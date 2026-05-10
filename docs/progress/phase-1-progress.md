@@ -34,7 +34,7 @@ Phase 1 is the paid chat MVP described in `project-plan.md`, `frontend-spec.md`,
 | IndexedDB/local history | Green | `LocalConversationStore` tested with `fake-indexeddb` |
 | Export/import | Green | JSON export/import wired in the sidebar and covered by local data test |
 | Electron shell | Green | `client/electron/main.cjs` and `preload.cjs` wrap the shared Vite build |
-| Docker Compose | Verified | `docker compose --env-file .env.example config` parsed successfully |
+| Docker Compose | Verified | `docker compose --env-file .env.example up --build -d` started Postgres, Redis, migration, API, and client locally; API health, frontend HTTP, register/chat, and Postgres record counts verified |
 | AWS Hong Kong deployment verification | Blocked | Requires an AWS host, DNS, and deployment credentials; local Docker/Caddy deployment artifacts are ready |
 | README | Green | Root `README.md` documents purpose, Phase 1 capabilities, setup, credentials, Docker, and verification |
 | Rendered frontend smoke | Verified | Browser opened `http://localhost:5173`, registered a local user, sent mock chat, saw quota and streamed reply with no console errors |

@@ -54,7 +54,8 @@ docker compose up --build
 
 - Web: `http://localhost:5173`
 - API: `http://localhost:8080`
-- Postgres: `localhost:5432`
+- Postgres: `localhost:15432`（容器内仍是 `5432`，避免冲突本机已有 PostgreSQL）
+- Redis: `localhost:16379`（容器内仍是 `6379`）
 
 ## 接入真实服务
 

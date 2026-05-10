@@ -1,0 +1,10 @@
+.git/
+.env
+.env.*
+tmp/
+*.log
+api
+jiandanly-api
+*.test
+*.prof
+coverage.out
