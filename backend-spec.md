@@ -1,8 +1,10 @@
 # 简单（Jiandan）后端技术方案
 
-**版本：** v1.2  
-**更新：** 2026-05-10  
-**适用阶段：** Phase 1 MVP + Phase 2 核心功能
+**版本：** v1.3
+**更新：** 2026-05-10
+**适用阶段：** Phase 1-5 分阶段落地
+
+> **v1.3 更新说明：** 删除当前阶段 BYOK 支持；移除 MVP 中的用户 API Key / 断线续传 / RAG / Office / 图片生成等重功能；计费改为包月额度为主、额外充值为补充，并引入钱包账本、额度预留、幂等支付事件和审计日志。
 
 > **v1.2 更新说明：** 新增 Tool Calling / Agentic Loop 架构；引入 Office 文件自研生成层：Excel（Go + excelize）、Word（Go + XML 模板填充）、PPT（Python FastAPI sidecar + python-pptx）；所有 Office 能力完全自主实现，零外部 Office API 依赖，用户完全无感知。
 
@@ -22,12 +24,12 @@
    - 5.3 计费层
    - 5.4 团队管理层
    - 5.5 Prompt 模板层
-   - 5.6 断线续传（Resumable Stream）
+   - 5.6 流式生成与恢复策略
    - 5.7 多模态 / Vision 支持
-   - 5.8 RAG 知识库（Phase 2）
-   - 5.9 Tool Calling / Agentic Loop（Phase 2）
-   - 5.10 Office 文件自研实现（Phase 2）
-   - 5.11 图片生成（Phase 2）
+   - 5.8 RAG 知识库（Phase 3）
+   - 5.9 Tool Calling / Agentic Loop（Phase 4）
+   - 5.10 Office 文件自研实现（Phase 4）
+   - 5.11 图片生成（Phase 4）
 6. [中间件设计](#六中间件设计)
 7. [错误处理规范](#七错误处理规范)
 8. [部署方案](#八部署方案)
@@ -39,6 +41,8 @@
 ## 一、整体架构
 
 ### 1.1 架构图
+
+前端客户端的模块划分、Web/Electron 差异和未来 Agent Host 边界见 [`frontend-spec.md`](frontend-spec.md)。本后端文档只描述客户端调用后端时依赖的 API、数据模型和服务流程。
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -62,16 +66,16 @@
 │                                                          │
 │  Router (chi)                                            │
 │  ├── /api/v1/auth/*          认证路由                    │
-│  ├── /api/v1/user/*          用户路由（含 API Key 管理）  │
+│  ├── /api/v1/user/*          用户资料与安全设置           │
 │  ├── /api/v1/chat/*          对话路由（含 SSE）           │
 │  ├── /api/v1/conversations/* 对话管理（搜索/分享/导出）   │
 │  ├── /api/v1/billing/*       计费路由                    │
-│  ├── /api/v1/team/*          团队路由                    │
+│  ├── /api/v1/team/*          团队路由（Phase 5）          │
 │  ├── /api/v1/template/*      模板路由                    │
 │  ├── /api/v1/file/*          文件路由                    │
-│  ├── /api/v1/knowledge/*     知识库 / RAG 路由           │
-│  ├── /api/v1/webhooks/*      Webhook 管理路由            │
-│  ├── /api/v1/images/*        图片生成路由（异步任务）      │
+│  ├── /api/v1/knowledge/*     知识库 / RAG 路由（Phase 3） │
+│  ├── /api/v1/webhooks/*      Webhook 管理路由（Phase 5）  │
+│  ├── /api/v1/images/*        图片生成路由（Phase 4）      │
 │  ├── /api/v1/payment/*       支付路由（Stripe Webhook）   │
 │  ├── /s/:token               对话分享公开访问（免登录）   │
 │  └── /health                 健康检查                    │
@@ -82,8 +86,8 @@
 │  核心服务                                                 │
 │  ├── AuthService             JWT + bcrypt + OAuth        │
 │  ├── LLMProxyService         SSE 流式代理 + 模型路由      │
-│  ├── BillingService          异步计费 + 余额管理          │
-│  ├── TeamService             组织 / 团队 / 成员管理       │
+│  ├── BillingService          包月额度 + 账本结算          │
+│  ├── TeamService             组织 / 团队 / 成员管理（P5） │
 │  ├── TemplateService         Prompt 模板管理             │
 │  ├── FileService             S3 上传 / 预签名 URL         │
 │  ├── ShareService            对话分享 / 导出             │
@@ -99,18 +103,19 @@
 │ PostgreSQL │  │  Redis 7        │  │  PPT Python Sidecar    │
 │    16      │  │                 │  │  (FastAPI + python-pptx)│
 │ + pgvector │  │ 限流计数器       │  │  localhost:5001         │
-│            │  │ 余额缓存         │  └────────────────────────┘
-│ 用户表      │  │ RT 黑名单        │
-│ 团队表      │  │ Stream 消息缓存  │
-│ 计费记录    │  │ 验证码缓存       │
-│ 对话历史    │  │ RAG 查询缓存    │
-│ 文件元数据  │  └─────────────────┘
+│            │  │ 短期流式缓存     │  └────────────────────────┘
+│ 用户表      │  │ 验证码缓存       │
+│ 团队表      │  │ 临时任务进度     │
+│ 钱包账本    │  │ RAG 查询缓存    │
+│ 支付事件    │  └─────────────────┘
+│ 对话历史    │
+│ 文件元数据  │
 │ Prompt模板  │
 │ 知识库分片  │
 │ 分享链接    │
-│ 用户APIKey  │
 │ Webhook配置 │
 │ file_jobs   │
+│ audit_logs  │
 └────────────┘
        │
        ▼
@@ -124,10 +129,10 @@
 ### 1.2 设计原则
 
 - **单体优先**：MVP 阶段不做微服务，一个 Go binary 包含所有逻辑，运维极简
-- **接口标准化**：对外暴露 OpenAI 兼容接口，方便客户端迁移和 BYOK 用户接入
-- **异步计费**：计费不阻塞对话链路，先响应用户，后台异步完成扣费
+- **接口标准化**：对外暴露 OpenAI 兼容接口，方便客户端和后续开放平台复用
+- **账务优先**：请求前预留额度，结束后结算；PostgreSQL 账本是唯一真实来源，Redis 只做缓存
 - **故障隔离**：LLM 供应商故障不影响主服务，熔断后自动降级
-- **数据主权**：用户数据可随时导出，增强信任感（职场用户的强需求）
+- **数据主权**：用户数据可随时导出 / 删除，跨境处理和供应商转发需要明确告知
 - **可观测性**：结构化日志 + 请求链路 ID，方便排查问题
 - **自研 Office 生成**：Excel / Word 纯 Go 实现（excelize + XML 模板），PPT 由极轻量 Python sidecar（python-pptx）处理；三种格式全部自主掌控，不依赖任何外部 Office API
 
@@ -147,15 +152,15 @@ jiandanly-api/
 │   │   ├── server.go
 │   │   └── routes.go
 │   ├── middleware/
-│   │   ├── auth.go               # JWT + API Key 双模式鉴权
+│   │   ├── auth.go               # JWT 鉴权
 │   │   ├── ratelimit.go
 │   │   ├── logger.go
 │   │   ├── recovery.go
 │   │   └── requestid.go
 │   ├── handler/
 │   │   ├── auth.go
-│   │   ├── user.go               # 用户信息 / API Key 管理
-│   │   ├── chat.go               # 对话 / SSE 流 / 断线续传
+│   │   ├── user.go               # 用户信息 / 安全设置
+│   │   ├── chat.go               # 对话 / SSE 流
 │   │   ├── conversation.go       # 对话列表 / 搜索 / 分享 / 导出
 │   │   ├── billing.go
 │   │   ├── team.go
@@ -169,7 +174,7 @@ jiandanly-api/
 │   ├── service/
 │   │   ├── auth.go
 │   │   ├── llm/
-│   │   │   ├── proxy.go          # SSE 代理 + Agentic Loop
+│   │   │   ├── proxy.go          # SSE 代理（Agentic Loop 在 Phase 4 启用）
 │   │   │   ├── router.go
 │   │   │   ├── providers.go      # LLM 供应商适配（DeepSeek/Claude/GPT）
 │   │   │   ├── circuit.go        # 熔断器
@@ -186,7 +191,7 @@ jiandanly-api/
 │   │   │   ├── gpt_image1.go     # 精品档：OpenAI gpt-image-1
 │   │   │   ├── dalle3.go         # 标准档：OpenAI dall-e-3
 │   │   │   ├── stability.go      # 快速档：Stability AI stable-image-core
-│   │   │   └── service.go        # ImageService（预检 → 生成 → S3 → 计费）
+│   │   │   └── service.go        # ImageService（任务入队 → 生成 → S3 → 结算）
 │   │   ├── billing.go
 │   │   ├── team.go
 │   │   ├── template.go
@@ -222,15 +227,16 @@ jiandanly-api/
 ├── migrations/
 │   ├── 001_init_users.sql
 │   ├── 002_init_teams.sql
-│   ├── 003_init_billing.sql
+│   ├── 003_init_wallets.sql
 │   ├── 004_init_conversations.sql
 │   ├── 005_init_templates.sql
 │   ├── 006_init_files.sql
 │   ├── 007_init_shares.sql
-│   ├── 008_init_api_keys.sql
-│   ├── 009_init_knowledge.sql    # pgvector 扩展 + 分片表
-│   ├── 010_init_webhooks.sql
-│   └── 011_init_file_jobs.sql    # Office 生成任务记录
+│   ├── 008_init_payments.sql
+│   ├── 009_init_audit_logs.sql
+│   ├── 010_init_knowledge.sql    # pgvector 扩展 + 分片表
+│   ├── 011_init_webhooks.sql
+│   └── 012_init_file_jobs.sql    # Office / 图片生成任务记录
 ├── ppt-sidecar/
 │   ├── main.py                   # FastAPI + python-pptx 服务
 │   └── Dockerfile                # python:3.12-slim，仅 3 个依赖
@@ -263,15 +269,6 @@ CREATE TABLE users (
     role          VARCHAR(20) NOT NULL DEFAULT 'user',   -- user | admin
     status        VARCHAR(20) NOT NULL DEFAULT 'active', -- active | suspended
 
-    -- BYOK
-    byok_enabled     BOOLEAN NOT NULL DEFAULT FALSE,
-    byok_provider    VARCHAR(50),
-    byok_api_key_enc TEXT,                -- AES-256 加密
-
-    -- 积分余额
-    credits_balance    BIGINT NOT NULL DEFAULT 0,
-    credits_total_used BIGINT NOT NULL DEFAULT 0,
-
     -- 元数据
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -298,27 +295,93 @@ CREATE TABLE oauth_accounts (
 );
 ```
 
-### 3.3 用户 API Key 表 `user_api_keys`
+### 3.3 订阅计划、钱包与账本
 
-允许用户生成 API Key，通过程序调用我们平台的 AI 接口（企业内部集成场景）。
+计费以包月额度为主，额外充值额度为补充。所有钱包余额都只存在于 PostgreSQL；Redis 可以缓存展示值，但不能作为扣费依据。
 
 ```sql
-CREATE TABLE user_api_keys (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name         VARCHAR(100) NOT NULL,        -- 用途描述，如"公司 OA 集成"
-    key_hash     VARCHAR(255) NOT NULL UNIQUE, -- SHA-256(raw_key)，原始 key 不存储
-    key_prefix   VARCHAR(12) NOT NULL,         -- 展示用前缀，如 "jd_sk_a1b2..."
-    last_used_at TIMESTAMPTZ,
-    expires_at   TIMESTAMPTZ,                  -- NULL 表示永不过期
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE subscription_plans (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code            VARCHAR(50) UNIQUE NOT NULL, -- free_trial | pro | team
+    name            VARCHAR(100) NOT NULL,
+    owner_type      VARCHAR(20) NOT NULL,        -- user | organization
+    monthly_price_cny INT NOT NULL DEFAULT 0,
+    monthly_credit_limit BIGINT NOT NULL,
+    max_members     INT,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_api_keys_user ON user_api_keys(user_id);
-CREATE INDEX idx_api_keys_hash ON user_api_keys(key_hash);
+CREATE TABLE wallets (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_type      VARCHAR(20) NOT NULL, -- user | organization
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    plan_code       VARCHAR(50) NOT NULL,
+
+    -- 包月额度
+    monthly_credit_limit BIGINT NOT NULL DEFAULT 0,
+    monthly_credits_used BIGINT NOT NULL DEFAULT 0,
+    period_start    TIMESTAMPTZ NOT NULL,
+    period_end      TIMESTAMPTZ NOT NULL,
+
+    -- 额外充值额度：月额度用完后再消耗
+    extra_credits_balance BIGINT NOT NULL DEFAULT 0,
+
+    status          VARCHAR(20) NOT NULL DEFAULT 'active', -- active | past_due | canceled
+    stripe_subscription_id VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CHECK (
+        (owner_type = 'user' AND user_id IS NOT NULL AND organization_id IS NULL) OR
+        (owner_type = 'organization' AND organization_id IS NOT NULL AND user_id IS NULL)
+    ),
+    UNIQUE(owner_type, user_id),
+    UNIQUE(owner_type, organization_id)
+);
+
+CREATE TABLE usage_reservations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id       UUID NOT NULL REFERENCES wallets(id),
+    user_id         UUID NOT NULL REFERENCES users(id),
+    organization_id UUID REFERENCES organizations(id),
+    conversation_id UUID,
+    message_id      UUID,
+    request_id      VARCHAR(80) NOT NULL,
+    mode            VARCHAR(20) NOT NULL, -- fast | deep
+    estimated_credits BIGINT NOT NULL,
+    actual_credits    BIGINT,
+    status          VARCHAR(20) NOT NULL DEFAULT 'reserved',
+    -- reserved | settled | released | failed
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    settled_at      TIMESTAMPTZ,
+    UNIQUE(request_id)
+);
+
+CREATE TABLE wallet_transactions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id       UUID NOT NULL REFERENCES wallets(id),
+    reservation_id  UUID REFERENCES usage_reservations(id),
+    type            VARCHAR(40) NOT NULL,
+    -- subscription_grant | usage_reserve | usage_settle | usage_release | topup | refund | admin_adjust
+    amount          BIGINT NOT NULL,
+    monthly_used_after BIGINT NOT NULL,
+    extra_balance_after BIGINT NOT NULL,
+    description     VARCHAR(500),
+    idempotency_key VARCHAR(255) UNIQUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_wallets_user ON wallets(user_id);
+CREATE INDEX idx_wallets_org  ON wallets(organization_id);
+CREATE INDEX idx_reservations_wallet ON usage_reservations(wallet_id, created_at DESC);
+CREATE INDEX idx_wallet_tx_wallet ON wallet_transactions(wallet_id, created_at DESC);
 ```
 
-### 3.4 组织 / 团队表
+### 3.4 组织 / 团队表（Phase 5 预留）
+
+团队能力后置。Phase 1-4 默认只实现个人钱包、个人文件库、个人知识库和个人 Agent；以下组织表用于 Phase 5 团队版，不进入早期迁移范围。
 
 ```sql
 CREATE TABLE organizations (
@@ -327,10 +390,6 @@ CREATE TABLE organizations (
     slug         VARCHAR(100) UNIQUE NOT NULL,
     owner_id     UUID NOT NULL REFERENCES users(id),
     plan         VARCHAR(50) NOT NULL DEFAULT 'team',  -- team | enterprise
-
-    -- 统一积分池
-    credits_balance          BIGINT NOT NULL DEFAULT 0,
-    credits_alert_threshold  BIGINT NOT NULL DEFAULT 1000,
 
     -- 配置
     max_members INT NOT NULL DEFAULT 20,
@@ -407,7 +466,7 @@ CREATE TABLE messages (
     output_tokens INT NOT NULL DEFAULT 0,
     credits_cost  BIGINT NOT NULL DEFAULT 0,
 
-    -- 断线续传状态
+    -- 流式状态
     stream_status VARCHAR(20) NOT NULL DEFAULT 'done', -- streaming | done | interrupted
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -464,7 +523,7 @@ CREATE TABLE files (
 
     -- 关联信息
     conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
-    knowledge_base_id UUID,     -- 归属知识库（Phase 2）
+    knowledge_base_id UUID,     -- 归属知识库（Phase 3）
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -473,40 +532,47 @@ CREATE INDEX idx_files_user ON files(user_id, created_at DESC);
 CREATE INDEX idx_files_org  ON files(organization_id);
 ```
 
-### 3.8 计费表
+### 3.8 支付与额外额度包
 
 ```sql
-CREATE TABLE credit_transactions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID REFERENCES users(id),
-    organization_id UUID REFERENCES organizations(id),
-
-    type         VARCHAR(30) NOT NULL, -- purchase | usage | refund | gift | admin_adjust
-    amount       BIGINT NOT NULL,      -- 正数=增加，负数=扣减
-    balance_after BIGINT NOT NULL,
-
-    description              VARCHAR(500),
-    stripe_payment_intent_id VARCHAR(255),
-    message_id               UUID REFERENCES messages(id),
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_credit_tx_user ON credit_transactions(user_id, created_at DESC);
-CREATE INDEX idx_credit_tx_org  ON credit_transactions(organization_id, created_at DESC);
-
-CREATE TABLE credit_packages (
+CREATE TABLE extra_credit_packages (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            VARCHAR(100) NOT NULL,
     credits         BIGINT NOT NULL,
     price_cny       INT NOT NULL,
-    price_usd       INT NOT NULL,
     stripe_price_id VARCHAR(255),
     is_popular      BOOLEAN NOT NULL DEFAULT FALSE,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     sort_order      INT NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE payment_orders (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id       UUID NOT NULL REFERENCES wallets(id),
+    package_id      UUID REFERENCES extra_credit_packages(id),
+    type            VARCHAR(30) NOT NULL, -- subscription | topup
+    amount_cny      INT NOT NULL,
+    currency        VARCHAR(10) NOT NULL DEFAULT 'cny',
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+    -- pending | paid | failed | canceled | refunded
+    stripe_checkout_session_id VARCHAR(255) UNIQUE,
+    stripe_payment_intent_id   VARCHAR(255),
+    stripe_subscription_id     VARCHAR(255),
+    idempotency_key VARCHAR(255) UNIQUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE stripe_events (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stripe_event_id VARCHAR(255) UNIQUE NOT NULL,
+    event_type      VARCHAR(100) NOT NULL,
+    payload         JSONB NOT NULL,
+    processed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_payment_orders_wallet ON payment_orders(wallet_id, created_at DESC);
 ```
 
 ### 3.9 Prompt 模板表 `prompt_templates`
@@ -557,14 +623,14 @@ CREATE TABLE usage_daily (
     output_tokens BIGINT NOT NULL DEFAULT 0,
     credits_used  BIGINT NOT NULL DEFAULT 0,
 
-    UNIQUE(date, user_id, model)
+    UNIQUE(date, user_id, organization_id, model)
 );
 
 CREATE INDEX idx_usage_daily_org  ON usage_daily(organization_id, date DESC);
 CREATE INDEX idx_usage_daily_user ON usage_daily(user_id, date DESC);
 ```
 
-### 3.11 RAG 知识库表（Phase 2）
+### 3.11 RAG 知识库表（Phase 3）
 
 ```sql
 -- 启用 pgvector 扩展
@@ -590,7 +656,9 @@ CREATE TABLE knowledge_chunks (
 
     chunk_index  INT NOT NULL,       -- 同一文件的第 N 个分片
     content      TEXT NOT NULL,      -- 原始文本（用于返回引用）
-    embedding    vector(1536),       -- 向量（OpenAI ada-002 或 BGE-large-zh）
+    embedding_model VARCHAR(100) NOT NULL DEFAULT 'text-embedding-3-small',
+    embedding_dim   INT NOT NULL DEFAULT 1536,
+    embedding    vector(1536),       -- 首发固定 1536 维；更换模型需新建对应维度迁移
     metadata     JSONB NOT NULL DEFAULT '{}',  -- 页码、来源文件名等
 
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -603,7 +671,7 @@ CREATE INDEX idx_chunks_embedding ON knowledge_chunks
 CREATE INDEX idx_chunks_kb ON knowledge_chunks(knowledge_base_id);
 ```
 
-### 3.12 Webhook 配置表（Phase 2）
+### 3.12 Webhook 配置表（Phase 5）
 
 ```sql
 CREATE TABLE webhooks (
@@ -623,6 +691,26 @@ CREATE TABLE webhooks (
 );
 
 CREATE INDEX idx_webhooks_org ON webhooks(organization_id);
+```
+
+### 3.13 审计日志表 `audit_logs`
+
+```sql
+CREATE TABLE audit_logs (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_user_id   UUID REFERENCES users(id),
+    organization_id UUID REFERENCES organizations(id),
+    action          VARCHAR(100) NOT NULL,
+    target_type     VARCHAR(80),
+    target_id       UUID,
+    ip_address      INET,
+    user_agent      TEXT,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_org ON audit_logs(organization_id, created_at DESC);
+CREATE INDEX idx_audit_actor ON audit_logs(actor_user_id, created_at DESC);
 ```
 
 ---
@@ -683,14 +771,6 @@ GET    /api/v1/auth/oauth/:provider/callback
 GET    /api/v1/user/me
 PATCH  /api/v1/user/me
 PATCH  /api/v1/user/password
-GET    /api/v1/user/byok
-PUT    /api/v1/user/byok
-DELETE /api/v1/user/byok
-
--- 用户 API Key 管理（供程序调用平台接口）
-GET    /api/v1/user/api-keys           获取 API Key 列表
-POST   /api/v1/user/api-keys           创建新 API Key（返回完整 key，仅此一次）
-DELETE /api/v1/user/api-keys/:id       删除 API Key
 ```
 
 ### 4.5 对话接口（核心）
@@ -705,9 +785,6 @@ GET    /api/v1/conversations/search    全文搜索（?q=关键词）
 GET    /api/v1/conversations/:id       详情 + 消息列表
 PATCH  /api/v1/conversations/:id       更新（标题/置顶/归档）
 DELETE /api/v1/conversations/:id       删除
-
--- 断线续传
-GET    /api/v1/conversations/:id/messages/:mid/stream  恢复中断的流
 
 -- 分享与导出
 POST   /api/v1/conversations/:id/share  创建分享链接
@@ -734,10 +811,9 @@ GET    /s/:token                        查看分享的对话
     ],
     "stream": true,
     "conversation_id": "uuid",
-    "resume_message_id": "uuid",  // 断线续传：从此消息继续
     "scene": "read",
     "template_id": "uuid",
-    "knowledge_base_ids": ["uuid1", "uuid2"]  // RAG：指定检索的知识库
+    "organization_id": "uuid"  // Phase 5 团队钱包场景必传；个人场景为空
 }
 ```
 
@@ -746,12 +822,14 @@ GET    /s/:token                        查看分享的对话
 ```
 GET    /api/v1/billing/balance
 GET    /api/v1/billing/transactions
-GET    /api/v1/billing/packages
-POST   /api/v1/billing/checkout
+GET    /api/v1/billing/subscription
+POST   /api/v1/billing/subscription/checkout
+GET    /api/v1/billing/topup-packages
+POST   /api/v1/billing/topup/checkout
 GET    /api/v1/billing/usage
 ```
 
-### 4.7 团队接口
+### 4.7 团队接口（Phase 5）
 
 ```
 POST   /api/v1/teams
@@ -786,7 +864,7 @@ GET    /api/v1/files/:id
 DELETE /api/v1/files/:id
 ```
 
-### 4.10 知识库接口（Phase 2）
+### 4.10 知识库接口（Phase 4）
 
 ```
 GET    /api/v1/knowledge               获取团队知识库列表
@@ -799,7 +877,7 @@ DELETE /api/v1/knowledge/:id/files/:fid 从知识库移除文件
 GET    /api/v1/knowledge/:id/search    语义搜索测试（管理员用）
 ```
 
-### 4.11 Webhook 接口（Phase 2）
+### 4.11 Webhook 接口（Phase 5）
 
 ```
 GET    /api/v1/webhooks
@@ -809,7 +887,7 @@ DELETE /api/v1/webhooks/:id
 POST   /api/v1/webhooks/:id/test       发送测试事件
 ```
 
-### 4.12 图片生成接口（Phase 2）
+### 4.12 图片生成接口（Phase 4）
 
 ```
 POST   /api/v1/images/generate         提交生图任务（异步，返回 job_id）
@@ -836,7 +914,6 @@ POST   /api/v1/payment/webhook         Stripe Webhook（验签替代 JWT）
 |------|--------|----------|
 | Access Token | 15 分钟 | 客户端内存 |
 | Refresh Token | 30 天 | HTTPOnly Cookie |
-| 用户 API Key | 永久 / 自定义 | 仅哈希值存 DB |
 
 ```go
 type Claims struct {
@@ -848,7 +925,7 @@ type Claims struct {
 }
 ```
 
-**鉴权中间件支持双模式：**
+**鉴权中间件仅支持 JWT。开放平台 API Key 属于 Phase 5，不进入当前 MVP。**
 
 ```go
 func AuthMiddleware(next http.Handler) http.Handler {
@@ -862,15 +939,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
                 return
             }
         }
-        // 其次检查 X-API-Key 头（用户程序调用）
-        if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
-            userID, err := validateAPIKey(apiKey)
-            if err == nil {
-                ctx := context.WithValue(r.Context(), ctxUserID, userID)
-                next.ServeHTTP(w, r.WithContext(ctx))
-                return
-            }
-        }
         response.Error(w, 40001, "未登录或登录已过期")
     })
 }
@@ -879,7 +947,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 **Refresh Token 轮换：**
 - 每次使用生成新 Refresh Token，旧的作废
 - 旧 Token 二次使用 → 立即吊销所有 Token（检测盗用）
-- Refresh Token 存 Redis 黑名单（退出登录后立即失效）
+- Refresh Token 轮换状态存 PostgreSQL，Redis 只缓存短期会话状态，不能依赖可淘汰缓存承载安全语义
 
 ### 5.2 LLM 代理层
 
@@ -1125,13 +1193,13 @@ func (r *Router) Select(mode string, hasImage bool) ModelConfig {
 客户端（OpenAI 格式请求）
         │
         ▼
-① 鉴权 + 余额预检（Redis，< 1ms）
+① 鉴权 + 选择钱包 + 创建额度预留（PostgreSQL 事务）
         │
 ② 检测是否含图片 → 选择模型（Router.Select）
         │
-③ 注入 system prompt（场景 / 模板 / RAG 上下文）
+③ 注入 system prompt（场景 / 模板；RAG 上下文 Phase 3 启用）
         │
-④ 创建 message 记录（status=streaming），写 Redis 空缓存
+④ 创建 message 记录（status=streaming），记录 reservation_id
         │
 ⑤ provider.BuildRequest()   ←─── 各家格式差异在此封装
         │                         DeepSeek/Qwen：直接用 OpenAI 格式
@@ -1148,14 +1216,15 @@ func (r *Router) Select(mode string, hasImage bool) ModelConfig {
         ├── 统一 Chunk → 转换为 OpenAI SSE 格式发送给客户端
         │   data: {"choices":[{"delta":{"content":"..."},"finish_reason":null}]}
         │
-        ├── 追加到 Redis（断线续传）
+        ├── 可选追加到 Redis 短期缓存（只用于体验，不作为可靠恢复）
         └── 累计 token 计数
         │
-⑧ 流结束后（异步）：
+⑧ 流结束后（同一结算流程）：
         → 更新 message status=done
-        → 扣费 + 写 usage_daily
-        → Redis 缓存 5 分钟后过期
-        → 触发 Webhook（chat.completed）
+        → 按实际 token / 工具成本结算 reservation
+        → 写 wallet_transactions + usage_daily
+        → 释放未使用的预留额度
+        → Webhook 事件仅在 Phase 5 启用
 ```
 
 **客户端永远收到 OpenAI 格式的 SSE，不感知后端路由到哪个供应商。**
@@ -1196,52 +1265,56 @@ var SceneSystemPrompts = map[string]string{
 
 ### 5.3 计费层
 
-#### 5.3.1 积分设计
+#### 5.3.1 包月额度设计
 
 ```
 积分单位：1 积分 = ¥0.01
-快速模式：1-5 积分/次（约 ¥0.01–0.05）
-深度模式：10-50 积分/次（约 ¥0.10–0.50）
-Vision 请求：额外加收图片处理积分
-
-充值套餐：
-¥9.9  → 1,100 积分（含 10% 赠送）
-¥29   → 3,500 积分（含 20% 赠送）
-¥99   → 13,000 积分（含 30% 赠送）
+个人专业版：每月发放固定额度
+团队版（Phase 5）：组织钱包每月发放额度池，成员可设置个人月上限
+额外额度：月额度耗尽后再消耗，可通过一次性充值包补充
 ```
 
-#### 5.3.2 余额检查与扣费
+扣费顺序固定为：先扣当月额度，再扣额外额度。月额度周期结束后重置，额外额度不参与月度重置。
+
+#### 5.3.2 额度预留与结算
 
 ```go
-// 请求前：Redis 快速预检
-func (s *BillingService) PreCheck(ctx context.Context, userID string, mode string) error {
-    balance := s.redis.Get(ctx, "balance:"+userID)
-    if balance < s.minCreditsForMode(mode) {
-        return ErrInsufficientCredits
-    }
-    return nil
+func (s *BillingService) Reserve(ctx context.Context, req ReserveRequest) (Reservation, error) {
+    return s.db.WithTxResult(ctx, func(tx *sql.Tx) (Reservation, error) {
+        wallet, err := s.repo.LockWalletForScope(tx, req.UserID, req.OrganizationID)
+        if err != nil { return Reservation{}, err }
+
+        estimate := s.estimateCredits(req.Mode, req.MaxTokens, req.ToolBudget)
+        available := wallet.MonthlyLimit - wallet.MonthlyUsed + wallet.ExtraBalance
+        if available < estimate {
+            return Reservation{}, ErrInsufficientCredits
+        }
+
+        reservation := s.repo.CreateReservation(tx, wallet.ID, req, estimate)
+        s.repo.InsertWalletTx(tx, wallet.ID, reservation.ID, "usage_reserve", -estimate)
+        return reservation, nil
+    })
 }
 
-// 响应完成后：异步精确扣费
-func (s *BillingService) DeductAsync(ctx context.Context, req DeductRequest) {
-    go func() {
-        credits := s.calculateCredits(req.InputTokens, req.OutputTokens, req.ImageCount, req.Model)
-        _ = s.db.WithTx(ctx, func(tx *sql.Tx) error {
-            balance, err := s.repo.LockBalance(tx, req.UserID)
-            if err != nil { return err }
-            newBalance := max(0, balance-credits)
-            s.repo.UpdateBalance(tx, req.UserID, newBalance)
-            s.repo.InsertTransaction(tx, req.UserID, -credits, newBalance, req.MessageID)
-            return nil
-        })
-        s.redis.Set(ctx, "balance:"+req.UserID, newBalance, 5*time.Minute)
-        s.repo.UpsertUsageDaily(ctx, req)
+func (s *BillingService) Settle(ctx context.Context, req SettleRequest) error {
+    return s.db.WithTx(ctx, func(tx *sql.Tx) error {
+        reservation, err := s.repo.LockReservation(tx, req.ReservationID)
+        if err != nil { return err }
+        if reservation.Status != "reserved" { return nil } // 幂等
 
-        // 余额低于阈值时触发 Webhook
-        if newBalance < s.alertThreshold(req.UserID) {
-            s.webhookSvc.Emit(ctx, "credits.low", req.UserID)
-        }
-    }()
+        actual := s.calculateCredits(req.InputTokens, req.OutputTokens, req.ImageCount, req.Model)
+        wallet, err := s.repo.LockWallet(tx, reservation.WalletID)
+        if err != nil { return err }
+
+        s.repo.ApplyActualUsage(tx, wallet.ID, actual)
+        s.repo.MarkReservationSettled(tx, reservation.ID, actual)
+        s.repo.InsertWalletTx(tx, wallet.ID, reservation.ID, "usage_settle", -actual)
+        return nil
+    })
+}
+
+func (s *BillingService) Release(ctx context.Context, reservationID string, reason string) error {
+    return s.repo.ReleaseReservationIdempotently(ctx, reservationID, reason)
 }
 ```
 
@@ -1259,7 +1332,9 @@ func (s *BillingService) calculateCredits(inputTokens, outputTokens, imageCount 
 }
 ```
 
-### 5.4 团队管理层
+### 5.4 团队管理层（Phase 5，后置）
+
+团队管理不进入早期实现。Phase 1-4 只要求个人钱包、个人文件、个人知识库和个人 Agent 可用；团队相关 schema/API 保留为 Phase 5 扩展边界。
 
 **权限矩阵：**
 
@@ -1280,16 +1355,22 @@ func (s *BillingService) calculateCredits(inputTokens, outputTokens, imageCount 
 
 **成员计费路由（个人 vs 组织）：**
 
+团队场景必须显式传 `organization_id`。一个用户可以属于多个组织，不能用“默认 active membership”推断钱包，否则容易把个人对话扣到团队账上，或把 A 团队对话扣到 B 团队。
+
 ```go
-func (s *BillingService) ResolveWallet(ctx context.Context, userID string) (walletOwner, walletType string) {
-    member, _ := s.teamRepo.GetActiveMembership(ctx, userID)
-    if member != nil {
-        if member.MonthlyLimit > 0 && member.MonthlyUsed >= member.MonthlyLimit {
-            panic(ErrMemberQuotaExceeded)
-        }
-        return member.OrganizationID, "organization"
+func (s *BillingService) ResolveWallet(ctx context.Context, userID, organizationID string) (Wallet, error) {
+    if organizationID == "" {
+        return s.walletRepo.GetUserWallet(ctx, userID)
     }
-    return userID, "user"
+
+    member, err := s.teamRepo.GetMembership(ctx, organizationID, userID)
+    if err != nil || member == nil {
+        return Wallet{}, ErrPermissionDenied
+    }
+    if member.MonthlyLimit > 0 && member.MonthlyUsed >= member.MonthlyLimit {
+        return Wallet{}, ErrMemberQuotaExceeded
+    }
+    return s.walletRepo.GetOrganizationWallet(ctx, organizationID)
 }
 ```
 
@@ -1315,36 +1396,22 @@ func (s *TemplateService) Render(tmpl Template, vars map[string]string) string {
 }
 ```
 
-### 5.6 断线续传（Resumable Stream）
+### 5.6 流式生成与恢复策略
+
+Phase 1 只保证“流式输出 + 最终消息落库”。断线后客户端重新打开对话，读取已经落库的最终消息或 interrupted 消息。真正的断线续传放到 Phase 4，必须基于服务端 generation job 和事件日志实现，不能只依赖 Redis 里追加的 chunk。
 
 ```go
-// 消息创建时在 Redis 写入空缓存
-func (s *LLMProxyService) initStream(ctx context.Context, msgID string) {
-    s.redis.Set(ctx, "stream:"+msgID, "", 5*time.Minute)
+func (s *LLMProxyService) markInterrupted(ctx context.Context, messageID, reservationID string) {
+    _ = s.messageRepo.UpdateStatus(ctx, messageID, "interrupted")
+    _ = s.billing.Release(ctx, reservationID, "client_disconnected")
 }
 
-// 每收到一个 chunk 追加到 Redis
-func (s *LLMProxyService) appendChunk(ctx context.Context, msgID, chunk string) {
-    s.redis.Append(ctx, "stream:"+msgID, chunk)
-    s.redis.Expire(ctx, "stream:"+msgID, 5*time.Minute)
-}
-
-// 客户端断线重连后调用此接口
-// GET /api/v1/conversations/:id/messages/:mid/stream
-func (h *ChatHandler) ResumeStream(w http.ResponseWriter, r *http.Request) {
-    msgID := chi.URLParam(r, "mid")
-    cached := h.redis.Get(r.Context(), "stream:"+msgID)
-
-    msg, _ := h.repo.GetMessage(r.Context(), msgID)
-    if msg.StreamStatus == "done" {
-        // 已完成，直接返回完整内容
-        response.JSON(w, msg)
-        return
-    }
-    // 仍在流式中，先返回已缓存部分，再接着转发剩余流
-    w.Header().Set("Content-Type", "text/event-stream")
-    fmt.Fprintf(w, "data: %s\n\n", cached)  // 先发已有内容
-    h.proxyRemainingStream(w, r, msgID)       // 再续传剩余
+// Phase 4 才引入：
+// generation_jobs(id, message_id, status, cursor, provider_request_id, ...)
+// generation_events(job_id, seq, event_type, payload, created_at)
+func (h *ChatHandler) GetMessage(w http.ResponseWriter, r *http.Request) {
+    msg := h.repo.MustGetMessage(r.Context(), chi.URLParam(r, "mid"))
+    response.JSON(w, msg)
 }
 ```
 
@@ -1394,13 +1461,14 @@ func hasImageContent(messages []Message) bool {
 5. 客户端将此 URL 放入消息 content 中发送对话请求
 6. 后端转发给 LLM 时直接透传 URL（Claude / GPT-4o 会自行下载图片）
 
-### 5.8 RAG 知识库（Phase 2）
+### 5.8 RAG 知识库（Phase 3）
 
 ```
 文件上传 → 文本提取（PDF/Word/TXT）→ 分片（每片 500 token，50 token 重叠）
-     → 向量化（BGE-large-zh 或 OpenAI ada-002）→ 写入 knowledge_chunks
+     → 向量化（首发 text-embedding-3-small）→ 写入 knowledge_chunks
 
 对话时（指定 knowledge_base_ids）：
+     → 校验用户对 knowledge_base_ids 的组织权限
      → 用户问题向量化 → pgvector 余弦相似度检索 Top-K 分片
      → 拼入 system prompt："以下是相关参考资料：\n{chunks}"
      → 正常走 LLM 代理流程
@@ -1408,6 +1476,8 @@ func hasImageContent(messages []Message) bool {
 
 ```go
 func (s *RAGService) Retrieve(ctx context.Context, kbIDs []string, query string, topK int) ([]Chunk, error) {
+    if err := s.authz.EnsureKnowledgeAccess(ctx, kbIDs); err != nil { return nil, err }
+
     embedding, err := s.embed.Embed(ctx, query)
     if err != nil { return nil, err }
 
@@ -1432,7 +1502,15 @@ func (s *RAGService) BuildContextPrompt(chunks []Chunk) string {
 }
 ```
 
-### 5.9 Tool Calling / Agentic Loop（Phase 2）
+### 5.9 Tool Calling / Agentic Loop（Phase 4）
+
+工具调用不进入 MVP。Phase 4 启用时，所有外部副作用工具（Office、图片、文件处理）必须走异步 job 队列，并设置统一保护：
+
+- 单次对话最多 4 轮工具循环，后台配置可调，默认低于模型最大能力
+- 单个工具任务必须有超时、最大输入 JSON 大小、最大输出文件大小
+- 文件类工具必须先创建 `file_jobs(status=queued)`，worker 执行后再结算额度
+- Excel 公式、Word XML、PPT JSON 必须做结构校验和内容转义，防止公式注入或 XML 破坏
+- 工具失败只返回可读错误，不让模型无限重试同一工具
 
 #### 工具注册表
 
@@ -1500,7 +1578,7 @@ var CreateExcelTool = ToolDefinition{
 func (s *LLMProxyService) Chat(ctx context.Context, req InternalRequest, w SSEWriter) error {
     messages := req.Messages
     tools    := SceneTools[req.Scene]
-    const maxRounds = 8  // 防无限循环
+    const maxRounds = 4  // 防无限循环，默认保守
 
     for round := 0; round < maxRounds; round++ {
         model   := s.router.Select(req.Mode, hasImage(messages))
@@ -1556,7 +1634,7 @@ func (s *LLMProxyService) Chat(ctx context.Context, req InternalRequest, w SSEWr
 }
 ```
 
-### 5.10 Office 文件自研实现
+### 5.10 Office 文件自研实现（Phase 4）
 
 #### 三种文件类型的实现策略
 
@@ -1944,9 +2022,10 @@ CREATE TABLE file_jobs (
     conversation_id UUID REFERENCES conversations(id),
     message_id      UUID REFERENCES messages(id),
 
-    type            VARCHAR(20) NOT NULL,    -- excel | word | ppt
+    type            VARCHAR(20) NOT NULL,    -- excel | word | ppt | image
     provider        VARCHAR(50) NOT NULL,    -- excel-go | word-go | ppt-python
-    status          VARCHAR(20) NOT NULL DEFAULT 'done',
+    status          VARCHAR(20) NOT NULL DEFAULT 'queued',
+    -- queued | running | done | failed | canceled
     input_params    JSONB NOT NULL,          -- AI 参数原始数据（排查用）
     output_file_id  UUID REFERENCES files(id),
     error_message   TEXT,
@@ -2025,7 +2104,7 @@ CREATE TABLE file_jobs (
 }
 ```
 
-### 5.11 图片生成（Phase 2）
+### 5.11 图片生成（Phase 4）
 
 用户可以在对话中直接要求生成图片，也可以通过独立的图片生成界面选择档位后提交。后端根据所选档位路由到对应的供应商，生成结果上传 S3，返回预签名 URL。
 
@@ -2196,6 +2275,8 @@ func sizeToAspectRatio(size string) string {
 
 #### ImageService（统一入口）
 
+图片生成统一使用异步任务。API 只负责创建 `file_jobs(status=queued)` 并预留额度，worker 完成生成、上传 S3、更新任务状态并结算额度。
+
 ```go
 // internal/service/image/service.go
 
@@ -2212,34 +2293,21 @@ var imageCreditCost = map[string]int64{
     "premium":  200,
 }
 
-func (s *ImageService) Generate(ctx context.Context, userID string, req ImageRequest) (string, error) {
+func (s *ImageService) Enqueue(ctx context.Context, userID string, req ImageRequest) (string, error) {
     cost := imageCreditCost[req.Quality]
 
-    // 1. 余额预检（Redis）
-    if err := s.billing.PreCheck(ctx, userID, cost); err != nil {
-        return "", ErrInsufficientCredits
+    reservation, err := s.billing.ReserveFixedCost(ctx, userID, cost, "image")
+    if err != nil { return "", err }
+
+    jobID, err := s.jobs.Create(ctx, FileJob{
+        Type: "image", Status: "queued", UserID: userID,
+        ReservationID: reservation.ID, InputParams: req,
+    })
+    if err != nil {
+        _ = s.billing.Release(ctx, reservation.ID, "job_create_failed")
+        return "", err
     }
-
-    // 2. 路由到对应档位 Provider 生成图片
-    provider := s.router.Route(req.Quality)
-    result, err := provider.Generate(ctx, req)
-    if err != nil { return "", err }
-
-    // 3. 上传 S3
-    filename := fmt.Sprintf("img_%s_%d.png", req.Quality, time.Now().UnixMilli())
-    fileID, err := s.fileService.UploadBytes(ctx, userID, filename,
-        result.ImageBytes, result.ContentType)
-    if err != nil { return "", err }
-
-    // 4. 记录 file_jobs
-    s.recordJob(ctx, userID, req, result, fileID)
-
-    // 5. 异步扣积分
-    go s.billing.Deduct(context.Background(), userID, cost,
-        fmt.Sprintf("图片生成（%s）", req.Quality))
-
-    // 6. 返回预签名 URL
-    return s.fileService.SignedURL(fileID), nil
+    return jobID, nil
 }
 ```
 
@@ -2362,7 +2430,7 @@ Recovery（捕获 panic，返回 500，记录堆栈）
 RateLimit（IP + 用户 ID 双维度）
   │
   ▼
-Auth（JWT 或 API Key 鉴权）
+Auth（JWT 鉴权）
   │
   ▼
 Handler
@@ -2376,7 +2444,6 @@ Handler
 | 用户对话（快速模式） | 令牌桶 | 20 req/min |
 | 用户对话（深度模式） | 令牌桶 | 10 req/min |
 | 登录/注册 | 计数器 | 5 次/min/IP |
-| API Key 调用 | 令牌桶 | 60 req/min（可配置）|
 | Stripe Webhook | 不限流，验签代替 |
 
 ---
@@ -2385,7 +2452,7 @@ Handler
 
 ```go
 var (
-    ErrInsufficientCredits  = NewAppError(50201, "积分余额不足，请充值后继续使用")
+    ErrInsufficientCredits  = NewAppError(50201, "本月额度和额外额度不足，请升级或充值后继续使用")
     ErrModelUnavailable     = NewAppError(50202, "AI 服务暂时不可用，请稍后重试")
     ErrInvalidToken         = NewAppError(40001, "登录状态已过期，请重新登录")
     ErrPermissionDenied     = NewAppError(40101, "权限不足")
@@ -2459,7 +2526,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy noeviction
     volumes:
       - redis_data:/data
     healthcheck:
@@ -2487,8 +2554,8 @@ volumes:
 ```
 
 > **注意：**
-> - PostgreSQL 镜像使用 `pgvector/pgvector:pg16`，内置 pgvector，Phase 2 直接启用，无需重建数据库。
-> - Redis maxmemory 设为 512mb（断线续传缓存需要更多空间）。
+> - PostgreSQL 镜像使用 `pgvector/pgvector:pg16`，内置 pgvector，Phase 3 启用 RAG 时无需重建数据库。
+> - Redis 不承载真实余额和安全黑名单，`noeviction` 用来避免关键短期状态被静默淘汰；容量不足应暴露为错误并扩容。
 > - `ppt-sidecar` 仅监听 127.0.0.1:5001，不对外暴露；`api` 服务通过内部 Docker 网络访问它（`http://ppt-sidecar:5001`）。
 
 ### 8.2 Caddyfile
@@ -2506,7 +2573,14 @@ jiandanly.com {
 }
 ```
 
-### 8.3 Dockerfile
+### 8.3 合规与数据边界
+
+- 香港部署用于降低大陆访问延迟，但不能被写成“规避中国个人信息保护义务”的技术保证。
+- 隐私政策需要明确：数据处理目的、LLM 供应商转发、文件存储位置、跨境处理、删除和导出方式。
+- 对话、上传文件、生成文件、支付事件、成员管理都要写入审计日志；日志中不得记录完整密钥、支付卡信息或未脱敏的敏感正文。
+- 后端转发给 LLM 供应商前，应尽量做文件类型、大小、内容长度和敏感字段过滤。
+
+### 8.4 Dockerfile
 
 ```dockerfile
 FROM golang:1.23-alpine AS builder
@@ -2524,7 +2598,7 @@ EXPOSE 8080
 CMD ["./api"]
 ```
 
-### 8.4 环境变量（.env.example）
+### 8.5 环境变量（.env.example）
 
 ```bash
 # 服务器
@@ -2545,9 +2619,6 @@ JWT_SECRET=your_32_byte_secret_here
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=720h
 
-# AES（BYOK API Key 加密）
-AES_KEY=your_32_byte_aes_key_here
-
 # LLM 供应商
 DEEPSEEK_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
@@ -2564,7 +2635,7 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_S3_BUCKET=jiandanly-files
 AWS_S3_REGION=ap-east-1
 
-# 向量化（Phase 2，RAG 用）
+# 向量化（Phase 3，RAG 用）
 # 选项 A：OpenAI ada-002（精度高，有成本）
 EMBEDDING_PROVIDER=openai
 EMBEDDING_MODEL=text-embedding-3-small
@@ -2572,14 +2643,14 @@ EMBEDDING_MODEL=text-embedding-3-small
 # EMBEDDING_PROVIDER=local
 # EMBEDDING_API_URL=http://localhost:8001/embed
 
-# Office 文件生成（Phase 2）
+# Office 文件生成（Phase 4）
 # Excel / Word 由 Go 进程内直接生成，无需额外配置
 # PPT 由独立 Python sidecar 生成，通过 Docker 内部网络访问
 PPT_SIDECAR_URL=http://ppt-sidecar:5001   # Docker Compose 内部地址
 # PPT_SIDECAR_URL=http://localhost:5001   # 本地开发时使用此地址
 WORD_TEMPLATES_DIR=./word-templates       # 预置 .docx 模板目录
 
-# 图片生成（Phase 2）
+# 图片生成（Phase 4）
 # 标准档 / 精品档 复用上面的 OPENAI_API_KEY
 STABILITY_API_KEY=sk-...                  # 快速档（Stability AI stable-image-core）
 # 积分消耗可在代码中调整：fast=20 / standard=80 / premium=200
@@ -2596,7 +2667,7 @@ SMTP_PASSWORD=re_...
 EMAIL_FROM=noreply@jiandanly.com
 ```
 
-### 8.5 数据库迁移
+### 8.6 数据库迁移
 
 ```go
 func runMigrations(db *sql.DB) error {
@@ -2626,10 +2697,10 @@ func runMigrations(db *sql.DB) error {
 | 日志 | `log/slog`（标准库） |
 | 配置 | `joho/godotenv` |
 | 测试 | `stretchr/testify` |
-| **Excel 生成（Phase 2）** | **`360EntSecGroup-Skylar/excelize/v2`** |
-| **Word 生成（Phase 2）** | Go 标准库 `archive/zip` + `encoding/xml`（无需第三方库） |
-| **PPT 生成（Phase 2）** | Python sidecar：`python-pptx` + `fastapi` + `uvicorn` |
-| 文档解析（Phase 2） | `ledongthuc/pdfcpu`（PDF）/ `unidoc/unioffice`（读取 Office） |
+| **Excel 生成（Phase 4）** | **`360EntSecGroup-Skylar/excelize/v2`** |
+| **Word 生成（Phase 4）** | Go 标准库 `archive/zip` + `encoding/xml`（无需第三方库） |
+| **PPT 生成（Phase 4）** | Python sidecar：`python-pptx` + `fastapi` + `uvicorn` |
+| 文档解析（Phase 2/4） | `ledongthuc/pdfcpu`（PDF）/ `unidoc/unioffice`（读取 Office） |
 
 ### 9.2 分层约定
 
@@ -2682,71 +2753,72 @@ docker-logs:
 
 ## 十、交付清单
 
-### Phase 1（MVP）
+### Phase 1：可收费聊天 MVP
 
 - [ ] 项目脚手架（目录结构、依赖、配置加载）
-- [ ] 数据库 Schema 及 Migration（001-008）
+- [ ] 数据库 Schema 及 Migration（users / wallets / conversations / payments / audit_logs）
 - [ ] 认证模块（注册 / 登录 / JWT / Refresh Token 轮换）
-- [ ] **双模式鉴权中间件**（JWT + X-API-Key）
+- [ ] JWT 鉴权中间件 + 限流中间件
 - [ ] LLM 代理核心（SSE 流式转发、DeepSeek + Claude）
-- [ ] 模型路由（快速 / 深度 / Vision 自动升级）
-- [ ] 场景 System Prompt 注入
-- [ ] **多模态支持**（messages.content 为 JSONB，图片透传）
-- [ ] **断线续传**（Redis 缓存 + /stream 恢复接口）
-- [ ] 积分余额系统（Redis 预检 + 异步扣费）
+- [ ] 模型路由（快速 / 深度）
+- [ ] 场景 System Prompt 注入（最小版本）
 - [ ] 基础对话接口（`POST /api/v1/chat/completions`）
-- [ ] **对话搜索**（`GET /api/v1/conversations/search`）
-- [ ] **对话分享链接**（创建 / 撤销 / 公开访问）
-- [ ] **对话导出**（Markdown / JSON）
-- [ ] **用户 API Key 管理**（创建 / 列表 / 删除）
-- [ ] Stripe 支付（创建会话 + Webhook 回调）
-- [ ] 用户信息接口
-- [ ] BYOK 配置接口
-- [ ] 限流中间件
-- [ ] 结构化日志 + 请求 ID
+- [ ] 包月订阅钱包：月额度发放、额度预留、结算、释放
+- [ ] Stripe 订阅 Checkout + Webhook 幂等处理
+- [ ] 用户信息接口、账单余额接口、用量接口
+- [ ] 结构化日志 + 请求 ID + 审计日志
 - [ ] Docker Compose 一键部署
 - [ ] AWS 香港服务器部署验证
 
-### Phase 2
+### Phase 2：场景化工作台
 
-- [ ] 团队管理（组织 / 成员 / 权限 / 用量上限）
-- [ ] 文件上传（S3 预签名 + 元数据记录 + 文本提取）
-- [ ] **RAG 知识库**（pgvector + 文档分片 + 语义检索）
-- [ ] Prompt 模板 CRUD（系统 / 团队 / 个人三级体系）
-- [ ] 用量报表（管理员后台，按人 / 按日）
-- [ ] **Webhook 管理**（配置 + 事件推送 + HMAC 签名）
-- [ ] 邮件服务（邀请 / 重置密码）
+- [ ] 场景卡片与模板 CRUD（系统 / 个人）
+- [ ] 文件上传（S3 预签名 + 元数据记录 + 基础文本提取）
+- [ ] 文档问答的非 RAG 简化版（单文件上下文长度限制）
+- [ ] 对话搜索（单独 `search_text`，不直接索引 JSONB 原文）
+- [ ] 对话分享链接（快照、撤销、过期、默认脱敏）
+- [ ] 对话导出（Markdown / JSON）
+- [ ] 额外额度包 Checkout：信用卡 / Apple Pay / 支付宝 / 微信支付一次性充值
+
+### Phase 3：个人高级能力
+
+- [ ] 个人文件库：文件列表、状态、再次引用、删除
+- [ ] 个人知识库：文档分片、向量化、语义检索、引用来源
+- [ ] 个人 Prompt 收藏和常用场景快捷入口
+- [ ] 个人用量报表：按日 / 按场景 / 按模型聚合
+- [ ] 个人数据导出和账号安全入口
+- [ ] 邮件服务（重置密码 / 额度告警）
 - [ ] OAuth 登录（Google / GitHub）
+
+### Phase 4：个人 Agent、工具与生成任务
+
+- [ ] 个人 RAG 知识库增强（pgvector + 文档分片 + 语义检索 + 权限校验）
+- [ ] generation_jobs / generation_events，用于可靠恢复和长任务状态
+- [ ] Tool Calling / Agentic Loop（SceneTools 注册表 + 循环驱动层，最多 4 轮）
+- [ ] 异步 job worker + 文件大小 / 耗时 / 输入 JSON 大小限制
+- [ ] OfficeProvider 接口 + Excel / Word / PPT 三种实现
+- [ ] file_jobs 表扩展为 Office / 图片统一任务记录
+- [ ] Office 文件生成计费（预留额度 + 任务完成结算）
+- [ ] ImageProvider 接口 + 三档路由器 + 图片生成异步接口
 - [ ] 熔断器（供应商故障自动降级）
+
+### Phase 5：团队版、开放平台与自动化
+
+- [ ] 团队管理（组织 / 成员 / 角色 / 成员月上限）
+- [ ] 团队钱包：组织月额度池 + 成员月上限
+- [ ] 请求必须显式传 `organization_id` 才能使用团队钱包
+- [ ] 团队管理后台：成员用量、账单、发票、团队模板
+- [ ] 团队共享知识库：权限、引用来源、跨成员使用
+- [ ] Webhook 管理（配置 + 事件推送 + HMAC 签名）
 - [ ] 低余额告警（Webhook + 邮件通知）
-- [ ] **Tool Calling / Agentic Loop**（SceneTools 注册表 + 循环驱动层，最多 8 轮）
-- [ ] **OfficeProvider 接口**（统一抽象，支持三种实现热插拔）
-- [ ] **ExcelProvider**（Go + excelize：多 Sheet / 公式 / 柱线饼图）
-- [ ] **WordProvider**（Go + archive/zip + encoding/xml：模板填充）
-- [ ] **Word 业务模板**（6 种：工作报告 / 方案书 / 通知 / 会议纪要 / 合同 / JD）
-- [ ] **PPTSidecarProvider**（Go HTTP 客户端调用 Python sidecar）
-- [ ] **PPT Python sidecar**（FastAPI + python-pptx，独立 Docker 服务）
-- [ ] **OfficeToolExecutor**（路由 create_excel / create_word / create_ppt）
-- [ ] **file_jobs 表**（生成任务记录 + 耗时监控）
-- [ ] Office 文件生成计费（积分扣减 + 成本追踪）
-- [ ] **ImageProvider 接口 + 三档路由器**（fast / standard / premium）
-- [ ] **GptImage1Provider**（精品档，gpt-image-1，200 积分/张）
-- [ ] **DallE3Provider**（标准档，dall-e-3，80 积分/张）
-- [ ] **StabilityProvider**（快速档，stable-image-core，20 积分/张）
-- [ ] **ImageService**（预检 → 生成 → S3 → 记录 file_jobs → 异步计费）
-- [ ] **`create_image` 工具定义**（chat / write 场景注入 Agentic Loop）
-- [ ] **图片生成异步接口**（`POST /images/generate` + `GET /images/:job_id`）
-- [ ] 图片生成历史列表接口
-
-### Phase 3（持续迭代）
-
-- [ ] 共享知识库跨团队权限
 - [ ] 定时任务 / 工作流模板
 - [ ] 飞书 / 钉钉 / 企业微信集成
 - [ ] MCP 协议支持
 - [ ] 移动端 API 优化（PWA / Capacitor）
+- [ ] 开放平台 API Key（企业系统调用本平台接口）
+- [ ] BYOK 作为最后阶段的可选评估项，不进入当前核心架构
 
 ---
 
-*文档版本: v1.2*  
+*文档版本: v1.3*
 *最后更新: 2026-05-10*
