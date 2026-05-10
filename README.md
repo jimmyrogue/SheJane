@@ -11,6 +11,7 @@
 - PostgreSQL 持久化：用户、refresh token、wallet、usage reservation、wallet transaction、LLM call record、payment order、Stripe event。
 - Stripe 订阅入口：Checkout Session 创建、Webhook 签名校验、事件幂等处理；本地无 Stripe 密钥时返回 mock checkout URL。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
+- 独立管理后台 MVP：单独 React/Vite admin web，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
 - Electron 壳：复用同一套 React UI，renderer 禁用 Node，预留安全 preload 边界。
 - Docker Compose：PostgreSQL、Redis、migration、API、Client、可选 Caddy reverse proxy。
@@ -37,7 +38,27 @@ make smoke-real-llm
 
 如果 smoke 输出 `The response is still using the mock provider`，说明 API 进程没有读到 `MOCK_LLM=false` 或 provider key。
 
-## 暂不进入 Phase 1
+## Phase 1.6：管理后台 MVP
+
+Phase 1.6 提供单独部署的管理后台 web，不再把后台入口放进普通用户 client。第一个管理员通过 `.env` 的 `ADMIN_EMAILS` 创建：
+
+```dotenv
+ADMIN_EMAILS=admin@example.com,ops@example.com
+ADMIN_BASE_URL=http://localhost:5174
+```
+
+用其中任意邮箱注册或登录后，后端会在注册、登录、刷新时自动把该用户提权为 `role=admin`。从 `ADMIN_EMAILS` 移除邮箱不会自动降级，避免误锁管理员；需要降级时请直接在数据库中审慎修改。
+
+管理员在独立后台登录：本地默认地址是 `http://localhost:5174`。当前后台能力边界：
+
+- 可查看：系统概览、用户列表、用户详情、钱包、最近调用、订单、fast/deep provider 状态。
+- 可操作：启用/禁用用户、调整用户 `extra_credits_balance`。
+- 有审计：额度调整写入 `wallet_transactions(type=admin_adjust)` 和 `audit_logs(action=admin.extra_credit_adjust)`；状态修改写入 `audit_logs(action=admin.user_status_update)`。
+- 不可操作：后台不修改 provider key，不手工修改订单状态，不做退款/补单，不改月额度、plan code 或订阅状态。
+
+Provider key 不进入后台管理：密钥只通过环境变量提供，后台只展示 key 是否已配置，避免把高权限供应商密钥暴露到浏览器、日志或管理员误操作路径里。
+
+## 后续阶段边界
 
 团队版、BYOK、云端历史同步、RAG、Office/图片生成、文件解析、Chrome Use、Computer Use、MCP、移动端和开放平台 API Key 都是后续阶段能力。
 
@@ -47,6 +68,7 @@ make smoke-real-llm
 cp .env.example .env
 cd api && go test ./...
 cd ../client && npm install && npm test -- --run
+cd ../admin && npm install && npm test -- --run
 ```
 
 启动开发服务：
@@ -63,6 +85,13 @@ cd client
 npm run dev
 ```
 
+第三个终端：
+
+```bash
+cd admin
+npm run dev
+```
+
 默认 `MOCK_LLM=true`，不需要外部模型密钥就能跑通聊天流。
 
 ## Docker 启动
@@ -75,6 +104,7 @@ docker compose up --build
 服务地址：
 
 - Web: `http://localhost:5173`
+- Admin: `http://localhost:5174`
 - API: `http://localhost:8080`
 - Postgres: `localhost:15432`（容器内仍是 `5432`，避免冲突本机已有 PostgreSQL）
 - Redis: `localhost:16379`（容器内仍是 `6379`）
@@ -85,6 +115,9 @@ docker compose up --build
 
 - `JWT_SECRET`：生产必须替换成长随机值。
 - `DATABASE_URL`：PostgreSQL 连接串。
+- `CLIENT_BASE_URL`：普通用户 Web 地址。
+- `ADMIN_BASE_URL`：独立管理后台 Web 地址，用于 API CORS 放行。
+- `ADMIN_EMAILS`：逗号分隔的管理员邮箱列表。
 - `MOCK_LLM=false`
 - `FAST_PROVIDER_API_KEY`：DeepSeek 或 OpenAI-compatible provider key。
 - `ANTHROPIC_API_KEY`：深度模式 Claude key。
@@ -94,9 +127,7 @@ Stripe Checkout 使用订阅模式，Webhook 处理 `checkout.session.completed`
 
 ## 系统管理
 
-当前还没有独立后台管理 UI。Phase 1.5 的管理方式是 Docker、API 日志、PostgreSQL 查询和 Stripe/DeepSeek 控制台。操作手册见 [`docs/operations.md`](docs/operations.md)。
-
-后台管理系统有计划，但建议后置：先做只读运营面板，再做人工额度/账号操作，最后进入团队管理后台。
+Phase 1.6 已提供独立管理后台 MVP。日常运营可以通过 `admin/` web 查看用户、用量、订单和 provider 状态，并执行账号启停、额外额度调整。更高风险操作仍应使用 Stripe/DeepSeek 控制台、PostgreSQL 和部署平台完成。操作手册见 [`docs/operations.md`](docs/operations.md)。
 
 ## 验证命令
 
@@ -111,4 +142,4 @@ make build
 make smoke-real-llm
 ```
 
-前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算和模型路由。
+前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、普通 client 不暴露后台入口、独立 admin web 渲染与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由和 admin API 权限/审计。

@@ -1,0 +1,219 @@
+export interface AuthPayload {
+  access_token: string
+  user: {
+    id: string
+    email: string
+    name: string
+    role: string
+    status: string
+  }
+}
+
+export interface WalletBalance {
+  id: string
+  plan_code: string
+  monthly_credit_limit: number
+  monthly_credits_used: number
+  monthly_remaining: number
+  extra_credits_balance: number
+  period_end: string
+  status: string
+}
+
+export interface AdminOverview {
+  users_total: number
+  active_users: number
+  disabled_users: number
+  llm_calls_total: number
+  llm_calls_failed: number
+  credits_cost_total: number
+  orders_total: number
+}
+
+export interface AdminUserSummary {
+  user: AuthPayload['user'] & { created_at?: string }
+  wallet?: WalletBalance
+  calls_count: number
+  credits_cost: number
+}
+
+export interface AdminUserDetail {
+  user: AuthPayload['user'] & { created_at?: string }
+  wallet?: WalletBalance
+  calls: AdminLLMCall[]
+  orders: AdminOrder[]
+  transactions: AdminWalletTransaction[]
+}
+
+export interface AdminLLMCall {
+  request_id: string
+  user_id: string
+  user_email?: string
+  mode: string
+  scene: string
+  model: string
+  provider: string
+  input_tokens: number
+  output_tokens: number
+  credits_cost: number
+  status: string
+  error_message?: string
+  started_at: string
+  finished_at?: string
+}
+
+export interface AdminOrder {
+  id: string
+  wallet_id: string
+  user_id?: string
+  user_email?: string
+  type: string
+  amount_cny: number
+  status: string
+  checkout_url: string
+  stripe_checkout_session_id: string
+  idempotency_key: string
+  created_at: string
+}
+
+export interface AdminWalletTransaction {
+  id: string
+  type: string
+  amount: number
+  monthly_used_after: number
+  extra_balance_after: number
+  description: string
+  created_at: string
+}
+
+export interface AdminProviderStatus {
+  mode: string
+  provider: string
+  base_url: string
+  model: string
+  mock: boolean
+  api_key_configured: boolean
+}
+
+interface APIResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+export class AdminAPI {
+  private accessToken = ''
+
+  constructor(private readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
+
+  setAccessToken(token: string): void {
+    this.accessToken = token
+  }
+
+  async login(input: { email: string; password: string }): Promise<AuthPayload> {
+    return this.post<AuthPayload>('/api/v1/auth/login', input, false)
+  }
+
+  async register(input: { email: string; password: string; name: string }): Promise<AuthPayload> {
+    return this.post<AuthPayload>('/api/v1/auth/register', input, false)
+  }
+
+  async refresh(): Promise<AuthPayload> {
+    return this.post<AuthPayload>('/api/v1/auth/refresh', {}, false)
+  }
+
+  async logout(): Promise<void> {
+    await this.post('/api/v1/auth/logout', {}, true)
+    this.accessToken = ''
+  }
+
+  async adminOverview(): Promise<AdminOverview> {
+    return this.get<AdminOverview>('/api/v1/admin/overview')
+  }
+
+  async adminUsers(query = ''): Promise<AdminUserSummary[]> {
+    return this.get<AdminUserSummary[]>(`/api/v1/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`)
+  }
+
+  async adminUserDetail(userId: string): Promise<AdminUserDetail> {
+    return this.get<AdminUserDetail>(`/api/v1/admin/users/${encodeURIComponent(userId)}`)
+  }
+
+  async adminUpdateUserStatus(userId: string, status: 'active' | 'disabled', reason: string): Promise<AuthPayload['user']> {
+    return this.patch<AuthPayload['user']>(`/api/v1/admin/users/${encodeURIComponent(userId)}/status`, { status, reason })
+  }
+
+  async adminAdjustCredits(userId: string, delta: number, reason: string): Promise<WalletBalance> {
+    return this.post<WalletBalance>(`/api/v1/admin/users/${encodeURIComponent(userId)}/credits/adjust`, { delta, reason }, true)
+  }
+
+  async adminLLMCalls(): Promise<AdminLLMCall[]> {
+    return this.get<AdminLLMCall[]>('/api/v1/admin/llm-calls')
+  }
+
+  async adminOrders(): Promise<AdminOrder[]> {
+    return this.get<AdminOrder[]>('/api/v1/admin/orders')
+  }
+
+  async adminProviders(): Promise<AdminProviderStatus[]> {
+    return this.get<AdminProviderStatus[]>('/api/v1/admin/providers')
+  }
+
+  private async get<T>(path: string): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      credentials: 'include',
+      headers: this.headers(true),
+    })
+    return decodeResponse<T>(response)
+  }
+
+  private async post<T>(path: string, body: unknown, requireAuth: boolean): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.headers(requireAuth),
+      body: JSON.stringify(body),
+    })
+    return decodeResponse<T>(response)
+  }
+
+  private async patch<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.headers(true),
+      body: JSON.stringify(body),
+    })
+    return decodeResponse<T>(response)
+  }
+
+  private headers(requireAuth: boolean): HeadersInit {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    }
+    if (requireAuth && this.accessToken) {
+      headers.Authorization = `Bearer ${this.accessToken}`
+    }
+    return headers
+  }
+}
+
+async function decodeResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new Error(await errorMessage(response))
+  }
+  const body = (await response.json()) as APIResponse<T>
+  if (body.code !== 0) {
+    throw new Error(body.message)
+  }
+  return body.data
+}
+
+async function errorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as APIResponse<unknown>
+    return body.message || `HTTP ${response.status}`
+  } catch {
+    return `HTTP ${response.status}`
+  }
+}

@@ -47,16 +47,16 @@ type Reservation struct {
 }
 
 type Transaction struct {
-	ID                string
-	WalletID          string
-	ReservationID     string
-	Type              string
-	Amount            int64
-	MonthlyUsedAfter  int64
-	ExtraBalanceAfter int64
-	Description       string
-	IdempotencyKey    string
-	CreatedAt         time.Time
+	ID                string    `json:"id"`
+	WalletID          string    `json:"wallet_id"`
+	ReservationID     string    `json:"reservation_id,omitempty"`
+	Type              string    `json:"type"`
+	Amount            int64     `json:"amount"`
+	MonthlyUsedAfter  int64     `json:"monthly_used_after"`
+	ExtraBalanceAfter int64     `json:"extra_balance_after"`
+	Description       string    `json:"description"`
+	IdempotencyKey    string    `json:"idempotency_key,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type Wallet struct {
@@ -206,6 +206,19 @@ func (w *Wallet) AddMonthlyGrant(amount int64, idempotencyKey string) {
 	w.PeriodStart = time.Now().UTC()
 	w.PeriodEnd = w.PeriodStart.AddDate(0, 1, 0)
 	w.appendTransactionLocked("subscription_grant", "", amount, "monthly subscription credits granted", idempotencyKey)
+}
+
+func (w *Wallet) AdjustExtraCredits(delta int64, reason string, idempotencyKey string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	next := w.ExtraCreditsBalance + delta
+	if next < 0 {
+		return fmt.Errorf("%w: extra credits cannot go below zero", ErrInsufficientCredits)
+	}
+	w.ExtraCreditsBalance = next
+	w.appendTransactionLocked("admin_adjust", "", delta, reason, idempotencyKey)
+	return nil
 }
 
 func (w *Wallet) Snapshot() WalletSnapshot {

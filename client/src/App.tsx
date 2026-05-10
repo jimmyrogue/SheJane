@@ -1,6 +1,18 @@
-import { Download, LogOut, MessageSquare, Plus, Send, Upload, WalletCards } from 'lucide-react'
+import {
+  Download,
+  LogOut,
+  MessageSquare,
+  Plus,
+  Send,
+  Upload,
+  WalletCards,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { JiandanAPI, type AuthPayload, type WalletBalance } from './shared/api/client'
+import {
+  JiandanAPI,
+  type AuthPayload,
+  type WalletBalance,
+} from './shared/api/client'
 import { createChatStore } from './features/chat/chatStore'
 import { LocalConversationStore } from './shared/local-data/localConversations'
 import type { ChatMode, Conversation } from './shared/local-data/types'

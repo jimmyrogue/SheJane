@@ -43,7 +43,8 @@ services:
     environment:
       HTTP_ADDR: :8080
       DATABASE_URL: postgres://jiandanly:jiandanly@postgres:5432/jiandanly?sslmode=disable
-      CLIENT_BASE_URL: http://localhost:5173
+      CLIENT_BASE_URL: ${CLIENT_BASE_URL:-http://localhost:5173}
+      ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:5174}
     ports:
       - "8080:8080"
 
@@ -54,6 +55,16 @@ services:
         VITE_API_BASE_URL: http://localhost:8080
     ports:
       - "5173:80"
+    depends_on:
+      - api
+
+  admin:
+    build:
+      context: ./admin
+      args:
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "${ADMIN_PORT:-5174}:80"
     depends_on:
       - api
 
@@ -70,6 +81,7 @@ services:
     depends_on:
       - api
       - client
+      - admin
 
 volumes:
   postgres-data:

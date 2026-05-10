@@ -64,6 +64,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
 	s.mux.HandleFunc("POST /api/v1/payment/webhook", s.paymentWebhook)
 	s.mux.HandleFunc("POST /api/v1/chat/completions", s.requireAuth(s.chatCompletions))
+	s.mux.HandleFunc("GET /api/v1/admin/overview", s.requireAdmin(s.adminOverview))
+	s.mux.HandleFunc("GET /api/v1/admin/users", s.requireAdmin(s.adminUsers))
+	s.mux.HandleFunc("GET /api/v1/admin/users/{id}", s.requireAdmin(s.adminUserDetail))
+	s.mux.HandleFunc("PATCH /api/v1/admin/users/{id}/status", s.requireAdmin(s.adminUpdateUserStatus))
+	s.mux.HandleFunc("POST /api/v1/admin/users/{id}/credits/adjust", s.requireAdmin(s.adminAdjustCredits))
+	s.mux.HandleFunc("GET /api/v1/admin/llm-calls", s.requireAdmin(s.adminLLMCalls))
+	s.mux.HandleFunc("GET /api/v1/admin/orders", s.requireAdmin(s.adminOrders))
+	s.mux.HandleFunc("GET /api/v1/admin/providers", s.requireAdmin(s.adminProviders))
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
@@ -74,7 +82,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			requestID = s.app.NewRequestID()
 		}
 		w.Header().Set("X-Request-ID", requestID)
-		w.Header().Set("Access-Control-Allow-Origin", corsOrigin(r.Header.Get("Origin"), s.app.Config.ClientBaseURL))
+		w.Header().Set("Access-Control-Allow-Origin", corsOrigin(r.Header.Get("Origin"), s.app.Config.ClientBaseURL, s.app.Config.AdminBaseURL))
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
@@ -384,6 +392,145 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user st
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }
 
+func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request, user store.User) {
+	overview, err := s.app.Store.AdminOverview(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取管理概览失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[store.AdminOverview]{Code: 0, Message: "ok", Data: overview})
+}
+
+func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, user store.User) {
+	users, err := s.app.Store.AdminUsers(r.Context(), adminListOptions(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取用户列表失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminUserSummary]{Code: 0, Message: "ok", Data: users})
+}
+
+func (s *Server) adminUserDetail(w http.ResponseWriter, r *http.Request, user store.User) {
+	detail, err := s.app.Store.AdminUserDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreReadError(w, err, "读取用户详情失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[store.AdminUserDetail]{Code: 0, Message: "ok", Data: detail})
+}
+
+func (s *Server) adminUpdateUserStatus(w http.ResponseWriter, r *http.Request, user store.User) {
+	targetID := r.PathValue("id")
+	var body struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Status = strings.TrimSpace(body.Status)
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.Status != "active" && body.Status != "disabled" {
+		writeError(w, http.StatusBadRequest, 40201, "用户状态无效")
+		return
+	}
+	if body.Reason == "" {
+		writeError(w, http.StatusBadRequest, 40201, "请填写操作原因")
+		return
+	}
+	if targetID == user.ID && body.Status == "disabled" {
+		writeError(w, http.StatusBadRequest, 40201, "不能禁用当前管理员账号")
+		return
+	}
+	updated, err := s.app.Store.UpdateUserStatus(r.Context(), user.ID, targetID, body.Status, body.Reason)
+	if err != nil {
+		writeStoreReadError(w, err, "更新用户状态失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[store.User]{Code: 0, Message: "ok", Data: updated})
+}
+
+func (s *Server) adminAdjustCredits(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		Delta  int64  `json:"delta"`
+		Reason string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.Delta == 0 {
+		writeError(w, http.StatusBadRequest, 40201, "额度调整不能为 0")
+		return
+	}
+	if body.Reason == "" {
+		writeError(w, http.StatusBadRequest, 40201, "请填写操作原因")
+		return
+	}
+	wallet, err := s.app.Store.AdjustExtraCredits(r.Context(), user.ID, r.PathValue("id"), body.Delta, body.Reason)
+	if err != nil {
+		if billing.IsInsufficientCredits(err) {
+			writeError(w, http.StatusBadRequest, 40202, "额外额度不能扣成负数")
+			return
+		}
+		writeStoreReadError(w, err, "调整额度失败")
+		return
+	}
+	snapshot := wallet.Snapshot()
+	writeJSON(w, http.StatusOK, apiResponse[billing.WalletSnapshot]{Code: 0, Message: "ok", Data: snapshot})
+}
+
+func (s *Server) adminLLMCalls(w http.ResponseWriter, r *http.Request, user store.User) {
+	records, err := s.app.Store.AdminLLMCalls(r.Context(), adminListOptions(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取调用记录失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminLLMCallRecord]{Code: 0, Message: "ok", Data: records})
+}
+
+func (s *Server) adminOrders(w http.ResponseWriter, r *http.Request, user store.User) {
+	orders, err := s.app.Store.AdminPaymentOrders(r.Context(), adminListOptions(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取订单失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminPaymentOrder]{Code: 0, Message: "ok", Data: orders})
+}
+
+type adminProviderStatus struct {
+	Mode             string `json:"mode"`
+	Provider         string `json:"provider"`
+	BaseURL          string `json:"base_url"`
+	Model            string `json:"model"`
+	Mock             bool   `json:"mock"`
+	APIKeyConfigured bool   `json:"api_key_configured"`
+}
+
+func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user store.User) {
+	fastProvider, fastModel := s.app.Router.Select(llm.ModeFast)
+	deepProvider, deepModel := s.app.Router.Select(llm.ModeDeep)
+	statuses := []adminProviderStatus{
+		{
+			Mode:             string(llm.ModeFast),
+			Provider:         fastProvider.Name(),
+			BaseURL:          s.app.Config.FastProviderBaseURL,
+			Model:            fastModel,
+			Mock:             s.app.Config.MockLLM || s.app.Config.FastProviderAPIKey == "",
+			APIKeyConfigured: s.app.Config.FastProviderAPIKey != "",
+		},
+		{
+			Mode:             string(llm.ModeDeep),
+			Provider:         deepProvider.Name(),
+			BaseURL:          deepProviderBaseURL(s.app.Config.AnthropicAPIKey != "", s.app.Config.DeepProviderBaseURL),
+			Model:            deepModel,
+			Mock:             s.app.Config.MockLLM || (s.app.Config.AnthropicAPIKey == "" && s.app.Config.DeepProviderAPIKey == ""),
+			APIKeyConfigured: s.app.Config.AnthropicAPIKey != "" || s.app.Config.DeepProviderAPIKey != "",
+		},
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]adminProviderStatus]{Code: 0, Message: "ok", Data: statuses})
+}
+
 func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
@@ -398,6 +545,16 @@ func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store
 		}
 		next(w, r, user)
 	}
+}
+
+func (s *Server) requireAdmin(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request, user store.User) {
+		if user.Role != "admin" || user.Status != "active" {
+			writeError(w, http.StatusForbidden, 40103, "需要管理员权限")
+			return
+		}
+		next(w, r, user)
+	})
 }
 
 func (s *Server) setRefreshCookie(w http.ResponseWriter, token string) {
@@ -472,6 +629,14 @@ func writeError(w http.ResponseWriter, status int, code int, message string) {
 	writeJSON(w, status, apiResponse[any]{Code: code, Message: message, Data: nil})
 }
 
+func writeStoreReadError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, 40401, "记录不存在")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, 50001, fallback)
+}
+
 func writeSSE(w io.Writer, requestID string, text string, finishReason string) error {
 	event := map[string]any{
 		"id":      requestID,
@@ -491,6 +656,26 @@ func writeSSE(w io.Writer, requestID string, text string, finishReason string) e
 	return err
 }
 
+func adminListOptions(r *http.Request) store.AdminListOptions {
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	offset, _ := strconv.Atoi(query.Get("offset"))
+	return store.AdminListOptions{
+		Query:  strings.TrimSpace(query.Get("q")),
+		UserID: strings.TrimSpace(query.Get("user_id")),
+		Status: strings.TrimSpace(query.Get("status")),
+		Limit:  limit,
+		Offset: offset,
+	}
+}
+
+func deepProviderBaseURL(anthropicConfigured bool, fallback string) string {
+	if anthropicConfigured {
+		return "https://api.anthropic.com"
+	}
+	return fallback
+}
+
 func bearerToken(header string) string {
 	if header == "" {
 		return ""
@@ -502,19 +687,32 @@ func bearerToken(header string) string {
 	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
 }
 
-func corsOrigin(requestOrigin string, configuredOrigin string) string {
-	if requestOrigin == "" || requestOrigin == configuredOrigin {
-		return configuredOrigin
+func corsOrigin(requestOrigin string, configuredOrigins ...string) string {
+	fallback := ""
+	for _, origin := range configuredOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = origin
+		}
+		if requestOrigin == origin {
+			return origin
+		}
+	}
+	if requestOrigin == "" {
+		return fallback
 	}
 	parsed, err := url.Parse(requestOrigin)
 	if err != nil {
-		return configuredOrigin
+		return fallback
 	}
 	switch parsed.Hostname() {
 	case "localhost", "127.0.0.1", "::1":
 		return requestOrigin
 	default:
-		return configuredOrigin
+		return fallback
 	}
 }
 

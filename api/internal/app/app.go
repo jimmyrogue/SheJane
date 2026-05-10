@@ -21,6 +21,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthorized       = errors.New("unauthorized")
 	ErrValidation         = errors.New("validation error")
+	ErrAccountDisabled    = errors.New("account disabled")
 )
 
 type App struct {
@@ -63,6 +64,10 @@ func (a *App) Register(ctx context.Context, email string, password string, name 
 	if err != nil {
 		return AuthResult{}, err
 	}
+	user, err = a.promoteAdminIfConfigured(ctx, user)
+	if err != nil {
+		return AuthResult{}, err
+	}
 	if _, err := a.Store.EnsureWallet(ctx, user.ID, a.Config.MonthlyCredits); err != nil {
 		return AuthResult{}, err
 	}
@@ -77,6 +82,13 @@ func (a *App) Login(ctx context.Context, email string, password string) (AuthRes
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return AuthResult{}, ErrInvalidCredentials
 	}
+	if user.Status != "active" {
+		return AuthResult{}, ErrAccountDisabled
+	}
+	user, err = a.promoteAdminIfConfigured(ctx, user)
+	if err != nil {
+		return AuthResult{}, err
+	}
 	return a.issueAuth(ctx, user)
 }
 
@@ -84,6 +96,13 @@ func (a *App) Refresh(ctx context.Context, refreshToken string) (AuthResult, err
 	user, err := a.Store.UseRefreshToken(ctx, refreshToken)
 	if err != nil {
 		return AuthResult{}, ErrUnauthorized
+	}
+	if user.Status != "active" {
+		return AuthResult{}, ErrUnauthorized
+	}
+	user, err = a.promoteAdminIfConfigured(ctx, user)
+	if err != nil {
+		return AuthResult{}, err
 	}
 	return a.issueAuth(ctx, user)
 }
@@ -103,7 +122,14 @@ func (a *App) Authenticate(ctx context.Context, token string) (store.User, error
 	if err != nil || !parsed.Valid {
 		return store.User{}, ErrUnauthorized
 	}
-	return a.Store.UserByID(ctx, claims.UserID)
+	user, err := a.Store.UserByID(ctx, claims.UserID)
+	if err != nil {
+		return store.User{}, err
+	}
+	if user.Status != "active" {
+		return store.User{}, ErrUnauthorized
+	}
+	return user, nil
 }
 
 func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
@@ -119,6 +145,13 @@ func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
 
 func (a *App) NewRequestID() string {
 	return randomToken("req")
+}
+
+func (a *App) promoteAdminIfConfigured(ctx context.Context, user store.User) (store.User, error) {
+	if user.Role == "admin" || !a.Config.IsAdminEmail(user.Email) {
+		return user, nil
+	}
+	return a.Store.UpdateUserRole(ctx, user.ID, "admin")
 }
 
 func (a *App) issueAuth(ctx context.Context, user store.User) (AuthResult, error) {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -55,6 +56,15 @@ func (s *PostgresStore) UserByEmail(ctx context.Context, email string) (User, er
 
 func (s *PostgresStore) UserByID(ctx context.Context, id string) (User, error) {
 	return s.userByQuery(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at FROM users WHERE id=$1`, id)
+}
+
+func (s *PostgresStore) UpdateUserRole(ctx context.Context, userID string, role string) (User, error) {
+	return scanUser(s.db.QueryRowContext(ctx, `
+		UPDATE users
+		SET role=$2, updated_at=NOW()
+		WHERE id=$1
+		RETURNING id::text, email, password_hash, name, role, status, created_at
+	`, userID, role))
 }
 
 func (s *PostgresStore) SaveRefreshToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
@@ -323,6 +333,218 @@ func (s *PostgresStore) RecordStripeEvent(ctx context.Context, eventID string, e
 	return rows > 0, err
 }
 
+func (s *PostgresStore) AdminOverview(ctx context.Context) (AdminOverview, error) {
+	var overview AdminOverview
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status='active'),
+			COUNT(*) FILTER (WHERE status='disabled')
+		FROM users
+	`).Scan(&overview.UsersTotal, &overview.ActiveUsers, &overview.DisabledUsers); err != nil {
+		return AdminOverview{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE status='failed'),
+			COALESCE(SUM(credits_cost), 0)
+		FROM llm_call_records
+	`).Scan(&overview.LLMCallsTotal, &overview.LLMCallsFailed, &overview.CreditsCostTotal); err != nil {
+		return AdminOverview{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM payment_orders`).Scan(&overview.OrdersTotal); err != nil {
+		return AdminOverview{}, err
+	}
+	return overview, nil
+}
+
+func (s *PostgresStore) AdminUsers(ctx context.Context, opts AdminListOptions) ([]AdminUserSummary, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, email, password_hash, name, role, status, created_at
+		FROM users
+		WHERE ($1='' OR email ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%')
+			AND ($2='' OR status=$2)
+		ORDER BY created_at DESC
+		LIMIT $3 OFFSET $4
+	`, strings.TrimSpace(opts.Query), opts.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]AdminUserSummary, 0)
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		summary := AdminUserSummary{User: user}
+		if wallet, err := s.WalletByUser(ctx, user.ID); err == nil {
+			snapshot := wallet.Snapshot()
+			summary.Wallet = &snapshot
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(credits_cost), 0) FROM llm_call_records WHERE user_id=$1`, user.ID).Scan(&summary.CallsCount, &summary.CreditsCost); err != nil {
+			return nil, err
+		}
+		result = append(result, summary)
+	}
+	return result, rows.Err()
+}
+
+func (s *PostgresStore) AdminUserDetail(ctx context.Context, userID string) (AdminUserDetail, error) {
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return AdminUserDetail{}, err
+	}
+	detail := AdminUserDetail{User: user, Calls: make([]LLMCallRecord, 0), Orders: make([]PaymentOrder, 0), Transactions: make([]billing.Transaction, 0)}
+	wallet, err := s.WalletByUser(ctx, userID)
+	if err == nil {
+		snapshot := wallet.Snapshot()
+		detail.Wallet = &snapshot
+		detail.Orders, err = s.PaymentOrdersByWallet(ctx, wallet.ID)
+		if err != nil {
+			return AdminUserDetail{}, err
+		}
+		detail.Transactions, err = s.walletTransactionsByWallet(ctx, wallet.ID, 50)
+		if err != nil {
+			return AdminUserDetail{}, err
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return AdminUserDetail{}, err
+	}
+	detail.Calls, err = s.LLMCallsByUser(ctx, userID)
+	if err != nil {
+		return AdminUserDetail{}, err
+	}
+	return detail, nil
+}
+
+func (s *PostgresStore) UpdateUserStatus(ctx context.Context, actorUserID string, userID string, status string, reason string) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer rollback(tx)
+
+	user, err := scanUser(tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET status=$2, updated_at=NOW()
+		WHERE id=$1
+		RETURNING id::text, email, password_hash, name, role, status, created_at
+	`, userID, status))
+	if err != nil {
+		return User{}, err
+	}
+	if err := insertAuditLog(ctx, tx, actorUserID, "admin.user_status_update", "user", userID, map[string]any{"status": status, "reason": reason}); err != nil {
+		return User{}, err
+	}
+	return user, tx.Commit()
+}
+
+func (s *PostgresStore) AdjustExtraCredits(ctx context.Context, actorUserID string, userID string, delta int64, reason string) (*billing.Wallet, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer rollback(tx)
+
+	var userExists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id=$1)`, userID).Scan(&userExists); err != nil {
+		return nil, err
+	}
+	if !userExists {
+		return nil, ErrNotFound
+	}
+	if err := ensureWalletTx(ctx, tx, userID, 0); err != nil {
+		return nil, err
+	}
+	wallet, err := selectWalletTx(ctx, tx, userID, true)
+	if err != nil {
+		return nil, err
+	}
+	nextExtra := wallet.ExtraCreditsBalance + delta
+	if nextExtra < 0 {
+		return nil, fmt.Errorf("%w: extra credits cannot go below zero", billing.ErrInsufficientCredits)
+	}
+	wallet.ExtraCreditsBalance = nextExtra
+	if _, err := tx.ExecContext(ctx, `UPDATE wallets SET extra_credits_balance=$1, updated_at=NOW() WHERE id=$2`, wallet.ExtraCreditsBalance, wallet.ID); err != nil {
+		return nil, err
+	}
+	idempotencyKey := fmt.Sprintf("admin:%s:%s:%d", actorUserID, userID, time.Now().UTC().UnixNano())
+	if err := insertWalletTransaction(ctx, tx, wallet.ID, "", "admin_adjust", delta, wallet.MonthlyCreditsUsed, wallet.ExtraCreditsBalance, reason, idempotencyKey); err != nil {
+		return nil, err
+	}
+	if err := insertAuditLog(ctx, tx, actorUserID, "admin.extra_credit_adjust", "user", userID, map[string]any{"delta": delta, "reason": reason}); err != nil {
+		return nil, err
+	}
+	return wallet, tx.Commit()
+}
+
+func (s *PostgresStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions) ([]AdminLLMCallRecord, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.request_id, c.user_id::text, c.wallet_id::text, COALESCE(c.reservation_id::text, ''),
+			COALESCE(c.client_conversation_id,''), COALESCE(c.client_message_id,''), c.mode, COALESCE(c.scene,''),
+			COALESCE(c.model,''), COALESCE(c.provider,''), c.input_tokens, c.output_tokens, c.credits_cost, c.status,
+			COALESCE(c.error_code,''), COALESCE(c.error_message,''), c.started_at, COALESCE(c.finished_at, '0001-01-01'::timestamptz),
+			u.email
+		FROM llm_call_records c
+		JOIN users u ON u.id = c.user_id
+		WHERE ($1='' OR c.user_id::text=$1)
+			AND ($2='' OR c.status=$2)
+		ORDER BY c.started_at DESC
+		LIMIT $3 OFFSET $4
+	`, opts.UserID, opts.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]AdminLLMCallRecord, 0)
+	for rows.Next() {
+		var item AdminLLMCallRecord
+		if err := rows.Scan(&item.RequestID, &item.UserID, &item.WalletID, &item.ReservationID, &item.ClientConversationID, &item.ClientMessageID, &item.Mode, &item.Scene, &item.Model, &item.Provider, &item.InputTokens, &item.OutputTokens, &item.CreditsCost, &item.Status, &item.ErrorCode, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt, &item.UserEmail); err != nil {
+			return nil, err
+		}
+		records = append(records, item)
+	}
+	return records, rows.Err()
+}
+
+func (s *PostgresStore) AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT o.id::text, o.wallet_id::text, o.type, o.amount_cny, o.status, COALESCE(o.checkout_url,''),
+			COALESCE(o.stripe_checkout_session_id,''), COALESCE(o.idempotency_key,''), o.created_at,
+			u.id::text, u.email
+		FROM payment_orders o
+		JOIN wallets w ON w.id = o.wallet_id
+		JOIN users u ON u.id = w.user_id
+		WHERE ($1='' OR u.id::text=$1)
+			AND ($2='' OR o.status=$2)
+		ORDER BY o.created_at DESC
+		LIMIT $3 OFFSET $4
+	`, opts.UserID, opts.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	orders := make([]AdminPaymentOrder, 0)
+	for rows.Next() {
+		var item AdminPaymentOrder
+		if err := rows.Scan(&item.ID, &item.WalletID, &item.Type, &item.AmountCNY, &item.Status, &item.CheckoutURL, &item.StripeSessionID, &item.IdempotencyKey, &item.CreatedAt, &item.UserID, &item.UserEmail); err != nil {
+			return nil, err
+		}
+		orders = append(orders, item)
+	}
+	return orders, rows.Err()
+}
+
 func (s *PostgresStore) userByQuery(ctx context.Context, query string, args ...any) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx, query, args...))
 }
@@ -451,6 +673,43 @@ func insertWalletTransaction(ctx context.Context, tx *sql.Tx, walletID string, r
 		ON CONFLICT (idempotency_key) DO NOTHING
 	`, walletID, reservationID, txType, amount, monthlyUsedAfter, extraBalanceAfter, description, idempotencyKey)
 	return err
+}
+
+func insertAuditLog(ctx context.Context, tx *sql.Tx, actorUserID string, action string, targetType string, targetID string, metadata map[string]any) error {
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata)
+		VALUES (NULLIF($1, '')::uuid, $2, $3, NULLIF($4, '')::uuid, $5)
+	`, actorUserID, action, targetType, targetID, json.RawMessage(raw))
+	return err
+}
+
+func (s *PostgresStore) walletTransactionsByWallet(ctx context.Context, walletID string, limit int) ([]billing.Transaction, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, wallet_id::text, COALESCE(reservation_id::text, ''), type, amount,
+			monthly_used_after, extra_balance_after, COALESCE(description, ''), COALESCE(idempotency_key, ''), created_at
+		FROM wallet_transactions
+		WHERE wallet_id=$1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, walletID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	transactions := make([]billing.Transaction, 0)
+	for rows.Next() {
+		var tx billing.Transaction
+		if err := rows.Scan(&tx.ID, &tx.WalletID, &tx.ReservationID, &tx.Type, &tx.Amount, &tx.MonthlyUsedAfter, &tx.ExtraBalanceAfter, &tx.Description, &tx.IdempotencyKey, &tx.CreatedAt); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, tx)
+	}
+	return transactions, rows.Err()
 }
 
 type rowScanner interface {

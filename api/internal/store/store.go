@@ -63,10 +63,65 @@ type PaymentOrder struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type AdminListOptions struct {
+	Query  string
+	UserID string
+	Status string
+	Limit  int
+	Offset int
+}
+
+type AdminOverview struct {
+	UsersTotal       int64 `json:"users_total"`
+	ActiveUsers      int64 `json:"active_users"`
+	DisabledUsers    int64 `json:"disabled_users"`
+	LLMCallsTotal    int64 `json:"llm_calls_total"`
+	LLMCallsFailed   int64 `json:"llm_calls_failed"`
+	CreditsCostTotal int64 `json:"credits_cost_total"`
+	OrdersTotal      int64 `json:"orders_total"`
+}
+
+type AdminUserSummary struct {
+	User        User                    `json:"user"`
+	Wallet      *billing.WalletSnapshot `json:"wallet,omitempty"`
+	CallsCount  int64                   `json:"calls_count"`
+	CreditsCost int64                   `json:"credits_cost"`
+}
+
+type AdminUserDetail struct {
+	User         User                    `json:"user"`
+	Wallet       *billing.WalletSnapshot `json:"wallet,omitempty"`
+	Calls        []LLMCallRecord         `json:"calls"`
+	Orders       []PaymentOrder          `json:"orders"`
+	Transactions []billing.Transaction   `json:"transactions"`
+}
+
+type AdminLLMCallRecord struct {
+	LLMCallRecord
+	UserEmail string `json:"user_email"`
+}
+
+type AdminPaymentOrder struct {
+	PaymentOrder
+	UserID    string `json:"user_id"`
+	UserEmail string `json:"user_email"`
+}
+
+type AuditLog struct {
+	ID          string    `json:"id"`
+	ActorUserID string    `json:"actor_user_id"`
+	Action      string    `json:"action"`
+	TargetType  string    `json:"target_type"`
+	TargetID    string    `json:"target_id"`
+	Metadata    string    `json:"metadata"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type Store interface {
 	CreateUser(ctx context.Context, email string, passwordHash string, name string) (User, error)
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)
+	UpdateUserRole(ctx context.Context, userID string, role string) (User, error)
 
 	SaveRefreshToken(ctx context.Context, token string, userID string, expiresAt time.Time) error
 	UseRefreshToken(ctx context.Context, token string) (User, error)
@@ -86,4 +141,12 @@ type Store interface {
 	PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error)
 	MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, monthlyCredits int64) error
 	RecordStripeEvent(ctx context.Context, eventID string, eventType string, payload []byte) (bool, error)
+
+	AdminOverview(ctx context.Context) (AdminOverview, error)
+	AdminUsers(ctx context.Context, opts AdminListOptions) ([]AdminUserSummary, error)
+	AdminUserDetail(ctx context.Context, userID string) (AdminUserDetail, error)
+	UpdateUserStatus(ctx context.Context, actorUserID string, userID string, status string, reason string) (User, error)
+	AdjustExtraCredits(ctx context.Context, actorUserID string, userID string, delta int64, reason string) (*billing.Wallet, error)
+	AdminLLMCalls(ctx context.Context, opts AdminListOptions) ([]AdminLLMCallRecord, error)
+	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
 }
