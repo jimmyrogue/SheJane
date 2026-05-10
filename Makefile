@@ -1,4 +1,4 @@
-.PHONY: test build api-test client-test client-build dev docker-up docker-down migrate
+.PHONY: test build api-test client-test client-build dev docker-up docker-down migrate smoke-real-llm
 
 test: api-test client-test
 
@@ -28,3 +28,6 @@ docker-down:
 
 migrate:
 	psql "$$DATABASE_URL" -f api/migrations/001_phase1.sql
+
+smoke-real-llm:
+	./scripts/smoke-real-llm.sh

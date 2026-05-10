@@ -12,10 +12,10 @@ func TestRouterSelectsProviderByMode(t *testing.T) {
 		wantName  string
 		wantModel string
 	}{
-		{ModeFast, "deepseek-fast", "deepseek-chat"},
+		{ModeFast, "deepseek-fast", "deepseek-v4-flash"},
 		{ModeDeep, "claude-deep", "claude-3-5-sonnet-latest"},
-		{"", "deepseek-fast", "deepseek-chat"},
-		{"unknown", "deepseek-fast", "deepseek-chat"},
+		{"", "deepseek-fast", "deepseek-v4-flash"},
+		{"unknown", "deepseek-fast", "deepseek-v4-flash"},
 	}
 
 	for _, tt := range tests {

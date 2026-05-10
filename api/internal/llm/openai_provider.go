@@ -40,9 +40,10 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 		defer close(errs)
 
 		payload := map[string]any{
-			"model":    model,
-			"messages": request.Messages,
-			"stream":   true,
+			"model":          model,
+			"messages":       request.Messages,
+			"stream":         true,
+			"stream_options": map[string]bool{"include_usage": true},
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -87,6 +88,14 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
 				errs <- err
 				return
+			}
+			hasUsage := event.Usage.PromptTokens > 0 || event.Usage.CompletionTokens > 0
+			if len(event.Choices) == 0 && hasUsage {
+				chunks <- Chunk{
+					InputTokens:  event.Usage.PromptTokens,
+					OutputTokens: event.Usage.CompletionTokens,
+				}
+				continue
 			}
 			for _, choice := range event.Choices {
 				if choice.Delta.Content != "" || choice.FinishReason != "" {

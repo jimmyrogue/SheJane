@@ -11,7 +11,7 @@ func NewRouter(fast Provider, deep Provider) *Router {
 	return &Router{
 		fast:      fast,
 		deep:      deep,
-		fastModel: "deepseek-chat",
+		fastModel: "deepseek-v4-flash",
 		deepModel: "claude-3-5-sonnet-latest",
 	}
 }

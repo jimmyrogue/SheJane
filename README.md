@@ -15,6 +15,28 @@
 - Electron 壳：复用同一套 React UI，renderer 禁用 Node，预留安全 preload 边界。
 - Docker Compose：PostgreSQL、Redis、migration、API、Client、可选 Caddy reverse proxy。
 
+## Phase 1.5：真实模型对接
+
+Phase 1 默认可以用 mock provider 本地开发。Phase 1.5 的目标是把聊天链路切到真实 LLM provider，先接 DeepSeek。
+
+在 `.env` 中配置：
+
+```dotenv
+MOCK_LLM=false
+FAST_PROVIDER_BASE_URL=https://api.deepseek.com
+FAST_PROVIDER_API_KEY=你的 DeepSeek API Key
+FAST_MODEL=deepseek-v4-flash
+```
+
+然后重启 API 并跑 smoke：
+
+```bash
+docker compose up -d --build api
+make smoke-real-llm
+```
+
+如果 smoke 输出 `The response is still using the mock provider`，说明 API 进程没有读到 `MOCK_LLM=false` 或 provider key。
+
 ## 暂不进入 Phase 1
 
 团队版、BYOK、云端历史同步、RAG、Office/图片生成、文件解析、Chrome Use、Computer Use、MCP、移动端和开放平台 API Key 都是后续阶段能力。
@@ -70,11 +92,23 @@ docker compose up --build
 
 Stripe Checkout 使用订阅模式，Webhook 处理 `checkout.session.completed` 并按月额度发放到账户钱包。
 
+## 系统管理
+
+当前还没有独立后台管理 UI。Phase 1.5 的管理方式是 Docker、API 日志、PostgreSQL 查询和 Stripe/DeepSeek 控制台。操作手册见 [`docs/operations.md`](docs/operations.md)。
+
+后台管理系统有计划，但建议后置：先做只读运营面板，再做人工额度/账号操作，最后进入团队管理后台。
+
 ## 验证命令
 
 ```bash
 make test
 make build
+```
+
+有真实 provider key 且 API 已用 `MOCK_LLM=false` 启动时，再运行：
+
+```bash
+make smoke-real-llm
 ```
 
 前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算和模型路由。
