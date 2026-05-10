@@ -26,7 +26,8 @@
    - 5.7 多模态 / Vision 支持
    - 5.8 RAG 知识库（Phase 2）
    - 5.9 Tool Calling / Agentic Loop（Phase 2）
-   - 5.10 专业任务供应商（Kimi / WPS AI 等）
+   - 5.10 Office 文件自研实现（Phase 2）
+   - 5.11 图片生成（Phase 2）
 6. [中间件设计](#六中间件设计)
 7. [错误处理规范](#七错误处理规范)
 8. [部署方案](#八部署方案)
@@ -70,6 +71,7 @@
 │  ├── /api/v1/file/*          文件路由                    │
 │  ├── /api/v1/knowledge/*     知识库 / RAG 路由           │
 │  ├── /api/v1/webhooks/*      Webhook 管理路由            │
+│  ├── /api/v1/images/*        图片生成路由（异步任务）      │
 │  ├── /api/v1/payment/*       支付路由（Stripe Webhook）   │
 │  ├── /s/:token               对话分享公开访问（免登录）   │
 │  └── /health                 健康检查                    │
@@ -88,6 +90,7 @@
 │  ├── RAGService              文档向量化 / 语义检索        │
 │  ├── WebhookService          事件推送                    │
 │  ├── OfficeService           Office 文件自研生成          │
+│  ├── ImageService            三档图片生成（快/标/精）      │
 │  └── PaymentService          Stripe 集成                 │
 └──────┬──────────────┬────────────────────┬──────────────┘
        │              │                    │
@@ -161,6 +164,7 @@ jiandanly-api/
 │   │   ├── knowledge.go          # RAG 知识库管理
 │   │   ├── webhook.go            # Webhook CRUD
 │   │   ├── share.go              # 公开分享页（免登录）
+│   │   ├── image.go              # 图片生成（提交任务 / 查询状态 / 历史）
 │   │   └── payment.go
 │   ├── service/
 │   │   ├── auth.go
@@ -176,6 +180,13 @@ jiandanly-api/
 │   │   │   ├── excel.go          # ExcelProvider（Go + excelize）
 │   │   │   ├── word.go           # WordProvider（Go + XML 模板填充）
 │   │   │   └── ppt.go            # PPTSidecarProvider（HTTP → Python）
+│   │   ├── image/
+│   │   │   ├── provider.go       # ImageProvider 接口 + ImageRequest/Result
+│   │   │   ├── router.go         # 按 quality 路由到对应 Provider
+│   │   │   ├── gpt_image1.go     # 精品档：OpenAI gpt-image-1
+│   │   │   ├── dalle3.go         # 标准档：OpenAI dall-e-3
+│   │   │   ├── stability.go      # 快速档：Stability AI stable-image-core
+│   │   │   └── service.go        # ImageService（预检 → 生成 → S3 → 计费）
 │   │   ├── billing.go
 │   │   ├── team.go
 │   │   ├── template.go
@@ -798,7 +809,16 @@ DELETE /api/v1/webhooks/:id
 POST   /api/v1/webhooks/:id/test       发送测试事件
 ```
 
-### 4.12 支付回调
+### 4.12 图片生成接口（Phase 2）
+
+```
+POST   /api/v1/images/generate         提交生图任务（异步，返回 job_id）
+GET    /api/v1/images/:job_id          查询任务状态 + 获取下载 URL
+GET    /api/v1/images                  用户生图历史列表
+DELETE /api/v1/images/:job_id          删除记录（同步删除 S3 文件）
+```
+
+### 4.13 支付回调
 
 ```
 POST   /api/v1/payment/webhook         Stripe Webhook（验签替代 JWT）
@@ -2005,6 +2025,321 @@ CREATE TABLE file_jobs (
 }
 ```
 
+### 5.11 图片生成（Phase 2）
+
+用户可以在对话中直接要求生成图片，也可以通过独立的图片生成界面选择档位后提交。后端根据所选档位路由到对应的供应商，生成结果上传 S3，返回预签名 URL。
+
+#### 三档模型策略
+
+| 档位 | 对应模型 | 参考成本 | 积分消耗 | 适用场景 |
+|------|---------|---------|---------|---------|
+| **fast（快速）** | Stability AI `stable-image-core` | ~$0.003/张 | **20 积分** | 草图、配图、快速验证 |
+| **standard（标准）** | OpenAI `dall-e-3` | ~$0.04/张 | **80 积分** | 营销配图、演示用图 |
+| **premium（精品）** | OpenAI `gpt-image-1` | ~$0.17/张 | **200 积分** | 高质量商业图、产品展示 |
+
+> 积分比例参考内部汇率（1 积分 ≈ ¥0.01），可在运营后台按成本动态调整，无需改代码。
+
+#### ImageProvider 接口
+
+```go
+// internal/service/image/provider.go
+
+type ImageRequest struct {
+    Prompt  string
+    Quality string // "fast" | "standard" | "premium"
+    Size    string // "1024x1024" | "1024x1792" | "1792x1024"（宽屏/竖屏）
+    Style   string // "natural" | "vivid"（仅 OpenAI 支持）
+    UserID  string
+}
+
+type ImageResult struct {
+    ImageBytes  []byte
+    ContentType string // "image/png" | "image/webp"
+    Width       int
+    Height      int
+    Provider    string // 记录实际用了哪个供应商
+}
+
+type ImageProvider interface {
+    Name()     string // "gpt-image-1" | "dall-e-3" | "stability-core"
+    Quality()  string // 该实现对应哪个档位
+    Generate(ctx context.Context, req ImageRequest) (ImageResult, error)
+}
+```
+
+#### 档位路由器
+
+```go
+// internal/service/image/router.go
+
+type ImageRouter struct {
+    providers map[string]ImageProvider // key: "fast" | "standard" | "premium"
+}
+
+func NewImageRouter(cfg *config.Config) *ImageRouter {
+    return &ImageRouter{
+        providers: map[string]ImageProvider{
+            "fast":     &StabilityProvider{APIKey: cfg.StabilityAPIKey},
+            "standard": &DallE3Provider{APIKey: cfg.OpenAIAPIKey},
+            "premium":  &GptImage1Provider{APIKey: cfg.OpenAIAPIKey},
+        },
+    }
+}
+
+func (r *ImageRouter) Route(quality string) ImageProvider {
+    if p, ok := r.providers[quality]; ok {
+        return p
+    }
+    return r.providers["standard"] // 默认中档
+}
+```
+
+#### 三种 Provider 实现
+
+**GptImage1Provider（精品档）：**
+
+```go
+// internal/service/image/gpt_image1.go
+
+type GptImage1Provider struct{ APIKey string }
+
+func (p *GptImage1Provider) Name()    string { return "gpt-image-1" }
+func (p *GptImage1Provider) Quality() string { return "premium" }
+
+func (p *GptImage1Provider) Generate(ctx context.Context, req ImageRequest) (ImageResult, error) {
+    payload := map[string]any{
+        "model":   "gpt-image-1",
+        "prompt":  req.Prompt,
+        "size":    req.Size,
+        "quality": "high",           // gpt-image-1 支持 low|medium|high
+        "output_format": "png",
+        "n": 1,
+    }
+    // POST https://api.openai.com/v1/images/generations
+    // 响应: data[0].b64_json → base64 解码为 []byte
+    return callOpenAIImages(ctx, p.APIKey, payload)
+}
+```
+
+**DallE3Provider（标准档）：**
+
+```go
+// internal/service/image/dalle3.go
+
+type DallE3Provider struct{ APIKey string }
+
+func (p *DallE3Provider) Name()    string { return "dall-e-3" }
+func (p *DallE3Provider) Quality() string { return "standard" }
+
+func (p *DallE3Provider) Generate(ctx context.Context, req ImageRequest) (ImageResult, error) {
+    payload := map[string]any{
+        "model":   "dall-e-3",
+        "prompt":  req.Prompt,
+        "size":    req.Size,
+        "quality": "standard",
+        "style":   req.Style,   // "natural" | "vivid"
+        "response_format": "b64_json",
+        "n": 1,
+    }
+    return callOpenAIImages(ctx, p.APIKey, payload)
+}
+```
+
+**StabilityProvider（快速档）：**
+
+```go
+// internal/service/image/stability.go
+
+type StabilityProvider struct{ APIKey string }
+
+func (p *StabilityProvider) Name()    string { return "stability-core" }
+func (p *StabilityProvider) Quality() string { return "fast" }
+
+func (p *StabilityProvider) Generate(ctx context.Context, req ImageRequest) (ImageResult, error) {
+    // POST https://api.stability.ai/v2beta/stable-image/generate/core
+    // multipart/form-data: prompt, aspect_ratio, output_format=png
+    // 响应: image/* 二进制流，直接读取
+    body := &bytes.Buffer{}
+    writer := multipart.NewWriter(body)
+    writer.WriteField("prompt", req.Prompt)
+    writer.WriteField("aspect_ratio", sizeToAspectRatio(req.Size))
+    writer.WriteField("output_format", "png")
+    writer.Close()
+
+    httpReq, _ := http.NewRequestWithContext(ctx, "POST",
+        "https://api.stability.ai/v2beta/stable-image/generate/core", body)
+    httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
+    httpReq.Header.Set("Accept", "image/*")
+    httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+
+    resp, err := http.DefaultClient.Do(httpReq)
+    if err != nil { return ImageResult{}, err }
+    defer resp.Body.Close()
+
+    imgBytes, _ := io.ReadAll(resp.Body)
+    return ImageResult{
+        ImageBytes:  imgBytes,
+        ContentType: "image/png",
+        Provider:    p.Name(),
+    }, nil
+}
+
+// 尺寸 → Stability aspect_ratio 参数映射
+func sizeToAspectRatio(size string) string {
+    switch size {
+    case "1792x1024": return "16:9"
+    case "1024x1792": return "9:16"
+    default:          return "1:1"
+    }
+}
+```
+
+#### ImageService（统一入口）
+
+```go
+// internal/service/image/service.go
+
+type ImageService struct {
+    router      *ImageRouter
+    fileService *FileService
+    billing     *BillingService
+}
+
+// 积分消耗定义（可迁移到数据库运营后台配置）
+var imageCreditCost = map[string]int64{
+    "fast":     20,
+    "standard": 80,
+    "premium":  200,
+}
+
+func (s *ImageService) Generate(ctx context.Context, userID string, req ImageRequest) (string, error) {
+    cost := imageCreditCost[req.Quality]
+
+    // 1. 余额预检（Redis）
+    if err := s.billing.PreCheck(ctx, userID, cost); err != nil {
+        return "", ErrInsufficientCredits
+    }
+
+    // 2. 路由到对应档位 Provider 生成图片
+    provider := s.router.Route(req.Quality)
+    result, err := provider.Generate(ctx, req)
+    if err != nil { return "", err }
+
+    // 3. 上传 S3
+    filename := fmt.Sprintf("img_%s_%d.png", req.Quality, time.Now().UnixMilli())
+    fileID, err := s.fileService.UploadBytes(ctx, userID, filename,
+        result.ImageBytes, result.ContentType)
+    if err != nil { return "", err }
+
+    // 4. 记录 file_jobs
+    s.recordJob(ctx, userID, req, result, fileID)
+
+    // 5. 异步扣积分
+    go s.billing.Deduct(context.Background(), userID, cost,
+        fmt.Sprintf("图片生成（%s）", req.Quality))
+
+    // 6. 返回预签名 URL
+    return s.fileService.SignedURL(fileID), nil
+}
+```
+
+#### `create_image` 工具定义（Agentic Loop 集成）
+
+AI 在对话中识别到生图需求时，通过工具调用触发生成：
+
+```go
+// internal/service/llm/tools.go（新增）
+
+var CreateImageTool = ToolDefinition{
+    Name: "create_image",
+    Description: `根据用户的描述生成图片。
+使用时机：用户明确要求生成、绘制、创作图片时。
+不要自行决定档位，必须从用户消息中提取或在调用前询问用户。`,
+    InputSchema: json.RawMessage(`{
+        "type": "object",
+        "required": ["prompt", "quality"],
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "description": "详细的图片描述，英文效果更好，建议 AI 自动翻译优化"
+            },
+            "quality": {
+                "type": "string",
+                "enum": ["fast", "standard", "premium"],
+                "description": "fast=快速(20积分) | standard=标准(80积分) | premium=精品(200积分)"
+            },
+            "size": {
+                "type": "string",
+                "enum": ["1024x1024", "1024x1792", "1792x1024"],
+                "description": "图片尺寸：正方形 | 竖版 | 横版"
+            },
+            "style": {
+                "type": "string",
+                "enum": ["natural", "vivid"],
+                "description": "风格：natural=真实自然 | vivid=鲜艳夸张（仅标准/精品档）"
+            }
+        }
+    }`),
+}
+
+// 加入 SceneTools（write 和 chat 场景均可生图）
+var SceneTools = map[string][]ToolDefinition{
+    "calculate": {CreateExcelTool, AnalyzeDataTool},
+    "write":     {CreateWordTool, CreatePPTTool, CreateImageTool},
+    "read":      {AnalyzeFileTool, ExtractTableTool},
+    "translate": {},
+    "chat":      {CreateImageTool},   // 通用对话也支持生图
+}
+```
+
+#### `file_jobs` 扩展（type 新增 `image`）
+
+`file_jobs` 表无需改结构，`type` 字段新增 `image` 枚举值，`input_params` 存储 prompt / quality / size：
+
+```json
+{
+  "type": "image",
+  "provider": "gpt-image-1",
+  "input_params": {
+    "prompt": "A clean minimalist office workspace with warm morning light",
+    "quality": "premium",
+    "size": "1792x1024",
+    "style": "natural"
+  }
+}
+```
+
+#### 直接调用 API（非 Agentic Loop）
+
+用户也可以通过独立的图片生成界面直接调用，不经过 AI 对话：
+
+```
+POST /api/v1/images/generate
+{
+  "prompt":  "用户输入的描述",
+  "quality": "standard",
+  "size":    "1024x1024",
+  "style":   "vivid"
+}
+
+→ 202 Accepted
+{
+  "job_id":   "uuid",
+  "status":   "processing"
+}
+
+GET /api/v1/images/:job_id
+→ 200 OK
+{
+  "status":       "done",
+  "download_url": "https://cdn.jiandanly.com/...",
+  "credits_used": 80,
+  "expires_at":   "2026-06-10T..."
+}
+```
+
+> **为什么用异步接口？** `gpt-image-1` 精品档生成耗时可达 15–30 秒，同步 HTTP 会超时。`fast` 档通常 3–5 秒，也建议统一用异步，客户端轮询或 SSE 推送状态。
+
 ---
 
 ## 六、中间件设计
@@ -2244,6 +2579,12 @@ PPT_SIDECAR_URL=http://ppt-sidecar:5001   # Docker Compose 内部地址
 # PPT_SIDECAR_URL=http://localhost:5001   # 本地开发时使用此地址
 WORD_TEMPLATES_DIR=./word-templates       # 预置 .docx 模板目录
 
+# 图片生成（Phase 2）
+# 标准档 / 精品档 复用上面的 OPENAI_API_KEY
+STABILITY_API_KEY=sk-...                  # 快速档（Stability AI stable-image-core）
+# 积分消耗可在代码中调整：fast=20 / standard=80 / premium=200
+IMAGE_DEFAULT_QUALITY=standard            # 未指定时的默认档位
+
 # 前端 URL（CORS）
 FRONTEND_URL=https://jiandanly.com
 
@@ -2388,6 +2729,14 @@ docker-logs:
 - [ ] **OfficeToolExecutor**（路由 create_excel / create_word / create_ppt）
 - [ ] **file_jobs 表**（生成任务记录 + 耗时监控）
 - [ ] Office 文件生成计费（积分扣减 + 成本追踪）
+- [ ] **ImageProvider 接口 + 三档路由器**（fast / standard / premium）
+- [ ] **GptImage1Provider**（精品档，gpt-image-1，200 积分/张）
+- [ ] **DallE3Provider**（标准档，dall-e-3，80 积分/张）
+- [ ] **StabilityProvider**（快速档，stable-image-core，20 积分/张）
+- [ ] **ImageService**（预检 → 生成 → S3 → 记录 file_jobs → 异步计费）
+- [ ] **`create_image` 工具定义**（chat / write 场景注入 Agentic Loop）
+- [ ] **图片生成异步接口**（`POST /images/generate` + `GET /images/:job_id`）
+- [ ] 图片生成历史列表接口
 
 ### Phase 3（持续迭代）
 
