@@ -39,9 +39,11 @@ Phase 1.6 adds a minimal, separately deployable admin web app so operators can m
 | Backend tests | Green | Admin permission, promotion, disabled user, self-disable, credit adjustment, transaction, audit, and provider-key redaction covered |
 | User client separation | Green | Main `client/` no longer exposes “管理后台”, even when the logged-in user has `role=admin` |
 | Independent admin web | Green | `admin/` React/Vite app owns admin login, overview, users, usage, orders, and model/provider status |
+| Admin UI polish | Verified | Admin web migrated to shadcn/ui primitives for sidebar, cards, tables, badges, inputs, alerts, and buttons; Playwright snapshot/screenshot passed |
+| Admin feature tabs | Verified | shadcn `Tabs` now controls overview, users, usage, orders, and model views; inactive sections are not rendered in the current tab |
 | Admin form validation | Green | Admin web prevents zero delta and empty reason before credit-adjustment API calls |
 | Operator docs | Green | `README.md` and `docs/operations.md` document `ADMIN_EMAILS`, first admin creation, scope, and provider-key boundary |
-| Final verification | Verified | `make test`, `make build`, Docker rebuild, `/health`, frontend HTTP, and admin HTTP passed after the admin split |
+| Final verification | Verified | `make test`, `make build`, Docker admin rebuild, admin Playwright snapshot, and admin screenshot passed after the shadcn UI pass |
 
 ## Manual Smoke Checklist
 

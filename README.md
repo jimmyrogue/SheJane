@@ -11,7 +11,7 @@
 - PostgreSQL 持久化：用户、refresh token、wallet、usage reservation、wallet transaction、LLM call record、payment order、Stripe event。
 - Stripe 订阅入口：Checkout Session 创建、Webhook 签名校验、事件幂等处理；本地无 Stripe 密钥时返回 mock checkout URL。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
-- 独立管理后台 MVP：单独 React/Vite admin web，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
+- 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
 - Electron 壳：复用同一套 React UI，renderer 禁用 Node，预留安全 preload 边界。
 - Docker Compose：PostgreSQL、Redis、migration、API、Client、可选 Caddy reverse proxy。

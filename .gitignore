@@ -12,6 +12,8 @@ Thumbs.db
 # Local agent/tooling scratch
 .claude/
 .codex/
+.playwright-cli/
+output/
 
 # Environment and secrets
 .env

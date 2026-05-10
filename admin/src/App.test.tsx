@@ -19,7 +19,7 @@ describe('admin web app', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders overview, users, orders, and providers for admins after login', async () => {
+  it('renders overview first and switches feature tabs independently', async () => {
     mockFetch('admin')
 
     render(<App />)
@@ -29,8 +29,32 @@ describe('admin web app', () => {
 
     expect(await screen.findByText('运营概览')).toBeInTheDocument()
     expect((await screen.findAllByText('admin@example.com')).length).toBeGreaterThan(0)
+    expect(screen.queryByText((content) => content.includes('order_1'))).not.toBeInTheDocument()
+    expect(screen.queryByText((content) => content.includes('deepseek-v4-flash'))).not.toBeInTheDocument()
+
+    selectAdminTab('订单')
     expect(await screen.findByText((content) => content.includes('order_1'))).toBeInTheDocument()
+    expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
+
+    selectAdminTab('模型')
     expect(await screen.findByText((content) => content.includes('deepseek-v4-flash'))).toBeInTheDocument()
+    expect(screen.queryByText((content) => content.includes('order_1'))).not.toBeInTheDocument()
+  })
+
+  it('renders a dedicated admin shell with a refresh action', async () => {
+    const calls = mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+
+    expect(await screen.findByRole('heading', { name: '管理后台' })).toBeInTheDocument()
+    const overviewCallsBeforeRefresh = calls.filter((call) => call.url.endsWith('/api/v1/admin/overview')).length
+    fireEvent.click(screen.getByRole('button', { name: '刷新数据' }))
+    expect(await screen.findByText('数据已刷新')).toBeInTheDocument()
+    const overviewCallsAfterRefresh = calls.filter((call) => call.url.endsWith('/api/v1/admin/overview')).length
+    expect(overviewCallsAfterRefresh).toBeGreaterThan(overviewCallsBeforeRefresh)
   })
 
   it('validates credit adjustment before calling the admin API', async () => {
@@ -41,6 +65,7 @@ describe('admin web app', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
     await screen.findByText('运营概览')
+    selectAdminTab('用户')
 
     const adjustButton = await screen.findByText('调整额度')
     fireEvent.click(adjustButton)
@@ -68,6 +93,13 @@ describe('admin web app', () => {
     expect(calls.some((call) => call.url.includes('/api/v1/admin/'))).toBe(false)
   })
 })
+
+function selectAdminTab(name: string) {
+  const tab = screen.getByRole('tab', { name })
+  fireEvent.pointerDown(tab)
+  fireEvent.mouseDown(tab)
+  fireEvent.click(tab)
+}
 
 function mockFetch(role: 'admin' | 'user') {
   const calls: Array<{ url: string; init?: RequestInit }> = []
