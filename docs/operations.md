@@ -4,13 +4,14 @@ Updated: 2026-05-10
 
 ## 当前管理边界
 
-Phase 1.7 提供独立管理后台和账单生命周期加固。普通用户 client 与 admin web 分开构建、分开部署：
+Phase 1.7 提供独立管理后台和账单生命周期加固。Phase 2 起产品方向调整为统一 Agentic Chat，长期采用 Local Agent Host + Cloud Control Plane。普通用户 client 与 admin web 分开构建、分开部署：
 
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
 - 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
 - 模型/provider：后台只读展示 fast/deep 当前 provider、base URL、model、mock/real 状态和 key 是否已配置，不显示也不修改 API key。
 - 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
+- Agentic Chat：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；未来 Local Agent Host 负责本地工具、文件、终端、浏览器、IDE 和本地 MCP。
 
 ## 本地启动
 
@@ -124,9 +125,9 @@ make smoke-stripe-webhook
 - `wallet_transactions.idempotency_key` 会记录 `stripe:<event_id>`，便于排查重复投递。
 - 后台订单和审计页只读，不提供手动改订单、补单、退款、删除审计或重放 webhook 的入口。
 
-## 文档上传与 S3
+## 文档上传、Agentic Chat 与 S3
 
-Phase 2A 的文档阅读使用真实 AWS S3，不在本地磁盘保存原文件。`.env` 至少需要：
+Phase 2A 的文档能力使用真实 AWS S3，不在本地磁盘保存原文件。当前实现仍通过普通 client 的“文档阅读”页面测试；后续会把该流程合并进统一 Agentic Chat composer。`.env` 至少需要：
 
 ```dotenv
 AWS_REGION=ap-east-1
@@ -166,7 +167,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 
 1. 配好 `.env` 后运行 `docker compose up -d --build`。
 2. 登录普通用户 Web：`http://localhost:5173`。
-3. 切换“文档阅读”，上传 PDF / DOCX / XLSX。
+3. 当前阶段切换“文档阅读”，上传 PDF / DOCX / XLSX；后续统一入口完成后，在同一个 composer 上传附件并提问。
 4. 确认 bucket 中出现 `documents/<user_id>/<document_id>/source.*` 和 `extracted.txt`。
 5. 对 ready 文档提问，确认真实 LLM 回复、额度减少、管理后台用量可见。
 6. 删除文档后，系统会 best-effort 删除 S3 原文件和文本对象。
@@ -174,9 +175,18 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 边界说明：
 
 - 上传和解析不扣额度；文档问答扣额度。
-- 本阶段只做单文件上下文，不做向量库、多文档 RAG 或团队文档库。
+- 本阶段只做单文件上下文，不做向量库、多文档 RAG、团队文档库或 Local Host 本地文件读取。
 - 提取文本只保留前 `DOCUMENT_TEXT_LIMIT` 字符，避免超长 prompt 失控。
 - 文档默认 7 天过期；当前没有后台手工延长或恢复入口。
+
+## Agentic Chat 运维边界
+
+Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两个平面理解：
+
+- **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
+- **Local Agent Host**：后续运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
+- **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
+- **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Host。
 
 ## 常用管理命令
 

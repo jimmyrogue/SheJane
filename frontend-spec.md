@@ -1,10 +1,10 @@
 # 简单（Jiandan）前端技术方案
 
-**版本：** v1.1
+**版本：** v1.2
 **更新：** 2026-05-10
 **适用阶段：** Phase 1-5 分阶段落地
 
-> 本文档补充 `project-plan.md` 与 `backend-spec.md` 中缺失的前端客户端设计。前端采用 Hybrid Local-first：长期聊天历史和个人工作数据默认保存在客户端，本地体验先闭环，再逐步演进为场景化工作台和 Agent Client。
+> 本文档补充 `project-plan.md`、`backend-spec.md` 与 [`spec.md`](spec.md) 中缺失的前端客户端设计。前端采用 Hybrid Local-first：长期聊天历史和个人工作数据默认保存在客户端，本地体验先闭环，并从 Phase 2 起演进为统一 Agentic Chat 与 Local Agent Host。
 
 ---
 
@@ -12,27 +12,27 @@
 
 ### 1.1 产品目标
 
-前端不是模型管理器，也不是纯聊天壳，而是面向非技术用户的工作台：
+前端不是模型管理器，也不是纯聊天壳，而是面向非技术用户的统一 Agentic Chat 工作台：
 
 - Phase 1：注册登录、基础聊天、本地聊天历史、快速/深度模式、额度展示、订阅入口
-- Phase 2：场景卡片、模板、临时文件上传、本地搜索/导出、主动分享快照、额外额度包
-- Phase 3：个人本地文件库、个人本地知识库、个人 Prompt 收藏、用量历史
-- Phase 4：个人 API + 文件工具 Agent、Office/图片生成任务状态
-- Phase 5：团队管理后台、Chrome Use / Computer Use / MCP 等长期能力
+- Phase 2：统一 composer、附件自动解析、云端兼容 Agent Run、事件流、文档/网页工具
+- Phase 3：Local Agent Host、本地文件引用、本地 MCP、受控 shell/浏览器/IDE 工具
+- Phase 4：Office/图片生成、多工具编排、artifact、上下文压缩和任务恢复
+- Phase 5：团队管理后台、共享知识库、自动化工作流、开放平台 API
 
 ### 1.2 客户端形态
 
 | 客户端 | 能力边界 | 说明 |
 |--------|----------|------|
-| Web | 云端 API、聊天、本地 IndexedDB、临时文件上传、个人工作台、支付 | 不执行本地工具，不操控浏览器或电脑 |
-| Electron | Web 全部能力 + 本地 SQLite / 文件数据库 + 桌面能力预留 | Phase 4 后可作为 Local Agent Host |
+| Web | 云端 API、Agentic Chat、本地 IndexedDB、临时文件上传、支付 | 不执行本地工具；Local Host 离线时使用云端受限模式 |
+| Electron | Web 全部能力 + 本地 SQLite / 文件数据库 + Local Agent Host | Phase 3 起承担本地工具执行与权限 UI |
 | PWA / Capacitor | Phase 5 之后评估 | 只复用核心业务能力，不优先承载本地工具 |
 
 ### 1.3 核心原则
 
 - **共享优先**：Web 与 Electron 共享 80%+ React 组件、状态和 API client。
 - **本地优先**：长期聊天历史、搜索、导入/导出和个人工作数据默认由客户端保存。
-- **桌面增强**：Electron 只承载 Web 无法安全完成的本地能力。
+- **桌面增强**：Electron / Local Agent Host 承载 Web 无法安全完成的本地能力。
 - **权限显式**：本地文件、浏览器、电脑控制类工具必须由用户确认。
 - **账务一致**：所有模型与工具消耗都走后端钱包预留/结算，前端只展示状态。
 - **简单默认**：MVP 不出现模型、token、API key、供应商配置等概念。
@@ -52,7 +52,7 @@
 │ Web Runtime              │      │ Electron Runtime       │
 │ Browser APIs only        │      │ Main + Preload + IPC   │
 │ IndexedDB local history  │      │ SQLite / file database │
-│ No local tools           │      │ Local Agent Host later │
+│ Cloud-limited Agent      │      │ Local Agent Host       │
 └───────────────┬──────────┘      └─────────────┬──────────┘
                 │ HTTPS / SSE                   │ HTTPS / SSE + IPC
                 └───────────────┬───────────────┘
@@ -74,12 +74,12 @@ jiandanly-client/
 │   │   ├── chat/            # 对话、SSE、本地消息列表
 │   │   ├── billing/         # 额度、订阅、充值入口
 │   │   ├── conversations/   # 本地列表、搜索、分享快照、导出
-│   │   ├── templates/       # 场景模板
-│   │   ├── files/           # 上传、确认、文件状态
+│   │   ├── composer/        # 统一输入、附件、URL、本地引用
+│   │   ├── files/           # 上传、确认、文件状态；作为 Agent 工具输入
 │   │   ├── personal/        # 个人文件库、个人知识库、用量历史
 │   │   ├── team/            # Phase 5 团队后台
 │   │   ├── settings/        # 账号、安全、偏好
-│   │   └── agent/           # Phase 4+ Agent UI 与任务事件
+│   │   └── agent/           # Agent run、事件流、工具状态、权限请求
 │   ├── shared/
 │   │   ├── api/             # REST client、SSE client、错误处理
 │   │   ├── local-data/      # IndexedDB / SQLite adapter、导入导出
@@ -90,7 +90,7 @@ jiandanly-client/
 ├── electron/
 │   ├── main.ts              # 窗口、菜单、更新、本地能力调度
 │   ├── preload.ts           # 安全 IPC 暴露
-│   └── agent-host/          # Phase 4+ 本地工具注册与执行
+│   └── agent-host/          # Local Agent Host、本地工具注册与执行
 └── package.json
 ```
 
@@ -119,7 +119,7 @@ jiandanly-client/
 - Phase 1 只支持基础文本聊天和 `fast` / `deep` 模式。
 - SSE client 负责解析 OpenAI-compatible stream，并把增量内容写入当前 assistant message。
 - 发送前先在本地创建 `client_conversation_id`、user message 和空 assistant message，再把 `client_conversation_id` / `client_message_id` 随请求发给后端。
-- 客户端断线后保留已收到的本地增量内容，允许用户手动重试；真正可靠恢复等 Phase 4 的 generation events。
+- 客户端断线后保留已收到的本地增量内容，允许用户手动重试；真正可靠恢复从 Phase 2.2 的 Agent Run events 开始补齐。
 - 发送前展示额度不足、未登录等明确错误；团队钱包错误只在 Phase 5 出现。
 
 ### 3.4 Billing
@@ -129,18 +129,22 @@ jiandanly-client/
 - 额外额度包只作为月额度耗尽后的补充购买入口。
 - 支付完成后回到前端 success 页面并轮询后端账单状态，不以前端 URL 参数直接加额度。
 
-### 3.5 Conversation
+### 3.5 Conversation / Unified Composer
 
 - Phase 1：本地对话列表、详情、重命名、归档/删除、导入/导出。
-- Phase 2：本地全文搜索、分享快照、导出增强。
+- Phase 2：普通聊天、附件问答、网页研究和任务 Agent 收敛到同一个 composer 与同一条 timeline。
+- composer 支持文本、附件、URL，后续支持本地文件/项目引用。
+- 上传附件并发送问题时，前端不再要求用户切换“文档阅读”模式，而是把附件作为本次 Agentic Chat 的输入。
+- 本地全文搜索、分享快照、导出增强继续保留，但不再作为场景模板路线的一部分。
 - 分享必须是显式动作：用户选择要分享的对话范围，前端上传 snapshot 到 `/api/v1/shared-conversations`。
 - 分享前提醒用户链接可被访问，默认支持过期时间、撤销和脱敏检查。
 
-### 3.6 Template / Scene
+### 3.6 Skill / Tool Selection
 
-- Phase 2 首页从空白聊天升级为场景卡片。
-- 场景只表达用户任务：帮我写、帮我读、帮我算、帮我翻译、自由对话。
-- 前端负责收集结构化输入，后端负责注入 system prompt 和计费。
+- Phase 2 不再把“场景卡片 / Prompt 模板”作为主入口。
+- 前端只展示系统自动选择的 skill、工具调用和来源；用户不需要手动选择 scene。
+- `fast` / `deep` 仍可作为质量/成本控制，不等同于 agent 模式切换。
+- 内部可继续保留 prompt/skill 配置，但它们属于运行时能力，不是用户必须理解的产品概念。
 
 ### 3.7 File Upload
 
@@ -151,12 +155,12 @@ jiandanly-client/
   4. 后端记录临时文件元数据并进入处理流程
 - Phase 1/2 默认 `purpose=temporary_input`，后端返回 `expires_at`，前端展示临时留存提示。
 - 前端限制文件类型和大小，但以后端校验为准。
-- Web 与 Electron 上传逻辑共享；Electron 后续可增强本地文件选择体验。
+- Web 与 Electron 上传逻辑共享；Electron 后续由 Local Agent Host 增强本地文件选择、读取和权限体验。
 
 ### 3.8 Personal Workspace
 
 - Phase 3 启用。
-- 支持个人本地文件库、个人本地知识库、个人 Prompt 收藏、用量历史。
+- 支持个人本地文件库、本地项目引用、本地 MCP 配置和用量历史。
 - 所有个人能力默认绑定用户钱包，不需要选择团队上下文。
 - 数据导出、删除和账号安全入口也放在个人设置中。
 - 云文件库、云知识库和云同步必须用户主动开启，后期再做。
@@ -164,7 +168,7 @@ jiandanly-client/
 ### 3.9 Team Admin
 
 - Phase 5 启用。
-- 支持组织信息、成员列表、角色、成员月上限、团队账单、团队模板。
+- 支持组织信息、成员列表、角色、成员月上限、团队账单和团队 Agent 策略。
 - 使用团队钱包时，请求必须显式带 `organization_id`，前端不能静默猜测。
 
 ### 3.10 Settings
@@ -176,38 +180,39 @@ jiandanly-client/
 
 ---
 
-## 四、Agent 前端路线
+## 四、Agentic Chat 前端路线
 
 ### 4.1 结论
 
-Agent 能力采用 **Hybrid 本地优先**：
+Agent 能力采用 **Local Agent Host + Cloud Control Plane**：
 
-- 云端：模型路由、个人账本、云端工具、任务事件持久化；团队策略 Phase 5 启用
-- Electron：本地工具执行、浏览器/电脑权限确认、本地执行日志
-- Web：只展示和调用云端工具，不执行本地工具
+- 云端：模型路由、个人账本、云端文档/网页工具、兼容 run API、admin 观察与审计
+- Electron / Local Host：本地工具执行、本地 MCP、浏览器/IDE/终端权限确认、本地执行日志
+- Web：统一 Agentic Chat UI；Local Host 离线时只使用云端受限能力
 
-### 4.2 Phase 4：API + 文件工具 Agent
+### 4.2 Phase 2：统一入口与云端兼容 Run
 
-第一版 Agent 只做低风险工具：
+第一版 Agentic Chat 先合并现有普通聊天和 Phase 2A 文档阅读：
 
-- Opt-in 云端 RAG 检索
-- Office / 图片生成任务状态
-- 已授权文件上传与分析
-- 后端 API 工具调用
+- 一个 composer 支持文本、附件和 URL
+- 上传文件后自动走 presigned upload + complete + 文本提取
+- 前端用一条 timeline 展示普通回答、文档解析状态、工具调用和最终答案
+- 云端兼容 run/event/stream API 先承接 Web 体验，为 Local Host 保持同一事件模型
 
 前端需要提供：
 
-- Agent run 页面：任务目标、事件流、工具状态、取消按钮
-- Tool call 卡片：工具名、输入摘要、执行状态、结果文件
+- Agent run timeline：目标、事件流、工具状态、取消按钮
+- Tool call 卡片：工具名、输入摘要、执行状态、结果文件或来源
 - 额度提示：工具执行前展示预计消耗，实际结算以后端为准
 
-### 4.3 Phase 5：Chrome Use / Computer Use
+### 4.3 Phase 3：Local Agent Host
 
-高风险本地自动化后置：
+Local Host 是长期强能力核心：
 
-- Chrome Use：读取网页、点击、表单填写、下载文件
-- Computer Use：操控桌面 app、截图、点击、键盘输入
-- MCP：连接外部工具和企业系统
+- 本地文件读取、本地项目引用、本地 MCP、受控 shell
+- Chrome / Browser Use：读取网页、点击、表单填写、下载文件
+- IDE / terminal 工具：只在用户授权后执行
+- 本地 run events 默认保存在本机，云端只同步计费、审计和摘要
 
 这些能力只允许在 Electron 中开启，且必须有：
 
@@ -217,7 +222,7 @@ Agent 能力采用 **Hybrid 本地优先**：
 - 权限日志和审计记录
 - 敏感输入遮蔽
 
-### 4.4 Electron IPC 安全边界
+### 4.4 Electron IPC / Local Host 安全边界
 
 ```text
 Renderer 不能直接访问 Node.js / 文件系统 / shell
@@ -230,10 +235,10 @@ main → local tool executor 执行受控工具
 
 | IPC | 阶段 | 说明 |
 |-----|------|------|
-| `agent.tools.list` | Phase 4 | 返回本地可用工具和权限状态 |
-| `agent.tools.execute` | Phase 4 | 执行受控本地工具 |
-| `agent.permissions.request` | Phase 4 | 请求用户授权 |
-| `agent.run.cancel` | Phase 4 | 取消本地执行中的任务 |
+| `agent.tools.list` | Phase 3 | 返回本地可用工具和权限状态 |
+| `agent.tools.execute` | Phase 3 | 执行受控本地工具 |
+| `agent.permissions.request` | Phase 3 | 请求用户授权 |
+| `agent.run.cancel` | Phase 3 | 取消本地执行中的任务 |
 
 ---
 
@@ -293,14 +298,15 @@ Refresh token 写入 HTTPOnly Cookie
   → 前端保存分享记录，可撤销
 ```
 
-### 5.6 Agent Run 流（Phase 4+）
+### 5.6 Agentic Chat / Agent Run 流（Phase 2+）
 
 ```
-用户输入目标
-  → 创建 agent run
-  → 前端订阅 run events
-  → 模型提出 tool call
-  → 云端工具由后端执行，本地工具由 Electron 执行
+用户输入目标或上传附件
+  → 创建 agent run 或本地消息任务
+  → 前端订阅 run events / SSE
+  → 系统选择 skill 和工具
+  → 云端工具由后端执行，本地工具由 Local Host 执行
+  → 高风险本地工具先请求权限
   → 工具结果回传
   → run 完成 / 失败 / 取消
   → 后端结算额度
@@ -317,7 +323,7 @@ Refresh token 写入 HTTPOnly Cookie
 - `localData`：IndexedDB / SQLite 连接状态、迁移版本、导入导出状态
 - `chat`：当前本地会话、SSE 状态、消息草稿
 - `workspace`：个人上下文；团队上下文 Phase 5 启用
-- `agent`：Phase 4+ run、events、tool calls
+- `agent`：Phase 2+ run、events、tool calls、permission requests
 
 ### 6.2 错误展示
 
@@ -359,31 +365,31 @@ Refresh token 写入 HTTPOnly Cookie
 
 ### Phase 2
 
-- 用户打开首页看到场景卡片，而不是只有空白对话框。
-- 用户可以上传文件并看到处理状态。
-- 用户可以本地搜索、分享快照、导出对话。
-- 用户可以购买额外额度包。
+- 用户无需切换模式即可完成普通聊天。
+- 用户可以在同一个 composer 上传 PDF / DOCX / XLSX 并提问。
+- 复杂任务可以展示 run timeline、skill 选择、工具调用、来源、最终答案和取消状态。
+- Local Host 离线时，Web 使用云端受限能力并给出明确状态。
 
 ### Phase 3
 
-- 用户可以查看个人本地文件库、文件状态和历史引用。
-- 用户可以建立个人本地知识库并在回答中看到引用来源。
-- 用户可以收藏个人 Prompt，并查看按日 / 按场景的个人用量。
-- 云同步、云历史、云知识库默认仍然关闭。
+- Electron 可以连接 Local Agent Host。
+- 用户可以授权读取本地文件或项目。
+- 本地 MCP、受控 shell、浏览器/IDE 工具只在权限允许时出现。
+- 私有本地内容不默认同步到云端。
 
 ### Phase 4
 
-- Agent run 有清晰事件流、工具状态和取消入口。
-- 本地工具只在 Electron 中出现。
 - Office / 图片生成任务有队列状态和结果文件入口。
+- 多工具编排有 artifact、来源、上下文压缩和恢复能力。
+- 工具失败、取消、超时、超预算都有清晰 UI 状态。
 
 ### Phase 5
 
-- 团队后台、成员用量、团队钱包和团队模板可管理。
+- 团队后台、成员用量、团队钱包和 Agent run 摘要可管理。
 - 团队请求明确使用 `organization_id`。
 - Chrome Use / Computer Use 默认关闭，并要求明确授权。
 
 ---
 
-*文档版本: v1.0*
+*文档版本: v1.2*
 *最后更新: 2026-05-10*

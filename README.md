@@ -1,17 +1,19 @@
 # 简单 Jiandanly
 
-简单是一款面向小团队和职业人群的 AI 生产力工具。Phase 1 的目标不是做多模型工作站，而是先交付一个可以注册、登录、聊天、看额度、进入订阅、并把聊天历史默认留在本地的可收费 MVP。
+简单是一款面向小团队和职业人群的 Agentic Chat 生产力工具。Phase 1 已完成可收费聊天 MVP；Phase 2 的方向已经从“场景模板 / 独立文档阅读”调整为“统一 Agentic Chat”：用户只在一个输入入口里提问、上传附件、贴 URL 或描述任务，系统自动决定是否解析文档、搜索网页、调用工具、加载 skill 或进入多步 agent loop。
+
+Agentic Chat 总规格见 [`spec.md`](spec.md)。
 
 ## Phase 1 已实现
 
 - Go API Gateway：健康检查、JWT 注册登录、HTTPOnly Refresh Token 轮换、用户信息接口。
-- Chat API：`POST /api/v1/chat/completions`，OpenAI-compatible SSE 流式输出，支持 `fast` / `deep` 模式和最小场景 system prompt 注入。
+- Chat API：`POST /api/v1/chat/completions`，OpenAI-compatible SSE 流式输出，支持 `fast` / `deep` 模式和最小 system prompt / skill instructions 注入。
 - 模型路由：默认本地 mock；可通过环境变量接入 DeepSeek/OpenAI-compatible provider 和 Anthropic Claude。
 - 额度账本：月额度、额外额度、请求前预留、结束后结算、失败释放。
 - PostgreSQL 持久化：用户、refresh token、wallet、usage reservation、wallet transaction、LLM call record、payment order、Stripe event。
 - Stripe 订阅闭环：Checkout Session 创建、Webhook 签名校验、事件幂等处理、订阅 ID 入库、续费发放月额度、失败/取消状态同步；本地无 Stripe 密钥时返回 mock checkout URL。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
-- Phase 2A 文档阅读 MVP：普通用户 client 内置独立“文档阅读”工作台，支持 PDF / DOCX / XLSX 上传到 S3、同步提取文本、单文件问答和额度扣减。
+- Phase 2A 文档能力：普通用户 client 当前仍有独立“文档阅读”工作台，支持 PDF / DOCX / XLSX 上传到 S3、同步提取文本、单文件问答和额度扣减；后续会被统一 Agentic Chat composer 吸收。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
@@ -79,14 +81,21 @@ make smoke-stripe-webhook
 
 如果 API 设置了 `STRIPE_WEBHOOK_SECRET`，脚本会优先使用当前 shell 的同名变量；没有时会自动读取当前目录 `.env` 中的 `STRIPE_WEBHOOK_SECRET`，并生成 `Stripe-Signature`。
 
-## Phase 2A：文档上传与单文件 AI 阅读
+## Phase 2：统一 Agentic Chat
 
-Phase 2A 开始补齐“帮我读”的真实文档能力。用户在普通 client 中切换到“文档阅读”，上传 PDF / DOCX / XLSX 后，浏览器用后端签发的 presigned PUT URL 直传 S3；后端在 `complete` 阶段下载原文件、提取文本、把文本另存为 S3 `.txt` object，再允许用户基于单个文档提问。
+Phase 2 的目标已经调整为统一 Agentic Chat。用户不再需要理解“聊天 / 文档阅读 / 任务 Agent”的区别；一个 composer 承载普通问题、附件、URL 和复杂任务。系统自动选择文档解析、网页工具、skill、权限请求或多步 agent loop。
 
-本阶段边界：
+长期架构是 **Local Agent Host + Cloud Control Plane**：
+
+- Local Agent Host：负责本地上下文、权限、工具执行、本地 MCP、文件、终端、浏览器和 IDE 能力。
+- Cloud Control Plane：负责 Auth、wallet、Stripe、admin、LLM provider、S3 文档、用量、审计和云端兼容 Agent Run。
+
+Phase 2A 已经补齐“文档能力”的底座。当前用户仍在普通 client 中切换到“文档阅读”，上传 PDF / DOCX / XLSX 后，浏览器用后端签发的 presigned PUT URL 直传 S3；后端在 `complete` 阶段下载原文件、提取文本、把文本另存为 S3 `.txt` object，再允许用户基于单个文档提问。下一步会把这个流程并入统一 composer。
+
+当前 Phase 2A 文档能力边界：
 
 - 支持：单文件上传、同步解析、单文件问答、删除文档、问答扣额度。
-- 不支持：多文档问答、向量库/RAG、团队文档库、长期知识库、admin 后台文档管理。
+- 不支持：多文档问答、向量库/RAG、团队文档库、长期知识库、admin 后台文档管理、Local Host 本地文件读取。
 - 上传和解析免费；只有文档问答会走现有 LLM reservation/settlement 账本。
 - 默认限制：单文件 30MB、提取文本 60k 字符、对象和记录保留 7 天。
 
@@ -107,7 +116,7 @@ S3 bucket CORS 至少允许来自 `CLIENT_BASE_URL` 的 `PUT`，并允许 `Conte
 
 ## 后续阶段边界
 
-团队版、BYOK、云端历史同步、多文档 RAG、Office/图片生成、Chrome Use、Computer Use、MCP、移动端和开放平台 API Key 都是后续阶段能力。
+场景模板工作台不再是后续主线。后续能力按 Agentic Chat 路线推进：统一 composer、云端兼容 Agent Run、Local Agent Host、本地 MCP、受控 shell/浏览器/IDE、Office/图片生成、多工具编排、团队版、移动端和开放平台 API Key。BYOK 仍作为最后阶段可选评估项，不进入当前核心架构。
 
 ## 本地开发
 
