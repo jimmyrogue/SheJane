@@ -1,4 +1,4 @@
-.PHONY: test build api-test client-test admin-test client-build admin-build dev docker-up docker-down migrate smoke-real-llm
+.PHONY: test build api-test client-test admin-test client-build admin-build dev docker-up docker-down migrate smoke-real-llm smoke-stripe-webhook
 
 test: api-test client-test admin-test
 
@@ -39,3 +39,6 @@ migrate:
 
 smoke-real-llm:
 	./scripts/smoke-real-llm.sh
+
+smoke-stripe-webhook:
+	./scripts/smoke-stripe-webhook.sh

@@ -52,15 +52,16 @@ type LLMCallRecord struct {
 }
 
 type PaymentOrder struct {
-	ID              string    `json:"id"`
-	WalletID        string    `json:"wallet_id"`
-	Type            string    `json:"type"`
-	AmountCNY       int       `json:"amount_cny"`
-	Status          string    `json:"status"`
-	CheckoutURL     string    `json:"checkout_url"`
-	StripeSessionID string    `json:"stripe_checkout_session_id"`
-	IdempotencyKey  string    `json:"idempotency_key"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                   string    `json:"id"`
+	WalletID             string    `json:"wallet_id"`
+	Type                 string    `json:"type"`
+	AmountCNY            int       `json:"amount_cny"`
+	Status               string    `json:"status"`
+	CheckoutURL          string    `json:"checkout_url"`
+	StripeSessionID      string    `json:"stripe_checkout_session_id"`
+	StripeSubscriptionID string    `json:"stripe_subscription_id"`
+	IdempotencyKey       string    `json:"idempotency_key"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 type AdminListOptions struct {
@@ -103,8 +104,10 @@ type AdminLLMCallRecord struct {
 
 type AdminPaymentOrder struct {
 	PaymentOrder
-	UserID    string `json:"user_id"`
-	UserEmail string `json:"user_email"`
+	UserID       string `json:"user_id"`
+	UserEmail    string `json:"user_email"`
+	PlanCode     string `json:"plan_code"`
+	WalletStatus string `json:"wallet_status"`
 }
 
 type AuditLog struct {
@@ -139,8 +142,11 @@ type Store interface {
 
 	CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error)
 	PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error)
-	MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, monthlyCredits int64) error
+	MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
+	MarkSubscriptionRenewed(ctx context.Context, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
+	UpdateSubscriptionStatus(ctx context.Context, stripeSubscriptionID string, status string, periodEnd time.Time) error
 	RecordStripeEvent(ctx context.Context, eventID string, eventType string, payload []byte) (bool, error)
+	MarkStripeEventProcessed(ctx context.Context, eventID string) error
 
 	AdminOverview(ctx context.Context) (AdminOverview, error)
 	AdminUsers(ctx context.Context, opts AdminListOptions) ([]AdminUserSummary, error)
@@ -149,4 +155,5 @@ type Store interface {
 	AdjustExtraCredits(ctx context.Context, actorUserID string, userID string, delta int64, reason string) (*billing.Wallet, error)
 	AdminLLMCalls(ctx context.Context, opts AdminListOptions) ([]AdminLLMCallRecord, error)
 	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
+	AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error)
 }

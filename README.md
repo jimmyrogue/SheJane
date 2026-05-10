@@ -9,9 +9,10 @@
 - 模型路由：默认本地 mock；可通过环境变量接入 DeepSeek/OpenAI-compatible provider 和 Anthropic Claude。
 - 额度账本：月额度、额外额度、请求前预留、结束后结算、失败释放。
 - PostgreSQL 持久化：用户、refresh token、wallet、usage reservation、wallet transaction、LLM call record、payment order、Stripe event。
-- Stripe 订阅入口：Checkout Session 创建、Webhook 签名校验、事件幂等处理；本地无 Stripe 密钥时返回 mock checkout URL。
+- Stripe 订阅闭环：Checkout Session 创建、Webhook 签名校验、事件幂等处理、订阅 ID 入库、续费发放月额度、失败/取消状态同步；本地无 Stripe 密钥时返回 mock checkout URL。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
+- 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
 - Electron 壳：复用同一套 React UI，renderer 禁用 Node，预留安全 preload 边界。
 - Docker Compose：PostgreSQL、Redis、migration、API、Client、可选 Caddy reverse proxy。
@@ -57,6 +58,25 @@ ADMIN_BASE_URL=http://localhost:5174
 - 不可操作：后台不修改 provider key，不手工修改订单状态，不做退款/补单，不改月额度、plan code 或订阅状态。
 
 Provider key 不进入后台管理：密钥只通过环境变量提供，后台只展示 key 是否已配置，避免把高权限供应商密钥暴露到浏览器、日志或管理员误操作路径里。
+
+## Phase 1.7：生产准备与账单稳固
+
+Phase 1.7 加固真实订阅和运营闭环：
+
+- `checkout.session.completed`：保存 `stripe_subscription_id`，订单标记为 `paid`，钱包切到 `pro/active` 并发放本月额度。
+- `invoice.paid` / `invoice.payment_succeeded`：对续费账单重置本月已用额度并重新发放月额度；同一 Stripe event 只处理一次。
+- `invoice.payment_failed`：钱包状态同步为 `past_due`。
+- `customer.subscription.updated/deleted`：同步 Stripe subscription 状态，取消后显示 `canceled`。
+- `GET /api/v1/admin/audit-logs`：管理员只读查看审计日志；后台不提供删除、修改或重放审计的入口。
+
+本地验证 Stripe webhook 闭环：
+
+```bash
+docker compose up -d --build
+make smoke-stripe-webhook
+```
+
+如果 API 设置了 `STRIPE_WEBHOOK_SECRET`，脚本会优先使用当前 shell 的同名变量；没有时会自动读取当前目录 `.env` 中的 `STRIPE_WEBHOOK_SECRET`，并生成 `Stripe-Signature`。
 
 ## 后续阶段边界
 
@@ -123,7 +143,7 @@ docker compose up --build
 - `ANTHROPIC_API_KEY`：深度模式 Claude key。
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID`：Stripe Billing Checkout。
 
-Stripe Checkout 使用订阅模式，Webhook 处理 `checkout.session.completed` 并按月额度发放到账户钱包。
+Stripe Checkout 使用订阅模式，Webhook 至少需要订阅 `checkout.session.completed`、`invoice.paid`、`invoice.payment_failed`、`customer.subscription.updated`、`customer.subscription.deleted`。系统不会在后台存储或展示 Stripe secret key。
 
 ## 系统管理
 
@@ -142,4 +162,10 @@ make build
 make smoke-real-llm
 ```
 
-前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、普通 client 不暴露后台入口、独立 admin web 渲染与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由和 admin API 权限/审计。
+本地合成 Stripe webhook：
+
+```bash
+make smoke-stripe-webhook
+```
+
+前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、普通 client 不暴露后台入口、独立 admin web 渲染、功能 tab、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、Stripe 订阅生命周期和 admin API 权限/审计。

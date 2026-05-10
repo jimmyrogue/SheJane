@@ -81,6 +81,23 @@ describe('admin web app', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/users/admin-1/credits/adjust'))).toBe(true)
   })
 
+  it('shows subscription ids in orders and renders audit logs read-only', async () => {
+    mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('运营概览')
+
+    selectAdminTab('订单')
+    expect(await screen.findByText((content) => content.includes('sub_test_123'))).toBeInTheDocument()
+
+    selectAdminTab('审计')
+    expect(await screen.findByText('admin.user_status_update')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /删除|修改|重试/ })).not.toBeInTheDocument()
+  })
+
   it('blocks non-admin users from loading admin data', async () => {
     const calls = mockFetch('user')
 
@@ -205,7 +222,27 @@ function mockFetch(role: 'admin' | 'user') {
             status: 'pending',
             checkout_url: '',
             stripe_checkout_session_id: 'cs_test_1',
+            stripe_subscription_id: 'sub_test_123',
+            plan_code: 'pro',
+            wallet_status: 'active',
             idempotency_key: 'order-key',
+            created_at: '2026-05-10T00:00:00Z',
+          },
+        ],
+      })
+    }
+    if (url.endsWith('/api/v1/admin/audit-logs')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: [
+          {
+            id: 'audit_1',
+            actor_user_id: 'admin-1',
+            action: 'admin.user_status_update',
+            target_type: 'user',
+            target_id: 'user-1',
+            metadata: '{"status":"disabled","reason":"support"}',
             created_at: '2026-05-10T00:00:00Z',
           },
         ],

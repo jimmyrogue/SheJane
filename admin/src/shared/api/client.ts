@@ -30,6 +30,16 @@ export interface AdminOverview {
   orders_total: number
 }
 
+export interface AdminAuditLog {
+  id: string
+  actor_user_id: string
+  action: string
+  target_type: string
+  target_id: string
+  metadata: string
+  created_at: string
+}
+
 export interface AdminUserSummary {
   user: AuthPayload['user'] & { created_at?: string }
   wallet?: WalletBalance
@@ -72,6 +82,9 @@ export interface AdminOrder {
   status: string
   checkout_url: string
   stripe_checkout_session_id: string
+  stripe_subscription_id: string
+  plan_code?: string
+  wallet_status?: string
   idempotency_key: string
   created_at: string
 }
@@ -157,6 +170,10 @@ export class AdminAPI {
 
   async adminProviders(): Promise<AdminProviderStatus[]> {
     return this.get<AdminProviderStatus[]>('/api/v1/admin/providers')
+  }
+
+  async adminAuditLogs(): Promise<AdminAuditLog[]> {
+    return this.get<AdminAuditLog[]>('/api/v1/admin/audit-logs')
   }
 
   private async get<T>(path: string): Promise<T> {

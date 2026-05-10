@@ -72,6 +72,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/llm-calls", s.requireAdmin(s.adminLLMCalls))
 	s.mux.HandleFunc("GET /api/v1/admin/orders", s.requireAdmin(s.adminOrders))
 	s.mux.HandleFunc("GET /api/v1/admin/providers", s.requireAdmin(s.adminProviders))
+	s.mux.HandleFunc("GET /api/v1/admin/audit-logs", s.requireAdmin(s.adminAuditLogs))
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
@@ -271,17 +272,13 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var event struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-		Data struct {
-			Object struct {
-				ID string `json:"id"`
-			} `json:"object"`
-		} `json:"data"`
-	}
+	var event stripeWebhookEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
 		writeError(w, http.StatusBadRequest, 40201, "无效的 Stripe 事件")
+		return
+	}
+	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(event.Type) == "" {
+		writeError(w, http.StatusBadRequest, 40201, "Stripe 事件缺少 id 或 type")
 		return
 	}
 	shouldProcess, err := s.app.Store.RecordStripeEvent(r.Context(), event.ID, event.Type, payload)
@@ -289,13 +286,79 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, 50001, "记录 Stripe 事件失败")
 		return
 	}
-	if shouldProcess && event.Type == "checkout.session.completed" {
-		if err := s.app.Store.MarkSubscriptionPaid(r.Context(), event.Data.Object.ID, s.app.Config.MonthlyCredits); err != nil && !errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusInternalServerError, 50001, "处理订阅支付失败")
+	if shouldProcess {
+		if err := s.processStripeEvent(r.Context(), event); err != nil {
+			writeError(w, http.StatusInternalServerError, 50001, "处理 Stripe 事件失败")
+			return
+		}
+		if err := s.app.Store.MarkStripeEventProcessed(r.Context(), event.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, 50001, "更新 Stripe 事件状态失败")
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"received": true}})
+}
+
+func (s *Server) processStripeEvent(ctx context.Context, event stripeWebhookEvent) error {
+	object := event.Data.Object
+	periodEnd := object.periodEndTime()
+	switch event.Type {
+	case "checkout.session.completed":
+		err := s.app.Store.MarkSubscriptionPaid(ctx, object.ID, object.Subscription.String(), event.ID, s.app.Config.MonthlyCredits, periodEnd)
+		if errors.Is(err, store.ErrNotFound) {
+			slog.Warn("stripe checkout session did not match local order", "event_id", event.ID, "session_id", object.ID)
+			return nil
+		}
+		return err
+	case "invoice.paid", "invoice.payment_succeeded":
+		if object.BillingReason == "subscription_create" {
+			return s.updateStripeSubscriptionStatus(ctx, event.ID, object.Subscription.String(), "active", periodEnd)
+		}
+		return s.markStripeSubscriptionRenewed(ctx, event.ID, object.Subscription.String(), periodEnd)
+	case "invoice.payment_failed":
+		return s.updateStripeSubscriptionStatus(ctx, event.ID, object.Subscription.String(), "past_due", periodEnd)
+	case "customer.subscription.created", "customer.subscription.updated", "customer.subscription.resumed":
+		status := object.Status
+		if status == "" {
+			status = "active"
+		}
+		return s.updateStripeSubscriptionStatus(ctx, event.ID, object.ID, status, periodEnd)
+	case "customer.subscription.deleted":
+		status := object.Status
+		if status == "" {
+			status = "canceled"
+		}
+		return s.updateStripeSubscriptionStatus(ctx, event.ID, object.ID, status, periodEnd)
+	default:
+		slog.Info("stripe event ignored", "event_id", event.ID, "event_type", event.Type)
+		return nil
+	}
+}
+
+func (s *Server) markStripeSubscriptionRenewed(ctx context.Context, eventID string, subscriptionID string, periodEnd time.Time) error {
+	if subscriptionID == "" {
+		slog.Warn("stripe invoice missing subscription id", "event_id", eventID)
+		return nil
+	}
+	err := s.app.Store.MarkSubscriptionRenewed(ctx, subscriptionID, eventID, s.app.Config.MonthlyCredits, periodEnd)
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Warn("stripe invoice did not match local subscription", "event_id", eventID, "stripe_subscription_id", subscriptionID)
+		return nil
+	}
+	return err
+}
+
+func (s *Server) updateStripeSubscriptionStatus(ctx context.Context, eventID string, subscriptionID string, status string, periodEnd time.Time) error {
+	if subscriptionID == "" {
+		slog.Warn("stripe subscription status event missing subscription id", "event_id", eventID, "status", status)
+		return nil
+	}
+	err := s.app.Store.UpdateSubscriptionStatus(ctx, subscriptionID, status, periodEnd)
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Warn("stripe subscription status did not match local subscription", "event_id", eventID, "stripe_subscription_id", subscriptionID, "status", status)
+		return nil
+	}
+	return err
 }
 
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -498,6 +561,15 @@ func (s *Server) adminOrders(w http.ResponseWriter, r *http.Request, user store.
 	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminPaymentOrder]{Code: 0, Message: "ok", Data: orders})
 }
 
+func (s *Server) adminAuditLogs(w http.ResponseWriter, r *http.Request, user store.User) {
+	logs, err := s.app.Store.AdminAuditLogs(r.Context(), adminListOptions(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取审计日志失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.AuditLog]{Code: 0, Message: "ok", Data: logs})
+}
+
 type adminProviderStatus struct {
 	Mode             string `json:"mode"`
 	Provider         string `json:"provider"`
@@ -529,6 +601,68 @@ func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user sto
 		},
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]adminProviderStatus]{Code: 0, Message: "ok", Data: statuses})
+}
+
+type stripeWebhookEvent struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Data struct {
+		Object stripeWebhookObject `json:"object"`
+	} `json:"data"`
+}
+
+type stripeWebhookObject struct {
+	ID               string   `json:"id"`
+	Subscription     stripeID `json:"subscription"`
+	Status           string   `json:"status"`
+	PaymentStatus    string   `json:"payment_status"`
+	BillingReason    string   `json:"billing_reason"`
+	CurrentPeriodEnd int64    `json:"current_period_end"`
+	PeriodEnd        int64    `json:"period_end"`
+	Lines            struct {
+		Data []struct {
+			Period struct {
+				End int64 `json:"end"`
+			} `json:"period"`
+		} `json:"data"`
+	} `json:"lines"`
+}
+
+func (object stripeWebhookObject) periodEndTime() time.Time {
+	if object.CurrentPeriodEnd > 0 {
+		return time.Unix(object.CurrentPeriodEnd, 0).UTC()
+	}
+	if object.PeriodEnd > 0 {
+		return time.Unix(object.PeriodEnd, 0).UTC()
+	}
+	for _, line := range object.Lines.Data {
+		if line.Period.End > 0 {
+			return time.Unix(line.Period.End, 0).UTC()
+		}
+	}
+	return time.Time{}
+}
+
+type stripeID string
+
+func (id *stripeID) UnmarshalJSON(data []byte) error {
+	var value string
+	if err := json.Unmarshal(data, &value); err == nil {
+		*id = stripeID(value)
+		return nil
+	}
+	var object struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	*id = stripeID(object.ID)
+	return nil
+}
+
+func (id stripeID) String() string {
+	return string(id)
 }
 
 func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {

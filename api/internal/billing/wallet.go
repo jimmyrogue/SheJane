@@ -62,16 +62,17 @@ type Transaction struct {
 type Wallet struct {
 	mu sync.Mutex
 
-	ID                  string
-	OwnerType           string
-	UserID              string
-	PlanCode            string
-	MonthlyCreditLimit  int64
-	MonthlyCreditsUsed  int64
-	ExtraCreditsBalance int64
-	PeriodStart         time.Time
-	PeriodEnd           time.Time
-	Status              string
+	ID                   string
+	OwnerType            string
+	UserID               string
+	PlanCode             string
+	MonthlyCreditLimit   int64
+	MonthlyCreditsUsed   int64
+	ExtraCreditsBalance  int64
+	PeriodStart          time.Time
+	PeriodEnd            time.Time
+	Status               string
+	StripeSubscriptionID string
 
 	reservations map[string]*Reservation
 	transactions []*Transaction
@@ -197,15 +198,39 @@ func (w *Wallet) Release(reservationID string) error {
 }
 
 func (w *Wallet) AddMonthlyGrant(amount int64, idempotencyKey string) {
+	w.ApplySubscriptionGrant(amount, "", time.Time{}, idempotencyKey)
+}
+
+func (w *Wallet) ApplySubscriptionGrant(amount int64, stripeSubscriptionID string, periodEnd time.Time, idempotencyKey string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	w.MonthlyCreditLimit = amount
 	w.MonthlyCreditsUsed = 0
 	w.PlanCode = "pro"
+	w.Status = "active"
+	if stripeSubscriptionID != "" {
+		w.StripeSubscriptionID = stripeSubscriptionID
+	}
 	w.PeriodStart = time.Now().UTC()
-	w.PeriodEnd = w.PeriodStart.AddDate(0, 1, 0)
+	if periodEnd.IsZero() || periodEnd.Before(w.PeriodStart) {
+		w.PeriodEnd = w.PeriodStart.AddDate(0, 1, 0)
+	} else {
+		w.PeriodEnd = periodEnd
+	}
 	w.appendTransactionLocked("subscription_grant", "", amount, "monthly subscription credits granted", idempotencyKey)
+}
+
+func (w *Wallet) UpdateSubscriptionStatus(status string, periodEnd time.Time) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if status != "" {
+		w.Status = status
+	}
+	if !periodEnd.IsZero() {
+		w.PeriodEnd = periodEnd
+	}
 }
 
 func (w *Wallet) AdjustExtraCredits(delta int64, reason string, idempotencyKey string) error {
@@ -226,28 +251,30 @@ func (w *Wallet) Snapshot() WalletSnapshot {
 	defer w.mu.Unlock()
 
 	return WalletSnapshot{
-		ID:                  w.ID,
-		PlanCode:            w.PlanCode,
-		MonthlyCreditLimit:  w.MonthlyCreditLimit,
-		MonthlyCreditsUsed:  w.MonthlyCreditsUsed,
-		MonthlyRemaining:    w.monthlyRemainingLocked(),
-		ExtraCreditsBalance: w.ExtraCreditsBalance,
-		PeriodStart:         w.PeriodStart,
-		PeriodEnd:           w.PeriodEnd,
-		Status:              w.Status,
+		ID:                   w.ID,
+		PlanCode:             w.PlanCode,
+		MonthlyCreditLimit:   w.MonthlyCreditLimit,
+		MonthlyCreditsUsed:   w.MonthlyCreditsUsed,
+		MonthlyRemaining:     w.monthlyRemainingLocked(),
+		ExtraCreditsBalance:  w.ExtraCreditsBalance,
+		PeriodStart:          w.PeriodStart,
+		PeriodEnd:            w.PeriodEnd,
+		Status:               w.Status,
+		StripeSubscriptionID: w.StripeSubscriptionID,
 	}
 }
 
 type WalletSnapshot struct {
-	ID                  string    `json:"id"`
-	PlanCode            string    `json:"plan_code"`
-	MonthlyCreditLimit  int64     `json:"monthly_credit_limit"`
-	MonthlyCreditsUsed  int64     `json:"monthly_credits_used"`
-	MonthlyRemaining    int64     `json:"monthly_remaining"`
-	ExtraCreditsBalance int64     `json:"extra_credits_balance"`
-	PeriodStart         time.Time `json:"period_start"`
-	PeriodEnd           time.Time `json:"period_end"`
-	Status              string    `json:"status"`
+	ID                   string    `json:"id"`
+	PlanCode             string    `json:"plan_code"`
+	MonthlyCreditLimit   int64     `json:"monthly_credit_limit"`
+	MonthlyCreditsUsed   int64     `json:"monthly_credits_used"`
+	MonthlyRemaining     int64     `json:"monthly_remaining"`
+	ExtraCreditsBalance  int64     `json:"extra_credits_balance"`
+	PeriodStart          time.Time `json:"period_start"`
+	PeriodEnd            time.Time `json:"period_end"`
+	Status               string    `json:"status"`
+	StripeSubscriptionID string    `json:"stripe_subscription_id,omitempty"`
 }
 
 func (w *Wallet) monthlyRemainingLocked() int64 {

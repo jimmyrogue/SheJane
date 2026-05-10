@@ -4,13 +4,13 @@ Updated: 2026-05-10
 
 ## 当前管理边界
 
-Phase 1.6 提供独立管理后台 MVP。普通用户 client 与 admin web 分开构建、分开部署：
+Phase 1.7 提供独立管理后台和账单生命周期加固。普通用户 client 与 admin web 分开构建、分开部署：
 
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
-- 支付与订阅：后台只读展示订单；真实支付、退款、补单仍由 Stripe Dashboard 管理。
+- 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
 - 模型/provider：后台只读展示 fast/deep 当前 provider、base URL、model、mock/real 状态和 key 是否已配置，不显示也不修改 API key。
-- 审计：账号状态变更和额外额度调整都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
+- 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
 
 ## 本地启动
 
@@ -87,6 +87,43 @@ DEEP_PROVIDER_API_KEY=同一个或单独的 DeepSeek API Key
 DEEP_MODEL=deepseek-v4-pro
 ```
 
+## Stripe 订阅与 Webhook
+
+Stripe Checkout 使用 `mode=subscription` 和 `STRIPE_PRICE_ID` 创建订阅 checkout。生产环境需要在 Stripe Workbench 配置 webhook endpoint：
+
+```text
+POST https://你的 API 域名/api/v1/payment/webhook
+```
+
+建议至少订阅这些事件：
+
+- `checkout.session.completed`：保存 subscription ID，订单标记为 `paid`，发放本月额度。
+- `invoice.paid` / `invoice.payment_succeeded`：续费成功后重置本月已用额度并发放新周期额度。
+- `invoice.payment_failed`：同步钱包状态为 `past_due`。
+- `customer.subscription.updated`：同步 Stripe subscription 状态。
+- `customer.subscription.deleted`：同步钱包状态为 `canceled`。
+
+本地合成 webhook smoke：
+
+```bash
+docker compose up -d --build
+make smoke-stripe-webhook
+```
+
+如果 API 配置了 `STRIPE_WEBHOOK_SECRET`，脚本会优先使用当前 shell 的同名变量；没有时会自动读取当前目录 `.env` 中的值：
+
+```bash
+export STRIPE_WEBHOOK_SECRET=whsec_xxx
+make smoke-stripe-webhook
+```
+
+账本规则：
+
+- Stripe event ID 先进入 `stripe_events`，处理成功后写 `processed_at`；重复事件不会重复发放额度。
+- 月额度只通过 subscription grant/renewal 重置，人工后台只允许调整 `extra_credits_balance`。
+- `wallet_transactions.idempotency_key` 会记录 `stripe:<event_id>`，便于排查重复投递。
+- 后台订单和审计页只读，不提供手动改订单、补单、退款、删除审计或重放 webhook 的入口。
+
 ## 常用管理命令
 
 查看 API 日志：
@@ -142,6 +179,29 @@ select
 from audit_logs
 order by created_at desc
 limit 20;
+
+select
+  stripe_event_id,
+  event_type,
+  processed_at,
+  created_at
+from stripe_events
+order by created_at desc
+limit 20;
+
+select
+  po.id,
+  u.email,
+  po.status as order_status,
+  po.stripe_checkout_session_id,
+  po.stripe_subscription_id,
+  w.status as wallet_status,
+  po.created_at
+from payment_orders po
+join wallets w on w.id = po.wallet_id
+join users u on u.id = w.user_id
+order by po.created_at desc
+limit 20;
 ```
 
 停止服务：
@@ -169,6 +229,7 @@ docker compose up --build -d
 - 额度调整：只调整额外额度，必须填写原因，不允许扣成负数。
 - 调用记录：全局只读列表，可按 API 参数扩展过滤。
 - 订单记录：全局只读列表，显示订单 ID、用户、金额、状态、Stripe session、创建时间。
+- 审计日志：只读展示后台操作和关键账务事件，不提供删除、修改或重放入口。
 - 模型状态：只读展示 provider、base URL、model、mock/real 状态、API key 是否配置。
 
 当前不支持：
@@ -179,3 +240,13 @@ docker compose up --build -d
 - 不做团队/组织后台、成员邀请、团队额度池或发票管理。
 
 Provider key 不进入后台，是为了降低浏览器泄露、日志泄露和误操作风险。密钥继续由 `.env`、部署平台 secret 和供应商控制台管理；后台只显示布尔状态，便于判断当前 API 是否可能走真实 provider。
+
+## 生产上线检查
+
+上线前至少确认：
+
+- `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名。
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库。
+- Stripe webhook endpoint 已订阅 Phase 1.7 事件列表，Dashboard 中最近一次投递为 2xx。
+- `make test` 和 `make build` 通过；本地或预发环境跑过 `make smoke-real-llm` 和 `make smoke-stripe-webhook`。
+- 管理员只能通过 `ADMIN_EMAILS` 创建/提权，生产后台域名只开放给可信运营人员。

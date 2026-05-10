@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Ban,
+  ClipboardList,
   Coins,
   Database,
   KeyRound,
@@ -47,6 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AdminAPI,
+  type AdminAuditLog,
   type AdminLLMCall,
   type AdminOrder,
   type AdminOverview,
@@ -56,7 +58,7 @@ import {
   type AuthPayload,
 } from './shared/api/client'
 
-type AdminSection = 'overview' | 'users' | 'usage' | 'orders' | 'providers'
+type AdminSection = 'overview' | 'users' | 'usage' | 'orders' | 'providers' | 'audit'
 
 const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 }> = [
   { id: 'overview', label: '概览', icon: BarChart3 },
@@ -64,6 +66,7 @@ const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 
   { id: 'usage', label: '用量', icon: MessageSquareText },
   { id: 'orders', label: '订单', icon: ReceiptText },
   { id: 'providers', label: '模型', icon: Settings },
+  { id: 'audit', label: '审计', icon: ClipboardList },
 ]
 
 export function App() {
@@ -223,6 +226,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [calls, setCalls] = useState<AdminLLMCall[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [providers, setProviders] = useState<AdminProviderStatus[]>([])
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
   const [selectedUser, setSelectedUser] = useState<AdminUserDetail | null>(null)
   const [query, setQuery] = useState('')
   const [delta, setDelta] = useState('')
@@ -238,18 +242,20 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, userData, callData, orderData, providerData] = await Promise.all([
+      const [overviewData, userData, callData, orderData, providerData, auditData] = await Promise.all([
         api.adminOverview(),
         api.adminUsers(nextQuery),
         api.adminLLMCalls(),
         api.adminOrders(),
         api.adminProviders(),
+        api.adminAuditLogs(),
       ])
       setOverview(overviewData)
       setUsers(userData)
       setCalls(callData)
       setOrders(orderData)
       setProviders(providerData)
+      setAuditLogs(auditData)
 
       const currentUserId = selectedUser?.user.id
       const detailUserId = currentUserId && userData.some((item) => item.user.id === currentUserId) ? currentUserId : userData[0]?.user.id
@@ -431,6 +437,10 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
             <TabsContent value="providers" className="mt-0">
               <ProvidersCard providers={providers} />
+            </TabsContent>
+
+            <TabsContent value="audit" className="mt-0">
+              <AuditCard logs={auditLogs} />
             </TabsContent>
           </Tabs>
         </main>
@@ -658,6 +668,7 @@ function OrdersCard({ orders }: { orders: AdminOrder[] }) {
               <TableHead>用户</TableHead>
               <TableHead>金额</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>订阅</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -668,14 +679,55 @@ function OrdersCard({ orders }: { orders: AdminOrder[] }) {
                   <TableCell className="max-w-36 truncate">{order.user_email ?? order.user_id ?? 'unknown'}</TableCell>
                   <TableCell>{formatCurrency(order.amount_cny)}</TableCell>
                   <TableCell><StatusBadge status={order.status} /></TableCell>
+                  <TableCell className="max-w-40 truncate">{order.stripe_subscription_id || '-'}</TableCell>
                 </TableRow>
               ))
             ) : (
-              <EmptyTableRow columns={4} label="暂无订单" />
+              <EmptyTableRow columns={5} label="暂无订单" />
             )}
           </TableBody>
         </Table>
-        {orders[0] ? <p className="mt-3 truncate text-xs text-muted-foreground">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · {formatDateTime(orders[0].created_at)}</p> : null}
+        {orders[0] ? <p className="mt-3 truncate text-xs text-muted-foreground">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · 钱包 {orders[0].wallet_status || '-'} · {formatDateTime(orders[0].created_at)}</p> : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AuditCard({ logs }: { logs: AdminAuditLog[] }) {
+  return (
+    <Card id="audit" className="min-w-0">
+      <CardHeader>
+        <CardTitle>审计</CardTitle>
+        <CardDescription>只读展示后台操作和关键账务事件。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>动作</TableHead>
+              <TableHead>对象</TableHead>
+              <TableHead>操作者</TableHead>
+              <TableHead>时间</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {logs.length ? (
+              logs.slice(0, 10).map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell>
+                    <div className="font-medium">{log.action}</div>
+                    <div className="max-w-72 truncate text-xs text-muted-foreground">{formatMetadata(log.metadata)}</div>
+                  </TableCell>
+                  <TableCell className="max-w-40 truncate">{log.target_type || '-'} · {log.target_id || '-'}</TableCell>
+                  <TableCell className="max-w-32 truncate">{log.actor_user_id || 'system'}</TableCell>
+                  <TableCell className="whitespace-nowrap">{formatDateTime(log.created_at)}</TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <EmptyTableRow columns={4} label="暂无审计记录" />
+            )}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   )
@@ -767,7 +819,7 @@ function EmptyTableRow({ columns, label }: { columns: number; label: string }) {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const variant = status === 'disabled' || status === 'failed' ? 'destructive' : status === 'active' || status === 'succeeded' || status === 'success' ? 'default' : 'secondary'
+  const variant = status === 'disabled' || status === 'failed' || status === 'past_due' || status === 'canceled' || status === 'unpaid' ? 'destructive' : status === 'active' || status === 'paid' || status === 'succeeded' || status === 'success' ? 'default' : 'secondary'
   return <Badge variant={variant}>{status}</Badge>
 }
 
@@ -784,4 +836,15 @@ function formatDateTime(value?: string) {
     return '-'
   }
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatMetadata(value: string) {
+  if (!value) {
+    return ''
+  }
+  try {
+    return JSON.stringify(JSON.parse(value))
+  } catch {
+    return value
+  }
 }

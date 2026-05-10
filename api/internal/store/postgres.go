@@ -254,17 +254,17 @@ func (s *PostgresStore) CreatePaymentOrder(ctx context.Context, order PaymentOrd
 		order.CreatedAt = time.Now().UTC()
 	}
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO payment_orders (wallet_id, type, amount_cny, status, checkout_url, stripe_checkout_session_id, idempotency_key, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		INSERT INTO payment_orders (wallet_id, type, amount_cny, status, checkout_url, stripe_checkout_session_id, stripe_subscription_id, idempotency_key, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		RETURNING id::text, created_at
-	`, order.WalletID, order.Type, order.AmountCNY, order.Status, order.CheckoutURL, nullableString(order.StripeSessionID), nullableString(order.IdempotencyKey), order.CreatedAt).
+	`, order.WalletID, order.Type, order.AmountCNY, order.Status, order.CheckoutURL, nullableString(order.StripeSessionID), nullableString(order.StripeSubscriptionID), nullableString(order.IdempotencyKey), order.CreatedAt).
 		Scan(&order.ID, &order.CreatedAt)
 	return order, err
 }
 
 func (s *PostgresStore) PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id::text, wallet_id::text, type, amount_cny, status, COALESCE(checkout_url,''), COALESCE(stripe_checkout_session_id,''), COALESCE(idempotency_key,''), created_at
+		SELECT id::text, wallet_id::text, type, amount_cny, status, COALESCE(checkout_url,''), COALESCE(stripe_checkout_session_id,''), COALESCE(stripe_subscription_id,''), COALESCE(idempotency_key,''), created_at
 		FROM payment_orders
 		WHERE wallet_id=$1
 		ORDER BY created_at DESC
@@ -277,7 +277,7 @@ func (s *PostgresStore) PaymentOrdersByWallet(ctx context.Context, walletID stri
 	orders := make([]PaymentOrder, 0)
 	for rows.Next() {
 		var order PaymentOrder
-		if err := rows.Scan(&order.ID, &order.WalletID, &order.Type, &order.AmountCNY, &order.Status, &order.CheckoutURL, &order.StripeSessionID, &order.IdempotencyKey, &order.CreatedAt); err != nil {
+		if err := rows.Scan(&order.ID, &order.WalletID, &order.Type, &order.AmountCNY, &order.Status, &order.CheckoutURL, &order.StripeSessionID, &order.StripeSubscriptionID, &order.IdempotencyKey, &order.CreatedAt); err != nil {
 			return nil, err
 		}
 		orders = append(orders, order)
@@ -285,19 +285,26 @@ func (s *PostgresStore) PaymentOrdersByWallet(ctx context.Context, walletID stri
 	return orders, rows.Err()
 }
 
-func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, monthlyCredits int64) error {
+func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer rollback(tx)
+	if periodEnd.IsZero() {
+		periodEnd = time.Now().UTC().AddDate(0, 1, 0)
+	}
+	if eventID == "" {
+		eventID = stripeSessionID
+	}
 
 	var walletID string
 	err = tx.QueryRowContext(ctx, `
-		UPDATE payment_orders SET status='paid'
+		UPDATE payment_orders
+		SET status='paid', stripe_subscription_id=COALESCE(NULLIF($2, ''), stripe_subscription_id)
 		WHERE stripe_checkout_session_id=$1 OR id::text=$1
 		RETURNING wallet_id::text
-	`, stripeSessionID).Scan(&walletID)
+	`, stripeSessionID, stripeSubscriptionID).Scan(&walletID)
 	if err != nil {
 		return mapNotFound(err)
 	}
@@ -306,14 +313,102 @@ func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionI
 	var extraBalance int64
 	err = tx.QueryRowContext(ctx, `
 		UPDATE wallets
-		SET plan_code='pro', monthly_credit_limit=$2, monthly_credits_used=0, period_start=NOW(), period_end=NOW() + INTERVAL '30 days', updated_at=NOW()
+		SET plan_code='pro',
+			monthly_credit_limit=$2,
+			monthly_credits_used=0,
+			period_start=NOW(),
+			period_end=$3,
+			status='active',
+			stripe_subscription_id=COALESCE(NULLIF($4, ''), stripe_subscription_id),
+			updated_at=NOW()
 		WHERE id=$1
 		RETURNING monthly_credits_used, extra_credits_balance
-	`, walletID, monthlyCredits).Scan(&monthlyUsed, &extraBalance)
+	`, walletID, monthlyCredits, periodEnd, stripeSubscriptionID).Scan(&monthlyUsed, &extraBalance)
 	if err != nil {
 		return err
 	}
-	if err := insertWalletTransaction(ctx, tx, walletID, "", "subscription_grant", monthlyCredits, monthlyUsed, extraBalance, "monthly subscription credits granted", "stripe:"+stripeSessionID); err != nil {
+	if err := insertWalletTransaction(ctx, tx, walletID, "", "subscription_grant", monthlyCredits, monthlyUsed, extraBalance, "monthly subscription credits granted", "stripe:"+eventID); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.subscription_paid", "wallet", walletID, map[string]any{"event_id": eventID, "stripe_checkout_session_id": stripeSessionID, "stripe_subscription_id": stripeSubscriptionID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) MarkSubscriptionRenewed(ctx context.Context, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if periodEnd.IsZero() {
+		periodEnd = time.Now().UTC().AddDate(0, 1, 0)
+	}
+
+	var walletID string
+	var monthlyUsed int64
+	var extraBalance int64
+	err = tx.QueryRowContext(ctx, `
+		UPDATE wallets
+		SET plan_code='pro',
+			monthly_credit_limit=$2,
+			monthly_credits_used=0,
+			period_start=NOW(),
+			period_end=$3,
+			status='active',
+			updated_at=NOW()
+		WHERE stripe_subscription_id=$1
+		RETURNING id::text, monthly_credits_used, extra_credits_balance
+	`, stripeSubscriptionID, monthlyCredits, periodEnd).Scan(&walletID, &monthlyUsed, &extraBalance)
+	if err != nil {
+		return mapNotFound(err)
+	}
+	if err := insertWalletTransaction(ctx, tx, walletID, "", "subscription_grant", monthlyCredits, monthlyUsed, extraBalance, "monthly subscription credits renewed", "stripe:"+eventID); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.subscription_renewed", "wallet", walletID, map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) UpdateSubscriptionStatus(ctx context.Context, stripeSubscriptionID string, status string, periodEnd time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	var walletID string
+	if periodEnd.IsZero() {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE wallets
+			SET status=$2, updated_at=NOW()
+			WHERE stripe_subscription_id=$1
+			RETURNING id::text
+		`, stripeSubscriptionID, status).Scan(&walletID)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE wallets
+			SET status=$2, period_end=$3, updated_at=NOW()
+			WHERE stripe_subscription_id=$1
+			RETURNING id::text
+		`, stripeSubscriptionID, status, periodEnd).Scan(&walletID)
+	}
+	if err != nil {
+		return mapNotFound(err)
+	}
+	if status != "active" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE payment_orders
+			SET status=$2
+			WHERE stripe_subscription_id=$1 AND type='subscription'
+		`, stripeSubscriptionID, status); err != nil {
+			return err
+		}
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.subscription_status_update", "wallet", walletID, map[string]any{"status": status, "stripe_subscription_id": stripeSubscriptionID}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -321,16 +416,33 @@ func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionI
 
 func (s *PostgresStore) RecordStripeEvent(ctx context.Context, eventID string, eventType string, payload []byte) (bool, error) {
 	var raw json.RawMessage = payload
-	result, err := s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO stripe_events (stripe_event_id, event_type, payload)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (stripe_event_id) DO NOTHING
-	`, eventID, eventType, raw)
-	if err != nil {
+	`, eventID, eventType, raw); err != nil {
 		return false, err
 	}
+	var processedAt sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT processed_at FROM stripe_events WHERE stripe_event_id=$1`, eventID).Scan(&processedAt); err != nil {
+		return false, err
+	}
+	return !processedAt.Valid, nil
+}
+
+func (s *PostgresStore) MarkStripeEventProcessed(ctx context.Context, eventID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE stripe_events SET processed_at=NOW() WHERE stripe_event_id=$1`, eventID)
+	if err != nil {
+		return err
+	}
 	rows, err := result.RowsAffected()
-	return rows > 0, err
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PostgresStore) AdminOverview(ctx context.Context) (AdminOverview, error) {
@@ -519,8 +631,8 @@ func (s *PostgresStore) AdminPaymentOrders(ctx context.Context, opts AdminListOp
 	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT o.id::text, o.wallet_id::text, o.type, o.amount_cny, o.status, COALESCE(o.checkout_url,''),
-			COALESCE(o.stripe_checkout_session_id,''), COALESCE(o.idempotency_key,''), o.created_at,
-			u.id::text, u.email
+			COALESCE(o.stripe_checkout_session_id,''), COALESCE(o.stripe_subscription_id,''), COALESCE(o.idempotency_key,''), o.created_at,
+			u.id::text, u.email, w.plan_code, w.status
 		FROM payment_orders o
 		JOIN wallets w ON w.id = o.wallet_id
 		JOIN users u ON u.id = w.user_id
@@ -537,12 +649,38 @@ func (s *PostgresStore) AdminPaymentOrders(ctx context.Context, opts AdminListOp
 	orders := make([]AdminPaymentOrder, 0)
 	for rows.Next() {
 		var item AdminPaymentOrder
-		if err := rows.Scan(&item.ID, &item.WalletID, &item.Type, &item.AmountCNY, &item.Status, &item.CheckoutURL, &item.StripeSessionID, &item.IdempotencyKey, &item.CreatedAt, &item.UserID, &item.UserEmail); err != nil {
+		if err := rows.Scan(&item.ID, &item.WalletID, &item.Type, &item.AmountCNY, &item.Status, &item.CheckoutURL, &item.StripeSessionID, &item.StripeSubscriptionID, &item.IdempotencyKey, &item.CreatedAt, &item.UserID, &item.UserEmail, &item.PlanCode, &item.WalletStatus); err != nil {
 			return nil, err
 		}
 		orders = append(orders, item)
 	}
 	return orders, rows.Err()
+}
+
+func (s *PostgresStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, COALESCE(actor_user_id::text, ''), action, COALESCE(target_type, ''),
+			COALESCE(target_id::text, ''), metadata::text, created_at
+		FROM audit_logs
+		WHERE ($1='' OR actor_user_id::text=$1 OR target_id::text=$1)
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, opts.UserID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs := make([]AuditLog, 0)
+	for rows.Next() {
+		var log AuditLog
+		if err := rows.Scan(&log.ID, &log.ActorUserID, &log.Action, &log.TargetType, &log.TargetID, &log.Metadata, &log.CreatedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	return logs, rows.Err()
 }
 
 func (s *PostgresStore) userByQuery(ctx context.Context, query string, args ...any) (User, error) {
@@ -635,7 +773,7 @@ func ensureWalletTx(ctx context.Context, tx *sql.Tx, userID string, monthlyCredi
 func selectWalletTx(ctx context.Context, tx *sql.Tx, userID string, forUpdate bool) (*billing.Wallet, error) {
 	query := `
 		SELECT id::text, COALESCE(user_id::text,''), plan_code, monthly_credit_limit, monthly_credits_used,
-			extra_credits_balance, period_start, period_end, status
+			extra_credits_balance, period_start, period_end, status, COALESCE(stripe_subscription_id, '')
 		FROM wallets
 		WHERE user_id=$1
 	`
@@ -651,7 +789,8 @@ func selectWalletTx(ctx context.Context, tx *sql.Tx, userID string, forUpdate bo
 	var periodStart time.Time
 	var periodEnd time.Time
 	var status string
-	err := tx.QueryRowContext(ctx, query, userID).Scan(&id, &walletUserID, &planCode, &monthlyLimit, &monthlyUsed, &extraBalance, &periodStart, &periodEnd, &status)
+	var stripeSubscriptionID string
+	err := tx.QueryRowContext(ctx, query, userID).Scan(&id, &walletUserID, &planCode, &monthlyLimit, &monthlyUsed, &extraBalance, &periodStart, &periodEnd, &status, &stripeSubscriptionID)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -662,6 +801,7 @@ func selectWalletTx(ctx context.Context, tx *sql.Tx, userID string, forUpdate bo
 	wallet.PeriodStart = periodStart
 	wallet.PeriodEnd = periodEnd
 	wallet.Status = status
+	wallet.StripeSubscriptionID = stripeSubscriptionID
 	return wallet, nil
 }
 

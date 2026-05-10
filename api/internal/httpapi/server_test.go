@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/coldflame/jiandanly/api/internal/app"
+	"github.com/coldflame/jiandanly/api/internal/billing"
 	"github.com/coldflame/jiandanly/api/internal/config"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
@@ -319,6 +320,184 @@ func TestAdminAdjustsExtraCreditsWithTransactionAndAudit(t *testing.T) {
 	}
 }
 
+func TestStripeCheckoutCompletedStoresSubscriptionAndIsIdempotent(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+		cfg.MonthlyCredits = 12345
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	userToken := registerAndTokenWithEmail(t, server, "paid@example.com")
+
+	order := createSubscriptionCheckout(t, server, userToken)
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_1", "checkout.session.completed", map[string]any{
+		"id":             order.StripeSessionID,
+		"subscription":   "sub_test_123",
+		"payment_status": "paid",
+		"status":         "complete",
+	}))
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_1", "checkout.session.completed", map[string]any{
+		"id":             order.StripeSessionID,
+		"subscription":   "sub_test_123",
+		"payment_status": "paid",
+		"status":         "complete",
+	}))
+
+	balance := billingBalance(t, server, userToken)
+	if balance.PlanCode != "pro" {
+		t.Fatalf("plan code = %q, want pro", balance.PlanCode)
+	}
+	if balance.Status != "active" {
+		t.Fatalf("wallet status = %q, want active", balance.Status)
+	}
+	if balance.MonthlyCreditLimit != 12345 {
+		t.Fatalf("monthly credit limit = %d, want 12345", balance.MonthlyCreditLimit)
+	}
+
+	transactions := walletTransactions(t, server, userToken)
+	grants := 0
+	for _, tx := range transactions {
+		if tx.Type == "subscription_grant" {
+			grants++
+		}
+	}
+	if grants != 1 {
+		t.Fatalf("subscription grants = %d, want 1, transactions = %#v", grants, transactions)
+	}
+
+	orders := adminOrdersBody(t, server, adminToken)
+	if !strings.Contains(orders, `"stripe_subscription_id":"sub_test_123"`) {
+		t.Fatalf("admin orders missing subscription id: %s", orders)
+	}
+	if !strings.Contains(orders, `"status":"paid"`) {
+		t.Fatalf("admin orders missing paid status: %s", orders)
+	}
+}
+
+func TestStripeWebhookRejectsMissingEventIdentity(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(`{"data":{"object":{"id":"cs_missing_event"}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("webhook status = %d, want 400, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStripeInvoicePaidRenewsMonthlyCreditsOnce(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.MonthlyCredits = 9000
+	})
+	userToken := registerAndTokenWithEmail(t, server, "renew@example.com")
+	order := createSubscriptionCheckout(t, server, userToken)
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_renew", "checkout.session.completed", map[string]any{
+		"id":           order.StripeSessionID,
+		"subscription": "sub_renew_123",
+	}))
+
+	sendTestChat(t, server, userToken)
+	usedBeforeRenewal := billingBalance(t, server, userToken).MonthlyCreditsUsed
+	if usedBeforeRenewal == 0 {
+		t.Fatal("expected chat to consume monthly credits before renewal")
+	}
+
+	postStripeWebhook(t, server, stripeEvent("evt_invoice_cycle_1", "invoice.paid", map[string]any{
+		"id":             "in_cycle_1",
+		"subscription":   "sub_renew_123",
+		"billing_reason": "subscription_cycle",
+		"period_end":     1780000000,
+	}))
+	postStripeWebhook(t, server, stripeEvent("evt_invoice_cycle_1", "invoice.paid", map[string]any{
+		"id":             "in_cycle_1",
+		"subscription":   "sub_renew_123",
+		"billing_reason": "subscription_cycle",
+		"period_end":     1780000000,
+	}))
+
+	balance := billingBalance(t, server, userToken)
+	if balance.MonthlyCreditsUsed != 0 {
+		t.Fatalf("monthly credits used after renewal = %d, want 0", balance.MonthlyCreditsUsed)
+	}
+	if balance.Status != "active" {
+		t.Fatalf("wallet status after renewal = %q, want active", balance.Status)
+	}
+	if balance.MonthlyCreditLimit != 9000 {
+		t.Fatalf("monthly credit limit after renewal = %d, want 9000", balance.MonthlyCreditLimit)
+	}
+
+	transactions := walletTransactions(t, server, userToken)
+	grants := 0
+	for _, tx := range transactions {
+		if tx.Type == "subscription_grant" {
+			grants++
+		}
+	}
+	if grants != 2 {
+		t.Fatalf("subscription grants = %d, want checkout + one renewal, transactions = %#v", grants, transactions)
+	}
+}
+
+func TestStripeSubscriptionFailureAndCancellationUpdateWalletStatus(t *testing.T) {
+	server := newTestServer(t)
+	userToken := registerAndTokenWithEmail(t, server, "status@example.com")
+	order := createSubscriptionCheckout(t, server, userToken)
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_status", "checkout.session.completed", map[string]any{
+		"id":           order.StripeSessionID,
+		"subscription": "sub_status_123",
+	}))
+
+	postStripeWebhook(t, server, stripeEvent("evt_invoice_failed_1", "invoice.payment_failed", map[string]any{
+		"id":           "in_failed_1",
+		"subscription": "sub_status_123",
+	}))
+	if got := billingBalance(t, server, userToken).Status; got != "past_due" {
+		t.Fatalf("wallet status after payment failure = %q, want past_due", got)
+	}
+
+	postStripeWebhook(t, server, stripeEvent("evt_sub_deleted_1", "customer.subscription.deleted", map[string]any{
+		"id":     "sub_status_123",
+		"status": "canceled",
+	}))
+	if got := billingBalance(t, server, userToken).Status; got != "canceled" {
+		t.Fatalf("wallet status after cancellation = %q, want canceled", got)
+	}
+}
+
+func TestAdminAuditLogsAreReadOnlyAndOrdersExposeSubscriptionID(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	userToken := registerAndTokenWithEmail(t, server, "audit-target@example.com")
+	user := currentUser(t, server, userToken)
+
+	statusUpdate := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/users/"+user.ID+"/status", strings.NewReader(`{"status":"disabled","reason":"support test"}`))
+	statusUpdate.Header.Set("Authorization", "Bearer "+adminToken)
+	statusUpdate.Header.Set("Content-Type", "application/json")
+	statusRecorder := httptest.NewRecorder()
+	server.ServeHTTP(statusRecorder, statusUpdate)
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status update = %d, body = %s", statusRecorder.Code, statusRecorder.Body.String())
+	}
+
+	audit := httptest.NewRequest(http.MethodGet, "/api/v1/admin/audit-logs", nil)
+	audit.Header.Set("Authorization", "Bearer "+adminToken)
+	auditRecorder := httptest.NewRecorder()
+	server.ServeHTTP(auditRecorder, audit)
+	if auditRecorder.Code != http.StatusOK {
+		t.Fatalf("audit logs status = %d, body = %s", auditRecorder.Code, auditRecorder.Body.String())
+	}
+	if !strings.Contains(auditRecorder.Body.String(), "admin.user_status_update") {
+		t.Fatalf("audit logs missing user status action: %s", auditRecorder.Body.String())
+	}
+
+	if body := adminOrdersBody(t, server, adminToken); strings.Contains(body, "secret") {
+		t.Fatalf("orders should not expose secrets: %s", body)
+	}
+}
+
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	server, _ := newTestServerAndStore(t, nil)
@@ -396,4 +575,105 @@ func adminUserDetail(t *testing.T, server http.Handler, token string, userID str
 		t.Fatalf("decode admin user detail response: %v", err)
 	}
 	return body.Data
+}
+
+func createSubscriptionCheckout(t *testing.T, server http.Handler, token string) store.PaymentOrder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/subscription/checkout", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[store.PaymentOrder]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout response: %v", err)
+	}
+	if body.Data.StripeSessionID == "" {
+		t.Fatalf("checkout response missing stripe session id: %#v", body.Data)
+	}
+	return body.Data
+}
+
+func postStripeWebhook(t *testing.T, server http.Handler, payload string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, body = %s, payload = %s", recorder.Code, recorder.Body.String(), payload)
+	}
+}
+
+func stripeEvent(eventID string, eventType string, object map[string]any) string {
+	payload, err := json.Marshal(map[string]any{
+		"id":   eventID,
+		"type": eventType,
+		"data": map[string]any{
+			"object": object,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return string(payload)
+}
+
+func billingBalance(t *testing.T, server http.Handler, token string) billing.WalletSnapshot {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/balance", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("balance status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[billing.WalletSnapshot]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode balance response: %v", err)
+	}
+	return body.Data
+}
+
+func walletTransactions(t *testing.T, server http.Handler, token string) []billing.Transaction {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/transactions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("transactions status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[[]billing.Transaction]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode transactions response: %v", err)
+	}
+	return body.Data
+}
+
+func adminOrdersBody(t *testing.T, server http.Handler, token string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/orders", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin orders status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.String()
+}
+
+func sendTestChat(t *testing.T, server http.Handler, token string) {
+	t.Helper()
+	body := `{"model":"fast","stream":true,"client_conversation_id":"conv-renew","client_message_id":"msg-renew","scene":"chat","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("chat status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
 }

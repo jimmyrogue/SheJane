@@ -23,7 +23,7 @@ type MemoryStore struct {
 	wallets      map[string]*billing.Wallet
 	llmCalls     map[string]LLMCallRecord
 	orders       map[string]PaymentOrder
-	stripeEvents map[string]struct{}
+	stripeEvents map[string]bool
 	auditLogs    []AuditLog
 }
 
@@ -35,7 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		wallets:      make(map[string]*billing.Wallet),
 		llmCalls:     make(map[string]LLMCallRecord),
 		orders:       make(map[string]PaymentOrder),
-		stripeEvents: make(map[string]struct{}),
+		stripeEvents: make(map[string]bool),
 		auditLogs:    make([]AuditLog, 0),
 	}
 }
@@ -265,20 +265,56 @@ func (s *MemoryStore) PaymentOrdersByWallet(ctx context.Context, walletID string
 	return orders, nil
 }
 
-func (s *MemoryStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, monthlyCredits int64) error {
+func (s *MemoryStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for id, order := range s.orders {
 		if order.StripeSessionID == stripeSessionID || order.ID == stripeSessionID {
 			order.Status = "paid"
+			order.StripeSubscriptionID = stripeSubscriptionID
 			s.orders[id] = order
 			for _, wallet := range s.wallets {
 				if wallet.ID == order.WalletID {
-					wallet.AddMonthlyGrant(monthlyCredits, "stripe:"+stripeSessionID)
+					wallet.ApplySubscriptionGrant(monthlyCredits, stripeSubscriptionID, periodEnd, "stripe:"+eventID)
+					s.appendAuditLocked("", "billing.subscription_paid", "wallet", wallet.ID, "stripe checkout completed", map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID})
 					return nil
 				}
 			}
+		}
+	}
+	return ErrNotFound
+}
+
+func (s *MemoryStore) MarkSubscriptionRenewed(ctx context.Context, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, wallet := range s.wallets {
+		if wallet.StripeSubscriptionID == stripeSubscriptionID {
+			wallet.ApplySubscriptionGrant(monthlyCredits, stripeSubscriptionID, periodEnd, "stripe:"+eventID)
+			s.appendAuditLocked("", "billing.subscription_renewed", "wallet", wallet.ID, "stripe invoice paid", map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID})
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (s *MemoryStore) UpdateSubscriptionStatus(ctx context.Context, stripeSubscriptionID string, status string, periodEnd time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, order := range s.orders {
+		if order.StripeSubscriptionID == stripeSubscriptionID && status != "active" {
+			order.Status = status
+			s.orders[id] = order
+		}
+	}
+	for _, wallet := range s.wallets {
+		if wallet.StripeSubscriptionID == stripeSubscriptionID {
+			wallet.UpdateSubscriptionStatus(status, periodEnd)
+			s.appendAuditLocked("", "billing.subscription_status_update", "wallet", wallet.ID, "stripe subscription status", map[string]any{"status": status, "stripe_subscription_id": stripeSubscriptionID})
+			return nil
 		}
 	}
 	return ErrNotFound
@@ -288,11 +324,22 @@ func (s *MemoryStore) RecordStripeEvent(ctx context.Context, eventID string, eve
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.stripeEvents[eventID]; ok {
-		return false, nil
+	if processed, ok := s.stripeEvents[eventID]; ok {
+		return !processed, nil
 	}
-	s.stripeEvents[eventID] = struct{}{}
+	s.stripeEvents[eventID] = false
 	return true, nil
+}
+
+func (s *MemoryStore) MarkStripeEventProcessed(ctx context.Context, eventID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.stripeEvents[eventID]; !ok {
+		return ErrNotFound
+	}
+	s.stripeEvents[eventID] = true
+	return nil
 }
 
 func (s *MemoryStore) AdminOverview(ctx context.Context) (AdminOverview, error) {
@@ -453,7 +500,12 @@ func (s *MemoryStore) AdminPaymentOrders(ctx context.Context, opts AdminListOpti
 		if opts.Status != "" && order.Status != opts.Status {
 			continue
 		}
-		orders = append(orders, AdminPaymentOrder{PaymentOrder: order, UserID: userID, UserEmail: email})
+		item := AdminPaymentOrder{PaymentOrder: order, UserID: userID, UserEmail: email}
+		if wallet := s.walletByIDLocked(order.WalletID); wallet != nil {
+			item.PlanCode = wallet.PlanCode
+			item.WalletStatus = wallet.Status
+		}
+		orders = append(orders, item)
 	}
 	sort.Slice(orders, func(i, j int) bool {
 		return orders[i].CreatedAt.After(orders[j].CreatedAt)
@@ -462,6 +514,27 @@ func (s *MemoryStore) AdminPaymentOrders(ctx context.Context, opts AdminListOpti
 		return []AdminPaymentOrder{}, nil
 	}
 	return orders[offset:minInt(offset+limit, len(orders))], nil
+}
+
+func (s *MemoryStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	logs := make([]AuditLog, 0, len(s.auditLogs))
+	for _, log := range s.auditLogs {
+		if opts.UserID != "" && log.ActorUserID != opts.UserID && log.TargetID != opts.UserID {
+			continue
+		}
+		logs = append(logs, log)
+	}
+	sort.Slice(logs, func(i, j int) bool {
+		return logs[i].CreatedAt.After(logs[j].CreatedAt)
+	})
+	if offset > len(logs) {
+		return []AuditLog{}, nil
+	}
+	return logs[offset:minInt(offset+limit, len(logs))], nil
 }
 
 func (s *MemoryStore) HasAuditLog(action string, targetID string) bool {
@@ -536,6 +609,15 @@ func (s *MemoryStore) userForWalletLocked(walletID string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+func (s *MemoryStore) walletByIDLocked(walletID string) *billing.Wallet {
+	for _, wallet := range s.wallets {
+		if wallet.ID == walletID {
+			return wallet
+		}
+	}
+	return nil
 }
 
 func (s *MemoryStore) appendAuditLocked(actorUserID string, action string, targetType string, targetID string, reason string, metadata map[string]any) {
