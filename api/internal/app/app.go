@@ -1,0 +1,178 @@
+package app
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/coldflame/jiandanly/api/internal/config"
+	"github.com/coldflame/jiandanly/api/internal/llm"
+	"github.com/coldflame/jiandanly/api/internal/store"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUnauthorized       = errors.New("unauthorized")
+	ErrValidation         = errors.New("validation error")
+)
+
+type App struct {
+	Config config.Config
+	Store  store.Store
+	Router *llm.Router
+}
+
+type AuthResult struct {
+	AccessToken  string
+	RefreshToken string
+	User         store.User
+}
+
+type Claims struct {
+	UserID string `json:"uid"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+	jwt.RegisteredClaims
+}
+
+func New(cfg config.Config, st store.Store) *App {
+	fast, deep := providersFromConfig(cfg)
+	return &App{
+		Config: cfg,
+		Store:  st,
+		Router: llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel),
+	}
+}
+
+func (a *App) Register(ctx context.Context, email string, password string, name string) (AuthResult, error) {
+	if !validEmail(email) || len(password) < 8 {
+		return AuthResult{}, fmt.Errorf("%w: email and password are required", ErrValidation)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return AuthResult{}, err
+	}
+	user, err := a.Store.CreateUser(ctx, email, string(hash), name)
+	if err != nil {
+		return AuthResult{}, err
+	}
+	if _, err := a.Store.EnsureWallet(ctx, user.ID, a.Config.MonthlyCredits); err != nil {
+		return AuthResult{}, err
+	}
+	return a.issueAuth(ctx, user)
+}
+
+func (a *App) Login(ctx context.Context, email string, password string) (AuthResult, error) {
+	user, err := a.Store.UserByEmail(ctx, email)
+	if err != nil {
+		return AuthResult{}, ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return AuthResult{}, ErrInvalidCredentials
+	}
+	return a.issueAuth(ctx, user)
+}
+
+func (a *App) Refresh(ctx context.Context, refreshToken string) (AuthResult, error) {
+	user, err := a.Store.UseRefreshToken(ctx, refreshToken)
+	if err != nil {
+		return AuthResult{}, ErrUnauthorized
+	}
+	return a.issueAuth(ctx, user)
+}
+
+func (a *App) Logout(ctx context.Context, refreshToken string) error {
+	if refreshToken == "" {
+		return nil
+	}
+	return a.Store.RevokeRefreshToken(ctx, refreshToken)
+}
+
+func (a *App) Authenticate(ctx context.Context, token string) (store.User, error) {
+	claims := &Claims{}
+	parsed, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (any, error) {
+		return []byte(a.Config.JWTSecret), nil
+	})
+	if err != nil || !parsed.Valid {
+		return store.User{}, ErrUnauthorized
+	}
+	return a.Store.UserByID(ctx, claims.UserID)
+}
+
+func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
+	tokens := llm.EstimateTokens(request.Messages)
+	if request.Model == string(llm.ModeDeep) {
+		tokens *= 2
+	}
+	if tokens < 300 {
+		return 300
+	}
+	return int64(tokens)
+}
+
+func (a *App) NewRequestID() string {
+	return randomToken("req")
+}
+
+func (a *App) issueAuth(ctx context.Context, user store.User) (AuthResult, error) {
+	now := time.Now().UTC()
+	claims := Claims{
+		UserID: user.ID,
+		Email:  user.Email,
+		Role:   user.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   user.ID,
+			Issuer:    "jiandanly-api",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(a.Config.AccessTokenTTL)),
+		},
+	}
+	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(a.Config.JWTSecret))
+	if err != nil {
+		return AuthResult{}, err
+	}
+	refreshToken := randomToken("refresh")
+	if err := a.Store.SaveRefreshToken(ctx, refreshToken, user.ID, now.Add(a.Config.RefreshTokenTTL)); err != nil {
+		return AuthResult{}, err
+	}
+	return AuthResult{AccessToken: accessToken, RefreshToken: refreshToken, User: user}, nil
+}
+
+func providersFromConfig(cfg config.Config) (llm.Provider, llm.Provider) {
+	if cfg.MockLLM {
+		return llm.NewMockProvider("deepseek-fast", "Mock Jiandan response from fast mode"), llm.NewMockProvider("claude-deep", "Mock Jiandan response from deep mode")
+	}
+
+	fast := llm.Provider(llm.NewMockProvider("deepseek-fast", "Mock Jiandan response from fast fallback"))
+	if cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "" {
+		fast = llm.NewOpenAICompatibleProvider("deepseek-fast", cfg.FastProviderBaseURL, cfg.FastProviderAPIKey)
+	}
+
+	deep := llm.Provider(llm.NewMockProvider("claude-deep", "Mock Jiandan response from deep fallback"))
+	if cfg.AnthropicAPIKey != "" {
+		deep = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, cfg.AnthropicVersion)
+	} else if cfg.DeepProviderBaseURL != "" && cfg.DeepProviderAPIKey != "" {
+		deep = llm.NewOpenAICompatibleProvider("deep-compatible", cfg.DeepProviderBaseURL, cfg.DeepProviderAPIKey)
+	}
+	return fast, deep
+}
+
+func randomToken(prefix string) string {
+	var bytes [24]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		panic(errors.New("crypto/rand failed"))
+	}
+	return prefix + "_" + hex.EncodeToString(bytes[:])
+}
+
+func validEmail(email string) bool {
+	email = strings.TrimSpace(email)
+	return strings.Contains(email, "@") && strings.Contains(email, ".")
+}

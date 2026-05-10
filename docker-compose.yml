@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: jiandanly
+      POSTGRES_USER: jiandanly
+      POSTGRES_PASSWORD: jiandanly
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jiandanly -d jiandanly"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: jiandanly
+    volumes:
+      - ./api/migrations:/migrations:ro
+    command: ["psql", "-h", "postgres", "-U", "jiandanly", "-d", "jiandanly", "-f", "/migrations/001_phase1.sql"]
+
+  api:
+    build:
+      context: ./api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HTTP_ADDR: :8080
+      DATABASE_URL: postgres://jiandanly:jiandanly@postgres:5432/jiandanly?sslmode=disable
+      CLIENT_BASE_URL: http://localhost:5173
+    ports:
+      - "8080:8080"
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - client
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

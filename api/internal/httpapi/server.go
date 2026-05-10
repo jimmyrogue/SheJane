@@ -1,0 +1,563 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/coldflame/jiandanly/api/internal/app"
+	"github.com/coldflame/jiandanly/api/internal/billing"
+	"github.com/coldflame/jiandanly/api/internal/llm"
+	"github.com/coldflame/jiandanly/api/internal/store"
+)
+
+const refreshCookieName = "jiandan_refresh"
+
+type Server struct {
+	app *app.App
+	mux *http.ServeMux
+}
+
+type apiResponse[T any] struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    T      `json:"data"`
+}
+
+type authPayload struct {
+	AccessToken string     `json:"access_token"`
+	User        store.User `json:"user"`
+}
+
+func NewServer(application *app.App) http.Handler {
+	server := &Server{
+		app: application,
+		mux: http.NewServeMux(),
+	}
+	server.routes()
+	return server.withMiddleware(server.mux)
+}
+
+func (s *Server) routes() {
+	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("POST /api/v1/auth/register", s.register)
+	s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	s.mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	s.mux.HandleFunc("GET /api/v1/user/me", s.requireAuth(s.me))
+	s.mux.HandleFunc("GET /api/v1/billing/balance", s.requireAuth(s.balance))
+	s.mux.HandleFunc("GET /api/v1/billing/subscription", s.requireAuth(s.subscription))
+	s.mux.HandleFunc("GET /api/v1/billing/usage", s.requireAuth(s.usage))
+	s.mux.HandleFunc("GET /api/v1/billing/transactions", s.requireAuth(s.transactions))
+	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
+	s.mux.HandleFunc("POST /api/v1/payment/webhook", s.paymentWebhook)
+	s.mux.HandleFunc("POST /api/v1/chat/completions", s.requireAuth(s.chatCompletions))
+}
+
+func (s *Server) withMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = s.app.NewRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("Access-Control-Allow-Origin", corsOrigin(r.Header.Get("Origin"), s.app.Config.ClientBaseURL))
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				slog.Error("request panic", "request_id", requestID, "error", recovered)
+				writeError(w, http.StatusInternalServerError, 50001, "服务暂时不可用")
+			}
+			slog.Info("request completed", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds())
+		}()
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKeyRequestID{}, requestID)))
+	})
+}
+
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, apiResponse[map[string]string]{Code: 0, Message: "ok", Data: map[string]string{"status": "ok"}})
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := s.app.Register(r.Context(), body.Email, body.Password, body.Name)
+	if err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, 40002, "邮箱已注册")
+			return
+		}
+		writeError(w, http.StatusBadRequest, 40201, "邮箱或密码不符合要求")
+		return
+	}
+	s.setRefreshCookie(w, result.RefreshToken)
+	writeJSON(w, http.StatusCreated, apiResponse[authPayload]{Code: 0, Message: "ok", Data: authPayload{AccessToken: result.AccessToken, User: result.User}})
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := s.app.Login(r.Context(), body.Email, body.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, 40001, "邮箱或密码错误")
+		return
+	}
+	s.setRefreshCookie(w, result.RefreshToken)
+	writeJSON(w, http.StatusOK, apiResponse[authPayload]{Code: 0, Message: "ok", Data: authPayload{AccessToken: result.AccessToken, User: result.User}})
+}
+
+func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(refreshCookieName)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, 40001, "未登录或登录已过期")
+		return
+	}
+	result, err := s.app.Refresh(r.Context(), cookie.Value)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, 40001, "未登录或登录已过期")
+		return
+	}
+	s.setRefreshCookie(w, result.RefreshToken)
+	writeJSON(w, http.StatusOK, apiResponse[authPayload]{Code: 0, Message: "ok", Data: authPayload{AccessToken: result.AccessToken, User: result.User}})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(refreshCookieName); err == nil {
+		_ = s.app.Logout(r.Context(), cookie.Value)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.app.Config.CookieSecure,
+	})
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"logged_out": true}})
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request, user store.User) {
+	writeJSON(w, http.StatusOK, apiResponse[store.User]{Code: 0, Message: "ok", Data: user})
+}
+
+func (s *Server) balance(w http.ResponseWriter, r *http.Request, user store.User) {
+	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取额度失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[billing.WalletSnapshot]{Code: 0, Message: "ok", Data: wallet.Snapshot()})
+}
+
+func (s *Server) subscription(w http.ResponseWriter, r *http.Request, user store.User) {
+	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取订阅失败")
+		return
+	}
+	snapshot := wallet.Snapshot()
+	writeJSON(w, http.StatusOK, apiResponse[map[string]any]{
+		Code:    0,
+		Message: "ok",
+		Data: map[string]any{
+			"plan_code":  snapshot.PlanCode,
+			"status":     snapshot.Status,
+			"period_end": snapshot.PeriodEnd,
+		},
+	})
+}
+
+func (s *Server) usage(w http.ResponseWriter, r *http.Request, user store.User) {
+	records, err := s.app.Store.LLMCallsByUser(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取用量失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.LLMCallRecord]{Code: 0, Message: "ok", Data: records})
+}
+
+func (s *Server) transactions(w http.ResponseWriter, r *http.Request, user store.User) {
+	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取账本失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]billing.Transaction]{Code: 0, Message: "ok", Data: wallet.Transactions()})
+}
+
+func (s *Server) subscriptionCheckout(w http.ResponseWriter, r *http.Request, user store.User) {
+	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取钱包失败")
+		return
+	}
+	order := store.PaymentOrder{
+		WalletID:       wallet.ID,
+		Type:           "subscription",
+		AmountCNY:      3900,
+		Status:         "pending",
+		IdempotencyKey: "sub:" + user.ID + ":" + time.Now().UTC().Format("20060102150405"),
+	}
+
+	if s.app.Config.StripeSecretKey == "" || s.app.Config.StripePriceID == "" {
+		order.StripeSessionID = "dev_" + s.app.NewRequestID()
+		order.CheckoutURL = s.app.Config.ClientBaseURL + "/billing/success?session_id=" + url.QueryEscape(order.StripeSessionID)
+	} else {
+		sessionID, checkoutURL, err := s.createStripeCheckout(r.Context(), user, order)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, 50201, "创建 Stripe Checkout 失败")
+			return
+		}
+		order.StripeSessionID = sessionID
+		order.CheckoutURL = checkoutURL
+	}
+
+	created, err := s.app.Store.CreatePaymentOrder(r.Context(), order)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "创建支付订单失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[store.PaymentOrder]{Code: 0, Message: "ok", Data: created})
+}
+
+func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
+	payload, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, 40201, "无效的 webhook")
+		return
+	}
+	if s.app.Config.StripeWebhookSecret != "" && !verifyStripeSignature(payload, r.Header.Get("Stripe-Signature"), s.app.Config.StripeWebhookSecret) {
+		writeError(w, http.StatusBadRequest, 40101, "Stripe 签名验证失败")
+		return
+	}
+
+	var event struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Data struct {
+			Object struct {
+				ID string `json:"id"`
+			} `json:"object"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
+		writeError(w, http.StatusBadRequest, 40201, "无效的 Stripe 事件")
+		return
+	}
+	shouldProcess, err := s.app.Store.RecordStripeEvent(r.Context(), event.ID, event.Type, payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "记录 Stripe 事件失败")
+		return
+	}
+	if shouldProcess && event.Type == "checkout.session.completed" {
+		if err := s.app.Store.MarkSubscriptionPaid(r.Context(), event.Data.Object.ID, s.app.Config.MonthlyCredits); err != nil && !errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusInternalServerError, 50001, "处理订阅支付失败")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"received": true}})
+}
+
+func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body llm.ChatRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if len(body.Messages) == 0 {
+		writeError(w, http.StatusBadRequest, 40201, "消息不能为空")
+		return
+	}
+	mode := llm.NormalizeMode(body.Model)
+	body.Model = string(mode)
+	body.Messages = llm.InjectScenePrompt(body.Scene, body.Messages)
+	provider, model := s.app.Router.Select(mode)
+	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
+
+	estimatedCredits := s.app.EstimateCredits(body)
+	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
+		UserID:               user.ID,
+		RequestID:            requestID,
+		ClientConversationID: body.ClientConversationID,
+		ClientMessageID:      body.ClientMessageID,
+		Mode:                 string(mode),
+	})
+	if err != nil {
+		if billing.IsInsufficientCredits(err) {
+			writeError(w, http.StatusPaymentRequired, 40202, "额度不足，请升级或充值")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, 50001, "额度预留失败")
+		return
+	}
+
+	if err := s.app.Store.CreateLLMCall(r.Context(), store.LLMCallRecord{
+		RequestID:            requestID,
+		UserID:               user.ID,
+		WalletID:             reservation.WalletID,
+		ReservationID:        reservation.ID,
+		ClientConversationID: body.ClientConversationID,
+		ClientMessageID:      body.ClientMessageID,
+		Mode:                 string(mode),
+		Scene:                body.Scene,
+		Model:                model,
+		Provider:             provider.Name(),
+		Status:               "streaming",
+		StartedAt:            time.Now().UTC(),
+	}); err != nil {
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
+		writeError(w, http.StatusInternalServerError, 50001, "记录调用失败")
+		return
+	}
+
+	chunks, errs := provider.Stream(r.Context(), body, model)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	inputTokens := llm.EstimateTokens(body.Messages)
+	outputTokens := 0
+	for chunk := range chunks {
+		if chunk.InputTokens > 0 {
+			inputTokens = chunk.InputTokens
+		}
+		if chunk.OutputTokens > outputTokens {
+			outputTokens = chunk.OutputTokens
+		}
+		if chunk.Text != "" {
+			_ = writeSSE(w, requestID, chunk.Text, "")
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+
+	if err := <-errs; err != nil {
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
+		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
+		_ = writeSSE(w, requestID, "", "error")
+		return
+	}
+
+	actualCredits := int64(inputTokens + outputTokens)
+	if actualCredits < 1 {
+		actualCredits = 1
+	}
+	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
+		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
+		_ = writeSSE(w, requestID, "", "error")
+		return
+	}
+	_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "done", inputTokens, outputTokens, actualCredits, "")
+	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+}
+
+func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r.Header.Get("Authorization"))
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, 40001, "未登录或登录已过期")
+			return
+		}
+		user, err := s.app.Authenticate(r.Context(), token)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, 40001, "未登录或登录已过期")
+			return
+		}
+		next(w, r, user)
+	}
+}
+
+func (s *Server) setRefreshCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     refreshCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   s.app.Config.CookieSecure,
+		MaxAge:   int(s.app.Config.RefreshTokenTTL.Seconds()),
+	})
+}
+
+func (s *Server) createStripeCheckout(ctx context.Context, user store.User, order store.PaymentOrder) (string, string, error) {
+	values := url.Values{}
+	values.Set("mode", "subscription")
+	values.Set("line_items[0][price]", s.app.Config.StripePriceID)
+	values.Set("line_items[0][quantity]", "1")
+	values.Set("customer_email", user.Email)
+	values.Set("client_reference_id", user.ID)
+	values.Set("success_url", s.app.Config.ClientBaseURL+"/billing/success?session_id={CHECKOUT_SESSION_ID}")
+	values.Set("cancel_url", s.app.Config.ClientBaseURL+"/billing")
+	values.Set("metadata[wallet_id]", order.WalletID)
+	values.Set("metadata[idempotency_key]", order.IdempotencyKey)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.stripe.com/v1/checkout/sessions", strings.NewReader(values.Encode()))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.app.Config.StripeSecretKey)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Stripe-Version", "2026-02-25.clover")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return "", "", fmt.Errorf("stripe checkout status %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	var decoded struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		return "", "", err
+	}
+	return decoded.ID, decoded.URL, nil
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, 40201, "请求参数无效")
+		return false
+	}
+	return true
+}
+
+func writeJSON[T any](w http.ResponseWriter, status int, response apiResponse[T]) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func writeError(w http.ResponseWriter, status int, code int, message string) {
+	writeJSON(w, status, apiResponse[any]{Code: code, Message: message, Data: nil})
+}
+
+func writeSSE(w io.Writer, requestID string, text string, finishReason string) error {
+	event := map[string]any{
+		"id":      requestID,
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]string{"content": text},
+			"finish_reason": finishReason,
+		}},
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", payload)
+	return err
+}
+
+func bearerToken(header string) string {
+	if header == "" {
+		return ""
+	}
+	prefix := "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
+}
+
+func corsOrigin(requestOrigin string, configuredOrigin string) string {
+	if requestOrigin == "" || requestOrigin == configuredOrigin {
+		return configuredOrigin
+	}
+	parsed, err := url.Parse(requestOrigin)
+	if err != nil {
+		return configuredOrigin
+	}
+	switch parsed.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return requestOrigin
+	default:
+		return configuredOrigin
+	}
+}
+
+func verifyStripeSignature(payload []byte, signatureHeader string, secret string) bool {
+	parts := strings.Split(signatureHeader, ",")
+	var timestamp string
+	var signature string
+	for _, part := range parts {
+		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(keyValue) != 2 {
+			continue
+		}
+		switch keyValue[0] {
+		case "t":
+			timestamp = keyValue[1]
+		case "v1":
+			signature = keyValue[1]
+		}
+	}
+	if timestamp == "" || signature == "" {
+		return false
+	}
+	if parsed, err := strconv.ParseInt(timestamp, 10, 64); err != nil || time.Since(time.Unix(parsed, 0)) > 5*time.Minute {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+type contextKeyRequestID struct{}
+
+func requestIDFromContext(ctx context.Context, fallback string) string {
+	value, ok := ctx.Value(contextKeyRequestID{}).(string)
+	if !ok || value == "" {
+		return fallback
+	}
+	return value
+}
+
+func cloneBody(body []byte) io.ReadCloser {
+	return io.NopCloser(bytes.NewReader(body))
+}

@@ -1,0 +1,72 @@
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local agent/tooling scratch
+.claude/
+.codex/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and runtime temp files
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# Node / Vite / React
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+.vite/
+**/.vite/
+.turbo/
+.parcel-cache/
+coverage/
+**/coverage/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Electron packaging output
+release/
+out/
+*.asar
+*.dmg
+*.pkg
+*.AppImage
+*.exe
+
+# Go build/test artifacts
+api/api
+api/jiandanly-api
+*.test
+*.prof
+coverage.out
+
+# Local databases and generated data
+*.db
+*.sqlite
+*.sqlite3
+postgres-data/
+redis-data/
+
+# Docker / deployment local overrides
+docker-compose.override.yml
+Caddyfile.local
