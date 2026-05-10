@@ -30,7 +30,6 @@ Phase 1.7 is complete for the individual-user MVP: Stripe subscription webhooks 
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Execution plan | Green | `docs/superpowers/plans/2026-05-10-phase-1-7-production-readiness.md` |
-| Stripe lifecycle tests | Not started | Backend tests will cover checkout, renewal, failure, cancellation, and idempotency |
 | Stripe lifecycle tests | Green | `cd api && go test ./internal/httpapi` covers checkout, renewal, failure, cancellation, and idempotency |
 | Checkout completion | Green | Persists `stripe_subscription_id`, marks order paid, grants monthly credits |
 | Renewal success | Green | `invoice.paid` with renewal reason refreshes monthly quota once per event |
