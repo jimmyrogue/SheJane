@@ -1,8 +1,10 @@
 # 简单（Jiandan）后端技术方案
 
-**版本：** v1.3
+**版本：** v1.4
 **更新：** 2026-05-10
 **适用阶段：** Phase 1-5 分阶段落地
+
+> **v1.4 更新说明：** 架构改为 Hybrid Local-first：后端不默认保存完整 prompt、response、messages；长期聊天历史由客户端本地保存。后端只保存账号、订阅、钱包账本、轻量模型调用记录、支付事件、分享快照和临时文件元数据。
 
 > **v1.3 更新说明：** 删除当前阶段 BYOK 支持；移除 MVP 中的用户 API Key / 断线续传 / RAG / Office / 图片生成等重功能；计费改为包月额度为主、额外充值为补充，并引入钱包账本、额度预留、幂等支付事件和审计日志。
 
@@ -26,7 +28,7 @@
    - 5.5 Prompt 模板层
    - 5.6 流式生成与恢复策略
    - 5.7 多模态 / Vision 支持
-   - 5.8 RAG 知识库（Phase 3）
+   - 5.8 RAG 知识库（Phase 4+ opt-in 云能力）
    - 5.9 Tool Calling / Agentic Loop（Phase 4）
    - 5.10 Office 文件自研实现（Phase 4）
    - 5.11 图片生成（Phase 4）
@@ -67,13 +69,13 @@
 │  Router (chi)                                            │
 │  ├── /api/v1/auth/*          认证路由                    │
 │  ├── /api/v1/user/*          用户资料与安全设置           │
-│  ├── /api/v1/chat/*          对话路由（含 SSE）           │
-│  ├── /api/v1/conversations/* 对话管理（搜索/分享/导出）   │
+│  ├── /api/v1/chat/*          模型网关（含 SSE）           │
+│  ├── /api/v1/shared-conversations/* 分享快照（主动上传） │
 │  ├── /api/v1/billing/*       计费路由                    │
 │  ├── /api/v1/team/*          团队路由（Phase 5）          │
 │  ├── /api/v1/template/*      模板路由                    │
 │  ├── /api/v1/file/*          文件路由                    │
-│  ├── /api/v1/knowledge/*     知识库 / RAG 路由（Phase 3） │
+│  ├── /api/v1/knowledge/*     云知识库 / RAG 路由（P4+）  │
 │  ├── /api/v1/webhooks/*      Webhook 管理路由（Phase 5）  │
 │  ├── /api/v1/images/*        图片生成路由（Phase 4）      │
 │  ├── /api/v1/payment/*       支付路由（Stripe Webhook）   │
@@ -108,11 +110,11 @@
 │ 团队表      │  │ 临时任务进度     │
 │ 钱包账本    │  │ RAG 查询缓存    │
 │ 支付事件    │  └─────────────────┘
-│ 对话历史    │
-│ 文件元数据  │
+│ 调用记录    │
+│ 分享快照    │
+│ 临时文件元数据│
 │ Prompt模板  │
 │ 知识库分片  │
-│ 分享链接    │
 │ Webhook配置 │
 │ file_jobs   │
 │ audit_logs  │
@@ -131,6 +133,7 @@
 - **单体优先**：MVP 阶段不做微服务，一个 Go binary 包含所有逻辑，运维极简
 - **接口标准化**：对外暴露 OpenAI 兼容接口，方便客户端和后续开放平台复用
 - **账务优先**：请求前预留额度，结束后结算；PostgreSQL 账本是唯一真实来源，Redis 只做缓存
+- **本地优先**：长期聊天历史默认由客户端保存，后端不作为 prompt / response / messages 主存储
 - **故障隔离**：LLM 供应商故障不影响主服务，熔断后自动降级
 - **数据主权**：用户数据可随时导出 / 删除，跨境处理和供应商转发需要明确告知
 - **可观测性**：结构化日志 + 请求链路 ID，方便排查问题
@@ -160,15 +163,14 @@ jiandanly-api/
 │   ├── handler/
 │   │   ├── auth.go
 │   │   ├── user.go               # 用户信息 / 安全设置
-│   │   ├── chat.go               # 对话 / SSE 流
-│   │   ├── conversation.go       # 对话列表 / 搜索 / 分享 / 导出
+│   │   ├── chat.go               # 模型网关 / SSE 流
+│   │   ├── share.go              # 分享快照 / 公开访问
 │   │   ├── billing.go
 │   │   ├── team.go
 │   │   ├── template.go
 │   │   ├── file.go
-│   │   ├── knowledge.go          # RAG 知识库管理
+│   │   ├── knowledge.go          # 云知识库管理（P4+）
 │   │   ├── webhook.go            # Webhook CRUD
-│   │   ├── share.go              # 公开分享页（免登录）
 │   │   ├── image.go              # 图片生成（提交任务 / 查询状态 / 历史）
 │   │   └── payment.go
 │   ├── service/
@@ -205,7 +207,7 @@ jiandanly-api/
 │   │   ├── team.go
 │   │   ├── billing.go
 │   │   ├── template.go
-│   │   ├── conversation.go
+│   │   ├── llm_call.go
 │   │   ├── file.go
 │   │   ├── knowledge.go
 │   │   └── webhook.go
@@ -214,7 +216,7 @@ jiandanly-api/
 │   │   ├── team.go
 │   │   ├── billing.go
 │   │   ├── template.go
-│   │   ├── conversation.go
+│   │   ├── llm_call.go
 │   │   ├── file.go
 │   │   └── knowledge.go
 │   └── pkg/
@@ -228,7 +230,7 @@ jiandanly-api/
 │   ├── 001_init_users.sql
 │   ├── 002_init_teams.sql
 │   ├── 003_init_wallets.sql
-│   ├── 004_init_conversations.sql
+│   ├── 004_init_llm_calls.sql
 │   ├── 005_init_templates.sql
 │   ├── 006_init_files.sql
 │   ├── 007_init_shares.sql
@@ -346,8 +348,8 @@ CREATE TABLE usage_reservations (
     wallet_id       UUID NOT NULL REFERENCES wallets(id),
     user_id         UUID NOT NULL REFERENCES users(id),
     organization_id UUID REFERENCES organizations(id),
-    conversation_id UUID,
-    message_id      UUID,
+    client_conversation_id VARCHAR(80),
+    client_message_id      VARCHAR(80),
     request_id      VARCHAR(80) NOT NULL,
     mode            VARCHAR(20) NOT NULL, -- fast | deep
     estimated_credits BIGINT NOT NULL,
@@ -377,6 +379,40 @@ CREATE INDEX idx_wallets_user ON wallets(user_id);
 CREATE INDEX idx_wallets_org  ON wallets(organization_id);
 CREATE INDEX idx_reservations_wallet ON usage_reservations(wallet_id, created_at DESC);
 CREATE INDEX idx_wallet_tx_wallet ON wallet_transactions(wallet_id, created_at DESC);
+```
+
+轻量模型调用记录用于客服排障、用量明细和风控，但不保存完整 prompt、response 或 messages 正文。`client_conversation_id` / `client_message_id` 由客户端本地数据库生成，只作为关联线索。
+
+```sql
+CREATE TABLE llm_call_records (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id      VARCHAR(80) UNIQUE NOT NULL,
+    user_id         UUID NOT NULL REFERENCES users(id),
+    wallet_id       UUID NOT NULL REFERENCES wallets(id),
+    reservation_id  UUID REFERENCES usage_reservations(id),
+
+    client_conversation_id VARCHAR(80),
+    client_message_id      VARCHAR(80),
+
+    mode            VARCHAR(20) NOT NULL, -- fast | deep
+    scene           VARCHAR(50),
+    model           VARCHAR(100),
+    provider        VARCHAR(50),
+
+    input_tokens    INT NOT NULL DEFAULT 0,
+    output_tokens   INT NOT NULL DEFAULT 0,
+    credits_cost    BIGINT NOT NULL DEFAULT 0,
+    status          VARCHAR(20) NOT NULL DEFAULT 'streaming',
+    -- streaming | done | interrupted | failed
+    error_code      VARCHAR(80),
+    error_message   VARCHAR(500),
+
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMPTZ
+);
+
+CREATE INDEX idx_llm_calls_user ON llm_call_records(user_id, started_at DESC);
+CREATE INDEX idx_llm_calls_client_conv ON llm_call_records(user_id, client_conversation_id);
 ```
 
 ### 3.4 组织 / 团队表（Phase 5 预留）
@@ -419,77 +455,30 @@ CREATE INDEX idx_org_members_org  ON organization_members(organization_id);
 CREATE INDEX idx_org_members_user ON organization_members(user_id);
 ```
 
-### 3.5 对话与消息表
+### 3.5 本地优先对话边界与后期云同步表
 
-```sql
-CREATE TABLE conversations (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+Phase 1-3 不创建云端 `conversations` / `messages` 主存储表。对话列表、详情、搜索、归档、删除、导入/导出都由客户端本地数据库负责。
 
-    title           VARCHAR(500) NOT NULL DEFAULT '新对话',
-    mode            VARCHAR(20) NOT NULL DEFAULT 'fast',  -- fast | deep
-    scene           VARCHAR(50),  -- write | read | translate | calculate | chat
-    template_id     UUID,
+只有以下场景可以把正文上传到后端：
 
-    message_count   INT NOT NULL DEFAULT 0,
-    total_tokens    INT NOT NULL DEFAULT 0,
-    total_credits   BIGINT NOT NULL DEFAULT 0,
+- 用户主动创建分享链接，上传当时的对话快照
+- 用户主动提交问题反馈，并选择附带片段
+- 后期用户显式开启 Cloud Sync / 团队共享历史 / 企业归档
 
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    archived_at TIMESTAMPTZ,
-    pinned_at   TIMESTAMPTZ        -- 置顶功能
-);
+后期 Cloud Sync 如需落库，再单独引入 `cloud_conversations` / `cloud_messages`，并以端到端加密、同步冲突、删除策略作为独立设计，不进入 MVP。
 
-CREATE INDEX idx_conversations_user   ON conversations(user_id, created_at DESC);
-CREATE INDEX idx_conversations_search ON conversations USING GIN(to_tsvector('simple', title));
-
--- 消息（content 为 JSONB 支持多模态）
-CREATE TABLE messages (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    role            VARCHAR(20) NOT NULL,  -- user | assistant | system
-
-    -- JSONB 格式，兼容 OpenAI 多模态
-    -- 纯文本：{"type": "text", "text": "..."}
-    -- 图片：  {"type": "image_url", "image_url": {"url": "s3://..."}}
-    -- 混合：  [{"type":"text","text":"..."}, {"type":"image_url",...}]
-    content         JSONB NOT NULL,
-
-    -- 模型信息
-    model    VARCHAR(100),
-    provider VARCHAR(50),
-
-    -- Token 统计
-    input_tokens  INT NOT NULL DEFAULT 0,
-    output_tokens INT NOT NULL DEFAULT 0,
-    credits_cost  BIGINT NOT NULL DEFAULT 0,
-
-    -- 流式状态
-    stream_status VARCHAR(20) NOT NULL DEFAULT 'done', -- streaming | done | interrupted
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
-
--- 消息全文搜索索引（从 JSONB content 中提取文本部分）
-CREATE INDEX idx_messages_fts ON messages
-    USING GIN(to_tsvector('simple', content::text));
-```
-
-### 3.6 对话分享表 `shared_conversations`
+### 3.6 对话分享快照表 `shared_conversations`
 
 ```sql
 CREATE TABLE shared_conversations (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     share_token     VARCHAR(64) UNIQUE NOT NULL,   -- URL 中的唯一标识
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     created_by      UUID NOT NULL REFERENCES users(id),
 
-    -- 快照（分享时固定内容，避免对话修改后影响已分享链接）
-    snapshot_data   JSONB NOT NULL,  -- 消息列表快照
+    -- 用户主动上传的本地对话快照；创建后固定，避免本地继续修改影响公开链接
+    client_conversation_id VARCHAR(80),
+    title           VARCHAR(500) NOT NULL DEFAULT '分享对话',
+    snapshot_data   JSONB NOT NULL,
 
     expires_at  TIMESTAMPTZ,         -- NULL 表示永不过期
     view_count  INT NOT NULL DEFAULT 0,
@@ -498,7 +487,7 @@ CREATE TABLE shared_conversations (
 );
 
 CREATE INDEX idx_shares_token ON shared_conversations(share_token);
-CREATE INDEX idx_shares_conv  ON shared_conversations(conversation_id);
+CREATE INDEX idx_shares_user  ON shared_conversations(created_by, created_at DESC);
 ```
 
 ### 3.7 文件元数据表 `files`
@@ -516,14 +505,19 @@ CREATE TABLE files (
     content_type VARCHAR(100) NOT NULL,
     size_bytes  BIGINT NOT NULL,
 
+    -- 留存策略
+    purpose     VARCHAR(40) NOT NULL DEFAULT 'temporary_input',
+    -- temporary_input | share_attachment | cloud_file_library | generated_output
+    retention_expires_at TIMESTAMPTZ,
+
     -- 文件处理状态
     status      VARCHAR(20) NOT NULL DEFAULT 'uploaded', -- uploaded | processing | ready | failed
-    text_content TEXT,          -- 提取的文本内容（用于 RAG 和 Vision 场景）
+    extracted_text_ref VARCHAR(512), -- 提取文本存对象存储或临时缓存引用，默认不长期写入数据库
     page_count  INT,
 
     -- 关联信息
-    conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
-    knowledge_base_id UUID,     -- 归属知识库（Phase 3）
+    client_conversation_id VARCHAR(80),
+    knowledge_base_id UUID,     -- 归属云知识库（Phase 4+ opt-in）
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -630,20 +624,22 @@ CREATE INDEX idx_usage_daily_org  ON usage_daily(organization_id, date DESC);
 CREATE INDEX idx_usage_daily_user ON usage_daily(user_id, date DESC);
 ```
 
-### 3.11 RAG 知识库表（Phase 3）
+### 3.11 RAG 知识库表（Phase 4+ opt-in 云能力）
+
+Phase 3 优先做客户端本地知识库和本地索引。以下云知识库表只在用户主动开启 Cloud Knowledge Base，或后续团队 / 企业共享知识库时启用，不进入早期 MVP 迁移。
 
 ```sql
 -- 启用 pgvector 扩展
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 知识库（一个团队可以有多个知识库，例如"产品手册"、"销售话术"）
+-- 云知识库（个人 opt-in 或 Phase 5 团队共享）
 CREATE TABLE knowledge_bases (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
     created_by      UUID NOT NULL REFERENCES users(id),
     name            VARCHAR(255) NOT NULL,
     description     TEXT,
-    is_shared       BOOLEAN NOT NULL DEFAULT TRUE,  -- 是否对团队所有成员可见
+    is_shared       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -773,27 +769,21 @@ PATCH  /api/v1/user/me
 PATCH  /api/v1/user/password
 ```
 
-### 4.5 对话接口（核心）
+### 4.5 Chat 与分享接口（核心）
 
 ```
--- 发起对话
+-- 发起模型调用
 POST   /api/v1/chat/completions        OpenAI 兼容格式，支持 stream=true
 
--- 对话管理
-GET    /api/v1/conversations           列表（分页 + 筛选）
-GET    /api/v1/conversations/search    全文搜索（?q=关键词）
-GET    /api/v1/conversations/:id       详情 + 消息列表
-PATCH  /api/v1/conversations/:id       更新（标题/置顶/归档）
-DELETE /api/v1/conversations/:id       删除
-
--- 分享与导出
-POST   /api/v1/conversations/:id/share  创建分享链接
-DELETE /api/v1/conversations/:id/share  撤销分享
-GET    /api/v1/conversations/:id/export 导出（?format=markdown|json|pdf）
+-- 分享快照：用户从本地对话中显式选择内容后上传
+POST   /api/v1/shared-conversations     创建分享链接
+DELETE /api/v1/shared-conversations/:id 撤销分享
 
 -- 公开访问（不需要登录）
 GET    /s/:token                        查看分享的对话
 ```
+
+Phase 1/2 不提供完整云端 conversation CRUD。对话列表、详情、搜索、重命名、归档、删除、导入/导出都由客户端本地数据库完成；后端只接收当次模型调用所需的 `messages`，并在创建分享时保存用户主动上传的 snapshot。
 
 **对话请求体（兼容 OpenAI，扩展场景字段）：**
 
@@ -810,10 +800,29 @@ GET    /s/:token                        查看分享的对话
         }
     ],
     "stream": true,
-    "conversation_id": "uuid",
+    "client_conversation_id": "local-conv-uuid",
+    "client_message_id": "local-msg-uuid",
     "scene": "read",
     "template_id": "uuid",
     "organization_id": "uuid"  // Phase 5 团队钱包场景必传；个人场景为空
+}
+```
+
+`client_conversation_id` 和 `client_message_id` 只用于关联用量、错误排查和本地客户端状态，不代表后端保存了完整对话。
+
+**分享快照请求体：**
+
+```json
+{
+    "client_conversation_id": "local-conv-uuid",
+    "title": "客户邮件润色",
+    "snapshot_data": {
+        "messages": [
+            {"role": "user", "content": "用户选择分享的内容"},
+            {"role": "assistant", "content": "对应回答"}
+        ]
+    },
+    "expires_at": "2026-06-10T00:00:00Z"
 }
 ```
 
@@ -858,16 +867,18 @@ POST   /api/v1/templates/:id/duplicate 复制一份到个人收藏
 ### 4.9 文件接口
 
 ```
-POST   /api/v1/files/upload-url        获取 S3 预签名上传 URL
+POST   /api/v1/files/upload-url        获取 S3 预签名上传 URL，默认 temporary_input
 POST   /api/v1/files/confirm           确认上传完成
 GET    /api/v1/files/:id
 DELETE /api/v1/files/:id
 ```
 
-### 4.10 知识库接口（Phase 4）
+`upload-url` 响应必须返回 `file_id`、`upload_url`、`expires_at`。Phase 1/2 文件默认是临时处理输入，后端定期清理 `retention_expires_at` 已过期的对象、提取结果和元数据。
+
+### 4.10 知识库接口（Phase 4+ opt-in 云知识库）
 
 ```
-GET    /api/v1/knowledge               获取团队知识库列表
+GET    /api/v1/knowledge               获取个人或团队知识库列表
 POST   /api/v1/knowledge               创建知识库
 GET    /api/v1/knowledge/:id
 PATCH  /api/v1/knowledge/:id
@@ -1197,9 +1208,9 @@ func (r *Router) Select(mode string, hasImage bool) ModelConfig {
         │
 ② 检测是否含图片 → 选择模型（Router.Select）
         │
-③ 注入 system prompt（场景 / 模板；RAG 上下文 Phase 3 启用）
+③ 注入 system prompt（场景 / 模板；云端 RAG 上下文仅 Phase 4+ opt-in 启用）
         │
-④ 创建 message 记录（status=streaming），记录 reservation_id
+④ 创建 llm_call_records（status=streaming），关联 reservation_id 与 client_*_id
         │
 ⑤ provider.BuildRequest()   ←─── 各家格式差异在此封装
         │                         DeepSeek/Qwen：直接用 OpenAI 格式
@@ -1216,11 +1227,12 @@ func (r *Router) Select(mode string, hasImage bool) ModelConfig {
         ├── 统一 Chunk → 转换为 OpenAI SSE 格式发送给客户端
         │   data: {"choices":[{"delta":{"content":"..."},"finish_reason":null}]}
         │
-        ├── 可选追加到 Redis 短期缓存（只用于体验，不作为可靠恢复）
+        ├── 客户端负责把增量写入本地 assistant message
+        ├── 可选追加到 Redis 短期缓存（只用于体验，不作为可靠恢复，也不是历史存储）
         └── 累计 token 计数
         │
 ⑧ 流结束后（同一结算流程）：
-        → 更新 message status=done
+        → 更新 llm_call_records status=done / failed / interrupted
         → 按实际 token / 工具成本结算 reservation
         → 写 wallet_transactions + usage_daily
         → 释放未使用的预留额度
@@ -1398,20 +1410,20 @@ func (s *TemplateService) Render(tmpl Template, vars map[string]string) string {
 
 ### 5.6 流式生成与恢复策略
 
-Phase 1 只保证“流式输出 + 最终消息落库”。断线后客户端重新打开对话，读取已经落库的最终消息或 interrupted 消息。真正的断线续传放到 Phase 4，必须基于服务端 generation job 和事件日志实现，不能只依赖 Redis 里追加的 chunk。
+Phase 1 只保证“云端流式转发 + 客户端本地持久化”。后端不保存完整消息正文，也不作为对话历史恢复来源。断线后客户端保留已收到的本地增量内容，并可让用户手动重试；后端只把对应 `llm_call_records` 标记为 `interrupted`，释放未使用的预留额度。
 
 ```go
-func (s *LLMProxyService) markInterrupted(ctx context.Context, messageID, reservationID string) {
-    _ = s.messageRepo.UpdateStatus(ctx, messageID, "interrupted")
+func (s *LLMProxyService) markInterrupted(ctx context.Context, requestID, reservationID string) {
+    _ = s.callRepo.UpdateStatus(ctx, requestID, "interrupted")
     _ = s.billing.Release(ctx, reservationID, "client_disconnected")
 }
 
 // Phase 4 才引入：
-// generation_jobs(id, message_id, status, cursor, provider_request_id, ...)
+// generation_jobs(id, request_id, status, cursor, provider_request_id, ...)
 // generation_events(job_id, seq, event_type, payload, created_at)
-func (h *ChatHandler) GetMessage(w http.ResponseWriter, r *http.Request) {
-    msg := h.repo.MustGetMessage(r.Context(), chi.URLParam(r, "mid"))
-    response.JSON(w, msg)
+func (h *ChatHandler) GetCallStatus(w http.ResponseWriter, r *http.Request) {
+    call := h.repo.MustGetCallByRequestID(r.Context(), chi.URLParam(r, "request_id"))
+    response.JSON(w, call)
 }
 ```
 
@@ -1437,7 +1449,7 @@ type ImageURL struct {
 }
 
 // content 可以是单个对象或数组（混合文本 + 图片）
-// 存储时统一序列化为 JSONB
+// Phase 1 仅作为请求内存结构使用，不作为后端消息历史存储
 
 // 路由层：检测是否含图片，自动选择支持 Vision 的模型
 func hasImageContent(messages []Message) bool {
@@ -1461,7 +1473,7 @@ func hasImageContent(messages []Message) bool {
 5. 客户端将此 URL 放入消息 content 中发送对话请求
 6. 后端转发给 LLM 时直接透传 URL（Claude / GPT-4o 会自行下载图片）
 
-### 5.8 RAG 知识库（Phase 3）
+### 5.8 RAG 知识库（Phase 4+ opt-in 云能力）
 
 ```
 文件上传 → 文本提取（PDF/Word/TXT）→ 分片（每片 500 token，50 token 重叠）
@@ -1473,6 +1485,8 @@ func hasImageContent(messages []Message) bool {
      → 拼入 system prompt："以下是相关参考资料：\n{chunks}"
      → 正常走 LLM 代理流程
 ```
+
+Phase 3 的个人知识库默认在客户端本地完成，不依赖这里的云端 RAG。云端 RAG 只用于用户主动开启云知识库、长任务 Agent 或 Phase 5 团队共享知识库。
 
 ```go
 func (s *RAGService) Retrieve(ctx context.Context, kbIDs []string, query string, topK int) ([]Chunk, error) {
@@ -2019,8 +2033,9 @@ func (e *OfficeToolExecutor) Execute(ctx context.Context, userID string, input T
 CREATE TABLE file_jobs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users(id),
-    conversation_id UUID REFERENCES conversations(id),
-    message_id      UUID REFERENCES messages(id),
+    client_conversation_id VARCHAR(80),
+    client_message_id      VARCHAR(80),
+    request_id      VARCHAR(80),
 
     type            VARCHAR(20) NOT NULL,    -- excel | word | ppt | image
     provider        VARCHAR(50) NOT NULL,    -- excel-go | word-go | ppt-python
@@ -2554,7 +2569,7 @@ volumes:
 ```
 
 > **注意：**
-> - PostgreSQL 镜像使用 `pgvector/pgvector:pg16`，内置 pgvector，Phase 3 启用 RAG 时无需重建数据库。
+> - PostgreSQL 镜像使用 `pgvector/pgvector:pg16`，内置 pgvector，Phase 4+ 启用 opt-in 云知识库时无需重建数据库。
 > - Redis 不承载真实余额和安全黑名单，`noeviction` 用来避免关键短期状态被静默淘汰；容量不足应暴露为错误并扩容。
 > - `ppt-sidecar` 仅监听 127.0.0.1:5001，不对外暴露；`api` 服务通过内部 Docker 网络访问它（`http://ppt-sidecar:5001`）。
 
@@ -2576,9 +2591,11 @@ jiandanly.com {
 ### 8.3 合规与数据边界
 
 - 香港部署用于降低大陆访问延迟，但不能被写成“规避中国个人信息保护义务”的技术保证。
-- 隐私政策需要明确：数据处理目的、LLM 供应商转发、文件存储位置、跨境处理、删除和导出方式。
-- 对话、上传文件、生成文件、支付事件、成员管理都要写入审计日志；日志中不得记录完整密钥、支付卡信息或未脱敏的敏感正文。
+- Local-first 是早期默认：聊天历史、对话搜索、导入/导出由客户端本地负责；后端不默认保存完整 prompt、response、messages。
+- 隐私政策需要明确：数据处理目的、LLM 供应商转发、临时文件存储位置、跨境处理、删除和导出方式。
+- 模型调用、上传文件、生成文件、支付事件、成员管理都要写入审计日志；日志中不得记录完整密钥、支付卡信息或未脱敏的敏感正文。
 - 后端转发给 LLM 供应商前，应尽量做文件类型、大小、内容长度和敏感字段过滤。
+- 临时文件必须有 `retention_expires_at`，过期对象、提取结果和元数据由定时清理任务删除。
 
 ### 8.4 Dockerfile
 
@@ -2635,7 +2652,7 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_S3_BUCKET=jiandanly-files
 AWS_S3_REGION=ap-east-1
 
-# 向量化（Phase 3，RAG 用）
+# 向量化（Phase 4+，opt-in 云知识库用）
 # 选项 A：OpenAI ada-002（精度高，有成本）
 EMBEDDING_PROVIDER=openai
 EMBEDDING_MODEL=text-embedding-3-small
@@ -2756,13 +2773,14 @@ docker-logs:
 ### Phase 1：可收费聊天 MVP
 
 - [ ] 项目脚手架（目录结构、依赖、配置加载）
-- [ ] 数据库 Schema 及 Migration（users / wallets / conversations / payments / audit_logs）
+- [ ] 数据库 Schema 及 Migration（users / wallets / llm_call_records / payments / audit_logs）
 - [ ] 认证模块（注册 / 登录 / JWT / Refresh Token 轮换）
 - [ ] JWT 鉴权中间件 + 限流中间件
 - [ ] LLM 代理核心（SSE 流式转发、DeepSeek + Claude）
 - [ ] 模型路由（快速 / 深度）
 - [ ] 场景 System Prompt 注入（最小版本）
 - [ ] 基础对话接口（`POST /api/v1/chat/completions`）
+- [ ] 轻量调用记录：保存 request_id、client_conversation_id、模型、用量、状态，不保存正文
 - [ ] 包月订阅钱包：月额度发放、额度预留、结算、释放
 - [ ] Stripe 订阅 Checkout + Webhook 幂等处理
 - [ ] 用户信息接口、账单余额接口、用量接口
@@ -2773,17 +2791,16 @@ docker-logs:
 ### Phase 2：场景化工作台
 
 - [ ] 场景卡片与模板 CRUD（系统 / 个人）
-- [ ] 文件上传（S3 预签名 + 元数据记录 + 基础文本提取）
+- [ ] 临时文件上传（S3 预签名 + `expires_at` + 元数据记录 + 基础文本提取）
 - [ ] 文档问答的非 RAG 简化版（单文件上下文长度限制）
-- [ ] 对话搜索（单独 `search_text`，不直接索引 JSONB 原文）
-- [ ] 对话分享链接（快照、撤销、过期、默认脱敏）
-- [ ] 对话导出（Markdown / JSON）
+- [ ] 本地对话搜索和导出由前端实现，后端不提供完整云端对话 CRUD
+- [ ] 对话分享链接：用户主动上传本地快照，支持撤销、过期、默认脱敏
 - [ ] 额外额度包 Checkout：信用卡 / Apple Pay / 支付宝 / 微信支付一次性充值
 
 ### Phase 3：个人高级能力
 
-- [ ] 个人文件库：文件列表、状态、再次引用、删除
-- [ ] 个人知识库：文档分片、向量化、语义检索、引用来源
+- [ ] 个人本地文件库：本地文件引用、状态、再次引用、删除
+- [ ] 个人本地知识库：客户端本地索引优先，云端知识库不默认开启
 - [ ] 个人 Prompt 收藏和常用场景快捷入口
 - [ ] 个人用量报表：按日 / 按场景 / 按模型聚合
 - [ ] 个人数据导出和账号安全入口
@@ -2792,7 +2809,7 @@ docker-logs:
 
 ### Phase 4：个人 Agent、工具与生成任务
 
-- [ ] 个人 RAG 知识库增强（pgvector + 文档分片 + 语义检索 + 权限校验）
+- [ ] Opt-in 云知识库增强（pgvector + 文档分片 + 语义检索 + 权限校验）
 - [ ] generation_jobs / generation_events，用于可靠恢复和长任务状态
 - [ ] Tool Calling / Agentic Loop（SceneTools 注册表 + 循环驱动层，最多 4 轮）
 - [ ] 异步 job worker + 文件大小 / 耗时 / 输入 JSON 大小限制
