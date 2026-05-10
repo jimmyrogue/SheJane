@@ -1,8 +1,10 @@
 # 简单（Jiandan）后端技术方案
 
-**版本：** v1.1  
+**版本：** v1.2  
 **更新：** 2026-05-10  
 **适用阶段：** Phase 1 MVP + Phase 2 核心功能
+
+> **v1.2 更新说明：** 新增 Tool Calling / Agentic Loop 架构；引入 Office 文件自研生成层：Excel（Go + excelize）、Word（Go + XML 模板填充）、PPT（Python FastAPI sidecar + python-pptx）；所有 Office 能力完全自主实现，零外部 Office API 依赖，用户完全无感知。
 
 > **v1.1 更新说明：** 基于竞品对比（LibreChat / Open WebUI / Lobe Chat / Chatbox）补充遗漏功能：对话搜索、对话分享、对话导出、多模态（Vision）、断线续传（Resumable Stream）、用户 API Key、Webhook、RAG 提前到 Phase 2、个人 Prompt 收藏、文件元数据表完善。
 
@@ -23,6 +25,8 @@
    - 5.6 断线续传（Resumable Stream）
    - 5.7 多模态 / Vision 支持
    - 5.8 RAG 知识库（Phase 2）
+   - 5.9 Tool Calling / Agentic Loop（Phase 2）
+   - 5.10 专业任务供应商（Kimi / WPS AI 等）
 6. [中间件设计](#六中间件设计)
 7. [错误处理规范](#七错误处理规范)
 8. [部署方案](#八部署方案)
@@ -83,32 +87,35 @@
 │  ├── ShareService            对话分享 / 导出             │
 │  ├── RAGService              文档向量化 / 语义检索        │
 │  ├── WebhookService          事件推送                    │
+│  ├── OfficeService           Office 文件自研生成          │
 │  └── PaymentService          Stripe 集成                 │
-└──────┬──────────────┬───────────────────────────────────┘
-       │              │
-       ▼              ▼
-┌────────────┐  ┌─────────────────────────────┐
-│ PostgreSQL │  │  Redis 7                    │
-│    16      │  │                             │
-│ + pgvector │  │ 限流计数器                   │
-│            │  │ 余额缓存                     │
-│ 用户表      │  │ Refresh Token 黑名单         │
-│ 团队表      │  │ Resumable Stream 消息缓存    │
-│ 计费记录    │  │ 验证码缓存                   │
-│ 对话历史    │  │ RAG 查询结果缓存             │
-│ 文件元数据  │  └─────────────────────────────┘
+└──────┬──────────────┬────────────────────┬──────────────┘
+       │              │                    │
+       ▼              ▼                    ▼
+┌────────────┐  ┌─────────────────┐  ┌────────────────────────┐
+│ PostgreSQL │  │  Redis 7        │  │  PPT Python Sidecar    │
+│    16      │  │                 │  │  (FastAPI + python-pptx)│
+│ + pgvector │  │ 限流计数器       │  │  localhost:5001         │
+│            │  │ 余额缓存         │  └────────────────────────┘
+│ 用户表      │  │ RT 黑名单        │
+│ 团队表      │  │ Stream 消息缓存  │
+│ 计费记录    │  │ 验证码缓存       │
+│ 对话历史    │  │ RAG 查询缓存    │
+│ 文件元数据  │  └─────────────────┘
 │ Prompt模板  │
 │ 知识库分片  │
 │ 分享链接    │
 │ 用户APIKey  │
 │ Webhook配置 │
+│ file_jobs   │
 └────────────┘
        │
        ▼
-┌──────────────────────────────────────────┐
-│          LLM Providers（对用户不可见）      │
-│  DeepSeek │ Claude │ GPT-4o │ Qwen │ ... │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│               LLM Providers（对话生成）                    │
+│        DeepSeek │ Claude │ GPT-4o │ Qwen │ ...           │
+│         统一 Provider 接口，ParseChunk 归一化 SSE 格式      │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### 1.2 设计原则
@@ -119,6 +126,7 @@
 - **故障隔离**：LLM 供应商故障不影响主服务，熔断后自动降级
 - **数据主权**：用户数据可随时导出，增强信任感（职场用户的强需求）
 - **可观测性**：结构化日志 + 请求链路 ID，方便排查问题
+- **自研 Office 生成**：Excel / Word 纯 Go 实现（excelize + XML 模板），PPT 由极轻量 Python sidecar（python-pptx）处理；三种格式全部自主掌控，不依赖任何外部 Office API
 
 ---
 
@@ -157,17 +165,24 @@ jiandanly-api/
 │   ├── service/
 │   │   ├── auth.go
 │   │   ├── llm/
-│   │   │   ├── proxy.go
+│   │   │   ├── proxy.go          # SSE 代理 + Agentic Loop
 │   │   │   ├── router.go
-│   │   │   ├── providers.go
-│   │   │   └── circuit.go
+│   │   │   ├── providers.go      # LLM 供应商适配（DeepSeek/Claude/GPT）
+│   │   │   ├── circuit.go        # 熔断器
+│   │   │   ├── tools.go          # ToolDefinition + SceneTools 注册表
+│   │   │   └── tool_executor.go  # OfficeToolExecutor（路由三种实现）
+│   │   ├── office/
+│   │   │   ├── provider.go       # OfficeProvider 接口定义
+│   │   │   ├── excel.go          # ExcelProvider（Go + excelize）
+│   │   │   ├── word.go           # WordProvider（Go + XML 模板填充）
+│   │   │   └── ppt.go            # PPTSidecarProvider（HTTP → Python）
 │   │   ├── billing.go
 │   │   ├── team.go
 │   │   ├── template.go
 │   │   ├── file.go
-│   │   ├── share.go              # 分享链接生成 / 验证
-│   │   ├── rag.go                # 文档解析 / 向量化 / 检索
-│   │   ├── webhook.go            # 事件触发 / HMAC 签名
+│   │   ├── share.go
+│   │   ├── rag.go
+│   │   ├── webhook.go
 │   │   └── payment.go
 │   ├── repository/
 │   │   ├── user.go
@@ -203,7 +218,18 @@ jiandanly-api/
 │   ├── 007_init_shares.sql
 │   ├── 008_init_api_keys.sql
 │   ├── 009_init_knowledge.sql    # pgvector 扩展 + 分片表
-│   └── 010_init_webhooks.sql
+│   ├── 010_init_webhooks.sql
+│   └── 011_init_file_jobs.sql    # Office 生成任务记录
+├── ppt-sidecar/
+│   ├── main.py                   # FastAPI + python-pptx 服务
+│   └── Dockerfile                # python:3.12-slim，仅 3 个依赖
+├── word-templates/               # 预置 Word .docx 模板（6 种）
+│   ├── business_report.docx
+│   ├── proposal.docx
+│   ├── notice.docx
+│   ├── meeting_minutes.docx
+│   ├── contract_simple.docx
+│   └── job_description.docx
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -1386,6 +1412,599 @@ func (s *RAGService) BuildContextPrompt(chunks []Chunk) string {
 }
 ```
 
+### 5.9 Tool Calling / Agentic Loop（Phase 2）
+
+#### 工具注册表
+
+按场景注入工具定义，避免无关场景浪费 token：
+
+```go
+// internal/service/llm/tools.go
+
+// 场景 → 启用的工具列表
+// chat 场景不注入任何工具，保持轻量
+var SceneTools = map[string][]ToolDefinition{
+    "calculate": {CreateExcelTool, AnalyzeDataTool},
+    "write":     {CreateWordTool, CreatePPTTool},
+    "read":      {AnalyzeFileTool, ExtractTableTool},
+    "translate": {},
+    "chat":      {},
+}
+
+var CreateExcelTool = ToolDefinition{
+    Name: "create_excel",
+    Description: `创建 Excel 文件。当用户需要生成表格、报表、数据分析结果时使用。
+支持多个 sheet、公式、基础图表（柱状图/折线图/饼图）。`,
+    InputSchema: json.RawMessage(`{
+        "type": "object",
+        "required": ["filename", "sheets"],
+        "properties": {
+            "filename": {"type": "string"},
+            "sheets": {
+                "type": "array",
+                "items": {
+                    "required": ["name","headers","rows"],
+                    "properties": {
+                        "name":     {"type": "string"},
+                        "headers":  {"type": "array", "items": {"type": "string"}},
+                        "rows":     {"type": "array", "items": {"type": "array"}},
+                        "formulas": {"type": "array", "items": {
+                            "properties": {
+                                "cell":    {"type": "string"},
+                                "formula": {"type": "string"}
+                            }
+                        }}
+                    }
+                }
+            },
+            "charts": {"type": "array", "items": {
+                "properties": {
+                    "type":       {"type": "string", "enum": ["bar","line","pie"]},
+                    "sheet":      {"type": "string"},
+                    "data_range": {"type": "string"},
+                    "title":      {"type": "string"}
+                }
+            }}
+        }
+    }`),
+}
+
+// PPT / Word 工具定义类似，schema 描述幻灯片结构或文档章节
+```
+
+#### Agentic Loop（代理层核心循环）
+
+```go
+// internal/service/llm/proxy.go
+
+func (s *LLMProxyService) Chat(ctx context.Context, req InternalRequest, w SSEWriter) error {
+    messages := req.Messages
+    tools    := SceneTools[req.Scene]
+    const maxRounds = 8  // 防无限循环
+
+    for round := 0; round < maxRounds; round++ {
+        model   := s.router.Select(req.Mode, hasImage(messages))
+        httpReq, _ := model.Provider.BuildRequest(ctx, InternalRequest{
+            Messages:  messages,
+            Tools:     tools,
+            MaxTokens: req.MaxTokens,
+            Stream:    true,
+        })
+
+        result, err := s.streamResponse(ctx, httpReq, model.Provider, w)
+        if err != nil { return err }
+
+        if result.StopReason == "end_turn" { break }
+
+        if result.StopReason == "tool_use" {
+            messages = append(messages, InternalMessage{
+                Role: "assistant", ToolCalls: result.ToolCalls,
+            })
+
+            var toolResults []ToolResult
+            for _, tc := range result.ToolCalls {
+                // 通知前端：工具开始执行
+                w.WriteEvent("tool_start", map[string]any{
+                    "tool": tc.Name, "message": toolProgressMsg(tc.Name),
+                })
+
+                output, err := s.toolRegistry.Execute(ctx, req.UserID, tc.Name, tc.Input)
+
+                // 通知前端：执行结果
+                w.WriteEvent("tool_done", map[string]any{
+                    "tool":         tc.Name,
+                    "success":      output.Success,
+                    "file_id":      output.FileID,
+                    "download_url": s.fileService.SignedURL(output.FileID),
+                })
+
+                toolResults = append(toolResults, ToolResult{
+                    ToolID: tc.ID, Content: toolResultSummary(output),
+                    IsError: err != nil || !output.Success,
+                })
+            }
+
+            // 工具结果回传给 AI，继续下一轮
+            messages = append(messages, InternalMessage{
+                Role: "user", ToolResults: toolResults,
+            })
+            continue
+        }
+        break
+    }
+    return nil
+}
+```
+
+### 5.10 Office 文件自研实现
+
+#### 三种文件类型的实现策略
+
+| 文件类型 | 实现方案 | 原因 |
+|---------|---------|------|
+| Excel (.xlsx) | 纯 Go，`excelize` 库 | 库成熟，支持公式/图表/样式，零外部依赖 |
+| Word (.docx) | 纯 Go，模板填充 | .docx 本质是 ZIP+XML，模板方式足够覆盖业务场景 |
+| PPT (.pptx) | Python 微服务，`python-pptx` | Go 的 PPT 库能力严重不足，Python 生态是业界标准 |
+
+整体思路：**Excel 和 Word 完全在 Go 主进程内完成，PPT 通过一个极轻量的 Python sidecar 服务处理，Go 通过 HTTP 调用它。**
+
+```
+AI tool_use 调用
+        │
+        ▼
+OfficeToolExecutor
+        │
+        ├── create_excel → ExcelGenerator（Go + excelize）→ .xlsx
+        ├── create_word  → WordGenerator（Go + 模板XML）→ .docx
+        └── create_ppt   → PPTSidecar（HTTP → Python FastAPI）→ .pptx
+                │
+        统一落地：验证 → 上传 S3 → 记录 file_jobs → 返回 URL
+```
+
+#### OfficeProvider 接口（不变）
+
+```go
+// internal/service/office/provider.go
+
+type OfficeRequest struct {
+    Type     string          // "excel" | "word" | "ppt"
+    Filename string
+    Params   json.RawMessage // AI 生成的结构化参数
+}
+
+type OfficeResult struct {
+    FileBytes   []byte
+    ContentType string
+}
+
+type OfficeProvider interface {
+    Name()     string
+    Supports(fileType string) bool
+    Generate(ctx context.Context, req OfficeRequest) (OfficeResult, error)
+}
+```
+
+#### Excel 实现（Go + excelize）
+
+AI 输出的 JSON schema 直接映射到 excelize API：
+
+```go
+// internal/service/office/excel.go
+
+type ExcelProvider struct{}
+
+func (e *ExcelProvider) Name()                   string { return "excel-go" }
+func (e *ExcelProvider) Supports(t string)       bool   { return t == "excel" }
+
+func (e *ExcelProvider) Generate(ctx context.Context, req OfficeRequest) (OfficeResult, error) {
+    var p ExcelParams
+    if err := json.Unmarshal(req.Params, &p); err != nil { return OfficeResult{}, err }
+
+    f := excelize.NewFile()
+    defer f.Close()
+
+    for _, sheet := range p.Sheets {
+        f.NewSheet(sheet.Name)
+
+        // 写入表头（加粗样式）
+        headerStyle, _ := f.NewStyle(&excelize.Style{
+            Font: &excelize.Font{Bold: true, Color: "FFFFFF"},
+            Fill: excelize.Fill{Type: "pattern", Color: []string{"4472C4"}, Pattern: 1},
+        })
+        for col, h := range sheet.Headers {
+            cell, _ := excelize.CoordinatesToCellName(col+1, 1)
+            f.SetCellValue(sheet.Name, cell, h)
+            f.SetCellStyle(sheet.Name, cell, cell, headerStyle)
+        }
+
+        // 写入数据行
+        for rowIdx, row := range sheet.Rows {
+            for colIdx, val := range row {
+                cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowIdx+2)
+                f.SetCellValue(sheet.Name, cell, val)
+            }
+        }
+
+        // 写入公式
+        for _, formula := range sheet.Formulas {
+            f.SetCellFormula(sheet.Name, formula.Cell, formula.Formula)
+        }
+
+        // 自动列宽
+        f.SetColWidth(sheet.Name, "A", "Z", 14)
+
+        // 添加图表
+        for _, chart := range sheet.Charts {
+            chartType := map[string]excelize.ChartType{
+                "bar":  excelize.Bar,
+                "line": excelize.Line,
+                "pie":  excelize.Pie,
+            }[chart.Type]
+            f.AddChart(sheet.Name, "H2", &excelize.Chart{
+                Type:  chartType,
+                Title: []excelize.RichTextRun{{Text: chart.Title}},
+                Series: []excelize.ChartSeries{{
+                    Name:       sheet.Name,
+                    Categories: fmt.Sprintf("%s!%s", sheet.Name, chart.CategoryRange),
+                    Values:     fmt.Sprintf("%s!%s", sheet.Name, chart.ValueRange),
+                }},
+            })
+        }
+    }
+
+    // 删除默认 Sheet1（如果有自定义 sheet）
+    if len(p.Sheets) > 0 { f.DeleteSheet("Sheet1") }
+
+    buf, err := f.WriteToBuffer()
+    if err != nil { return OfficeResult{}, err }
+
+    return OfficeResult{
+        FileBytes:   buf.Bytes(),
+        ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }, nil
+}
+```
+
+#### Word 实现（Go + 模板 XML）
+
+Word 文档本质是一组 XML 文件打包成 ZIP。我们预置多套 `.docx` 模板，运行时用 AI 生成的内容填充：
+
+```go
+// internal/service/office/word.go
+// 策略：读取预置模板 → 解压 → 替换 word/document.xml → 重新打包
+
+type WordProvider struct {
+    TemplatesDir string // 模板文件目录
+}
+
+func (w *WordProvider) Name()             string { return "word-go" }
+func (w *WordProvider) Supports(t string) bool   { return t == "word" }
+
+func (w *WordProvider) Generate(ctx context.Context, req OfficeRequest) (OfficeResult, error) {
+    var p WordParams
+    json.Unmarshal(req.Params, &p)
+
+    // 选择模板（报告/方案/通知/合同等）
+    templatePath := filepath.Join(w.TemplatesDir, p.Template+".docx")
+    tmplBytes, err := os.ReadFile(templatePath)
+    if err != nil { return OfficeResult{}, err }
+
+    // 解压 → 找到 word/document.xml → 替换占位符 → 重新打包
+    result, err := fillDocxTemplate(tmplBytes, p.Variables)
+    if err != nil { return OfficeResult{}, err }
+
+    return OfficeResult{
+        FileBytes:   result,
+        ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }, nil
+}
+
+// AI 为 Word 生成的 JSON schema
+// {
+//   "template": "business_report",   // 模板名：business_report|proposal|notice|contract
+//   "variables": {
+//     "title":    "2026年Q1销售分析报告",
+//     "author":   "销售部",
+//     "sections": [
+//       {"heading": "核心数据", "content": "..."},
+//       {"heading": "问题分析", "content": "..."}
+//     ]
+//   }
+// }
+```
+
+**预置 Word 模板列表（针对白领场景）：**
+
+| 模板 ID | 用途 |
+|---------|------|
+| `business_report` | 工作报告 / 周报月报 |
+| `proposal` | 方案书 / 策划案 |
+| `notice` | 通知公告 |
+| `meeting_minutes` | 会议纪要 |
+| `contract_simple` | 简单合同 / 协议 |
+| `job_description` | 岗位说明书（HR 场景）|
+
+#### PPT 实现（Python 微服务 + python-pptx）
+
+Python sidecar 是一个极轻量的 FastAPI 服务，只做一件事：接收 JSON → 返回 .pptx 文件二进制。
+
+**Go 调用方：**
+
+```go
+// internal/service/office/ppt.go
+
+type PPTSidecarProvider struct {
+    SidecarURL string  // http://ppt-sidecar:5001
+    HTTPClient *http.Client
+}
+
+func (p *PPTSidecarProvider) Name()             string { return "ppt-python" }
+func (p *PPTSidecarProvider) Supports(t string) bool   { return t == "ppt" }
+
+func (p *PPTSidecarProvider) Generate(ctx context.Context, req OfficeRequest) (OfficeResult, error) {
+    body, _ := json.Marshal(req.Params)
+    httpReq, _ := http.NewRequestWithContext(ctx, "POST",
+        p.SidecarURL+"/generate/ppt", bytes.NewReader(body))
+    httpReq.Header.Set("Content-Type", "application/json")
+
+    resp, err := p.HTTPClient.Do(httpReq)
+    if err != nil { return OfficeResult{}, fmt.Errorf("ppt sidecar 不可用: %w", err) }
+    defer resp.Body.Close()
+
+    if resp.StatusCode != 200 {
+        errBody, _ := io.ReadAll(resp.Body)
+        return OfficeResult{}, fmt.Errorf("ppt 生成失败: %s", errBody)
+    }
+
+    fileBytes, err := io.ReadAll(resp.Body)
+    if err != nil { return OfficeResult{}, err }
+
+    return OfficeResult{
+        FileBytes:   fileBytes,
+        ContentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }, nil
+}
+```
+
+**Python sidecar（ppt-sidecar/main.py，约 120 行）：**
+
+```python
+# ppt-sidecar/main.py
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+from pptx import Presentation
+from pptx.util import Inches, Pt, Emu
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+from pptx.chart.data import ChartData
+from pptx.enum.chart import XL_CHART_TYPE
+import json, io
+
+app = FastAPI()
+
+CHART_TYPE_MAP = {
+    "bar":  XL_CHART_TYPE.COLUMN_CLUSTERED,
+    "line": XL_CHART_TYPE.LINE,
+    "pie":  XL_CHART_TYPE.PIE,
+}
+
+SLIDE_LAYOUTS = {
+    "title":       0,   # 标题页
+    "section":     1,   # 章节标题
+    "bullet":      2,   # 标题 + 要点
+    "two_column":  3,   # 双栏
+    "blank":       6,   # 空白
+}
+
+@app.post("/generate/ppt")
+async def generate_ppt(params: dict):
+    try:
+        prs = Presentation()
+        prs.slide_width  = Inches(13.33)
+        prs.slide_height = Inches(7.5)
+
+        theme = params.get("theme", "blue")  # blue | green | gray
+        apply_theme(prs, theme)
+
+        for slide_data in params.get("slides", []):
+            layout_name = slide_data.get("type", "bullet")
+            layout = prs.slide_layouts[SLIDE_LAYOUTS.get(layout_name, 2)]
+            slide = prs.slides.add_slide(layout)
+
+            # 填充标题
+            if slide_data.get("title") and slide.shapes.title:
+                slide.shapes.title.text = slide_data["title"]
+
+            # 填充要点（bullet 类型）
+            if layout_name == "bullet" and slide_data.get("bullets"):
+                tf = slide.placeholders[1].text_frame
+                tf.clear()
+                for i, bullet in enumerate(slide_data["bullets"]):
+                    p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
+                    p.text  = bullet
+                    p.level = slide_data.get("levels", [0] * len(slide_data["bullets"]))[i]
+
+            # 插入图表
+            if slide_data.get("chart"):
+                c = slide_data["chart"]
+                chart_data = ChartData()
+                chart_data.categories = c["categories"]
+                for series in c["series"]:
+                    chart_data.add_series(series["name"], series["values"])
+                chart_type = CHART_TYPE_MAP.get(c.get("type", "bar"),
+                             XL_CHART_TYPE.COLUMN_CLUSTERED)
+                slide.shapes.add_chart(
+                    chart_type, Inches(1), Inches(1.8), Inches(11), Inches(5),
+                    chart_data
+                )
+
+            # 双栏布局
+            if layout_name == "two_column":
+                fill_two_column(slide, slide_data)
+
+        buf = io.BytesIO()
+        prs.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+def health(): return {"status": "ok"}
+```
+
+**ppt-sidecar/Dockerfile（极轻量）：**
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install fastapi uvicorn python-pptx --no-cache-dir
+COPY main.py .
+EXPOSE 5001
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"]
+```
+
+#### OfficeToolExecutor（串联三种实现）
+
+```go
+// internal/service/llm/tool_executor.go
+
+type OfficeToolExecutor struct {
+    excel       *office.ExcelProvider
+    word        *office.WordProvider
+    ppt         *office.PPTSidecarProvider
+    fileService *FileService
+}
+
+func (e *OfficeToolExecutor) Execute(ctx context.Context, userID string, input ToolInput) (ToolOutput, error) {
+    var req office.OfficeRequest
+    json.Unmarshal(input, &req)
+
+    var result office.OfficeResult
+    var err error
+
+    switch req.Type {
+    case "excel":
+        result, err = e.excel.Generate(ctx, req)
+    case "word":
+        result, err = e.word.Generate(ctx, req)
+    case "ppt":
+        result, err = e.ppt.Generate(ctx, req)
+        // PPT sidecar 不可用时降级：返回友好错误，不静默失败
+        if err != nil {
+            return ToolOutput{
+                Success: false,
+                Error:   "PPT 生成服务暂时不可用，请稍后重试或改用 Word 格式",
+            }, nil
+        }
+    default:
+        return ToolOutput{Error: "不支持的文件类型: " + req.Type}, nil
+    }
+
+    if err != nil { return ToolOutput{Error: "文件生成失败: " + err.Error()}, nil }
+
+    // 统一落地：上传 S3 + 记录 file_jobs
+    fileID, err := e.fileService.UploadBytes(ctx, userID,
+        req.Filename, result.FileBytes, result.ContentType)
+    if err != nil { return ToolOutput{}, err }
+
+    return ToolOutput{Success: true, FileID: fileID}, nil
+}
+```
+
+#### `file_jobs` 表（生成任务记录）
+
+```sql
+CREATE TABLE file_jobs (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id),
+    conversation_id UUID REFERENCES conversations(id),
+    message_id      UUID REFERENCES messages(id),
+
+    type            VARCHAR(20) NOT NULL,    -- excel | word | ppt
+    provider        VARCHAR(50) NOT NULL,    -- excel-go | word-go | ppt-python
+    status          VARCHAR(20) NOT NULL DEFAULT 'done',
+    input_params    JSONB NOT NULL,          -- AI 参数原始数据（排查用）
+    output_file_id  UUID REFERENCES files(id),
+    error_message   TEXT,
+
+    duration_ms     INT,                     -- 生成耗时（性能监控）
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at    TIMESTAMPTZ
+);
+```
+
+#### AI 为三种格式生成的 JSON 示例
+
+**Excel（calculate 场景）：**
+```json
+{
+  "type": "excel",
+  "filename": "Q1销售报表",
+  "sheets": [{
+    "name": "销售数据",
+    "headers": ["月份", "销售额", "目标", "完成率"],
+    "rows": [
+      ["1月", 120000, 100000, "=B2/C2"],
+      ["2月", 95000,  100000, "=B3/C3"]
+    ],
+    "formulas": [{"cell": "B8", "formula": "=SUM(B2:B7)"}],
+    "charts": [{
+      "type": "line",
+      "title": "月度销售趋势",
+      "category_range": "A2:A7",
+      "value_range": "B2:B7"
+    }]
+  }]
+}
+```
+
+**Word（write 场景）：**
+```json
+{
+  "type": "word",
+  "filename": "Q1工作总结",
+  "template": "business_report",
+  "variables": {
+    "title": "2026年第一季度工作总结",
+    "author": "市场部  张三",
+    "date": "2026年4月1日",
+    "sections": [
+      {"heading": "一、工作完成情况", "content": "本季度完成销售额..."},
+      {"heading": "二、存在的问题", "content": "在客户维护方面..."},
+      {"heading": "三、下季度计划", "content": "重点推进..."}
+    ]
+  }
+}
+```
+
+**PPT（write 场景）：**
+```json
+{
+  "type": "ppt",
+  "filename": "Q1销售汇报",
+  "theme": "blue",
+  "slides": [
+    {"type": "title",   "title": "2026年Q1销售汇报", "subtitle": "市场部 · 2026.04"},
+    {"type": "section", "title": "核心数据"},
+    {"type": "bullet",  "title": "Q1业绩亮点",
+     "bullets": ["销售额同比增长 23%", "新客户获取 128 家", "续签率 91%"],
+     "levels":  [0, 0, 0]},
+    {"type": "bullet",  "title": "月度趋势",
+     "chart": {"type": "line", "categories": ["1月","2月","3月"],
+               "series": [{"name": "实际", "values": [120000, 95000, 138000]},
+                          {"name": "目标", "values": [100000, 100000, 120000]}]}},
+    {"type": "section", "title": "Q2 计划"},
+    {"type": "bullet",  "title": "重点方向",
+     "bullets": ["拓展华南区域渠道", "提升大客户服务质量", "上线新产品线"]},
+    {"type": "title",   "title": "谢谢", "subtitle": ""}
+  ]
+}
+```
+
 ---
 
 ## 六、中间件设计
@@ -1473,6 +2092,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ppt-sidecar:
+        condition: service_healthy
+
+  ppt-sidecar:
+    build: ./ppt-sidecar
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   postgres:
     image: pgvector/pgvector:pg16   # 内置 pgvector 扩展
@@ -1519,7 +2151,10 @@ volumes:
   caddy_config:
 ```
 
-> **注意：** PostgreSQL 镜像改为 `pgvector/pgvector:pg16`，内置 pgvector，Phase 2 直接用，无需重建数据库。Redis maxmemory 从 256mb 提升到 512mb（断线续传缓存需要更多空间）。
+> **注意：**
+> - PostgreSQL 镜像使用 `pgvector/pgvector:pg16`，内置 pgvector，Phase 2 直接启用，无需重建数据库。
+> - Redis maxmemory 设为 512mb（断线续传缓存需要更多空间）。
+> - `ppt-sidecar` 仅监听 127.0.0.1:5001，不对外暴露；`api` 服务通过内部 Docker 网络访问它（`http://ppt-sidecar:5001`）。
 
 ### 8.2 Caddyfile
 
@@ -1602,6 +2237,13 @@ EMBEDDING_MODEL=text-embedding-3-small
 # EMBEDDING_PROVIDER=local
 # EMBEDDING_API_URL=http://localhost:8001/embed
 
+# Office 文件生成（Phase 2）
+# Excel / Word 由 Go 进程内直接生成，无需额外配置
+# PPT 由独立 Python sidecar 生成，通过 Docker 内部网络访问
+PPT_SIDECAR_URL=http://ppt-sidecar:5001   # Docker Compose 内部地址
+# PPT_SIDECAR_URL=http://localhost:5001   # 本地开发时使用此地址
+WORD_TEMPLATES_DIR=./word-templates       # 预置 .docx 模板目录
+
 # 前端 URL（CORS）
 FRONTEND_URL=https://jiandanly.com
 
@@ -1643,7 +2285,10 @@ func runMigrations(db *sql.DB) error {
 | 日志 | `log/slog`（标准库） |
 | 配置 | `joho/godotenv` |
 | 测试 | `stretchr/testify` |
-| 文档解析（Phase 2） | `ledongthuc/pdfcpu` / `unidoc/unioffice` |
+| **Excel 生成（Phase 2）** | **`360EntSecGroup-Skylar/excelize/v2`** |
+| **Word 生成（Phase 2）** | Go 标准库 `archive/zip` + `encoding/xml`（无需第三方库） |
+| **PPT 生成（Phase 2）** | Python sidecar：`python-pptx` + `fastapi` + `uvicorn` |
+| 文档解析（Phase 2） | `ledongthuc/pdfcpu`（PDF）/ `unidoc/unioffice`（读取 Office） |
 
 ### 9.2 分层约定
 
@@ -1733,6 +2378,16 @@ docker-logs:
 - [ ] OAuth 登录（Google / GitHub）
 - [ ] 熔断器（供应商故障自动降级）
 - [ ] 低余额告警（Webhook + 邮件通知）
+- [ ] **Tool Calling / Agentic Loop**（SceneTools 注册表 + 循环驱动层，最多 8 轮）
+- [ ] **OfficeProvider 接口**（统一抽象，支持三种实现热插拔）
+- [ ] **ExcelProvider**（Go + excelize：多 Sheet / 公式 / 柱线饼图）
+- [ ] **WordProvider**（Go + archive/zip + encoding/xml：模板填充）
+- [ ] **Word 业务模板**（6 种：工作报告 / 方案书 / 通知 / 会议纪要 / 合同 / JD）
+- [ ] **PPTSidecarProvider**（Go HTTP 客户端调用 Python sidecar）
+- [ ] **PPT Python sidecar**（FastAPI + python-pptx，独立 Docker 服务）
+- [ ] **OfficeToolExecutor**（路由 create_excel / create_word / create_ppt）
+- [ ] **file_jobs 表**（生成任务记录 + 耗时监控）
+- [ ] Office 文件生成计费（积分扣减 + 成本追踪）
 
 ### Phase 3（持续迭代）
 
@@ -1744,5 +2399,5 @@ docker-logs:
 
 ---
 
-*文档版本: v1.1*  
+*文档版本: v1.2*  
 *最后更新: 2026-05-10*
