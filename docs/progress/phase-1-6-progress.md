@@ -11,6 +11,12 @@ Phase 1.6 adds a minimal, separately deployable admin web app so operators can m
 - In scope: admin identification through `ADMIN_EMAILS`, `ADMIN_BASE_URL` CORS support, admin-only APIs, overview/user/usage/order/provider read views, user enable/disable, extra credit adjustment, wallet transaction audit, independent `admin/` web app, and operator docs.
 - Out of scope: team or organization admin, provider key editing, encrypted key vaulting, manual order mutation, refund handling, plan changes, monthly quota mutation, and shared product-client admin entry.
 
+## Phase Status
+
+Closed on 2026-05-10.
+
+Phase 1.6 is complete for the individual-user MVP: the backend admin APIs, separate admin web deployment, shadcn/ui admin interface, real feature tabs, audited safe write operations, provider/order read-only boundaries, and operator documentation are all in place. Manual local testing confirmed login/register, chat, credits, export, real LLM calls, and admin web behavior.
+
 ## Status Legend
 
 - `Not started`: no file or test exists yet.
