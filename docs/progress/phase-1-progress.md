@@ -32,9 +32,10 @@ Phase 1 is the paid chat MVP described in `project-plan.md`, `frontend-spec.md`,
 | Frontend tests | Green | `cd client && npm test -- --run` passed |
 | React shared app | Green | `client/src/App.tsx` implements auth, chat, mode/scene controls, quota bar, subscription entry |
 | IndexedDB/local history | Green | `LocalConversationStore` tested with `fake-indexeddb` |
-| Export/import | Green | JSON export/import wired in the sidebar and covered by local data test |
+| Export/import | Verified | JSON export/import wired in the sidebar, covered by local data test, and user verified export locally |
 | Electron shell | Green | `client/electron/main.cjs` and `preload.cjs` wrap the shared Vite build |
 | Docker Compose | Verified | `docker compose --env-file .env.example up --build -d` started Postgres, Redis, migration, API, and client locally; API health, frontend HTTP, register/chat, and Postgres record counts verified |
+| User acceptance test | Verified | User tested locally: login/register works, messages send successfully, quota decreases after chat, and export works |
 | AWS Hong Kong deployment verification | Blocked | Requires an AWS host, DNS, and deployment credentials; local Docker/Caddy deployment artifacts are ready |
 | README | Green | Root `README.md` documents purpose, Phase 1 capabilities, setup, credentials, Docker, and verification |
 | Rendered frontend smoke | Verified | Browser opened `http://localhost:5173`, registered a local user, sent mock chat, saw quota and streamed reply with no console errors |
@@ -45,3 +46,18 @@ Phase 1 is the paid chat MVP described in `project-plan.md`, `frontend-spec.md`,
 - Chat history remains client-local by default; backend stores only metadata and usage records.
 - Team, BYOK, cloud sync, cloud knowledge base, RAG, Office generation, image generation, and tool/agent automation are explicitly outside Phase 1.
 - Stripe and external LLM providers are environment-driven. Local development must still run with deterministic mock adapters.
+
+## Phase 1 Closeout
+
+Status: locally complete and accepted.
+
+Accepted local workflows:
+
+- Register and log in.
+- Send a message and receive a mock streamed response.
+- Verify quota decreases after chat.
+- Export local chat data.
+
+Remaining non-local item:
+
+- AWS Hong Kong deployment verification is blocked until a target host, DNS, and deployment credentials are available.
