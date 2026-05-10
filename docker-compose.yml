@@ -29,7 +29,7 @@ services:
       PGPASSWORD: jiandanly
     volumes:
       - ./api/migrations:/migrations:ro
-    command: ["psql", "-h", "postgres", "-U", "jiandanly", "-d", "jiandanly", "-f", "/migrations/001_phase1.sql"]
+    command: ["sh", "-c", "for file in /migrations/*.sql; do psql -h postgres -U jiandanly -d jiandanly -f \"$$file\"; done"]
 
   api:
     build:

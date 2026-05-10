@@ -124,6 +124,60 @@ make smoke-stripe-webhook
 - `wallet_transactions.idempotency_key` 会记录 `stripe:<event_id>`，便于排查重复投递。
 - 后台订单和审计页只读，不提供手动改订单、补单、退款、删除审计或重放 webhook 的入口。
 
+## 文档上传与 S3
+
+Phase 2A 的文档阅读使用真实 AWS S3，不在本地磁盘保存原文件。`.env` 至少需要：
+
+```dotenv
+AWS_REGION=ap-east-1
+AWS_ACCESS_KEY_ID=你的开发 IAM access key
+AWS_SECRET_ACCESS_KEY=你的开发 IAM secret
+S3_BUCKET=你的 dev bucket
+S3_DOCUMENT_PREFIX=documents
+DOCUMENT_MAX_BYTES=31457280
+DOCUMENT_TEXT_LIMIT=60000
+DOCUMENT_TTL_HOURS=168
+```
+
+建议 IAM 权限只覆盖这个 bucket/prefix：
+
+```text
+s3:PutObject
+s3:GetObject
+s3:HeadObject
+s3:DeleteObject
+```
+
+S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
+
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:5173"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["Content-Type", "x-amz-*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+本地验证流程：
+
+1. 配好 `.env` 后运行 `docker compose up -d --build`。
+2. 登录普通用户 Web：`http://localhost:5173`。
+3. 切换“文档阅读”，上传 PDF / DOCX / XLSX。
+4. 确认 bucket 中出现 `documents/<user_id>/<document_id>/source.*` 和 `extracted.txt`。
+5. 对 ready 文档提问，确认真实 LLM 回复、额度减少、管理后台用量可见。
+6. 删除文档后，系统会 best-effort 删除 S3 原文件和文本对象。
+
+边界说明：
+
+- 上传和解析不扣额度；文档问答扣额度。
+- 本阶段只做单文件上下文，不做向量库、多文档 RAG 或团队文档库。
+- 提取文本只保留前 `DOCUMENT_TEXT_LIMIT` 字符，避免超长 prompt 失控。
+- 文档默认 7 天过期；当前没有后台手工延长或恢复入口。
+
 ## 常用管理命令
 
 查看 API 日志：

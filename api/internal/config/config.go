@@ -34,6 +34,15 @@ type Config struct {
 	StripeSecretKey     string
 	StripeWebhookSecret string
 	StripePriceID       string
+
+	AWSRegion          string
+	AWSAccessKeyID     string
+	AWSSecretAccessKey string
+	S3Bucket           string
+	S3DocumentPrefix   string
+	DocumentMaxBytes   int64
+	DocumentTextLimit  int
+	DocumentTTLHours   int
 }
 
 func Default() Config {
@@ -59,6 +68,14 @@ func Default() Config {
 		DeepProviderBaseURL: "",
 		DeepProviderAPIKey:  "",
 		FastProviderAPIKey:  "",
+		AWSRegion:           "",
+		AWSAccessKeyID:      "",
+		AWSSecretAccessKey:  "",
+		S3Bucket:            "",
+		S3DocumentPrefix:    "documents",
+		DocumentMaxBytes:    30 * 1024 * 1024,
+		DocumentTextLimit:   60_000,
+		DocumentTTLHours:    168,
 	}
 }
 
@@ -85,6 +102,14 @@ func Load() Config {
 	cfg.StripeSecretKey = getEnv("STRIPE_SECRET_KEY", cfg.StripeSecretKey)
 	cfg.StripeWebhookSecret = getEnv("STRIPE_WEBHOOK_SECRET", cfg.StripeWebhookSecret)
 	cfg.StripePriceID = getEnv("STRIPE_PRICE_ID", cfg.StripePriceID)
+	cfg.AWSRegion = getEnv("AWS_REGION", cfg.AWSRegion)
+	cfg.AWSAccessKeyID = getEnv("AWS_ACCESS_KEY_ID", cfg.AWSAccessKeyID)
+	cfg.AWSSecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", cfg.AWSSecretAccessKey)
+	cfg.S3Bucket = getEnv("S3_BUCKET", cfg.S3Bucket)
+	cfg.S3DocumentPrefix = getEnv("S3_DOCUMENT_PREFIX", cfg.S3DocumentPrefix)
+	cfg.DocumentMaxBytes = getEnvInt64("DOCUMENT_MAX_BYTES", cfg.DocumentMaxBytes)
+	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)
+	cfg.DocumentTTLHours = getEnvInt("DOCUMENT_TTL_HOURS", cfg.DocumentTTLHours)
 	return cfg
 }
 
@@ -123,6 +148,18 @@ func getEnvInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
 	}

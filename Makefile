@@ -35,7 +35,7 @@ docker-down:
 	docker compose down
 
 migrate:
-	psql "$$DATABASE_URL" -f api/migrations/001_phase1.sql
+	@for file in api/migrations/*.sql; do psql "$$DATABASE_URL" -f "$$file"; done
 
 smoke-real-llm:
 	./scripts/smoke-real-llm.sh

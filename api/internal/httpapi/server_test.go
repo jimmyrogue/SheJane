@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"archive/zip"
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"github.com/coldflame/jiandanly/api/internal/app"
 	"github.com/coldflame/jiandanly/api/internal/billing"
 	"github.com/coldflame/jiandanly/api/internal/config"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
 
@@ -94,6 +98,161 @@ func TestBillingBalanceRequiresAuth(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("billing status = %d, want 401", recorder.Code)
+	}
+}
+
+func TestDocumentUploadRequiresAuthAndValidatesInput(t *testing.T) {
+	server, _ := newDocumentTestServer(t, nil)
+
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/documents/uploads", strings.NewReader(`{"filename":"brief.docx","content_type":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","size_bytes":128}`))
+	unauth.Header.Set("Content-Type", "application/json")
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth upload status = %d, want 401", unauthRecorder.Code)
+	}
+
+	token := registerAndToken(t, server)
+	unsupported := documentUploadRequest("legacy.doc", "application/msword", 128)
+	unsupported.Header.Set("Authorization", "Bearer "+token)
+	unsupportedRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unsupportedRecorder, unsupported)
+	if unsupportedRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported upload status = %d, want 400, body = %s", unsupportedRecorder.Code, unsupportedRecorder.Body.String())
+	}
+
+	tooLarge := documentUploadRequest("large.pdf", "application/pdf", 31*1024*1024)
+	tooLarge.Header.Set("Authorization", "Bearer "+token)
+	tooLargeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(tooLargeRecorder, tooLarge)
+	if tooLargeRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("large upload status = %d, want 400, body = %s", tooLargeRecorder.Code, tooLargeRecorder.Body.String())
+	}
+
+	valid := documentUploadRequest("brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	valid.Header.Set("Authorization", "Bearer "+token)
+	validRecorder := httptest.NewRecorder()
+	server.ServeHTTP(validRecorder, valid)
+	if validRecorder.Code != http.StatusCreated {
+		t.Fatalf("valid upload status = %d, body = %s", validRecorder.Code, validRecorder.Body.String())
+	}
+	var body apiResponse[documentUploadPayload]
+	if err := json.Unmarshal(validRecorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode valid upload: %v", err)
+	}
+	if body.Data.Document.ID == "" || body.Data.Document.Status != documents.StatusUploading {
+		t.Fatalf("upload document = %#v", body.Data.Document)
+	}
+	if body.Data.Upload.Method != http.MethodPut || body.Data.Upload.URL == "" {
+		t.Fatalf("upload info = %#v", body.Data.Upload)
+	}
+}
+
+func TestDocumentCompleteExtractsDocxAndListsReadyDocument(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	token := registerAndToken(t, server)
+	upload := createDocumentUpload(t, server, token, "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+
+	if err := objects.PutObject(t.Context(), upload.Document.SourceObjectKey, upload.Document.ContentType, minimalDocx("Phase two document text")); err != nil {
+		t.Fatalf("put source object: %v", err)
+	}
+
+	complete := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+upload.Document.ID+"/complete", nil)
+	complete.Header.Set("Authorization", "Bearer "+token)
+	completeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(completeRecorder, complete)
+	if completeRecorder.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeRecorder.Code, completeRecorder.Body.String())
+	}
+	var completeBody apiResponse[documents.Document]
+	if err := json.Unmarshal(completeRecorder.Body.Bytes(), &completeBody); err != nil {
+		t.Fatalf("decode complete: %v", err)
+	}
+	if completeBody.Data.Status != documents.StatusReady || completeBody.Data.TextObjectKey == "" {
+		t.Fatalf("complete document = %#v", completeBody.Data)
+	}
+	extracted, err := objects.GetObject(t.Context(), completeBody.Data.TextObjectKey)
+	if err != nil {
+		t.Fatalf("get extracted text: %v", err)
+	}
+	if !strings.Contains(string(extracted), "Phase two document text") {
+		t.Fatalf("extracted text = %q", string(extracted))
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/documents", nil)
+	list.Header.Set("Authorization", "Bearer "+token)
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, list)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
+	}
+	if !strings.Contains(listRecorder.Body.String(), `"status":"ready"`) {
+		t.Fatalf("list missing ready document: %s", listRecorder.Body.String())
+	}
+}
+
+func TestDocumentAskStreamsAndSettlesUsage(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	token := registerAndToken(t, server)
+	upload := createDocumentUpload(t, server, token, "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := objects.PutObject(t.Context(), upload.Document.SourceObjectKey, upload.Document.ContentType, minimalDocx("The launch date is Tuesday.")); err != nil {
+		t.Fatalf("put source object: %v", err)
+	}
+	completeDocument(t, server, token, upload.Document.ID)
+	before := billingBalance(t, server, token)
+
+	ask := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+upload.Document.ID+"/ask", strings.NewReader(`{"model":"fast","question":"When is launch?"}`))
+	ask.Header.Set("Authorization", "Bearer "+token)
+	ask.Header.Set("Content-Type", "application/json")
+	askRecorder := httptest.NewRecorder()
+	server.ServeHTTP(askRecorder, ask)
+	if askRecorder.Code != http.StatusOK {
+		t.Fatalf("ask status = %d, body = %s", askRecorder.Code, askRecorder.Body.String())
+	}
+	if !strings.Contains(askRecorder.Body.String(), "Mock Jiandan response") || !strings.Contains(askRecorder.Body.String(), "data: [DONE]") {
+		t.Fatalf("ask stream body = %s", askRecorder.Body.String())
+	}
+	after := billingBalance(t, server, token)
+	if after.MonthlyRemaining >= before.MonthlyRemaining {
+		t.Fatalf("monthly remaining before=%d after=%d, want decrease", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+}
+
+func TestDocumentAskRejectsForeignAndExpiredDocuments(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	ownerToken := registerAndTokenWithEmail(t, server, "owner@example.com")
+	otherToken := registerAndTokenWithEmail(t, server, "other@example.com")
+	upload := createDocumentUpload(t, server, ownerToken, "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := objects.PutObject(t.Context(), upload.Document.SourceObjectKey, upload.Document.ContentType, minimalDocx("Private text")); err != nil {
+		t.Fatalf("put source object: %v", err)
+	}
+	completeDocument(t, server, ownerToken, upload.Document.ID)
+
+	foreign := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+upload.Document.ID+"/ask", strings.NewReader(`{"model":"fast","question":"Read it"}`))
+	foreign.Header.Set("Authorization", "Bearer "+otherToken)
+	foreign.Header.Set("Content-Type", "application/json")
+	foreignRecorder := httptest.NewRecorder()
+	server.ServeHTTP(foreignRecorder, foreign)
+	if foreignRecorder.Code != http.StatusNotFound {
+		t.Fatalf("foreign ask status = %d, want 404, body = %s", foreignRecorder.Code, foreignRecorder.Body.String())
+	}
+
+	expiredServer, expiredObjects := newDocumentTestServer(t, func(cfg *config.Config) {
+		cfg.DocumentTTLHours = -1
+	})
+	expiredToken := registerAndTokenWithEmail(t, expiredServer, "expired@example.com")
+	expiredUpload := createDocumentUpload(t, expiredServer, expiredToken, "expired.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := expiredObjects.PutObject(t.Context(), expiredUpload.Document.SourceObjectKey, expiredUpload.Document.ContentType, minimalDocx("Expired text")); err != nil {
+		t.Fatalf("put expired source object: %v", err)
+	}
+	completeDocument(t, expiredServer, expiredToken, expiredUpload.Document.ID)
+	expiredAsk := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+expiredUpload.Document.ID+"/ask", strings.NewReader(`{"model":"fast","question":"Read it"}`))
+	expiredAsk.Header.Set("Authorization", "Bearer "+expiredToken)
+	expiredAsk.Header.Set("Content-Type", "application/json")
+	expiredRecorder := httptest.NewRecorder()
+	expiredServer.ServeHTTP(expiredRecorder, expiredAsk)
+	if expiredRecorder.Code != http.StatusGone {
+		t.Fatalf("expired ask status = %d, want 410, body = %s", expiredRecorder.Code, expiredRecorder.Body.String())
 	}
 }
 
@@ -524,6 +683,21 @@ func newTestServerAndStore(t *testing.T, mutate func(*config.Config)) (http.Hand
 	return NewServer(service), memory
 }
 
+func newDocumentTestServer(t *testing.T, mutate func(*config.Config)) (http.Handler, *documents.MemoryObjectStorage) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 10_000
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	memory := store.NewMemoryStore()
+	objects := documents.NewMemoryObjectStorage()
+	service := app.New(cfg, memory, app.WithDocumentObjectStorage(objects))
+	return NewServer(service), objects
+}
+
 func registerAndToken(t *testing.T, server http.Handler) string {
 	t.Helper()
 	return registerAndTokenWithEmail(t, server, "grace@example.com")
@@ -676,4 +850,62 @@ func sendTestChat(t *testing.T, server http.Handler, token string) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("chat status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
+}
+
+type documentUploadPayload struct {
+	Document documents.Document     `json:"document"`
+	Upload   documents.UploadTarget `json:"upload"`
+}
+
+func documentUploadRequest(filename string, contentType string, sizeBytes int64) *http.Request {
+	body := fmt.Sprintf(`{"filename":%q,"content_type":%q,"size_bytes":%d}`, filename, contentType, sizeBytes)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/documents/uploads", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func createDocumentUpload(t *testing.T, server http.Handler, token string, filename string, contentType string, sizeBytes int64) documentUploadPayload {
+	t.Helper()
+	req := documentUploadRequest(filename, contentType, sizeBytes)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create document upload status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[documentUploadPayload]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode document upload: %v", err)
+	}
+	return body.Data
+}
+
+func completeDocument(t *testing.T, server http.Handler, token string, documentID string) documents.Document {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+documentID+"/complete", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("complete document status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[documents.Document]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode complete document: %v", err)
+	}
+	return body.Data
+}
+
+func minimalDocx(text string) []byte {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	file, err := writer.Create("word/document.xml")
+	if err != nil {
+		panic(err)
+	}
+	_, _ = file.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>` + text + `</w:t></w:r></w:p></w:body></w:document>`))
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+	return buffer.Bytes()
 }

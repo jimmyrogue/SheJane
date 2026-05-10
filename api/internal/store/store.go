@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/coldflame/jiandanly/api/internal/billing"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 )
 
 var (
@@ -139,6 +140,14 @@ type Store interface {
 	CreateLLMCall(ctx context.Context, record LLMCallRecord) error
 	FinishLLMCall(ctx context.Context, requestID string, status string, inputTokens int, outputTokens int, creditsCost int64, errorMessage string) error
 	LLMCallsByUser(ctx context.Context, userID string) ([]LLMCallRecord, error)
+
+	CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error)
+	DocumentsByUser(ctx context.Context, userID string) ([]documents.Document, error)
+	DocumentByID(ctx context.Context, userID string, documentID string) (documents.Document, error)
+	MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error)
+	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error)
+	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error)
+	DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error)
 
 	CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error)
 	PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error)

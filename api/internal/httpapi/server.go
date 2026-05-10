@@ -19,6 +19,7 @@ import (
 
 	"github.com/coldflame/jiandanly/api/internal/app"
 	"github.com/coldflame/jiandanly/api/internal/billing"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 	"github.com/coldflame/jiandanly/api/internal/llm"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
@@ -64,6 +65,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
 	s.mux.HandleFunc("POST /api/v1/payment/webhook", s.paymentWebhook)
 	s.mux.HandleFunc("POST /api/v1/chat/completions", s.requireAuth(s.chatCompletions))
+	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
+	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
+	s.mux.HandleFunc("GET /api/v1/documents", s.requireAuth(s.documentsList))
+	s.mux.HandleFunc("GET /api/v1/documents/{id}", s.requireAuth(s.documentDetail))
+	s.mux.HandleFunc("DELETE /api/v1/documents/{id}", s.requireAuth(s.documentDelete))
+	s.mux.HandleFunc("POST /api/v1/documents/{id}/ask", s.requireAuth(s.documentAsk))
 	s.mux.HandleFunc("GET /api/v1/admin/overview", s.requireAdmin(s.adminOverview))
 	s.mux.HandleFunc("GET /api/v1/admin/users", s.requireAdmin(s.adminUsers))
 	s.mux.HandleFunc("GET /api/v1/admin/users/{id}", s.requireAdmin(s.adminUserDetail))
@@ -370,9 +377,102 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user st
 		writeError(w, http.StatusBadRequest, 40201, "消息不能为空")
 		return
 	}
+	body.Messages = llm.InjectScenePrompt(body.Scene, body.Messages)
+	s.streamLLMResponse(w, r, user, body)
+}
+
+func (s *Server) documentUpload(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"content_type"`
+		SizeBytes   int64  `json:"size_bytes"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	upload, err := s.app.Documents.CreateUpload(r.Context(), user.ID, body.Filename, body.ContentType, body.SizeBytes)
+	if err != nil {
+		writeDocumentError(w, err, "创建文档上传失败")
+		return
+	}
+	writeJSON(w, http.StatusCreated, apiResponse[documents.UploadResponse]{Code: 0, Message: "ok", Data: upload})
+}
+
+func (s *Server) documentComplete(w http.ResponseWriter, r *http.Request, user store.User) {
+	document, err := s.app.Documents.CompleteUpload(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeDocumentError(w, err, "解析文档失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[documents.Document]{Code: 0, Message: "ok", Data: document})
+}
+
+func (s *Server) documentsList(w http.ResponseWriter, r *http.Request, user store.User) {
+	items, err := s.app.Documents.DocumentsByUser(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取文档列表失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]documents.Document]{Code: 0, Message: "ok", Data: items})
+}
+
+func (s *Server) documentDetail(w http.ResponseWriter, r *http.Request, user store.User) {
+	document, err := s.app.Documents.DocumentByID(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeDocumentError(w, err, "读取文档失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[documents.Document]{Code: 0, Message: "ok", Data: document})
+}
+
+func (s *Server) documentDelete(w http.ResponseWriter, r *http.Request, user store.User) {
+	document, err := s.app.Documents.DeleteDocument(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeDocumentError(w, err, "删除文档失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[documents.Document]{Code: 0, Message: "ok", Data: document})
+}
+
+func (s *Server) documentAsk(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		Model    string `json:"model"`
+		Question string `json:"question"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.Question = strings.TrimSpace(body.Question)
+	if body.Question == "" {
+		writeError(w, http.StatusBadRequest, 40201, "问题不能为空")
+		return
+	}
+	document, text, err := s.app.Documents.TextForQuestion(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeDocumentError(w, err, "读取文档正文失败")
+		return
+	}
+	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
+	llmRequest := llm.ChatRequest{
+		Model:                body.Model,
+		Stream:               true,
+		Scene:                "document",
+		ClientConversationID: "document:" + document.ID,
+		ClientMessageID:      requestID,
+		Messages: []llm.Message{
+			{
+				Role:    "system",
+				Content: "你是简单 Jiandan 的文档阅读助手。只能基于用户上传文档的提取文本回答；如果文档中没有答案，请直接说明。文档名：" + document.OriginalName + "\n\n文档文本：\n" + text,
+			},
+			{Role: "user", Content: body.Question},
+		},
+	}
+	s.streamLLMResponse(w, r, user, llmRequest)
+}
+
+func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user store.User, body llm.ChatRequest) {
 	mode := llm.NormalizeMode(body.Model)
 	body.Model = string(mode)
-	body.Messages = llm.InjectScenePrompt(body.Scene, body.Messages)
 	provider, model := s.app.Router.Select(mode)
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 
@@ -769,6 +869,25 @@ func writeStoreReadError(w http.ResponseWriter, err error, fallback string) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, 50001, fallback)
+}
+
+func writeDocumentError(w http.ResponseWriter, err error, fallback string) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, 40401, "文档不存在")
+	case errors.Is(err, documents.ErrExpired):
+		writeError(w, http.StatusGone, 41001, "文档已过期")
+	case errors.Is(err, documents.ErrNotReady):
+		writeError(w, http.StatusConflict, 40901, "文档尚未解析完成")
+	case errors.Is(err, documents.ErrTooLarge):
+		writeError(w, http.StatusBadRequest, 40201, "文件大小超过限制")
+	case errors.Is(err, documents.ErrUnsupportedType):
+		writeError(w, http.StatusBadRequest, 40201, "仅支持 PDF、DOCX、XLSX 文件")
+	case errors.Is(err, documents.ErrObjectStorageMissing):
+		writeError(w, http.StatusServiceUnavailable, 50301, "文档存储尚未配置")
+	default:
+		writeError(w, http.StatusInternalServerError, 50001, fallback)
+	}
 }
 
 func writeSSE(w io.Writer, requestID string, text string, finishReason string) error {

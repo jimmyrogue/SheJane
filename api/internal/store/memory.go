@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coldflame/jiandanly/api/internal/billing"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 )
 
 type MemoryStore struct {
@@ -22,6 +23,7 @@ type MemoryStore struct {
 	refresh      map[string]RefreshToken
 	wallets      map[string]*billing.Wallet
 	llmCalls     map[string]LLMCallRecord
+	documents    map[string]documents.Document
 	orders       map[string]PaymentOrder
 	stripeEvents map[string]bool
 	auditLogs    []AuditLog
@@ -34,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 		refresh:      make(map[string]RefreshToken),
 		wallets:      make(map[string]*billing.Wallet),
 		llmCalls:     make(map[string]LLMCallRecord),
+		documents:    make(map[string]documents.Document),
 		orders:       make(map[string]PaymentOrder),
 		stripeEvents: make(map[string]bool),
 		auditLogs:    make([]AuditLog, 0),
@@ -230,6 +233,110 @@ func (s *MemoryStore) LLMCallsByUser(ctx context.Context, userID string) ([]LLMC
 		return records[i].StartedAt.After(records[j].StartedAt)
 	})
 	return records, nil
+}
+
+func (s *MemoryStore) CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.usersByID[document.UserID]; !ok {
+		return documents.Document{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	if document.ID == "" {
+		document.ID = newUUID()
+	}
+	if document.Status == "" {
+		document.Status = documents.StatusUploading
+	}
+	if document.CreatedAt.IsZero() {
+		document.CreatedAt = now
+	}
+	document.UpdatedAt = now
+	s.documents[document.ID] = document
+	return document, nil
+}
+
+func (s *MemoryStore) DocumentsByUser(ctx context.Context, userID string) ([]documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items := make([]documents.Document, 0)
+	for _, document := range s.documents {
+		if document.UserID == userID && document.Status != documents.StatusDeleted {
+			items = append(items, document)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return items, nil
+}
+
+func (s *MemoryStore) DocumentByID(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.documentByIDLocked(userID, documentID)
+}
+
+func (s *MemoryStore) MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	document, err := s.documentByIDLocked(userID, documentID)
+	if err != nil {
+		return documents.Document{}, err
+	}
+	document.Status = documents.StatusProcessing
+	document.ErrorMessage = ""
+	document.UpdatedAt = time.Now().UTC()
+	s.documents[document.ID] = document
+	return document, nil
+}
+
+func (s *MemoryStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	document, err := s.documentByIDLocked(userID, documentID)
+	if err != nil {
+		return documents.Document{}, err
+	}
+	document.Status = documents.StatusReady
+	document.TextObjectKey = textObjectKey
+	document.ErrorMessage = ""
+	document.UpdatedAt = time.Now().UTC()
+	s.documents[document.ID] = document
+	return document, nil
+}
+
+func (s *MemoryStore) MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	document, err := s.documentByIDLocked(userID, documentID)
+	if err != nil {
+		return documents.Document{}, err
+	}
+	document.Status = documents.StatusFailed
+	document.ErrorMessage = truncateString(errorMessage, 500)
+	document.UpdatedAt = time.Now().UTC()
+	s.documents[document.ID] = document
+	return document, nil
+}
+
+func (s *MemoryStore) DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	document, err := s.documentByIDLocked(userID, documentID)
+	if err != nil {
+		return documents.Document{}, err
+	}
+	document.Status = documents.StatusDeleted
+	document.UpdatedAt = time.Now().UTC()
+	s.documents[document.ID] = document
+	return document, nil
 }
 
 func (s *MemoryStore) CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error) {
@@ -549,6 +656,14 @@ func (s *MemoryStore) HasAuditLog(action string, targetID string) bool {
 	return false
 }
 
+func (s *MemoryStore) documentByIDLocked(userID string, documentID string) (documents.Document, error) {
+	document, ok := s.documents[documentID]
+	if !ok || document.UserID != userID || document.Status == documents.StatusDeleted {
+		return documents.Document{}, ErrNotFound
+	}
+	return document, nil
+}
+
 func (s *MemoryStore) adminUserSummaryLocked(user User) AdminUserSummary {
 	summary := AdminUserSummary{User: user}
 	if wallet, ok := s.wallets[user.ID]; ok {
@@ -659,4 +774,15 @@ func newID(prefix string) string {
 		panic(errors.New("crypto/rand failed"))
 	}
 	return prefix + "_" + hex.EncodeToString(bytes[:])
+}
+
+func newUUID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		panic(err)
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(bytes[:])
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
 }

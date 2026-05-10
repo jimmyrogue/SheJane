@@ -46,6 +46,35 @@ export interface WalletBalance {
   status: string
 }
 
+export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'failed' | 'deleted'
+
+export interface UserDocument {
+  id: string
+  user_id: string
+  original_name: string
+  content_type: string
+  size_bytes: number
+  status: DocumentStatus
+  source_object_key: string
+  text_object_key?: string
+  error_message?: string
+  expires_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface UploadTarget {
+  method: 'PUT'
+  url: string
+  headers: Record<string, string>
+  expires_at: string
+}
+
+export interface DocumentUploadResponse {
+  document: UserDocument
+  upload: UploadTarget
+}
+
 interface APIResponse<T> {
   code: number
   message: string
@@ -87,6 +116,31 @@ export class JiandanAPI implements ChatAPI {
     return { checkout_url: order.checkout_url }
   }
 
+  async listDocuments(): Promise<UserDocument[]> {
+    return this.get<UserDocument[]>('/api/v1/documents')
+  }
+
+  async createDocumentUpload(input: {
+    filename: string
+    content_type: string
+    size_bytes: number
+  }): Promise<DocumentUploadResponse> {
+    return this.post<DocumentUploadResponse>('/api/v1/documents/uploads', input, true)
+  }
+
+  async completeDocument(documentID: string): Promise<UserDocument> {
+    return this.post<UserDocument>(`/api/v1/documents/${documentID}/complete`, {}, true)
+  }
+
+  async deleteDocument(documentID: string): Promise<UserDocument> {
+    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.headers(true),
+    })
+    return decodeResponse<UserDocument>(response)
+  }
+
   async streamChat(request: StreamChatRequest, handlers: StreamHandlers): Promise<StreamChatResult> {
     const response = await fetch(`${this.baseURL}/api/v1/chat/completions`, {
       method: 'POST',
@@ -99,6 +153,49 @@ export class JiandanAPI implements ChatAPI {
         client_conversation_id: request.clientConversationId,
         client_message_id: request.clientMessageId,
         messages: request.messages,
+      }),
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(await errorMessage(response))
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done = false
+    while (!done) {
+      const result = await reader.read()
+      done = result.done
+      buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !done })
+      const parsed = parseSSEBuffer(buffer)
+      buffer = parsed.rest
+      for (const event of parsed.events) {
+        if (event.type === 'delta') {
+          handlers.onDelta(event.content)
+        }
+      }
+    }
+
+    return {
+      requestId: response.headers.get('X-Request-ID') ?? '',
+      inputTokens: 0,
+      outputTokens: 0,
+      creditsCost: 0,
+    }
+  }
+
+  async askDocument(
+    documentID: string,
+    request: { mode: ChatMode; question: string },
+    handlers: StreamHandlers,
+  ): Promise<StreamChatResult> {
+    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}/ask`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.headers(true),
+      body: JSON.stringify({
+        model: request.mode,
+        question: request.question,
       }),
     })
     if (!response.ok || !response.body) {

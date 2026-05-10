@@ -14,6 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/coldflame/jiandanly/api/internal/billing"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 )
 
 type PostgresStore struct {
@@ -244,6 +245,78 @@ func (s *PostgresStore) LLMCallsByUser(ctx context.Context, userID string) ([]LL
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+func (s *PostgresStore) CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error) {
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO documents (
+			id, user_id, original_name, content_type, size_bytes, status,
+			source_object_key, text_object_key, error_message, expires_at, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),NULLIF($9, ''),$10,$11,$12)
+		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+	`, document.ID, document.UserID, document.OriginalName, document.ContentType, document.SizeBytes, document.Status, document.SourceObjectKey, document.TextObjectKey, document.ErrorMessage, document.ExpiresAt, nonZeroTime(document.CreatedAt), nonZeroTime(document.UpdatedAt)).
+		Scan(&document.ID, &document.UserID, &document.OriginalName, &document.ContentType, &document.SizeBytes, &document.Status, &document.SourceObjectKey, &document.TextObjectKey, &document.ErrorMessage, &document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt)
+	return document, err
+}
+
+func (s *PostgresStore) DocumentsByUser(ctx context.Context, userID string) ([]documents.Document, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+		FROM documents
+		WHERE user_id=$1 AND status <> 'deleted'
+		ORDER BY created_at DESC
+		LIMIT 100
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]documents.Document, 0)
+	for rows.Next() {
+		document, err := scanDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, document)
+	}
+	return result, rows.Err()
+}
+
+func (s *PostgresStore) DocumentByID(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	return scanDocument(s.db.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+		FROM documents
+		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
+	`, userID, documentID))
+}
+
+func (s *PostgresStore) MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusProcessing, "", "", true)
+}
+
+func (s *PostgresStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error) {
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusReady, textObjectKey, "", true)
+}
+
+func (s *PostgresStore) MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error) {
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusFailed, "", truncateString(errorMessage, 500), false)
+}
+
+func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error) {
+	return scanDocument(s.db.QueryRowContext(ctx, `
+		UPDATE documents
+		SET status='deleted', updated_at=NOW(), deleted_at=NOW()
+		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
+		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+	`, userID, documentID))
 }
 
 func (s *PostgresStore) CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error) {
@@ -827,6 +900,21 @@ func insertAuditLog(ctx context.Context, tx *sql.Tx, actorUserID string, action 
 	return err
 }
 
+func (s *PostgresStore) updateDocumentStatus(ctx context.Context, userID string, documentID string, status string, textObjectKey string, errorMessage string, clearError bool) (documents.Document, error) {
+	query := `
+		UPDATE documents
+		SET status=$3,
+			text_object_key=COALESCE(NULLIF($4, ''), text_object_key),
+			error_message=CASE WHEN $6 THEN NULL ELSE NULLIF($5, '') END,
+			updated_at=NOW()
+		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
+		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+	`
+	return scanDocument(s.db.QueryRowContext(ctx, query, userID, documentID, status, textObjectKey, errorMessage, clearError))
+}
+
 func (s *PostgresStore) walletTransactionsByWallet(ctx context.Context, walletID string, limit int) ([]billing.Transaction, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id::text, wallet_id::text, COALESCE(reservation_id::text, ''), type, amount,
@@ -865,6 +953,15 @@ func scanUser(row rowScanner) (User, error) {
 	return user, nil
 }
 
+func scanDocument(row rowScanner) (documents.Document, error) {
+	var document documents.Document
+	err := row.Scan(&document.ID, &document.UserID, &document.OriginalName, &document.ContentType, &document.SizeBytes, &document.Status, &document.SourceObjectKey, &document.TextObjectKey, &document.ErrorMessage, &document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt)
+	if err != nil {
+		return documents.Document{}, mapNotFound(err)
+	}
+	return document, nil
+}
+
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
@@ -901,6 +998,14 @@ func isUniqueViolation(err error) bool {
 
 func contains(value string, needle string) bool {
 	return len(value) >= len(needle) && (value == needle || len(needle) == 0 || stringContains(value, needle))
+}
+
+func truncateString(value string, limit int) string {
+	runes := []rune(value)
+	if limit <= 0 || len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func stringContains(value string, needle string) bool {

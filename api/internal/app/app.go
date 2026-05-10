@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/coldflame/jiandanly/api/internal/config"
+	"github.com/coldflame/jiandanly/api/internal/documents"
 	"github.com/coldflame/jiandanly/api/internal/llm"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
@@ -25,9 +26,10 @@ var (
 )
 
 type App struct {
-	Config config.Config
-	Store  store.Store
-	Router *llm.Router
+	Config    config.Config
+	Store     store.Store
+	Router    *llm.Router
+	Documents *documents.Service
 }
 
 type AuthResult struct {
@@ -43,12 +45,43 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func New(cfg config.Config, st store.Store) *App {
+type Option func(*appOptions)
+
+type appOptions struct {
+	documentStorage documents.ObjectStorage
+}
+
+func WithDocumentObjectStorage(storage documents.ObjectStorage) Option {
+	return func(options *appOptions) {
+		options.documentStorage = storage
+	}
+}
+
+func New(cfg config.Config, st store.Store, opts ...Option) *App {
+	options := appOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	fast, deep := providersFromConfig(cfg)
+	documentStorage := options.documentStorage
+	if documentStorage == nil {
+		documentStorage = documents.NewObjectStorageFromConfig(context.Background(), documents.StorageConfig{
+			Region:          cfg.AWSRegion,
+			AccessKeyID:     cfg.AWSAccessKeyID,
+			SecretAccessKey: cfg.AWSSecretAccessKey,
+			Bucket:          cfg.S3Bucket,
+		})
+	}
+	documentConfig := documents.DefaultServiceConfig()
+	documentConfig.S3DocumentPrefix = cfg.S3DocumentPrefix
+	documentConfig.MaxBytes = cfg.DocumentMaxBytes
+	documentConfig.TextLimit = cfg.DocumentTextLimit
+	documentConfig.TTL = time.Duration(cfg.DocumentTTLHours) * time.Hour
 	return &App{
-		Config: cfg,
-		Store:  st,
-		Router: llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel),
+		Config:    cfg,
+		Store:     st,
+		Router:    llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel),
+		Documents: documents.NewService(st, documentStorage, documentConfig),
 	}
 }
 

@@ -11,6 +11,7 @@
 - PostgreSQL 持久化：用户、refresh token、wallet、usage reservation、wallet transaction、LLM call record、payment order、Stripe event。
 - Stripe 订阅闭环：Checkout Session 创建、Webhook 签名校验、事件幂等处理、订阅 ID 入库、续费发放月额度、失败/取消状态同步；本地无 Stripe 密钥时返回 mock checkout URL。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
+- Phase 2A 文档阅读 MVP：普通用户 client 内置独立“文档阅读”工作台，支持 PDF / DOCX / XLSX 上传到 S3、同步提取文本、单文件问答和额度扣减。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
@@ -78,9 +79,35 @@ make smoke-stripe-webhook
 
 如果 API 设置了 `STRIPE_WEBHOOK_SECRET`，脚本会优先使用当前 shell 的同名变量；没有时会自动读取当前目录 `.env` 中的 `STRIPE_WEBHOOK_SECRET`，并生成 `Stripe-Signature`。
 
+## Phase 2A：文档上传与单文件 AI 阅读
+
+Phase 2A 开始补齐“帮我读”的真实文档能力。用户在普通 client 中切换到“文档阅读”，上传 PDF / DOCX / XLSX 后，浏览器用后端签发的 presigned PUT URL 直传 S3；后端在 `complete` 阶段下载原文件、提取文本、把文本另存为 S3 `.txt` object，再允许用户基于单个文档提问。
+
+本阶段边界：
+
+- 支持：单文件上传、同步解析、单文件问答、删除文档、问答扣额度。
+- 不支持：多文档问答、向量库/RAG、团队文档库、长期知识库、admin 后台文档管理。
+- 上传和解析免费；只有文档问答会走现有 LLM reservation/settlement 账本。
+- 默认限制：单文件 30MB、提取文本 60k 字符、对象和记录保留 7 天。
+
+`.env` 需要配置 AWS S3：
+
+```dotenv
+AWS_REGION=ap-east-1
+AWS_ACCESS_KEY_ID=你的开发 IAM access key
+AWS_SECRET_ACCESS_KEY=你的开发 IAM secret
+S3_BUCKET=你的 dev bucket
+S3_DOCUMENT_PREFIX=documents
+DOCUMENT_MAX_BYTES=31457280
+DOCUMENT_TEXT_LIMIT=60000
+DOCUMENT_TTL_HOURS=168
+```
+
+S3 bucket CORS 至少允许来自 `CLIENT_BASE_URL` 的 `PUT`，并允许 `Content-Type` header。API 使用同一组 IAM 凭证执行 `HeadObject`、`GetObject`、`PutObject` 和 `DeleteObject`。
+
 ## 后续阶段边界
 
-团队版、BYOK、云端历史同步、RAG、Office/图片生成、文件解析、Chrome Use、Computer Use、MCP、移动端和开放平台 API Key 都是后续阶段能力。
+团队版、BYOK、云端历史同步、多文档 RAG、Office/图片生成、Chrome Use、Computer Use、MCP、移动端和开放平台 API Key 都是后续阶段能力。
 
 ## 本地开发
 
@@ -142,6 +169,7 @@ docker compose up --build
 - `FAST_PROVIDER_API_KEY`：DeepSeek 或 OpenAI-compatible provider key。
 - `ANTHROPIC_API_KEY`：深度模式 Claude key。
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID`：Stripe Billing Checkout。
+- `AWS_REGION`、`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`S3_BUCKET`：Phase 2A 文档上传与解析。
 
 Stripe Checkout 使用订阅模式，Webhook 至少需要订阅 `checkout.session.completed`、`invoice.paid`、`invoice.payment_failed`、`customer.subscription.updated`、`customer.subscription.deleted`。系统不会在后台存储或展示 Stripe secret key。
 
@@ -168,4 +196,4 @@ make smoke-real-llm
 make smoke-stripe-webhook
 ```
 
-前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、普通 client 不暴露后台入口、独立 admin web 渲染、功能 tab、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、Stripe 订阅生命周期和 admin API 权限/审计。
+前端单测覆盖 SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、普通 client 不暴露后台入口、文档阅读页上传/列表/表单校验、独立 admin web 渲染、功能 tab、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、文档上传/解析/问答、Stripe 订阅生命周期和 admin API 权限/审计。
