@@ -32,8 +32,8 @@ Phase 1.5 turns the Phase 1 mock chat into a real LLM-backed chat flow. The firs
 | Local real LLM smoke | Green | `scripts/smoke-real-llm.sh` registers a user, sends a real chat, and fails if response is still mock |
 | Operator documentation | Green | `docs/operations.md` explains Docker management, logs, SQL checks, and admin-system plan |
 | README | Green | Root README documents Phase 1.5 real DeepSeek setup and smoke command |
-| Live DeepSeek verification | Blocked | Requires a real `FAST_PROVIDER_API_KEY`; do not commit or print provider secrets |
-| Final verification | Verified | `bash -n scripts/smoke-real-llm.sh`, `make test`, and `make build` passed locally |
+| Live DeepSeek verification | Verified | User configured a real provider key locally and confirmed chat now talks to the real API |
+| Final verification | Verified | `bash -n scripts/smoke-real-llm.sh`, `make test`, and `make build` passed locally; real-provider smoke was completed by user |
 
 ## Admin System Decision
 
@@ -44,3 +44,18 @@ There is a product-level plan for an admin system, but it should not block Phase
 3. Add team management after individual usage and billing are stable.
 
 For now, system management is done through Docker, API logs, PostgreSQL queries, and external provider dashboards.
+
+## Phase 1.5 Closeout
+
+Status: locally complete and user verified.
+
+Accepted local workflows:
+
+- Configure a real DeepSeek/OpenAI-compatible provider key.
+- Run the app with `MOCK_LLM=false`.
+- Send a chat message through the product UI.
+- Confirm the assistant response comes from a real provider instead of the mock provider.
+
+Remaining non-local item:
+
+- Production deployment still needs target host, DNS, secrets, and post-deploy smoke verification.
