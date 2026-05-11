@@ -1,6 +1,7 @@
 import type { ChatAPI } from '../../shared/api/client'
+import type { AgentRunEvent } from '../../shared/api/sse'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
-import type { ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
+import type { AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
 
 interface ChatStoreDeps {
   localData: LocalConversationStore
@@ -13,6 +14,10 @@ interface SendMessageInput {
   content: string
   mode: ChatMode
   scene: string
+  document?: {
+    id: string
+    name: string
+  }
 }
 
 export function createChatStore(deps: ChatStoreDeps) {
@@ -33,7 +38,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       const userMessage: ChatMessage = {
         id: createLocalID('msg'),
         role: 'user',
-        content: text,
+        content: formatUserMessage(text, input.document),
         createdAt: timestamp,
         status: 'done',
       }
@@ -45,29 +50,33 @@ export function createChatStore(deps: ChatStoreDeps) {
         status: 'streaming',
       }
 
-      const requestMessages = [...conversation.messages, userMessage]
-        .filter((message) => message.role !== 'system')
-        .map((message) => ({ role: message.role, content: message.content }))
-
       conversation.messages = [...conversation.messages, userMessage, assistantMessage]
       conversation.updatedAt = timestamp
       await deps.localData.save(conversation)
 
       try {
-        const result = await deps.api.streamChat(
-          {
-            mode: input.mode,
-            scene: input.scene,
-            clientConversationId: conversation.id,
-            clientMessageId: userMessage.id,
-            messages: requestMessages,
+        const run = await deps.api.createAgentRun({
+          goal: text,
+          mode: input.mode,
+          clientConversationId: conversation.id,
+          clientMessageId: userMessage.id,
+          attachments: input.document
+            ? [{ type: 'document', document_id: input.document.id, name: input.document.name }]
+            : [],
+        })
+        assistantMessage.runId = run.id
+        const streamHandlers = {
+          onDelta: (delta: string) => {
+            assistantMessage.content += delta
           },
-          {
-            onDelta: (delta) => {
-              assistantMessage.content += delta
-            },
+          onEvent: (event: AgentRunEvent) => {
+            const item = timelineItem(event)
+            if (item) {
+              assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), item]
+            }
           },
-        )
+        }
+        const result = await deps.api.streamAgentRun(run.id, streamHandlers)
         assistantMessage.status = 'done'
         assistantMessage.requestId = result.requestId
         assistantMessage.creditsCost = result.creditsCost
@@ -94,4 +103,40 @@ function createConversation(firstMessage: string, timestamp: string): Conversati
     updatedAt: timestamp,
     messages: [],
   }
+}
+
+function formatUserMessage(text: string, document?: { name: string }): string {
+  if (!document) {
+    return text
+  }
+  return `📎 ${document.name}\n${text}`
+}
+
+function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
+  if (event.event_type === 'llm.delta') {
+    return null
+  }
+  const payload = event.payload ?? {}
+  switch (event.event_type) {
+    case 'skill.selected':
+      return { type: event.event_type, label: `选择能力：${stringValue(payload.skill) || 'direct-answer'}` }
+    case 'tool.requested':
+      return { type: event.event_type, label: `调用工具：${stringValue(payload.tool)}` }
+    case 'tool.completed':
+      return { type: event.event_type, label: `工具完成：${stringValue(payload.tool)}` }
+    case 'tool.failed':
+      return { type: event.event_type, label: `工具失败：${stringValue(payload.tool)}` }
+    case 'run.completed':
+      return { type: event.event_type, label: '任务完成' }
+    case 'run.failed':
+      return { type: event.event_type, label: stringValue(payload.message) || '任务失败' }
+    case 'run.canceled':
+      return { type: event.event_type, label: '任务已取消' }
+    default:
+      return { type: event.event_type, label: event.event_type }
+  }
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }

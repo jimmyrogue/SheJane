@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseOpenAIStreamEvent, parseSSEBuffer } from './sse'
+import { parseAgentSSEBuffer, parseOpenAIStreamEvent, parseSSEBuffer } from './sse'
 
 describe('SSE parser', () => {
   it('extracts OpenAI-compatible delta content', () => {
@@ -22,5 +22,19 @@ describe('SSE parser', () => {
 
     expect(result.events).toEqual([{ type: 'delta', content: 'A' }])
     expect(result.rest).toContain('"B"')
+  })
+
+  it('extracts Agent Run events from event-stream chunks', () => {
+    const result = parseAgentSSEBuffer(
+      'event: agent.event\n' +
+        'data: {"event_type":"tool.completed","payload":{"tool":"document.read"}}\n\n' +
+        'data: [DONE]\n\n',
+    )
+
+    expect(result.events).toEqual([
+      { type: 'agent', event: { event_type: 'tool.completed', payload: { tool: 'document.read' } } },
+      { type: 'done' },
+    ])
+    expect(result.rest).toBe('')
   })
 })

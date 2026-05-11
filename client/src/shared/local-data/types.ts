@@ -2,6 +2,11 @@ export type MessageRole = 'system' | 'user' | 'assistant'
 export type ChatMode = 'fast' | 'deep'
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error'
 
+export interface AgentTimelineItem {
+  type: string
+  label: string
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
@@ -9,7 +14,9 @@ export interface ChatMessage {
   createdAt: string
   status: MessageStatus
   requestId?: string
+  runId?: string
   creditsCost?: number
+  agentEvents?: AgentTimelineItem[]
 }
 
 export interface Conversation {

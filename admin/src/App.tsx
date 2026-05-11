@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Ban,
+  Bot,
   ClipboardList,
   Coins,
   Database,
@@ -48,6 +49,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AdminAPI,
+  type AdminAgentRun,
   type AdminAuditLog,
   type AdminLLMCall,
   type AdminOrder,
@@ -58,7 +60,7 @@ import {
   type AuthPayload,
 } from './shared/api/client'
 
-type AdminSection = 'overview' | 'users' | 'usage' | 'orders' | 'providers' | 'audit'
+type AdminSection = 'overview' | 'users' | 'usage' | 'orders' | 'providers' | 'agent-runs' | 'audit'
 
 const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 }> = [
   { id: 'overview', label: '概览', icon: BarChart3 },
@@ -66,6 +68,7 @@ const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 
   { id: 'usage', label: '用量', icon: MessageSquareText },
   { id: 'orders', label: '订单', icon: ReceiptText },
   { id: 'providers', label: '模型', icon: Settings },
+  { id: 'agent-runs', label: 'Agent', icon: Bot },
   { id: 'audit', label: '审计', icon: ClipboardList },
 ]
 
@@ -226,6 +229,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [calls, setCalls] = useState<AdminLLMCall[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [providers, setProviders] = useState<AdminProviderStatus[]>([])
+  const [agentRuns, setAgentRuns] = useState<AdminAgentRun[]>([])
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
   const [selectedUser, setSelectedUser] = useState<AdminUserDetail | null>(null)
   const [query, setQuery] = useState('')
@@ -242,12 +246,13 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, userData, callData, orderData, providerData, auditData] = await Promise.all([
+      const [overviewData, userData, callData, orderData, providerData, agentRunData, auditData] = await Promise.all([
         api.adminOverview(),
         api.adminUsers(nextQuery),
         api.adminLLMCalls(),
         api.adminOrders(),
         api.adminProviders(),
+        api.adminAgentRuns(),
         api.adminAuditLogs(),
       ])
       setOverview(overviewData)
@@ -255,6 +260,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
       setCalls(callData)
       setOrders(orderData)
       setProviders(providerData)
+      setAgentRuns(agentRunData)
       setAuditLogs(auditData)
 
       const currentUserId = selectedUser?.user.id
@@ -437,6 +443,10 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
             <TabsContent value="providers" className="mt-0">
               <ProvidersCard providers={providers} />
+            </TabsContent>
+
+            <TabsContent value="agent-runs" className="mt-0">
+              <AgentRunsCard runs={agentRuns} />
             </TabsContent>
 
             <TabsContent value="audit" className="mt-0">
@@ -771,6 +781,51 @@ function ProvidersCard({ providers }: { providers: AdminProviderStatus[] }) {
               ))
             ) : (
               <EmptyTableRow columns={3} label="暂无模型配置" />
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AgentRunsCard({ runs }: { runs: AdminAgentRun[] }) {
+  return (
+    <Card id="agent-runs" className="min-w-0">
+      <CardHeader>
+        <CardTitle>Agent Runs</CardTitle>
+        <CardDescription>只读观察云端兼容 run 的状态、用户、模式和摘要，不展示完整用户输入。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Run</TableHead>
+              <TableHead>用户</TableHead>
+              <TableHead>摘要</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>更新时间</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {runs.length ? (
+              runs.slice(0, 10).map((run) => (
+                <TableRow key={run.id}>
+                  <TableCell>
+                    <div className="max-w-32 truncate font-medium">{run.id}</div>
+                    <div className="text-xs text-muted-foreground">{run.origin} · {run.mode}</div>
+                  </TableCell>
+                  <TableCell className="max-w-36 truncate">{run.user_email || run.user_id}</TableCell>
+                  <TableCell className="max-w-72 truncate">
+                    <div>{run.goal_summary || '用户任务'}</div>
+                    <div className="text-xs text-muted-foreground">附件 {run.attachments?.length ?? 0} · 过期 {formatDateTime(run.expires_at)}</div>
+                  </TableCell>
+                  <TableCell><StatusBadge status={run.status} /></TableCell>
+                  <TableCell className="whitespace-nowrap">{formatDateTime(run.updated_at)}</TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <EmptyTableRow columns={5} label="暂无 Agent Runs" />
             )}
           </TableBody>
         </Table>

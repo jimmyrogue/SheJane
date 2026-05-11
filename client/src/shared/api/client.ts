@@ -1,4 +1,4 @@
-import { parseSSEBuffer } from './sse'
+import { parseAgentSSEBuffer, parseSSEBuffer, type AgentRunEvent } from './sse'
 import type { ChatMode } from '../local-data/types'
 
 export interface StreamChatRequest {
@@ -11,6 +11,7 @@ export interface StreamChatRequest {
 
 export interface StreamHandlers {
   onDelta: (content: string) => void
+  onEvent?: (event: AgentRunEvent) => void
 }
 
 export interface StreamChatResult {
@@ -21,7 +22,29 @@ export interface StreamChatResult {
 }
 
 export interface ChatAPI {
-  streamChat(request: StreamChatRequest, handlers: StreamHandlers): Promise<StreamChatResult>
+  createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun>
+  streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult>
+}
+
+export interface AgentAttachment {
+  type: 'document'
+  document_id: string
+  name?: string
+}
+
+export interface CreateAgentRunRequest {
+  goal: string
+  mode: ChatMode
+  clientConversationId: string
+  clientMessageId: string
+  attachments: AgentAttachment[]
+}
+
+export interface AgentRun {
+  id: string
+  status: string
+  mode: ChatMode
+  goal_summary?: string
 }
 
 export interface AuthPayload {
@@ -184,6 +207,63 @@ export class JiandanAPI implements ChatAPI {
     }
   }
 
+  async createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun> {
+    return this.post<AgentRun>('/api/v1/agent/runs', {
+      goal: request.goal,
+      mode: request.mode,
+      client_conversation_id: request.clientConversationId,
+      client_message_id: request.clientMessageId,
+      attachments: request.attachments,
+    }, true)
+  }
+
+  async streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult> {
+    const response = await fetch(`${this.baseURL}/api/v1/agent/runs/${encodeURIComponent(runID)}/stream`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: this.headers(true),
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(await errorMessage(response))
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let done = false
+    let requestId = response.headers.get('X-Request-ID') ?? ''
+    let inputTokens = 0
+    let outputTokens = 0
+    let creditsCost = 0
+    while (!done) {
+      const result = await reader.read()
+      done = result.done
+      buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !done })
+      const parsed = parseAgentSSEBuffer(buffer)
+      buffer = parsed.rest
+      for (const event of parsed.events) {
+        if (event.type !== 'agent') {
+          continue
+        }
+        handlers.onEvent?.(event.event)
+        if (event.event.event_type === 'llm.delta') {
+          const content = event.event.payload?.content
+          if (typeof content === 'string') {
+            handlers.onDelta(content)
+          }
+        }
+        if (event.event.event_type === 'run.completed') {
+          requestId = stringPayload(event.event, 'request_id') || requestId
+          inputTokens = numberPayload(event.event, 'input_tokens')
+          outputTokens = numberPayload(event.event, 'output_tokens')
+          creditsCost = numberPayload(event.event, 'credits_cost')
+        }
+      }
+    }
+
+    return { requestId, inputTokens, outputTokens, creditsCost }
+  }
+
   async askDocument(
     documentID: string,
     request: { mode: ChatMode; question: string },
@@ -254,6 +334,16 @@ export class JiandanAPI implements ChatAPI {
     }
     return headers
   }
+}
+
+function stringPayload(event: AgentRunEvent, key: string): string {
+  const value = event.payload?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function numberPayload(event: AgentRunEvent, key: string): number {
+  const value = event.payload?.[key]
+  return typeof value === 'number' ? value : 0
 }
 
 async function decodeResponse<T>(response: Response): Promise<T> {

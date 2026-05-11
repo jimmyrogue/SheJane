@@ -180,6 +180,17 @@ func (a *App) NewRequestID() string {
 	return randomToken("req")
 }
 
+func (a *App) NewUUID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		panic(err)
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(bytes[:])
+	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
+}
+
 func (a *App) promoteAdminIfConfigured(ctx context.Context, user store.User) (store.User, error) {
 	if user.Role == "admin" || !a.Config.IsAdminEmail(user.Email) {
 		return user, nil

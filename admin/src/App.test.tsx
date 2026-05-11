@@ -39,6 +39,10 @@ describe('admin web app', () => {
     selectAdminTab('模型')
     expect(await screen.findByText((content) => content.includes('deepseek-v4-flash'))).toBeInTheDocument()
     expect(screen.queryByText((content) => content.includes('order_1'))).not.toBeInTheDocument()
+
+    selectAdminTab('Agent')
+    expect(await screen.findByText((content) => content.includes('run_1'))).toBeInTheDocument()
+    expect(screen.queryByText((content) => content.includes('deepseek-v4-flash'))).not.toBeInTheDocument()
   })
 
   it('renders a dedicated admin shell with a refresh action', async () => {
@@ -96,6 +100,21 @@ describe('admin web app', () => {
     selectAdminTab('审计')
     expect(await screen.findByText('admin.user_status_update')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /删除|修改|重试/ })).not.toBeInTheDocument()
+  })
+
+  it('renders agent runs as a read-only operations view', async () => {
+    mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('运营概览')
+
+    selectAdminTab('Agent')
+    expect(await screen.findByText((content) => content.includes('run_1'))).toBeInTheDocument()
+    expect(screen.getByText('用户任务（18 字）')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /取消|重试|删除/ })).not.toBeInTheDocument()
   })
 
   it('blocks non-admin users from loading admin data', async () => {
@@ -227,6 +246,29 @@ function mockFetch(role: 'admin' | 'user') {
             wallet_status: 'active',
             idempotency_key: 'order-key',
             created_at: '2026-05-10T00:00:00Z',
+          },
+        ],
+      })
+    }
+    if (url.endsWith('/api/v1/admin/agent-runs')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: [
+          {
+            id: 'run_1',
+            user_id: 'user-1',
+            user_email: 'user@example.com',
+            origin: 'cloud',
+            status: 'completed',
+            mode: 'fast',
+            goal_summary: '用户任务（18 字）',
+            client_conversation_id: 'conv-1',
+            client_message_id: 'msg-1',
+            attachments: [],
+            expires_at: '2026-05-17T00:00:00Z',
+            created_at: '2026-05-10T00:00:00Z',
+            updated_at: '2026-05-10T00:01:00Z',
           },
         ],
       })

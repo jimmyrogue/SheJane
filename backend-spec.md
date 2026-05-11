@@ -1,7 +1,7 @@
 # 简单（Jiandan）后端技术方案
 
-**版本：** v1.5
-**更新：** 2026-05-10
+**版本：** v1.6
+**更新：** 2026-05-11
 **适用阶段：** Phase 1-5 分阶段落地
 
 > **v1.5 更新说明：** Phase 2 方向改为统一 Agentic Chat。长期架构锁定为 Local Agent Host + Cloud Control Plane：后端负责账号、额度、支付、模型网关、文档服务、admin、审计和云端兼容 Agent Run；本地 Host 负责本地工具、权限、MCP、文件/终端/浏览器/IDE 执行。完整规格见 [`spec.md`](spec.md)。
@@ -432,7 +432,12 @@ CREATE TABLE agent_runs (
     status          VARCHAR(30) NOT NULL DEFAULT 'queued',
     -- queued | running | waiting_permission | completed | failed | canceled | insufficient_credits
     mode            VARCHAR(20) NOT NULL DEFAULT 'fast',
-    goal_summary    VARCHAR(1000) NOT NULL DEFAULT '',
+    goal            TEXT NOT NULL DEFAULT '',
+    -- cloud-compatible run execution input, short-lived only; admin API never returns it
+    goal_summary    VARCHAR(240) NOT NULL DEFAULT '',
+    client_conversation_id VARCHAR(80),
+    client_message_id      VARCHAR(80),
+    attachments      JSONB NOT NULL DEFAULT '[]',
     error_code      VARCHAR(80),
     error_message   VARCHAR(500),
     expires_at      TIMESTAMPTZ NOT NULL,
@@ -2858,12 +2863,13 @@ docker-logs:
 
 ### Phase 2：统一 Agentic Chat
 
-- [ ] Phase 2.0：新增 [`spec.md`](spec.md)，替换旧的场景模板路线
-- [ ] Phase 2.1：合并普通聊天和文档阅读入口，现有 documents API 成为 Agentic Chat 的文档工具
-- [ ] Phase 2.2：新增云端兼容 Agent Run API：runs / events / stream / cancel
-- [ ] Phase 2.2：新增 `agent_runs` / `agent_events` 短期事件表，默认 7 天保留
-- [ ] Phase 2.2：新增 Agent LLM Gateway，Local Host 调云端模型并统一额度扣减
-- [ ] Phase 2.2：admin 只读观察 run 摘要、LLM 用量和工具错误，不展示私有本地内容
+- [x] Phase 2.0：新增 [`spec.md`](spec.md)，替换旧的场景模板路线
+- [x] Phase 2.1：合并普通聊天和文档阅读入口，现有 documents API 成为 Agentic Chat 的文档工具
+- [x] Phase 2.2：新增云端兼容 Agent Run API：runs / events / stream / cancel
+- [x] Phase 2.2：新增 `agent_runs` / `agent_events` 短期事件表，默认 7 天保留
+- [x] Phase 2.2：Agent Run 复用现有 LLM provider 和额度预留/结算，并写 `llm_call_records(scene=agent)`
+- [x] Phase 2.2：admin 只读观察 run 摘要、LLM 用量和工具错误，不展示私有本地内容
+- [ ] Phase 2.2b：补齐云端 `web.fetch` / `web.search`，加入 SSRF 防护、来源标记和响应大小限制
 
 ### Phase 3：Local Agent Host
 

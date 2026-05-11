@@ -108,6 +108,24 @@ export interface AdminProviderStatus {
   api_key_configured: boolean
 }
 
+export interface AdminAgentRun {
+  id: string
+  user_id: string
+  user_email: string
+  origin: string
+  status: string
+  mode: string
+  goal_summary: string
+  client_conversation_id?: string
+  client_message_id?: string
+  attachments?: Array<{ type: string; document_id?: string; name?: string }>
+  error_code?: string
+  error_message?: string
+  expires_at: string
+  created_at: string
+  updated_at: string
+}
+
 interface APIResponse<T> {
   code: number
   message: string
@@ -170,6 +188,10 @@ export class AdminAPI {
 
   async adminProviders(): Promise<AdminProviderStatus[]> {
     return this.get<AdminProviderStatus[]>('/api/v1/admin/providers')
+  }
+
+  async adminAgentRuns(): Promise<AdminAgentRun[]> {
+    return this.get<AdminAgentRun[]>('/api/v1/admin/agent-runs')
   }
 
   async adminAuditLogs(): Promise<AdminAuditLog[]> {

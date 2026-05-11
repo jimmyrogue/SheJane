@@ -1,7 +1,7 @@
 # Jiandanly Agentic Chat Spec
 
 **Version:** v0.1
-**Updated:** 2026-05-10
+**Updated:** 2026-05-11
 **Status:** Phase 2 direction replacement
 
 ## 1. Direction
@@ -288,7 +288,7 @@ Permission scope should support:
 ### Phase 2.2: Cloud-Compatible Agent Run
 
 - Add run/event/stream APIs in the cloud backend.
-- Implement web search/fetch and document-read tools with strong SSRF and size protections.
+- Implement document-read tools first; add guarded web search/fetch as a follow-up increment with strong SSRF and size protections.
 - Use the existing wallet reservation/settlement path for every LLM call.
 - Admin gains read-only run and tool-failure visibility.
 

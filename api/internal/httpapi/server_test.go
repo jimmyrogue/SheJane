@@ -256,6 +256,134 @@ func TestDocumentAskRejectsForeignAndExpiredDocuments(t *testing.T) {
 	}
 }
 
+func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
+	server := newTestServer(t)
+
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs", strings.NewReader(`{"goal":"hello","mode":"fast"}`))
+	unauth.Header.Set("Content-Type", "application/json")
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth agent run status = %d, want 401", unauthRecorder.Code)
+	}
+
+	token := registerAndToken(t, server)
+	before := billingBalance(t, server, token)
+	run := createAgentRun(t, server, token, `{"goal":"总结今天的计划","mode":"fast","client_conversation_id":"conv-agent","client_message_id":"msg-agent"}`)
+	if run.Status != "queued" || run.Mode != "fast" || run.ID == "" {
+		t.Fatalf("agent run = %#v", run)
+	}
+
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("agent stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	body := streamRecorder.Body.String()
+	for _, want := range []string{"run.created", "run.started", "skill.selected", "llm.started", "llm.delta", "run.completed", "Mock Jiandan response", "data: [DONE]"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agent stream missing %q: %s", want, body)
+		}
+	}
+	after := billingBalance(t, server, token)
+	if after.MonthlyRemaining >= before.MonthlyRemaining {
+		t.Fatalf("monthly remaining before=%d after=%d, want decrease", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+
+	events := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/events", nil)
+	events.Header.Set("Authorization", "Bearer "+token)
+	eventsRecorder := httptest.NewRecorder()
+	server.ServeHTTP(eventsRecorder, events)
+	if eventsRecorder.Code != http.StatusOK {
+		t.Fatalf("agent events status = %d, body = %s", eventsRecorder.Code, eventsRecorder.Body.String())
+	}
+	if !strings.Contains(eventsRecorder.Body.String(), `"event_type":"run.completed"`) {
+		t.Fatalf("persisted events missing completion: %s", eventsRecorder.Body.String())
+	}
+	if calls := usageRecords(t, server, token); !strings.Contains(calls, `"scene":"agent"`) {
+		t.Fatalf("usage records missing agent scene: %s", calls)
+	}
+}
+
+func TestAgentRunWithDocumentAttachmentEmitsDocumentToolEvents(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	token := registerAndToken(t, server)
+	upload := createDocumentUpload(t, server, token, "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := objects.PutObject(t.Context(), upload.Document.SourceObjectKey, upload.Document.ContentType, minimalDocx("The roadmap risk is delayed billing.")); err != nil {
+		t.Fatalf("put source object: %v", err)
+	}
+	completeDocument(t, server, token, upload.Document.ID)
+
+	run := createAgentRun(t, server, token, `{"goal":"这份文档最大的风险是什么？","mode":"fast","attachments":[{"type":"document","document_id":"`+upload.Document.ID+`","name":"brief.docx"}]}`)
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("agent document stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	body := streamRecorder.Body.String()
+	for _, want := range []string{"document-analysis", "document.read", "tool.requested", "tool.completed", "run.completed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("agent document stream missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestAgentRunCanBeCanceledBeforeStream(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndToken(t, server)
+	run := createAgentRun(t, server, token, `{"goal":"稍后再做","mode":"fast"}`)
+
+	cancel := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs/"+run.ID+"/cancel", nil)
+	cancel.Header.Set("Authorization", "Bearer "+token)
+	cancelRecorder := httptest.NewRecorder()
+	server.ServeHTTP(cancelRecorder, cancel)
+	if cancelRecorder.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body = %s", cancelRecorder.Code, cancelRecorder.Body.String())
+	}
+	if !strings.Contains(cancelRecorder.Body.String(), `"status":"canceled"`) {
+		t.Fatalf("cancel response missing status: %s", cancelRecorder.Body.String())
+	}
+
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("canceled stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	if strings.Contains(streamRecorder.Body.String(), "llm.delta") || !strings.Contains(streamRecorder.Body.String(), "run.canceled") {
+		t.Fatalf("canceled stream should replay cancel without llm: %s", streamRecorder.Body.String())
+	}
+}
+
+func TestAdminCanObserveAgentRunsReadOnly(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	userToken := registerAndTokenWithEmail(t, server, "agent-user@example.com")
+	run := createAgentRun(t, server, userToken, `{"goal":"给我一个摘要，但不要在后台暴露完整正文","mode":"fast"}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/agent-runs", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin agent runs status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, run.ID) || !strings.Contains(body, "agent-user@example.com") || !strings.Contains(body, `"status":"queued"`) {
+		t.Fatalf("admin agent runs missing run summary: %s", body)
+	}
+	if strings.Contains(body, "完整正文") {
+		t.Fatalf("admin agent runs should expose summaries, not full raw goal: %s", body)
+	}
+}
+
 func TestAdminOriginAllowedByCORS(t *testing.T) {
 	server := newTestServerWithConfig(t, func(cfg *config.Config) {
 		cfg.ClientBaseURL = "https://app.example.com"
@@ -751,6 +879,29 @@ func adminUserDetail(t *testing.T, server http.Handler, token string, userID str
 	return body.Data
 }
 
+type agentRunTestPayload struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Mode   string `json:"mode"`
+}
+
+func createAgentRun(t *testing.T, server http.Handler, token string, body string) agentRunTestPayload {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create agent run status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response apiResponse[agentRunTestPayload]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	return response.Data
+}
+
 func createSubscriptionCheckout(t *testing.T, server http.Handler, token string) store.PaymentOrder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/subscription/checkout", nil)
@@ -768,6 +919,18 @@ func createSubscriptionCheckout(t *testing.T, server http.Handler, token string)
 		t.Fatalf("checkout response missing stripe session id: %#v", body.Data)
 	}
 	return body.Data
+}
+
+func usageRecords(t *testing.T, server http.Handler, token string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/usage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("usage status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.String()
 }
 
 func postStripeWebhook(t *testing.T, server http.Handler, payload string) {

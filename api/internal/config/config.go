@@ -43,6 +43,7 @@ type Config struct {
 	DocumentMaxBytes   int64
 	DocumentTextLimit  int
 	DocumentTTLHours   int
+	AgentRunTTLHours   int
 }
 
 func Default() Config {
@@ -76,6 +77,7 @@ func Default() Config {
 		DocumentMaxBytes:    30 * 1024 * 1024,
 		DocumentTextLimit:   60_000,
 		DocumentTTLHours:    168,
+		AgentRunTTLHours:    168,
 	}
 }
 
@@ -110,6 +112,7 @@ func Load() Config {
 	cfg.DocumentMaxBytes = getEnvInt64("DOCUMENT_MAX_BYTES", cfg.DocumentMaxBytes)
 	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)
 	cfg.DocumentTTLHours = getEnvInt("DOCUMENT_TTL_HOURS", cfg.DocumentTTLHours)
+	cfg.AgentRunTTLHours = getEnvInt("AGENT_RUN_TTL_HOURS", cfg.AgentRunTTLHours)
 	return cfg
 }
 

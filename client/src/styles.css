@@ -107,6 +107,25 @@ button {
   padding: 0 11px;
 }
 
+.sidebar-section {
+  display: grid;
+  gap: 9px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.section-heading small {
+  font-weight: 650;
+  opacity: 0.72;
+}
+
 .workspace-switch button {
   justify-content: center;
 }
@@ -175,9 +194,9 @@ button {
 
 .document-list {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 7px;
+  max-height: 220px;
   min-height: 0;
   overflow: auto;
 }
@@ -186,6 +205,35 @@ button {
   justify-content: flex-start;
   width: 100%;
   min-height: 48px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.document-select,
+.document-delete,
+.attachment-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.document-select {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.document-delete {
+  display: inline-grid;
+  width: 34px;
+  min-height: 48px;
+  place-items: center;
+  opacity: 0.72;
 }
 
 .document-list-item span {
@@ -375,6 +423,24 @@ button {
   background: #edf6ea;
 }
 
+.agent-timeline {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -8px;
+}
+
+.agent-timeline small {
+  border: 1px solid #dce4da;
+  border-radius: 999px;
+  background: #f7faf6;
+  color: #60726a;
+  font-size: 11px;
+  line-height: 1.3;
+  padding: 4px 8px;
+}
+
 .empty-state {
   display: grid;
   min-height: 100%;
@@ -420,6 +486,45 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.attachment-chip {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #cbdccf;
+  border-radius: 8px;
+  background: #edf6ea;
+  color: #12382e;
+  padding: 8px 9px;
+}
+
+.attachment-chip.pending {
+  background: #fff8e6;
+  border-color: #e4c772;
+}
+
+.attachment-chip span {
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.attachment-chip small {
+  min-width: 0;
+  overflow: hidden;
+  color: #60726a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
 }
 
 .segmented {

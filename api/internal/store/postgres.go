@@ -247,6 +247,124 @@ func (s *PostgresStore) LLMCallsByUser(ctx context.Context, userID string) ([]LL
 	return records, rows.Err()
 }
 
+func (s *PostgresStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {
+	if run.ID == "" {
+		run.ID = newUUID()
+	}
+	if run.Origin == "" {
+		run.Origin = "cloud"
+	}
+	if run.Status == "" {
+		run.Status = "queued"
+	}
+	if run.Mode == "" {
+		run.Mode = "fast"
+	}
+	now := time.Now().UTC()
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = now
+	}
+	if run.ExpiresAt.IsZero() {
+		run.ExpiresAt = now.Add(168 * time.Hour)
+	}
+	attachments, err := json.Marshal(run.Attachments)
+	if err != nil {
+		return AgentRun{}, err
+	}
+	return scanAgentRun(s.db.QueryRowContext(ctx, `
+		INSERT INTO agent_runs (
+			id, user_id, origin, status, mode, goal, goal_summary,
+			client_conversation_id, client_message_id, attachments, expires_at, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),NULLIF($9, ''),$10,$11,$12,$13)
+		RETURNING id::text, user_id::text, origin, status, mode, goal, goal_summary,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
+	`, run.ID, run.UserID, run.Origin, run.Status, run.Mode, run.Goal, run.GoalSummary, run.ClientConversationID, run.ClientMessageID, json.RawMessage(attachments), run.ExpiresAt, run.CreatedAt, run.UpdatedAt))
+}
+
+func (s *PostgresStore) AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error) {
+	return scanAgentRun(s.db.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text, origin, status, mode, goal, goal_summary,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
+		FROM agent_runs
+		WHERE user_id=$1 AND id=$2
+	`, userID, runID))
+}
+
+func (s *PostgresStore) UpdateAgentRunStatus(ctx context.Context, userID string, runID string, status string, errorCode string, errorMessage string) (AgentRun, error) {
+	return scanAgentRun(s.db.QueryRowContext(ctx, `
+		UPDATE agent_runs
+		SET status=$3, error_code=NULLIF($4, ''), error_message=NULLIF($5, ''), updated_at=NOW()
+		WHERE user_id=$1 AND id=$2
+		RETURNING id::text, user_id::text, origin, status, mode, goal, goal_summary,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
+	`, userID, runID, status, errorCode, truncateString(errorMessage, 500)))
+}
+
+func (s *PostgresStore) AppendAgentEvent(ctx context.Context, runID string, eventType string, payload map[string]any) (AgentEvent, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return AgentEvent{}, err
+	}
+	var event AgentEvent
+	var payloadText string
+	err = s.db.QueryRowContext(ctx, `
+		INSERT INTO agent_events (run_id, seq, event_type, payload)
+		VALUES ($1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM agent_events WHERE run_id=$1), $2, $3)
+		RETURNING id::text, run_id::text, seq, event_type, payload::text, created_at
+	`, runID, eventType, json.RawMessage(raw)).Scan(&event.ID, &event.RunID, &event.Seq, &event.EventType, &payloadText, &event.CreatedAt)
+	if err != nil {
+		return AgentEvent{}, mapNotFound(err)
+	}
+	if err := json.Unmarshal([]byte(payloadText), &event.Payload); err != nil {
+		return AgentEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *PostgresStore) AgentEventsByRun(ctx context.Context, userID string, runID string) ([]AgentEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.id::text, e.run_id::text, e.seq, e.event_type, e.payload::text, e.created_at
+		FROM agent_events e
+		JOIN agent_runs r ON r.id = e.run_id
+		WHERE r.user_id=$1 AND r.id=$2
+		ORDER BY e.seq ASC
+	`, userID, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]AgentEvent, 0)
+	for rows.Next() {
+		var event AgentEvent
+		var payloadText string
+		if err := rows.Scan(&event.ID, &event.RunID, &event.Seq, &event.EventType, &payloadText, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(payloadText), &event.Payload); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		if _, err := s.AgentRunByID(ctx, userID, runID); err != nil {
+			return nil, err
+		}
+	}
+	return events, nil
+}
+
 func (s *PostgresStore) CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error) {
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO documents (
@@ -730,6 +848,41 @@ func (s *PostgresStore) AdminPaymentOrders(ctx context.Context, opts AdminListOp
 	return orders, rows.Err()
 }
 
+func (s *PostgresStore) AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id::text, r.user_id::text, r.origin, r.status, r.mode, r.goal, r.goal_summary,
+			COALESCE(r.client_conversation_id,''), COALESCE(r.client_message_id,''), r.attachments::text,
+			COALESCE(r.error_code,''), COALESCE(r.error_message,''), r.expires_at, r.created_at, r.updated_at,
+			u.email
+		FROM agent_runs r
+		JOIN users u ON u.id = r.user_id
+		WHERE ($1='' OR r.user_id::text=$1)
+			AND ($2='' OR r.status=$2)
+			AND ($3='' OR u.email ILIKE '%' || $3 || '%' OR r.id::text=$3)
+		ORDER BY r.created_at DESC
+		LIMIT $4 OFFSET $5
+	`, opts.UserID, opts.Status, strings.TrimSpace(opts.Query), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]AdminAgentRun, 0)
+	for rows.Next() {
+		var item AdminAgentRun
+		var attachmentsText string
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Origin, &item.Status, &item.Mode, &item.Goal, &item.GoalSummary, &item.ClientConversationID, &item.ClientMessageID, &attachmentsText, &item.ErrorCode, &item.ErrorMessage, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt, &item.UserEmail); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(attachmentsText), &item.Attachments); err != nil {
+			return nil, err
+		}
+		runs = append(runs, item)
+	}
+	return runs, rows.Err()
+}
+
 func (s *PostgresStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {
 	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, `
@@ -960,6 +1113,22 @@ func scanDocument(row rowScanner) (documents.Document, error) {
 		return documents.Document{}, mapNotFound(err)
 	}
 	return document, nil
+}
+
+func scanAgentRun(row rowScanner) (AgentRun, error) {
+	var run AgentRun
+	var attachmentsText string
+	err := row.Scan(&run.ID, &run.UserID, &run.Origin, &run.Status, &run.Mode, &run.Goal, &run.GoalSummary, &run.ClientConversationID, &run.ClientMessageID, &attachmentsText, &run.ErrorCode, &run.ErrorMessage, &run.ExpiresAt, &run.CreatedAt, &run.UpdatedAt)
+	if err != nil {
+		return AgentRun{}, mapNotFound(err)
+	}
+	if attachmentsText == "" {
+		attachmentsText = "[]"
+	}
+	if err := json.Unmarshal([]byte(attachmentsText), &run.Attachments); err != nil {
+		return AgentRun{}, err
+	}
+	return run, nil
 }
 
 func hashToken(token string) string {

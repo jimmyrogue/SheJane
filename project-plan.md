@@ -343,9 +343,10 @@ AWS ap-east-1 (香港)
 
 ### Phase 2：统一 Agentic Chat（持续拆分交付）
 
-- [ ] Phase 2.0：新增 [`spec.md`](spec.md)，替换旧的场景模板路线
-- [ ] Phase 2.1：合并普通聊天和文档阅读入口，上传附件后在同一条对话中解析并问答
-- [ ] Phase 2.2：云端兼容 Agent Run API，提供 run/events/stream/cancel 和文档、网页工具
+- [x] Phase 2.0：新增 [`spec.md`](spec.md)，替换旧的场景模板路线
+- [x] Phase 2.1：合并普通聊天和文档阅读入口，上传附件后在同一条对话中解析并问答
+- [x] Phase 2.2：云端兼容 Agent Run API，提供 run/events/stream/cancel、文档工具和 admin 只读观察
+- [ ] Phase 2.2b：云端网页工具，补齐 `web.fetch` / 可选 `web.search` 的 SSRF 防护、来源标记和大小限制
 - [ ] Phase 2.3：Local Agent Host MVP，Electron 或本地 daemon 承担本地工具执行
 - [ ] Phase 2.4：权限、审计、恢复、上下文压缩和本地/云端同步边界
 

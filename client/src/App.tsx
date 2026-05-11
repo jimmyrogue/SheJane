@@ -1,5 +1,4 @@
 import {
-  BookOpenText,
   Download,
   FileText,
   Loader2,
@@ -10,6 +9,7 @@ import {
   Trash2,
   Upload,
   WalletCards,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -21,14 +21,6 @@ import {
 import { createChatStore } from './features/chat/chatStore'
 import { LocalConversationStore } from './shared/local-data/localConversations'
 import type { ChatMode, Conversation } from './shared/local-data/types'
-
-const scenes = [
-  { value: 'chat', label: '自由对话' },
-  { value: 'write', label: '帮我写' },
-  { value: 'read', label: '帮我读' },
-  { value: 'translate', label: '帮我翻译' },
-  { value: 'calculate', label: '帮我算' },
-]
 
 const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.docx,.xlsx'
@@ -45,16 +37,11 @@ export function App() {
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
   const [mode, setMode] = useState<ChatMode>('fast')
-  const [scene, setScene] = useState('chat')
-  const [workspaceView, setWorkspaceView] = useState<'chat' | 'documents'>('chat')
   const [documents, setDocuments] = useState<UserDocument[]>([])
-  const [activeDocumentID, setActiveDocumentID] = useState<string>()
-  const [documentQuestion, setDocumentQuestion] = useState('')
-  const [documentAnswer, setDocumentAnswer] = useState('')
+  const [attachedDocumentID, setAttachedDocumentID] = useState<string>()
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
-  const [isAskingDocument, setIsAskingDocument] = useState(false)
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
@@ -75,13 +62,12 @@ export function App() {
       .then(([wallet, items]) => {
         setBalance(wallet)
         setDocuments(items)
-        setActiveDocumentID(items[0]?.id)
       })
       .catch(() => undefined)
   }, [api])
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
-  const activeDocument = documents.find((document) => document.id === activeDocumentID)
+  const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -89,7 +75,6 @@ export function App() {
     const [wallet, items] = await Promise.all([api.balance(), api.listDocuments()])
     setBalance(wallet)
     setDocuments(items)
-    setActiveDocumentID(items[0]?.id)
   }
 
   async function refreshConversations(nextActiveID?: string) {
@@ -103,6 +88,10 @@ export function App() {
       setNotice('请先登录后再发送消息')
       return
     }
+    if (attachedDocument && attachedDocument.status !== 'ready') {
+      setNotice('文档尚未解析完成')
+      return
+    }
     setIsSending(true)
     setNotice('')
     try {
@@ -110,7 +99,13 @@ export function App() {
         conversationId: activeID,
         content: draft,
         mode,
-        scene,
+        scene: 'chat',
+        document: attachedDocument
+          ? {
+              id: attachedDocument.id,
+              name: attachedDocument.original_name,
+            }
+          : undefined,
       })
       setDraft('')
       await refreshConversations(conversation.id)
@@ -156,7 +151,7 @@ export function App() {
     setAuth(null)
     setBalance(null)
     setDocuments([])
-    setActiveDocumentID(undefined)
+    setAttachedDocumentID(undefined)
   }
 
   async function uploadDocument(file: File | undefined) {
@@ -185,7 +180,7 @@ export function App() {
         size_bytes: file.size,
       })
       setDocuments((items) => upsertDocument(items, upload.document))
-      setActiveDocumentID(upload.document.id)
+      setAttachedDocumentID(upload.document.id)
       const uploadResponse = await fetch(upload.upload.url, {
         method: upload.upload.method,
         headers: upload.upload.headers,
@@ -196,8 +191,8 @@ export function App() {
       }
       const completed = await api.completeDocument(upload.document.id)
       setDocuments((items) => upsertDocument(items, completed))
-      setActiveDocumentID(completed.id)
-      setNotice('文档已解析完成')
+      setAttachedDocumentID(completed.id)
+      setNotice('文档已解析完成，已附加到当前对话')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '文档上传失败')
     } finally {
@@ -205,49 +200,10 @@ export function App() {
     }
   }
 
-  async function askActiveDocument() {
-    if (!activeDocument) {
-      setNotice('请先选择文档')
-      return
-    }
-    if (activeDocument.status !== 'ready') {
-      setNotice('文档尚未解析完成')
-      return
-    }
-    const question = documentQuestion.trim()
-    if (!question) {
-      setNotice('请先输入问题')
-      return
-    }
-    setNotice('')
-    setDocumentAnswer('')
-    setIsAskingDocument(true)
-    try {
-      await api.askDocument(activeDocument.id, { mode, question }, {
-        onDelta: (content) => setDocumentAnswer((current) => current + content),
-      })
-      setDocumentQuestion('')
-      setBalance(await api.balance())
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '文档问答失败')
-    } finally {
-      setIsAskingDocument(false)
-    }
-  }
-
-  async function deleteActiveDocument() {
-    if (!activeDocument) {
-      return
-    }
-    const deleted = await api.deleteDocument(activeDocument.id)
+  async function deleteDocument(document: UserDocument) {
+    const deleted = await api.deleteDocument(document.id)
     setDocuments((items) => items.filter((item) => item.id !== deleted.id))
-    setActiveDocumentID((current) => {
-      if (current !== deleted.id) {
-        return current
-      }
-      return documents.find((item) => item.id !== deleted.id)?.id
-    })
-    setDocumentAnswer('')
+    setAttachedDocumentID((current) => (current === deleted.id ? undefined : current))
     setNotice('文档已删除')
   }
 
@@ -266,90 +222,84 @@ export function App() {
           </div>
         </div>
 
-        <div className="workspace-switch">
-          <button className={workspaceView === 'chat' ? 'selected' : ''} onClick={() => setWorkspaceView('chat')}>
-            <MessageSquare size={16} />
-            对话
-          </button>
-          <button
-            className={workspaceView === 'documents' ? 'selected' : ''}
-            onClick={() => setWorkspaceView('documents')}
-          >
-            <BookOpenText size={16} />
-            文档阅读
-          </button>
+        <button className="primary-action" onClick={() => setActiveID(undefined)}>
+          <Plus size={18} />
+          新对话
+        </button>
+
+        <div className="conversation-list">
+          {conversations.map((conversation) => (
+            <button
+              className={conversation.id === activeID ? 'conversation active' : 'conversation'}
+              key={conversation.id}
+              onClick={() => setActiveID(conversation.id)}
+            >
+              <MessageSquare size={16} />
+              <span>{conversation.title}</span>
+            </button>
+          ))}
         </div>
 
-        {workspaceView === 'chat' ? (
-          <>
-            <button className="primary-action" onClick={() => setActiveID(undefined)}>
-              <Plus size={18} />
-              新对话
-            </button>
+        <section className="sidebar-section">
+          <div className="section-heading">
+            <span>附件资料</span>
+            <small>{documents.length} 个</small>
+          </div>
+          <label className="document-upload">
+            <Upload size={18} />
+            <span>{isUploading ? '上传解析中' : '上传附件'}</span>
+            <input
+              aria-label="上传附件"
+              type="file"
+              accept={documentAccept}
+              disabled={isUploading}
+              onChange={(event) => {
+                void uploadDocument(event.currentTarget.files?.[0])
+                event.currentTarget.value = ''
+              }}
+            />
+          </label>
 
-            <div className="conversation-list">
-              {conversations.map((conversation) => (
-                <button
-                  className={conversation.id === activeID ? 'conversation active' : 'conversation'}
-                  key={conversation.id}
-                  onClick={() => setActiveID(conversation.id)}
-                >
-                  <MessageSquare size={16} />
-                  <span>{conversation.title}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="local-actions">
-              <button onClick={exportLocalData}>
-                <Download size={16} />
-                导出
-              </button>
-              <button onClick={() => importInputRef.current?.click()}>
-                <Upload size={16} />
-                导入
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json"
-                hidden
-                onChange={(event) => void importLocalData(event.currentTarget.files?.[0])}
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            <label className="document-upload">
-              <Upload size={18} />
-              <span>{isUploading ? '上传解析中' : '上传文档'}</span>
-              <input
-                aria-label="上传文档"
-                type="file"
-                accept={documentAccept}
-                disabled={isUploading}
-                onChange={(event) => {
-                  void uploadDocument(event.currentTarget.files?.[0])
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
-
-            <div className="document-list">
-              {documents.map((document) => (
-                <button
-                  className={document.id === activeDocumentID ? 'document-list-item active' : 'document-list-item'}
-                  key={document.id}
-                  onClick={() => setActiveDocumentID(document.id)}
-                >
+          <div className="document-list">
+            {documents.map((document) => (
+              <div
+                className={document.id === attachedDocumentID ? 'document-list-item active' : 'document-list-item'}
+                key={document.id}
+              >
+                <button className="document-select" onClick={() => setAttachedDocumentID(document.id)}>
                   <FileText size={16} />
                   <span>{document.original_name}</span>
                   <small>{document.status}</small>
                 </button>
-              ))}
-            </div>
-          </>
-        )}
+                <button
+                  className="document-delete"
+                  title={`删除 ${document.original_name}`}
+                  onClick={() => void deleteDocument(document)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="local-actions">
+          <button onClick={exportLocalData}>
+            <Download size={16} />
+            导出
+          </button>
+          <button onClick={() => importInputRef.current?.click()}>
+            <Upload size={16} />
+            导入
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json"
+            hidden
+            onChange={(event) => void importLocalData(event.currentTarget.files?.[0])}
+          />
+        </div>
       </aside>
 
       <section className="workspace">
@@ -373,128 +323,70 @@ export function App() {
           </div>
         </header>
 
-        {workspaceView === 'chat' ? (
-          <section className="chat-surface">
-            {activeConversation?.messages.length ? (
-              <div className="messages">
-                {activeConversation.messages.map((message) => (
-                  <article className={`message ${message.role}`} key={message.id}>
-                    <span>{message.role === 'user' ? '我' : '简单'}</span>
-                    <p>{message.content}</p>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                <h1>把复杂的工作，简单做完</h1>
-                <p>选择模式，输入任务，聊天历史会默认保存在本机。</p>
-              </div>
-            )}
-          </section>
-        ) : (
-          <section className="document-surface">
-            {activeDocument ? (
-              <div className="document-reader">
-                <header className="document-header">
-                  <div>
-                    <span className="eyebrow">基于单个文档提问</span>
-                    <h1>{activeDocument.original_name}</h1>
-                    <p>
-                      {formatBytes(activeDocument.size_bytes)} · {activeDocument.status} · 过期于{' '}
-                      {formatDate(activeDocument.expires_at)}
-                    </p>
-                  </div>
-                  <button className="icon-button light" title="删除文档" onClick={() => void deleteActiveDocument()}>
-                    <Trash2 size={17} />
-                  </button>
-                </header>
-
-                {activeDocument.status === 'failed' ? (
-                  <div className="document-status failed">{activeDocument.error_message || '解析失败'}</div>
-                ) : null}
-                {activeDocument.status !== 'ready' && activeDocument.status !== 'failed' ? (
-                  <div className="document-status">
-                    <Loader2 size={18} />
-                    文档正在准备中
-                  </div>
-                ) : null}
-
-                <div className="document-answer">
-                  {documentAnswer ? (
-                    <p>{documentAnswer}</p>
-                  ) : (
-                    <p className="muted">选择已解析完成的文档后，可以在下方提问。</p>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <h1>上传材料，直接开问</h1>
-                <p>支持 PDF、Word 和 Excel，本阶段按单文件上下文回答。</p>
-              </div>
-            )}
-          </section>
-        )}
+        <section className="chat-surface">
+          {activeConversation?.messages.length ? (
+            <div className="messages">
+              {activeConversation.messages.map((message) => (
+                <article className={`message ${message.role}`} key={message.id}>
+                  <span>{message.role === 'user' ? '我' : '简单'}</span>
+                  <p>{message.content}</p>
+                  {message.agentEvents?.length ? (
+                    <div className="agent-timeline">
+                      {message.agentEvents.map((event, index) => (
+                        <small key={`${event.type}-${index}`}>{event.label}</small>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <h1>把复杂的工作，简单做完</h1>
+              <p>直接提问，或上传附件后让简单阅读。本地聊天历史会默认保存在本机。</p>
+            </div>
+          )}
+        </section>
 
         {notice ? <div className="notice">{notice}</div> : null}
 
-        {workspaceView === 'chat' ? (
-          <footer className="composer">
-            <div className="composer-controls">
-              <ModeToggle mode={mode} onChange={setMode} />
-              <select value={scene} onChange={(event) => setScene(event.target.value)}>
-                {scenes.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="composer-input">
-              <textarea
-                value={draft}
-                placeholder="写邮件、总结材料、翻译文本，或直接问一个工作问题"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                    void sendMessage()
-                  }
-                }}
-              />
-              <button className="send-button" disabled={isSending || !draft.trim()} onClick={() => void sendMessage()}>
-                <Send size={18} />
-                发送
+        <footer className="composer">
+          <div className="composer-controls">
+            <ModeToggle mode={mode} onChange={setMode} />
+            <span className="muted">上传和解析免费；发送问题会消耗额度。</span>
+          </div>
+          {attachedDocument ? (
+            <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
+              {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <Loader2 size={15} /> : <FileText size={15} />}
+              <span>已附加 {attachedDocument.original_name}</span>
+              <small>
+                {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at)}
+              </small>
+              <button title="移除附件" onClick={() => setAttachedDocumentID(undefined)}>
+                <X size={14} />
               </button>
             </div>
-          </footer>
-        ) : (
-          <footer className="composer document-composer">
-            <div className="composer-controls">
-              <ModeToggle mode={mode} onChange={setMode} />
-              <span className="muted">上传和解析免费；提问会消耗额度。</span>
-            </div>
-            <div className="composer-input">
-              <textarea
-                value={documentQuestion}
-                placeholder="询问这份文档里的结论、数字、风险或下一步"
-                onChange={(event) => setDocumentQuestion(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                    void askActiveDocument()
-                  }
-                }}
-              />
-              <button
-                className="send-button"
-                disabled={isAskingDocument || activeDocument?.status !== 'ready'}
-                onClick={() => void askActiveDocument()}
-              >
-                <Send size={18} />
-                提问
-              </button>
-            </div>
-          </footer>
-        )}
+          ) : null}
+          {attachedDocument?.status === 'failed' ? (
+            <div className="document-status failed">{attachedDocument.error_message || '解析失败'}</div>
+          ) : null}
+          <div className="composer-input">
+            <textarea
+              value={draft}
+              placeholder="描述你的问题、任务，或让简单阅读附件"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  void sendMessage()
+                }
+              }}
+            />
+            <button className="send-button" disabled={isSending || !draft.trim()} onClick={() => void sendMessage()}>
+              <Send size={18} />
+              发送
+            </button>
+          </div>
+        </footer>
       </section>
     </main>
   )

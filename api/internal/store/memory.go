@@ -23,6 +23,8 @@ type MemoryStore struct {
 	refresh      map[string]RefreshToken
 	wallets      map[string]*billing.Wallet
 	llmCalls     map[string]LLMCallRecord
+	agentRuns    map[string]AgentRun
+	agentEvents  map[string][]AgentEvent
 	documents    map[string]documents.Document
 	orders       map[string]PaymentOrder
 	stripeEvents map[string]bool
@@ -36,6 +38,8 @@ func NewMemoryStore() *MemoryStore {
 		refresh:      make(map[string]RefreshToken),
 		wallets:      make(map[string]*billing.Wallet),
 		llmCalls:     make(map[string]LLMCallRecord),
+		agentRuns:    make(map[string]AgentRun),
+		agentEvents:  make(map[string][]AgentEvent),
 		documents:    make(map[string]documents.Document),
 		orders:       make(map[string]PaymentOrder),
 		stripeEvents: make(map[string]bool),
@@ -233,6 +237,106 @@ func (s *MemoryStore) LLMCallsByUser(ctx context.Context, userID string) ([]LLMC
 		return records[i].StartedAt.After(records[j].StartedAt)
 	})
 	return records, nil
+}
+
+func (s *MemoryStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.usersByID[run.UserID]; !ok {
+		return AgentRun{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	if run.ID == "" {
+		run.ID = newUUID()
+	}
+	if run.Origin == "" {
+		run.Origin = "cloud"
+	}
+	if run.Status == "" {
+		run.Status = "queued"
+	}
+	if run.Mode == "" {
+		run.Mode = "fast"
+	}
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = now
+	}
+	if run.ExpiresAt.IsZero() {
+		run.ExpiresAt = now.Add(168 * time.Hour)
+	}
+	if run.Attachments == nil {
+		run.Attachments = []AgentAttachment{}
+	}
+	s.agentRuns[run.ID] = run
+	return run, nil
+}
+
+func (s *MemoryStore) AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.agentRuns[runID]
+	if !ok || run.UserID != userID {
+		return AgentRun{}, ErrNotFound
+	}
+	return run, nil
+}
+
+func (s *MemoryStore) UpdateAgentRunStatus(ctx context.Context, userID string, runID string, status string, errorCode string, errorMessage string) (AgentRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.agentRuns[runID]
+	if !ok || run.UserID != userID {
+		return AgentRun{}, ErrNotFound
+	}
+	run.Status = status
+	run.ErrorCode = errorCode
+	run.ErrorMessage = truncateString(errorMessage, 500)
+	run.UpdatedAt = time.Now().UTC()
+	s.agentRuns[run.ID] = run
+	return run, nil
+}
+
+func (s *MemoryStore) AppendAgentEvent(ctx context.Context, runID string, eventType string, payload map[string]any) (AgentEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.agentRuns[runID]; !ok {
+		return AgentEvent{}, ErrNotFound
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	event := AgentEvent{
+		ID:        newUUID(),
+		RunID:     runID,
+		Seq:       int64(len(s.agentEvents[runID]) + 1),
+		EventType: eventType,
+		Payload:   payload,
+		CreatedAt: time.Now().UTC(),
+	}
+	s.agentEvents[runID] = append(s.agentEvents[runID], event)
+	return event, nil
+}
+
+func (s *MemoryStore) AgentEventsByRun(ctx context.Context, userID string, runID string) ([]AgentEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.agentRuns[runID]
+	if !ok || run.UserID != userID {
+		return nil, ErrNotFound
+	}
+	events := append([]AgentEvent(nil), s.agentEvents[runID]...)
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Seq < events[j].Seq
+	})
+	return events, nil
 }
 
 func (s *MemoryStore) CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error) {
@@ -621,6 +725,35 @@ func (s *MemoryStore) AdminPaymentOrders(ctx context.Context, opts AdminListOpti
 		return []AdminPaymentOrder{}, nil
 	}
 	return orders[offset:minInt(offset+limit, len(orders))], nil
+}
+
+func (s *MemoryStore) AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	query := strings.ToLower(strings.TrimSpace(opts.Query))
+	runs := make([]AdminAgentRun, 0, len(s.agentRuns))
+	for _, run := range s.agentRuns {
+		user := s.usersByID[run.UserID]
+		if opts.UserID != "" && run.UserID != opts.UserID {
+			continue
+		}
+		if opts.Status != "" && run.Status != opts.Status {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(user.Email), query) && !strings.Contains(strings.ToLower(run.ID), query) {
+			continue
+		}
+		runs = append(runs, AdminAgentRun{AgentRun: run, UserEmail: user.Email})
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+	if offset > len(runs) {
+		return []AdminAgentRun{}, nil
+	}
+	return runs[offset:minInt(offset+limit, len(runs))], nil
 }
 
 func (s *MemoryStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {

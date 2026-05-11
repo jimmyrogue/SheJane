@@ -1,7 +1,7 @@
 # 简单（Jiandan）前端技术方案
 
-**版本：** v1.2
-**更新：** 2026-05-10
+**版本：** v1.3
+**更新：** 2026-05-11
 **适用阶段：** Phase 1-5 分阶段落地
 
 > 本文档补充 `project-plan.md`、`backend-spec.md` 与 [`spec.md`](spec.md) 中缺失的前端客户端设计。前端采用 Hybrid Local-first：长期聊天历史和个人工作数据默认保存在客户端，本地体验先闭环，并从 Phase 2 起演进为统一 Agentic Chat 与 Local Agent Host。
@@ -197,7 +197,7 @@ Agent 能力采用 **Local Agent Host + Cloud Control Plane**：
 - 一个 composer 支持文本、附件和 URL
 - 上传文件后自动走 presigned upload + complete + 文本提取
 - 前端用一条 timeline 展示普通回答、文档解析状态、工具调用和最终答案
-- 云端兼容 run/event/stream API 先承接 Web 体验，为 Local Host 保持同一事件模型
+- 云端兼容 run/event/stream API 先承接 Web 体验，为 Local Host 保持同一事件模型。Phase 2.2 已让普通问题和附件问答都走 Agent Run stream。
 
 前端需要提供：
 

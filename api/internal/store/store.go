@@ -52,6 +52,44 @@ type LLMCallRecord struct {
 	FinishedAt           time.Time `json:"finished_at,omitempty"`
 }
 
+type AgentAttachment struct {
+	Type       string `json:"type"`
+	DocumentID string `json:"document_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+}
+
+type AgentRun struct {
+	ID                   string            `json:"id"`
+	UserID               string            `json:"user_id"`
+	Origin               string            `json:"origin"`
+	Status               string            `json:"status"`
+	Mode                 string            `json:"mode"`
+	Goal                 string            `json:"-"`
+	GoalSummary          string            `json:"goal_summary"`
+	ClientConversationID string            `json:"client_conversation_id,omitempty"`
+	ClientMessageID      string            `json:"client_message_id,omitempty"`
+	Attachments          []AgentAttachment `json:"attachments,omitempty"`
+	ErrorCode            string            `json:"error_code,omitempty"`
+	ErrorMessage         string            `json:"error_message,omitempty"`
+	ExpiresAt            time.Time         `json:"expires_at"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
+}
+
+type AgentEvent struct {
+	ID        string         `json:"id"`
+	RunID     string         `json:"run_id"`
+	Seq       int64          `json:"seq"`
+	EventType string         `json:"event_type"`
+	Payload   map[string]any `json:"payload"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+type AdminAgentRun struct {
+	AgentRun
+	UserEmail string `json:"user_email"`
+}
+
 type PaymentOrder struct {
 	ID                   string    `json:"id"`
 	WalletID             string    `json:"wallet_id"`
@@ -141,6 +179,12 @@ type Store interface {
 	FinishLLMCall(ctx context.Context, requestID string, status string, inputTokens int, outputTokens int, creditsCost int64, errorMessage string) error
 	LLMCallsByUser(ctx context.Context, userID string) ([]LLMCallRecord, error)
 
+	CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error)
+	AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error)
+	UpdateAgentRunStatus(ctx context.Context, userID string, runID string, status string, errorCode string, errorMessage string) (AgentRun, error)
+	AppendAgentEvent(ctx context.Context, runID string, eventType string, payload map[string]any) (AgentEvent, error)
+	AgentEventsByRun(ctx context.Context, userID string, runID string) ([]AgentEvent, error)
+
 	CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error)
 	DocumentsByUser(ctx context.Context, userID string) ([]documents.Document, error)
 	DocumentByID(ctx context.Context, userID string, documentID string) (documents.Document, error)
@@ -164,5 +208,6 @@ type Store interface {
 	AdjustExtraCredits(ctx context.Context, actorUserID string, userID string, delta int64, reason string) (*billing.Wallet, error)
 	AdminLLMCalls(ctx context.Context, opts AdminListOptions) ([]AdminLLMCallRecord, error)
 	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
+	AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error)
 	AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error)
 }

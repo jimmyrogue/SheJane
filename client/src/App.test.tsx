@@ -49,7 +49,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
   })
 
-  it('shows the document reading workspace with loaded documents', async () => {
+  it('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
     mockFetch('user')
 
     render(<App />)
@@ -58,14 +58,14 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.click(screen.getByText('文档阅读'))
 
-    expect((await screen.findAllByText('roadmap.pdf')).length).toBeGreaterThan(0)
-    expect(screen.getAllByText('ready').length).toBeGreaterThan(0)
-    expect(screen.getByText('基于单个文档提问')).toBeInTheDocument()
+    expect(screen.queryByText('文档阅读')).not.toBeInTheDocument()
+    expect(screen.getByText('附件资料')).toBeInTheDocument()
+    expect(screen.getByLabelText('上传附件')).toBeInTheDocument()
+    expect(screen.getByText('roadmap.pdf')).toBeInTheDocument()
   })
 
-  it('uploads a document through a presigned target and completes parsing', async () => {
+  it('uploads a document from the composer and attaches it to the next message', async () => {
     const calls = mockFetch('user')
 
     render(<App />)
@@ -74,19 +74,18 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.click(screen.getByText('文档阅读'))
     const file = new File(['hello'], 'brief.docx', {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     })
-    fireEvent.change(screen.getByLabelText('上传文档'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
 
-    expect((await screen.findAllByText('brief.docx')).length).toBeGreaterThan(0)
+    expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
     expect(calls.some((call) => call.url === 'https://s3.example.com/upload' && call.init?.method === 'PUT')).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-upload/complete'))).toBe(true)
   })
 
-  it('prevents empty document questions', async () => {
-    mockFetch('user')
+  it('sends attached document questions through agent runs and stores the answer in chat history', async () => {
+    const calls = mockFetch('user')
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
@@ -94,10 +93,19 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.click(screen.getByText('文档阅读'))
-    fireEvent.click(await screen.findByText('提问'))
+    fireEvent.click(screen.getByText('roadmap.pdf'))
+    expect(screen.getByText('已附加 roadmap.pdf')).toBeInTheDocument()
 
-    expect(await screen.findByText('请先输入问题')).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+      target: { value: '这份文档的结论是什么？' },
+    })
+    fireEvent.click(screen.getByText('发送'))
+
+    expect(await screen.findByText('文档回答')).toBeInTheDocument()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(true)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs/run-doc/stream'))).toBe(true)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-ready/ask'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/chat/completions'))).toBe(false)
   })
 })
 
@@ -197,6 +205,31 @@ function mockFetch(role: 'admin' | 'user') {
         },
       })
     }
+    if (url.endsWith('/api/v1/agent/runs')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          id: 'run-doc',
+          user_id: `${role}-1`,
+          origin: 'cloud',
+          status: 'queued',
+          mode: 'fast',
+          goal_summary: '用户任务（12 字，含附件 1 个）',
+          expires_at: '2026-05-17T00:00:00Z',
+          created_at: '2026-05-10T00:00:00Z',
+          updated_at: '2026-05-10T00:00:00Z',
+        },
+      }, 201)
+    }
+    if (url.endsWith('/api/v1/agent/runs/run-doc/stream')) {
+      return agentSSE([
+        { event_type: 'skill.selected', payload: { skill: 'document-analysis' } },
+        { event_type: 'tool.completed', payload: { tool: 'document.read' } },
+        { event_type: 'llm.delta', payload: { content: '文档回答' } },
+        { event_type: 'run.completed', payload: { request_id: 'req-doc-1', credits_cost: 18 } },
+      ])
+    }
     throw new Error(`Unexpected fetch ${url}`)
   })
   return calls
@@ -206,5 +239,28 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function sseResponse(content: string): Response {
+  return new Response(`data: {"choices":[{"delta":{"content":"${content}"}}]}\n\ndata: [DONE]\n\n`, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'X-Request-ID': 'req-doc-1',
+    },
+  })
+}
+
+function agentSSE(events: Array<{ event_type: string; payload: Record<string, unknown> }>): Response {
+  const body = `${events
+    .map((event, index) => `event: agent.event\ndata: ${JSON.stringify({ id: `event-${index}`, run_id: 'run-doc', seq: index + 1, created_at: '2026-05-10T00:00:00Z', ...event })}`)
+    .join('\n\n')}\n\ndata: [DONE]\n\n`
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'X-Request-ID': 'req-doc-1',
+    },
   })
 }
