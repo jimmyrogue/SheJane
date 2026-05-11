@@ -1,10 +1,18 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
 export type ChatMode = 'fast' | 'deep'
-export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error'
+export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'done' | 'error'
 
 export interface AgentTimelineItem {
   type: string
   label: string
+  eventId?: string
+  permissionRequestId?: string
+  permissionTool?: string
+  permissionDecision?: 'approve' | 'deny'
+  artifactId?: string
+  artifactTitle?: string
+  artifactTool?: string
+  verificationStatus?: 'passed' | 'failed'
 }
 
 export interface ChatMessage {

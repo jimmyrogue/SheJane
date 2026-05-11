@@ -1,8 +1,8 @@
 # 简单 Jiandanly
 
-简单是一款面向小团队和职业人群的 Agentic Chat 生产力工具。Phase 1 已完成可收费聊天 MVP；Phase 2 的方向已经从“场景模板 / 独立文档阅读”调整为“统一 Agentic Chat”：用户只在一个输入入口里提问、上传附件、贴 URL 或描述任务，系统自动决定是否解析文档、搜索网页、调用工具、加载 skill 或进入多步 agent loop。
+简单是一款面向小团队和职业人群的 Agentic Chat 生产力工具。Phase 1 已完成可收费聊天 MVP；Phase 2 的方向已经从“场景模板 / 独立文档阅读”升级为 **Local Agent Harness**：用户只在一个输入入口里提问、上传附件、贴 URL 或描述任务，系统自动决定是否解析文档、调用工具、加载 skill、请求权限、验证结果或进入多步 agent loop。
 
-Agentic Chat 总规格见 [`spec.md`](spec.md)。
+Local Agent Harness 总规格见 [`spec.md`](spec.md)。
 
 ## Phase 1 已实现
 
@@ -15,6 +15,9 @@ Agentic Chat 总规格见 [`spec.md`](spec.md)。
 - React/Vite 客户端：登录/注册、基础聊天、快速/深度切换、额度展示、订阅入口、本地导入/导出。
 - Phase 2.1 统一 composer：普通用户 client 已把 PDF / DOCX / XLSX 上传、同步提取文本、单文件问答和额度扣减并入普通聊天入口。
 - Phase 2.2 云端兼容 Agent Run：普通问题和附件问答都会创建 run、消费事件流、记录短期 `agent_events`，并在 admin 后台只读观察 run 摘要。
+- Phase 2.3a Local Agent Harness daemon foundation：新增 `local-host/` Node/TypeScript daemon，提供 loopback health/tools/runs/stream/cancel API、pairing token、本地 SQLite run/event store 和 Electron 探测。
+- Phase 2.4 Harness Loop MVP：Local Host 可调用云端 `/api/v1/agent/llm`，执行 `time.now`、授权 workspace 内 `file.read` / `file.search`，并对 `shell.run` 进入 permission-gated 流程。
+- Phase 2.5-2.9 Local Harness UI / Workspace Bridge：已加入本地 artifact、checkpoint、context compaction、memory、verification、`web.fetch` / 可选 `web.search` / MCP allowlist 护栏，并在普通 client 中支持本地工作区授权、诊断、撤销、本地项目引用、权限批准/拒绝、artifact 预览和验证事件展示。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
@@ -82,16 +85,17 @@ make smoke-stripe-webhook
 
 如果 API 设置了 `STRIPE_WEBHOOK_SECRET`，脚本会优先使用当前 shell 的同名变量；没有时会自动读取当前目录 `.env` 中的 `STRIPE_WEBHOOK_SECRET`，并生成 `Stripe-Signature`。
 
-## Phase 2：统一 Agentic Chat
+## Phase 2：Local Agent Harness
 
-Phase 2 的目标已经调整为统一 Agentic Chat。用户不再需要理解“聊天 / 文档阅读 / 任务 Agent”的区别；一个 composer 承载普通问题、附件、URL 和复杂任务。系统自动选择文档解析、网页工具、skill、权限请求或多步 agent loop。
+Phase 2 的目标已经调整为 Local Agent Harness。用户不再需要理解“聊天 / 文档阅读 / 任务 Agent”的区别；一个 composer 承载普通问题、附件、URL 和复杂任务。系统自动选择文档解析、工具、skill、权限请求、验证循环或多步 agent loop。
 
-长期架构是 **Local Agent Host + Cloud Control Plane**：
+长期架构是 **Local Agent Harness + Cloud Control Plane**：
 
-- Local Agent Host：负责本地上下文、权限、工具执行、本地 MCP、文件、终端、浏览器和 IDE 能力。
+- Local Agent Harness：负责 12 个 harness 组件，包括编排循环、工具、记忆、上下文管理、提示词构建、输出解析、状态管理、错误处理、护栏安全、验证循环、子智能体预留和生命周期管理。
+- Local Host / Worker：负责本地上下文、权限、工具执行、本地 MCP、文件、终端、浏览器和 IDE 能力。
 - Cloud Control Plane：负责 Auth、wallet、Stripe、admin、LLM provider、S3 文档、用量、审计和云端兼容 Agent Run。
 
-Phase 2A 已经补齐“文档能力”的底座，Phase 2.1 已把它并入统一 composer。Phase 2.2 进一步把普通聊天和附件问答收敛到同一套 Agent Run 协议：前端创建 run，后端通过 `agent_events` 推送 skill/tool/LLM 事件，LLM 调用继续走现有额度预留和结算。用户在普通聊天入口上传 PDF / DOCX / XLSX 后，浏览器用后端签发的 presigned PUT URL 直传 S3；后端在 `complete` 阶段下载原文件、提取文本、把文本另存为 S3 `.txt` object。文件解析完成后会作为当前聊天附件，用户直接发送问题即可触发 `document.read` 工具并基于单个文档问答。
+Phase 2A 已经补齐“文档能力”的底座，Phase 2.1 已把它并入统一 composer。Phase 2.2 进一步把普通聊天和附件问答收敛到同一套 Agent Run 协议。Phase 2.3a-2.9 已新增本地 daemon、Harness loop、artifact/checkpoint/memory、web/MCP 护栏、client UI bridge、工作区授权治理和本地项目引用：Electron 会探测 `GET /local/v1/health`，已配对时普通无附件消息会进入本地 run，并在 timeline 中展示权限、artifact 和验证结果。
 
 当前 Phase 2A 文档能力边界：
 
@@ -116,9 +120,30 @@ AGENT_RUN_TTL_HOURS=168
 
 S3 bucket CORS 至少允许来自 `CLIENT_BASE_URL` 的 `PUT`，并允许 `Content-Type` header。API 使用同一组 IAM 凭证执行 `HeadObject`、`GetObject`、`PutObject` 和 `DeleteObject`。
 
+### 本地 Harness 开发
+
+本地 Host 默认只监听 loopback。开发时需要 pairing token：
+
+```bash
+cd local-host
+npm install
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
+```
+
+Electron 端默认探测 `http://127.0.0.1:17371`，也可以覆盖：
+
+```bash
+cd client
+JIANDANLY_LOCAL_HOST_URL=http://127.0.0.1:17371 \
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+npm run electron
+```
+
+Phase 2.9 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；消息 timeline 支持批准/拒绝权限请求、查看 artifact 和展示规则验证结果。真实 MCP runtime adapter、浏览器/IDE 控制和更完整的 run 恢复 UI 继续后置。
+
 ## 后续阶段边界
 
-场景模板工作台不再是后续主线。后续能力按 Agentic Chat 路线推进：统一 composer、云端兼容 Agent Run、Local Agent Host、本地 MCP、受控 shell/浏览器/IDE、Office/图片生成、多工具编排、团队版、移动端和开放平台 API Key。BYOK 仍作为最后阶段可选评估项，不进入当前核心架构。
+场景模板工作台不再是后续主线。后续能力按 Local Agent Harness 路线推进：统一 composer、云端兼容 Agent Run、Local Agent Harness、本地 MCP、受控 shell/浏览器/IDE、memory/context/checkpoint/artifact、verification loops、Office/图片生成、多工具编排、团队版、移动端和开放平台 API Key。BYOK 仍作为最后阶段可选评估项，不进入当前核心架构。
 
 ## 本地开发
 
@@ -127,6 +152,7 @@ cp .env.example .env
 cd api && go test ./...
 cd ../client && npm install && npm test -- --run
 cd ../admin && npm install && npm test -- --run
+cd ../local-host && npm install && npm test -- --run
 ```
 
 启动开发服务：
@@ -147,6 +173,23 @@ npm run dev
 
 ```bash
 cd admin
+npm run dev
+```
+
+可选本地 Harness 终端：
+
+```bash
+cd local-host
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
+```
+
+如需让本地 Harness 通过云端模型网关扣费，需要提供当前登录用户的 access token：
+
+```bash
+cd local-host
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+JIANDANLY_CLOUD_BASE_URL=http://localhost:8080 \
+JIANDANLY_CLOUD_ACCESS_TOKEN=用户 access token \
 npm run dev
 ```
 
@@ -182,6 +225,10 @@ docker compose up --build
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID`：Stripe Billing Checkout。
 - `AWS_REGION`、`AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`S3_BUCKET`：Phase 2A 文档上传与解析。
 - `AGENT_RUN_TTL_HOURS`：Phase 2.2 云端 run/event 短期保留时长，默认 168 小时。
+- `JIANDANLY_LOCAL_HOST_TOKEN`：本地 Harness pairing token，仅用于本机 daemon。
+- `JIANDANLY_LOCAL_HOST_URL`：Electron 探测本地 Harness 的 loopback URL，默认 `http://127.0.0.1:17371`。
+- `JIANDANLY_CLOUD_BASE_URL`：Local Harness 调用云端 Control Plane 的 API base URL。
+- `JIANDANLY_CLOUD_ACCESS_TOKEN`：Local Harness 调用云端模型网关的短期用户 token；当前开发阶段手动注入，后续改为 pairing/session 流程。
 
 Stripe Checkout 使用订阅模式，Webhook 至少需要订阅 `checkout.session.completed`、`invoice.paid`、`invoice.payment_failed`、`customer.subscription.updated`、`customer.subscription.deleted`。系统不会在后台存储或展示 Stripe secret key。
 
@@ -209,3 +256,4 @@ make smoke-stripe-webhook
 ```
 
 前端单测覆盖 OpenAI/Agent SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、统一 composer 附件上传/Agent Run 文档问答、普通 client 不暴露后台入口、独立 admin web 渲染、功能 tab、Agent Runs 观察页、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、文档上传/解析/问答、Agent Run create/events/stream/cancel/admin observe、Stripe 订阅生命周期和 admin API 权限/审计。
+Local Host 单测覆盖 pairing token、health/tools、run 创建、SSE 事件重放、取消、TAO loop、file.read、workspace 越界阻断和 shell permission flow。

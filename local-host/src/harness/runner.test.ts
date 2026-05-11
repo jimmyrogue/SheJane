@@ -1,0 +1,354 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { afterEach, describe, expect, it } from 'vitest'
+import { runHarness } from './runner.js'
+import { InMemoryLocalHostStore } from '../state/memoryStore.js'
+import type { LLMGateway, LLMGatewayRequest, LLMGatewayResponse } from '../llm/gateway.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
+  tempDirs.length = 0
+})
+
+describe('harness runner', () => {
+  it('executes native tool calls and feeds observations back to the model', async () => {
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'notes.txt'), 'Jiandanly harness reads local files.', 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Read notes.txt and summarize it.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-1',
+            name: 'file.read',
+            arguments: { path: 'notes.txt' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-2',
+        content: 'The note says Jiandanly can read local files.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(2)
+    expect(gateway.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call-1',
+          name: 'file.read',
+          content: expect.stringContaining('Jiandanly harness reads local files.'),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id).map((event) => event.eventType)).toEqual([
+      'run.created',
+      'run.started',
+      'skill.selected',
+      'llm.started',
+      'tool.requested',
+      'tool.started',
+      'tool.completed',
+      'verification.started',
+      'verification.completed',
+      'llm.started',
+      'llm.delta',
+      'run.completed',
+    ])
+  })
+
+  it('blocks file tools outside the authorized workspace and keeps the error recoverable', async () => {
+    const workspace = await tempWorkspace()
+    const secret = await tempWorkspace()
+    await writeFile(join(secret, 'secret.txt'), 'do not read me', 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Try to read outside the workspace.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-1',
+            name: 'file.read',
+            arguments: { path: join(secret, 'secret.txt') },
+          },
+        ],
+      },
+      {
+        requestId: 'req-2',
+        content: 'I cannot read files outside the authorized workspace.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const events = store.listEvents(run.id)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'file.read',
+            error_code: 'path_outside_workspace',
+            recoverable: true,
+          }),
+        }),
+      ]),
+    )
+    expect(gateway.requests[1].messages.at(-1)).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call-1',
+      content: expect.stringContaining('path_outside_workspace'),
+    })
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('pauses shell commands for permission and executes only after approval', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Run a safe command.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-shell',
+            name: 'shell.run',
+            arguments: { command: 'printf hello > shell-output.txt' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-2',
+        content: 'The approved shell command completed.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({
+      status: 'pending',
+      toolName: 'shell.run',
+    })
+    expect(store.getRun(run.id)?.status).toBe('waiting_permission')
+    expect(store.listEvents(run.id).map((event) => event.eventType)).toContain('permission.required')
+    await expect(readFile(join(workspace, 'shell-output.txt'), 'utf8')).rejects.toThrow()
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    await expect(readFile(join(workspace, 'shell-output.txt'), 'utf8')).resolves.toBe('hello')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(gateway.requests).toHaveLength(2)
+    expect(gateway.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call-shell',
+          name: 'shell.run',
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'permission.resolved' }),
+        expect.objectContaining({ eventType: 'tool.completed', payload: expect.objectContaining({ tool: 'shell.run' }) }),
+        expect.objectContaining({ eventType: 'run.completed', payload: expect.objectContaining({ final: 'The approved shell command completed.' }) }),
+      ]),
+    )
+  })
+
+  it('stores long tool output as an artifact and sends only a reference back to the model', async () => {
+    const workspace = await tempWorkspace()
+    const largeContent = 'phase-2.5-artifact '.repeat(300)
+    await writeFile(join(workspace, 'large.txt'), largeContent, 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Read large.txt and summarize it.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-large', name: 'file.read', arguments: { path: 'large.txt', maxBytes: largeContent.length } }],
+      },
+      {
+        requestId: 'req-2',
+        content: 'The large file was summarized from an artifact reference.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, artifactThresholdChars: 512 })
+
+    const artifact = store.listArtifacts(run.id)[0]
+    expect(artifact).toMatchObject({
+      runId: run.id,
+      kind: 'tool_output',
+      toolName: 'file.read',
+      content: largeContent,
+    })
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'artifact.created', payload: expect.objectContaining({ artifact_id: artifact.id }) }),
+        expect.objectContaining({ eventType: 'tool.completed', payload: expect.objectContaining({ artifact_id: artifact.id }) }),
+      ]),
+    )
+    const toolMessage = gateway.requests[1].messages.find((message) => message.role === 'tool')
+    expect(toolMessage?.content).toContain(artifact.id)
+    expect(toolMessage?.content.length).toBeLessThan(largeContent.length / 2)
+    expect(toolMessage?.content).not.toContain(largeContent)
+  })
+
+  it('compacts oversized context and checkpoints the compacted state before continuing', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Keep context compact.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const verboseAssistantContent = 'intermediate reasoning '.repeat(80)
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        content: verboseAssistantContent,
+        toolCalls: [{ id: 'call-time', name: 'time.now', arguments: {} }],
+      },
+      {
+        requestId: 'req-2',
+        content: 'Done after compaction.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, contextLimitChars: 600 })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'context.compacted' }),
+        expect.objectContaining({ eventType: 'checkpoint.created' }),
+      ]),
+    )
+    expect(gateway.requests[1].messages.map((message) => message.content).join('\n')).toContain('Compacted run history')
+    expect(gateway.requests[1].messages.map((message) => message.content).join('\n')).not.toContain(verboseAssistantContent)
+    expect(store.latestCheckpoint(run.id)?.messages.map((message) => message.content).join('\n')).toContain('Compacted run history')
+  })
+
+  it('resumes a running run from the latest checkpoint', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Resume me from checkpoint.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.updateRunStatus(run.id, 'running')
+    store.createCheckpoint({
+      runId: run.id,
+      step: 1,
+      reason: 'test_resume',
+      messages: [
+        { role: 'system', content: 'System policy' },
+        { role: 'user', content: 'Resume me from checkpoint.' },
+        { role: 'tool', toolCallId: 'call-prev', name: 'time.now', content: '2026-05-11T00:00:00.000Z' },
+      ],
+    })
+    const gateway = new ScriptedGateway([{ requestId: 'req-resume', content: 'Resumed from checkpoint.' }])
+
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests[0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', toolCallId: 'call-prev', name: 'time.now' }),
+      ]),
+    )
+    expect(store.listEvents(run.id)).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: 'checkpoint.resumed' })]))
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('loads memory index and matching topic notes into the first model request', async () => {
+    const store = new InMemoryLocalHostStore()
+    store.upsertMemory({
+      kind: 'index',
+      title: 'Engineering habits',
+      summary: 'Prefer failing tests before implementation.',
+      content: 'Always verify RED before GREEN.',
+    })
+    store.upsertMemory({
+      kind: 'topic',
+      title: 'Jiandanly local harness',
+      summary: 'Local Harness owns tool execution and context.',
+      content: 'Do not move local file contents into the cloud control plane.',
+    })
+    const run = store.createRun({ goal: 'Improve the Jiandanly local harness.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-memory', content: 'Memory loaded.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const prompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(prompt).toContain('Prefer failing tests before implementation.')
+    expect(prompt).toContain('Do not move local file contents into the cloud control plane.')
+  })
+
+  it('emits verification events for successful and failed tool observations', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Verify shell result.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-shell', name: 'shell.run', arguments: { command: 'exit 7' } }],
+      },
+      {
+        requestId: 'req-2',
+        content: 'The command failed verification.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'verification.started', payload: expect.objectContaining({ tool: 'shell.run', tool_call_id: 'call-shell' }) }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'shell.run',
+            status: 'failed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'exit_code_zero', passed: false })]),
+          }),
+        }),
+      ]),
+    )
+  })
+})
+
+class ScriptedGateway implements LLMGateway {
+  readonly requests: LLMGatewayRequest[] = []
+  private index = 0
+
+  constructor(private readonly responses: LLMGatewayResponse[]) {}
+
+  async call(request: LLMGatewayRequest): Promise<LLMGatewayResponse> {
+    this.requests.push(request)
+    const response = this.responses[this.index]
+    this.index += 1
+    if (!response) {
+      throw new Error('No scripted response left')
+    }
+    return response
+  }
+}
+
+async function tempWorkspace(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'jiandanly-harness-'))
+  tempDirs.push(dir)
+  return dir
+}

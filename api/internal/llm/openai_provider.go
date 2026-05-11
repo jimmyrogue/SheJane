@@ -116,6 +116,66 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 	return chunks, errs
 }
 
+func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, request ChatRequest, model string) (Completion, error) {
+	payload := map[string]any{
+		"model":    model,
+		"messages": openAIMessages(request.Messages),
+		"stream":   false,
+	}
+	if len(request.Tools) > 0 {
+		payload["tools"] = openAITools(request.Tools)
+		payload["tool_choice"] = "auto"
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return Completion{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Completion{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return Completion{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return Completion{}, fmt.Errorf("%s returned status %d", p.name, resp.StatusCode)
+	}
+	var event openAICompletionEvent
+	if err := json.NewDecoder(resp.Body).Decode(&event); err != nil {
+		return Completion{}, err
+	}
+	completion := Completion{
+		InputTokens:  event.Usage.PromptTokens,
+		OutputTokens: event.Usage.CompletionTokens,
+	}
+	if len(event.Choices) == 0 {
+		return completion, nil
+	}
+	choice := event.Choices[0]
+	completion.Content = choice.Message.Content
+	completion.FinishReason = choice.FinishReason
+	for _, toolCall := range choice.Message.ToolCalls {
+		arguments := map[string]any{}
+		if strings.TrimSpace(toolCall.Function.Arguments) != "" {
+			if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
+				return Completion{}, err
+			}
+		}
+		completion.ToolCalls = append(completion.ToolCalls, ToolCall{
+			ID:        toolCall.ID,
+			Name:      toolCall.Function.Name,
+			Arguments: arguments,
+		})
+	}
+	return completion, nil
+}
+
 type openAIStreamEvent struct {
 	Choices []struct {
 		Delta struct {
@@ -127,4 +187,76 @@ type openAIStreamEvent struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
+}
+
+type openAICompletionEvent struct {
+	Choices []struct {
+		Message struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+func openAITools(tools []ToolDefinition) []map[string]any {
+	result := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        tool.Name,
+				"description": tool.Description,
+				"parameters":  tool.InputSchema,
+			},
+		})
+	}
+	return result
+}
+
+func openAIMessages(messages []Message) []map[string]any {
+	result := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		item := map[string]any{
+			"role":    message.Role,
+			"content": message.Content,
+		}
+		if message.ToolCallID != "" {
+			item["tool_call_id"] = message.ToolCallID
+		}
+		if message.Name != "" {
+			item["name"] = message.Name
+		}
+		if len(message.ToolCalls) > 0 {
+			calls := make([]map[string]any, 0, len(message.ToolCalls))
+			for _, call := range message.ToolCalls {
+				arguments, err := json.Marshal(call.Arguments)
+				if err != nil {
+					arguments = []byte("{}")
+				}
+				calls = append(calls, map[string]any{
+					"id":   call.ID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      call.Name,
+						"arguments": string(arguments),
+					},
+				})
+			}
+			item["tool_calls"] = calls
+		}
+		result = append(result, item)
+	}
+	return result
 }

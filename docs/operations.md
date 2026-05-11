@@ -4,14 +4,14 @@ Updated: 2026-05-11
 
 ## 当前管理边界
 
-Phase 1.7 提供独立管理后台和账单生命周期加固。Phase 2 起产品方向调整为统一 Agentic Chat，长期采用 Local Agent Host + Cloud Control Plane。普通用户 client 与 admin web 分开构建、分开部署：
+Phase 1.7 提供独立管理后台和账单生命周期加固。Phase 2 起产品方向调整为 Local Agent Harness，长期采用 Local Agent Harness + Cloud Control Plane。普通用户 client 与 admin web 分开构建、分开部署：
 
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
 - 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
 - 模型/provider：后台只读展示 fast/deep 当前 provider、base URL、model、mock/real 状态和 key 是否已配置，不显示也不修改 API key。
 - 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
-- Agentic Chat：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；未来 Local Agent Host 负责本地工具、文件、终端、浏览器、IDE 和本地 MCP。
+- Local Agent Harness：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；Local Harness 负责 12 个 harness 组件、本地工具、文件、终端、浏览器、IDE、本地 MCP、checkpoint 和 artifact。
 - Agent Run：Phase 2.2 起普通聊天和附件问答会创建短期 `agent_runs` / `agent_events`。后台只展示摘要、状态和错误，不展示完整用户输入或文档正文。
 
 ## 本地启动
@@ -183,15 +183,70 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 - 文档默认 7 天过期；当前没有后台手工延长或恢复入口。
 - Agent Run 事件默认 7 天过期；当前没有后台重放、修改、取消已完成 run 的入口。
 
-## Agentic Chat 运维边界
+## Local Agent Harness 运维边界
 
 Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两个平面理解：
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
-- **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Host 后续复用事件模型。
-- **Local Agent Host**：后续运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
+- **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
+- **Phase 2.3-2.9 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.9 起普通 client 可以选择、授权、诊断和撤销工作区，创建本地 run、批准/拒绝权限并按需读取 artifact。
+- **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
-- **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Host。
+- **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
+
+本地开发 Local Harness：
+
+```bash
+cd local-host
+npm install
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
+```
+
+Electron client 连接本地 Host：
+
+```bash
+cd client
+JIANDANLY_LOCAL_HOST_URL=http://127.0.0.1:17371 \
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+npm run electron
+```
+
+连接云端模型网关：
+
+```bash
+cd local-host
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+JIANDANLY_CLOUD_BASE_URL=http://localhost:8080 \
+JIANDANLY_CLOUD_ACCESS_TOKEN=用户 access token \
+npm run dev
+```
+
+启用 Phase 2.6 可选搜索和 MCP allowlist：
+
+```bash
+cd local-host
+JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+TAVILY_API_KEY=tvly-... \
+JIANDANLY_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read \
+npm run dev
+```
+
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时会返回可恢复的 disabled-tool observation。`mcp.call` 当前只做 allowlist 护栏，不连接真实 MCP runtime adapter。
+
+测试本地 health：
+
+```bash
+curl http://127.0.0.1:17371/local/v1/health
+curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/tools
+```
+
+注意：
+
+- daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
+- `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
+- Phase 2.9 已实现 `time.now`、授权 workspace 内 `file.read` / `file.search`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist 护栏，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、权限批准/拒绝、artifact 预览和验证结果展示。
+- Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
+- 仍未实现完整 run 诊断导出、真实 MCP runtime adapter、浏览器/IDE 控制和 Playwright/截图验证。
 
 ## 常用管理命令
 

@@ -1,6 +1,9 @@
 import {
+  CheckCircle2,
   Download,
+  Eye,
   FileText,
+  FolderOpen,
   Loader2,
   LogOut,
   MessageSquare,
@@ -18,9 +21,26 @@ import {
   type UserDocument,
   type WalletBalance,
 } from './shared/api/client'
-import { createChatStore } from './features/chat/chatStore'
-import { LocalConversationStore } from './shared/local-data/localConversations'
-import type { ChatMode, Conversation } from './shared/local-data/types'
+import { createChatStore, timelineItem } from './features/chat/chatStore'
+import type { AgentRunEvent } from './shared/api/sse'
+import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
+import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation } from './shared/local-data/types'
+import {
+  authorizeLocalWorkspace,
+  createLocalRun,
+  diagnoseLocalWorkspace,
+  getDesktopLocalHostConfig,
+  getLocalArtifact,
+  listAuthorizedWorkspaces,
+  probeLocalHost,
+  revokeLocalWorkspace,
+  resolveLocalPermission,
+  streamLocalRun,
+  type LocalArtifact,
+  type LocalHostConfig,
+  type LocalHostProbe,
+  type LocalWorkspaceAuthorization,
+} from './shared/local-host/client'
 
 const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.docx,.xlsx'
@@ -43,6 +63,11 @@ export function App() {
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [notice, setNotice] = useState('')
+  const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
+  const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
+  const [localWorkspacePath, setLocalWorkspacePath] = useState(() => localStorage.getItem('jiandanly-local-workspace') ?? '')
+  const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
+  const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
 
   useEffect(() => {
     void localData.list().then((items) => {
@@ -66,8 +91,36 @@ export function App() {
       .catch(() => undefined)
   }, [api])
 
+  useEffect(() => {
+    const config = getDesktopLocalHostConfig()
+    if (!config) {
+      return
+    }
+    setLocalHostConfig(config)
+    let disposed = false
+    void probeLocalHost(config.baseURL).then((probe) => {
+      if (!disposed) {
+        setLocalHost(probe)
+      }
+    })
+    if (config.token) {
+      void listAuthorizedWorkspaces(config)
+        .then((items) => {
+          if (!disposed) {
+            setAuthorizedWorkspaces(items)
+          }
+        })
+        .catch(() => undefined)
+    }
+    return () => {
+      disposed = true
+    }
+  }, [])
+
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
+  const selectedWorkspace = findWorkspaceByPath(authorizedWorkspaces, localWorkspacePath)
+  const localProjectLabel = selectedWorkspace?.label ?? workspaceLabelFromPath(localWorkspacePath)
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -95,18 +148,21 @@ export function App() {
     setIsSending(true)
     setNotice('')
     try {
-      const conversation = await chat.sendMessage({
-        conversationId: activeID,
-        content: draft,
-        mode,
-        scene: 'chat',
-        document: attachedDocument
-          ? {
-              id: attachedDocument.id,
-              name: attachedDocument.original_name,
-            }
-          : undefined,
-      })
+      const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token)
+      const conversation = canUseLocalHarness
+        ? await sendLocalHarnessMessage(draft)
+        : await chat.sendMessage({
+            conversationId: activeID,
+            content: draft,
+            mode,
+            scene: 'chat',
+            document: attachedDocument
+              ? {
+                  id: attachedDocument.id,
+                  name: attachedDocument.original_name,
+                }
+              : undefined,
+          })
       setDraft('')
       await refreshConversations(conversation.id)
       setBalance(await api.balance())
@@ -115,6 +171,187 @@ export function App() {
       await refreshConversations(activeID)
     } finally {
       setIsSending(false)
+    }
+  }
+
+  async function sendLocalHarnessMessage(content: string): Promise<Conversation> {
+    if (!localHostConfig) {
+      throw new Error('本地 Harness 未连接')
+    }
+    const text = content.trim()
+    if (!text) {
+      throw new Error('消息不能为空')
+    }
+
+    const timestamp = new Date().toISOString()
+    const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp)
+    const userMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      role: 'user',
+      content: text,
+      createdAt: timestamp,
+      status: 'done',
+    }
+    const assistantMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      status: 'streaming',
+      agentEvents: [],
+    }
+
+    conversation.messages = [...conversation.messages, userMessage, assistantMessage]
+    conversation.updatedAt = timestamp
+    await localData.save(conversation)
+
+    try {
+      const run = await createLocalRun(
+        {
+          goal: text,
+          workspacePath: localWorkspacePath.trim() || undefined,
+        },
+        localHostConfig,
+      )
+      assistantMessage.runId = run.id
+      const seenEventIDs = new Set<string>()
+      await streamLocalRun(run.id, localHostConfig, {
+        onEvent: (event) => appendLocalRunEvent(assistantMessage, event, seenEventIDs),
+        onDelta: (delta, event) => appendLocalDelta(assistantMessage, delta, event, seenEventIDs),
+      })
+      finalizeLocalRunStatus(assistantMessage)
+    } catch (error) {
+      assistantMessage.status = 'error'
+      assistantMessage.content = error instanceof Error ? error.message : '本地 Harness 执行失败'
+      throw error
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+    }
+
+    return conversation
+  }
+
+  async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny') {
+    if (!activeID || !localHostConfig) {
+      setNotice('本地 Harness 未连接')
+      return
+    }
+    const conversation = await localData.get(activeID)
+    const message = conversation?.messages.find((item) => item.id === messageID)
+    if (!conversation || !message?.runId) {
+      setNotice('找不到需要继续的本地任务')
+      return
+    }
+
+    setNotice('')
+    message.status = 'streaming'
+    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    try {
+      await resolveLocalPermission(requestID, decision, localHostConfig)
+      await streamLocalRun(message.runId, localHostConfig, {
+        onEvent: (event) => appendLocalRunEvent(message, event, seenEventIDs),
+        onDelta: (delta, event) => appendLocalDelta(message, delta, event, seenEventIDs),
+      })
+      finalizeLocalRunStatus(message)
+    } catch (error) {
+      message.status = 'error'
+      message.content = error instanceof Error ? error.message : '本地权限处理失败'
+      setNotice(message.content)
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversations(conversation.id)
+    }
+  }
+
+  async function openLocalArtifact(artifactID: string) {
+    if (!localHostConfig) {
+      setNotice('本地 Harness 未连接')
+      return
+    }
+    setNotice('')
+    try {
+      setArtifactPreview(await getLocalArtifact(artifactID, localHostConfig))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Artifact 读取失败')
+    }
+  }
+
+  async function chooseWorkspaceDirectory() {
+    const selectedPath = await window.jiandanDesktop?.selectWorkspaceDirectory?.()
+    if (!selectedPath) {
+      return
+    }
+    await authorizeWorkspace(selectedPath)
+  }
+
+  async function authorizeWorkspace(path = localWorkspacePath) {
+    if (!localHostConfig?.token) {
+      setNotice('本地 Harness 未配对，无法授权工作区')
+      return
+    }
+    const nextPath = path.trim()
+    if (!nextPath) {
+      setNotice('请先填写本地工作区路径')
+      return
+    }
+    try {
+      const workspace = await authorizeLocalWorkspace(nextPath, localHostConfig)
+      setLocalWorkspacePath(workspace.path)
+      localStorage.setItem('jiandanly-local-workspace', workspace.path)
+      setAuthorizedWorkspaces((items) => upsertWorkspace(items, workspace))
+      setNotice(`工作区已授权：${workspace.label}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '工作区授权失败')
+    }
+  }
+
+  async function diagnoseWorkspace(path = localWorkspacePath) {
+    if (!localHostConfig?.token) {
+      setNotice('本地 Harness 未配对，无法诊断工作区')
+      return
+    }
+    const nextPath = path.trim()
+    if (!nextPath) {
+      setNotice('请先填写本地工作区路径')
+      return
+    }
+    try {
+      const diagnosis = await diagnoseLocalWorkspace(nextPath, localHostConfig)
+      if (diagnosis.authorized) {
+        setNotice(`路径已授权：${diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path)}`)
+        return
+      }
+      if (diagnosis.reason === 'not_found') {
+        setNotice('路径不存在，请重新选择工作区')
+        return
+      }
+      if (diagnosis.reason === 'not_directory') {
+        setNotice('路径不是文件夹，请选择工作区目录')
+        return
+      }
+      setNotice('路径存在，但尚未授权')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '工作区诊断失败')
+    }
+  }
+
+  async function revokeWorkspace(workspace: LocalWorkspaceAuthorization) {
+    if (!localHostConfig?.token) {
+      setNotice('本地 Harness 未配对，无法撤销工作区')
+      return
+    }
+    try {
+      const revoked = await revokeLocalWorkspace(workspace.id, localHostConfig)
+      setAuthorizedWorkspaces((items) => items.filter((item) => item.id !== revoked.id))
+      if (pathInsideWorkspace(revoked.path, localWorkspacePath)) {
+        setLocalWorkspacePath('')
+        localStorage.removeItem('jiandanly-local-workspace')
+      }
+      setNotice(`工作区授权已撤销：${revoked.label}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '工作区撤销失败')
     }
   }
 
@@ -283,6 +520,61 @@ export function App() {
           </div>
         </section>
 
+        <section className="sidebar-section">
+          <div className="section-heading">
+            <span>本地工作区</span>
+            <small>{localHost?.online ? (localHostConfig?.token ? '已配对' : '待配对') : '未连接'}</small>
+          </div>
+          <label className="workspace-path-field">
+            <span>
+              <FolderOpen size={15} />
+              本地工作区路径
+            </span>
+            <div className="workspace-path-row">
+              <input
+                aria-label="本地工作区路径"
+                value={localWorkspacePath}
+                placeholder="/Users/you/project"
+                onChange={(event) => {
+                  setLocalWorkspacePath(event.target.value)
+                  localStorage.setItem('jiandanly-local-workspace', event.target.value)
+                }}
+              />
+              {window.jiandanDesktop?.selectWorkspaceDirectory ? (
+                <button type="button" onClick={() => void chooseWorkspaceDirectory()}>
+                  选择
+                </button>
+              ) : null}
+            </div>
+          </label>
+          <button className="workspace-authorize-button" type="button" onClick={() => void authorizeWorkspace()}>
+            授权当前路径
+          </button>
+          <button className="workspace-authorize-button subtle" type="button" onClick={() => void diagnoseWorkspace()}>
+            诊断当前路径
+          </button>
+          {authorizedWorkspaces.length ? (
+            <div className="workspace-authorized-list">
+              {authorizedWorkspaces.slice(0, 3).map((workspace) => (
+                <div className={workspace.path === localWorkspacePath.trim() ? 'workspace-authorized-item active' : 'workspace-authorized-item'} key={workspace.id}>
+                  <button type="button" onClick={() => {
+                    setLocalWorkspacePath(workspace.path)
+                    localStorage.setItem('jiandanly-local-workspace', workspace.path)
+                  }}>
+                    已授权：{workspace.label}
+                  </button>
+                  <button title={`诊断 ${workspace.label}`} type="button" onClick={() => void diagnoseWorkspace(workspace.path)}>
+                    诊断
+                  </button>
+                  <button title={`撤销 ${workspace.label}`} type="button" onClick={() => void revokeWorkspace(workspace)}>
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
+
         <div className="local-actions">
           <button onClick={exportLocalData}>
             <Download size={16} />
@@ -315,6 +607,11 @@ export function App() {
             <span className="plan">{balance?.plan_code ?? 'free_trial'}</span>
           </div>
           <div className="account">
+            {localHost ? (
+              <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
+                {localHost.online ? (localHostConfig?.token ? '本地 Harness' : '本地未配对') : '云端受限'}
+              </span>
+            ) : null}
             <span>{auth.user.email}</span>
             <button onClick={startCheckout}>升级</button>
             <button className="icon-button" title="退出登录" onClick={logout}>
@@ -329,13 +626,13 @@ export function App() {
               {activeConversation.messages.map((message) => (
                 <article className={`message ${message.role}`} key={message.id}>
                   <span>{message.role === 'user' ? '我' : '简单'}</span>
-                  <p>{message.content}</p>
+                  <p>{message.content || (message.status === 'waiting_permission' ? '等待你批准本地工具调用。' : '')}</p>
                   {message.agentEvents?.length ? (
-                    <div className="agent-timeline">
-                      {message.agentEvents.map((event, index) => (
-                        <small key={`${event.type}-${index}`}>{event.label}</small>
-                      ))}
-                    </div>
+                    <AgentTimeline
+                      message={message}
+                      onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
+                      onPermissionDecision={(requestID, decision) => void handlePermissionDecision(message.id, requestID, decision)}
+                    />
                   ) : null}
                 </article>
               ))}
@@ -349,6 +646,21 @@ export function App() {
         </section>
 
         {notice ? <div className="notice">{notice}</div> : null}
+
+        {artifactPreview ? (
+          <section className="artifact-preview">
+            <header>
+              <div>
+                <strong>Artifact: {artifactPreview.title}</strong>
+                <small>{artifactPreview.tool_name ?? 'local artifact'}</small>
+              </div>
+              <button className="icon-button light" title="关闭 artifact" onClick={() => setArtifactPreview(null)}>
+                <X size={15} />
+              </button>
+            </header>
+            <pre>{artifactPreview.content}</pre>
+          </section>
+        ) : null}
 
         <footer className="composer">
           <div className="composer-controls">
@@ -369,6 +681,19 @@ export function App() {
           ) : null}
           {attachedDocument?.status === 'failed' ? (
             <div className="document-status failed">{attachedDocument.error_message || '解析失败'}</div>
+          ) : null}
+          {!attachedDocument && localHost?.online && localHostConfig?.token && localWorkspacePath.trim() ? (
+            <div className={`local-project-chip ${selectedWorkspace ? '' : 'pending'}`}>
+              <FolderOpen size={15} />
+              <span>本地项目：{localProjectLabel}</span>
+              <small>{selectedWorkspace ? '已授权' : '待授权'} · {localWorkspacePath.trim()}</small>
+              <button title="移除本地项目引用" onClick={() => {
+                setLocalWorkspacePath('')
+                localStorage.removeItem('jiandanly-local-workspace')
+              }}>
+                <X size={14} />
+              </button>
+            </div>
           ) : null}
           <div className="composer-input">
             <textarea
@@ -403,6 +728,113 @@ function ModeToggle({ mode, onChange }: { mode: ChatMode; onChange: (mode: ChatM
       </button>
     </div>
   )
+}
+
+function AgentTimeline({
+  message,
+  onOpenArtifact,
+  onPermissionDecision,
+}: {
+  message: ChatMessage
+  onOpenArtifact: (artifactID: string) => void
+  onPermissionDecision: (requestID: string, decision: 'approve' | 'deny') => void
+}) {
+  return (
+    <div className="agent-timeline">
+      {message.agentEvents?.map((event, index) => (
+        <div className={`timeline-item ${timelineItemClass(event)}`} key={`${event.eventId ?? event.type}-${index}`}>
+          <small>{event.label}</small>
+          {event.permissionRequestId && event.type === 'permission.required' && !isPermissionResolved(message, event.permissionRequestId) ? (
+            <span className="timeline-actions">
+              <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve')}>
+                <CheckCircle2 size={13} />
+                批准 {event.permissionTool || '工具'}
+              </button>
+              <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'deny')}>
+                <X size={13} />
+                拒绝 {event.permissionTool || '工具'}
+              </button>
+            </span>
+          ) : null}
+          {event.artifactId ? (
+            <button className="timeline-artifact-button" onClick={() => onOpenArtifact(event.artifactId!)}>
+              <Eye size={13} />
+              查看 artifact
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>) {
+  if (event.event_type === 'llm.delta') {
+    return
+  }
+  if (event.id && seenEventIDs.has(event.id)) {
+    return
+  }
+  if (event.id) {
+    seenEventIDs.add(event.id)
+  }
+  const item = timelineItem(event)
+  if (item) {
+    message.agentEvents = [...(message.agentEvents ?? []), item]
+  }
+}
+
+function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEvent, seenEventIDs: Set<string>) {
+  if (event.id && seenEventIDs.has(event.id)) {
+    return
+  }
+  if (event.id) {
+    seenEventIDs.add(event.id)
+  }
+  message.content += delta
+}
+
+function finalizeLocalRunStatus(message: ChatMessage) {
+  const events = message.agentEvents ?? []
+  if (events.some((event) => event.type === 'run.failed')) {
+    message.status = 'error'
+    return
+  }
+  if (events.some((event) => event.type === 'run.completed')) {
+    message.status = 'done'
+    return
+  }
+  message.status = hasPendingPermission(events) ? 'waiting_permission' : 'done'
+}
+
+function hasPendingPermission(events: AgentTimelineItem[]): boolean {
+  const pending = new Set<string>()
+  for (const event of events) {
+    if (event.type === 'permission.required' && event.permissionRequestId) {
+      pending.add(event.permissionRequestId)
+    }
+    if (event.type === 'permission.resolved' && event.permissionRequestId) {
+      pending.delete(event.permissionRequestId)
+    }
+  }
+  return pending.size > 0
+}
+
+function isPermissionResolved(message: ChatMessage, requestID: string): boolean {
+  return (message.agentEvents ?? []).some((event) => event.type === 'permission.resolved' && event.permissionRequestId === requestID)
+}
+
+function timelineItemClass(event: AgentTimelineItem): string {
+  if (event.type.startsWith('permission.')) {
+    return 'permission'
+  }
+  if (event.artifactId) {
+    return 'artifact'
+  }
+  if (event.verificationStatus) {
+    return event.verificationStatus === 'passed' ? 'verification passed' : 'verification failed'
+  }
+  return ''
 }
 
 function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payload: AuthPayload) => Promise<void> }) {
@@ -475,6 +907,47 @@ function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payload: Au
 
 function upsertDocument(items: UserDocument[], document: UserDocument): UserDocument[] {
   return [document, ...items.filter((item) => item.id !== document.id)]
+}
+
+function upsertWorkspace(items: LocalWorkspaceAuthorization[], workspace: LocalWorkspaceAuthorization): LocalWorkspaceAuthorization[] {
+  return [workspace, ...items.filter((item) => item.id !== workspace.id && item.path !== workspace.path)]
+}
+
+function findWorkspaceByPath(items: LocalWorkspaceAuthorization[], path: string): LocalWorkspaceAuthorization | undefined {
+  const normalized = path.trim()
+  return normalized ? items.find((item) => pathInsideWorkspace(item.path, normalized)) : undefined
+}
+
+function workspaceLabelFromPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) {
+    return ''
+  }
+  return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed
+}
+
+function pathInsideWorkspace(root: string, target: string): boolean {
+  const normalizedRoot = trimPath(root)
+  const normalizedTarget = trimPath(target)
+  if (!normalizedRoot || !normalizedTarget) {
+    return false
+  }
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`) || normalizedTarget.startsWith(`${normalizedRoot}\\`)
+}
+
+function trimPath(path: string): string {
+  return path.trim().replace(/[\\/]+$/u, '')
+}
+
+function createConversation(firstMessage: string, timestamp: string): Conversation {
+  return {
+    id: createLocalID('conv'),
+    title: firstMessage.slice(0, 24) || '新对话',
+    archived: false,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    messages: [],
+  }
 }
 
 function normalizeDocumentContentType(file: File): string {

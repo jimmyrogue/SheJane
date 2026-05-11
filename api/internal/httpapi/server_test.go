@@ -307,6 +307,76 @@ func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 	}
 }
 
+func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
+	server := newTestServer(t)
+
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(`{"mode":"fast","messages":[{"role":"user","content":"hello"}]}`))
+	unauth.Header.Set("Content-Type", "application/json")
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth agent llm status = %d, want 401", unauthRecorder.Code)
+	}
+
+	token := registerAndToken(t, server)
+	before := billingBalance(t, server, token)
+	body := `{"run_id":"local-run-1","mode":"fast","messages":[{"role":"user","content":"hello from local harness"}],"tools":[{"name":"time.now","description":"time","inputSchema":{"type":"object"},"isReadOnly":true,"isDestructive":false,"isConcurrencySafe":true,"maxResultSize":4096,"permissionPolicy":"allow"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("agent llm status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response apiResponse[struct {
+		RequestID string `json:"requestId"`
+		Content   string `json:"content"`
+		ToolCalls []any  `json:"toolCalls"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode agent llm response: %v", err)
+	}
+	if response.Data.RequestID == "" || !strings.Contains(response.Data.Content, "Mock Jiandan response") {
+		t.Fatalf("unexpected agent llm response: %#v", response.Data)
+	}
+	if len(response.Data.ToolCalls) != 0 {
+		t.Fatalf("mock gateway should not return tool calls: %#v", response.Data.ToolCalls)
+	}
+	after := billingBalance(t, server, token)
+	if after.MonthlyRemaining >= before.MonthlyRemaining {
+		t.Fatalf("monthly remaining before=%d after=%d, want decrease", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+	if calls := usageRecords(t, server, token); !strings.Contains(calls, `"scene":"agent_local"`) {
+		t.Fatalf("usage records missing agent_local scene: %s", calls)
+	}
+}
+
+func TestAgentToolEventsRequiresAuthAndAcceptsRedactedSummaries(t *testing.T) {
+	server := newTestServer(t)
+
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tool-events", strings.NewReader(`{"events":[]}`))
+	unauth.Header.Set("Content-Type", "application/json")
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth tool events status = %d, want 401", unauthRecorder.Code)
+	}
+
+	token := registerAndToken(t, server)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tool-events", strings.NewReader(`{"run_id":"local-run-1","events":[{"tool":"file.read","status":"failed","error_code":"path_outside_workspace","duration_ms":12}]}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("tool events status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"accepted":true`) || !strings.Contains(recorder.Body.String(), `"count":1`) {
+		t.Fatalf("tool events response should acknowledge count without echoing payload: %s", recorder.Body.String())
+	}
+}
+
 func TestAgentRunWithDocumentAttachmentEmitsDocumentToolEvents(t *testing.T) {
 	server, objects := newDocumentTestServer(t, nil)
 	token := registerAndToken(t, server)

@@ -70,6 +70,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/agent/runs/{id}/events", s.requireAuth(s.agentRunEvents))
 	s.mux.HandleFunc("GET /api/v1/agent/runs/{id}/stream", s.requireAuth(s.agentRunStream))
 	s.mux.HandleFunc("POST /api/v1/agent/runs/{id}/cancel", s.requireAuth(s.agentRunCancel))
+	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.agentLLMGateway))
+	s.mux.HandleFunc("POST /api/v1/agent/tool-events", s.requireAuth(s.agentToolEvents))
 	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
 	s.mux.HandleFunc("GET /api/v1/documents", s.requireAuth(s.documentsList))
@@ -477,6 +479,191 @@ func (s *Server) agentRunCancel(w http.ResponseWriter, r *http.Request, user sto
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[store.AgentRun]{Code: 0, Message: "ok", Data: updated})
+}
+
+func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		RunID    string `json:"run_id"`
+		Mode     string `json:"mode"`
+		Messages []struct {
+			Role       string `json:"role"`
+			Content    string `json:"content"`
+			ToolCallID string `json:"toolCallId,omitempty"`
+			Name       string `json:"name,omitempty"`
+			ToolCalls  []struct {
+				ID        string         `json:"id"`
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+			} `json:"toolCalls,omitempty"`
+		} `json:"messages"`
+		Tools []struct {
+			Name              string         `json:"name"`
+			Description       string         `json:"description"`
+			InputSchema       map[string]any `json:"inputSchema"`
+			IsReadOnly        bool           `json:"isReadOnly"`
+			IsDestructive     bool           `json:"isDestructive"`
+			IsConcurrencySafe bool           `json:"isConcurrencySafe"`
+			MaxResultSize     int            `json:"maxResultSize"`
+			PermissionPolicy  string         `json:"permissionPolicy"`
+		} `json:"tools"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if len(body.Messages) == 0 {
+		writeError(w, http.StatusBadRequest, 40201, "消息不能为空")
+		return
+	}
+	messages := make([]llm.Message, 0, len(body.Messages))
+	for _, message := range body.Messages {
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			role = "user"
+		}
+		toolCalls := make([]llm.ToolCall, 0, len(message.ToolCalls))
+		for _, call := range message.ToolCalls {
+			toolCalls = append(toolCalls, llm.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
+		}
+		messages = append(messages, llm.Message{Role: role, Content: message.Content, ToolCallID: message.ToolCallID, Name: message.Name, ToolCalls: toolCalls})
+	}
+	tools := make([]llm.ToolDefinition, 0, len(body.Tools))
+	for _, tool := range body.Tools {
+		if strings.TrimSpace(tool.Name) == "" {
+			continue
+		}
+		tools = append(tools, llm.ToolDefinition{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: tool.InputSchema,
+		})
+	}
+	mode := llm.NormalizeMode(body.Mode)
+	request := llm.ChatRequest{
+		Model:    string(mode),
+		Stream:   false,
+		Scene:    "agent_local",
+		Messages: messages,
+		Tools:    tools,
+	}
+	provider, model := s.app.Router.Select(mode)
+	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
+	estimatedCredits := s.app.EstimateCredits(request)
+	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
+		UserID:    user.ID,
+		RequestID: requestID,
+		Mode:      string(mode),
+	})
+	if err != nil {
+		if billing.IsInsufficientCredits(err) {
+			writeError(w, http.StatusPaymentRequired, 40202, "额度不足，请升级或充值")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, 50001, "额度预留失败")
+		return
+	}
+	if err := s.app.Store.CreateLLMCall(r.Context(), store.LLMCallRecord{
+		RequestID:     requestID,
+		UserID:        user.ID,
+		WalletID:      reservation.WalletID,
+		ReservationID: reservation.ID,
+		Mode:          string(mode),
+		Scene:         "agent_local",
+		Model:         model,
+		Provider:      provider.Name(),
+		Status:        "streaming",
+		StartedAt:     time.Now().UTC(),
+	}); err != nil {
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
+		writeError(w, http.StatusInternalServerError, 50001, "记录调用失败")
+		return
+	}
+
+	completion, err := completeAgentLLM(r.Context(), provider, request, model)
+	if err != nil {
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
+		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", 0, 0, 0, err.Error())
+		writeError(w, http.StatusBadGateway, 50201, "模型调用失败")
+		return
+	}
+	inputTokens := completion.InputTokens
+	if inputTokens < 1 {
+		inputTokens = llm.EstimateTokens(request.Messages)
+	}
+	outputTokens := completion.OutputTokens
+	actualCredits := int64(inputTokens + outputTokens)
+	if actualCredits < 1 {
+		actualCredits = 1
+	}
+	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
+		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
+		writeError(w, http.StatusInternalServerError, 50001, "额度结算失败")
+		return
+	}
+	_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "done", inputTokens, outputTokens, actualCredits, "")
+	writeJSON(w, http.StatusOK, apiResponse[map[string]any]{
+		Code:    0,
+		Message: "ok",
+		Data: map[string]any{
+			"requestId": requestID,
+			"content":   completion.Content,
+			"toolCalls": completion.ToolCalls,
+			"usage": map[string]any{
+				"input_tokens":  inputTokens,
+				"output_tokens": outputTokens,
+				"credits_cost":  actualCredits,
+			},
+		},
+	})
+}
+
+type agentToolCompleter interface {
+	CompleteWithTools(context.Context, llm.ChatRequest, string) (llm.Completion, error)
+}
+
+func completeAgentLLM(ctx context.Context, provider llm.Provider, request llm.ChatRequest, model string) (llm.Completion, error) {
+	if completer, ok := provider.(agentToolCompleter); ok {
+		return completer.CompleteWithTools(ctx, request, model)
+	}
+	chunks, errs := provider.Stream(ctx, request, model)
+	completion := llm.Completion{InputTokens: llm.EstimateTokens(request.Messages)}
+	var content strings.Builder
+	for chunk := range chunks {
+		if chunk.InputTokens > 0 {
+			completion.InputTokens = chunk.InputTokens
+		}
+		if chunk.OutputTokens > completion.OutputTokens {
+			completion.OutputTokens = chunk.OutputTokens
+		}
+		content.WriteString(chunk.Text)
+	}
+	if err := <-errs; err != nil {
+		return llm.Completion{}, err
+	}
+	completion.Content = content.String()
+	return completion, nil
+}
+
+func (s *Server) agentToolEvents(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		RunID  string           `json:"run_id"`
+		Events []map[string]any `json:"events"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if len(body.Events) > 100 {
+		writeError(w, http.StatusBadRequest, 40201, "工具事件过多")
+		return
+	}
+	slog.Info("local agent tool event summaries accepted", "user_id", user.ID, "run_id", body.RunID, "count", len(body.Events))
+	writeJSON(w, http.StatusAccepted, apiResponse[map[string]any]{
+		Code:    0,
+		Message: "ok",
+		Data: map[string]any{
+			"accepted": true,
+			"count":    len(body.Events),
+		},
+	})
 }
 
 func (s *Server) agentRunStream(w http.ResponseWriter, r *http.Request, user store.User) {

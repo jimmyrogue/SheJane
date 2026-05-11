@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
 const path = require('node:path')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
@@ -30,6 +30,19 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow)
+
+ipcMain.handle('jiandanly:select-workspace-directory', async () => {
+  const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  const options = {
+    title: '选择本地工作区',
+    properties: ['openDirectory'],
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  if (result.canceled || result.filePaths.length === 0) {
+    return undefined
+  }
+  return result.filePaths[0]
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

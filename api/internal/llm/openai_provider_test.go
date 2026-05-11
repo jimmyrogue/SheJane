@@ -90,3 +90,67 @@ func TestOpenAICompatibleProviderStreamsContentAndUsageOnlyEvent(t *testing.T) {
 		t.Fatalf("output tokens = %d, want 11", outputTokens)
 	}
 }
+
+func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{
+				"message": {
+					"content": "",
+					"tool_calls": [{
+						"id": "call-1",
+						"type": "function",
+						"function": {
+							"name": "file.read",
+							"arguments": "{\"path\":\"README.md\"}"
+						}
+					}]
+				},
+				"finish_reason": "tool_calls"
+			}],
+			"usage": {"prompt_tokens": 12, "completion_tokens": 4}
+		}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
+	response, err := provider.CompleteWithTools(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "read file"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "call-prev", Name: "file.read", Arguments: map[string]any{"path": "README.md"}}}},
+			{Role: "tool", ToolCallID: "call-prev", Name: "file.read", Content: "file contents"},
+		},
+		Tools: []ToolDefinition{{
+			Name:        "file.read",
+			Description: "read a file",
+			InputSchema: map[string]any{
+				"type": "object",
+			},
+		}},
+	}, "deepseek-chat")
+	if err != nil {
+		t.Fatalf("CompleteWithTools returned error: %v", err)
+	}
+	tools, ok := payload["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("request payload missing tools: %#v", payload)
+	}
+	messages := payload["messages"].([]any)
+	assistant := messages[1].(map[string]any)
+	toolCalls := assistant["tool_calls"].([]any)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	if function["name"] != "file.read" || !strings.Contains(function["arguments"].(string), "README.md") {
+		t.Fatalf("assistant tool_calls were not converted to OpenAI shape: %#v", assistant)
+	}
+	if response.InputTokens != 12 || response.OutputTokens != 4 {
+		t.Fatalf("usage = %d/%d, want 12/4", response.InputTokens, response.OutputTokens)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Name != "file.read" || response.ToolCalls[0].Arguments["path"] != "README.md" {
+		t.Fatalf("tool calls = %#v", response.ToolCalls)
+	}
+}

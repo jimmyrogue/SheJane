@@ -1,11 +1,12 @@
-.PHONY: test build api-test client-test admin-test client-build admin-build dev docker-up docker-down migrate smoke-real-llm smoke-stripe-webhook
+.PHONY: test build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev docker-up docker-down migrate smoke-real-llm smoke-stripe-webhook
 
-test: api-test client-test admin-test
+test: api-test client-test admin-test local-host-test
 
 build:
 	cd api && go build ./cmd/api
 	cd client && npm run build
 	cd admin && npm run build
+	cd local-host && npm run build
 
 api-test:
 	cd api && go test ./...
@@ -16,11 +17,17 @@ client-test:
 admin-test:
 	cd admin && npm test -- --run
 
+local-host-test:
+	cd local-host && npm test -- --run
+
 client-build:
 	cd client && npm run build
 
 admin-build:
 	cd admin && npm run build
+
+local-host-build:
+	cd local-host && npm run build
 
 dev:
 	@echo "Run API, client, and admin in three terminals:"

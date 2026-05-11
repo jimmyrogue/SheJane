@@ -112,28 +112,73 @@ function formatUserMessage(text: string, document?: { name: string }): string {
   return `📎 ${document.name}\n${text}`
 }
 
-function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
+export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
   if (event.event_type === 'llm.delta') {
     return null
   }
   const payload = event.payload ?? {}
+  const eventId = event.id
   switch (event.event_type) {
     case 'skill.selected':
-      return { type: event.event_type, label: `选择能力：${stringValue(payload.skill) || 'direct-answer'}` }
+      return { type: event.event_type, label: `选择能力：${stringValue(payload.skill) || 'direct-answer'}`, eventId }
     case 'tool.requested':
-      return { type: event.event_type, label: `调用工具：${stringValue(payload.tool)}` }
+      return { type: event.event_type, label: `调用工具：${stringValue(payload.tool)}`, eventId }
     case 'tool.completed':
-      return { type: event.event_type, label: `工具完成：${stringValue(payload.tool)}` }
+      return { type: event.event_type, label: `工具完成：${stringValue(payload.tool)}`, eventId }
     case 'tool.failed':
-      return { type: event.event_type, label: `工具失败：${stringValue(payload.tool)}` }
+      return { type: event.event_type, label: `工具失败：${stringValue(payload.tool)}`, eventId }
+    case 'permission.required': {
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: `需要权限：${tool}`,
+        eventId,
+        permissionRequestId: stringValue(payload.request_id),
+        permissionTool: tool,
+      }
+    }
+    case 'permission.resolved': {
+      const tool = stringValue(payload.tool)
+      const decision = payload.decision === 'approve' ? 'approve' : 'deny'
+      return {
+        type: event.event_type,
+        label: `${decision === 'approve' ? '权限已批准' : '权限已拒绝'}：${tool}`,
+        eventId,
+        permissionRequestId: stringValue(payload.request_id),
+        permissionTool: tool,
+        permissionDecision: decision,
+      }
+    }
+    case 'artifact.created': {
+      const title = stringValue(payload.title) || stringValue(payload.artifact_id)
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: `Artifact：${title || tool}`,
+        eventId,
+        artifactId: stringValue(payload.artifact_id),
+        artifactTitle: title,
+        artifactTool: tool,
+      }
+    }
+    case 'verification.completed': {
+      const status = payload.status === 'passed' ? 'passed' : 'failed'
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: `${status === 'passed' ? '验证通过' : '验证失败'}：${tool}`,
+        eventId,
+        verificationStatus: status,
+      }
+    }
     case 'run.completed':
-      return { type: event.event_type, label: '任务完成' }
+      return { type: event.event_type, label: '任务完成', eventId }
     case 'run.failed':
-      return { type: event.event_type, label: stringValue(payload.message) || '任务失败' }
+      return { type: event.event_type, label: stringValue(payload.message) || '任务失败', eventId }
     case 'run.canceled':
-      return { type: event.event_type, label: '任务已取消' }
+      return { type: event.event_type, label: '任务已取消', eventId }
     default:
-      return { type: event.event_type, label: event.event_type }
+      return { type: event.event_type, label: event.event_type, eventId }
   }
 }
 
