@@ -126,7 +126,7 @@ export const localHostTools: ToolDefinition[] = [
   },
   {
     name: 'mcp.call',
-    description: 'Call an allowlisted local MCP tool. Phase 2.6 enforces the allowlist before runtime adapters are enabled.',
+    description: 'Call an allowlisted local MCP tool through the configured local stdio MCP runtime adapter.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

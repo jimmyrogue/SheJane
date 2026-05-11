@@ -328,6 +328,147 @@ describe('harness runner', () => {
       ]),
     )
   })
+
+  it('executes approved MCP calls through the local runtime adapter and feeds the observation back', async () => {
+    const serverPath = await writeFakeMCPServer()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Use an allowlisted MCP docs search.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-mcp',
+            name: 'mcp.call',
+            arguments: { server: 'local-docs', tool: 'safe.search', input: { q: 'harness' } },
+          },
+        ],
+      },
+      {
+        requestId: 'req-2',
+        content: 'The MCP search returned harness documentation.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'mcp.call', status: 'pending' })
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumePermissionID: permission.id,
+      toolOptions: {
+        mcpAllowlist: ['local-docs.safe.search'],
+        mcpServers: {
+          'local-docs': {
+            command: process.execPath,
+            args: [serverPath],
+          },
+        },
+      },
+    })
+
+    expect(gateway.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call-mcp',
+          name: 'mcp.call',
+          content: 'MCP result for harness',
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'permission.resolved', payload: expect.objectContaining({ tool: 'mcp.call' }) }),
+        expect.objectContaining({ eventType: 'tool.completed', payload: expect.objectContaining({ tool: 'mcp.call' }) }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'mcp.call',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'mcp_runtime_available', passed: true })]),
+          }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('runs concurrency-safe tool calls in parallel while preserving observation order', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Fetch two public pages.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          { id: 'fetch-a', name: 'web.fetch', arguments: { url: 'https://example.com/a' } },
+          { id: 'fetch-b', name: 'web.fetch', arguments: { url: 'https://example.com/b' } },
+        ],
+      },
+      {
+        requestId: 'req-2',
+        content: 'Both pages were fetched.',
+      },
+    ])
+    let activeFetches = 0
+    let maxActiveFetches = 0
+    const fetcher = async (input: string | URL | Request) => {
+      activeFetches += 1
+      maxActiveFetches = Math.max(maxActiveFetches, activeFetches)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      activeFetches -= 1
+      return new Response(`content from ${String(input)}`, {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      })
+    }
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: {
+        fetcher: fetcher as typeof fetch,
+        resolveHostname: async () => ['93.184.216.34'],
+      },
+    })
+
+    expect(maxActiveFetches).toBe(2)
+    expect(gateway.requests[1].messages.filter((message) => message.role === 'tool')).toMatchObject([
+      { toolCallId: 'fetch-a', name: 'web.fetch', content: expect.stringContaining('content from https://example.com/a') },
+      { toolCallId: 'fetch-b', name: 'web.fetch', content: expect.stringContaining('content from https://example.com/b') },
+    ])
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('marks the run failed when the model gateway throws', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Handle model failures.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+
+    await expect(runHarness({ run, store, llmGateway: new FailingGateway('gateway unavailable'), emit: () => undefined })).resolves.toBeUndefined()
+
+    expect(store.getRun(run.id)?.status).toBe('failed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.failed',
+          payload: expect.objectContaining({
+            error_code: 'llm_failed',
+            message: 'gateway unavailable',
+          }),
+        }),
+      ]),
+    )
+  })
 })
 
 class ScriptedGateway implements LLMGateway {
@@ -347,8 +488,63 @@ class ScriptedGateway implements LLMGateway {
   }
 }
 
+class FailingGateway implements LLMGateway {
+  constructor(private readonly message: string) {}
+
+  async call(): Promise<LLMGatewayResponse> {
+    throw new Error(this.message)
+  }
+}
+
 async function tempWorkspace(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'jiandanly-harness-'))
   tempDirs.push(dir)
   return dir
+}
+
+async function writeFakeMCPServer(): Promise<string> {
+  const dir = await tempWorkspace()
+  const serverPath = join(dir, 'fake-mcp-server.mjs')
+  await writeFile(
+    serverPath,
+    `
+      import { createInterface } from 'node:readline'
+
+      const rl = createInterface({ input: process.stdin })
+      function send(message) {
+        process.stdout.write(JSON.stringify(message) + '\\n')
+      }
+
+      rl.on('line', (line) => {
+        const message = JSON.parse(line)
+        if (message.method === 'initialize') {
+          send({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              protocolVersion: '2024-11-05',
+              capabilities: { tools: {} },
+              serverInfo: { name: 'fake-local-docs', version: '0.1.0' }
+            }
+          })
+          return
+        }
+        if (message.method === 'notifications/initialized') {
+          return
+        }
+        if (message.method === 'tools/call') {
+          send({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              content: [{ type: 'text', text: 'MCP result for ' + message.params.arguments.q }],
+              isError: false
+            }
+          })
+        }
+      })
+    `,
+    'utf8',
+  )
+  return serverPath
 }

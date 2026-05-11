@@ -189,7 +189,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.9 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.9 起普通 client 可以选择、授权、诊断和撤销工作区，创建本地 run、批准/拒绝权限并按需读取 artifact。
+- **Phase 2.3-2.13 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
@@ -221,17 +221,18 @@ JIANDANLY_CLOUD_ACCESS_TOKEN=用户 access token \
 npm run dev
 ```
 
-启用 Phase 2.6 可选搜索和 MCP allowlist：
+启用 Phase 2.6+ 可选搜索和 MCP：
 
 ```bash
 cd local-host
 JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
 TAVILY_API_KEY=tvly-... \
 JIANDANLY_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read \
+JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}' \
 npm run dev
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时会返回可恢复的 disabled-tool observation。`mcp.call` 当前只做 allowlist 护栏，不连接真实 MCP runtime adapter。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时会返回可恢复的 disabled-tool observation。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 测试本地 health：
 
@@ -244,9 +245,9 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.9 已实现 `time.now`、授权 workspace 内 `file.read` / `file.search`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist 护栏，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、权限批准/拒绝、artifact 预览和验证结果展示。
+- Phase 2.13 已实现 `time.now`、授权 workspace 内 `file.read` / `file.search`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
-- 仍未实现完整 run 诊断导出、真实 MCP runtime adapter、浏览器/IDE 控制和 Playwright/截图验证。
+- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、浏览器/IDE 控制和 Playwright/截图验证。
 
 ## 常用管理命令
 

@@ -242,6 +242,12 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return run
   }
 
+  listRuns(limit = 20): LocalRun[] {
+    const normalizedLimit = Math.max(1, Math.min(limit, 100))
+    const rows = this.db.prepare('SELECT * FROM local_runs ORDER BY updated_at DESC LIMIT ?').all(normalizedLimit) as unknown as RunRow[]
+    return rows.map(deserializeRun)
+  }
+
   getRun(id: string): LocalRun | undefined {
     const row = this.db.prepare('SELECT * FROM local_runs WHERE id = ?').get(id) as RunRow | undefined
     return row ? deserializeRun(row) : undefined

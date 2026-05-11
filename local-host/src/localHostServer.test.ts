@@ -333,6 +333,49 @@ describe('local host daemon foundation', () => {
     })
     expect(rejected.status).toBe(403)
   })
+
+  it('lists local runs and exports redacted run diagnostics', async () => {
+    const workspace = await tempWorkspace()
+    const largeContent = 'diagnostic-secret-output '.repeat(600)
+    await writeFile(join(workspace, 'large.txt'), largeContent, 'utf8')
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-large', name: 'file.read', arguments: { path: 'large.txt', maxBytes: largeContent.length } }],
+      },
+      { requestId: 'req-2', content: 'Export diagnostics.' },
+    ])
+    const baseURL = await startServer(gateway)
+    await authorizeWorkspace(baseURL, workspace)
+
+    const created = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Export a diagnostic bundle.', workspace_path: workspace }),
+    })
+    const run = await created.json()
+    const stream = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    await stream.text()
+
+    const listed = await fetch(`${baseURL}/local/v1/runs?limit=5`, { headers: authHeaders() })
+    expect(listed.status).toBe(200)
+    await expect(listed.json()).resolves.toMatchObject({
+      runs: [expect.objectContaining({ id: run.id, status: 'completed', events_count: expect.any(Number) })],
+    })
+
+    const diagnostics = await fetch(`${baseURL}/local/v1/runs/${run.id}/diagnostics`, { headers: authHeaders() })
+    expect(diagnostics.status).toBe(200)
+    const body = await diagnostics.json()
+    expect(body).toMatchObject({
+      schema_version: 1,
+      run: expect.objectContaining({ id: run.id, status: 'completed' }),
+      events: expect.arrayContaining([expect.objectContaining({ event_type: 'artifact.created' })]),
+      artifacts: [expect.objectContaining({ tool_name: 'file.read', bytes: largeContent.length })],
+      latest_checkpoint: null,
+    })
+    expect(JSON.stringify(body)).not.toContain(largeContent)
+    expect(body.artifacts[0]).not.toHaveProperty('content')
+  })
 })
 
 async function startServer(llmGateway?: LLMGateway): Promise<string> {

@@ -1,4 +1,4 @@
-# Phase 2.3a-2.9 Progress - Local Agent Harness Foundation, Loop, Context, Web, UI, and Workspace Governance
+# Phase 2.3a-2.13 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, and Recovery
 
 Updated: 2026-05-11
 
@@ -18,10 +18,13 @@ This phase proves:
 - Local memory can be loaded as hints without treating it as verified truth.
 - Tool observations can emit rule-based verification events.
 - The local harness can fetch public web pages with SSRF protection and optionally search through Tavily.
-- MCP calls are gated by an explicit allowlist before any runtime adapter is introduced.
+- MCP calls are gated by an explicit allowlist and can execute through a configured local stdio MCP runtime adapter after user permission approval.
+- Consecutive concurrency-safe read tools can execute in parallel while preserving model observation order.
+- Model gateway failures become durable `run.failed` events instead of escaping the runner and leaving runs stuck.
 - The user client can create local runs from the unified composer, approve or deny permission requests, preview artifacts, and show verification events.
 - Workspace roots are explicitly authorized through the paired Local Host before a run can use local file or shell tools.
 - Workspace authorization can be diagnosed and revoked from the client, and the composer shows the active local project reference.
+- Recent local runs can be listed, resumed through the existing stream endpoint, and exported as redacted diagnostic bundles.
 
 ## Completed
 
@@ -31,7 +34,9 @@ This phase proves:
   - `GET /local/v1/tools`
   - `POST /local/v1/runs`
   - `GET /local/v1/runs/{id}`
+  - `GET /local/v1/runs`
   - `GET /local/v1/runs/{id}/stream`
+  - `GET /local/v1/runs/{id}/diagnostics`
   - `POST /local/v1/runs/{id}/cancel`
   - `POST /local/v1/permissions/{request_id}`
   - `GET /local/v1/artifacts/{id}`
@@ -97,20 +102,45 @@ This phase proves:
   - The client can diagnose the current path or an authorized workspace from the sidebar.
   - The client can revoke an authorized workspace and clears the active local project reference when the active root is revoked.
   - The composer shows a local project chip when a workspace path is attached to the next Local Harness run.
+- [x] Phase 2.10 Run Recovery / Diagnostics MVP:
+  - Local Host supports `GET /local/v1/runs?limit=` for recent run listing.
+  - Local Host supports `GET /local/v1/runs/{id}/diagnostics` for redacted run diagnostic export.
+  - Diagnostic export includes run metadata, event log, permission records, artifact metadata, and latest checkpoint summary.
+  - Diagnostic export does not include artifact content or full checkpoint messages.
+  - The client sidebar shows recent local runs from the paired Local Host.
+  - The client can recover a recent run by streaming `/local/v1/runs/{id}/stream` into a new local conversation.
+  - The client can download a diagnostics JSON bundle for a recent run.
+- [x] Phase 2.11 MCP Runtime Adapter MVP:
+  - `mcp.call` now executes allowlisted local MCP tools through a configured stdio JSON-RPC server.
+  - MCP calls still require both `JIANDANLY_MCP_ALLOWLIST` and explicit user permission approval.
+  - MCP server config is supplied through `JIANDANLY_MCP_SERVERS_JSON`; command, args, env and secrets are not returned in tool metadata.
+  - MCP startup failure, timeout, JSON-RPC error and tool error become recoverable observations instead of daemon crashes.
+  - Harness runner tests cover the permission -> MCP execution -> observation -> verification flow.
+- [x] Phase 2.12 Tool Batching MVP:
+  - Consecutive `permissionPolicy=allow` + `isConcurrencySafe=true` tool calls run in parallel.
+  - Tool observations are still pushed back to the model in the original tool call order.
+  - Permission-gated and destructive tools remain serial and pause the run for user approval.
+- [x] Phase 2.13 Error Handling Hardening:
+  - Model gateway exceptions are converted to `run.failed` with `error_code=llm_failed`.
+  - The run status is durably updated to `failed`; the error no longer escapes the runner as an unhandled server failure.
 
 ## Current Boundaries
 
 - Real local file read/search is available only when the run has an authorized workspace path.
 - Shell commands are permission-gated and execute only after explicit approval through the local permission API.
-- Real MCP runtime execution and browser control are not enabled yet.
+- Browser control is not enabled yet.
 - `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without cloud LLM configuration it uses a static fallback response.
 - The SQLite runtime store uses Node's built-in `node:sqlite`, which is currently experimental in Node 22. This is acceptable for Phase 2.3a foundation but should be revisited before production packaging if Electron's bundled Node runtime differs.
 - Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, optional Tavily `web.search`, and MCP allowlist guardrails.
 - Phase 2.7 adds a manual workspace path field, permission approve/deny controls, artifact preview, and verification timeline rendering.
 - Phase 2.8 adds native Electron directory selection and persistent Local Host workspace authorization rules.
 - Phase 2.9 adds workspace revocation, path-level authorization diagnostics, and visible local project references in the composer.
+- Phase 2.10 adds recent local run listing, manual recovery, and redacted diagnostics export.
+- Phase 2.11 adds a real local stdio MCP runtime adapter behind the existing allowlist and permission flow.
+- Phase 2.12 adds concurrency-safe read-tool batching with deterministic observation order.
+- Phase 2.13 hardens LLM gateway failure handling so runs do not remain stuck in `running`.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
-- Real MCP runtime adapter, browser/IDE control, richer run recovery UI, diagnostics export, and Playwright/visual verification loops are still pending.
+- Browser/IDE control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
 
 ## Verification
 
@@ -120,11 +150,12 @@ This phase proves:
 - `cd client && npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`
 - `cd local-host && npm test -- --run src/localHostServer.test.ts src/state/sqliteStore.test.ts`
 - `cd client && npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`
+- `cd local-host && npm test -- --run src/tools/mcpTools.test.ts src/harness/runner.test.ts`
 
 Full workspace verification is tracked in the implementation closeout.
 
 ## Next
 
-- Phase 2.10 candidate: local run recovery controls and diagnostics export.
-- Add a real MCP runtime adapter behind the existing `mcp.call` allowlist.
+- Phase 2.14 candidate: diagnostics import/replay UI, or browser/IDE tools with explicit permission boundaries.
+- Add diagnostics import/replay before broadening browser/IDE automation.
 - Add browser/IDE tools and visual verification after permission UX is stable.

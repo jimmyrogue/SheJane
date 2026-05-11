@@ -273,7 +273,7 @@ Pairing:
 ### Phase 2.6: Verification / MCP / Web
 
 - Add verification loops. **Done for rule checks on file/search/shell/web/MCP tool observations.**
-- Add local MCP allowlist. **Done as `mcp.call` guardrail; real MCP runtime adapter remains a follow-up.**
+- Add local MCP allowlist. **Done as `mcp.call` guardrail.**
 - Add local `web.fetch` and optional `web.search`. **Done with SSRF protection for fetch and Tavily-backed search when `TAVILY_API_KEY` is configured.**
 - Admin observes summaries, errors, latency, and cost only.
 
@@ -303,6 +303,34 @@ Pairing:
 - Show the active local project reference in the composer before a Local Harness run is created. **Done.**
 - Clear the active local project reference when its authorization is revoked. **Done.**
 
+### Phase 2.10: Run Recovery and Diagnostics
+
+- Add `GET /local/v1/runs?limit=` for recent local run listing. **Done.**
+- Add `GET /local/v1/runs/{id}/diagnostics` for redacted diagnostic export. **Done.**
+- Keep diagnostic bundles local and omit artifact content and full checkpoint messages by default. **Done.**
+- Let the unified client recover a recent local run by replaying/continuing `/local/v1/runs/{id}/stream`. **Done.**
+- Let the unified client download a diagnostics JSON bundle for a recent local run. **Done.**
+
+### Phase 2.11: MCP Runtime Adapter
+
+- Execute allowlisted `mcp.call` tool calls through configured local stdio MCP servers. **Done for stdio JSON-RPC MVP.**
+- Require both `JIANDANLY_MCP_ALLOWLIST` and local user permission approval before execution. **Done.**
+- Configure servers through `JIANDANLY_MCP_SERVERS_JSON`; do not expose command, args, env, tokens, or server stderr in tool metadata. **Done.**
+- Convert MCP startup failure, timeout, JSON-RPC error, and tool error into recoverable tool observations. **Done.**
+- Keep browser/IDE tools and visual verification as later phases. **Pending.**
+
+### Phase 2.12: Tool Batching
+
+- Execute consecutive permission-free, concurrency-safe tool calls in parallel. **Done.**
+- Preserve the original tool call order when injecting observations back into model context. **Done.**
+- Keep permission-gated or destructive tools serial and pause for approval. **Done.**
+
+### Phase 2.13: Error Handling Hardening
+
+- Convert model gateway exceptions into durable `run.failed` events. **Done.**
+- Mark the run status as `failed` instead of leaving it stuck in `running`. **Done.**
+- Keep retry/backoff policies and richer failure diagnosis as follow-ups. **Pending.**
+
 ## 9. Test Strategy
 
 - macOS/Windows install, start, stop, update, uninstall, health check.
@@ -316,6 +344,10 @@ Pairing:
 - Insufficient credits cannot be bypassed locally.
 - Provider keys never leave cloud.
 - Admin can see summaries/status/error/cost/tool type, not private local content.
+- Electron paired mode can list recent local runs, recover a run, and export a diagnostics bundle without artifact content.
+- Local MCP tests cover allowlist rejection, missing runtime config, stdio execution, metadata redaction, process startup failure, and Harness permission-to-observation flow.
+- Harness runner tests cover concurrency-safe tool batching and deterministic observation order.
+- Harness runner tests cover model gateway failure becoming a durable `run.failed` event.
 
 ## 10. Deprecated Direction
 

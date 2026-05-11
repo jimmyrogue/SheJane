@@ -73,6 +73,12 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return run
   }
 
+  listRuns(limit = 20): LocalRun[] {
+    return [...this.runs.values()]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, Math.max(1, Math.min(limit, 100)))
+  }
+
   getRun(id: string): LocalRun | undefined {
     return this.runs.get(id)
   }

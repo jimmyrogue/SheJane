@@ -54,12 +54,10 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
 
   for (let step = startStep; step < (options.maxSteps ?? defaultMaxSteps); step += 1) {
     messages = maybeCompactMessages(options, messages, step)
-    const response = await gateway.call({
-      runId: run.id,
-      mode: 'fast',
-      messages,
-      tools: localHostTools,
-    })
+    const response = await callModelOrFail(options, gateway, run, messages)
+    if (!response) {
+      return
+    }
     append(options, 'llm.started', { request_id: response.requestId ?? '', step: step + 1 })
     const toolCalls = response.toolCalls ?? []
     if (response.content) {
@@ -72,7 +70,8 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
     }
 
     messages.push({ role: 'assistant', content: response.content ?? '', toolCalls })
-    for (const call of toolCalls) {
+    for (let index = 0; index < toolCalls.length;) {
+      const call = toolCalls[index]
       append(options, 'tool.requested', { tool: call.name, tool_call_id: call.id, arguments: call.arguments })
       if (requiresPermission(call.name)) {
         createCheckpointEvent(options, step + 1, 'waiting_permission', messages)
@@ -91,13 +90,46 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
         })
         return
       }
-      const observation = await executeAndAppend(options, call, run)
-      messages.push(observation)
+      const batch = [call]
+      if (canRunConcurrently(call.name)) {
+        for (let nextIndex = index + 1; nextIndex < toolCalls.length; nextIndex += 1) {
+          const nextCall = toolCalls[nextIndex]
+          if (!canRunConcurrently(nextCall.name)) {
+            break
+          }
+          append(options, 'tool.requested', { tool: nextCall.name, tool_call_id: nextCall.id, arguments: nextCall.arguments })
+          batch.push(nextCall)
+        }
+      }
+      const observations =
+        batch.length === 1
+          ? [await executeAndAppend(options, batch[0], run)]
+          : await Promise.all(batch.map((batchedCall) => executeAndAppend(options, batchedCall, run)))
+      messages.push(...observations)
+      index += batch.length
     }
   }
 
   options.store.updateRunStatus(run.id, 'failed')
   append(options, 'run.failed', { error_code: 'max_steps_exceeded', message: 'Agent exceeded local max steps.' })
+}
+
+async function callModelOrFail(options: HarnessRunOptions, gateway: LLMGateway, run: LocalRun, messages: HarnessMessage[]) {
+  try {
+    return await gateway.call({
+      runId: run.id,
+      mode: 'fast',
+      messages,
+      tools: localHostTools,
+    })
+  } catch (error) {
+    options.store.updateRunStatus(run.id, 'failed')
+    append(options, 'run.failed', {
+      error_code: 'llm_failed',
+      message: error instanceof Error ? error.message : 'Model gateway failed.',
+    })
+    return undefined
+  }
 }
 
 async function resumePermission(options: HarnessRunOptions): Promise<void> {
@@ -422,4 +454,9 @@ function append(options: HarnessRunOptions, eventType: string, payload: Record<s
 function requiresPermission(toolName: string): boolean {
   const definition = localHostTools.find((tool) => tool.name === toolName)
   return definition?.permissionPolicy === 'ask'
+}
+
+function canRunConcurrently(toolName: string): boolean {
+  const definition = localHostTools.find((tool) => tool.name === toolName)
+  return definition?.permissionPolicy === 'allow' && definition.isConcurrencySafe
 }

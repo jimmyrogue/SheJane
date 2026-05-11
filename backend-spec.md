@@ -2876,11 +2876,18 @@ docker-logs:
 - [x] Phase 2.5：Local Host 支持 artifact、checkpoint resume、context compaction 和基础本地 memory；云端仍只接收计费和摘要
 - [x] Phase 2.6：Local Host 支持规则验证事件、SSRF 防护 `web.fetch`、可选 Tavily `web.search` 和 MCP allowlist 护栏；云端仍不执行本地工具
 - [x] Phase 2.9：Local Host 支持 workspace 授权诊断、撤销和 client 本地项目引用；云端仍不保存本地私有文件内容
+- [x] Phase 2.10：Local Host 支持最近 run 列表、基于 stream 的手动恢复和脱敏诊断导出；云端仍只接收计费和摘要
+- [x] Phase 2.11：Local Host 支持真实 stdio MCP runtime adapter；`mcp.call` 仍必须经过 allowlist 和本地用户权限批准，云端不执行本地 MCP
+- [x] Phase 2.12：Local Host 支持并发安全工具批处理；读类工具可并行执行，结果仍按原始 tool call 顺序回填模型上下文
+- [x] Phase 2.13：Local Host 将模型网关异常转换为 durable `run.failed`，避免本地 run 卡在 `running`
 
 ### Phase 3：Local Agent Harness 深化
 
 - [x] MVP TAO loop、本地 run 事件持久化、artifact、checkpoint 和基础恢复
-- [ ] 真实本地 MCP runtime adapter
+- [x] 最近本地 run 列表、手动恢复入口和脱敏诊断导出
+- [x] 真实本地 MCP runtime adapter
+- [x] 并发安全工具批处理和稳定 observation 顺序
+- [x] 模型网关失败的 durable run failure
 - [ ] 浏览器、IDE 工具；写操作和危险命令默认需要确认
 - [x] MVP verification 生命周期
 - [ ] 更强上下文压缩、Playwright/视觉验证和 LLM-as-judge

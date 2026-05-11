@@ -6,10 +6,16 @@ import type { LLMGateway } from './llm/gateway.js'
 import { localHostTools } from './tools/registry.js'
 import {
   localHostVersion,
+  type LocalArtifact,
+  type LocalCheckpoint,
   type LocalEvent,
   type LocalHostStore,
+  type LocalRunDiagnostics,
+  type PermissionRequest,
   type LocalRun,
   type SerializedArtifact,
+  type SerializedArtifactSummary,
+  type SerializedCheckpointSummary,
   type SerializedEvent,
   type SerializedRun,
   type WorkspaceAuthorization,
@@ -112,6 +118,13 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return
   }
 
+  if (request.method === 'GET' && url.pathname === '/local/v1/runs') {
+    const limit = parseLimit(url.searchParams.get('limit'))
+    const runs = options.store.listRuns(limit).map((run) => serializeRun(run, options.store.countEvents(run.id)))
+    writeJSON(response, 200, { runs })
+    return
+  }
+
   if (request.method === 'POST' && url.pathname === '/local/v1/runs') {
     const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown }>(request)
     const goal = typeof body.goal === 'string' ? body.goal.trim() : ''
@@ -146,6 +159,17 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       return
     }
     writeJSON(response, 200, serializeRun(run, options.store.countEvents(run.id)))
+    return
+  }
+
+  const diagnosticsMatch = url.pathname.match(/^\/local\/v1\/runs\/([^/]+)\/diagnostics$/)
+  if (request.method === 'GET' && diagnosticsMatch) {
+    const run = options.store.getRun(diagnosticsMatch[1])
+    if (!run) {
+      writeJSON(response, 404, { error: 'run_not_found' })
+      return
+    }
+    writeJSON(response, 200, buildRunDiagnostics(run, options.store))
     return
   }
 
@@ -330,6 +354,62 @@ function serializeArtifact(artifact: ReturnType<LocalHostStore['getArtifact']> e
   }
 }
 
+function serializeArtifactSummary(artifact: LocalArtifact): SerializedArtifactSummary {
+  return {
+    id: artifact.id,
+    run_id: artifact.runId,
+    kind: artifact.kind,
+    title: artifact.title,
+    content_type: artifact.contentType,
+    bytes: artifact.bytes,
+    tool_call_id: artifact.toolCallId,
+    tool_name: artifact.toolName,
+    metadata: artifact.metadata,
+    created_at: artifact.createdAt,
+  }
+}
+
+function serializeCheckpointSummary(checkpoint: LocalCheckpoint): SerializedCheckpointSummary {
+  return {
+    id: checkpoint.id,
+    run_id: checkpoint.runId,
+    step: checkpoint.step,
+    reason: checkpoint.reason,
+    messages_count: checkpoint.messages.length,
+    created_at: checkpoint.createdAt,
+  }
+}
+
+function serializePermission(permission: PermissionRequest) {
+  return {
+    id: permission.id,
+    run_id: permission.runId,
+    tool_call_id: permission.toolCallId,
+    tool_name: permission.toolName,
+    arguments: permission.arguments,
+    status: permission.status,
+    created_at: permission.createdAt,
+    resolved_at: permission.resolvedAt,
+  }
+}
+
+function buildRunDiagnostics(run: LocalRun, store: LocalHostStore): LocalRunDiagnostics {
+  const latestCheckpoint = store.latestCheckpoint(run.id)
+  return {
+    schema_version: 1,
+    exported_at: new Date().toISOString(),
+    local_host_version: localHostVersion,
+    run: serializeRun(run, store.countEvents(run.id)),
+    events: store.listEvents(run.id).map((event) => serializeEvent({
+      ...event,
+      payload: redactDiagnosticPayload(event.payload),
+    })),
+    permissions: store.listPermissions(run.id).map(serializePermission),
+    artifacts: store.listArtifacts(run.id).map(serializeArtifactSummary),
+    latest_checkpoint: latestCheckpoint ? serializeCheckpointSummary(latestCheckpoint) : null,
+  }
+}
+
 function serializeWorkspace(workspace: WorkspaceAuthorization) {
   return {
     id: workspace.id,
@@ -395,6 +475,36 @@ async function validateWorkspaceDirectory(path: string): Promise<{ ok: true } | 
   } catch {
     return { ok: false, error: 'workspace_not_found', message: 'Workspace path does not exist.' }
   }
+}
+
+function parseLimit(value: string | null): number {
+  if (!value) {
+    return 20
+  }
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(Math.floor(parsed), 100)) : 20
+}
+
+function redactDiagnosticPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return redactDiagnosticValue(payload) as Record<string, unknown>
+}
+
+function redactDiagnosticValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(redactDiagnosticValue)
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+  const output: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value)) {
+    if ((key === 'stdout' || key === 'stderr') && typeof child === 'string') {
+      output[key] = `[redacted ${child.length} chars]`
+      continue
+    }
+    output[key] = redactDiagnosticValue(child)
+  }
+  return output
 }
 
 function writeJSON(response: ServerResponse, status: number, body: unknown): void {

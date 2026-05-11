@@ -239,7 +239,7 @@ Local Harness 是长期强能力核心：
 - 敏感输入遮蔽
 - checkpoint / resume / cancel 状态
 
-当前 Phase 2.9 已实现 daemon 内的 TAO loop、`time.now`、授权 workspace 内 `file.read` / `file.search`、permission-gated `shell.run`、云端 `/api/v1/agent/llm` 扣费入口、`/api/v1/agent/tool-events` 摘要入口、长输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search` 和 MCP allowlist 护栏。普通 client 已能在 Local Host 已配对时创建本地 run，通过 Electron 原生目录选择器选择工作区，调用 Local Host 授权、诊断或撤销路径，在 timeline 中批准/拒绝权限请求、查看 artifact、展示 verification 结果，并在 composer 中显示当前本地项目引用。后续仍需要 checkpoint/resume 更细 UI、真实 MCP runtime adapter、浏览器/IDE 控制和视觉验证。
+当前 Phase 2.13 已实现 daemon 内的 TAO loop、`time.now`、授权 workspace 内 `file.read` / `file.search`、permission-gated `shell.run`、云端 `/api/v1/agent/llm` 扣费入口、`/api/v1/agent/tool-events` 摘要入口、长输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、stdio MCP runtime、并发安全工具批处理和模型失败 durable handling。普通 client 已能在 Local Host 已配对时创建本地 run，通过 Electron 原生目录选择器选择工作区，调用 Local Host 授权、诊断或撤销路径，在 timeline 中批准/拒绝权限请求、查看 artifact、展示 verification 结果，在 composer 中显示当前本地项目引用，并从最近本地任务列表恢复 run 或导出脱敏诊断包。后续仍需要 checkpoint/resume 更细 UI、浏览器/IDE 控制和视觉验证。
 
 ### 4.5 Electron / Local API 安全边界
 
@@ -398,6 +398,7 @@ Refresh token 写入 HTTPOnly Cookie
 - 用户可以授权读取本地文件或项目。
 - 用户选择或填写的本地工作区必须先通过 Local Host 授权；未授权路径不能创建本地 run。
 - 用户可以诊断或撤销已授权工作区；撤销当前工作区后 composer 的本地项目引用必须同步清除。
+- 用户可以查看最近本地 run、手动恢复 run，并导出不含 artifact 正文和完整 checkpoint messages 的诊断 JSON。
 - 用户可以在本地 run timeline 中批准或拒绝 `shell.run` 等高风险工具请求。
 - 大工具输出以 artifact 引用展示，用户按需打开预览。
 - 本地 MCP、受控 shell、浏览器/IDE 工具只在权限允许时出现。

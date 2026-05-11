@@ -3,9 +3,11 @@ import {
   createLocalRun,
   authorizeLocalWorkspace,
   diagnoseLocalWorkspace,
+  getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
   getLocalArtifact,
   listAuthorizedWorkspaces,
+  listLocalRuns,
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermission,
@@ -231,6 +233,60 @@ describe('desktop local host client', () => {
       2,
       'http://127.0.0.1:17371/local/v1/workspaces/workspace-1',
       expect.objectContaining({ method: 'DELETE', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+  })
+
+  it('lists local runs and fetches redacted diagnostics through protected APIs', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            runs: [
+              {
+                id: 'run-1',
+                goal: 'Resume this run',
+                status: 'running',
+                created_at: '2026-05-11T00:00:00Z',
+                updated_at: '2026-05-11T00:00:01Z',
+                events_count: 3,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schema_version: 1,
+            exported_at: '2026-05-11T00:00:02Z',
+            run: { id: 'run-1', goal: 'Resume this run', status: 'running' },
+            events: [],
+            permissions: [],
+            artifacts: [],
+            latest_checkpoint: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+
+    await expect(listLocalRuns({ baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toEqual([
+      expect.objectContaining({ id: 'run-1', status: 'running' }),
+    ])
+    await expect(getLocalRunDiagnostics('run-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toMatchObject({
+      schema_version: 1,
+      run: { id: 'run-1' },
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/runs',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/runs/run-1/diagnostics',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
     )
   })
 })

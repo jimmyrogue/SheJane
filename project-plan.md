@@ -355,11 +355,14 @@ AWS ap-east-1 (香港)
 - [x] Phase 2.7：Local Harness UI Bridge，普通 client 支持本地工作区路径、Local Run 创建、权限批准/拒绝、artifact 预览和验证事件展示
 - [x] Phase 2.8：Workspace Authorization，Electron 原生目录选择、Local Host 持久授权工作区、未授权路径拒绝创建本地 run
 - [x] Phase 2.9：Workspace Governance，工作区撤销、授权规则诊断和 composer 本地项目引用
+- [x] Phase 2.10：Run Recovery / Diagnostics，最近本地 run 列表、手动恢复和脱敏诊断导出
+- [x] Phase 2.11：MCP Runtime Adapter，`mcp.call` 在 allowlist、用户权限批准和 stdio server 配置齐备时可执行真实本地 MCP 工具
+- [x] Phase 2.12：Tool Batching，并发安全的读类工具可并行执行，观察结果仍按 tool call 顺序回填
+- [x] Phase 2.13：Error Handling，模型网关异常会进入 durable `run.failed`，避免 run 卡在 running
 
 ### Phase 3：本地 Host 高级能力（4-8 周）
 
-- [ ] 本地 run 持久化恢复 UI、导出和故障诊断
-- [ ] 真实本地 MCP runtime adapter，按工具 allowlist 和用户授权开放
+- [ ] 本地 run 诊断导入/回放、更细粒度恢复 UI 和故障定位面板
 - [ ] 受控 shell、浏览器、IDE 工具，写操作和危险命令默认需要确认
 - [ ] 云端只同步计费、审计和 run 摘要，不默认同步私有文件内容
 

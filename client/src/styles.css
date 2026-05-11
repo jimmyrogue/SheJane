@@ -330,6 +330,54 @@ button {
   padding: 0;
 }
 
+.local-run-list {
+  display: grid;
+  gap: 6px;
+}
+
+.local-run-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.local-run-item button {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.84);
+  font-weight: 750;
+  padding: 0 10px;
+}
+
+.local-run-item button:first-child {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.local-run-item button:last-child {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+}
+
+.local-run-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-run-item small {
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
+}
+
 .workspace-path-field input::placeholder {
   color: rgba(255, 255, 255, 0.42);
 }

@@ -197,13 +197,15 @@ describe('user client shell', () => {
     })
     fireEvent.click(screen.getByText('发送'))
 
-    expect(await screen.findByText('需要权限：shell.run')).toBeInTheDocument()
+    expect((await screen.findAllByText('需要权限：shell.run')).length).toBeGreaterThan(0)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces' && call.init?.method === 'POST')).toBe(true)
-    expect(
-      calls
-        .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
-        .map((call) => call.init?.body),
-    ).toContain(JSON.stringify({ goal: '检查这个项目', workspace_path: '/tmp/picked-workspace' }))
+    await waitFor(() => {
+      expect(
+        calls
+          .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+          .map((call) => call.init?.body),
+      ).toContain(JSON.stringify({ goal: '检查这个项目', workspace_path: '/tmp/picked-workspace' }))
+    })
   })
 
   it('shows, diagnoses, and revokes local project references', async () => {
@@ -234,11 +236,60 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces/diagnose' && call.init?.method === 'POST')).toBe(true)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces/workspace-1' && call.init?.method === 'DELETE')).toBe(true)
   })
+
+  it('recovers recent local runs and exports diagnostics', async () => {
+    const createObjectURL = vi.fn(() => 'blob:diagnostics')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    const calls = mockFetch('user', {
+      localRuns: [
+        {
+          id: 'recover-run',
+          goal: 'Resume workspace scan',
+          status: 'running',
+          created_at: '2026-05-11T00:00:00Z',
+          updated_at: '2026-05-11T00:00:01Z',
+          events_count: 2,
+        },
+      ],
+    })
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    expect(await screen.findByText('Resume workspace scan')).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('恢复 Resume workspace scan'))
+    expect(await screen.findByText('恢复后的本地结果')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('导出诊断 Resume workspace scan'))
+    expect(await screen.findByText('诊断已导出：recover-run')).toBeInTheDocument()
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:diagnostics')
+    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/recover-run/diagnostics')).toBe(true)
+  })
 })
 
-function mockFetch(role: 'admin' | 'user', options: { workspaces?: Array<{ id: string; path: string; label: string }> } = {}) {
+function mockFetch(
+  role: 'admin' | 'user',
+  options: {
+    workspaces?: Array<{ id: string; path: string; label: string }>
+    localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
+  } = {},
+) {
   const calls: Array<{ url: string; init?: RequestInit }> = []
   let workspaces = options.workspaces ?? []
+  const localRuns = options.localRuns ?? []
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input)
     calls.push({ url, init })
@@ -255,7 +306,7 @@ function mockFetch(role: 'admin' | 'user', options: { workspaces?: Array<{ id: s
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
-    if (url === 'http://127.0.0.1:17371/local/v1/runs') {
+    if (url === 'http://127.0.0.1:17371/local/v1/runs' && init?.method === 'POST') {
       return new Response(
         JSON.stringify({
           id: 'local-run',
@@ -266,6 +317,9 @@ function mockFetch(role: 'admin' | 'user', options: { workspaces?: Array<{ id: s
         }),
         { status: 201, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs') {
+      return new Response(JSON.stringify({ runs: localRuns }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url === 'http://127.0.0.1:17371/local/v1/workspaces' && init?.method === 'POST') {
       const body = JSON.parse(String(init.body ?? '{}')) as { path?: string }
@@ -332,6 +386,27 @@ function mockFetch(role: 'admin' | 'user', options: { workspaces?: Array<{ id: s
               { id: 'local-event-3', event_type: 'artifact.created', payload: { artifact_id: 'artifact-shell', title: 'shell output', tool: 'shell.run' } },
             ],
         'local-run',
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs/recover-run/stream') {
+      return agentSSE([
+        { id: 'recover-event-1', event_type: 'checkpoint.resumed', payload: { checkpoint_id: 'checkpoint-1', reason: 'test_resume' } },
+        { id: 'recover-event-2', event_type: 'llm.delta', payload: { content: '恢复后的本地结果' } },
+        { id: 'recover-event-3', event_type: 'run.completed', payload: { final: '恢复后的本地结果' } },
+      ], 'recover-run')
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs/recover-run/diagnostics') {
+      return new Response(
+        JSON.stringify({
+          schema_version: 1,
+          exported_at: '2026-05-11T00:00:02Z',
+          run: localRuns[0],
+          events: [],
+          permissions: [],
+          artifacts: [],
+          latest_checkpoint: { id: 'checkpoint-1', step: 1, reason: 'test_resume', messages_count: 3 },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
     if (url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell') {

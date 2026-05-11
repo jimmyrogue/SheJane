@@ -149,12 +149,55 @@ export interface SerializedArtifact {
   created_at: string
 }
 
+export interface SerializedArtifactSummary {
+  id: string
+  run_id: string
+  kind: ArtifactKind
+  title: string
+  content_type: string
+  bytes: number
+  tool_call_id?: string
+  tool_name?: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface SerializedCheckpointSummary {
+  id: string
+  run_id: string
+  step: number
+  reason: string
+  messages_count: number
+  created_at: string
+}
+
+export interface LocalRunDiagnostics {
+  schema_version: 1
+  exported_at: string
+  local_host_version: string
+  run: SerializedRun
+  events: SerializedEvent[]
+  permissions: Array<{
+    id: string
+    run_id: string
+    tool_call_id: string
+    tool_name: string
+    arguments: Record<string, unknown>
+    status: PermissionStatus
+    created_at: string
+    resolved_at?: string
+  }>
+  artifacts: SerializedArtifactSummary[]
+  latest_checkpoint: SerializedCheckpointSummary | null
+}
+
 export interface LocalHostStore {
   authorizeWorkspace(input: { path: string; label?: string }): WorkspaceAuthorization
   listAuthorizedWorkspaces(): WorkspaceAuthorization[]
   findAuthorizedWorkspace(path: string): WorkspaceAuthorization | undefined
   revokeWorkspace(id: string): WorkspaceAuthorization | undefined
   createRun(input: { goal: string; workspacePath?: string }): LocalRun
+  listRuns(limit?: number): LocalRun[]
   getRun(id: string): LocalRun | undefined
   countEvents(runID: string): number
   listEvents(runID: string): LocalEvent[]

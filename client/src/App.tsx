@@ -8,6 +8,7 @@ import {
   LogOut,
   MessageSquare,
   Plus,
+  RotateCcw,
   Send,
   Trash2,
   Upload,
@@ -29,9 +30,11 @@ import {
   authorizeLocalWorkspace,
   createLocalRun,
   diagnoseLocalWorkspace,
+  getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
   getLocalArtifact,
   listAuthorizedWorkspaces,
+  listLocalRuns,
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermission,
@@ -39,6 +42,7 @@ import {
   type LocalArtifact,
   type LocalHostConfig,
   type LocalHostProbe,
+  type LocalRun as LocalHarnessRun,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
 
@@ -67,6 +71,7 @@ export function App() {
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localWorkspacePath, setLocalWorkspacePath] = useState(() => localStorage.getItem('jiandanly-local-workspace') ?? '')
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
+  const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
 
   useEffect(() => {
@@ -104,10 +109,11 @@ export function App() {
       }
     })
     if (config.token) {
-      void listAuthorizedWorkspaces(config)
-        .then((items) => {
+      void Promise.all([listAuthorizedWorkspaces(config), listLocalRuns(config)])
+        .then(([workspaces, runs]) => {
           if (!disposed) {
-            setAuthorizedWorkspaces(items)
+            setAuthorizedWorkspaces(workspaces)
+            setLocalRuns(runs)
           }
         })
         .catch(() => undefined)
@@ -214,6 +220,7 @@ export function App() {
         localHostConfig,
       )
       assistantMessage.runId = run.id
+      setLocalRuns((items) => upsertLocalRun(items, run))
       const seenEventIDs = new Set<string>()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => appendLocalRunEvent(assistantMessage, event, seenEventIDs),
@@ -275,6 +282,71 @@ export function App() {
       setArtifactPreview(await getLocalArtifact(artifactID, localHostConfig))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Artifact 读取失败')
+    }
+  }
+
+  async function recoverLocalRun(run: LocalHarnessRun) {
+    if (!localHostConfig) {
+      setNotice('本地 Harness 未连接')
+      return
+    }
+    const timestamp = new Date().toISOString()
+    const conversation = createConversation(run.goal, timestamp)
+    const userMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      role: 'user',
+      content: `恢复本地任务：${run.goal}`,
+      createdAt: timestamp,
+      status: 'done',
+    }
+    const assistantMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      status: 'streaming',
+      runId: run.id,
+      agentEvents: [],
+    }
+    conversation.messages = [userMessage, assistantMessage]
+    await localData.save(conversation)
+    setNotice('')
+    try {
+      const seenEventIDs = new Set<string>()
+      await streamLocalRun(run.id, localHostConfig, {
+        onEvent: (event) => appendLocalRunEvent(assistantMessage, event, seenEventIDs),
+        onDelta: (delta, event) => appendLocalDelta(assistantMessage, delta, event, seenEventIDs),
+      })
+      finalizeLocalRunStatus(assistantMessage)
+      const freshRuns = await listLocalRuns(localHostConfig)
+      setLocalRuns(freshRuns)
+    } catch (error) {
+      assistantMessage.status = 'error'
+      assistantMessage.content = error instanceof Error ? error.message : '本地任务恢复失败'
+      setNotice(assistantMessage.content)
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversations(conversation.id)
+    }
+  }
+
+  async function exportLocalRunDiagnostics(run: LocalHarnessRun) {
+    if (!localHostConfig) {
+      setNotice('本地 Harness 未连接')
+      return
+    }
+    try {
+      const diagnostics = await getLocalRunDiagnostics(run.id, localHostConfig)
+      const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `jiandanly-local-run-${run.id}-diagnostics.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setNotice(`诊断已导出：${run.id}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '本地任务诊断导出失败')
     }
   }
 
@@ -574,6 +646,29 @@ export function App() {
             </div>
           ) : null}
         </section>
+
+        {localRuns.length ? (
+          <section className="sidebar-section">
+            <div className="section-heading">
+              <span>最近本地任务</span>
+              <small>{localRuns.length} 个</small>
+            </div>
+            <div className="local-run-list">
+              {localRuns.slice(0, 4).map((run) => (
+                <div className="local-run-item" key={run.id}>
+                  <button type="button" onClick={() => void recoverLocalRun(run)} title={`恢复 ${run.goal}`}>
+                    <RotateCcw size={13} />
+                    <span>{run.goal}</span>
+                    <small>{run.status}</small>
+                  </button>
+                  <button type="button" title={`导出诊断 ${run.goal}`} onClick={() => void exportLocalRunDiagnostics(run)}>
+                    <Download size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <div className="local-actions">
           <button onClick={exportLocalData}>
@@ -911,6 +1006,10 @@ function upsertDocument(items: UserDocument[], document: UserDocument): UserDocu
 
 function upsertWorkspace(items: LocalWorkspaceAuthorization[], workspace: LocalWorkspaceAuthorization): LocalWorkspaceAuthorization[] {
   return [workspace, ...items.filter((item) => item.id !== workspace.id && item.path !== workspace.path)]
+}
+
+function upsertLocalRun(items: LocalHarnessRun[], run: LocalHarnessRun): LocalHarnessRun[] {
+  return [run, ...items.filter((item) => item.id !== run.id)]
 }
 
 function findWorkspaceByPath(items: LocalWorkspaceAuthorization[], path: string): LocalWorkspaceAuthorization | undefined {

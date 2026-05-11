@@ -5,6 +5,7 @@ import { isIP } from 'node:net'
 import { relative, resolve, sep } from 'node:path'
 import type { LLMToolCall } from '../llm/gateway.js'
 import type { LocalRun } from '../types.js'
+import { callStdioMCPTool, parseMCPServersConfig, type MCPServerConfig } from './mcpRuntime.js'
 
 export interface ToolExecutionResult {
   ok: boolean
@@ -20,6 +21,8 @@ export interface ToolExecutionOptions {
   tavilyApiKey?: string
   tavilyBaseURL?: string
   mcpAllowlist?: string[]
+  mcpServers?: Record<string, MCPServerConfig>
+  mcpTimeoutMs?: number
 }
 
 export async function executeTool(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions = {}): Promise<ToolExecutionResult> {
@@ -359,12 +362,49 @@ async function callMCPTool(call: LLMToolCall, options: ToolExecutionOptions): Pr
       data: { mcp_tool: mcpTool, allowed: false },
     }
   }
+  let servers: Record<string, MCPServerConfig>
+  try {
+    servers = options.mcpServers ?? parseMCPServersConfig(process.env.JIANDANLY_MCP_SERVERS_JSON)
+  } catch {
+    return {
+      ok: false,
+      content: 'MCP server configuration is invalid JSON.',
+      errorCode: 'mcp_servers_config_invalid',
+      recoverable: true,
+      data: { mcp_tool: mcpTool, allowed: true },
+    }
+  }
+  const config = servers[server]
+  if (!config) {
+    return {
+      ok: false,
+      content: `MCP tool ${mcpTool} is allowlisted, but no local MCP server is configured for ${server}.`,
+      errorCode: 'mcp_runtime_not_configured',
+      recoverable: true,
+      data: { mcp_tool: mcpTool, allowed: true },
+    }
+  }
+  const input = call.arguments.input && typeof call.arguments.input === 'object' && !Array.isArray(call.arguments.input) ? call.arguments.input : {}
+  const result = await callStdioMCPTool({
+    server,
+    tool,
+    input: input as Record<string, unknown>,
+    config,
+    timeoutMs: options.mcpTimeoutMs,
+  })
   return {
-    ok: false,
-    content: `MCP tool ${mcpTool} is allowlisted, but the local MCP runtime adapter is not configured in this MVP.`,
-    errorCode: 'mcp_runtime_not_configured',
+    ok: result.ok,
+    content: result.content,
+    errorCode: result.errorCode,
     recoverable: true,
-    data: { mcp_tool: mcpTool, allowed: true },
+    data: {
+      mcp_tool: mcpTool,
+      allowed: true,
+      server,
+      tool,
+      content_types: result.contentTypes,
+      is_tool_error: result.isToolError,
+    },
   }
 }
 

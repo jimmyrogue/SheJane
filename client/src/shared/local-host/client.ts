@@ -27,6 +27,9 @@ export interface LocalRun {
   workspace_path?: string
   created_at: string
   updated_at: string
+  completed_at?: string
+  canceled_at?: string
+  events_count?: number
 }
 
 export interface LocalArtifact {
@@ -52,6 +55,44 @@ export interface LocalWorkspaceDiagnosis {
   authorized: boolean
   reason: 'authorized' | 'not_authorized' | 'not_found' | 'not_directory'
   workspace?: LocalWorkspaceAuthorization
+}
+
+export interface LocalRunDiagnostics {
+  schema_version: 1
+  exported_at: string
+  local_host_version?: string
+  run: LocalRun
+  events: AgentRunEvent[]
+  permissions: Array<{
+    id: string
+    run_id: string
+    tool_call_id: string
+    tool_name: string
+    arguments: Record<string, unknown>
+    status: string
+    created_at: string
+    resolved_at?: string
+  }>
+  artifacts: Array<{
+    id: string
+    run_id: string
+    kind: string
+    title: string
+    content_type: string
+    bytes: number
+    tool_call_id?: string
+    tool_name?: string
+    metadata?: Record<string, unknown>
+    created_at: string
+  }>
+  latest_checkpoint: {
+    id: string
+    run_id?: string
+    step: number
+    reason: string
+    messages_count: number
+    created_at?: string
+  } | null
 }
 
 export interface LocalStreamHandlers {
@@ -115,6 +156,27 @@ export async function createLocalRun(
     }),
   })
   return decodeLocalResponse<LocalRun>(response)
+}
+
+export async function listLocalRuns(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalRun[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ runs?: LocalRun[] }>(response)
+  return body.runs ?? []
+}
+
+export async function getLocalRunDiagnostics(
+  runID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalRunDiagnostics> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/diagnostics`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalRunDiagnostics>(response)
 }
 
 export async function listAuthorizedWorkspaces(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalWorkspaceAuthorization[]> {
