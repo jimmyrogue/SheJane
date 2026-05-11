@@ -361,11 +361,12 @@ AWS ap-east-1 (香港)
 - [x] Phase 2.13：Error Handling，模型网关异常会进入 durable `run.failed`，避免 run 卡在 running
 - [x] Phase 2.14：Electron Session / DeepSeek Tool Loop / Debuggability，登录态自动同步到 Local Host，DeepSeek 工具名兼容，开发启动和日志命令完善
 - [x] Phase 2.15：Universal Tool Primitives，把工具路线从程序员优先调整为通用办公 Agent 基础动词层，新增 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`
+- [x] Phase 2.16：Browser / Environment Observation，新增受控网页打开/快照/关闭、本地环境观察和语义 timeline 事件
 
 ### Phase 3：本地 Host 高级能力（4-8 周）
 
 - [ ] 本地 run 诊断导入/回放、更细粒度恢复 UI 和故障定位面板
-- [ ] 浏览器页面观察/点击、屏幕观察、应用窗口控制，所有可见系统操作默认需要确认
+- [ ] 浏览器点击/输入、屏幕 OCR、应用窗口控制，所有可见系统操作默认需要确认
 - [ ] 云端只同步计费、审计和 run 摘要，不默认同步私有文件内容
 
 ### Phase 4：生成任务与多工具编排（6-8 周）

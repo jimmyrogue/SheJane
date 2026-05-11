@@ -1,6 +1,6 @@
 # Universal Tool Primitives Spec
 
-**Status:** Phase 2.15 implementation spec
+**Status:** Phase 2.15 implementation spec; Phase 2.16 adds observation primitives on top
 **Updated:** 2026-05-11
 
 ## Summary
@@ -14,6 +14,8 @@ Tool names use object-domain prefixes:
 - `fs.*` for authorized local workspace files and folders.
 - `open.*` for opening user-visible system targets.
 - `clipboard.*` for plain-text clipboard operations.
+- `browser.*` for Local Host managed page observation.
+- `environment.observe` for user-approved local environment metadata.
 - `task.verify` for simple result checks.
 - Existing `file.*` tools remain legacy aliases for compatibility.
 
@@ -28,8 +30,8 @@ Tool results follow the existing Local Host shape:
 
 ## Permission Defaults
 
-- `allow`: read-only workspace tools such as `fs.list`, `fs.read`, `fs.search`, and `task.verify`.
-- `ask`: user-visible or mutating actions such as `fs.write`, `open.url`, `open.file`, `clipboard.read`, and `clipboard.write`.
+- `allow`: read-only workspace tools such as `fs.list`, `fs.read`, `fs.search`, `browser.snapshot`, `browser.close`, and `task.verify`.
+- `ask`: user-visible, sensitive, or mutating actions such as `fs.write`, `open.url`, `open.file`, `clipboard.read`, `clipboard.write`, `browser.open`, and `environment.observe`.
 - `deny`: reserved for future policy rules; denied tools should not be exposed to the model.
 
 All workspace tools must stay inside authorized workspace roots. Clipboard tools handle text only. `open.url` supports `http` and `https` only. `open.file` only opens files under an authorized workspace.
@@ -48,6 +50,17 @@ All workspace tools must stay inside authorized workspace roots. Clipboard tools
 | `clipboard.write` | ask | Write plain text to the clipboard. |
 | `task.verify` | allow | Verify simple file, URL, or boolean conditions. |
 
+## Phase 2.16 Observation Tools
+
+| Tool | Permission | Purpose |
+|---|---:|---|
+| `browser.open` | ask | Open a public HTTP(S) URL in the Local Host managed page context and capture the first snapshot. |
+| `browser.snapshot` | allow | Observe the managed page title, URL, visible text, links, forms, and buttons. |
+| `browser.close` | allow | Clear the managed page context. |
+| `environment.observe` | ask | Observe platform, foreground app, window title, and screen-permission metadata. |
+
 ## Boundary
 
 These primitives are intentionally lower-level than business workflows. A future "summarize downloaded PDFs and draft an email" flow should be built by combining file listing, file reading, document parsing, clipboard/open actions, and verification events. It should not become a hardcoded single-purpose tool.
+
+Browser observation is intentionally not full Computer Use. Phase 2.16 does not inspect existing browser tabs, click, type, submit forms, capture screenshots, or control other applications.

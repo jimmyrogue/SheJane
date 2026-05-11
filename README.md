@@ -17,7 +17,7 @@ Local Agent Harness 总规格见 [`spec.md`](spec.md)。
 - Phase 2.2 云端兼容 Agent Run：普通问题和附件问答都会创建 run、消费事件流、记录短期 `agent_events`，并在 admin 后台只读观察 run 摘要。
 - Phase 2.3a Local Agent Harness daemon foundation：新增 `local-host/` Node/TypeScript daemon，提供 loopback health/tools/runs/stream/cancel API、pairing token、本地 SQLite run/event store 和 Electron 探测。
 - Phase 2.4 Harness Loop MVP：Local Host 可调用云端 `/api/v1/agent/llm`，执行 `time.now`、授权 workspace 内 `file.read` / `file.search`，并对 `shell.run` 进入 permission-gated 流程。
-- Phase 2.5-2.13 Local Harness UI / Workspace Bridge：已加入本地 artifact、checkpoint、context compaction、memory、verification、`web.fetch` / 可选 `web.search` / stdio MCP runtime / 并发安全工具批处理 / 模型失败 durable handling，并在普通 client 中支持本地工作区授权、诊断、撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证事件展示。
+- Phase 2.5-2.16 Local Harness UI / Workspace / Observation Bridge：已加入本地 artifact、checkpoint、context compaction、memory、verification、`web.fetch` / 可选 `web.search` / stdio MCP runtime / 并发安全工具批处理 / 模型失败 durable handling、通用工具原语、受控浏览器观察和本地环境观察，并在普通 client 中支持本地工作区授权、诊断、撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览、验证事件和观察事件展示。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
@@ -139,7 +139,7 @@ JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
 npm run electron
 ```
 
-Phase 2.13 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；最近本地任务支持恢复和下载脱敏诊断 JSON；消息 timeline 支持批准/拒绝权限请求、查看 artifact 和展示规则验证结果。`mcp.call` 已可在 allowlist 和用户权限批准后调用本地 stdio MCP server；并发安全的读类工具会批量并行执行但保持 observation 顺序；模型网关异常会进入 `run.failed`；浏览器/IDE 控制和更完整的 run 回放 UI 继续后置。
+Phase 2.16 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；最近本地任务支持恢复和下载脱敏诊断 JSON；消息 timeline 支持批准/拒绝权限请求、查看 artifact、展示规则验证结果，并显示 `browser.observed` / `environment.observed` 等观察事件。`mcp.call` 已可在 allowlist 和用户权限批准后调用本地 stdio MCP server；并发安全的读类工具会批量并行执行但保持 observation 顺序；模型网关异常会进入 `run.failed`；真实浏览器点击/输入、屏幕 OCR、IDE 控制和更完整的 run 回放 UI 继续后置。
 
 Electron 是 Local Harness 的主入口。Phase 2.14 已加入本地 session bridge：用户在 Electron 正常登录后，client 会通过 paired loopback API 把当前云端 access token 注入 Local Host 内存 session；Local Host 再用这个短期 token 调 `/api/v1/agent/llm` 并扣该用户额度。退出登录时会调用 `DELETE /local/v1/session` 清掉本地 session。开发者不再需要手动复制 `JIANDANLY_CLOUD_ACCESS_TOKEN`；环境变量仍保留为 smoke 和无 UI 调试兜底。
 

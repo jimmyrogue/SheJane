@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { lookup } from 'node:dns/promises'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
+import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { dirname, relative, resolve, sep } from 'node:path'
 import type { LLMToolCall } from '../llm/gateway.js'
 import type { LocalRun } from '../types.js'
@@ -15,6 +16,34 @@ export interface ToolExecutionResult {
   recoverable?: boolean
 }
 
+export interface BrowserSnapshot {
+  url: string
+  title: string
+  visibleText: string
+  links: Array<{ text: string; url: string }>
+  forms: Array<{ action: string; fields: string[] }>
+  buttons: string[]
+}
+
+export interface BrowserAdapter {
+  open: (input: { url: string }) => Promise<BrowserSnapshot>
+  snapshot: () => Promise<BrowserSnapshot>
+  close: () => Promise<void>
+}
+
+export interface EnvironmentObservation {
+  platform?: string
+  arch?: string
+  release?: string
+  foregroundApp?: string
+  windowTitle?: string
+  screenPermission?: 'granted' | 'denied' | 'unknown'
+}
+
+export interface EnvironmentAdapter {
+  observe: () => Promise<EnvironmentObservation>
+}
+
 export interface ToolExecutionOptions {
   fetcher?: typeof fetch
   resolveHostname?: (hostname: string) => Promise<string[]>
@@ -23,6 +52,8 @@ export interface ToolExecutionOptions {
     readText: () => Promise<string>
     writeText: (text: string) => Promise<void>
   }
+  browser?: BrowserAdapter
+  environment?: EnvironmentAdapter
   tavilyApiKey?: string
   tavilyBaseURL?: string
   mcpAllowlist?: string[]
@@ -66,6 +97,14 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return writeClipboard(call, options)
     case 'task.verify':
       return verifyTask(call, run)
+    case 'browser.open':
+      return openManagedBrowser(call, options)
+    case 'browser.snapshot':
+      return snapshotManagedBrowser(call, options)
+    case 'browser.close':
+      return closeManagedBrowser(options)
+    case 'environment.observe':
+      return observeEnvironment(options)
     case 'shell.run':
       return runShellCommand(call, run)
     case 'web.fetch':
@@ -367,6 +406,83 @@ async function verifyTask(call: LLMToolCall, run: LocalRun): Promise<ToolExecuti
     return { ok: false, content: `Unsupported verification check: ${check}`, errorCode: 'unsupported_verification_check', recoverable: true }
   } catch (error) {
     return verificationResult(check, false, error instanceof Error ? error.message : 'Verification failed.')
+  }
+}
+
+async function openManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const rawURL = typeof call.arguments.url === 'string' ? call.arguments.url.trim() : ''
+  if (!rawURL) {
+    return { ok: false, content: 'A URL is required.', errorCode: 'url_required', recoverable: true }
+  }
+  const checked = await validatePublicHTTPURL(rawURL, options)
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  try {
+    const snapshot = await browserAdapter(options).open({ url: checked.url.href })
+    return browserSnapshotResult('browser.open', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_open_failed', 'Failed to open managed browser page.')
+  }
+}
+
+async function snapshotManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const snapshot = await browserAdapter(options).snapshot()
+    return browserSnapshotResult('browser.snapshot', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_snapshot_failed', 'Failed to snapshot managed browser page.')
+  }
+}
+
+async function closeManagedBrowser(options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    await browserAdapter(options).close()
+    return {
+      ok: true,
+      content: 'Managed browser page closed.',
+      data: { source: 'browser.close' },
+    }
+  } catch (error) {
+    return toolErrorResult(error, 'browser_close_failed', 'Failed to close managed browser page.')
+  }
+}
+
+async function observeEnvironment(options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const observation = await (options.environment ?? defaultEnvironmentAdapter()).observe()
+    const data: Record<string, unknown> = {
+      source: 'environment.observe',
+      platform: observation.platform ?? osPlatform(),
+    }
+    if (observation.arch) {
+      data.arch = observation.arch
+    }
+    if (observation.release) {
+      data.release = observation.release
+    }
+    if (observation.foregroundApp) {
+      data.foreground_app = observation.foregroundApp
+    }
+    if (observation.windowTitle) {
+      data.window_title = observation.windowTitle
+    }
+    data.screen_permission = observation.screenPermission ?? 'unknown'
+    const lines = [
+      `Platform: ${data.platform}`,
+      observation.arch ? `Architecture: ${observation.arch}` : '',
+      observation.release ? `OS release: ${observation.release}` : '',
+      observation.foregroundApp ? `Foreground app: ${observation.foregroundApp}` : '',
+      observation.windowTitle ? `Window title: ${observation.windowTitle}` : '',
+      `Screen permission: ${data.screen_permission}`,
+    ].filter(Boolean)
+    return {
+      ok: true,
+      content: lines.join('\n'),
+      data,
+    }
+  } catch (error) {
+    return toolErrorResult(error, 'environment_observe_failed', 'Failed to observe local environment.')
   }
 }
 
@@ -719,6 +835,210 @@ function verificationResult(check: string, passed: boolean, content: string): To
       passed,
     },
   }
+}
+
+function browserAdapter(options: ToolExecutionOptions): BrowserAdapter {
+  if (!options.browser) {
+    options.browser = createFetchBrowserAdapter(options)
+  }
+  return options.browser
+}
+
+function createFetchBrowserAdapter(options: ToolExecutionOptions): BrowserAdapter {
+  let currentSnapshot: BrowserSnapshot | undefined
+  return {
+    open: async ({ url }) => {
+      currentSnapshot = await fetchBrowserSnapshot(url, options)
+      return currentSnapshot
+    },
+    snapshot: async () => {
+      if (!currentSnapshot) {
+        throw recoverableToolError('browser_page_required', 'No managed browser page is open.')
+      }
+      return currentSnapshot
+    },
+    close: async () => {
+      currentSnapshot = undefined
+    },
+  }
+}
+
+async function fetchBrowserSnapshot(url: string, options: ToolExecutionOptions): Promise<BrowserSnapshot> {
+  const timeoutMs = 10000
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await (options.fetcher ?? fetch)(url, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/html,text/plain,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.1',
+        'User-Agent': 'JiandanlyLocalHarness/0.1',
+      },
+    })
+    const finalURL = response.url || url
+    const finalChecked = await validatePublicHTTPURL(finalURL, options)
+    if (!finalChecked.ok) {
+      throw recoverableToolError(finalChecked.errorCode, finalChecked.message)
+    }
+    const contentType = response.headers.get('content-type') ?? ''
+    if (contentType && !isTextualContentType(contentType)) {
+      throw recoverableToolError('non_text_response', `Non-text response is not supported: ${contentType}`)
+    }
+    if (!response.ok) {
+      throw recoverableToolError('browser_http_error', `Managed browser page returned HTTP ${response.status}.`)
+    }
+    const rawText = await readResponseText(response, 262144)
+    return parseBrowserSnapshot(rawText, finalChecked.url.href, contentType)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function parseBrowserSnapshot(rawText: string, url: string, contentType: string): BrowserSnapshot {
+  const isHTML = contentType.toLowerCase().includes('html') || /<html[\s>]/i.test(rawText) || /<body[\s>]/i.test(rawText)
+  if (!isHTML) {
+    return {
+      url,
+      title: new URL(url).hostname,
+      visibleText: rawText.replace(/\s+/g, ' ').trim(),
+      links: [],
+      forms: [],
+      buttons: [],
+    }
+  }
+  const title = decodeHTML(extractHTMLText(firstMatch(rawText, /<title[^>]*>([\s\S]*?)<\/title>/i) ?? '') || new URL(url).hostname)
+  const links = [...rawText.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)]
+    .map((match) => {
+      const href = attributeValue(match[1] ?? '', 'href')
+      if (!href) {
+        return undefined
+      }
+      const resolved = resolveBrowserURL(href, url)
+      if (!resolved) {
+        return undefined
+      }
+      return {
+        text: decodeHTML(extractHTMLText(match[2] ?? '')).slice(0, 160),
+        url: resolved,
+      }
+    })
+    .filter((link): link is { text: string; url: string } => Boolean(link))
+    .slice(0, 30)
+  const forms = [...rawText.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)]
+    .map((match) => {
+      const action = resolveBrowserURL(attributeValue(match[1] ?? '', 'action') ?? url, url) ?? url
+      const fields = [...(match[2] ?? '').matchAll(/\bname\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)]
+        .map((field) => field[1] ?? field[2] ?? field[3] ?? '')
+        .filter(Boolean)
+        .slice(0, 30)
+      return { action, fields }
+    })
+    .slice(0, 20)
+  const buttons = [
+    ...[...rawText.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/gi)].map((match) => decodeHTML(extractHTMLText(match[1] ?? ''))),
+    ...[...rawText.matchAll(/<input\b([^>]*\btype\s*=\s*(?:"(?:submit|button)"|'(?:submit|button)'|(?:submit|button))[^>]*)>/gi)].map((match) =>
+      attributeValue(match[1] ?? '', 'value') ?? 'button'
+    ),
+  ]
+    .filter(Boolean)
+    .slice(0, 30)
+  return {
+    url,
+    title,
+    visibleText: decodeHTML(extractHTMLText(rawText)),
+    links,
+    forms,
+    buttons,
+  }
+}
+
+function browserSnapshotResult(source: 'browser.open' | 'browser.snapshot', snapshot: BrowserSnapshot, maxTextCharacters: unknown): ToolExecutionResult {
+  const maxText = typeof maxTextCharacters === 'number' ? Math.max(1, Math.min(Math.floor(maxTextCharacters), 60000)) : 6000
+  const visibleText = snapshot.visibleText.slice(0, maxText).trim()
+  const payload = {
+    title: snapshot.title,
+    url: snapshot.url,
+    visible_text: visibleText,
+    text_characters: snapshot.visibleText.length,
+    text_truncated: snapshot.visibleText.length > visibleText.length,
+    links: snapshot.links,
+    forms: snapshot.forms,
+    buttons: snapshot.buttons,
+  }
+  return {
+    ok: true,
+    content: JSON.stringify(payload),
+    data: {
+      source,
+      url: snapshot.url,
+      title: snapshot.title,
+      text_characters: snapshot.visibleText.length,
+      text_truncated: snapshot.visibleText.length > visibleText.length,
+      links_count: snapshot.links.length,
+      forms_count: snapshot.forms.length,
+      buttons_count: snapshot.buttons.length,
+    },
+  }
+}
+
+function defaultEnvironmentAdapter(): EnvironmentAdapter {
+  return {
+    observe: async () => ({
+      platform: osPlatform(),
+      arch: osArch(),
+      release: osRelease(),
+      foregroundApp: 'unknown',
+      windowTitle: 'unknown',
+      screenPermission: 'unknown',
+    }),
+  }
+}
+
+function toolErrorResult(error: unknown, fallbackCode: string, fallbackMessage: string): ToolExecutionResult {
+  const typed = error as Error & { errorCode?: string; recoverable?: boolean }
+  return {
+    ok: false,
+    content: typed instanceof Error ? typed.message : fallbackMessage,
+    errorCode: typed?.errorCode ?? fallbackCode,
+    recoverable: typed?.recoverable ?? true,
+  }
+}
+
+function recoverableToolError(errorCode: string, message: string): Error & { errorCode: string; recoverable: boolean } {
+  const error = new Error(message) as Error & { errorCode: string; recoverable: boolean }
+  error.errorCode = errorCode
+  error.recoverable = true
+  return error
+}
+
+function firstMatch(input: string, pattern: RegExp): string | undefined {
+  return pattern.exec(input)?.[1]
+}
+
+function attributeValue(input: string, name: string): string | undefined {
+  const match = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(input)
+  return match?.[1] ?? match?.[2] ?? match?.[3]
+}
+
+function resolveBrowserURL(input: string, baseURL: string): string | undefined {
+  try {
+    return new URL(input, baseURL).href
+  } catch {
+    return undefined
+  }
+}
+
+function decodeHTML(input: string): string {
+  return input
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 async function openWithSystemDefault(target: { kind: 'url' | 'file'; target: string }): Promise<void> {

@@ -370,6 +370,100 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
+  it('emits browser and environment observation events with permission boundaries', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Open a page, observe it, then inspect the environment.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-browser-open',
+        toolCalls: [{ id: 'call-browser-open', name: 'browser.open', arguments: { url: 'https://example.com/report' } }],
+      },
+      {
+        requestId: 'req-browser-snapshot',
+        toolCalls: [{ id: 'call-browser-snapshot', name: 'browser.snapshot', arguments: { maxTextCharacters: 128 } }],
+      },
+      {
+        requestId: 'req-environment',
+        toolCalls: [{ id: 'call-environment', name: 'environment.observe', arguments: {} }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Environment observed.',
+      },
+    ])
+    const toolOptions = {
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        open: async () => ({
+          url: 'https://example.com/report',
+          title: 'Example Report',
+          visibleText: 'Quarterly report content.',
+          links: [{ text: 'Source', url: 'https://example.com/source' }],
+          forms: [],
+          buttons: ['Download'],
+        }),
+        snapshot: async () => ({
+          url: 'https://example.com/report',
+          title: 'Example Report',
+          visibleText: 'Quarterly report content.',
+          links: [{ text: 'Source', url: 'https://example.com/source' }],
+          forms: [],
+          buttons: ['Download'],
+        }),
+        close: async () => undefined,
+      },
+      environment: {
+        observe: async () => ({
+          platform: 'darwin',
+          foregroundApp: 'Preview',
+          windowTitle: 'Invoice.pdf',
+          screenPermission: 'unknown',
+        }),
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions })
+    const browserPermission = store.listPermissions(run.id)[0]
+    expect(browserPermission).toMatchObject({ toolName: 'browser.open', status: 'pending' })
+    await store.resolvePermission(browserPermission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: browserPermission.id, toolOptions })
+
+    const environmentPermission = store.listPermissions(run.id).at(-1)!
+    expect(environmentPermission).toMatchObject({ toolName: 'environment.observe', status: 'pending' })
+    await store.resolvePermission(environmentPermission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: environmentPermission.id, toolOptions })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'ui.action.requested',
+          payload: expect.objectContaining({ tool: 'browser.open', request_id: browserPermission.id }),
+        }),
+        expect.objectContaining({
+          eventType: 'browser.observed',
+          payload: expect.objectContaining({ tool: 'browser.open', title: 'Example Report', url: 'https://example.com/report' }),
+        }),
+        expect.objectContaining({
+          eventType: 'browser.observed',
+          payload: expect.objectContaining({ tool: 'browser.snapshot', title: 'Example Report', url: 'https://example.com/report' }),
+        }),
+        expect.objectContaining({
+          eventType: 'environment.observed',
+          payload: expect.objectContaining({ platform: 'darwin', foreground_app: 'Preview', window_title: 'Invoice.pdf' }),
+        }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'browser.snapshot',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'browser_snapshot_ok', passed: true })]),
+          }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
   it('fails fast when the model requests an unsupported tool', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Use a tool that is not registered.' })

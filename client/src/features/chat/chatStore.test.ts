@@ -101,4 +101,19 @@ describe('chat store', () => {
       label: '验证通过：验证任务结果',
     })
   })
+
+  it('renders browser and environment observation events with user-facing labels', () => {
+    expect(timelineItem({ event_type: 'browser.observed', payload: { title: 'Example Report', url: 'https://example.com/report' } })).toMatchObject({
+      label: '观察网页：Example Report',
+    })
+    expect(timelineItem({ event_type: 'environment.observed', payload: { foreground_app: 'Preview', window_title: 'Invoice.pdf' } })).toMatchObject({
+      label: '观察环境：Preview - Invoice.pdf',
+    })
+    expect(timelineItem({ event_type: 'ui.action.requested', payload: { tool: 'browser.open' } })).toMatchObject({
+      label: '请求操作：打开受控网页',
+    })
+    expect(timelineItem({ event_type: 'ui.action.completed', payload: { tool: 'browser.open' } })).toMatchObject({
+      label: '操作完成：打开受控网页',
+    })
+  })
 })

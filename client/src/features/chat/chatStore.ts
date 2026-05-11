@@ -171,6 +171,26 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
         verificationStatus: status,
       }
     }
+    case 'browser.observed': {
+      const title = stringValue(payload.title)
+      const url = stringValue(payload.url)
+      return { type: event.event_type, label: `观察网页：${title || url || '当前页面'}`, eventId, artifactId: stringValue(payload.artifact_id) }
+    }
+    case 'environment.observed': {
+      const app = stringValue(payload.foreground_app)
+      const title = stringValue(payload.window_title)
+      const platform = stringValue(payload.platform)
+      const target = app && title ? `${app} - ${title}` : app || title || platform || '本地环境'
+      return { type: event.event_type, label: `观察环境：${target}`, eventId }
+    }
+    case 'ui.action.requested': {
+      const tool = stringValue(payload.tool)
+      return { type: event.event_type, label: `请求操作：${toolActionLabel(tool)}`, eventId }
+    }
+    case 'ui.action.completed': {
+      const tool = stringValue(payload.tool)
+      return { type: event.event_type, label: `操作完成：${toolActionLabel(tool)}`, eventId, artifactId: stringValue(payload.artifact_id) }
+    }
     case 'run.completed':
       return { type: event.event_type, label: '任务完成', eventId }
     case 'run.failed':
@@ -201,6 +221,10 @@ function toolActionLabel(tool: string): string {
     'clipboard.read': '读取剪贴板',
     'clipboard.write': '写入剪贴板',
     'task.verify': '验证任务结果',
+    'browser.open': '打开受控网页',
+    'browser.snapshot': '观察网页',
+    'browser.close': '关闭受控网页',
+    'environment.observe': '观察本地环境',
     'shell.run': '运行命令',
     'web.fetch': '读取网页',
     'web.search': '搜索网页',

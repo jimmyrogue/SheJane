@@ -1,4 +1,4 @@
-# Phase 2.3a-2.15 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, and Universal Tool Primitives
+# Phase 2.3a-2.16 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, and Browser Observation
 
 Updated: 2026-05-11
 
@@ -27,6 +27,7 @@ This phase proves:
 - Recent local runs can be listed, resumed through the existing stream endpoint, and exported as redacted diagnostic bundles.
 - Electron login can attach a short-lived cloud session to the paired Local Host without copying access tokens by hand.
 - Universal tool primitives provide general work-agent verbs for listing, reading, searching, writing, opening, clipboard access, and verification.
+- Controlled browser and environment observation let the Harness inspect a managed page and local environment metadata without broad computer control.
 
 ## Completed
 
@@ -164,12 +165,19 @@ This phase proves:
   - Added `task.verify` for file existence, file content, URL shape, and boolean checks.
   - Updated the Local Harness prompt to prefer `fs.*` over legacy `file.*`.
   - Updated client timeline and permission buttons to show user-facing action names such as `打开网页`, `写入文件`, and `运行命令`.
+- [x] Phase 2.16 Browser / Environment Observation:
+  - Added permission-gated `browser.open` for Local Host managed page contexts with public URL validation and private-network blocking.
+  - Added `browser.snapshot` for managed page title, URL, visible text, links, forms, and buttons.
+  - Added `browser.close` for clearing the managed page context.
+  - Added permission-gated `environment.observe` for platform, foreground app, window title, and screen-permission metadata.
+  - Added `browser.observed`, `environment.observed`, `ui.action.requested`, and `ui.action.completed` semantic events.
+  - Updated client timeline labels to show user-facing actions such as `打开受控网页`, `观察网页`, and `观察环境`.
 
 ## Current Boundaries
 
 - Real local file read/search is available only when the run has an authorized workspace path.
 - Shell commands are permission-gated and execute only after explicit approval through the local permission API.
-- Browser control is not enabled yet.
+- Browser observation is limited to Local Host managed page contexts; it does not read or control existing Chrome/Safari tabs.
 - `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without a cloud session or headless cloud LLM env configuration it uses a static fallback response.
 - The SQLite runtime store uses Node's built-in `node:sqlite`, which is currently experimental in Node 22. This is acceptable for Phase 2.3a foundation but should be revisited before production packaging if Electron's bundled Node runtime differs.
 - Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, optional Tavily `web.search`, and MCP allowlist guardrails.
@@ -186,8 +194,9 @@ This phase proves:
 - Phase 2.14c adds CLI-level observability, but in-app log inspection and one-click current-run diagnostic export are still future work.
 - Phase 2.14d adds a minimal write path, but only for explicit `file.write` approvals inside authorized workspace roots; destructive shell commands still require separate approval.
 - Phase 2.15 adds general work-agent primitives; clipboard operations are text-only, `open.url` supports only `http`/`https`, and `open.file` is limited to authorized workspace files.
+- Phase 2.16 adds controlled page snapshotting and environment metadata, but not clicking, typing, form submission, screen OCR, or app-window control.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
-- Browser/IDE control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
+- Browser action control, screen/app control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
 
 ## Verification
 
@@ -202,6 +211,9 @@ This phase proves:
 - `cd client && npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`
 - `cd api && go test ./internal/llm ./internal/httpapi`
 - `cd local-host && npm test -- --run src/harness/runner.test.ts`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts`
+- `cd local-host && npm test -- --run src/harness/runner.test.ts -t "browser and environment"`
+- `cd client && npm test -- --run src/features/chat/chatStore.test.ts -t "browser and environment"`
 - `cd local-host && npm test -- --run`
 - `cd local-host && npm run build`
 - `cd client && npm test -- --run src/App.test.tsx src/features/chat/chatStore.test.ts`
@@ -214,6 +226,6 @@ Full workspace verification is tracked in the implementation closeout.
 
 ## Next
 
-- Phase 2.16 candidate: browser/page observation and action primitives with explicit permission boundaries.
+- Phase 2.17 candidate: controlled browser actions for click/type/navigation with explicit permission and deterministic adapter tests.
 - Add diagnostics import/replay before broadening long-running local automation.
-- Add screen/app control only after browser and clipboard/open/file primitives are stable.
+- Add screen/app control only after browser observation and action primitives are stable.

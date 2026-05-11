@@ -76,11 +76,11 @@ test.describe('client simulated user flows', () => {
     await page.getByPlaceholder('描述你的问题、任务，或让简单阅读附件').fill('运行本地检查')
     await page.getByRole('button', { name: '发送' }).click()
 
-    await expect(page.getByText('需要权限：shell.run').first()).toBeVisible()
-    await page.getByRole('button', { name: '批准 shell.run' }).click()
+    await expect(page.getByText('需要权限：运行命令').first()).toBeVisible()
+    await page.getByRole('button', { name: '批准 运行命令' }).click()
 
     await expect(page.getByText('本地执行完成')).toBeVisible()
-    await expect(page.getByText('验证通过：shell.run')).toBeVisible()
+    await expect(page.getByText('验证通过：运行命令')).toBeVisible()
     await page.getByRole('button', { name: '查看 artifact' }).click()
     await expect(page.getByText('Artifact: shell output')).toBeVisible()
     await expect(page.getByText('artifact preview content')).toBeVisible()

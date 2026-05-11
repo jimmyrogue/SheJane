@@ -189,7 +189,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.15 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
+- **Phase 2.3-2.16 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.16 起 Local Host 支持受控 `browser.*` 页面观察和 `environment.observe` 本地环境观察；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
@@ -267,6 +267,15 @@ Phase 2.15 通用工具原语：
 
 旧 `file.read`、`file.search`、`file.write` 仍保留，用于兼容已有 run 和测试；新模型提示会优先引导使用 `fs.*`。
 
+Phase 2.16 浏览器与环境观察：
+
+- `browser.open`：在 Local Host 管理的受控页面上下文中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。
+- `browser.snapshot`：读取受控页面的标题、URL、可见文本、主要链接、表单和按钮；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
+- `browser.close`：关闭当前受控页面上下文。
+- `environment.observe`：读取基础本地环境元数据，例如平台、前台应用和窗口标题；每次都需要用户批准，不采集屏幕截图。
+- 事件流会额外出现 `browser.observed`、`environment.observed`、`ui.action.requested` 和 `ui.action.completed`，client 会显示为“观察网页”“观察环境”“请求操作”等普通用户文案。
+- 本阶段不做点击、输入、提交表单、屏幕 OCR、系统设置修改或读取用户现有浏览器标签页。
+
 测试本地 health：
 
 ```bash
@@ -278,9 +287,9 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.15 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
+- Phase 2.16 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、受控 `browser.open` / `browser.snapshot` / `browser.close`、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
-- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、浏览器/IDE 控制和 Playwright/截图验证。
+- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、真实浏览器点击/输入、IDE 控制和 Playwright/截图验证。
 
 ## 自动化测试与 Smoke
 

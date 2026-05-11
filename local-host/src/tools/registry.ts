@@ -248,6 +248,68 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'browser.open',
+    description: 'Open a public http(s) URL in the Local Host managed browser context after explicit user approval, then capture a structured page snapshot.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['url'],
+      properties: {
+        url: { type: 'string' },
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: false,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'ask',
+  },
+  {
+    name: 'browser.snapshot',
+    description: 'Read the current Local Host managed browser page title, URL, visible text, links, forms, and buttons.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'allow',
+  },
+  {
+    name: 'browser.close',
+    description: 'Close the current Local Host managed browser page context.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+    },
+    isReadOnly: false,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 4096,
+    permissionPolicy: 'allow',
+  },
+  {
+    name: 'environment.observe',
+    description: 'Observe basic local environment information such as platform and foreground window metadata after explicit user approval.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 4096,
+    permissionPolicy: 'ask',
+  },
+  {
     name: 'shell.run',
     description: 'Run a shell command in an authorized workspace after explicit user approval.',
     inputSchema: {

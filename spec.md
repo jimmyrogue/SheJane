@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.list`, `fs.read`, `fs.search`, `fs.write`, `open.url`, `open.file`, `clipboard.read`, `clipboard.write`, and `task.verify`; legacy `file.*` aliases remain for compatibility. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.16 adds controlled `browser.*` and `environment.observe` observation tools. Legacy `file.*` aliases remain for compatibility. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -171,10 +171,14 @@ Events are ordered by stable sequence numbers:
 - `tool.requested`
 - `permission.required`
 - `permission.resolved`
+- `ui.action.requested`
+- `ui.action.completed`
 - `tool.started`
 - `tool.progress`
 - `tool.completed`
 - `tool.failed`
+- `browser.observed`
+- `environment.observed`
 - `artifact.created`
 - `context.compacted`
 - `checkpoint.created`
@@ -343,7 +347,13 @@ Pairing:
 - Add `fs.list`, `fs.read`, `fs.search`, `fs.write`, `open.url`, `open.file`, `clipboard.read`, `clipboard.write`, and `task.verify`. **Done.**
 - Keep `file.read`, `file.search`, and `file.write` as compatibility aliases while prompting the model to prefer `fs.*`. **Done.**
 - Render permission requests with user-facing action names such as "打开网页", "写入文件", and "写入剪贴板". **Done.**
-- Full browser/page observation, screen observation, and app-control actions remain Phase 2.16+ work. **Pending.**
+
+### Phase 2.16: Browser and Environment Observation
+
+- Add `browser.open`, `browser.snapshot`, and `browser.close` for a Local Host managed page context. **Done for fetch-backed snapshot MVP.**
+- Add `environment.observe` for user-approved local environment metadata. **Done.**
+- Emit semantic `browser.observed`, `environment.observed`, and `ui.action.*` events for clearer timelines. **Done.**
+- Keep user browser tab inspection, clicking, typing, screen OCR, and app-window control as later phases. **Pending.**
 
 ## 9. Test Strategy
 
@@ -355,6 +365,9 @@ Pairing:
 - `fs.list`, `fs.read`, `fs.search`, and `fs.write` stay inside authorized workspace.
 - `open.url`, `open.file`, and clipboard tools require explicit permission.
 - `task.verify` covers simple file, content, URL, and boolean checks.
+- `browser.open` requires explicit permission and blocks localhost/private-network targets before fetching.
+- `browser.snapshot` observes only the Local Host managed page context.
+- `environment.observe` requires explicit permission and emits metadata only, not screenshot content.
 - `shell.run` requires explicit permission.
 - Denied permission becomes recoverable observation, not a crash.
 - Large tool output becomes artifact.
@@ -365,6 +378,7 @@ Pairing:
 - Local MCP tests cover allowlist rejection, missing runtime config, stdio execution, metadata redaction, process startup failure, and Harness permission-to-observation flow.
 - Harness runner tests cover concurrency-safe tool batching and deterministic observation order.
 - Harness runner tests cover model gateway failure becoming a durable `run.failed` event.
+- Browser/environment tests cover managed page snapshots, SSRF blocking, permission-gated observation, and user-facing timeline labels.
 
 ## 10. Deprecated Direction
 
