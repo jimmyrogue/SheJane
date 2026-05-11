@@ -30,7 +30,7 @@ export class CloudLLMGateway implements LLMGateway {
       }),
     })
     if (!response.ok) {
-      throw new Error(`Cloud LLM gateway returned HTTP ${response.status}`)
+      throw new Error(await cloudGatewayErrorMessage(response))
     }
     const body = (await response.json()) as { code?: number; message?: string; data?: LLMGatewayResponse } & LLMGatewayResponse
     if (body.data) {
@@ -38,4 +38,29 @@ export class CloudLLMGateway implements LLMGateway {
     }
     return body
   }
+}
+
+async function cloudGatewayErrorMessage(response: Response): Promise<string> {
+  const fallback = `Cloud LLM gateway returned HTTP ${response.status}`
+  try {
+    const body = (await response.clone().json()) as { code?: number; message?: string }
+    const message = typeof body.message === 'string' ? body.message.trim() : ''
+    const code = typeof body.code === 'number' || typeof body.code === 'string' ? String(body.code) : ''
+    if (message && code) {
+      return `${fallback} (${code}): ${message}`
+    }
+    if (message) {
+      return `${fallback}: ${message}`
+    }
+  } catch {
+    try {
+      const text = (await response.text()).trim()
+      if (text) {
+        return `${fallback}: ${text.slice(0, 240)}`
+      }
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
 }

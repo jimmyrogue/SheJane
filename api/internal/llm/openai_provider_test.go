@@ -102,11 +102,12 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 			"choices": [{
 				"message": {
 					"content": "",
+					"reasoning_content": "I need the README.md file contents before answering.",
 					"tool_calls": [{
 						"id": "call-1",
 						"type": "function",
 						"function": {
-							"name": "file.read",
+							"name": "file__read",
 							"arguments": "{\"path\":\"README.md\"}"
 						}
 					}]
@@ -122,7 +123,7 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 	response, err := provider.CompleteWithTools(context.Background(), ChatRequest{
 		Messages: []Message{
 			{Role: "user", Content: "read file"},
-			{Role: "assistant", ToolCalls: []ToolCall{{ID: "call-prev", Name: "file.read", Arguments: map[string]any{"path": "README.md"}}}},
+			{Role: "assistant", ReasoningContent: "I should inspect README.md first.", ToolCalls: []ToolCall{{ID: "call-prev", Name: "file.read", Arguments: map[string]any{"path": "README.md"}}}},
 			{Role: "tool", ToolCallID: "call-prev", Name: "file.read", Content: "file contents"},
 		},
 		Tools: []ToolDefinition{{
@@ -144,8 +145,22 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 	assistant := messages[1].(map[string]any)
 	toolCalls := assistant["tool_calls"].([]any)
 	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
-	if function["name"] != "file.read" || !strings.Contains(function["arguments"].(string), "README.md") {
+	if function["name"] != "file__read" || !strings.Contains(function["arguments"].(string), "README.md") {
 		t.Fatalf("assistant tool_calls were not converted to OpenAI shape: %#v", assistant)
+	}
+	if assistant["reasoning_content"] != "I should inspect README.md first." {
+		t.Fatalf("assistant reasoning_content = %#v", assistant["reasoning_content"])
+	}
+	toolMessage := messages[2].(map[string]any)
+	if toolMessage["name"] != "file__read" {
+		t.Fatalf("tool message name = %#v, want provider-safe file__read", toolMessage["name"])
+	}
+	requestToolName := tools[0].(map[string]any)["function"].(map[string]any)["name"]
+	if requestToolName != "file__read" {
+		t.Fatalf("request tool name = %#v, want provider-safe file__read", requestToolName)
+	}
+	if response.ReasoningContent != "I need the README.md file contents before answering." {
+		t.Fatalf("reasoning content = %q", response.ReasoningContent)
 	}
 	if response.InputTokens != 12 || response.OutputTokens != 4 {
 		t.Fatalf("usage = %d/%d, want 12/4", response.InputTokens, response.OutputTokens)

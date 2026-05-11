@@ -1,4 +1,4 @@
-# Phase 2.3a-2.13 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, and Recovery
+# Phase 2.3a-2.15 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, and Universal Tool Primitives
 
 Updated: 2026-05-11
 
@@ -25,6 +25,8 @@ This phase proves:
 - Workspace roots are explicitly authorized through the paired Local Host before a run can use local file or shell tools.
 - Workspace authorization can be diagnosed and revoked from the client, and the composer shows the active local project reference.
 - Recent local runs can be listed, resumed through the existing stream endpoint, and exported as redacted diagnostic bundles.
+- Electron login can attach a short-lived cloud session to the paired Local Host without copying access tokens by hand.
+- Universal tool primitives provide general work-agent verbs for listing, reading, searching, writing, opening, clipboard access, and verification.
 
 ## Completed
 
@@ -32,6 +34,9 @@ This phase proves:
 - [x] Added [`local-host/src/server.ts`](../../local-host/src/server.ts) with:
   - `GET /local/v1/health`
   - `GET /local/v1/tools`
+  - `GET /local/v1/session`
+  - `POST /local/v1/session`
+  - `DELETE /local/v1/session`
   - `POST /local/v1/runs`
   - `GET /local/v1/runs/{id}`
   - `GET /local/v1/runs`
@@ -123,13 +128,49 @@ This phase proves:
 - [x] Phase 2.13 Error Handling Hardening:
   - Model gateway exceptions are converted to `run.failed` with `error_code=llm_failed`.
   - The run status is durably updated to `failed`; the error no longer escapes the runner as an unhandled server failure.
+- [x] Phase 2.14 Local Session Bridge:
+  - Local Host supports paired `GET /local/v1/session`, `POST /local/v1/session`, and `DELETE /local/v1/session`.
+  - The session stores cloud base URL and bearer access token in memory only.
+  - Session API responses never return the access token.
+  - Harness runs use the current in-memory cloud session for `/api/v1/agent/llm` when no test-injected gateway is supplied.
+  - Electron client syncs the cloud access token into Local Host after register/login/refresh.
+  - Electron logout clears the Local Host cloud session.
+  - Manual testing no longer requires copying `JIANDANLY_CLOUD_ACCESS_TOKEN`; that env remains available for smoke or headless debugging.
+- [x] Phase 2.14a Electron Dev Startup:
+  - Added `make dev-electron` as the recommended one-command local Electron entrypoint.
+  - The dev helper starts Docker Compose in detached mode, starts Local Host, starts an isolated client dev server on `55173`, then launches Electron in dev mode.
+  - The helper avoids the old footgun where `docker compose up --build` and `npm run dev` block the terminal before Electron can run.
+  - README and operations docs now point manual testers to `make dev-electron`.
+- [x] Phase 2.14b DeepSeek Tool Loop Compatibility:
+  - OpenAI-compatible provider requests now map internal dotted tool names such as `time.now` and `file.read` to provider-safe function names, then map returned tool calls back to internal names.
+  - DeepSeek thinking-mode `reasoning_content` is captured from tool-call responses and replayed on subsequent assistant messages.
+  - Local Host stores and forwards `reasoningContent` inside run/checkpoint messages but does not expose it as visible UI reasoning.
+  - Verified a real two-step Local Harness run against DeepSeek: model requested `time.now`, Local Host executed it, the follow-up model call completed, and the run reached `run.completed`.
+- [x] Phase 2.14c Debuggability / Error Surfacing:
+  - `POST /api/v1/agent/llm` now returns 402 for quota exhaustion during final settlement instead of generic 500.
+  - Local Host cloud gateway errors now include cloud API `code` and `message`, so UI run failures can show actionable reasons such as quota exhaustion.
+  - Added `make logs-api`, `make logs-local-host`, `make logs-client`, `make logs-llm-errors`, and `make logs-dev` for local debugging.
+- [x] Phase 2.14d Tool Guardrail / Write Path Fix:
+  - Implemented `workspace.open` so approved workspace changes persist on the run and can be used by later file/search/shell tools.
+  - Added permission-gated `file.write` for UTF-8 text files inside the authorized workspace.
+  - Added `workspace_open_ok` and `file_write_ok` verification events.
+  - Unsupported tool calls now fail fast with `unsupported_tool` instead of looping until `max_steps_exceeded`.
+  - Max-step failures now include the last requested tool for faster diagnosis.
+- [x] Phase 2.15 Universal Tool Primitives:
+  - Added [`docs/specs/universal-tool-primitives.md`](../specs/universal-tool-primitives.md) as the tool primitive contract.
+  - Added `fs.list`, `fs.read`, `fs.search`, and permission-gated `fs.write` as the preferred workspace file primitives.
+  - Kept `file.read`, `file.search`, and `file.write` as compatibility aliases.
+  - Added permission-gated `open.url`, `open.file`, `clipboard.read`, and `clipboard.write`.
+  - Added `task.verify` for file existence, file content, URL shape, and boolean checks.
+  - Updated the Local Harness prompt to prefer `fs.*` over legacy `file.*`.
+  - Updated client timeline and permission buttons to show user-facing action names such as `打开网页`, `写入文件`, and `运行命令`.
 
 ## Current Boundaries
 
 - Real local file read/search is available only when the run has an authorized workspace path.
 - Shell commands are permission-gated and execute only after explicit approval through the local permission API.
 - Browser control is not enabled yet.
-- `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without cloud LLM configuration it uses a static fallback response.
+- `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without a cloud session or headless cloud LLM env configuration it uses a static fallback response.
 - The SQLite runtime store uses Node's built-in `node:sqlite`, which is currently experimental in Node 22. This is acceptable for Phase 2.3a foundation but should be revisited before production packaging if Electron's bundled Node runtime differs.
 - Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, optional Tavily `web.search`, and MCP allowlist guardrails.
 - Phase 2.7 adds a manual workspace path field, permission approve/deny controls, artifact preview, and verification timeline rendering.
@@ -139,6 +180,12 @@ This phase proves:
 - Phase 2.11 adds a real local stdio MCP runtime adapter behind the existing allowlist and permission flow.
 - Phase 2.12 adds concurrency-safe read-tool batching with deterministic observation order.
 - Phase 2.13 hardens LLM gateway failure handling so runs do not remain stuck in `running`.
+- Phase 2.14 makes Electron the primary Local Harness testing surface by syncing login state into Local Host through paired loopback session APIs.
+- Phase 2.14a makes the local Electron dev path one-command via `make dev-electron`; Docker still stays running after the app exits and can be stopped with `make docker-down`.
+- Phase 2.14b handles DeepSeek V4 thinking-mode tool calls; other OpenAI-compatible providers may still need provider-specific quirks as we broaden model support.
+- Phase 2.14c adds CLI-level observability, but in-app log inspection and one-click current-run diagnostic export are still future work.
+- Phase 2.14d adds a minimal write path, but only for explicit `file.write` approvals inside authorized workspace roots; destructive shell commands still require separate approval.
+- Phase 2.15 adds general work-agent primitives; clipboard operations are text-only, `open.url` supports only `http`/`https`, and `open.file` is limited to authorized workspace files.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
 - Browser/IDE control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
 
@@ -151,11 +198,22 @@ This phase proves:
 - `cd local-host && npm test -- --run src/localHostServer.test.ts src/state/sqliteStore.test.ts`
 - `cd client && npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`
 - `cd local-host && npm test -- --run src/tools/mcpTools.test.ts src/harness/runner.test.ts`
+- `cd local-host && npm test -- --run src/localHostServer.test.ts`
+- `cd client && npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`
+- `cd api && go test ./internal/llm ./internal/httpapi`
+- `cd local-host && npm test -- --run src/harness/runner.test.ts`
+- `cd local-host && npm test -- --run`
+- `cd local-host && npm run build`
+- `cd client && npm test -- --run src/App.test.tsx src/features/chat/chatStore.test.ts`
+- `make test`
+- `make build`
+- Real API smoke: `POST /api/v1/agent/llm` with `time.now` tools succeeds across first tool-call turn and second observation turn.
+- Real Local Host smoke: temporary Local Host run for `what time is it` reached `run.completed` after `time.now`.
 
 Full workspace verification is tracked in the implementation closeout.
 
 ## Next
 
-- Phase 2.14 candidate: diagnostics import/replay UI, or browser/IDE tools with explicit permission boundaries.
-- Add diagnostics import/replay before broadening browser/IDE automation.
-- Add browser/IDE tools and visual verification after permission UX is stable.
+- Phase 2.16 candidate: browser/page observation and action primitives with explicit permission boundaries.
+- Add diagnostics import/replay before broadening long-running local automation.
+- Add screen/app control only after browser and clipboard/open/file primitives are stable.

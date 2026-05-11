@@ -141,6 +141,8 @@ npm run electron
 
 Phase 2.13 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；最近本地任务支持恢复和下载脱敏诊断 JSON；消息 timeline 支持批准/拒绝权限请求、查看 artifact 和展示规则验证结果。`mcp.call` 已可在 allowlist 和用户权限批准后调用本地 stdio MCP server；并发安全的读类工具会批量并行执行但保持 observation 顺序；模型网关异常会进入 `run.failed`；浏览器/IDE 控制和更完整的 run 回放 UI 继续后置。
 
+Electron 是 Local Harness 的主入口。Phase 2.14 已加入本地 session bridge：用户在 Electron 正常登录后，client 会通过 paired loopback API 把当前云端 access token 注入 Local Host 内存 session；Local Host 再用这个短期 token 调 `/api/v1/agent/llm` 并扣该用户额度。退出登录时会调用 `DELETE /local/v1/session` 清掉本地 session。开发者不再需要手动复制 `JIANDANLY_CLOUD_ACCESS_TOKEN`；环境变量仍保留为 smoke 和无 UI 调试兜底。
+
 启用本地 MCP 需要同时配置 allowlist 和 stdio server JSON：
 
 ```bash
@@ -193,7 +195,7 @@ cd local-host
 JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
 ```
 
-如需让本地 Harness 通过云端模型网关扣费，需要提供当前登录用户的 access token：
+仅在无 UI/headless smoke 调试时，才需要用环境变量预置当前登录用户的 access token：
 
 ```bash
 cd local-host
@@ -203,7 +205,25 @@ JIANDANLY_CLOUD_ACCESS_TOKEN=用户 access token \
 npm run dev
 ```
 
+正常 Electron 手动测试不需要上面这段 token 注入。推荐流程是先启动 API，再启动 Local Host 和 Electron，最后在 Electron 里正常登录：
+
+```bash
+make dev-electron
+```
+
+这条命令会用 `docker compose up -d --build` 在后台启动云端控制面，启动 Local Host，使用隔离端口 `55173` 启动 client dev server，最后打开 Electron。关闭 Electron 窗口后，本次脚本启动的本地 helper 进程会自动退出；Docker 栈可用 `make docker-down` 关闭。
+
 默认 `MOCK_LLM=true`，不需要外部模型密钥就能跑通聊天流。
+
+开发时查看日志：
+
+```bash
+make logs-dev          # API / Local Host / client / 最近 LLM 错误快照
+make logs-api          # 持续查看 Docker API 日志
+make logs-local-host   # 持续查看本地 Harness 日志
+make logs-client       # 持续查看 client Vite 日志
+make logs-llm-errors   # 查看最近 LLM 调用和错误原因
+```
 
 ## Docker 启动
 
@@ -246,24 +266,32 @@ Stripe Checkout 使用订阅模式，Webhook 至少需要订阅 `checkout.sessio
 
 Phase 1.6 已提供独立管理后台 MVP。日常运营可以通过 `admin/` web 查看用户、用量、订单和 provider 状态，并执行账号启停、额外额度调整。更高风险操作仍应使用 Stripe/DeepSeek 控制台、PostgreSQL 和部署平台完成。操作手册见 [`docs/operations.md`](docs/operations.md)。
 
-## 验证命令
+## 自动化测试
 
 ```bash
 make test
 make build
+make test-e2e
+make test-ci
 ```
 
-有真实 provider key 且 API 已用 `MOCK_LLM=false` 启动时，再运行：
+默认测试以“本地确定性”为边界，不依赖真实 LLM、Stripe、S3、Tavily 或公网：
+
+- `make test`：Go test + client/admin/local-host Vitest，覆盖 API 账本、文档、Agent Run、admin、本地 Harness runner/tools/store。
+- `make test-e2e`：启动隔离的 client/admin Vite dev server（默认 `55173/55174`），使用 `e2e/` Playwright Chromium 模拟注册、统一 composer、附件 Agent Run、本地 Harness 权限/artifact/恢复和 admin tabs。
+- `make test-ci`：`make test` + `make build` + Playwright simulated E2E；GitHub Actions 默认跑这条。
+- `make smoke-local-host`：启动真实 Local Host daemon，检查 health、未配对 401、工具注册表和 mock run event stream。
+- `make smoke-docker-local`：用 disposable Compose project + `MOCK_LLM=true` 启动本地闭环，验证 API health、注册、mock chat 扣额度、admin overview。
+
+真实服务 smoke 需要显式运行，避免误消耗额度、创建 Stripe test object 或上传 S3 文件：
 
 ```bash
+RUN_EXTERNAL_SMOKE=1 make smoke-external
 make smoke-real-llm
-```
-
-本地合成 Stripe webhook：
-
-```bash
 make smoke-stripe-webhook
+make smoke-s3-document
 ```
 
-前端单测覆盖 OpenAI/Agent SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、统一 composer 附件上传/Agent Run 文档问答、普通 client 不暴露后台入口、独立 admin web 渲染、功能 tab、Agent Runs 观察页、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、文档上传/解析/问答、Agent Run create/events/stream/cancel/admin observe、Stripe 订阅生命周期和 admin API 权限/审计。Local Host 单测覆盖 pairing token、run/event stream、workspace 授权治理、permission flow、artifact/checkpoint/memory、web SSRF 防护、MCP allowlist、stdio MCP runtime 和 Harness loop 观察回填。
-Local Host 单测覆盖 pairing token、health/tools、run 创建、SSE 事件重放、取消、TAO loop、file.read、workspace 越界阻断和 shell permission flow。
+`smoke-s3-document` 会在上传后调用文档删除接口做 best-effort 清理，避免 dev bucket 长期堆积 smoke 对象。
+
+前端单测覆盖 OpenAI/Agent SSE 解析、本地 IndexedDB 历史导入导出、发送消息本地落库与 assistant delta 合并、统一 composer 附件上传/Agent Run 文档问答、普通 client 不暴露后台入口、独立 admin web 渲染、功能 tab、Agent Runs 观察页、订单订阅 ID、审计页与额度调整表单校验。后端单测覆盖注册登录、鉴权、流式聊天、额度预留/结算、模型路由、文档上传/解析/问答、Agent Run create/events/stream/cancel/admin observe、Stripe 订阅生命周期和 admin API 权限/审计。Local Host 单测覆盖 pairing token、run/event stream、workspace 授权治理、permission flow、artifact/checkpoint/memory、web SSRF 防护、MCP allowlist、stdio MCP runtime、Harness loop 观察回填、并发安全工具批处理和模型失败 durable handling。Playwright E2E 只验证用户可见行为和跨边界契约，不重复底层分支测试。

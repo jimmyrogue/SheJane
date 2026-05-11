@@ -486,11 +486,13 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		RunID    string `json:"run_id"`
 		Mode     string `json:"mode"`
 		Messages []struct {
-			Role       string `json:"role"`
-			Content    string `json:"content"`
-			ToolCallID string `json:"toolCallId,omitempty"`
-			Name       string `json:"name,omitempty"`
-			ToolCalls  []struct {
+			Role                  string `json:"role"`
+			Content               string `json:"content"`
+			ReasoningContent      string `json:"reasoningContent,omitempty"`
+			ReasoningContentSnake string `json:"reasoning_content,omitempty"`
+			ToolCallID            string `json:"toolCallId,omitempty"`
+			Name                  string `json:"name,omitempty"`
+			ToolCalls             []struct {
 				ID        string         `json:"id"`
 				Name      string         `json:"name"`
 				Arguments map[string]any `json:"arguments"`
@@ -524,7 +526,18 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		for _, call := range message.ToolCalls {
 			toolCalls = append(toolCalls, llm.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
 		}
-		messages = append(messages, llm.Message{Role: role, Content: message.Content, ToolCallID: message.ToolCallID, Name: message.Name, ToolCalls: toolCalls})
+		reasoningContent := message.ReasoningContent
+		if reasoningContent == "" {
+			reasoningContent = message.ReasoningContentSnake
+		}
+		messages = append(messages, llm.Message{
+			Role:             role,
+			Content:          message.Content,
+			ReasoningContent: reasoningContent,
+			ToolCallID:       message.ToolCallID,
+			Name:             message.Name,
+			ToolCalls:        toolCalls,
+		})
 	}
 	tools := make([]llm.ToolDefinition, 0, len(body.Tools))
 	for _, tool := range body.Tools {
@@ -596,6 +609,10 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 	}
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
+		if billing.IsInsufficientCredits(err) {
+			writeError(w, http.StatusPaymentRequired, 40202, "额度不足，请升级或充值")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, 50001, "额度结算失败")
 		return
 	}
@@ -604,9 +621,10 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		Code:    0,
 		Message: "ok",
 		Data: map[string]any{
-			"requestId": requestID,
-			"content":   completion.Content,
-			"toolCalls": completion.ToolCalls,
+			"requestId":        requestID,
+			"content":          completion.Content,
+			"reasoningContent": completion.ReasoningContent,
+			"toolCalls":        completion.ToolCalls,
 			"usage": map[string]any{
 				"input_tokens":  inputTokens,
 				"output_tokens": outputTokens,
@@ -830,8 +848,14 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 	}
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(ctx, requestID, "failed", inputTokens, outputTokens, 0, err.Error())
-		_, _ = s.app.Store.UpdateAgentRunStatus(ctx, user.ID, run.ID, "failed", "settlement_failed", err.Error())
-		_ = s.appendAgentEvent(ctx, w, run.ID, "run.failed", map[string]any{"error_code": "settlement_failed", "message": "额度结算失败"})
+		errorCode := "settlement_failed"
+		message := "额度结算失败"
+		if billing.IsInsufficientCredits(err) {
+			errorCode = "insufficient_credits"
+			message = "额度不足，请升级或充值"
+		}
+		_, _ = s.app.Store.UpdateAgentRunStatus(ctx, user.ID, run.ID, "failed", errorCode, err.Error())
+		_ = s.appendAgentEvent(ctx, w, run.ID, "run.failed", map[string]any{"error_code": errorCode, "message": message})
 		return
 	}
 	_ = s.app.Store.FinishLLMCall(ctx, requestID, "done", inputTokens, outputTokens, actualCredits, "")
@@ -1006,6 +1030,10 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 	}
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
+		if billing.IsInsufficientCredits(err) {
+			_ = writeSSE(w, requestID, "额度不足，请升级或充值", "error")
+			return
+		}
 		_ = writeSSE(w, requestID, "", "error")
 		return
 	}

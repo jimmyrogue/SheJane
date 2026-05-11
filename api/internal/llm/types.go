@@ -10,11 +10,12 @@ const (
 )
 
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Name             string     `json:"name,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type ChatRequest struct {
@@ -41,11 +42,12 @@ type ToolCall struct {
 }
 
 type Completion struct {
-	Content      string
-	ToolCalls    []ToolCall
-	InputTokens  int
-	OutputTokens int
-	FinishReason string
+	Content          string
+	ReasoningContent string
+	ToolCalls        []ToolCall
+	InputTokens      int
+	OutputTokens     int
+	FinishReason     string
 }
 
 type Chunk struct {

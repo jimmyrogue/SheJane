@@ -83,6 +83,20 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return this.runs.get(id)
   }
 
+  updateRunWorkspace(id: string, workspacePath: string): LocalRun | undefined {
+    const run = this.runs.get(id)
+    if (!run) {
+      return undefined
+    }
+    const next: LocalRun = {
+      ...run,
+      workspacePath: resolve(workspacePath),
+      updatedAt: new Date().toISOString(),
+    }
+    this.runs.set(id, next)
+    return next
+  }
+
   countEvents(runID: string): number {
     return this.events.get(runID)?.length ?? 0
   }

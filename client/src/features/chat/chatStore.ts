@@ -122,19 +122,19 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
     case 'skill.selected':
       return { type: event.event_type, label: `选择能力：${stringValue(payload.skill) || 'direct-answer'}`, eventId }
     case 'tool.requested':
-      return { type: event.event_type, label: `调用工具：${stringValue(payload.tool)}`, eventId }
+      return { type: event.event_type, label: `调用工具：${toolActionLabel(stringValue(payload.tool))}`, eventId }
     case 'tool.completed':
-      return { type: event.event_type, label: `工具完成：${stringValue(payload.tool)}`, eventId }
+      return { type: event.event_type, label: `工具完成：${toolActionLabel(stringValue(payload.tool))}`, eventId }
     case 'tool.failed':
-      return { type: event.event_type, label: `工具失败：${stringValue(payload.tool)}`, eventId }
+      return { type: event.event_type, label: `工具失败：${toolActionLabel(stringValue(payload.tool))}`, eventId }
     case 'permission.required': {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `需要权限：${tool}`,
+        label: `需要权限：${toolActionLabel(tool)}`,
         eventId,
         permissionRequestId: stringValue(payload.request_id),
-        permissionTool: tool,
+        permissionTool: toolActionLabel(tool),
       }
     }
     case 'permission.resolved': {
@@ -142,10 +142,10 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const decision = payload.decision === 'approve' ? 'approve' : 'deny'
       return {
         type: event.event_type,
-        label: `${decision === 'approve' ? '权限已批准' : '权限已拒绝'}：${tool}`,
+        label: `${decision === 'approve' ? '权限已批准' : '权限已拒绝'}：${toolActionLabel(tool)}`,
         eventId,
         permissionRequestId: stringValue(payload.request_id),
-        permissionTool: tool,
+        permissionTool: toolActionLabel(tool),
         permissionDecision: decision,
       }
     }
@@ -166,7 +166,7 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `${status === 'passed' ? '验证通过' : '验证失败'}：${tool}`,
+        label: `${status === 'passed' ? '验证通过' : '验证失败'}：${toolActionLabel(tool)}`,
         eventId,
         verificationStatus: status,
       }
@@ -184,4 +184,29 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function toolActionLabel(tool: string): string {
+  const labels: Record<string, string> = {
+    'fs.list': '列出文件',
+    'fs.read': '读取文件',
+    'fs.search': '搜索文件',
+    'fs.write': '写入文件',
+    'file.read': '读取文件',
+    'file.search': '搜索文件',
+    'file.write': '写入文件',
+    'workspace.open': '打开工作区',
+    'open.url': '打开网页',
+    'open.file': '打开文件',
+    'clipboard.read': '读取剪贴板',
+    'clipboard.write': '写入剪贴板',
+    'task.verify': '验证任务结果',
+    'shell.run': '运行命令',
+    'web.fetch': '读取网页',
+    'web.search': '搜索网页',
+    'mcp.call': '调用扩展工具',
+    'document.read': '阅读文档',
+    'time.now': '读取时间',
+  }
+  return labels[tool] || tool || '工具'
 }

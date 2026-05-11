@@ -126,21 +126,54 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    expect(await screen.findByText('本地 Harness')).toBeInTheDocument()
+    expect((await screen.findAllByText('本地 Harness')).length).toBeGreaterThan(0)
     fireEvent.change(screen.getByLabelText('本地工作区路径'), { target: { value: '/tmp/jiandanly-workspace' } })
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
       target: { value: '运行本地检查' },
     })
     fireEvent.click(screen.getByText('发送'))
 
-    expect((await screen.findAllByText('需要权限：shell.run')).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByText('批准 shell.run'))
+    expect((await screen.findAllByText('需要权限：运行命令')).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByText('批准 运行命令'))
 
     expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
-    expect(await screen.findByText('验证通过：shell.run')).toBeInTheDocument()
+    expect(await screen.findByText('验证通过：运行命令')).toBeInTheDocument()
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toBe(true)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell' && call.init?.method === 'POST')).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
+  })
+
+  it('syncs the cloud login session into the paired Local Harness and clears it on logout', async () => {
+    const calls = mockFetch('user')
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.url === 'http://127.0.0.1:17371/local/v1/session' &&
+            call.init?.method === 'POST' &&
+            call.init.body === JSON.stringify({ cloud_base_url: 'http://localhost:8080', access_token: 'user-token' }),
+        ),
+      ).toBe(true)
+    })
+
+    fireEvent.click(screen.getByTitle('退出登录'))
+
+    await screen.findByText('创建账号')
+    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/session' && call.init?.method === 'DELETE')).toBe(true)
   })
 
   it('previews local artifacts from the agent timeline', async () => {
@@ -197,7 +230,7 @@ describe('user client shell', () => {
     })
     fireEvent.click(screen.getByText('发送'))
 
-    expect((await screen.findAllByText('需要权限：shell.run')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('需要权限：运行命令')).length).toBeGreaterThan(0)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces' && call.init?.method === 'POST')).toBe(true)
     await waitFor(() => {
       expect(
@@ -305,6 +338,20 @@ function mockFetch(
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/session' && init?.method === 'POST') {
+      return new Response(
+        JSON.stringify({
+          connected: true,
+          cloud_base_url: 'http://localhost:8080',
+          auth: 'bearer',
+          updated_at: '2026-05-11T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/session' && init?.method === 'DELETE') {
+      return new Response(JSON.stringify({ connected: false }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs' && init?.method === 'POST') {
       return new Response(

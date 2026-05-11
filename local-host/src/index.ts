@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createLocalHostServer } from './server.js'
 import { SQLiteLocalHostStore } from './state/sqliteStore.js'
-import { CloudLLMGateway } from './llm/cloudGateway.js'
+import { LocalCloudSessionManager } from './llm/cloudSession.js'
 
 const host = process.env.JIANDANLY_LOCAL_HOST_ADDR || '127.0.0.1'
 const port = Number(process.env.JIANDANLY_LOCAL_HOST_PORT || '17371')
@@ -19,14 +19,11 @@ const dbPath =
 const store = new SQLiteLocalHostStore(dbPath)
 const cloudBaseURL = process.env.JIANDANLY_CLOUD_BASE_URL
 const cloudAccessToken = process.env.JIANDANLY_CLOUD_ACCESS_TOKEN
-const llmGateway =
-  cloudBaseURL && cloudAccessToken
-    ? new CloudLLMGateway({
-        baseURL: cloudBaseURL,
-        accessToken: cloudAccessToken,
-      })
-    : undefined
-const server = createLocalHostServer({ pairingToken, store, llmGateway })
+const cloudSession = new LocalCloudSessionManager({ defaultBaseURL: cloudBaseURL })
+if (cloudBaseURL && cloudAccessToken) {
+  cloudSession.setSession({ cloudBaseURL, accessToken: cloudAccessToken })
+}
+const server = createLocalHostServer({ pairingToken, store, cloudSession })
 
 server.listen(port, host, () => {
   // eslint-disable-next-line no-console

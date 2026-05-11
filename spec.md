@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. First tools: `time.now`, `workspace.open`, `file.read`, `file.search`, `shell.run`. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.list`, `fs.read`, `fs.search`, `fs.write`, `open.url`, `open.file`, `clipboard.read`, `clipboard.write`, and `task.verify`; legacy `file.*` aliases remain for compatibility. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -331,6 +331,20 @@ Pairing:
 - Mark the run status as `failed` instead of leaving it stuck in `running`. **Done.**
 - Keep retry/backoff policies and richer failure diagnosis as follow-ups. **Pending.**
 
+### Phase 2.14: Electron Session and Debuggability
+
+- Electron login syncs a short-lived cloud session into Local Host memory so manual testing does not require copying access tokens. **Done.**
+- DeepSeek/OpenAI-compatible dotted tool names are mapped to provider-safe names and back. **Done.**
+- Local dev startup and log inspection are exposed through `make dev-electron` and `make logs-*`. **Done.**
+
+### Phase 2.15: Universal Tool Primitives
+
+- Reframe the tool roadmap around general work-agent verbs instead of programmer-first tools. **Done.**
+- Add `fs.list`, `fs.read`, `fs.search`, `fs.write`, `open.url`, `open.file`, `clipboard.read`, `clipboard.write`, and `task.verify`. **Done.**
+- Keep `file.read`, `file.search`, and `file.write` as compatibility aliases while prompting the model to prefer `fs.*`. **Done.**
+- Render permission requests with user-facing action names such as "打开网页", "写入文件", and "写入剪贴板". **Done.**
+- Full browser/page observation, screen observation, and app-control actions remain Phase 2.16+ work. **Pending.**
+
 ## 9. Test Strategy
 
 - macOS/Windows install, start, stop, update, uninstall, health check.
@@ -338,6 +352,9 @@ Pairing:
 - Host offline falls back to cloud-limited mode.
 - Local run creation streams ordered events and writes local persistence.
 - `file.read` stays inside authorized workspace.
+- `fs.list`, `fs.read`, `fs.search`, and `fs.write` stay inside authorized workspace.
+- `open.url`, `open.file`, and clipboard tools require explicit permission.
+- `task.verify` covers simple file, content, URL, and boolean checks.
 - `shell.run` requires explicit permission.
 - Denied permission becomes recoverable observation, not a crash.
 - Large tool output becomes artifact.

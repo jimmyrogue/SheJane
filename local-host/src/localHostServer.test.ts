@@ -1,4 +1,4 @@
-import type { Server } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -167,6 +167,78 @@ describe('local host daemon foundation', () => {
       'run.completed',
     ])
     expect(events.at(-1)?.payload.final).toBe('todo.txt says ship phase 2.4')
+  })
+
+  it('accepts a paired cloud session without persisting or returning the access token', async () => {
+    const cloudCalls: Array<{ authorization?: string; body: unknown }> = []
+    const cloudBaseURL = await startCloudGateway(async (request, response) => {
+      let raw = ''
+      for await (const chunk of request) {
+        raw += chunk
+      }
+      cloudCalls.push({
+        authorization: request.headers.authorization,
+        body: JSON.parse(raw),
+      })
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        code: 0,
+        message: 'ok',
+        data: {
+          requestId: 'cloud-req-1',
+          content: '云端 session 已接通',
+          toolCalls: [],
+        },
+      }))
+    })
+    const baseURL = await startServer()
+
+    const initialSession = await fetch(`${baseURL}/local/v1/session`, {
+      headers: authHeaders(),
+    })
+    expect(initialSession.status).toBe(200)
+    await expect(initialSession.json()).resolves.toEqual({ connected: false })
+
+    const session = await fetch(`${baseURL}/local/v1/session`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloud_base_url: cloudBaseURL, access_token: 'cloud-user-token' }),
+    })
+    expect(session.status).toBe(200)
+    const sessionBody = await session.json()
+    expect(sessionBody).toMatchObject({
+      connected: true,
+      cloud_base_url: cloudBaseURL,
+      auth: 'bearer',
+    })
+    expect(JSON.stringify(sessionBody)).not.toContain('cloud-user-token')
+
+    const created = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Use cloud session.' }),
+    })
+    const run = await created.json()
+    const stream = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, {
+      headers: authHeaders(),
+    })
+    const events = parseSSE(await stream.text())
+
+    expect(events.at(-1)?.event_type).toBe('run.completed')
+    expect(events.at(-1)?.payload.final).toBe('云端 session 已接通')
+    expect(cloudCalls).toHaveLength(1)
+    expect(cloudCalls[0].authorization).toBe('Bearer cloud-user-token')
+    expect(cloudCalls[0].body).toMatchObject({
+      run_id: run.id,
+      mode: 'fast',
+    })
+
+    const cleared = await fetch(`${baseURL}/local/v1/session`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    })
+    expect(cleared.status).toBe(200)
+    await expect(cleared.json()).resolves.toEqual({ connected: false })
   })
 
   it('resolves shell permissions through the permission endpoint', async () => {
@@ -384,6 +456,19 @@ async function startServer(llmGateway?: LLMGateway): Promise<string> {
     store: new InMemoryLocalHostStore(),
     llmGateway,
   })
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  servers.push(server)
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected TCP server address')
+  }
+  return `http://127.0.0.1:${address.port}`
+}
+
+async function startCloudGateway(handler: Parameters<typeof createServer>[0]): Promise<string> {
+  const server = createServer(handler)
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve)
   })

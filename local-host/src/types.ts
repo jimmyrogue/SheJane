@@ -42,6 +42,7 @@ export interface PermissionRequest {
 export interface StoredHarnessMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  reasoningContent?: string
   toolCallId?: string
   name?: string
   toolCalls?: Array<{
@@ -199,6 +200,7 @@ export interface LocalHostStore {
   createRun(input: { goal: string; workspacePath?: string }): LocalRun
   listRuns(limit?: number): LocalRun[]
   getRun(id: string): LocalRun | undefined
+  updateRunWorkspace(id: string, workspacePath: string): LocalRun | undefined
   countEvents(runID: string): number
   listEvents(runID: string): LocalEvent[]
   appendEvent(runID: string, eventType: string, payload?: Record<string, unknown>): LocalEvent

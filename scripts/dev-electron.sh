@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_DIR="${JIANDANLY_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
+TOKEN="${JIANDANLY_LOCAL_HOST_TOKEN:-dev-local-token}"
+API_PORT="${API_PORT:-8080}"
+API_BASE_URL="${JIANDANLY_CLOUD_BASE_URL:-http://localhost:${API_PORT}}"
+LOCAL_HOST_PORT="${JIANDANLY_LOCAL_HOST_PORT:-17371}"
+LOCAL_HOST_URL="${JIANDANLY_LOCAL_HOST_URL:-http://127.0.0.1:${LOCAL_HOST_PORT}}"
+CLIENT_DEV_PORT="${CLIENT_DEV_PORT:-55173}"
+CLIENT_DEV_URL="${ELECTRON_DEV_URL:-http://127.0.0.1:${CLIENT_DEV_PORT}}"
+
+PIDS=()
+
+kill_tree() {
+  local pid="$1"
+  local child
+  while read -r child; do
+    [[ -n "$child" ]] && kill_tree "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+  kill "$pid" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  trap - EXIT INT TERM
+  for pid in "${PIDS[@]:-}"; do
+    kill_tree "$pid"
+  done
+}
+trap cleanup EXIT INT TERM
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 127
+  fi
+}
+
+ensure_node_modules() {
+  local package_dir="$1"
+  if [[ ! -d "${package_dir}/node_modules" ]]; then
+    echo "Installing dependencies in ${package_dir}"
+    (cd "$package_dir" && npm install)
+  fi
+}
+
+wait_for_url() {
+  local url="$1"
+  local label="$2"
+  local log_file="${3:-}"
+  for _ in $(seq 1 120); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for ${label}: ${url}" >&2
+  if [[ -n "$log_file" && -f "$log_file" ]]; then
+    echo "Last ${label} log lines:" >&2
+    tail -80 "$log_file" >&2 || true
+  fi
+  exit 1
+}
+
+start_cloud_stack() {
+  if [[ "${SKIP_DOCKER:-}" == "1" ]]; then
+    echo "Skipping Docker startup because SKIP_DOCKER=1"
+    wait_for_url "${API_BASE_URL}/health" "API"
+    return
+  fi
+
+  require_command docker
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is not reachable. Start Docker Desktop or rerun with SKIP_DOCKER=1 if your API is already running." >&2
+    exit 2
+  fi
+
+  echo "Starting cloud control plane with Docker Compose in detached mode"
+  (cd "$ROOT_DIR" && docker compose up -d --build)
+  wait_for_url "${API_BASE_URL}/health" "API"
+}
+
+start_local_host() {
+  if curl -fsS "${LOCAL_HOST_URL}/local/v1/health" >/dev/null 2>&1; then
+    echo "Local Host already running at ${LOCAL_HOST_URL}"
+    return
+  fi
+
+  local log_file="${LOG_DIR}/local-host.log"
+  echo "Starting Local Agent Harness at ${LOCAL_HOST_URL}"
+  (
+    cd "${ROOT_DIR}/local-host"
+    JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
+      JIANDANLY_LOCAL_HOST_PORT="$LOCAL_HOST_PORT" \
+      JIANDANLY_CLOUD_BASE_URL="$API_BASE_URL" \
+      npm run dev >"$log_file" 2>&1
+  ) &
+  PIDS+=("$!")
+  wait_for_url "${LOCAL_HOST_URL}/local/v1/health" "Local Host" "$log_file"
+}
+
+start_client_dev_server() {
+  if curl -fsS "$CLIENT_DEV_URL" >/dev/null 2>&1; then
+    echo "Client dev server already running at ${CLIENT_DEV_URL}"
+    return
+  fi
+
+  local log_file="${LOG_DIR}/client-vite.log"
+  echo "Starting client dev server at ${CLIENT_DEV_URL}"
+  (
+    cd "${ROOT_DIR}/client"
+    VITE_API_BASE_URL="$API_BASE_URL" \
+      npm run dev -- --host 127.0.0.1 --port "$CLIENT_DEV_PORT" >"$log_file" 2>&1
+  ) &
+  PIDS+=("$!")
+  wait_for_url "$CLIENT_DEV_URL" "client dev server" "$log_file"
+}
+
+launch_electron() {
+  echo "Launching Electron. Close the app window to stop local dev helper processes."
+  (
+    cd "${ROOT_DIR}/client"
+    ELECTRON_DEV=true \
+      ELECTRON_DEV_URL="$CLIENT_DEV_URL" \
+      JIANDANLY_LOCAL_HOST_URL="$LOCAL_HOST_URL" \
+      JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
+      npm run electron
+  ) &
+  local electron_pid="$!"
+  PIDS+=("$electron_pid")
+  wait "$electron_pid"
+}
+
+main() {
+  require_command curl
+  require_command npm
+  mkdir -p "$LOG_DIR"
+  ensure_node_modules "${ROOT_DIR}/client"
+  ensure_node_modules "${ROOT_DIR}/local-host"
+
+  start_cloud_stack
+  start_local_host
+  start_client_dev_server
+  launch_electron
+}
+
+main "$@"

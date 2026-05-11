@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { lookup } from 'node:dns/promises'
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
-import { relative, resolve, sep } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
 import type { LLMToolCall } from '../llm/gateway.js'
 import type { LocalRun } from '../types.js'
 import { callStdioMCPTool, parseMCPServersConfig, type MCPServerConfig } from './mcpRuntime.js'
@@ -18,6 +18,11 @@ export interface ToolExecutionResult {
 export interface ToolExecutionOptions {
   fetcher?: typeof fetch
   resolveHostname?: (hostname: string) => Promise<string[]>
+  opener?: (target: { kind: 'url' | 'file'; target: string }) => Promise<void>
+  clipboard?: {
+    readText: () => Promise<string>
+    writeText: (text: string) => Promise<void>
+  }
   tavilyApiKey?: string
   tavilyBaseURL?: string
   mcpAllowlist?: string[]
@@ -34,12 +39,33 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
         data: {
           iso: new Date().toISOString(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          source: 'time.now',
         },
       }
+    case 'fs.list':
+      return listWorkspaceDirectory(call, run)
+    case 'fs.read':
+      return readWorkspaceFile(call, run, 'fs.read')
+    case 'fs.search':
+      return searchWorkspaceFiles(call, run, 'fs.search')
+    case 'fs.write':
+      return writeWorkspaceFile(call, run, 'fs.write')
     case 'file.read':
-      return readWorkspaceFile(call, run)
+      return readWorkspaceFile(call, run, 'file.read')
     case 'file.search':
-      return searchWorkspaceFiles(call, run)
+      return searchWorkspaceFiles(call, run, 'file.search')
+    case 'file.write':
+      return writeWorkspaceFile(call, run, 'file.write')
+    case 'open.url':
+      return openURL(call, options)
+    case 'open.file':
+      return openWorkspaceFile(call, run, options)
+    case 'clipboard.read':
+      return readClipboard(options)
+    case 'clipboard.write':
+      return writeClipboard(call, options)
+    case 'task.verify':
+      return verifyTask(call, run)
     case 'shell.run':
       return runShellCommand(call, run)
     case 'web.fetch':
@@ -73,7 +99,40 @@ export function pathInsideWorkspace(run: LocalRun, inputPath: unknown): { ok: tr
   return { ok: true, path: target, root }
 }
 
-async function readWorkspaceFile(call: LLMToolCall, run: LocalRun): Promise<ToolExecutionResult> {
+async function listWorkspaceDirectory(call: LLMToolCall, run: LocalRun): Promise<ToolExecutionResult> {
+  const checked = pathInsideWorkspace(run, typeof call.arguments.path === 'string' ? call.arguments.path : '.')
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  const maxEntries = typeof call.arguments.maxEntries === 'number' ? Math.max(1, Math.min(call.arguments.maxEntries, 500)) : 200
+  try {
+    const entries = await readdir(checked.path, { withFileTypes: true })
+    const listed = entries.slice(0, maxEntries).map((entry) => ({
+      name: entry.name,
+      path: relative(checked.root, resolve(checked.path, entry.name)),
+      type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other',
+    }))
+    return {
+      ok: true,
+      content: JSON.stringify(listed),
+      data: {
+        source: 'fs.list',
+        path: relative(checked.root, checked.path) || '.',
+        entries: listed,
+        truncated: entries.length > listed.length,
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to list directory.',
+      errorCode: 'fs_list_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function readWorkspaceFile(call: LLMToolCall, run: LocalRun, source: string): Promise<ToolExecutionResult> {
   const checked = pathInsideWorkspace(run, call.arguments.path)
   if (!checked.ok) {
     return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
@@ -86,6 +145,7 @@ async function readWorkspaceFile(call: LLMToolCall, run: LocalRun): Promise<Tool
       ok: true,
       content: buffer.subarray(0, maxBytes).toString('utf8'),
       data: {
+        source,
         path: relative(checked.root, checked.path),
         bytes: buffer.length,
         truncated,
@@ -95,13 +155,13 @@ async function readWorkspaceFile(call: LLMToolCall, run: LocalRun): Promise<Tool
     return {
       ok: false,
       content: error instanceof Error ? error.message : 'Failed to read file.',
-      errorCode: 'file_read_failed',
+      errorCode: source === 'fs.read' ? 'fs_read_failed' : 'file_read_failed',
       recoverable: true,
     }
   }
 }
 
-async function searchWorkspaceFiles(call: LLMToolCall, run: LocalRun): Promise<ToolExecutionResult> {
+async function searchWorkspaceFiles(call: LLMToolCall, run: LocalRun, source: string): Promise<ToolExecutionResult> {
   if (!run.workspacePath) {
     return { ok: false, content: 'This tool requires an authorized workspace.', errorCode: 'workspace_required', recoverable: true }
   }
@@ -137,7 +197,176 @@ async function searchWorkspaceFiles(call: LLMToolCall, run: LocalRun): Promise<T
   return {
     ok: true,
     content: JSON.stringify(results),
-    data: { results },
+    data: { source, results },
+  }
+}
+
+async function writeWorkspaceFile(call: LLMToolCall, run: LocalRun, source: string): Promise<ToolExecutionResult> {
+  const checked = pathInsideWorkspace(run, call.arguments.path)
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  const content = typeof call.arguments.content === 'string' ? call.arguments.content : undefined
+  if (content === undefined) {
+    return { ok: false, content: 'File content is required.', errorCode: 'content_required', recoverable: true }
+  }
+  const bytes = Buffer.byteLength(content)
+  const maxBytes = 1024 * 1024
+  if (bytes > maxBytes) {
+    return {
+      ok: false,
+      content: `File content exceeds the ${maxBytes} byte limit.`,
+      errorCode: 'content_too_large',
+      recoverable: true,
+    }
+  }
+  try {
+    if (call.arguments.createDirs === true) {
+      await mkdir(dirname(checked.path), { recursive: true })
+    }
+    await writeFile(checked.path, content, 'utf8')
+    return {
+      ok: true,
+      content: `Wrote ${bytes} bytes to ${relative(checked.root, checked.path)}.`,
+      data: {
+        source,
+        path: relative(checked.root, checked.path),
+        bytes,
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to write file.',
+      errorCode: source === 'fs.write' ? 'fs_write_failed' : 'file_write_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function openURL(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const rawURL = typeof call.arguments.url === 'string' ? call.arguments.url.trim() : ''
+  const checked = validateOpenHTTPURL(rawURL)
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  try {
+    await (options.opener ?? openWithSystemDefault)({ kind: 'url', target: checked.url.href })
+    return {
+      ok: true,
+      content: `Opened URL: ${checked.url.href}`,
+      data: { source: 'open.url', url: checked.url.href },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to open URL.',
+      errorCode: 'open_url_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function openWorkspaceFile(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const checked = pathInsideWorkspace(run, call.arguments.path)
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  try {
+    const stats = await stat(checked.path)
+    if (!stats.isFile()) {
+      return { ok: false, content: 'Path is not a file.', errorCode: 'path_not_file', recoverable: true }
+    }
+    await (options.opener ?? openWithSystemDefault)({ kind: 'file', target: checked.path })
+    return {
+      ok: true,
+      content: `Opened file: ${relative(checked.root, checked.path)}`,
+      data: { source: 'open.file', path: relative(checked.root, checked.path) },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to open file.',
+      errorCode: 'open_file_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function readClipboard(options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const text = await (options.clipboard ?? defaultClipboard()).readText()
+    return {
+      ok: true,
+      content: text,
+      data: { source: 'clipboard.read', characters: text.length },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to read clipboard.',
+      errorCode: 'clipboard_read_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function writeClipboard(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const text = typeof call.arguments.text === 'string' ? call.arguments.text : undefined
+  if (text === undefined) {
+    return { ok: false, content: 'Clipboard text is required.', errorCode: 'clipboard_text_required', recoverable: true }
+  }
+  try {
+    await (options.clipboard ?? defaultClipboard()).writeText(text)
+    return {
+      ok: true,
+      content: `Wrote ${text.length} characters to the clipboard.`,
+      data: { source: 'clipboard.write', characters: text.length },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Failed to write clipboard.',
+      errorCode: 'clipboard_write_failed',
+      recoverable: true,
+    }
+  }
+}
+
+async function verifyTask(call: LLMToolCall, run: LocalRun): Promise<ToolExecutionResult> {
+  const check = typeof call.arguments.check === 'string' ? call.arguments.check : ''
+  try {
+    if (check === 'file_exists') {
+      const checked = pathInsideWorkspace(run, call.arguments.path)
+      if (!checked.ok) {
+        return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+      }
+      await stat(checked.path)
+      return verificationResult(check, true, `File exists: ${relative(checked.root, checked.path)}`)
+    }
+    if (check === 'file_contains') {
+      const checked = pathInsideWorkspace(run, call.arguments.path)
+      if (!checked.ok) {
+        return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+      }
+      const text = typeof call.arguments.text === 'string' ? call.arguments.text : ''
+      if (!text) {
+        return { ok: false, content: 'Text is required.', errorCode: 'text_required', recoverable: true }
+      }
+      const content = await readFile(checked.path, 'utf8')
+      return verificationResult(check, content.includes(text), `File ${content.includes(text) ? 'contains' : 'does not contain'} requested text.`)
+    }
+    if (check === 'url_valid') {
+      const rawURL = typeof call.arguments.url === 'string' ? call.arguments.url : ''
+      const checked = validateOpenHTTPURL(rawURL)
+      return verificationResult(check, checked.ok, checked.ok ? `URL is valid: ${checked.url.href}` : checked.message)
+    }
+    if (check === 'boolean') {
+      return verificationResult(check, call.arguments.value === true, call.arguments.value === true ? 'Boolean assertion passed.' : 'Boolean assertion failed.')
+    }
+    return { ok: false, content: `Unsupported verification check: ${check}`, errorCode: 'unsupported_verification_check', recoverable: true }
+  } catch (error) {
+    return verificationResult(check, false, error instanceof Error ? error.message : 'Verification failed.')
   }
 }
 
@@ -461,6 +690,125 @@ function isBlockedIP(ip: string): boolean {
 function isTextualContentType(contentType: string): boolean {
   const lower = contentType.toLowerCase()
   return lower.startsWith('text/') || lower.includes('json') || lower.includes('xml') || lower.includes('markdown')
+}
+
+function validateOpenHTTPURL(rawURL: string): { ok: true; url: URL } | { ok: false; errorCode: string; message: string } {
+  if (!rawURL.trim()) {
+    return { ok: false, errorCode: 'url_required', message: 'A URL is required.' }
+  }
+  try {
+    const url = new URL(rawURL)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { ok: false, errorCode: 'invalid_url_scheme', message: 'Only http and https URLs can be opened.' }
+    }
+    return { ok: true, url }
+  } catch {
+    return { ok: false, errorCode: 'invalid_url', message: 'Invalid URL.' }
+  }
+}
+
+function verificationResult(check: string, passed: boolean, content: string): ToolExecutionResult {
+  return {
+    ok: passed,
+    content,
+    errorCode: passed ? undefined : 'verification_failed',
+    recoverable: !passed,
+    data: {
+      source: 'task.verify',
+      check,
+      passed,
+    },
+  }
+}
+
+async function openWithSystemDefault(target: { kind: 'url' | 'file'; target: string }): Promise<void> {
+  const platform = process.platform
+  if (platform === 'darwin') {
+    await runDetached('open', [target.target])
+    return
+  }
+  if (platform === 'win32') {
+    await runDetached('cmd', ['/c', 'start', '', target.target])
+    return
+  }
+  await runDetached('xdg-open', [target.target])
+}
+
+function defaultClipboard(): NonNullable<ToolExecutionOptions['clipboard']> {
+  return {
+    readText: async () => {
+      if (process.platform === 'darwin') {
+        return runForOutput('pbpaste', [])
+      }
+      if (process.platform === 'win32') {
+        return runForOutput('powershell.exe', ['-NoProfile', '-Command', 'Get-Clipboard'])
+      }
+      return runForOutput('sh', ['-lc', 'command -v wl-paste >/dev/null 2>&1 && wl-paste || xclip -selection clipboard -o'])
+    },
+    writeText: async (text: string) => {
+      if (process.platform === 'darwin') {
+        await runWithInput('pbcopy', [], text)
+        return
+      }
+      if (process.platform === 'win32') {
+        await runWithInput('powershell.exe', ['-NoProfile', '-Command', 'Set-Clipboard'], text)
+        return
+      }
+      await runWithInput('sh', ['-lc', 'command -v wl-copy >/dev/null 2>&1 && wl-copy || xclip -selection clipboard'], text)
+    },
+  }
+}
+
+async function runDetached(command: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' })
+    child.on('error', reject)
+    child.on('spawn', () => {
+      child.unref()
+      resolvePromise()
+    })
+  })
+}
+
+async function runForOutput(command: string, args: string[]): Promise<string> {
+  return new Promise<string>((resolvePromise, reject) => {
+    const child = spawn(command, args)
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise(stdout)
+        return
+      }
+      reject(new Error(stderr.trim() || `${command} exited with ${code}`))
+    })
+  })
+}
+
+async function runWithInput(command: string, args: string[], input: string): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(command, args)
+    let stderr = ''
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise()
+        return
+      }
+      reject(new Error(stderr.trim() || `${command} exited with ${code}`))
+    })
+    child.stdin.end(input)
+  })
 }
 
 async function readResponseText(response: Response, maxBytes: number): Promise<string> {

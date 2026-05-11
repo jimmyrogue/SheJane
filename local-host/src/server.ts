@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { runHarness } from './harness/runner.js'
 import type { LLMGateway } from './llm/gateway.js'
+import { LocalCloudSessionManager } from './llm/cloudSession.js'
 import { localHostTools } from './tools/registry.js'
 import {
   localHostVersion,
@@ -29,18 +30,25 @@ export interface LocalHostServerOptions {
   pairingToken: string
   store: LocalHostStore
   llmGateway?: LLMGateway
+  cloudSession?: LocalCloudSessionManager
 }
 
 export function createLocalHostServer(options: LocalHostServerOptions): Server {
+  const resolvedOptions = {
+    ...options,
+    cloudSession: options.cloudSession ?? new LocalCloudSessionManager(),
+  }
   return createServer((request, response) => {
-    handleRequest(request, response, options).catch((error: unknown) => {
+    handleRequest(request, response, resolvedOptions).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : 'Internal server error'
       writeJSON(response, 500, { error: message })
     })
   })
 }
 
-async function handleRequest(request: IncomingMessage, response: ServerResponse, options: LocalHostServerOptions): Promise<void> {
+type ResolvedLocalHostServerOptions = LocalHostServerOptions & { cloudSession: LocalCloudSessionManager }
+
+async function handleRequest(request: IncomingMessage, response: ServerResponse, options: ResolvedLocalHostServerOptions): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1')
 
   if (request.method === 'OPTIONS') {
@@ -68,6 +76,30 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
   if (request.method === 'GET' && url.pathname === '/local/v1/tools') {
     writeJSON(response, 200, { tools: localHostTools })
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/local/v1/session') {
+    writeJSON(response, 200, options.cloudSession.state())
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/local/v1/session') {
+    const body = await readJSONBody<{ cloud_base_url?: unknown; access_token?: unknown }>(request)
+    const accessToken = typeof body.access_token === 'string' ? body.access_token : ''
+    const cloudBaseURL = typeof body.cloud_base_url === 'string' ? body.cloud_base_url : undefined
+    try {
+      writeJSON(response, 200, options.cloudSession.setSession({ cloudBaseURL, accessToken }))
+    } catch (error) {
+      writeJSON(response, 400, {
+        error: error instanceof Error ? error.message : 'cloud_session_invalid',
+      })
+    }
+    return
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/local/v1/session') {
+    writeJSON(response, 200, options.cloudSession.clearSession())
     return
   }
 
@@ -227,7 +259,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     await runHarness({
       run,
       store: options.store,
-      llmGateway: options.llmGateway,
+      llmGateway: currentLLMGateway(options),
       emit: () => undefined,
       resumePermissionID: permission.id,
     })
@@ -256,7 +288,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   writeJSON(response, 404, { error: 'not_found' })
 }
 
-async function streamRun(response: ServerResponse, run: LocalRun, options: LocalHostServerOptions): Promise<void> {
+async function streamRun(response: ServerResponse, run: LocalRun, options: ResolvedLocalHostServerOptions): Promise<void> {
   writeCORS(response)
   response.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -274,13 +306,17 @@ async function streamRun(response: ServerResponse, run: LocalRun, options: Local
     await runHarness({
       run,
       store,
-      llmGateway: options.llmGateway,
+      llmGateway: currentLLMGateway(options),
       emit: (event) => writeSSE(response, event),
     })
   }
 
   response.write('data: [DONE]\n\n')
   response.end()
+}
+
+function currentLLMGateway(options: ResolvedLocalHostServerOptions): LLMGateway | undefined {
+  return options.llmGateway ?? options.cloudSession.gateway()
 }
 
 function writeSSE(response: ServerResponse, event: LocalEvent): void {

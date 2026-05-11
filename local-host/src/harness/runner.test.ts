@@ -23,6 +23,7 @@ describe('harness runner', () => {
     const gateway = new ScriptedGateway([
       {
         requestId: 'req-1',
+        reasoningContent: 'I need to read the requested local note before answering.',
         toolCalls: [
           {
             id: 'call-1',
@@ -47,6 +48,14 @@ describe('harness runner', () => {
           toolCallId: 'call-1',
           name: 'file.read',
           content: expect.stringContaining('Jiandanly harness reads local files.'),
+        }),
+      ]),
+    )
+    expect(gateway.requests[1].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          reasoningContent: 'I need to read the requested local note before answering.',
         }),
       ]),
     )
@@ -171,6 +180,232 @@ describe('harness runner', () => {
     )
   })
 
+  it('opens an approved workspace before running workspace-bound tools', async () => {
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'notes.txt'), 'workspace opened successfully', 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Open this workspace and read notes.txt.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-open',
+        toolCalls: [
+          {
+            id: 'call-open',
+            name: 'workspace.open',
+            arguments: { path: workspace },
+          },
+        ],
+      },
+      {
+        requestId: 'req-read',
+        toolCalls: [
+          {
+            id: 'call-read',
+            name: 'file.read',
+            arguments: { path: 'notes.txt' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-final',
+        content: 'The workspace note was read.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'workspace.open', status: 'pending' })
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    expect(store.getRun(run.id)?.workspacePath).toBe(workspace)
+    expect(gateway.requests.at(-1)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          toolCallId: 'call-read',
+          name: 'file.read',
+          content: expect.stringContaining('workspace opened successfully'),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('pauses file writes for permission and writes only after approval', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Create generated.txt.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-write',
+        toolCalls: [
+          {
+            id: 'call-write',
+            name: 'file.write',
+            arguments: { path: 'generated.txt', content: 'hello from file.write\n' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-final',
+        content: 'generated.txt was created.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'file.write', status: 'pending' })
+    await expect(readFile(join(workspace, 'generated.txt'), 'utf8')).rejects.toThrow()
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    await expect(readFile(join(workspace, 'generated.txt'), 'utf8')).resolves.toBe('hello from file.write\n')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'permission.resolved', payload: expect.objectContaining({ tool: 'file.write' }) }),
+        expect.objectContaining({ eventType: 'tool.completed', payload: expect.objectContaining({ tool: 'file.write' }) }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'file.write',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'file_write_ok', passed: true })]),
+          }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('uses universal primitive permissions for writes, opens, and clipboard changes', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Use universal primitives safely.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-write',
+        toolCalls: [
+          {
+            id: 'call-write',
+            name: 'fs.write',
+            arguments: { path: 'primitive.txt', content: 'primitive write' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-open',
+        toolCalls: [
+          {
+            id: 'call-open-url',
+            name: 'open.url',
+            arguments: { url: 'https://example.com' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-clipboard',
+        toolCalls: [
+          {
+            id: 'call-clipboard',
+            name: 'clipboard.write',
+            arguments: { text: 'copy me' },
+          },
+        ],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Primitive actions completed.',
+      },
+    ])
+    const opened: Array<{ kind: string; target: string }> = []
+    let clipboard = ''
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const writePermission = store.listPermissions(run.id)[0]
+    expect(writePermission).toMatchObject({ toolName: 'fs.write', status: 'pending' })
+    await store.resolvePermission(writePermission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: writePermission.id })
+
+    const openPermission = store.listPermissions(run.id).at(-1)!
+    expect(openPermission).toMatchObject({ toolName: 'open.url', status: 'pending' })
+    await store.resolvePermission(openPermission.id, 'approve')
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumePermissionID: openPermission.id,
+      toolOptions: { opener: async (target) => opened.push(target) },
+    })
+
+    const clipboardPermission = store.listPermissions(run.id).at(-1)!
+    expect(clipboardPermission).toMatchObject({ toolName: 'clipboard.write', status: 'pending' })
+    await store.resolvePermission(clipboardPermission.id, 'approve')
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumePermissionID: clipboardPermission.id,
+      toolOptions: {
+        opener: async (target) => opened.push(target),
+        clipboard: {
+          readText: async () => clipboard,
+          writeText: async (text) => {
+            clipboard = text
+          },
+        },
+      },
+    })
+
+    await expect(readFile(join(workspace, 'primitive.txt'), 'utf8')).resolves.toBe('primitive write')
+    expect(opened).toEqual([{ kind: 'url', target: 'https://example.com/' }])
+    expect(clipboard).toBe('copy me')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('fails fast when the model requests an unsupported tool', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Use a tool that is not registered.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-unknown',
+        toolCalls: [{ id: 'call-unknown', name: 'file.delete', arguments: { path: 'notes.txt' } }],
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(1)
+    expect(store.getRun(run.id)?.status).toBe('failed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'file.delete',
+            error_code: 'unknown_tool',
+            recoverable: false,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.failed',
+          payload: expect.objectContaining({
+            error_code: 'unsupported_tool',
+            tool: 'file.delete',
+          }),
+        }),
+      ]),
+    )
+  })
+
   it('stores long tool output as an artifact and sends only a reference back to the model', async () => {
     const workspace = await tempWorkspace()
     const largeContent = 'phase-2.5-artifact '.repeat(300)
@@ -227,7 +462,7 @@ describe('harness runner', () => {
       },
     ])
 
-    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, contextLimitChars: 600 })
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, contextLimitChars: 1200 })
 
     expect(store.listEvents(run.id)).toEqual(
       expect.arrayContaining([

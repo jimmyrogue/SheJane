@@ -95,6 +95,13 @@ export interface LocalRunDiagnostics {
   } | null
 }
 
+export interface LocalCloudSession {
+  connected: boolean
+  cloud_base_url?: string
+  auth?: 'bearer'
+  updated_at?: string
+}
+
 export interface LocalStreamHandlers {
   onDelta: (content: string, event: AgentRunEvent) => void
   onEvent: (event: AgentRunEvent) => void
@@ -156,6 +163,30 @@ export async function createLocalRun(
     }),
   })
   return decodeLocalResponse<LocalRun>(response)
+}
+
+export async function setLocalCloudSession(
+  input: { cloudBaseURL: string; accessToken: string },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalCloudSession> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/session`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      cloud_base_url: input.cloudBaseURL,
+      access_token: input.accessToken,
+    }),
+  })
+  return decodeLocalResponse<LocalCloudSession>(response)
+}
+
+export async function clearLocalCloudSession(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalCloudSession> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/session`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalCloudSession>(response)
 }
 
 export async function listLocalRuns(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalRun[]> {

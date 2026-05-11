@@ -253,6 +253,17 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return row ? deserializeRun(row) : undefined
   }
 
+  updateRunWorkspace(id: string, workspacePath: string): LocalRun | undefined {
+    const run = this.getRun(id)
+    if (!run) {
+      return undefined
+    }
+    this.db
+      .prepare('UPDATE local_runs SET workspace_path = ?, updated_at = ? WHERE id = ?')
+      .run(resolve(workspacePath), new Date().toISOString(), id)
+    return this.getRun(id)
+  }
+
   countEvents(runID: string): number {
     const row = this.db.prepare('SELECT count(*) AS count FROM local_events WHERE run_id = ?').get(runID) as { count: number }
     return Number(row.count)

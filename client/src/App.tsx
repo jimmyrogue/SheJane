@@ -28,6 +28,7 @@ import { createLocalID, LocalConversationStore } from './shared/local-data/local
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
+  clearLocalCloudSession,
   createLocalRun,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -38,8 +39,10 @@ import {
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermission,
+  setLocalCloudSession,
   streamLocalRun,
   type LocalArtifact,
+  type LocalCloudSession,
   type LocalHostConfig,
   type LocalHostProbe,
   type LocalRun as LocalHarnessRun,
@@ -69,6 +72,7 @@ export function App() {
   const [notice, setNotice] = useState('')
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
+  const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
   const [localWorkspacePath, setLocalWorkspacePath] = useState(() => localStorage.getItem('jiandanly-local-workspace') ?? '')
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
@@ -123,6 +127,36 @@ export function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!auth?.access_token || !localHost?.online || !localHostConfig?.token) {
+      if (!auth) {
+        setLocalCloudSessionState(null)
+      }
+      return
+    }
+    let disposed = false
+    void setLocalCloudSession(
+      {
+        cloudBaseURL: api.baseURL,
+        accessToken: auth.access_token,
+      },
+      localHostConfig,
+    )
+      .then((session) => {
+        if (!disposed) {
+          setLocalCloudSessionState(session)
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setLocalCloudSessionState({ connected: false })
+        }
+      })
+    return () => {
+      disposed = true
+    }
+  }, [api, auth, localHost?.online, localHostConfig])
+
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
   const selectedWorkspace = findWorkspaceByPath(authorizedWorkspaces, localWorkspacePath)
@@ -154,7 +188,7 @@ export function App() {
     setIsSending(true)
     setNotice('')
     try {
-      const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token)
+      const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
         ? await sendLocalHarnessMessage(draft)
         : await chat.sendMessage({
@@ -456,7 +490,11 @@ export function App() {
   }
 
   async function logout() {
-    await api.logout()
+    await Promise.allSettled([
+      api.logout(),
+      localHostConfig?.token ? clearLocalCloudSession(localHostConfig) : Promise.resolve(),
+    ])
+    setLocalCloudSessionState(null)
     setAuth(null)
     setBalance(null)
     setDocuments([])
@@ -595,7 +633,7 @@ export function App() {
         <section className="sidebar-section">
           <div className="section-heading">
             <span>本地工作区</span>
-            <small>{localHost?.online ? (localHostConfig?.token ? '已配对' : '待配对') : '未连接'}</small>
+            <small>{localHostStatusLabel(localHost, localHostConfig, localCloudSession)}</small>
           </div>
           <label className="workspace-path-field">
             <span>
@@ -704,7 +742,7 @@ export function App() {
           <div className="account">
             {localHost ? (
               <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
-                {localHost.online ? (localHostConfig?.token ? '本地 Harness' : '本地未配对') : '云端受限'}
+                {localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
               </span>
             ) : null}
             <span>{auth.user.email}</span>
@@ -777,7 +815,7 @@ export function App() {
           {attachedDocument?.status === 'failed' ? (
             <div className="document-status failed">{attachedDocument.error_message || '解析失败'}</div>
           ) : null}
-          {!attachedDocument && localHost?.online && localHostConfig?.token && localWorkspacePath.trim() ? (
+          {!attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected && localWorkspacePath.trim() ? (
             <div className={`local-project-chip ${selectedWorkspace ? '' : 'pending'}`}>
               <FolderOpen size={15} />
               <span>本地项目：{localProjectLabel}</span>
@@ -823,6 +861,23 @@ function ModeToggle({ mode, onChange }: { mode: ChatMode; onChange: (mode: ChatM
       </button>
     </div>
   )
+}
+
+function localHostStatusLabel(
+  localHost: LocalHostProbe | null,
+  config: LocalHostConfig | null,
+  session: LocalCloudSession | null,
+): string {
+  if (!localHost?.online) {
+    return '云端受限'
+  }
+  if (!config?.token) {
+    return '本地未配对'
+  }
+  if (!session?.connected) {
+    return '本地待登录'
+  }
+  return '本地 Harness'
 }
 
 function AgentTimeline({

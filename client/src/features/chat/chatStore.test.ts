@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createChatStore } from './chatStore'
+import { createChatStore, timelineItem } from './chatStore'
 import { LocalConversationStore } from '../../shared/local-data/localConversations'
 import type { ChatAPI } from '../../shared/api/client'
 
@@ -83,5 +83,22 @@ describe('chat store', () => {
       runId: 'run-doc-1',
     })
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
+  })
+
+  it('renders universal primitive tool events with user-facing action names', () => {
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-url', tool: 'open.url' } })).toMatchObject({
+      label: '需要权限：打开网页',
+      permissionTool: '打开网页',
+    })
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-write', tool: 'fs.write' } })).toMatchObject({
+      label: '需要权限：写入文件',
+      permissionTool: '写入文件',
+    })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'fs.list' } })).toMatchObject({
+      label: '调用工具：列出文件',
+    })
+    expect(timelineItem({ event_type: 'verification.completed', payload: { tool: 'task.verify', status: 'passed' } })).toMatchObject({
+      label: '验证通过：验证任务结果',
+    })
   })
 })

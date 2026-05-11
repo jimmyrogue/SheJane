@@ -3,6 +3,7 @@ import type { ToolDefinition } from '../types.js'
 export interface HarnessMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  reasoningContent?: string
   toolCallId?: string
   name?: string
   toolCalls?: LLMToolCall[]
@@ -24,6 +25,7 @@ export interface LLMGatewayRequest {
 export interface LLMGatewayResponse {
   requestId?: string
   content?: string
+  reasoningContent?: string
   toolCalls?: LLMToolCall[]
 }
 

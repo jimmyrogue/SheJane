@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/coldflame/jiandanly/api/internal/billing"
 	"github.com/coldflame/jiandanly/api/internal/config"
 	"github.com/coldflame/jiandanly/api/internal/documents"
+	"github.com/coldflame/jiandanly/api/internal/llm"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
 
@@ -349,6 +351,34 @@ func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	}
 	if calls := usageRecords(t, server, token); !strings.Contains(calls, `"scene":"agent_local"`) {
 		t.Fatalf("usage records missing agent_local scene: %s", calls)
+	}
+}
+
+func TestAgentLLMGatewayReturnsPaymentRequiredWhenSettlementExceedsBalance(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 400
+	memory := store.NewMemoryStore()
+	service := app.New(cfg, memory)
+	highUsage := highUsageProvider{name: "deepseek-fast"}
+	service.Router = llm.NewRouterWithModels(highUsage, "deepseek-test", highUsage, "deepseek-test")
+	server := NewServer(service)
+
+	token := registerAndToken(t, server)
+	body := `{"run_id":"local-run-1","mode":"fast","messages":[{"role":"user","content":"hello"}],"tools":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusPaymentRequired {
+		t.Fatalf("agent llm status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "额度不足") {
+		t.Fatalf("agent llm body missing quota message: %s", recorder.Body.String())
 	}
 }
 
@@ -859,6 +889,23 @@ func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	server, _ := newTestServerAndStore(t, nil)
 	return server
+}
+
+type highUsageProvider struct {
+	name string
+}
+
+func (p highUsageProvider) Name() string {
+	return p.name
+}
+
+func (p highUsageProvider) Stream(ctx context.Context, request llm.ChatRequest, model string) (<-chan llm.Chunk, <-chan error) {
+	chunks := make(chan llm.Chunk, 1)
+	errs := make(chan error, 1)
+	chunks <- llm.Chunk{Text: "expensive response", InputTokens: 300, OutputTokens: 500}
+	close(chunks)
+	close(errs)
+	return chunks, errs
 }
 
 func newTestServerWithConfig(t *testing.T, mutate func(*config.Config)) http.Handler {

@@ -117,13 +117,14 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 }
 
 func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, request ChatRequest, model string) (Completion, error) {
+	toolNames, reverseToolNames := openAIToolNameMaps(request.Tools)
 	payload := map[string]any{
 		"model":    model,
-		"messages": openAIMessages(request.Messages),
+		"messages": openAIMessages(request.Messages, toolNames),
 		"stream":   false,
 	}
 	if len(request.Tools) > 0 {
-		payload["tools"] = openAITools(request.Tools)
+		payload["tools"] = openAITools(request.Tools, toolNames)
 		payload["tool_choice"] = "auto"
 	}
 	body, err := json.Marshal(payload)
@@ -159,6 +160,7 @@ func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, reques
 	}
 	choice := event.Choices[0]
 	completion.Content = choice.Message.Content
+	completion.ReasoningContent = choice.Message.ReasoningContent
 	completion.FinishReason = choice.FinishReason
 	for _, toolCall := range choice.Message.ToolCalls {
 		arguments := map[string]any{}
@@ -169,7 +171,7 @@ func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, reques
 		}
 		completion.ToolCalls = append(completion.ToolCalls, ToolCall{
 			ID:        toolCall.ID,
-			Name:      toolCall.Function.Name,
+			Name:      reverseToolName(toolCall.Function.Name, reverseToolNames),
 			Arguments: arguments,
 		})
 	}
@@ -192,8 +194,9 @@ type openAIStreamEvent struct {
 type openAICompletionEvent struct {
 	Choices []struct {
 		Message struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []struct {
 				ID       string `json:"id"`
 				Type     string `json:"type"`
 				Function struct {
@@ -210,13 +213,13 @@ type openAICompletionEvent struct {
 	} `json:"usage"`
 }
 
-func openAITools(tools []ToolDefinition) []map[string]any {
+func openAITools(tools []ToolDefinition, names map[string]string) []map[string]any {
 	result := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		result = append(result, map[string]any{
 			"type": "function",
 			"function": map[string]any{
-				"name":        tool.Name,
+				"name":        forwardToolName(tool.Name, names),
 				"description": tool.Description,
 				"parameters":  tool.InputSchema,
 			},
@@ -225,7 +228,7 @@ func openAITools(tools []ToolDefinition) []map[string]any {
 	return result
 }
 
-func openAIMessages(messages []Message) []map[string]any {
+func openAIMessages(messages []Message, toolNames map[string]string) []map[string]any {
 	result := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		item := map[string]any{
@@ -236,7 +239,10 @@ func openAIMessages(messages []Message) []map[string]any {
 			item["tool_call_id"] = message.ToolCallID
 		}
 		if message.Name != "" {
-			item["name"] = message.Name
+			item["name"] = forwardToolName(message.Name, toolNames)
+		}
+		if message.Role == "assistant" && message.ReasoningContent != "" {
+			item["reasoning_content"] = message.ReasoningContent
 		}
 		if len(message.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(message.ToolCalls))
@@ -249,7 +255,7 @@ func openAIMessages(messages []Message) []map[string]any {
 					"id":   call.ID,
 					"type": "function",
 					"function": map[string]any{
-						"name":      call.Name,
+						"name":      forwardToolName(call.Name, toolNames),
 						"arguments": string(arguments),
 					},
 				})
@@ -259,4 +265,77 @@ func openAIMessages(messages []Message) []map[string]any {
 		result = append(result, item)
 	}
 	return result
+}
+
+func openAIToolNameMaps(tools []ToolDefinition) (map[string]string, map[string]string) {
+	forward := make(map[string]string, len(tools))
+	reverse := make(map[string]string, len(tools))
+	used := make(map[string]int, len(tools))
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) == "" {
+			continue
+		}
+		name := providerSafeToolName(tool.Name, used)
+		forward[tool.Name] = name
+		reverse[name] = tool.Name
+	}
+	return forward, reverse
+}
+
+func providerSafeToolName(name string, used map[string]int) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(name) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '_' || r == '-':
+			builder.WriteRune(r)
+		case r == '.':
+			builder.WriteString("__")
+		default:
+			builder.WriteRune('_')
+		}
+	}
+	base := builder.String()
+	if base == "" {
+		base = "tool"
+	}
+	if len(base) > 64 {
+		base = base[:64]
+	}
+	candidate := base
+	if count := used[candidate]; count > 0 {
+		for {
+			suffix := fmt.Sprintf("__%d", count+1)
+			prefix := base
+			if len(prefix)+len(suffix) > 64 {
+				prefix = prefix[:64-len(suffix)]
+			}
+			candidate = prefix + suffix
+			if used[candidate] == 0 {
+				break
+			}
+			count++
+		}
+	}
+	used[candidate]++
+	return candidate
+}
+
+func forwardToolName(name string, names map[string]string) string {
+	if mapped := names[name]; mapped != "" {
+		return mapped
+	}
+	return name
+}
+
+func reverseToolName(name string, names map[string]string) string {
+	if mapped := names[name]; mapped != "" {
+		return mapped
+	}
+	return name
 }

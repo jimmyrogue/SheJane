@@ -107,7 +107,7 @@ interface APIResponse<T> {
 export class JiandanAPI implements ChatAPI {
   private accessToken = ''
 
-  constructor(private readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
+  constructor(readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
 
   setAccessToken(token: string): void {
     this.accessToken = token

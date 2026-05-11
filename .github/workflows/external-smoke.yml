@@ -1,0 +1,26 @@
+name: External Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  external-smoke:
+    name: Real service smoke
+    runs-on: ubuntu-latest
+    env:
+      RUN_EXTERNAL_SMOKE: "1"
+      API_BASE_URL: ${{ secrets.JIANDANLY_API_BASE_URL }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run external smoke scripts
+        run: |
+          test -n "$API_BASE_URL"
+          ./scripts/smoke-external.sh
