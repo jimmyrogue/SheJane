@@ -26,6 +26,7 @@ export interface ChatMessage {
   status: MessageStatus
   requestId?: string
   runId?: string
+  runOrigin?: 'cloud' | 'local'
   creditsCost?: number
   agentEvents?: AgentTimelineItem[]
 }

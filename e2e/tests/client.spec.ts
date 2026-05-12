@@ -86,9 +86,20 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '查看 artifact' }).first().click()
     await expect(page.getByText('Artifact: shell output')).toBeVisible()
     await expect(page.getByText('artifact preview content')).toBeVisible()
+    await page.getByTitle('查看诊断 local-run').click()
+    await expect(page.getByText('任务诊断：local-run')).toBeVisible()
+    await expect(page.getByText('verification.completed')).toBeVisible()
+    await expect(page.locator('.diagnostics-preview').getByText(/https:\/\/example\.com\/source/)).toBeVisible()
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: '导出当前诊断' }).click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toBe('jiandanly-local-run-local-run-diagnostics.json')
+    await expect(page.getByText('诊断已导出：local-run')).toBeVisible()
 
     expect(requestWasMade(state, '/local/v1/runs')).toBe(true)
     expect(requestWasMade(state, '/local/v1/permissions/perm-shell')).toBe(true)
+    expect(requestWasMade(state, '/local/v1/runs/local-run/diagnostics')).toBe(true)
     expect(requestWasMade(state, '/api/v1/agent/runs')).toBe(false)
   })
 

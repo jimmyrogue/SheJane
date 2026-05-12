@@ -47,6 +47,7 @@ import {
   type LocalHostProbe,
   type LocalPermissionScope,
   type LocalRun as LocalHarnessRun,
+  type LocalRunDiagnostics,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
 
@@ -78,6 +79,7 @@ export function App() {
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
+  const [runDiagnostics, setRunDiagnostics] = useState<LocalRunDiagnostics | null>(null)
 
   useEffect(() => {
     void localData.list().then((items) => {
@@ -239,6 +241,7 @@ export function App() {
       content: '',
       createdAt: timestamp,
       status: 'streaming',
+      runOrigin: 'local',
       agentEvents: [],
     }
 
@@ -341,6 +344,7 @@ export function App() {
       createdAt: timestamp,
       status: 'streaming',
       runId: run.id,
+      runOrigin: 'local',
       agentEvents: [],
     }
     conversation.messages = [userMessage, assistantMessage]
@@ -373,16 +377,32 @@ export function App() {
     }
     try {
       const diagnostics = await getLocalRunDiagnostics(run.id, localHostConfig)
-      const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `jiandanly-local-run-${run.id}-diagnostics.json`
-      link.click()
-      URL.revokeObjectURL(url)
-      setNotice(`诊断已导出：${run.id}`)
+      downloadLocalRunDiagnostics(diagnostics)
+      setNotice(`诊断已导出：${diagnostics.run.id}`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '本地任务诊断导出失败')
     }
+  }
+
+  async function openLocalRunDiagnostics(runID: string) {
+    if (!localHostConfig) {
+      setNotice('本地 Harness 未连接')
+      return
+    }
+    try {
+      setRunDiagnostics(await getLocalRunDiagnostics(runID, localHostConfig))
+      setNotice('')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '本地任务诊断读取失败')
+    }
+  }
+
+  function exportCurrentRunDiagnostics() {
+    if (!runDiagnostics) {
+      return
+    }
+    downloadLocalRunDiagnostics(runDiagnostics)
+    setNotice(`诊断已导出：${runDiagnostics.run.id}`)
   }
 
   async function chooseWorkspaceDirectory() {
@@ -765,6 +785,7 @@ export function App() {
                     <AgentTimeline
                       message={message}
                       onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
+                      onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
                       onPermissionDecision={(requestID, decision, scope) => void handlePermissionDecision(message.id, requestID, decision, scope)}
                     />
                   ) : null}
@@ -793,6 +814,45 @@ export function App() {
               </button>
             </header>
             <pre>{artifactPreview.content}</pre>
+          </section>
+        ) : null}
+
+        {runDiagnostics ? (
+          <section className="diagnostics-preview">
+            <header>
+              <div>
+                <strong>任务诊断：{runDiagnostics.run.id}</strong>
+                <small>{runDiagnostics.run.goal || 'Local Harness run'}</small>
+              </div>
+              <div className="diagnostics-actions">
+                <button type="button" onClick={exportCurrentRunDiagnostics}>
+                  <Download size={14} />
+                  导出当前诊断
+                </button>
+                <button className="icon-button light" title="关闭诊断" onClick={() => setRunDiagnostics(null)}>
+                  <X size={15} />
+                </button>
+              </div>
+            </header>
+            <div className="diagnostics-summary">
+              <span>状态 {runDiagnostics.run.status}</span>
+              <span>事件 {runDiagnostics.events.length}</span>
+              <span>权限 {runDiagnostics.permissions.length}</span>
+              <span>Artifact {runDiagnostics.artifacts.length}</span>
+            </div>
+            {runDiagnostics.latest_checkpoint ? (
+              <small className="diagnostics-checkpoint">
+                最新检查点：{runDiagnostics.latest_checkpoint.id} · {runDiagnostics.latest_checkpoint.reason} · {runDiagnostics.latest_checkpoint.messages_count} messages
+              </small>
+            ) : null}
+            <ul className="diagnostics-events">
+              {diagnosticEvents(runDiagnostics).map((event, index) => (
+                <li key={`${event.id ?? event.event_type}-${index}`}>
+                  <code>{event.event_type}</code>
+                  <span>{diagnosticEventDetail(event)}</span>
+                </li>
+              ))}
+            </ul>
           </section>
         ) : null}
 
@@ -884,10 +944,12 @@ function localHostStatusLabel(
 function AgentTimeline({
   message,
   onOpenArtifact,
+  onOpenDiagnostics,
   onPermissionDecision,
 }: {
   message: ChatMessage
   onOpenArtifact: (artifactID: string) => void
+  onOpenDiagnostics?: (runID: string) => void
   onPermissionDecision: (requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
   return (
@@ -924,6 +986,12 @@ function AgentTimeline({
           ) : null}
         </div>
       ))}
+      {message.runId && onOpenDiagnostics && hasLocalDiagnosticSignal(message) ? (
+        <button className="timeline-artifact-button" title={`查看诊断 ${message.runId}`} onClick={() => onOpenDiagnostics(message.runId!)}>
+          <Download size={13} />
+          诊断
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -995,6 +1063,57 @@ function timelineItemClass(event: AgentTimelineItem): string {
     return event.verificationStatus === 'passed' ? 'verification passed' : 'verification failed'
   }
   return ''
+}
+
+function hasLocalDiagnosticSignal(message: ChatMessage): boolean {
+  if (message.runOrigin === 'local') {
+    return true
+  }
+  return (message.agentEvents ?? []).some((event) =>
+    event.type.startsWith('permission.')
+    || event.type.startsWith('checkpoint.')
+    || event.type === 'artifact.created'
+    || event.type === 'source.collected'
+    || event.type === 'browser.observed'
+    || event.type === 'environment.observed'
+    || event.type === 'run.budget_warning',
+  )
+}
+
+function downloadLocalRunDiagnostics(diagnostics: LocalRunDiagnostics) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `jiandanly-local-run-${diagnostics.run.id}-diagnostics.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function diagnosticEvents(diagnostics: LocalRunDiagnostics): AgentRunEvent[] {
+  const interesting = diagnostics.events.filter((event) =>
+    event.event_type === 'source.collected'
+    || event.event_type === 'verification.completed'
+    || event.event_type === 'tool.failed'
+    || event.event_type === 'run.failed'
+    || event.event_type === 'checkpoint.created'
+    || event.event_type === 'checkpoint.resumed',
+  )
+  return (interesting.length ? interesting : diagnostics.events).slice(-8)
+}
+
+function diagnosticEventDetail(event: AgentRunEvent): string {
+  const payload = event.payload ?? {}
+  const title = stringFromPayload(payload.title)
+  const url = stringFromPayload(payload.url)
+  const tool = stringFromPayload(payload.tool)
+  const status = stringFromPayload(payload.status)
+  const errorCode = stringFromPayload(payload.error_code)
+  const message = stringFromPayload(payload.message)
+  return [title, url, tool, status, errorCode, message].filter(Boolean).join(' · ') || '无详情'
+}
+
+function stringFromPayload(value: unknown): string {
+  return typeof value === 'string' ? value : ''
 }
 
 function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payload: AuthPayload) => Promise<void> }) {

@@ -1,4 +1,4 @@
-# Phase 2.3a-2.18 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, Browser Observation, Playwright Managed Browser, and Evidence Grounding
+# Phase 2.3a-2.21 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, Browser Observation, Playwright Managed Browser, Evidence Grounding, Browser Verify, Current Run Diagnostics, and Research Policy
 
 Updated: 2026-05-12
 
@@ -30,6 +30,9 @@ This phase proves:
 - Controlled browser and environment observation let the Harness inspect a managed page and local environment metadata without broad computer control.
 - Playwright Managed Browser gives the Harness a real Chromium page for search, open, snapshot, screenshot, click, type, scroll, and close actions under explicit permission boundaries.
 - Browser research can collect usable sources, classify bad pages, avoid repeated browsing loops, and expose source evidence to the client timeline.
+- Browser verification can check the current managed page against expected text/status and optionally capture screenshot artifacts.
+- Current local runs can be inspected from the message timeline through a redacted diagnostics panel and exported as JSON.
+- Research policy prevents search result pages from becoming sources, hides optional Tavily `web.search` when unconfigured, and asks the model to stop browsing once enough real sources are collected.
 
 ## Completed
 
@@ -198,6 +201,23 @@ This phase proves:
   - Large browser observations are artifactized without injecting long page正文 into the next model call.
   - Updated the local harness prompt to default to 2-3 searches, 3-5 sources, source reading via `browser.read`, and stopping once evidence is sufficient.
   - Client timeline now shows `阅读网页正文` and `收集来源：...` with the source URL.
+- [x] Phase 2.19 Browser Verify:
+  - Added `browser.verify` to validate the current managed browser page against expected text and usable page status.
+  - Failed verification remains a recoverable tool observation so the model can change strategy instead of crashing the run.
+  - Optional verification screenshots are stored as artifacts and referenced by id; image bytes are not injected into prompt context.
+  - Added `browser_verify_ok` verification events and local prompt guidance to verify visual/tabular/card-like pages before final answers.
+- [x] Phase 2.20 Current Run Diagnostics:
+  - Added a diagnostics action to local assistant message timelines.
+  - The diagnostics panel renders run status, event count, permission count, artifact count, latest checkpoint summary, and recent source/verification/error events.
+  - Current-run diagnostics reuse the existing redacted `GET /local/v1/runs/{id}/diagnostics` API and JSON download path.
+  - The panel does not render artifact bodies or full checkpoint messages.
+- [x] Phase 2.21 Research Policy Controller:
+  - Search result pages are now treated as navigation aids and are excluded from `source.collected`.
+  - Source collection is deduplicated by canonical URL and now prefers `browser.read` / `browser.snapshot` evidence over shallow opens.
+  - A research preflight guard blocks further `browser.search`, `browser.open`, or `web.fetch` calls after enough real sources are collected or search/navigation budgets are exhausted.
+  - Optional Tavily-backed `web.search` is hidden from advertised model tools unless `TAVILY_API_KEY` or an injected Tavily key is configured.
+  - `web.fetch` HTTP error observations now return concise summaries instead of large HTML/CSS bodies.
+  - Added env knobs: `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`.
 
 ## Current Boundaries
 
@@ -217,13 +237,16 @@ This phase proves:
 - Phase 2.14 makes Electron the primary Local Harness testing surface by syncing login state into Local Host through paired loopback session APIs.
 - Phase 2.14a makes the local Electron dev path one-command via `make dev-electron`; Docker still stays running after the app exits and can be stopped with `make docker-down`.
 - Phase 2.14b handles DeepSeek V4 thinking-mode tool calls; other OpenAI-compatible providers may still need provider-specific quirks as we broaden model support.
-- Phase 2.14c adds CLI-level observability, but in-app log inspection and one-click current-run diagnostic export are still future work.
+- Phase 2.14c adds CLI-level observability; Phase 2.20 adds one-click current-run diagnostic export, while in-app log tailing is still future work.
 - Phase 2.14d adds a minimal write path, but only for explicit `file.write` approvals inside authorized workspace roots; destructive shell commands still require separate approval.
 - Phase 2.15 adds general work-agent primitives; clipboard operations are text-only, `open.url` supports only `http`/`https`, and `open.file` is limited to authorized workspace files.
 - Phase 2.18 adds source grounding for managed-browser research through `browser.read`, `source.collected`, page quality classification, and duplicate browse protection.
-- Phase 2.17-2.18 browser tooling covers Playwright managed browser search/open/read/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, login-state browsing, user-browser tab inspection, screen OCR, or app-window control.
+- Phase 2.19 adds page-evidence verification through `browser.verify`; it is not an OCR or LLM vision judge.
+- Phase 2.20 adds current-run diagnostics viewing and export; diagnostics import/replay is still pending.
+- Phase 2.21 adds research policy control; it is a soft reliability guard, not a full planner or source-quality ranking engine.
+- Phase 2.17-2.21 browser tooling covers Playwright managed browser search/open/read/verify/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, source-budget preflight, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, login-state browsing, user-browser tab inspection, screen OCR, or app-window control.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
-- Screen/app control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
+- Screen/app control, richer run recovery UI, diagnostics import/replay, desktop OCR, and LLM-as-judge visual verification are still pending.
 
 ## Verification
 
@@ -249,8 +272,16 @@ This phase proves:
 - `cd local-host && npm test -- --run`
 - `cd local-host && npm run build`
 - `cd client && npm test -- --run src/App.test.tsx src/features/chat/chatStore.test.ts`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts src/harness/runner.test.ts -t "browser.verify|visual verification"`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts src/harness/runner.test.ts`
+- `cd client && npm test -- --run src/features/chat/chatStore.test.ts src/App.test.tsx -t "browser and environment|paired local harness"`
+- `cd e2e && npm test -- --grep "paired Local Harness"`
+- `cd local-host && npm test -- --run src/harness/runner.test.ts -t "search result pages|Tavily web.search"`
+- `cd local-host && npm test -- --run src/tools/webTools.test.ts -t "HTTP error observations"`
 - `make test`
 - `make build`
+- `E2E_CLIENT_PORT=55273 E2E_ADMIN_PORT=55274 make test-e2e`
+- `git diff --check`
 - Real API smoke: `POST /api/v1/agent/llm` with `time.now` tools succeeds across first tool-call turn and second observation turn.
 - Real Local Host smoke: temporary Local Host run for `what time is it` reached `run.completed` after `time.now`.
 
@@ -259,5 +290,5 @@ Full workspace verification is tracked in the implementation closeout.
 ## Next
 
 - Add diagnostics import/replay before broadening long-running local automation.
-- Add browser visual verification loops after screenshot artifacts are stable.
+- Add LLM-as-judge visual verification after screenshot artifacts are stable.
 - Add screen/app control only after managed browser actions remain reliable in manual smoke.

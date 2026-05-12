@@ -1,6 +1,6 @@
 # Jiandanly 运维与管理手册
 
-Updated: 2026-05-11
+Updated: 2026-05-12
 
 ## 当前管理边界
 
@@ -193,7 +193,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.18 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
+- **Phase 2.3-2.21 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/verify/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Phase 2.20 起普通 client 可直接从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON；Phase 2.21 起研究策略会排除搜索结果页来源、达到来源/搜索预算后阻止继续浏览、未配置 Tavily 时隐藏 `web.search`；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
@@ -279,9 +279,20 @@ make logs-local-host
 - `browser_http_error`：页面成功打开但 HTTP 状态是 4xx/5xx，例如搜索到的旧 API 已经 404；这是可恢复错误，模型应换来源或基于已有证据说明限制。
 - `browser_empty` / `browser_login_required` / `browser_captcha_like`：页面打开了，但没有可用正文、要求登录或疑似验证码；模型应换来源或说明限制。
 - `browser_duplicate_observation`：同一 run 内第三次重复相同搜索 query 或 URL open 被拦截；模型应换关键词、换来源或总结已有证据。
+- `research_enough_sources`：已收集足够的可用非搜索页来源；模型应停止继续搜索/打开网页，直接基于已有来源回答。
+- `research_search_budget_exhausted` / `research_navigation_budget_exhausted`：当前 run 已达到搜索或候选来源打开预算；模型应收束回答或说明仍缺少的证据。
 - `browser_navigation_blocked`：点击后跳转到了被禁止的 localhost、私网或非 HTTP(S) 目标。
 - `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `JIANDANLY_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
 - `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
+
+Phase 2.19-2.20 Electron 手动 smoke：
+
+1. 运行 `make dev-electron` 并用普通用户登录。
+2. 授权一个无敏感内容的本地测试工作区。
+3. 让 Agent 搜索一个公开网页问题，要求它收集来源并在回答前验证页面证据。
+4. 确认 timeline 出现 `搜索网页`、`阅读网页正文`、`验证网页`、`收集来源` 和最终回答。
+5. 点击当前消息 timeline 的“诊断”，确认诊断面板只显示 run 状态、事件/权限/artifact 计数、最新 checkpoint 摘要和最近来源/验证/错误事件。
+6. 点击“导出当前诊断”，确认下载的 JSON 不包含 artifact 正文或完整 checkpoint messages。
 
 启用 Phase 2.6+ 可选搜索和 MCP：
 
@@ -294,7 +305,13 @@ JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/p
 npm run dev
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时会返回可恢复的 disabled-tool observation。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时不会出现在提供给模型的工具列表里，旧 run 或手工调用仍会得到可恢复的 disabled-tool observation。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+
+研究策略预算可用环境变量微调：
+
+- `JIANDANLY_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
+- `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
+- `JIANDANLY_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
 
 Phase 2.15 通用工具原语：
 
@@ -307,11 +324,12 @@ Phase 2.15 通用工具原语：
 
 旧 `file.read`、`file.search`、`file.write` 仍保留，用于兼容已有 run 和测试；新模型提示会优先引导使用 `fs.*`。
 
-Phase 2.17-2.18 Playwright 托管浏览器：
+Phase 2.17-2.20 Playwright 托管浏览器：
 
 - `browser.search`：使用 `JIANDANLY_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
 - `browser.open`：在 Playwright 托管 Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。
 - `browser.read`：读取当前托管页面的标题、URL、meta 描述、正文和关键链接；长正文保存为 artifact，模型上下文只拿到来源元数据和 artifact 引用。
+- `browser.verify`：验证当前托管页面是否包含期望文本、是否处于 usable 状态；验证失败是可恢复 observation，可按需保存页面截图 artifact。
 - `browser.snapshot`：读取托管页面的标题、URL、可见文本、主要链接、表单、按钮和可交互元素 refs；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
 - `browser.screenshot`：截取当前托管页面 PNG，并保存为本地 artifact；模型上下文只拿到 artifact id 和摘要，不直接塞 base64。
 - `browser.click`、`browser.type`：按 snapshot 中的 `ref` 点击或输入，每次都需要用户批准；密码和一次性验证码输入会被阻止。
@@ -319,7 +337,8 @@ Phase 2.17-2.18 Playwright 托管浏览器：
 - `browser.close`：关闭当前托管浏览器 page/context/browser。
 - `environment.observe`：读取基础本地环境元数据，例如平台、前台应用和窗口标题；每次都需要用户批准，不采集屏幕截图。
 - 事件流会额外出现 `browser.observed`、`source.collected`、`environment.observed`、`ui.action.requested` 和 `ui.action.completed`，client 会显示为“观察网页”“收集来源”“观察环境”“请求操作”等普通用户文案。
-- 浏览器观察会返回 `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`；只有 usable 页面会进入 `source.collected`。
+- 当前消息 timeline 的“诊断”按钮会读取 `GET /local/v1/runs/{id}/diagnostics`，只展示状态、计数、最新 checkpoint 摘要和最近来源/验证/错误事件；不会展示 artifact 正文或完整 checkpoint messages。
+- 浏览器观察会返回 `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`；只有 usable 且不是搜索结果页的 `browser.read` / `browser.snapshot` 页面会进入 `source.collected`。
 - 同一 run 内第三次重复相同搜索 query 或打开相同 URL 会被拦截为可恢复 observation，避免模型在同一来源上绕圈。
 - 默认使用 headless Chromium；调试时可设 `JIANDANLY_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
 - CloakBrowser 只作为未来可选 engine 预留，不进入默认依赖，也不打包 binary。
@@ -336,9 +355,9 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.18 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
+- Phase 2.21 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.verify` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、研究策略预算、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
-- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制和 Playwright 视觉验证循环。
+- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制、桌面 OCR 或 LLM-as-judge 视觉裁判。
 
 ## 自动化测试与 Smoke
 

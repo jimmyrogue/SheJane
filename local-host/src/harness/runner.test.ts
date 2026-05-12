@@ -13,6 +13,7 @@ afterEach(async () => {
   tempDirs.length = 0
   vi.restoreAllMocks()
   delete process.env.JIANDANLY_LOCAL_HOST_DEBUG
+  delete process.env.TAVILY_API_KEY
 })
 
 describe('harness runner', () => {
@@ -735,6 +736,209 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
+  it('does not collect search result pages as sources and blocks extra browsing after enough real sources', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Research a current topic with two sources, then answer.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'browser.search', arguments: { query: 'public tech news today' } }],
+      },
+      {
+        requestId: 'req-open-a',
+        toolCalls: [{ id: 'call-open-a', name: 'browser.open', arguments: { url: 'https://example.com/source-a' } }],
+      },
+      {
+        requestId: 'req-read-a',
+        toolCalls: [{ id: 'call-read-a', name: 'browser.read', arguments: {} }],
+      },
+      {
+        requestId: 'req-open-b',
+        toolCalls: [{ id: 'call-open-b', name: 'browser.open', arguments: { url: 'https://example.org/source-b' } }],
+      },
+      {
+        requestId: 'req-read-b',
+        toolCalls: [{ id: 'call-read-b', name: 'browser.read', arguments: {} }],
+      },
+      {
+        requestId: 'req-extra-search',
+        toolCalls: [{ id: 'call-extra-search', name: 'browser.search', arguments: { query: 'same topic extra source' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Answered from the two collected real sources.',
+      },
+    ])
+    const searchSnapshot = {
+      url: 'https://cn.bing.com/search?q=public%20tech%20news%20today',
+      title: 'public tech news today - Search',
+      visibleText: 'Search results with links to Source A and Source B.',
+      links: [
+        { text: 'Source A', url: 'https://example.com/source-a' },
+        { text: 'Source B', url: 'https://example.org/source-b' },
+      ],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const sourceA = {
+      url: 'https://example.com/source-a',
+      title: 'Source A Report',
+      visibleText: 'Source A has enough evidence for the answer.',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const sourceB = {
+      url: 'https://example.org/source-b',
+      title: 'Source B Report',
+      visibleText: 'Source B independently confirms the answer.',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    let currentSnapshot = searchSnapshot
+    const toolOptions = {
+      tavilyApiKey: '',
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        search: async () => {
+          currentSnapshot = searchSnapshot
+          return currentSnapshot
+        },
+        open: async ({ url }: { url: string }) => {
+          currentSnapshot = url.includes('source-b') ? sourceB : sourceA
+          return currentSnapshot
+        },
+        snapshot: async () => currentSnapshot,
+        screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+        click: async () => currentSnapshot,
+        type: async () => currentSnapshot,
+        scroll: async () => currentSnapshot,
+        close: async () => undefined,
+      },
+    } as any
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions })
+    const searchPermission = store.listPermissions(run.id)[0]
+    await store.resolvePermission(searchPermission.id, 'approve', 'run')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: searchPermission.id, toolOptions })
+    const openPermission = store.listPermissions(run.id).find((permission) => permission.toolName === 'browser.open')!
+    await store.resolvePermission(openPermission.id, 'approve', 'run')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: openPermission.id, toolOptions })
+
+    const sources = store.listEvents(run.id).filter((event) => event.eventType === 'source.collected')
+    expect(sources.map((event) => event.payload.url)).toEqual([
+      'https://example.com/source-a',
+      'https://example.org/source-b',
+    ])
+    expect(sources.map((event) => event.payload.tool)).toEqual(['browser.read', 'browser.read'])
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'browser.search',
+            tool_call_id: 'call-extra-search',
+            error_code: 'research_enough_sources',
+            recoverable: true,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({ final: 'Answered from the two collected real sources.' }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('stores browser verification screenshot artifacts and emits verification results', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Verify a visual browser source before answering.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-open',
+        toolCalls: [{ id: 'call-open-visual', name: 'browser.open', arguments: { url: 'https://example.com/visual-report' } }],
+      },
+      {
+        requestId: 'req-verify',
+        toolCalls: [{ id: 'call-verify-visual', name: 'browser.verify', arguments: { expectText: 'Revenue table', includeScreenshot: true } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'The page was visually verified before answering.',
+      },
+    ])
+    const snapshot = {
+      url: 'https://example.com/visual-report',
+      title: 'Visual Source Report',
+      description: 'Report with a visible revenue table.',
+      visibleText: 'Visual Source Report\nRevenue table\nQ1 100\nQ2 120',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const toolOptions = {
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        search: async () => snapshot,
+        open: async () => snapshot,
+        snapshot: async () => snapshot,
+        screenshot: async () => ({ content: 'png-bytes', contentType: 'image/png', bytes: 9, title: 'Visual Source screenshot' }),
+        click: async () => snapshot,
+        type: async () => snapshot,
+        scroll: async () => snapshot,
+        close: async () => undefined,
+      },
+    } as any
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'browser.open', status: 'pending' })
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id, toolOptions })
+
+    const verifyArtifact = store.listArtifacts(run.id).find((artifact) => artifact.toolName === 'browser.verify')
+    expect(verifyArtifact).toMatchObject({
+      kind: 'tool_output',
+      title: 'Visual Source screenshot',
+      contentType: 'image/png',
+      content: 'png-bytes',
+    })
+    expect(gateway.requests.at(-1)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          name: 'browser.verify',
+          content: expect.stringContaining(verifyArtifact!.id),
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'browser.verify',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'browser_verify_ok', passed: true, detail: 'passed' })]),
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'artifact.created',
+          payload: expect.objectContaining({ artifact_id: verifyArtifact!.id, tool: 'browser.verify' }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
   it('fails fast when the model requests an unsupported tool', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Use a tool that is not registered.' })
@@ -1058,6 +1262,32 @@ describe('harness runner', () => {
     expect(serialized).toContain('web.search')
     expect(serialized).toContain('web_search_disabled')
     expect(serialized).not.toContain('private search token')
+  })
+
+  it('hides optional Tavily web.search from the advertised tool list until configured', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Inspect available tools.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-no-tavily', content: 'No search provider configured.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { tavilyApiKey: '' } })
+
+    expect(gateway.requests[0].tools.map((tool) => tool.name)).not.toContain('web.search')
+
+    const configuredStore = new InMemoryLocalHostStore()
+    const configuredRun = configuredStore.createRun({ goal: 'Inspect Tavily tools.' })
+    configuredStore.appendEvent(configuredRun.id, 'run.created', { goal: configuredRun.goal })
+    const configuredGateway = new ScriptedGateway([{ requestId: 'req-tavily', content: 'Search provider configured.' }])
+
+    await runHarness({
+      run: configuredRun,
+      store: configuredStore,
+      llmGateway: configuredGateway,
+      emit: () => undefined,
+      toolOptions: { tavilyApiKey: 'tvly-test' },
+    })
+
+    expect(configuredGateway.requests[0].tools.map((tool) => tool.name)).toContain('web.search')
   })
 
   it('executes approved MCP calls through the local runtime adapter and feeds the observation back', async () => {

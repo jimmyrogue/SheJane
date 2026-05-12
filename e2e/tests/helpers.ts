@@ -331,6 +331,22 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
     await rawJSON(route, { id: 'artifact-shell', title: 'shell output', content: 'artifact preview content', tool_name: 'shell.run', created_at: '2026-05-11T00:00:00Z' })
     return
   }
+  if (url.endsWith('/local/v1/runs/local-run/diagnostics')) {
+    await rawJSON(route, {
+      schema_version: 1,
+      exported_at: '2026-05-11T00:00:03Z',
+      run: { id: 'local-run', goal: '运行本地检查', status: 'completed', created_at: '2026-05-11T00:00:00Z', updated_at: '2026-05-11T00:00:03Z' },
+      events: [
+        { id: 'diag-event-1', event_type: 'source.collected', payload: { title: 'Example Source', url: 'https://example.com/source' } },
+        { id: 'diag-event-2', event_type: 'verification.completed', payload: { tool: 'browser.verify', status: 'passed' } },
+        { id: 'diag-event-3', event_type: 'tool.failed', payload: { tool: 'browser.open', error_code: 'browser_http_error' } },
+      ],
+      permissions: [{ id: 'perm-shell', run_id: 'local-run', tool_call_id: 'call-shell', tool_name: 'shell.run', arguments: { command: 'printf ok' }, status: 'approved', scope: 'once', created_at: '2026-05-11T00:00:01Z', resolved_at: '2026-05-11T00:00:02Z' }],
+      artifacts: [{ id: 'artifact-shell', run_id: 'local-run', kind: 'tool_output', title: 'shell output', content_type: 'text/plain', bytes: 22, tool_name: 'shell.run', created_at: '2026-05-11T00:00:02Z' }],
+      latest_checkpoint: { id: 'checkpoint-local', step: 2, reason: 'permission_resolved', messages_count: 4 },
+    })
+    return
+  }
   if (url.endsWith('/local/v1/runs/recover-run/stream')) {
     await localAgentSSE(route, [
       { id: 'recover-event-1', event_type: 'checkpoint.resumed', payload: { checkpoint_id: 'checkpoint-1', reason: 'test_resume' } },

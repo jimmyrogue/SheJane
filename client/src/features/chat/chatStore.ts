@@ -65,6 +65,7 @@ export function createChatStore(deps: ChatStoreDeps) {
             : [],
         })
         assistantMessage.runId = run.id
+        assistantMessage.runOrigin = 'cloud'
         const streamHandlers = {
           onDelta: (delta: string) => {
             assistantMessage.content += delta
@@ -255,6 +256,7 @@ function toolActionLabel(tool: string): string {
     'browser.search': '搜索网页',
     'browser.snapshot': '观察网页',
     'browser.read': '阅读网页正文',
+    'browser.verify': '验证网页',
     'browser.screenshot': '页面截图',
     'browser.click': '点击网页元素',
     'browser.type': '输入网页文本',

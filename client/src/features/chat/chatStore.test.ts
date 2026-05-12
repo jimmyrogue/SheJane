@@ -121,6 +121,9 @@ describe('chat store', () => {
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.read' } })).toMatchObject({
       label: '调用工具：阅读网页正文',
     })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.verify' } })).toMatchObject({
+      label: '调用工具：验证网页',
+    })
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.screenshot' } })).toMatchObject({
       label: '调用工具：页面截图',
     })

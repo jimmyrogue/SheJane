@@ -112,6 +112,11 @@ describe('user client shell', () => {
 
   it('uses the paired local harness for workspace tasks and can approve permission requests', async () => {
     const calls = mockFetch('user')
+    const createObjectURL = vi.fn(() => 'blob:current-diagnostics')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     window.jiandanDesktop = {
       platform: 'darwin',
       localHost: {
@@ -141,7 +146,21 @@ describe('user client shell', () => {
     expect(await screen.findByText('验证通过：运行命令')).toBeInTheDocument()
     expect(await screen.findByText('收集来源：Example Source')).toBeInTheDocument()
     expect(await screen.findByText('https://example.com/source')).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('查看诊断 local-run'))
+    expect(await screen.findByText('任务诊断：local-run')).toBeInTheDocument()
+    expect(screen.getByText('状态 completed')).toBeInTheDocument()
+    expect(screen.getByText('事件 3')).toBeInTheDocument()
+    expect(screen.getByText('权限 1')).toBeInTheDocument()
+    expect(screen.getByText('Artifact 1')).toBeInTheDocument()
+    expect(screen.getByText(/最新检查点：checkpoint-local/)).toBeInTheDocument()
+    expect(screen.getByText('source.collected')).toBeInTheDocument()
+    expect(screen.getByText('verification.completed')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('导出当前诊断'))
+    expect(await screen.findByText('诊断已导出：local-run')).toBeInTheDocument()
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:current-diagnostics')
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toBe(true)
+    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/diagnostics')).toBe(true)
     expect(calls.some((call) =>
       call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell'
       && call.init?.method === 'POST'
@@ -205,8 +224,8 @@ describe('user client shell', () => {
     })
     fireEvent.click(screen.getByText('发送'))
 
-    const artifactButton = await screen.findByText('查看 artifact')
-    fireEvent.click(artifactButton)
+    const artifactButtons = await screen.findAllByText('查看 artifact')
+    fireEvent.click(artifactButtons[0])
 
     expect(await screen.findByText('Artifact: shell output')).toBeInTheDocument()
     expect(screen.getByText('artifact preview content')).toBeInTheDocument()
@@ -441,6 +460,53 @@ function mockFetch(
               { id: 'local-event-3', event_type: 'artifact.created', payload: { artifact_id: 'artifact-shell', title: 'shell output', tool: 'shell.run' } },
             ],
         'local-run',
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/diagnostics') {
+      return new Response(
+        JSON.stringify({
+          schema_version: 1,
+          exported_at: '2026-05-11T00:00:03Z',
+          run: {
+            id: 'local-run',
+            goal: '运行本地检查',
+            status: 'completed',
+            created_at: '2026-05-11T00:00:00Z',
+            updated_at: '2026-05-11T00:00:03Z',
+          },
+          events: [
+            { id: 'diag-event-1', event_type: 'source.collected', payload: { title: 'Example Source', url: 'https://example.com/source' } },
+            { id: 'diag-event-2', event_type: 'verification.completed', payload: { tool: 'browser.verify', status: 'passed' } },
+            { id: 'diag-event-3', event_type: 'tool.failed', payload: { tool: 'browser.open', error_code: 'browser_http_error' } },
+          ],
+          permissions: [
+            {
+              id: 'perm-shell',
+              run_id: 'local-run',
+              tool_call_id: 'call-shell',
+              tool_name: 'shell.run',
+              arguments: { command: 'printf ok' },
+              status: 'approved',
+              scope: 'run',
+              created_at: '2026-05-11T00:00:01Z',
+              resolved_at: '2026-05-11T00:00:02Z',
+            },
+          ],
+          artifacts: [
+            {
+              id: 'artifact-shell',
+              run_id: 'local-run',
+              kind: 'tool_output',
+              title: 'shell output',
+              content_type: 'text/plain',
+              bytes: 22,
+              tool_name: 'shell.run',
+              created_at: '2026-05-11T00:00:02Z',
+            },
+          ],
+          latest_checkpoint: { id: 'checkpoint-local', step: 2, reason: 'permission_resolved', messages_count: 4 },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs/recover-run/stream') {

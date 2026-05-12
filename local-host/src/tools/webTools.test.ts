@@ -60,6 +60,32 @@ describe('web tools', () => {
     })
   })
 
+  it('keeps HTTP error observations short even when the response body is huge', async () => {
+    const hugeBody = `<html><body>${'oversized-css-and-html '.repeat(5000)}</body></html>`
+    const result = await executeTool(
+      { id: 'call-fetch-404', name: 'web.fetch', arguments: { url: 'https://example.com/missing', maxBytes: 65536 } },
+      run,
+      {
+        resolveHostname: async () => ['93.184.216.34'],
+        fetcher: async () =>
+          new Response(hugeBody, {
+            status: 404,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+          }),
+      },
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'http_error',
+      recoverable: true,
+      data: expect.objectContaining({ status: 404 }),
+    })
+    expect(result.content.length).toBeLessThan(1600)
+    expect(result.content).toContain('HTTP 404')
+    expect(result.content).not.toContain('oversized-css-and-html oversized-css-and-html oversized-css-and-html oversized-css-and-html oversized-css-and-html')
+  })
+
   it('uses Tavily search when configured and keeps result size bounded', async () => {
     let request: Request | undefined
     const result = await executeTool(
@@ -103,7 +129,7 @@ describe('web tools', () => {
   })
 
   it('reports web.search as disabled when Tavily is not configured', async () => {
-    const result = await executeTool({ id: 'call-search-disabled', name: 'web.search', arguments: { query: 'anything' } }, run)
+    const result = await executeTool({ id: 'call-search-disabled', name: 'web.search', arguments: { query: 'anything' } }, run, { tavilyApiKey: '' })
 
     expect(result).toMatchObject({
       ok: false,

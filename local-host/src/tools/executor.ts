@@ -149,6 +149,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return snapshotManagedBrowser(call, options)
     case 'browser.read':
       return readManagedBrowser(call, options)
+    case 'browser.verify':
+      return verifyManagedBrowser(call, options)
     case 'browser.screenshot':
       return screenshotManagedBrowser(call, options)
     case 'browser.click':
@@ -526,6 +528,23 @@ async function readManagedBrowser(call: LLMToolCall, options: ToolExecutionOptio
   }
 }
 
+async function verifyManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const adapter = browserAdapter(options)
+    const snapshot = await adapter.snapshot()
+    const screenshot = call.arguments.includeScreenshot === true
+      ? await adapter.screenshot({ fullPage: true })
+      : undefined
+    return browserVerifyResult(snapshot, {
+      expectText: typeof call.arguments.expectText === 'string' ? call.arguments.expectText.trim() : '',
+      requireUsable: call.arguments.requireUsable !== false,
+      screenshot,
+    })
+  } catch (error) {
+    return toolErrorResult(error, 'browser_verify_failed', 'Failed to verify managed browser page.')
+  }
+}
+
 async function screenshotManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
   try {
     const screenshot = await browserAdapter(options).screenshot({ fullPage: call.arguments.fullPage === true })
@@ -758,11 +777,33 @@ async function fetchPublicURL(call: LLMToolCall, options: ToolExecutionOptions):
     }
     const rawText = await readResponseText(response, maxBytes)
     const content = contentType.includes('html') ? extractHTMLText(rawText) : rawText
+    if (!response.ok) {
+      const preview = content.replace(/\s+/g, ' ').trim().slice(0, 80)
+      return {
+        ok: false,
+        content: JSON.stringify({
+          error: `HTTP ${response.status} ${response.statusText || ''}`.trim(),
+          url: finalChecked.url.href,
+          status: response.status,
+          content_preview: preview,
+          content_characters: content.length,
+          truncated: Buffer.byteLength(rawText) >= maxBytes,
+        }),
+        errorCode: 'http_error',
+        recoverable: true,
+        data: {
+          url: finalChecked.url.href,
+          status: response.status,
+          content_type: contentType,
+          bytes: Buffer.byteLength(rawText),
+          truncated: Buffer.byteLength(rawText) >= maxBytes,
+          source: 'web.fetch',
+        },
+      }
+    }
     return {
-      ok: response.ok,
+      ok: true,
       content: content.slice(0, maxBytes),
-      errorCode: response.ok ? undefined : 'http_error',
-      recoverable: !response.ok,
       data: {
         url: finalChecked.url.href,
         status: response.status,
@@ -1525,6 +1566,96 @@ function browserReadResult(snapshot: BrowserSnapshot, maxTextCharacters: unknown
     content: JSON.stringify(payload),
     data,
   }
+}
+
+function browserVerifyResult(
+  snapshot: BrowserSnapshot,
+  input: { expectText: string; requireUsable: boolean; screenshot?: BrowserScreenshot },
+): ToolExecutionResult {
+  const observationStatus = classifyBrowserObservation(snapshot)
+  const match = input.expectText ? findBrowserEvidence(snapshot, input.expectText) : { matched: true, evidence: '' }
+  const usablePassed = !input.requireUsable || observationStatus === 'usable'
+  const passed = usablePassed && match.matched
+  const verificationStatus = passed ? 'passed' : 'failed'
+  const payload = {
+    title: snapshot.title,
+    url: snapshot.url,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
+    verification_status: verificationStatus,
+    http_status: snapshot.httpStatus,
+    expect_text: input.expectText,
+    matched_text: match.matched,
+    evidence: match.evidence,
+    text_characters: snapshot.visibleText.length,
+    checks: [
+      { name: 'page_usable', passed: usablePassed, detail: observationStatus },
+      ...(input.expectText ? [{ name: 'expected_text_present', passed: match.matched, detail: input.expectText }] : []),
+    ],
+    screenshot: input.screenshot
+      ? { captured: true, bytes: input.screenshot.bytes, content_type: input.screenshot.contentType }
+      : { captured: false },
+  }
+  const data = {
+    source: 'browser.verify',
+    url: snapshot.url,
+    title: snapshot.title,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
+    verification_status: verificationStatus,
+    http_status: snapshot.httpStatus,
+    text_characters: snapshot.visibleText.length,
+    matched_text: match.matched,
+    screenshot_captured: Boolean(input.screenshot),
+    screenshot_bytes: input.screenshot?.bytes,
+  }
+  return {
+    ok: true,
+    content: JSON.stringify(payload),
+    data,
+    artifact: input.screenshot
+      ? {
+          title: input.screenshot.title,
+          content: input.screenshot.content,
+          contentType: input.screenshot.contentType,
+          metadata: data,
+        }
+      : undefined,
+  }
+}
+
+function findBrowserEvidence(snapshot: BrowserSnapshot, expectedText: string): { matched: boolean; evidence: string } {
+  const haystacks = [
+    snapshot.title,
+    snapshot.description ?? '',
+    snapshot.url,
+    snapshot.visibleText,
+    ...snapshot.links.flatMap((link) => [link.text, link.url]),
+  ]
+  const needle = normalizeSearchText(expectedText)
+  for (const value of haystacks) {
+    const normalized = normalizeSearchText(value)
+    const index = normalized.indexOf(needle)
+    if (index >= 0) {
+      return { matched: true, evidence: evidenceSnippet(value, expectedText) }
+    }
+  }
+  return { matched: false, evidence: '' }
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function evidenceSnippet(value: string, expectedText: string): string {
+  const lower = value.toLowerCase()
+  const index = lower.indexOf(expectedText.toLowerCase())
+  if (index < 0) {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 240)
+  }
+  const start = Math.max(0, index - 80)
+  const end = Math.min(value.length, index + expectedText.length + 80)
+  return value.slice(start, end).replace(/\s+/g, ' ').trim()
 }
 
 function classifyBrowserObservation(snapshot: BrowserSnapshot): BrowserObservationStatus {

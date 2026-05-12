@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.18 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; optional `web.search` is advertised only when Tavily is configured. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -137,7 +137,7 @@ Cloud must not:
 | 7. State Management | Durable run event log and checkpoints. Support cancel, resume, failed diagnosis. Local state is source of execution truth. |
 | 8. Error Handling | Transient errors retry; model-recoverable errors become observations; user-fixable errors enter `waiting_permission`; unexpected errors become failed diagnostic events. |
 | 9. Guardrails and Safety | Input guardrails for dangerous intent/budget/workspace; tool guardrails for paths, commands, network, MCP allowlist; output guardrails prevent fabricated tool results or hidden failures. |
-| 10. Verification Loops | MVP uses rule verification: exit code, tests, file existence, type checks. Later: Playwright/screenshot verification and optional LLM-as-judge. |
+| 10. Verification Loops | MVP uses rule verification: exit code, tests, file existence, type checks, and browser page evidence checks. `browser.verify` can validate current managed page text/status and attach screenshot artifacts. Later: LLM-as-judge visual review. |
 | 11. Subagent Orchestration | MVP reserves data structures only. Phase 3 can add fork, teammate, and worktree modes after single-agent quality is strong. |
 | 12. Lifecycle Management | install, pair, start, stop, restart, update, uninstall, health check, log rotation, crash restart, checkpoint recovery or explicit failure. |
 
@@ -370,10 +370,34 @@ Pairing:
 
 - Add `browser.read` for reading the current managed browser page title, URL, meta description, main text, and key links. **Done.**
 - Add browser `observation_status`: `usable`, `empty`, `http_error`, `blocked`, `login_required`, and `captcha_like`. **Done.**
-- Emit `source.collected` when an opened, read, or snapshotted page is usable as a source. **Done.**
+- Emit `source.collected` when a read or snapshotted non-search-result page is usable as a source. **Done.**
 - Block the third duplicate search query or URL open in the same run with a recoverable observation. **Done.**
 - Update prompts so web research uses a small number of targeted searches and sources, changes strategy on bad pages, and stops once evidence is sufficient. **Done.**
 - Keep existing Chrome control, login-state browsing, order submission, payments, posting, email sending, desktop screen control, and long-term source libraries out of scope. **Done.**
+
+### Phase 2.19: Browser Verify
+
+- Add `browser.verify` for checking the current managed browser page against expected text and usable page status. **Done.**
+- Treat failed verification as a recoverable observation, not a daemon crash. **Done.**
+- Allow optional screenshot artifact capture during verification without injecting image bytes into prompt context. **Done.**
+- Emit `browser_verify_ok` verification checks in the Harness event stream. **Done.**
+- Keep OCR, LLM vision judging, user Chrome tab control, and desktop screenshot verification out of scope. **Done.**
+
+### Phase 2.20: Current Run Diagnostics
+
+- Add a current-message diagnostics action in the client timeline for Local Harness runs. **Done.**
+- Fetch `GET /local/v1/runs/{id}/diagnostics` and render run status, event count, permission count, artifact count, latest checkpoint summary, and recent source/verification/error events. **Done.**
+- Reuse the redacted diagnostics JSON export path for the current run. **Done.**
+- Do not render artifact bodies or checkpoint messages in the diagnostics panel. **Done.**
+
+### Phase 2.21: Research Policy Controller
+
+- Treat search engine result pages as navigation aids, not citation sources. **Done.**
+- Count usable non-search sources by canonical URL and block duplicate source collection. **Done.**
+- Add a research preflight guard that blocks extra `browser.search`, `browser.open`, or `web.fetch` calls after the run has enough real sources or exceeds configured search/navigation budgets. **Done.**
+- Hide optional Tavily-backed `web.search` from the tool list unless `TAVILY_API_KEY` or an injected Tavily key is configured. **Done.**
+- Keep provider/web HTTP error observations concise so large 404/blocked pages do not pollute model context. **Done.**
+- Expose budget tuning with `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`. **Done.**
 
 ## 9. Test Strategy
 

@@ -364,11 +364,14 @@ AWS ap-east-1 (香港)
 - [x] Phase 2.16：Browser / Environment Observation，新增受控网页打开/快照/关闭、本地环境观察和语义 timeline 事件
 - [x] Phase 2.17：Playwright Managed Browser，默认使用 Playwright 托管 Chromium，支持网页搜索、打开、快照、截图 artifact、点击、输入、滚动和关闭
 - [x] Phase 2.18：Browser Task Reliability & Evidence Grounding，新增 `browser.read`、来源收集、页面质量状态、重复浏览保护和证据充分后停止的 prompt 策略
+- [x] Phase 2.19：Browser Verify，新增 `browser.verify` 对当前托管网页做正文/标题/链接证据校验，可按需保存截图 artifact
+- [x] Phase 2.20：Current Run Diagnostics，普通 client 可从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON
+- [x] Phase 2.21：Research Policy Controller，搜索结果页不再算来源，未配置 Tavily 时不向模型暴露 `web.search`，研究任务达到来源/搜索预算后用可恢复 observation 要求收束回答，并截断 HTTP 错误正文
 
 ### Phase 3：本地 Host 高级能力（4-8 周）
 
-- [ ] 本地 run 诊断导入/回放、更细粒度恢复 UI 和故障定位面板
-- [ ] 浏览器视觉验证、屏幕 OCR、应用窗口控制，所有可见系统操作默认需要确认
+- [ ] 本地 run 诊断导入/回放、更细粒度恢复 UI 和失败重试建议
+- [ ] LLM-as-judge 视觉验证、屏幕 OCR、应用窗口控制，所有可见系统操作默认需要确认
 - [ ] 云端只同步计费、审计和 run 摘要，不默认同步私有文件内容
 
 ### Phase 4：生成任务与多工具编排（6-8 周）

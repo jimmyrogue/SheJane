@@ -677,7 +677,8 @@ button {
   padding: 10px 12px;
 }
 
-.artifact-preview {
+.artifact-preview,
+.diagnostics-preview {
   display: grid;
   gap: 10px;
   margin: 0 28px 14px;
@@ -688,7 +689,8 @@ button {
   padding: 14px;
 }
 
-.artifact-preview header {
+.artifact-preview header,
+.diagnostics-preview header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -696,11 +698,14 @@ button {
 }
 
 .artifact-preview strong,
-.artifact-preview small {
+.artifact-preview small,
+.diagnostics-preview strong,
+.diagnostics-preview small {
   display: block;
 }
 
-.artifact-preview small {
+.artifact-preview small,
+.diagnostics-preview small {
   margin-top: 3px;
   color: #60726a;
 }
@@ -715,6 +720,82 @@ button {
   color: #15231d;
   padding: 12px;
   white-space: pre-wrap;
+}
+
+.diagnostics-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostics-actions button:not(.icon-button) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid rgba(18, 56, 46, 0.16);
+  border-radius: 8px;
+  background: #f7faf6;
+  color: #12382e;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.diagnostics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnostics-summary span {
+  border: 1px solid #dce4da;
+  border-radius: 999px;
+  background: #f7faf6;
+  color: #53645c;
+  font-size: 12px;
+  font-weight: 750;
+  padding: 5px 9px;
+}
+
+.diagnostics-checkpoint {
+  border-left: 3px solid #bfd0dc;
+  padding-left: 10px;
+}
+
+.diagnostics-events {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.diagnostics-events li {
+  display: grid;
+  grid-template-columns: minmax(140px, 190px) 1fr;
+  gap: 8px;
+  align-items: baseline;
+  border: 1px solid #e1e8e4;
+  border-radius: 8px;
+  background: #f7faf6;
+  color: #53645c;
+  padding: 8px 10px;
+}
+
+.diagnostics-events code {
+  color: #12382e;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.diagnostics-events span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer {

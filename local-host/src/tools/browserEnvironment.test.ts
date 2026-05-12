@@ -244,6 +244,113 @@ describe('browser and environment observation tools', () => {
     })
   })
 
+  it('returns a recoverable error when browser.verify is requested before a managed page exists', async () => {
+    await expect(executeTool({ id: 'verify-empty', name: 'browser.verify', arguments: { expectText: 'Example' } }, run, {})).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'browser_page_required',
+      recoverable: true,
+    })
+  })
+
+  it('verifies the current managed browser page against expected text', async () => {
+    const snapshot = {
+      url: 'https://example.com/report',
+      title: 'Example Research Report',
+      description: 'A short report description.',
+      visibleText: 'Example Research Report\nThis report includes verified source evidence.',
+      links: [{ text: 'Primary source', url: 'https://example.com/source' }],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const result = await executeTool(
+      { id: 'verify-browser', name: 'browser.verify', arguments: { expectText: 'verified source evidence', requireUsable: true } },
+      run,
+      {
+        browser: {
+          open: async () => snapshot,
+          search: async () => snapshot,
+          snapshot: async () => snapshot,
+          screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+          click: async () => snapshot,
+          type: async () => snapshot,
+          scroll: async () => snapshot,
+          close: async () => undefined,
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: expect.objectContaining({
+        source: 'browser.verify',
+        url: 'https://example.com/report',
+        title: 'Example Research Report',
+        observation_status: 'usable',
+        verification_status: 'passed',
+        matched_text: true,
+        screenshot_captured: false,
+      }),
+    })
+    expect(JSON.parse(result.content)).toMatchObject({
+      verification_status: 'passed',
+      observation_status: 'usable',
+      expect_text: 'verified source evidence',
+      matched_text: true,
+      evidence: expect.stringContaining('verified source evidence'),
+    })
+  })
+
+  it('keeps failed browser verification recoverable and stores an optional screenshot artifact', async () => {
+    const snapshot = {
+      url: 'https://example.com/report',
+      title: 'Example Research Report',
+      description: 'A short report description.',
+      visibleText: 'Example Research Report\nThis report does not include the target phrase.',
+      links: [{ text: 'Primary source', url: 'https://example.com/source' }],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const result = await executeTool(
+      { id: 'verify-browser-failed', name: 'browser.verify', arguments: { expectText: 'missing phrase', includeScreenshot: true } },
+      run,
+      {
+        browser: {
+          open: async () => snapshot,
+          search: async () => snapshot,
+          snapshot: async () => snapshot,
+          screenshot: async () => ({ content: 'base64-png', contentType: 'image/png', bytes: 10, title: 'Example screenshot' }),
+          click: async () => snapshot,
+          type: async () => snapshot,
+          scroll: async () => snapshot,
+          close: async () => undefined,
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: expect.objectContaining({
+        source: 'browser.verify',
+        observation_status: 'usable',
+        verification_status: 'failed',
+        matched_text: false,
+        screenshot_captured: true,
+      }),
+      artifact: expect.objectContaining({
+        title: 'Example screenshot',
+        content: 'base64-png',
+        contentType: 'image/png',
+      }),
+    })
+    expect(JSON.parse(result.content)).toMatchObject({
+      verification_status: 'failed',
+      matched_text: false,
+      screenshot: { captured: true, bytes: 10 },
+    })
+  })
+
   it('blocks the third duplicate browser search and open attempt within one run', async () => {
     let searches = 0
     let opens = 0

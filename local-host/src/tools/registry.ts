@@ -316,6 +316,24 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'browser.verify',
+    description: 'Verify the current managed browser page against expected visible text or page usability, optionally capturing a screenshot artifact for evidence.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        expectText: { type: 'string' },
+        requireUsable: { type: 'boolean' },
+        includeScreenshot: { type: 'boolean' },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'browser.screenshot',
     description: 'Capture a PNG screenshot of the current managed browser page and store it as a local artifact.',
     inputSchema: {
