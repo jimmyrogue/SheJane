@@ -300,6 +300,22 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'browser.read',
+    description: 'Read the current Playwright-managed browser page main text, title, URL, meta description, and key links. Use after opening a source page to collect evidence.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'browser.screenshot',
     description: 'Capture a PNG screenshot of the current managed browser page and store it as a local artifact.',
     inputSchema: {

@@ -363,6 +363,7 @@ AWS ap-east-1 (香港)
 - [x] Phase 2.15：Universal Tool Primitives，把工具路线从程序员优先调整为通用办公 Agent 基础动词层，新增 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`
 - [x] Phase 2.16：Browser / Environment Observation，新增受控网页打开/快照/关闭、本地环境观察和语义 timeline 事件
 - [x] Phase 2.17：Playwright Managed Browser，默认使用 Playwright 托管 Chromium，支持网页搜索、打开、快照、截图 artifact、点击、输入、滚动和关闭
+- [x] Phase 2.18：Browser Task Reliability & Evidence Grounding，新增 `browser.read`、来源收集、页面质量状态、重复浏览保护和证据充分后停止的 prompt 策略
 
 ### Phase 3：本地 Host 高级能力（4-8 周）
 

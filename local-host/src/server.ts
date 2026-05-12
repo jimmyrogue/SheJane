@@ -5,6 +5,7 @@ import { runHarness } from './harness/runner.js'
 import type { LLMGateway } from './llm/gateway.js'
 import { LocalCloudSessionManager } from './llm/cloudSession.js'
 import { logLocalHostError } from './debugLogger.js'
+import type { ToolExecutionOptions } from './tools/executor.js'
 import { localHostTools } from './tools/registry.js'
 import {
   localHostVersion,
@@ -38,6 +39,7 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
   const resolvedOptions = {
     ...options,
     cloudSession: options.cloudSession ?? new LocalCloudSessionManager(),
+    toolOptionsByRun: new Map<string, ToolExecutionOptions>(),
   }
   return createServer((request, response) => {
     handleRequest(request, response, resolvedOptions).catch((error: unknown) => {
@@ -51,7 +53,10 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
   })
 }
 
-type ResolvedLocalHostServerOptions = LocalHostServerOptions & { cloudSession: LocalCloudSessionManager }
+type ResolvedLocalHostServerOptions = LocalHostServerOptions & {
+  cloudSession: LocalCloudSessionManager
+  toolOptionsByRun: Map<string, ToolExecutionOptions>
+}
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse, options: ResolvedLocalHostServerOptions): Promise<void> {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -268,7 +273,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       llmGateway: currentLLMGateway(options),
       emit: () => undefined,
       resumePermissionID: permission.id,
+      toolOptions: toolOptionsForRun(options, run.id),
     })
+    cleanupRunToolOptions(options, run.id)
     writeJSON(response, 202, {
       request_id: permissionMatch[1],
       decision,
@@ -315,11 +322,29 @@ async function streamRun(response: ServerResponse, run: LocalRun, options: Resol
       store,
       llmGateway: currentLLMGateway(options),
       emit: (event) => writeSSE(response, event),
+      toolOptions: toolOptionsForRun(options, run.id),
     })
+    cleanupRunToolOptions(options, run.id)
   }
 
   response.write('data: [DONE]\n\n')
   response.end()
+}
+
+function toolOptionsForRun(options: ResolvedLocalHostServerOptions, runID: string): ToolExecutionOptions {
+  let toolOptions = options.toolOptionsByRun.get(runID)
+  if (!toolOptions) {
+    toolOptions = {}
+    options.toolOptionsByRun.set(runID, toolOptions)
+  }
+  return toolOptions
+}
+
+function cleanupRunToolOptions(options: ResolvedLocalHostServerOptions, runID: string): void {
+  const status = options.store.getRun(runID)?.status
+  if (status && terminalStatuses.has(status)) {
+    options.toolOptionsByRun.delete(runID)
+  }
 }
 
 function currentLLMGateway(options: ResolvedLocalHostServerOptions): LLMGateway | undefined {

@@ -184,6 +184,119 @@ describe('browser and environment observation tools', () => {
     })
   })
 
+  it('returns a recoverable error when browser.read is requested before a managed page exists', async () => {
+    await expect(executeTool({ id: 'read-empty', name: 'browser.read', arguments: {} }, run, {})).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'browser_page_required',
+      recoverable: true,
+    })
+  })
+
+  it('reads the current managed browser page with source metadata and observation status', async () => {
+    const snapshot = {
+      url: 'https://example.com/report',
+      title: 'Example Research Report',
+      description: 'A short report description.',
+      visibleText: 'Example Research Report\nThis report explains the source evidence.\nFooter',
+      links: [
+        { text: 'Primary source', url: 'https://example.com/source' },
+        { text: 'Contact', url: 'https://example.com/contact' },
+      ],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const result = await executeTool(
+      { id: 'read-browser', name: 'browser.read', arguments: { maxTextCharacters: 128 } },
+      run,
+      {
+        browser: {
+          open: async () => snapshot,
+          search: async () => snapshot,
+          snapshot: async () => snapshot,
+          screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+          click: async () => snapshot,
+          type: async () => snapshot,
+          scroll: async () => snapshot,
+          close: async () => undefined,
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: expect.objectContaining({
+        source: 'browser.read',
+        url: 'https://example.com/report',
+        title: 'Example Research Report',
+        description: 'A short report description.',
+        observation_status: 'usable',
+        text_characters: snapshot.visibleText.length,
+      }),
+    })
+    expect(JSON.parse(result.content)).toMatchObject({
+      title: 'Example Research Report',
+      url: 'https://example.com/report',
+      description: 'A short report description.',
+      observation_status: 'usable',
+      main_text: expect.stringContaining('source evidence'),
+      links: expect.arrayContaining([{ text: 'Primary source', url: 'https://example.com/source' }]),
+    })
+  })
+
+  it('blocks the third duplicate browser search and open attempt within one run', async () => {
+    let searches = 0
+    let opens = 0
+    const snapshot = {
+      url: 'https://example.com/search?q=jiandanly',
+      title: 'Search Results',
+      visibleText: 'Jiandanly result page',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const options = {
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        open: async () => {
+          opens += 1
+          return { ...snapshot, url: 'https://example.com/report', title: 'Report' }
+        },
+        search: async () => {
+          searches += 1
+          return snapshot
+        },
+        snapshot: async () => snapshot,
+        screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+        click: async () => snapshot,
+        type: async () => snapshot,
+        scroll: async () => snapshot,
+        close: async () => undefined,
+      },
+    } as any
+
+    await expect(executeTool({ id: 'search-1', name: 'browser.search', arguments: { query: 'Jiandanly' } }, run, options)).resolves.toMatchObject({ ok: true })
+    await expect(executeTool({ id: 'search-2', name: 'browser.search', arguments: { query: ' jiandanly ' } }, run, options)).resolves.toMatchObject({ ok: true })
+    await expect(executeTool({ id: 'search-3', name: 'browser.search', arguments: { query: 'JIANDANLY' } }, run, options)).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'browser_duplicate_observation',
+      recoverable: true,
+      data: expect.objectContaining({ observation_status: 'blocked' }),
+    })
+
+    await expect(executeTool({ id: 'open-1', name: 'browser.open', arguments: { url: 'https://example.com/report' } }, run, options)).resolves.toMatchObject({ ok: true })
+    await expect(executeTool({ id: 'open-2', name: 'browser.open', arguments: { url: 'https://example.com/report/' } }, run, options)).resolves.toMatchObject({ ok: true })
+    await expect(executeTool({ id: 'open-3', name: 'browser.open', arguments: { url: 'https://example.com/report' } }, run, options)).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'browser_duplicate_observation',
+      recoverable: true,
+      data: expect.objectContaining({ observation_status: 'blocked' }),
+    })
+    expect(searches).toBe(2)
+    expect(opens).toBe(2)
+  })
+
   it('observes environment through an injected adapter without adding private text to payload data', async () => {
     const result = await executeTool(
       { id: 'environment', name: 'environment.observe', arguments: {} },

@@ -43,9 +43,12 @@ export interface BrowserScreenshot {
   title: string
 }
 
+export type BrowserObservationStatus = 'usable' | 'empty' | 'http_error' | 'blocked' | 'login_required' | 'captcha_like'
+
 export interface BrowserSnapshot {
   url: string
   title: string
+  description?: string
   visibleText: string
   httpStatus?: number
   links: Array<{ text: string; url: string }>
@@ -92,6 +95,7 @@ export interface ToolExecutionOptions {
   browserTimeoutMs?: number
   browserSearchURL?: string
   browserViewport?: { width: number; height: number }
+  browserObservationCounts?: Map<string, number>
   allowProxyFakeIPs?: boolean
   environment?: EnvironmentAdapter
   tavilyApiKey?: string
@@ -143,6 +147,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return searchManagedBrowser(call, options)
     case 'browser.snapshot':
       return snapshotManagedBrowser(call, options)
+    case 'browser.read':
+      return readManagedBrowser(call, options)
     case 'browser.screenshot':
       return screenshotManagedBrowser(call, options)
     case 'browser.click':
@@ -466,7 +472,11 @@ async function openManagedBrowser(call: LLMToolCall, options: ToolExecutionOptio
   }
   const checked = await validatePublicHTTPURL(rawURL, options)
   if (!checked.ok) {
-    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+    return blockedBrowserObservation('browser.open', checked.message, checked.errorCode, { url: rawURL })
+  }
+  const duplicate = browserDuplicateObservation(options, 'browser.open', duplicateURLKey(checked.url))
+  if (duplicate) {
+    return duplicate
   }
   try {
     const snapshot = await browserAdapter(options).open({ url: checked.url.href })
@@ -484,7 +494,11 @@ async function searchManagedBrowser(call: LLMToolCall, options: ToolExecutionOpt
   const searchURL = buildBrowserSearchURL(query, options)
   const checked = await validatePublicHTTPURL(searchURL, options)
   if (!checked.ok) {
-    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+    return blockedBrowserObservation('browser.search', checked.message, checked.errorCode, { query, url: searchURL })
+  }
+  const duplicate = browserDuplicateObservation(options, 'browser.search', duplicateQueryKey(query))
+  if (duplicate) {
+    return duplicate
   }
   try {
     const snapshot = await browserAdapter(options).search({ query, url: checked.url.href })
@@ -500,6 +514,15 @@ async function snapshotManagedBrowser(call: LLMToolCall, options: ToolExecutionO
     return browserSnapshotResult('browser.snapshot', snapshot, call.arguments.maxTextCharacters)
   } catch (error) {
     return toolErrorResult(error, 'browser_snapshot_failed', 'Failed to snapshot managed browser page.')
+  }
+}
+
+async function readManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const snapshot = await browserAdapter(options).snapshot()
+    return browserReadResult(snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_read_failed', 'Failed to read managed browser page.')
   }
 }
 
@@ -1253,6 +1276,11 @@ export const browserSnapshotScript = String.raw`(() => {
     if (tag === 'select') return 'combobox';
     return tag || 'element';
   };
+  const metaDescription = (
+    doc.querySelector?.('meta[name="description"]')?.getAttribute?.('content') ||
+    doc.querySelector?.('meta[property="og:description"]')?.getAttribute?.('content') ||
+    ''
+  ).replace(/\s+/g, ' ').trim();
 
   const links = toArray(doc.querySelectorAll('a[href]'))
     .filter(isVisible)
@@ -1300,6 +1328,7 @@ export const browserSnapshotScript = String.raw`(() => {
   return {
     url: locationHref,
     title: doc.title || new URL(locationHref).hostname,
+    description: metaDescription,
     visibleText: (doc.body?.innerText || '').replace(/\s+/g, ' ').trim(),
     links,
     forms,
@@ -1319,6 +1348,7 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
     return {
       url,
       title: new URL(url).hostname,
+      description: '',
       visibleText: rawText.replace(/\s+/g, ' ').trim(),
       links: [],
       forms: [],
@@ -1327,6 +1357,7 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
     }
   }
   const title = decodeHTML(extractHTMLText(firstMatch(rawText, /<title[^>]*>([\s\S]*?)<\/title>/i) ?? '') || new URL(url).hostname)
+  const description = decodeHTML(extractMetaDescription(rawText) ?? '')
   const links = [...rawText.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi)]
     .map((match) => {
       const href = attributeValue(match[1] ?? '', 'href')
@@ -1372,6 +1403,7 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
   return {
     url,
     title,
+    description,
     visibleText: decodeHTML(extractHTMLText(rawText)),
     links,
     forms,
@@ -1384,6 +1416,7 @@ function normalizeBrowserSnapshot(snapshot: BrowserSnapshot): BrowserSnapshot {
   return {
     url: snapshot.url,
     title: snapshot.title || safeHostname(snapshot.url),
+    description: snapshot.description ?? '',
     visibleText: snapshot.visibleText ?? '',
     httpStatus: snapshot.httpStatus,
     links: (snapshot.links ?? []).slice(0, 50),
@@ -1400,9 +1433,12 @@ function browserSnapshotResult(
 ): ToolExecutionResult {
   const maxText = typeof maxTextCharacters === 'number' ? Math.max(1, Math.min(Math.floor(maxTextCharacters), 60000)) : 6000
   const visibleText = snapshot.visibleText.slice(0, maxText).trim()
+  const observationStatus = classifyBrowserObservation(snapshot)
   const payload = {
     title: snapshot.title,
     url: snapshot.url,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
     http_status: snapshot.httpStatus,
     visible_text: visibleText,
     text_characters: snapshot.visibleText.length,
@@ -1416,6 +1452,8 @@ function browserSnapshotResult(
     source,
     url: snapshot.url,
     title: snapshot.title,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
     http_status: snapshot.httpStatus,
     text_characters: snapshot.visibleText.length,
     text_truncated: snapshot.visibleText.length > visibleText.length,
@@ -1424,14 +1462,14 @@ function browserSnapshotResult(
     buttons_count: snapshot.buttons.length,
     elements_count: snapshot.elements?.length ?? 0,
   }
-  if (typeof snapshot.httpStatus === 'number' && snapshot.httpStatus >= 400) {
+  if (observationStatus !== 'usable') {
     return {
       ok: false,
       content: JSON.stringify({
-        error: `Managed browser page returned HTTP ${snapshot.httpStatus}.`,
+        error: browserObservationMessage(observationStatus, snapshot),
         ...payload,
       }),
-      errorCode: 'browser_http_error',
+      errorCode: browserObservationErrorCode(observationStatus),
       recoverable: true,
       data,
     }
@@ -1441,6 +1479,143 @@ function browserSnapshotResult(
     content: JSON.stringify(payload),
     data,
   }
+}
+
+function browserReadResult(snapshot: BrowserSnapshot, maxTextCharacters: unknown): ToolExecutionResult {
+  const maxText = typeof maxTextCharacters === 'number' ? Math.max(1, Math.min(Math.floor(maxTextCharacters), 60000)) : 12000
+  const mainText = snapshot.visibleText.slice(0, maxText).trim()
+  const observationStatus = classifyBrowserObservation(snapshot)
+  const payload = {
+    title: snapshot.title,
+    url: snapshot.url,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
+    http_status: snapshot.httpStatus,
+    main_text: mainText,
+    text_characters: snapshot.visibleText.length,
+    text_truncated: snapshot.visibleText.length > mainText.length,
+    links: snapshot.links.slice(0, 20),
+    key_links: snapshot.links.slice(0, 20),
+  }
+  const data = {
+    source: 'browser.read',
+    url: snapshot.url,
+    title: snapshot.title,
+    description: snapshot.description ?? '',
+    observation_status: observationStatus,
+    http_status: snapshot.httpStatus,
+    text_characters: snapshot.visibleText.length,
+    text_truncated: snapshot.visibleText.length > mainText.length,
+    links_count: snapshot.links.length,
+  }
+  if (observationStatus !== 'usable') {
+    return {
+      ok: false,
+      content: JSON.stringify({
+        error: browserObservationMessage(observationStatus, snapshot),
+        ...payload,
+      }),
+      errorCode: browserObservationErrorCode(observationStatus),
+      recoverable: true,
+      data,
+    }
+  }
+  return {
+    ok: true,
+    content: JSON.stringify(payload),
+    data,
+  }
+}
+
+function classifyBrowserObservation(snapshot: BrowserSnapshot): BrowserObservationStatus {
+  if (typeof snapshot.httpStatus === 'number' && snapshot.httpStatus >= 400) {
+    return 'http_error'
+  }
+  const text = (snapshot.visibleText ?? '').trim()
+  const lower = text.toLowerCase()
+  const title = (snapshot.title ?? '').toLowerCase()
+  const combined = `${title}\n${lower}`
+  if (/(captcha|verify you are human|human verification|security check|访问验证|验证码|人机验证|安全验证)/i.test(combined)) {
+    return 'captcha_like'
+  }
+  if (/(login|sign in|log in|登录|注册|请先登录|账号密码|password)/i.test(combined)) {
+    return 'login_required'
+  }
+  if (text.length === 0 && snapshot.links.length === 0 && snapshot.forms.length === 0 && snapshot.buttons.length === 0 && (snapshot.elements?.length ?? 0) === 0) {
+    return 'empty'
+  }
+  return 'usable'
+}
+
+function browserObservationErrorCode(status: BrowserObservationStatus): string {
+  return status === 'http_error' ? 'browser_http_error' : `browser_${status}`
+}
+
+function browserObservationMessage(status: BrowserObservationStatus, snapshot: BrowserSnapshot): string {
+  if (status === 'http_error') {
+    return `Managed browser page returned HTTP ${snapshot.httpStatus}.`
+  }
+  if (status === 'empty') {
+    return 'Managed browser page did not expose usable text or interactive content.'
+  }
+  if (status === 'login_required') {
+    return 'Managed browser page appears to require login.'
+  }
+  if (status === 'captcha_like') {
+    return 'Managed browser page appears to require captcha or human verification.'
+  }
+  if (status === 'blocked') {
+    return 'Managed browser observation was blocked by a safety or repetition guard.'
+  }
+  return 'Managed browser page is usable.'
+}
+
+function blockedBrowserObservation(source: 'browser.open' | 'browser.search', message: string, errorCode: string, extra: Record<string, unknown>): ToolExecutionResult {
+  const data = {
+    source,
+    observation_status: 'blocked',
+    ...extra,
+  }
+  return {
+    ok: false,
+    content: JSON.stringify({
+      error: message,
+      observation_status: 'blocked',
+      ...extra,
+    }),
+    errorCode,
+    recoverable: true,
+    data,
+  }
+}
+
+function browserDuplicateObservation(options: ToolExecutionOptions, source: 'browser.open' | 'browser.search', key: string): ToolExecutionResult | undefined {
+  options.browserObservationCounts ??= new Map<string, number>()
+  const count = options.browserObservationCounts.get(key) ?? 0
+  if (count >= 2) {
+    const message = source === 'browser.search'
+      ? 'This search query has already been tried twice in this run. Use a different query or summarize the existing results.'
+      : 'This URL has already been opened twice in this run. Use a different source or summarize the existing page.'
+    return blockedBrowserObservation(source, message, 'browser_duplicate_observation', {
+      duplicate_key: key,
+      duplicate_count: count,
+    })
+  }
+  options.browserObservationCounts.set(key, count + 1)
+  return undefined
+}
+
+function duplicateQueryKey(query: string): string {
+  return `search:${query.trim().toLowerCase().replace(/\s+/g, ' ')}`
+}
+
+function duplicateURLKey(url: URL): string {
+  const copy = new URL(url.href)
+  copy.hash = ''
+  copy.hostname = copy.hostname.toLowerCase()
+  copy.pathname = copy.pathname.replace(/\/+$/, '') || '/'
+  copy.searchParams.sort()
+  return `open:${copy.href}`
 }
 
 function buildBrowserSearchURL(query: string, options: ToolExecutionOptions): string {
@@ -1539,6 +1714,17 @@ function firstMatch(input: string, pattern: RegExp): string | undefined {
 function attributeValue(input: string, name: string): string | undefined {
   const match = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(input)
   return match?.[1] ?? match?.[2] ?? match?.[3]
+}
+
+function extractMetaDescription(html: string): string | undefined {
+  for (const match of html.matchAll(/<meta\b([^>]*)>/gi)) {
+    const attrs = match[1] ?? ''
+    const name = (attributeValue(attrs, 'name') ?? attributeValue(attrs, 'property') ?? '').toLowerCase()
+    if (name === 'description' || name === 'og:description') {
+      return attributeValue(attrs, 'content')?.replace(/\s+/g, ' ').trim()
+    }
+  }
+  return undefined
 }
 
 function resolveBrowserURL(input: string, baseURL: string): string | undefined {

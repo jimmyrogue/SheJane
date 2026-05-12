@@ -644,6 +644,97 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
+  it('collects source evidence from browser.read and stores long page text as an artifact', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Open a source, read it, and answer with evidence.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-open',
+        toolCalls: [{ id: 'call-open-source', name: 'browser.open', arguments: { url: 'https://example.com/source' } }],
+      },
+      {
+        requestId: 'req-read',
+        toolCalls: [{ id: 'call-read-source', name: 'browser.read', arguments: { maxTextCharacters: 12000 } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Answered with the collected source.',
+      },
+    ])
+    const longText = `Example Source Report\n${'Evidence paragraph. '.repeat(120)}`
+    const snapshot = {
+      url: 'https://example.com/source',
+      title: 'Example Source Report',
+      description: 'Source description.',
+      visibleText: longText,
+      links: [{ text: 'Related source', url: 'https://example.com/related' }],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const toolOptions = {
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        search: async () => snapshot,
+        open: async () => snapshot,
+        snapshot: async () => snapshot,
+        screenshot: async () => ({ content: 'png-bytes', contentType: 'image/png', bytes: 9, title: 'Source screenshot' }),
+        click: async () => snapshot,
+        type: async () => snapshot,
+        scroll: async () => snapshot,
+        close: async () => undefined,
+      },
+    } as any
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions, artifactThresholdChars: 512 })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'browser.open', status: 'pending' })
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id, toolOptions, artifactThresholdChars: 512 })
+
+    const readArtifact = store.listArtifacts(run.id).find((artifact) => artifact.toolName === 'browser.read')
+    expect(readArtifact).toMatchObject({
+      kind: 'tool_output',
+      title: 'browser.read output',
+      toolCallId: 'call-read-source',
+      content: expect.stringContaining('Evidence paragraph.'),
+    })
+    expect(gateway.requests.at(-1)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'tool',
+          name: 'browser.read',
+          content: expect.stringContaining(readArtifact!.id),
+        }),
+      ]),
+    )
+    expect(gateway.requests.at(-1)?.messages.map((message) => message.content).join('\n')).not.toContain('Evidence paragraph. Evidence paragraph. Evidence paragraph.')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'source.collected',
+          payload: expect.objectContaining({
+            tool: 'browser.read',
+            title: 'Example Source Report',
+            url: 'https://example.com/source',
+            artifact_id: readArtifact!.id,
+            observation_status: 'usable',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'browser.read',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'browser_read_usable', passed: true, detail: 'usable' })]),
+          }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
   it('fails fast when the model requests an unsupported tool', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Use a tool that is not registered.' })

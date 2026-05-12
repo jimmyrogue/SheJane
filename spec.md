@@ -1,7 +1,7 @@
 # Jiandanly Local Agent Harness Spec
 
 **Version:** v0.2
-**Updated:** 2026-05-11
+**Updated:** 2026-05-12
 **Status:** Phase 2 replacement direction
 
 ## 1. Direction
@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.18 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -178,6 +178,7 @@ Events are ordered by stable sequence numbers:
 - `tool.completed`
 - `tool.failed`
 - `browser.observed`
+- `source.collected`
 - `environment.observed`
 - `artifact.created`
 - `context.compacted`
@@ -365,6 +366,15 @@ Pairing:
 - Block localhost, private-network, non-HTTP(S), `file://`, `chrome://`, and other internal navigation targets. **Done.**
 - Keep CloakBrowser as a future optional engine only; it is not a default dependency and no binary is bundled. **Done.**
 
+### Phase 2.18: Browser Task Reliability and Evidence Grounding
+
+- Add `browser.read` for reading the current managed browser page title, URL, meta description, main text, and key links. **Done.**
+- Add browser `observation_status`: `usable`, `empty`, `http_error`, `blocked`, `login_required`, and `captcha_like`. **Done.**
+- Emit `source.collected` when an opened, read, or snapshotted page is usable as a source. **Done.**
+- Block the third duplicate search query or URL open in the same run with a recoverable observation. **Done.**
+- Update prompts so web research uses a small number of targeted searches and sources, changes strategy on bad pages, and stops once evidence is sufficient. **Done.**
+- Keep existing Chrome control, login-state browsing, order submission, payments, posting, email sending, desktop screen control, and long-term source libraries out of scope. **Done.**
+
 ## 9. Test Strategy
 
 - macOS/Windows install, start, stop, update, uninstall, health check.
@@ -376,6 +386,9 @@ Pairing:
 - `open.url`, `open.file`, and clipboard tools require explicit permission.
 - `task.verify` covers simple file, content, URL, and boolean checks.
 - `browser.open` and `browser.search` require explicit permission and block localhost/private-network targets before navigation.
+- `browser.read` returns `browser_page_required` when there is no managed browser page.
+- Usable browser pages emit `source.collected`; `empty`, `http_error`, `blocked`, `login_required`, and `captcha_like` pages do not become source evidence.
+- The third duplicate browser search query or URL open in a single run is blocked as `browser_duplicate_observation`.
 - `browser.click` and `browser.type` require explicit permission; password and one-time-code inputs are blocked.
 - `browser.screenshot` stores a PNG artifact without putting image bytes directly into prompt context.
 - `browser.snapshot` observes only the Local Host managed Playwright context.

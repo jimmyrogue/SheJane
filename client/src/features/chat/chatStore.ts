@@ -190,6 +190,18 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const url = stringValue(payload.url)
       return { type: event.event_type, label: `观察网页：${title || url || '当前页面'}`, eventId, artifactId: stringValue(payload.artifact_id) }
     }
+    case 'source.collected': {
+      const title = stringValue(payload.title)
+      const url = stringValue(payload.url)
+      return {
+        type: event.event_type,
+        label: `收集来源：${title || url || '网页来源'}`,
+        eventId,
+        artifactId: stringValue(payload.artifact_id),
+        sourceTitle: title,
+        sourceUrl: url,
+      }
+    }
     case 'environment.observed': {
       const app = stringValue(payload.foreground_app)
       const title = stringValue(payload.window_title)
@@ -242,6 +254,7 @@ function toolActionLabel(tool: string): string {
     'browser.open': '打开网页',
     'browser.search': '搜索网页',
     'browser.snapshot': '观察网页',
+    'browser.read': '阅读网页正文',
     'browser.screenshot': '页面截图',
     'browser.click': '点击网页元素',
     'browser.type': '输入网页文本',

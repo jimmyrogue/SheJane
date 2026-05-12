@@ -895,6 +895,11 @@ function AgentTimeline({
       {message.agentEvents?.map((event, index) => (
         <div className={`timeline-item ${timelineItemClass(event)}`} key={`${event.eventId ?? event.type}-${index}`}>
           <small>{event.label}</small>
+          {event.sourceUrl ? (
+            <a className="timeline-source-link" href={event.sourceUrl} target="_blank" rel="noreferrer">
+              {event.sourceUrl}
+            </a>
+          ) : null}
           {event.permissionRequestId && event.type === 'permission.required' && !isPermissionResolved(message, event.permissionRequestId) ? (
             <span className="timeline-actions">
               <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve', 'once')}>

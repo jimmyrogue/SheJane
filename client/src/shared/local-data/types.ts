@@ -13,6 +13,8 @@ export interface AgentTimelineItem {
   artifactId?: string
   artifactTitle?: string
   artifactTool?: string
+  sourceTitle?: string
+  sourceUrl?: string
   verificationStatus?: 'passed' | 'failed'
 }
 

@@ -596,6 +596,15 @@ button {
   line-height: 1.3;
 }
 
+.timeline-source-link {
+  max-width: 260px;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeline-item.permission {
   border-color: #d5c28c;
   background: #fff8e6;

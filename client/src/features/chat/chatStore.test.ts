@@ -118,6 +118,9 @@ describe('chat store', () => {
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.search' } })).toMatchObject({
       label: '调用工具：搜索网页',
     })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.read' } })).toMatchObject({
+      label: '调用工具：阅读网页正文',
+    })
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.screenshot' } })).toMatchObject({
       label: '调用工具：页面截图',
     })
@@ -131,6 +134,15 @@ describe('chat store', () => {
     })
     expect(timelineItem({ event_type: 'tool.completed', payload: { tool: 'browser.scroll' } })).toMatchObject({
       label: '工具完成：滚动网页',
+    })
+  })
+
+  it('renders collected browser sources with title and url', () => {
+    expect(timelineItem({ event_type: 'source.collected', payload: { title: 'Example Source', url: 'https://example.com/source', artifact_id: 'artifact-source' } })).toMatchObject({
+      label: '收集来源：Example Source',
+      sourceTitle: 'Example Source',
+      sourceUrl: 'https://example.com/source',
+      artifactId: 'artifact-source',
     })
   })
 

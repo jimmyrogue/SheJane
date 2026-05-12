@@ -81,7 +81,9 @@ test.describe('client simulated user flows', () => {
 
     await expect(page.getByText('本地执行完成')).toBeVisible()
     await expect(page.getByText('验证通过：运行命令')).toBeVisible()
-    await page.getByRole('button', { name: '查看 artifact' }).click()
+    await expect(page.getByText('收集来源：Example Source')).toBeVisible()
+    await expect(page.getByText('https://example.com/source')).toBeVisible()
+    await page.getByRole('button', { name: '查看 artifact' }).first().click()
     await expect(page.getByText('Artifact: shell output')).toBeVisible()
     await expect(page.getByText('artifact preview content')).toBeVisible()
 

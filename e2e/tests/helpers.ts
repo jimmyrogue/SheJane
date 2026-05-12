@@ -312,9 +312,10 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
           { id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } },
           { id: 'local-event-2', event_type: 'permission.resolved', payload: { request_id: 'perm-shell', decision: 'approve', tool: 'shell.run' } },
           { id: 'local-event-3', event_type: 'artifact.created', payload: { artifact_id: 'artifact-shell', title: 'shell output', tool: 'shell.run' } },
-          { id: 'local-event-4', event_type: 'verification.completed', payload: { tool: 'shell.run', status: 'passed' } },
-          { id: 'local-event-5', event_type: 'llm.delta', payload: { content: '本地执行完成' } },
-          { id: 'local-event-6', event_type: 'run.completed', payload: { final: '本地执行完成' } },
+          { id: 'local-event-4', event_type: 'source.collected', payload: { title: 'Example Source', url: 'https://example.com/source', artifact_id: 'artifact-shell', tool: 'browser.read' } },
+          { id: 'local-event-5', event_type: 'verification.completed', payload: { tool: 'shell.run', status: 'passed' } },
+          { id: 'local-event-6', event_type: 'llm.delta', payload: { content: '本地执行完成' } },
+          { id: 'local-event-7', event_type: 'run.completed', payload: { final: '本地执行完成' } },
         ]
       : [
           { id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } },

@@ -1,6 +1,6 @@
-# Phase 2.3a-2.17 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, Browser Observation, and Playwright Managed Browser
+# Phase 2.3a-2.18 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, Browser Observation, Playwright Managed Browser, and Evidence Grounding
 
-Updated: 2026-05-11
+Updated: 2026-05-12
 
 ## Goal
 
@@ -29,6 +29,7 @@ This phase proves:
 - Universal tool primitives provide general work-agent verbs for listing, reading, searching, writing, opening, clipboard access, and verification.
 - Controlled browser and environment observation let the Harness inspect a managed page and local environment metadata without broad computer control.
 - Playwright Managed Browser gives the Harness a real Chromium page for search, open, snapshot, screenshot, click, type, scroll, and close actions under explicit permission boundaries.
+- Browser research can collect usable sources, classify bad pages, avoid repeated browsing loops, and expose source evidence to the client timeline.
 
 ## Completed
 
@@ -189,6 +190,14 @@ This phase proves:
   - Changed `JIANDANLY_LOCAL_MAX_STEPS` into an optional hard safety cap instead of a default limit; the Local Harness now runs until the model finishes, the user cancels, a pause/error occurs, or an explicit cap is configured.
   - Added `JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` for soft long-running warnings that do not stop the run.
   - Browser 4xx/5xx pages are now recoverable `browser_http_error` tool failures rather than successful observations.
+- [x] Phase 2.18 Browser Task Reliability & Evidence Grounding:
+  - Added `browser.read` to read the current managed browser page title, URL, meta description, main text, and key links.
+  - Browser observations now include `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`.
+  - Added `source.collected` timeline events for usable source pages with title, URL, tool, artifact id, and text length.
+  - Added duplicate browsing protection: the third identical search query or URL open in one run returns a recoverable `browser_duplicate_observation` instead of executing again.
+  - Large browser observations are artifactized without injecting long page正文 into the next model call.
+  - Updated the local harness prompt to default to 2-3 searches, 3-5 sources, source reading via `browser.read`, and stopping once evidence is sufficient.
+  - Client timeline now shows `阅读网页正文` and `收集来源：...` with the source URL.
 
 ## Current Boundaries
 
@@ -211,7 +220,8 @@ This phase proves:
 - Phase 2.14c adds CLI-level observability, but in-app log inspection and one-click current-run diagnostic export are still future work.
 - Phase 2.14d adds a minimal write path, but only for explicit `file.write` approvals inside authorized workspace roots; destructive shell commands still require separate approval.
 - Phase 2.15 adds general work-agent primitives; clipboard operations are text-only, `open.url` supports only `http`/`https`, and `open.file` is limited to authorized workspace files.
-- Phase 2.17 adds Playwright managed browser search/open/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, user-browser tab inspection, screen OCR, or app-window control.
+- Phase 2.18 adds source grounding for managed-browser research through `browser.read`, `source.collected`, page quality classification, and duplicate browse protection.
+- Phase 2.17-2.18 browser tooling covers Playwright managed browser search/open/read/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, login-state browsing, user-browser tab inspection, screen OCR, or app-window control.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
 - Screen/app control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
 
@@ -232,6 +242,8 @@ This phase proves:
 - `cd local-host && npm test -- --run src/harness/runner.test.ts -t "browser and environment"`
 - `cd client && npm test -- --run src/features/chat/chatStore.test.ts -t "browser and environment"`
 - `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts src/harness/runner.test.ts`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts src/harness/runner.test.ts -t "browser.read|duplicate|source evidence"`
+- `cd client && npm test -- --run src/features/chat/chatStore.test.ts -t "source|browser.read"`
 - `cd client && npm test -- --run src/features/chat/chatStore.test.ts`
 - `cd local-host && npm run build`
 - `cd local-host && npm test -- --run`
