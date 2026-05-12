@@ -32,6 +32,10 @@ func (p *AnthropicProvider) Name() string {
 	return "anthropic-claude"
 }
 
+func (p *AnthropicProvider) ProviderKind() ProviderKind {
+	return ProviderKindAnthropic
+}
+
 func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, model string) (<-chan Chunk, <-chan error) {
 	chunks := make(chan Chunk)
 	errs := make(chan error, 1)

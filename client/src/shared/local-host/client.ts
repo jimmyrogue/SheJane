@@ -13,6 +13,8 @@ export interface LocalHostConfig {
   token?: string
 }
 
+export type LocalPermissionScope = 'once' | 'run'
+
 export interface LocalHostProbe {
   online: boolean
   status?: string
@@ -70,6 +72,7 @@ export interface LocalRunDiagnostics {
     tool_name: string
     arguments: Record<string, unknown>
     status: string
+    scope?: LocalPermissionScope
     created_at: string
     resolved_at?: string
   }>
@@ -304,12 +307,16 @@ export async function resolveLocalPermission(
   requestID: string,
   decision: 'approve' | 'deny',
   config: LocalHostConfig,
-  fetcher: Fetcher = fetch,
+  optionsOrFetcher: { scope?: LocalPermissionScope } | Fetcher = {},
+  maybeFetcher: Fetcher = fetch,
 ): Promise<void> {
+  const options = typeof optionsOrFetcher === 'function' ? {} : optionsOrFetcher
+  const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : maybeFetcher
+  const scope = options.scope === 'run' ? 'run' : 'once'
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/permissions/${encodeURIComponent(requestID)}`, {
     method: 'POST',
     headers: localHeaders(config, true),
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify(scope === 'run' ? { decision, scope } : { decision }),
   })
   if (!response.ok) {
     throw new Error(await localErrorMessage(response))

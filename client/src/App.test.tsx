@@ -134,12 +134,17 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('发送'))
 
     expect((await screen.findAllByText('需要权限：运行命令')).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByText('批准 运行命令'))
+    fireEvent.click(screen.getByText('本会话始终允许'))
 
     expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
+    expect(await screen.findByText('本会话已允许：运行命令')).toBeInTheDocument()
     expect(await screen.findByText('验证通过：运行命令')).toBeInTheDocument()
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toBe(true)
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell' && call.init?.method === 'POST')).toBe(true)
+    expect(calls.some((call) =>
+      call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell'
+      && call.init?.method === 'POST'
+      && call.init.body === JSON.stringify({ decision: 'approve', scope: 'run' }),
+    )).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
   })
 
@@ -422,7 +427,7 @@ function mockFetch(
         permissionApproved
           ? [
               { id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } },
-              { id: 'local-event-2', event_type: 'permission.resolved', payload: { request_id: 'perm-shell', decision: 'approve', tool: 'shell.run' } },
+              { id: 'local-event-2', event_type: 'permission.resolved', payload: { request_id: 'perm-shell', decision: 'approve', tool: 'shell.run', scope: 'run' } },
               { id: 'local-event-3', event_type: 'artifact.created', payload: { artifact_id: 'artifact-shell', title: 'shell output', tool: 'shell.run' } },
               { id: 'local-event-4', event_type: 'verification.completed', payload: { tool: 'shell.run', status: 'passed' } },
               { id: 'local-event-5', event_type: 'llm.delta', payload: { content: '本地执行完成' } },

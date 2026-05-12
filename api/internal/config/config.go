@@ -22,9 +22,11 @@ type Config struct {
 	MonthlyCredits int64
 	MockLLM        bool
 
+	FastProviderKind    string
 	FastProviderBaseURL string
 	FastProviderAPIKey  string
 	FastModel           string
+	DeepProviderKind    string
 	DeepProviderBaseURL string
 	DeepProviderAPIKey  string
 	DeepModel           string
@@ -59,8 +61,10 @@ func Default() Config {
 		AdminEmails:         nil,
 		MonthlyCredits:      20_000,
 		MockLLM:             true,
+		FastProviderKind:    "",
 		FastProviderBaseURL: "https://api.deepseek.com",
 		FastModel:           "deepseek-v4-flash",
+		DeepProviderKind:    "",
 		DeepModel:           "claude-3-5-sonnet-latest",
 		AnthropicVersion:    "2023-06-01",
 		StripeWebhookSecret: "",
@@ -93,9 +97,11 @@ func Load() Config {
 	cfg.AdminEmails = getEnvList("ADMIN_EMAILS", cfg.AdminEmails)
 	cfg.MonthlyCredits = getEnvInt64("MONTHLY_CREDITS", cfg.MonthlyCredits)
 	cfg.MockLLM = getEnvBool("MOCK_LLM", cfg.MockLLM)
+	cfg.FastProviderKind = getEnv("FAST_PROVIDER_KIND", cfg.FastProviderKind)
 	cfg.FastProviderBaseURL = getEnv("FAST_PROVIDER_BASE_URL", cfg.FastProviderBaseURL)
 	cfg.FastProviderAPIKey = getEnv("FAST_PROVIDER_API_KEY", cfg.FastProviderAPIKey)
 	cfg.FastModel = getEnv("FAST_MODEL", cfg.FastModel)
+	cfg.DeepProviderKind = getEnv("DEEP_PROVIDER_KIND", cfg.DeepProviderKind)
 	cfg.DeepProviderBaseURL = getEnv("DEEP_PROVIDER_BASE_URL", cfg.DeepProviderBaseURL)
 	cfg.DeepProviderAPIKey = getEnv("DEEP_PROVIDER_API_KEY", cfg.DeepProviderAPIKey)
 	cfg.DeepModel = getEnv("DEEP_MODEL", cfg.DeepModel)

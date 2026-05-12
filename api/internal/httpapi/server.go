@@ -1168,6 +1168,7 @@ func (s *Server) adminAuditLogs(w http.ResponseWriter, r *http.Request, user sto
 type adminProviderStatus struct {
 	Mode             string `json:"mode"`
 	Provider         string `json:"provider"`
+	Kind             string `json:"kind"`
 	BaseURL          string `json:"base_url"`
 	Model            string `json:"model"`
 	Mock             bool   `json:"mock"`
@@ -1177,10 +1178,12 @@ type adminProviderStatus struct {
 func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user store.User) {
 	fastProvider, fastModel := s.app.Router.Select(llm.ModeFast)
 	deepProvider, deepModel := s.app.Router.Select(llm.ModeDeep)
+	deepKind := llm.KindOfProvider(deepProvider)
 	statuses := []adminProviderStatus{
 		{
 			Mode:             string(llm.ModeFast),
 			Provider:         fastProvider.Name(),
+			Kind:             string(llm.KindOfProvider(fastProvider)),
 			BaseURL:          s.app.Config.FastProviderBaseURL,
 			Model:            fastModel,
 			Mock:             s.app.Config.MockLLM || s.app.Config.FastProviderAPIKey == "",
@@ -1189,7 +1192,8 @@ func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user sto
 		{
 			Mode:             string(llm.ModeDeep),
 			Provider:         deepProvider.Name(),
-			BaseURL:          deepProviderBaseURL(s.app.Config.AnthropicAPIKey != "", s.app.Config.DeepProviderBaseURL),
+			Kind:             string(deepKind),
+			BaseURL:          deepProviderBaseURL(deepKind == llm.ProviderKindAnthropic, s.app.Config.DeepProviderBaseURL),
 			Model:            deepModel,
 			Mock:             s.app.Config.MockLLM || (s.app.Config.AnthropicAPIKey == "" && s.app.Config.DeepProviderAPIKey == ""),
 			APIKeyConfigured: s.app.Config.AnthropicAPIKey != "" || s.app.Config.DeepProviderAPIKey != "",

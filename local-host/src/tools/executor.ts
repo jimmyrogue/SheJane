@@ -8,26 +8,60 @@ import type { LLMToolCall } from '../llm/gateway.js'
 import type { LocalRun } from '../types.js'
 import { callStdioMCPTool, parseMCPServersConfig, type MCPServerConfig } from './mcpRuntime.js'
 
+type PlaywrightModule = typeof import('playwright')
+type PlaywrightBrowser = Awaited<ReturnType<PlaywrightModule['chromium']['launch']>>
+type PlaywrightContext = Awaited<ReturnType<PlaywrightBrowser['newContext']>>
+type PlaywrightPage = Awaited<ReturnType<PlaywrightContext['newPage']>>
+
 export interface ToolExecutionResult {
   ok: boolean
   content: string
   data?: Record<string, unknown>
   errorCode?: string
   recoverable?: boolean
+  artifact?: {
+    title: string
+    content: string
+    contentType: string
+    metadata?: Record<string, unknown>
+  }
+}
+
+export interface BrowserElement {
+  ref: string
+  role: string
+  name: string
+  text?: string
+  tag?: string
+  href?: string
+}
+
+export interface BrowserScreenshot {
+  content: string
+  contentType: string
+  bytes: number
+  title: string
 }
 
 export interface BrowserSnapshot {
   url: string
   title: string
   visibleText: string
+  httpStatus?: number
   links: Array<{ text: string; url: string }>
   forms: Array<{ action: string; fields: string[] }>
   buttons: string[]
+  elements?: BrowserElement[]
 }
 
 export interface BrowserAdapter {
   open: (input: { url: string }) => Promise<BrowserSnapshot>
+  search: (input: { query: string; url: string }) => Promise<BrowserSnapshot>
   snapshot: () => Promise<BrowserSnapshot>
+  screenshot: (input?: { fullPage?: boolean }) => Promise<BrowserScreenshot>
+  click: (input: { ref: string }) => Promise<BrowserSnapshot>
+  type: (input: { ref: string; text: string }) => Promise<BrowserSnapshot>
+  scroll: (input: { direction?: string; amount?: number }) => Promise<BrowserSnapshot>
   close: () => Promise<void>
 }
 
@@ -53,6 +87,12 @@ export interface ToolExecutionOptions {
     writeText: (text: string) => Promise<void>
   }
   browser?: BrowserAdapter
+  browserEngine?: 'playwright' | 'fetch' | 'cloakbrowser'
+  browserHeadless?: boolean
+  browserTimeoutMs?: number
+  browserSearchURL?: string
+  browserViewport?: { width: number; height: number }
+  allowProxyFakeIPs?: boolean
   environment?: EnvironmentAdapter
   tavilyApiKey?: string
   tavilyBaseURL?: string
@@ -99,8 +139,18 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return verifyTask(call, run)
     case 'browser.open':
       return openManagedBrowser(call, options)
+    case 'browser.search':
+      return searchManagedBrowser(call, options)
     case 'browser.snapshot':
       return snapshotManagedBrowser(call, options)
+    case 'browser.screenshot':
+      return screenshotManagedBrowser(call, options)
+    case 'browser.click':
+      return clickManagedBrowser(call, options)
+    case 'browser.type':
+      return typeManagedBrowser(call, options)
+    case 'browser.scroll':
+      return scrollManagedBrowser(call, options)
     case 'browser.close':
       return closeManagedBrowser(options)
     case 'environment.observe':
@@ -426,12 +476,103 @@ async function openManagedBrowser(call: LLMToolCall, options: ToolExecutionOptio
   }
 }
 
+async function searchManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const query = typeof call.arguments.query === 'string' ? call.arguments.query.trim() : ''
+  if (!query) {
+    return { ok: false, content: 'A search query is required.', errorCode: 'query_required', recoverable: true }
+  }
+  const searchURL = buildBrowserSearchURL(query, options)
+  const checked = await validatePublicHTTPURL(searchURL, options)
+  if (!checked.ok) {
+    return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+  }
+  try {
+    const snapshot = await browserAdapter(options).search({ query, url: checked.url.href })
+    return browserSnapshotResult('browser.search', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_search_failed', 'Failed to search with managed browser.')
+  }
+}
+
 async function snapshotManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
   try {
     const snapshot = await browserAdapter(options).snapshot()
     return browserSnapshotResult('browser.snapshot', snapshot, call.arguments.maxTextCharacters)
   } catch (error) {
     return toolErrorResult(error, 'browser_snapshot_failed', 'Failed to snapshot managed browser page.')
+  }
+}
+
+async function screenshotManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const screenshot = await browserAdapter(options).screenshot({ fullPage: call.arguments.fullPage === true })
+    return {
+      ok: true,
+      content: `Screenshot captured: ${screenshot.title} (${screenshot.bytes} bytes).`,
+      data: {
+        source: 'browser.screenshot',
+        title: screenshot.title,
+        content_type: screenshot.contentType,
+        bytes: screenshot.bytes,
+      },
+      artifact: {
+        title: screenshot.title,
+        content: screenshot.content,
+        contentType: screenshot.contentType,
+        metadata: {
+          source: 'browser.screenshot',
+          bytes: screenshot.bytes,
+        },
+      },
+    }
+  } catch (error) {
+    return toolErrorResult(error, 'browser_screenshot_failed', 'Failed to capture managed browser screenshot.')
+  }
+}
+
+async function clickManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const ref = typeof call.arguments.ref === 'string' ? call.arguments.ref.trim() : ''
+  if (!ref) {
+    return { ok: false, content: 'A browser element ref is required.', errorCode: 'browser_ref_required', recoverable: true }
+  }
+  try {
+    const snapshot = await browserAdapter(options).click({ ref })
+    const checked = await validatePublicHTTPURL(snapshot.url, options)
+    if (!checked.ok) {
+      return { ok: false, content: checked.message, errorCode: checked.errorCode, recoverable: true }
+    }
+    return browserSnapshotResult('browser.click', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_click_failed', 'Failed to click managed browser element.')
+  }
+}
+
+async function typeManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const ref = typeof call.arguments.ref === 'string' ? call.arguments.ref.trim() : ''
+  const text = typeof call.arguments.text === 'string' ? call.arguments.text : ''
+  if (!ref) {
+    return { ok: false, content: 'A browser element ref is required.', errorCode: 'browser_ref_required', recoverable: true }
+  }
+  if (!text) {
+    return { ok: false, content: 'Text is required.', errorCode: 'text_required', recoverable: true }
+  }
+  try {
+    const snapshot = await browserAdapter(options).type({ ref, text })
+    return browserSnapshotResult('browser.type', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_type_failed', 'Failed to type into managed browser element.')
+  }
+}
+
+async function scrollManagedBrowser(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  try {
+    const snapshot = await browserAdapter(options).scroll({
+      direction: typeof call.arguments.direction === 'string' ? call.arguments.direction : 'down',
+      amount: typeof call.arguments.amount === 'number' ? call.arguments.amount : undefined,
+    })
+    return browserSnapshotResult('browser.scroll', snapshot, call.arguments.maxTextCharacters)
+  } catch (error) {
+    return toolErrorResult(error, 'browser_scroll_failed', 'Failed to scroll managed browser page.')
   }
 }
 
@@ -767,9 +908,23 @@ async function validatePublicHTTPURL(rawURL: string, options: ToolExecutionOptio
   if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
     return { ok: false, errorCode: 'ssrf_blocked', message: 'Localhost URLs are blocked.' }
   }
-  const ips = isIP(hostname) ? [hostname] : await (options.resolveHostname ?? resolveHostname)(hostname)
-  if (ips.length === 0 || ips.some(isBlockedIP)) {
-    return { ok: false, errorCode: 'ssrf_blocked', message: 'Private, loopback, link-local, multicast, and reserved network targets are blocked.' }
+  let ips: string[]
+  try {
+    ips = isIP(hostname) ? [hostname] : await (options.resolveHostname ?? resolveHostname)(hostname)
+  } catch (error) {
+    return {
+      ok: false,
+      errorCode: 'dns_resolution_failed',
+      message: `DNS resolution failed for ${hostname}: ${error instanceof Error ? error.message : 'unknown error'}`,
+    }
+  }
+  const allowFakeIPs = allowProxyFakeIPs(options)
+  if (ips.length === 0 || ips.some((ip) => isBlockedIP(ip, allowFakeIPs))) {
+    return {
+      ok: false,
+      errorCode: 'ssrf_blocked',
+      message: `Private, loopback, link-local, multicast, and reserved network targets are blocked for ${hostname}. resolved_ips=${ips.join(',') || 'none'}`,
+    }
   }
   return { ok: true, url }
 }
@@ -779,7 +934,7 @@ async function resolveHostname(hostname: string): Promise<string[]> {
   return records.map((record) => record.address)
 }
 
-function isBlockedIP(ip: string): boolean {
+function isBlockedIP(ip: string, allowProxyFakeIPs = false): boolean {
   if (ip.includes(':')) {
     const lower = ip.toLowerCase()
     return lower === '::1' || lower.startsWith('fc') || lower.startsWith('fd') || lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')
@@ -798,9 +953,16 @@ function isBlockedIP(ip: string): boolean {
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
     (a === 192 && b === 0) ||
-    (a === 198 && (b === 18 || b === 19)) ||
+    (!allowProxyFakeIPs && a === 198 && (b === 18 || b === 19)) ||
     a >= 224
   )
+}
+
+function allowProxyFakeIPs(options: ToolExecutionOptions): boolean {
+  if (typeof options.allowProxyFakeIPs === 'boolean') {
+    return options.allowProxyFakeIPs
+  }
+  return (process.env.JIANDANLY_ALLOW_PROXY_FAKE_IPS ?? 'true').toLowerCase() !== 'false'
 }
 
 function isTextualContentType(contentType: string): boolean {
@@ -839,7 +1001,16 @@ function verificationResult(check: string, passed: boolean, content: string): To
 
 function browserAdapter(options: ToolExecutionOptions): BrowserAdapter {
   if (!options.browser) {
-    options.browser = createFetchBrowserAdapter(options)
+    const engine = (options.browserEngine ?? process.env.JIANDANLY_BROWSER_ENGINE ?? 'playwright').toLowerCase()
+    if (engine === 'fetch') {
+      options.browser = createFetchBrowserAdapter(options)
+    } else if (engine === 'playwright') {
+      options.browser = createPlaywrightBrowserAdapter(options)
+    } else if (engine === 'cloakbrowser') {
+      throw recoverableToolError('browser_engine_unavailable', 'CloakBrowser is reserved as a future optional engine and is not bundled in this phase.')
+    } else {
+      throw recoverableToolError('browser_engine_unsupported', `Unsupported browser engine: ${engine}`)
+    }
   }
   return options.browser
 }
@@ -851,14 +1022,166 @@ function createFetchBrowserAdapter(options: ToolExecutionOptions): BrowserAdapte
       currentSnapshot = await fetchBrowserSnapshot(url, options)
       return currentSnapshot
     },
+    search: async ({ url }) => {
+      currentSnapshot = await fetchBrowserSnapshot(url, options)
+      return currentSnapshot
+    },
     snapshot: async () => {
       if (!currentSnapshot) {
         throw recoverableToolError('browser_page_required', 'No managed browser page is open.')
       }
       return currentSnapshot
     },
+    screenshot: async () => {
+      throw recoverableToolError('browser_action_unavailable', 'The fetch-backed browser adapter cannot capture screenshots.')
+    },
+    click: async () => {
+      throw recoverableToolError('browser_action_unavailable', 'The fetch-backed browser adapter cannot click page elements.')
+    },
+    type: async () => {
+      throw recoverableToolError('browser_action_unavailable', 'The fetch-backed browser adapter cannot type into page elements.')
+    },
+    scroll: async () => {
+      throw recoverableToolError('browser_action_unavailable', 'The fetch-backed browser adapter cannot scroll pages.')
+    },
     close: async () => {
       currentSnapshot = undefined
+    },
+  }
+}
+
+function createPlaywrightBrowserAdapter(options: ToolExecutionOptions): BrowserAdapter {
+  let browser: PlaywrightBrowser | undefined
+  let context: PlaywrightContext | undefined
+  let page: PlaywrightPage | undefined
+  const timeoutMs = browserTimeoutMs(options)
+
+  const ensurePage = async (): Promise<PlaywrightPage> => {
+    if (page && !page.isClosed()) {
+      return page
+    }
+    const { chromium } = await import('playwright')
+    browser = browser ?? (await chromium.launch({ headless: browserHeadless(options) }))
+    context = context ?? (await browser.newContext({ viewport: browserViewport(options) }))
+    page = await context.newPage()
+    page.setDefaultTimeout(timeoutMs)
+    page.setDefaultNavigationTimeout(timeoutMs)
+    return page
+  }
+
+  const currentPage = (): PlaywrightPage => {
+    if (!page || page.isClosed()) {
+      throw recoverableToolError('browser_page_required', 'No managed browser page is open.')
+    }
+    return page
+  }
+
+  const snapshot = async (): Promise<BrowserSnapshot> => snapshotPlaywrightPage(currentPage())
+
+  return {
+    open: async ({ url }) => {
+      const checked = await validatePublicHTTPURL(url, options)
+      if (!checked.ok) {
+        throw recoverableToolError(checked.errorCode, checked.message)
+      }
+      const targetPage = await ensurePage()
+      const response = await targetPage.goto(checked.url.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs })
+      await settlePlaywrightPage(targetPage, timeoutMs)
+      return snapshotPlaywrightPage(targetPage, response?.status())
+    },
+    search: async ({ url }) => {
+      const checked = await validatePublicHTTPURL(url, options)
+      if (!checked.ok) {
+        throw recoverableToolError(checked.errorCode, checked.message)
+      }
+      const targetPage = await ensurePage()
+      const response = await targetPage.goto(checked.url.href, { waitUntil: 'domcontentloaded', timeout: timeoutMs })
+      await settlePlaywrightPage(targetPage, timeoutMs)
+      return snapshotPlaywrightPage(targetPage, response?.status())
+    },
+    snapshot,
+    screenshot: async ({ fullPage } = {}) => {
+      const targetPage = currentPage()
+      const buffer = await targetPage.screenshot({ fullPage: fullPage === true, type: 'png', timeout: timeoutMs })
+      const title = (await targetPage.title().catch(() => 'Browser page')) || 'Browser page'
+      return {
+        content: buffer.toString('base64'),
+        contentType: 'image/png',
+        bytes: buffer.length,
+        title: `${title} screenshot`,
+      }
+    },
+    click: async ({ ref }) => {
+      const targetPage = currentPage()
+      const beforeURL = targetPage.url()
+      const locator = targetPage.locator(browserRefSelector(ref)).first()
+      const risk = await locator.evaluate((element: unknown) => {
+        const candidate = element as {
+          innerText?: string
+          textContent?: string
+          value?: string
+          href?: string
+          getAttribute?: (name: string) => string | null
+        }
+        const label = [
+          candidate.getAttribute?.('aria-label'),
+          candidate.innerText,
+          candidate.textContent,
+          candidate.value,
+          candidate.href,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        const hasDownload = Boolean(candidate.getAttribute?.('download'))
+        const riskyAction = /(download|checkout|place order|submit order|purchase|buy now|pay now|subscribe|post|send email|下载|结账|下单|提交订单|购买|支付|订阅|发帖|发送邮件)/i.test(label)
+        return {
+          blocked: hasDownload || riskyAction,
+          reason: hasDownload ? 'download' : riskyAction ? 'high_risk_action' : '',
+        }
+      })
+      if (risk.blocked) {
+        throw recoverableToolError('browser_high_risk_action_blocked', `High-risk browser action is blocked in this phase: ${risk.reason}`)
+      }
+      await locator.click({ timeout: timeoutMs })
+      await settlePlaywrightPage(targetPage, timeoutMs)
+      const checked = await validatePublicHTTPURL(targetPage.url(), options)
+      if (!checked.ok) {
+        await rollbackUnsafeNavigation(targetPage, beforeURL, timeoutMs)
+        throw recoverableToolError('browser_navigation_blocked', checked.message)
+      }
+      return snapshotPlaywrightPage(targetPage)
+    },
+    type: async ({ ref, text }) => {
+      const targetPage = currentPage()
+      const locator = targetPage.locator(browserRefSelector(ref)).first()
+      const sensitive = await locator.evaluate((element: unknown) => {
+        const input = element as { getAttribute?: (name: string) => string | null }
+        const type = input.getAttribute?.('type')?.toLowerCase() ?? ''
+        const autocomplete = input.getAttribute?.('autocomplete')?.toLowerCase() ?? ''
+        return type === 'password' || autocomplete === 'one-time-code' || autocomplete === 'current-password'
+      })
+      if (sensitive) {
+        throw recoverableToolError('browser_sensitive_input_blocked', 'Typing into password or one-time-code fields is blocked in this phase.')
+      }
+      await locator.fill(text, { timeout: timeoutMs })
+      await settlePlaywrightPage(targetPage, timeoutMs)
+      return snapshotPlaywrightPage(targetPage)
+    },
+    scroll: async ({ direction, amount }) => {
+      const targetPage = currentPage()
+      const delta = Math.max(100, Math.min(amount ?? 700, 5000)) * (direction === 'up' ? -1 : 1)
+      await targetPage.mouse.wheel(0, delta)
+      await settlePlaywrightPage(targetPage, timeoutMs)
+      return snapshotPlaywrightPage(targetPage)
+    },
+    close: async () => {
+      await page?.close().catch(() => undefined)
+      await context?.close().catch(() => undefined)
+      await browser?.close().catch(() => undefined)
+      page = undefined
+      context = undefined
+      browser = undefined
     },
   }
 }
@@ -895,6 +1218,101 @@ async function fetchBrowserSnapshot(url: string, options: ToolExecutionOptions):
   }
 }
 
+export const browserSnapshotScript = String.raw`(() => {
+  const doc = globalThis.document;
+  const locationHref = globalThis.location.href;
+  const toArray = (value) => Array.from(value || []);
+  const textOf = (element) => (
+    element.getAttribute?.('aria-label') ||
+    element.innerText ||
+    element.value ||
+    element.placeholder ||
+    element.textContent ||
+    ''
+  ).replace(/\s+/g, ' ').trim().slice(0, 180);
+  const resolveURL = (value) => {
+    if (typeof value !== 'string' || !value) return undefined;
+    try {
+      return new URL(value, locationHref).href;
+    } catch {
+      return undefined;
+    }
+  };
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect?.();
+    const style = globalThis.getComputedStyle?.(element);
+    return Boolean(rect && rect.width > 0 && rect.height > 0 && style?.visibility !== 'hidden' && style?.display !== 'none');
+  };
+  const elementRole = (element) => {
+    const explicit = element.getAttribute?.('role');
+    if (explicit) return explicit;
+    const tag = element.tagName?.toLowerCase();
+    if (tag === 'a') return 'link';
+    if (tag === 'button') return 'button';
+    if (tag === 'input' || tag === 'textarea') return 'textbox';
+    if (tag === 'select') return 'combobox';
+    return tag || 'element';
+  };
+
+  const links = toArray(doc.querySelectorAll('a[href]'))
+    .filter(isVisible)
+    .map((element) => ({
+      text: textOf(element),
+      url: resolveURL(element.getAttribute?.('href')) || '',
+    }))
+    .filter((link) => link.url)
+    .slice(0, 50);
+  const forms = toArray(doc.querySelectorAll('form'))
+    .map((form) => {
+      const fields = toArray(form.querySelectorAll?.('input[name], textarea[name], select[name]'))
+        .map((field) => field.getAttribute?.('name') || '')
+        .filter(Boolean)
+        .slice(0, 30);
+      return {
+        action: resolveURL(form.getAttribute?.('action')) || locationHref,
+        fields,
+      };
+    })
+    .slice(0, 20);
+  const buttons = toArray(doc.querySelectorAll('button, input[type="submit"], input[type="button"]'))
+    .filter(isVisible)
+    .map(textOf)
+    .filter(Boolean)
+    .slice(0, 50);
+  const elements = toArray(doc.querySelectorAll('a[href], button, input, textarea, select, [role="button"], [contenteditable="true"]'))
+    .filter(isVisible)
+    .slice(0, 100)
+    .map((element, index) => {
+      const ref = 'el-' + (index + 1);
+      element.setAttribute?.('data-jiandanly-ref', ref);
+      const href = resolveURL(element.getAttribute?.('href'));
+      const text = textOf(element);
+      return {
+        ref,
+        role: elementRole(element),
+        name: text || href || ref,
+        text,
+        tag: element.tagName?.toLowerCase(),
+        href,
+      };
+    });
+
+  return {
+    url: locationHref,
+    title: doc.title || new URL(locationHref).hostname,
+    visibleText: (doc.body?.innerText || '').replace(/\s+/g, ' ').trim(),
+    links,
+    forms,
+    buttons,
+    elements,
+  };
+})()`
+
+async function snapshotPlaywrightPage(page: PlaywrightPage, httpStatus?: number): Promise<BrowserSnapshot> {
+  const snapshot = (await page.evaluate(browserSnapshotScript)) as BrowserSnapshot
+  return normalizeBrowserSnapshot({ ...snapshot, httpStatus })
+}
+
 function parseBrowserSnapshot(rawText: string, url: string, contentType: string): BrowserSnapshot {
   const isHTML = contentType.toLowerCase().includes('html') || /<html[\s>]/i.test(rawText) || /<body[\s>]/i.test(rawText)
   if (!isHTML) {
@@ -905,6 +1323,7 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
       links: [],
       forms: [],
       buttons: [],
+      elements: [],
     }
   }
   const title = decodeHTML(extractHTMLText(firstMatch(rawText, /<title[^>]*>([\s\S]*?)<\/title>/i) ?? '') || new URL(url).hostname)
@@ -925,6 +1344,13 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
     })
     .filter((link): link is { text: string; url: string } => Boolean(link))
     .slice(0, 30)
+  const elements = links.map((link, index) => ({
+    ref: `link-${index + 1}`,
+    role: 'link',
+    name: link.text || link.url,
+    text: link.text,
+    href: link.url,
+  }))
   const forms = [...rawText.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)]
     .map((match) => {
       const action = resolveBrowserURL(attributeValue(match[1] ?? '', 'action') ?? url, url) ?? url
@@ -950,35 +1376,129 @@ function parseBrowserSnapshot(rawText: string, url: string, contentType: string)
     links,
     forms,
     buttons,
+    elements,
   }
 }
 
-function browserSnapshotResult(source: 'browser.open' | 'browser.snapshot', snapshot: BrowserSnapshot, maxTextCharacters: unknown): ToolExecutionResult {
+function normalizeBrowserSnapshot(snapshot: BrowserSnapshot): BrowserSnapshot {
+  return {
+    url: snapshot.url,
+    title: snapshot.title || safeHostname(snapshot.url),
+    visibleText: snapshot.visibleText ?? '',
+    httpStatus: snapshot.httpStatus,
+    links: (snapshot.links ?? []).slice(0, 50),
+    forms: (snapshot.forms ?? []).slice(0, 20),
+    buttons: (snapshot.buttons ?? []).slice(0, 50),
+    elements: (snapshot.elements ?? []).slice(0, 100),
+  }
+}
+
+function browserSnapshotResult(
+  source: 'browser.open' | 'browser.search' | 'browser.snapshot' | 'browser.click' | 'browser.type' | 'browser.scroll',
+  snapshot: BrowserSnapshot,
+  maxTextCharacters: unknown,
+): ToolExecutionResult {
   const maxText = typeof maxTextCharacters === 'number' ? Math.max(1, Math.min(Math.floor(maxTextCharacters), 60000)) : 6000
   const visibleText = snapshot.visibleText.slice(0, maxText).trim()
   const payload = {
     title: snapshot.title,
     url: snapshot.url,
+    http_status: snapshot.httpStatus,
     visible_text: visibleText,
     text_characters: snapshot.visibleText.length,
     text_truncated: snapshot.visibleText.length > visibleText.length,
     links: snapshot.links,
     forms: snapshot.forms,
     buttons: snapshot.buttons,
+    elements: snapshot.elements ?? [],
+  }
+  const data = {
+    source,
+    url: snapshot.url,
+    title: snapshot.title,
+    http_status: snapshot.httpStatus,
+    text_characters: snapshot.visibleText.length,
+    text_truncated: snapshot.visibleText.length > visibleText.length,
+    links_count: snapshot.links.length,
+    forms_count: snapshot.forms.length,
+    buttons_count: snapshot.buttons.length,
+    elements_count: snapshot.elements?.length ?? 0,
+  }
+  if (typeof snapshot.httpStatus === 'number' && snapshot.httpStatus >= 400) {
+    return {
+      ok: false,
+      content: JSON.stringify({
+        error: `Managed browser page returned HTTP ${snapshot.httpStatus}.`,
+        ...payload,
+      }),
+      errorCode: 'browser_http_error',
+      recoverable: true,
+      data,
+    }
   }
   return {
     ok: true,
     content: JSON.stringify(payload),
-    data: {
-      source,
-      url: snapshot.url,
-      title: snapshot.title,
-      text_characters: snapshot.visibleText.length,
-      text_truncated: snapshot.visibleText.length > visibleText.length,
-      links_count: snapshot.links.length,
-      forms_count: snapshot.forms.length,
-      buttons_count: snapshot.buttons.length,
-    },
+    data,
+  }
+}
+
+function buildBrowserSearchURL(query: string, options: ToolExecutionOptions): string {
+  const template = options.browserSearchURL ?? process.env.JIANDANLY_BROWSER_SEARCH_URL ?? 'https://cn.bing.com/search?q={query}'
+  const encoded = encodeURIComponent(query)
+  if (template.includes('{query}')) {
+    return template.split('{query}').join(encoded)
+  }
+  const url = new URL(template)
+  url.searchParams.set('q', query)
+  return url.href
+}
+
+function browserTimeoutMs(options: ToolExecutionOptions): number {
+  const env = Number(process.env.JIANDANLY_BROWSER_TIMEOUT_MS)
+  const value = options.browserTimeoutMs ?? (Number.isFinite(env) && env > 0 ? env : 15000)
+  return Math.max(1000, Math.min(value, 120000))
+}
+
+function browserHeadless(options: ToolExecutionOptions): boolean {
+  if (typeof options.browserHeadless === 'boolean') {
+    return options.browserHeadless
+  }
+  return (process.env.JIANDANLY_BROWSER_HEADLESS ?? 'true').toLowerCase() !== 'false'
+}
+
+function browserViewport(options: ToolExecutionOptions): { width: number; height: number } {
+  return {
+    width: options.browserViewport?.width ?? 1280,
+    height: options.browserViewport?.height ?? 800,
+  }
+}
+
+async function settlePlaywrightPage(page: PlaywrightPage, timeoutMs: number): Promise<void> {
+  await page.waitForLoadState('networkidle', { timeout: Math.min(timeoutMs, 3000) }).catch(() => undefined)
+}
+
+async function rollbackUnsafeNavigation(page: PlaywrightPage, beforeURL: string, timeoutMs: number): Promise<void> {
+  if (!beforeURL || beforeURL === 'about:blank') {
+    await page.close().catch(() => undefined)
+    return
+  }
+  await page.goto(beforeURL, { waitUntil: 'domcontentloaded', timeout: timeoutMs }).catch(() => undefined)
+}
+
+function browserRefSelector(ref: string): string {
+  return `[data-jiandanly-ref="${cssAttributeEscape(ref)}"]`
+}
+
+function cssAttributeEscape(input: string): string {
+  return input.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function safeHostname(rawURL: string): string {
+  try {
+    return new URL(rawURL).hostname
+  } catch {
+    return 'Browser page'
   }
 }
 

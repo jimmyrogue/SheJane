@@ -250,7 +250,7 @@ async function handleAdminAPI(route: Route, role: 'admin' | 'user'): Promise<voi
     return
   }
   if (url.endsWith('/api/v1/admin/providers')) {
-    await json(route, { code: 0, message: 'ok', data: [{ mode: 'fast', provider: 'deepseek', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', mock: false, api_key_configured: true }] })
+    await json(route, { code: 0, message: 'ok', data: [{ mode: 'fast', provider: 'deepseek', kind: 'deepseek-v4', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', mock: false, api_key_configured: true }] })
     return
   }
   if (url.endsWith('/api/v1/admin/agent-runs')) {

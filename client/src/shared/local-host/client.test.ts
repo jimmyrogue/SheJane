@@ -168,6 +168,7 @@ describe('desktop local host client', () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -183,6 +184,9 @@ describe('desktop local host client', () => {
     await expect(
       resolveLocalPermission('perm-1', 'approve', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher),
     ).resolves.toBeUndefined()
+    await expect(
+      resolveLocalPermission('perm-2', 'approve', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, { scope: 'run' }, fetcher),
+    ).resolves.toBeUndefined()
     await expect(getLocalArtifact('artifact-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toMatchObject({
       id: 'artifact-1',
       content: 'artifact content',
@@ -194,6 +198,11 @@ describe('desktop local host client', () => {
     )
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
+      'http://127.0.0.1:17371/local/v1/permissions/perm-2',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ decision: 'approve', scope: 'run' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
       'http://127.0.0.1:17371/local/v1/artifacts/artifact-1',
       expect.objectContaining({ method: 'GET' }),
     )

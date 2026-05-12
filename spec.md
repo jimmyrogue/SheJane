@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.16 adds controlled `browser.*` and `environment.observe` observation tools. Legacy `file.*` aliases remain for compatibility. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -350,10 +350,20 @@ Pairing:
 
 ### Phase 2.16: Browser and Environment Observation
 
-- Add `browser.open`, `browser.snapshot`, and `browser.close` for a Local Host managed page context. **Done for fetch-backed snapshot MVP.**
+- Add `browser.open`, `browser.snapshot`, and `browser.close` for a Local Host managed page context. **Done in Phase 2.16 as fetch-backed snapshot MVP; upgraded in Phase 2.17.**
 - Add `environment.observe` for user-approved local environment metadata. **Done.**
 - Emit semantic `browser.observed`, `environment.observed`, and `ui.action.*` events for clearer timelines. **Done.**
-- Keep user browser tab inspection, clicking, typing, screen OCR, and app-window control as later phases. **Pending.**
+- Keep user browser tab inspection, screen OCR, and app-window control as later phases. **Pending.**
+
+### Phase 2.17: Playwright Managed Browser MVP
+
+- Add Playwright as the default Local Host browser runtime and install Chromium explicitly with `npm run browser:install`. **Done.**
+- Add `browser.search`, `browser.screenshot`, `browser.click`, `browser.type`, and `browser.scroll`. **Done.**
+- Keep `browser.open`, `browser.snapshot`, and `browser.close` on the same tool contract while defaulting to Playwright instead of fetch-backed parsing. **Done.**
+- Store screenshots as local artifacts and expose only the artifact id plus summary to the model context. **Done.**
+- Require user permission for search/open/click/type; allow snapshot/screenshot/scroll/close. **Done.**
+- Block localhost, private-network, non-HTTP(S), `file://`, `chrome://`, and other internal navigation targets. **Done.**
+- Keep CloakBrowser as a future optional engine only; it is not a default dependency and no binary is bundled. **Done.**
 
 ## 9. Test Strategy
 
@@ -365,8 +375,10 @@ Pairing:
 - `fs.list`, `fs.read`, `fs.search`, and `fs.write` stay inside authorized workspace.
 - `open.url`, `open.file`, and clipboard tools require explicit permission.
 - `task.verify` covers simple file, content, URL, and boolean checks.
-- `browser.open` requires explicit permission and blocks localhost/private-network targets before fetching.
-- `browser.snapshot` observes only the Local Host managed page context.
+- `browser.open` and `browser.search` require explicit permission and block localhost/private-network targets before navigation.
+- `browser.click` and `browser.type` require explicit permission; password and one-time-code inputs are blocked.
+- `browser.screenshot` stores a PNG artifact without putting image bytes directly into prompt context.
+- `browser.snapshot` observes only the Local Host managed Playwright context.
 - `environment.observe` requires explicit permission and emits metadata only, not screenshot content.
 - `shell.run` requires explicit permission.
 - Denied permission becomes recoverable observation, not a crash.
@@ -378,7 +390,7 @@ Pairing:
 - Local MCP tests cover allowlist rejection, missing runtime config, stdio execution, metadata redaction, process startup failure, and Harness permission-to-observation flow.
 - Harness runner tests cover concurrency-safe tool batching and deterministic observation order.
 - Harness runner tests cover model gateway failure becoming a durable `run.failed` event.
-- Browser/environment tests cover managed page snapshots, SSRF blocking, permission-gated observation, and user-facing timeline labels.
+- Browser/environment tests cover managed page snapshots, search, screenshot artifact creation, click/type/scroll, SSRF blocking, permission-gated observation, and user-facing timeline labels.
 
 ## 10. Deprecated Direction
 

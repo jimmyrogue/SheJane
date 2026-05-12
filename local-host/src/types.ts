@@ -27,6 +27,7 @@ export interface LocalRun {
 
 export type PermissionDecision = 'approve' | 'deny'
 export type PermissionStatus = 'pending' | 'approved' | 'denied'
+export type PermissionScope = 'once' | 'run'
 
 export interface PermissionRequest {
   id: string
@@ -35,6 +36,7 @@ export interface PermissionRequest {
   toolName: string
   arguments: Record<string, unknown>
   status: PermissionStatus
+  scope: PermissionScope
   createdAt: string
   resolvedAt?: string
 }
@@ -185,6 +187,7 @@ export interface LocalRunDiagnostics {
     tool_name: string
     arguments: Record<string, unknown>
     status: PermissionStatus
+    scope: PermissionScope
     created_at: string
     resolved_at?: string
   }>
@@ -208,7 +211,7 @@ export interface LocalHostStore {
   createPermission(input: { runId: string; toolCallId: string; toolName: string; arguments: Record<string, unknown> }): PermissionRequest
   permissionByID(id: string): PermissionRequest | undefined
   listPermissions(runID: string): PermissionRequest[]
-  resolvePermission(id: string, decision: PermissionDecision): Promise<PermissionRequest | undefined> | PermissionRequest | undefined
+  resolvePermission(id: string, decision: PermissionDecision, scope?: PermissionScope): Promise<PermissionRequest | undefined> | PermissionRequest | undefined
   createArtifact(input: {
     runId: string
     kind: ArtifactKind

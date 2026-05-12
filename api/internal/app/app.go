@@ -229,14 +229,19 @@ func providersFromConfig(cfg config.Config) (llm.Provider, llm.Provider) {
 
 	fast := llm.Provider(llm.NewMockProvider("deepseek-fast", "Mock Jiandan response from fast fallback"))
 	if cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "" {
-		fast = llm.NewOpenAICompatibleProvider("deepseek-fast", cfg.FastProviderBaseURL, cfg.FastProviderAPIKey)
+		fastKind := llm.InferOpenAIProviderKind(cfg.FastProviderKind, cfg.FastProviderBaseURL)
+		fast = llm.NewOpenAICompatibleProviderWithProfile("deepseek-fast", cfg.FastProviderBaseURL, cfg.FastProviderAPIKey, llm.ProfileForProviderKind(fastKind))
 	}
 
 	deep := llm.Provider(llm.NewMockProvider("claude-deep", "Mock Jiandan response from deep fallback"))
-	if cfg.AnthropicAPIKey != "" {
+	deepKind := llm.NormalizeProviderKind(cfg.DeepProviderKind)
+	if cfg.AnthropicAPIKey != "" && (deepKind == "" || deepKind == llm.ProviderKindAnthropic) {
 		deep = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, cfg.AnthropicVersion)
 	} else if cfg.DeepProviderBaseURL != "" && cfg.DeepProviderAPIKey != "" {
-		deep = llm.NewOpenAICompatibleProvider("deep-compatible", cfg.DeepProviderBaseURL, cfg.DeepProviderAPIKey)
+		if deepKind == "" || deepKind == llm.ProviderKindAnthropic {
+			deepKind = llm.InferOpenAIProviderKind(cfg.DeepProviderKind, cfg.DeepProviderBaseURL)
+		}
+		deep = llm.NewOpenAICompatibleProviderWithProfile("deep-compatible", cfg.DeepProviderBaseURL, cfg.DeepProviderAPIKey, llm.ProfileForProviderKind(deepKind))
 	}
 	return fast, deep
 }

@@ -520,7 +520,9 @@ func TestAdminEmailCanAccessOverviewAndProviderStatusDoesNotExposeSecrets(t *tes
 	server := newTestServerWithConfig(t, func(cfg *config.Config) {
 		cfg.AdminEmails = []string{"admin@example.com"}
 		cfg.MockLLM = false
+		cfg.FastProviderKind = string(llm.ProviderKindDeepSeekV4)
 		cfg.FastProviderAPIKey = "secret-fast-key"
+		cfg.DeepProviderKind = string(llm.ProviderKindOpenAICompatible)
 		cfg.DeepProviderBaseURL = "https://api.deepseek.com"
 		cfg.DeepProviderAPIKey = "secret-deep-key"
 		cfg.DeepModel = "deepseek-v4-pro"
@@ -548,6 +550,9 @@ func TestAdminEmailCanAccessOverviewAndProviderStatusDoesNotExposeSecrets(t *tes
 	}
 	if !strings.Contains(body, `"api_key_configured":true`) {
 		t.Fatalf("provider status missing key configured flag: %s", body)
+	}
+	if !strings.Contains(body, `"kind":"deepseek-v4"`) || !strings.Contains(body, `"kind":"openai-compatible"`) {
+		t.Fatalf("provider status missing provider kind: %s", body)
 	}
 }
 

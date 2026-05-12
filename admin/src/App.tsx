@@ -766,7 +766,7 @@ function ProvidersCard({ providers }: { providers: AdminProviderStatus[] }) {
                   <TableCell>{provider.mode}</TableCell>
                   <TableCell className="max-w-44">
                     <div className="truncate font-medium">{provider.provider}</div>
-                    <div className="truncate text-xs text-muted-foreground">{provider.model} · {provider.base_url || 'default'}</div>
+                    <div className="truncate text-xs text-muted-foreground">{provider.kind || 'unknown'} · {provider.model} · {provider.base_url || 'default'}</div>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">

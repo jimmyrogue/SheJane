@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runHarness } from './runner.js'
 import { InMemoryLocalHostStore } from '../state/memoryStore.js'
 import type { LLMGateway, LLMGatewayRequest, LLMGatewayResponse } from '../llm/gateway.js'
@@ -11,6 +11,8 @@ const tempDirs: string[] = []
 afterEach(async () => {
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
+  vi.restoreAllMocks()
+  delete process.env.JIANDANLY_LOCAL_HOST_DEBUG
 })
 
 describe('harness runner', () => {
@@ -178,6 +180,94 @@ describe('harness runner', () => {
         expect.objectContaining({ eventType: 'run.completed', payload: expect.objectContaining({ final: 'The approved shell command completed.' }) }),
       ]),
     )
+  })
+
+  it('auto-approves the same permission type for the rest of the run when approved with run scope', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Run two safe commands.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-first-shell',
+        toolCalls: [{ id: 'call-shell-1', name: 'shell.run', arguments: { command: 'printf first > first.txt' } }],
+      },
+      {
+        requestId: 'req-second-shell',
+        toolCalls: [{ id: 'call-shell-2', name: 'shell.run', arguments: { command: 'printf second > second.txt' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Both commands completed.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'shell.run', status: 'pending' })
+
+    await store.resolvePermission(permission.id, 'approve', 'run')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    await expect(readFile(join(workspace, 'first.txt'), 'utf8')).resolves.toBe('first')
+    await expect(readFile(join(workspace, 'second.txt'), 'utf8')).resolves.toBe('second')
+    expect(store.listPermissions(run.id)).toHaveLength(1)
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'permission.auto_approved',
+          payload: expect.objectContaining({ tool: 'shell.run', scope: 'run' }),
+        }),
+        expect.objectContaining({ eventType: 'run.completed', payload: expect.objectContaining({ final: 'Both commands completed.' }) }),
+      ]),
+    )
+  })
+
+  it('does not send incomplete multi-tool permission turns back to the model', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Run an approved command, then continue safely.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new PairingValidatingGateway([
+      {
+        requestId: 'req-multi-tool',
+        toolCalls: [
+          {
+            id: 'call-shell',
+            name: 'shell.run',
+            arguments: { command: 'printf hello > shell-output.txt' },
+          },
+          {
+            id: 'call-time',
+            name: 'time.now',
+            arguments: {},
+          },
+        ],
+      },
+      {
+        requestId: 'req-final',
+        content: 'The approved command completed and the incomplete sibling call was not replayed.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'shell.run', status: 'pending' })
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(gateway.requests).toHaveLength(2)
+    expect(gateway.requests[1].messages).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          toolCalls: expect.arrayContaining([expect.objectContaining({ id: 'call-time' })]),
+        }),
+      ]),
+    )
+    expect(gateway.requests[1].messages.map((message) => message.content).join('\n')).toContain('Incomplete tool-call turn was summarized')
   })
 
   it('opens an approved workspace before running workspace-bound tools', async () => {
@@ -464,6 +554,96 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
+  it('runs a Playwright-style browser search, snapshot, and screenshot loop with artifact references', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Search the web and capture evidence.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'browser.search', arguments: { query: 'Jiandanly harness' } }],
+      },
+      {
+        requestId: 'req-snapshot',
+        toolCalls: [{ id: 'call-snapshot', name: 'browser.snapshot', arguments: { maxTextCharacters: 200 } }],
+      },
+      {
+        requestId: 'req-screenshot',
+        toolCalls: [{ id: 'call-screenshot', name: 'browser.screenshot', arguments: {} }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Found a browser result and captured a screenshot artifact.',
+      },
+    ])
+    const snapshot = {
+      url: 'https://www.bing.com/search?q=Jiandanly%20harness',
+      title: 'Jiandanly harness - Search',
+      visibleText: 'Jiandanly Local Harness result',
+      links: [{ text: 'Jiandanly', url: 'https://example.com/jiandanly' }],
+      forms: [],
+      buttons: [],
+      elements: [{ ref: 'result-1', role: 'link', name: 'Jiandanly', text: 'Jiandanly', href: 'https://example.com/jiandanly' }],
+    }
+    const toolOptions = {
+      resolveHostname: async () => ['204.79.197.200'],
+      browser: {
+        search: async () => snapshot,
+        open: async () => snapshot,
+        snapshot: async () => snapshot,
+        screenshot: async () => ({ content: 'png-bytes', contentType: 'image/png', bytes: 9, title: 'Search screenshot' }),
+        click: async () => snapshot,
+        type: async () => snapshot,
+        scroll: async () => snapshot,
+        close: async () => undefined,
+      },
+    } as any
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions })
+    const permission = store.listPermissions(run.id)[0]
+    expect(permission).toMatchObject({ toolName: 'browser.search', status: 'pending' })
+
+    await store.resolvePermission(permission.id, 'approve')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id, toolOptions })
+
+    const artifact = store.listArtifacts(run.id)[0]
+    expect(artifact).toMatchObject({
+      kind: 'tool_output',
+      toolName: 'browser.screenshot',
+      title: 'Search screenshot',
+      contentType: 'image/png',
+      content: 'png-bytes',
+    })
+    expect(gateway.requests.at(-1)?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', name: 'browser.screenshot', content: expect.stringContaining(artifact.id) }),
+      ]),
+    )
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'browser.observed', payload: expect.objectContaining({ tool: 'browser.search', title: 'Jiandanly harness - Search' }) }),
+        expect.objectContaining({ eventType: 'artifact.created', payload: expect.objectContaining({ artifact_id: artifact.id, tool: 'browser.screenshot' }) }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'browser.search',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'browser_search_ok', passed: true })]),
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'verification.completed',
+          payload: expect.objectContaining({
+            tool: 'browser.screenshot',
+            status: 'passed',
+            checks: expect.arrayContaining([expect.objectContaining({ name: 'browser_screenshot_ok', passed: true })]),
+          }),
+        }),
+      ]),
+    )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
   it('fails fast when the model requests an unsupported tool', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Use a tool that is not registered.' })
@@ -569,6 +749,111 @@ describe('harness runner', () => {
     expect(store.latestCheckpoint(run.id)?.messages.map((message) => message.content).join('\n')).toContain('Compacted run history')
   })
 
+  it('uses a no-tool finalization round instead of failing when the step budget is exhausted', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Search several sources and answer from what you have.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-time-1', name: 'time.now', arguments: {} }],
+      },
+      {
+        requestId: 'req-2',
+        toolCalls: [{ id: 'call-time-2', name: 'time.now', arguments: {} }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'I reached the tool budget and can still answer from the gathered observations.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, maxSteps: 2 })
+
+    expect(gateway.requests).toHaveLength(3)
+    expect(gateway.requests[2].tools).toEqual([])
+    expect(gateway.requests[2].messages.at(-1)?.content).toContain('tool step budget is exhausted')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'run.budget_warning', payload: expect.objectContaining({ max_steps: 2, last_tool: 'time.now' }) }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: 'I reached the tool budget and can still answer from the gathered observations.',
+            reason: 'max_steps_finalized',
+          }),
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id).some((event) => event.eventType === 'run.failed')).toBe(false)
+  })
+
+  it('does not impose a default hard step limit on long-running local harness runs', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Keep gathering evidence until the model has enough.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const toolResponses = Array.from({ length: 13 }, (_, index) => ({
+      requestId: `req-tool-${index + 1}`,
+      toolCalls: [{ id: `call-time-${index + 1}`, name: 'time.now', arguments: {} }],
+    }))
+    const gateway = new ScriptedGateway([
+      ...toolResponses,
+      {
+        requestId: 'req-final',
+        content: 'Completed after more than the old default step limit.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(14)
+    expect(gateway.requests[13].tools.length).toBeGreaterThan(0)
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'run.completed', payload: expect.objectContaining({ final: 'Completed after more than the old default step limit.' }) }),
+      ]),
+    )
+    expect(store.listEvents(run.id).some((event) => event.eventType === 'run.failed')).toBe(false)
+  })
+
+  it('emits soft long-running warnings without forcing finalization', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Continue after soft warnings.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', toolCalls: [{ id: 'call-time-1', name: 'time.now', arguments: {} }] },
+      { requestId: 'req-2', toolCalls: [{ id: 'call-time-2', name: 'time.now', arguments: {} }] },
+      { requestId: 'req-3', content: 'Final answer after a soft warning.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, stepWarningInterval: 2 })
+
+    expect(gateway.requests).toHaveLength(3)
+    expect(gateway.requests[2].tools.length).toBeGreaterThan(0)
+    expect(gateway.requests[2].messages.at(-1)?.content).toContain('This run has used 2 tool-use turns')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: 'run.budget_warning', payload: expect.objectContaining({ reason: 'long_running', step: 2 }) }),
+      ]),
+    )
+  })
+
+  it('stops the loop when a running task is canceled between turns', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Stop when canceled.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new CancelOnFirstCallGateway(store, run.id)
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(1)
+    expect(store.getRun(run.id)?.status).toBe('canceled')
+    expect(store.listEvents(run.id).some((event) => event.eventType === 'tool.requested')).toBe(false)
+  })
+
   it('resumes a running run from the latest checkpoint', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Resume me from checkpoint.' })
@@ -584,15 +869,13 @@ describe('harness runner', () => {
         { role: 'tool', toolCallId: 'call-prev', name: 'time.now', content: '2026-05-11T00:00:00.000Z' },
       ],
     })
-    const gateway = new ScriptedGateway([{ requestId: 'req-resume', content: 'Resumed from checkpoint.' }])
+    const gateway = new PairingValidatingGateway([{ requestId: 'req-resume', content: 'Resumed from checkpoint.' }])
 
     await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined })
 
-    expect(gateway.requests[0].messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: 'tool', toolCallId: 'call-prev', name: 'time.now' }),
-      ]),
-    )
+    expect(gateway.requests[0].messages).not.toEqual(expect.arrayContaining([expect.objectContaining({ role: 'tool' })]))
+    expect(gateway.requests[0].messages.map((message) => message.content).join('\n')).toContain('Orphan tool observation was summarized')
+    expect(gateway.requests[0].messages.map((message) => message.content).join('\n')).toContain('2026-05-11T00:00:00.000Z')
     expect(store.listEvents(run.id)).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: 'checkpoint.resumed' })]))
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
@@ -656,6 +939,34 @@ describe('harness runner', () => {
         }),
       ]),
     )
+  })
+
+  it('writes sanitized debug logs for failed tool observations when local debug is enabled', async () => {
+    process.env.JIANDANLY_LOCAL_HOST_DEBUG = '1'
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Search without Tavily config.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'web.search', arguments: { query: 'private search token' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'Search is unavailable.',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const serialized = warn.mock.calls.map((call) => call.map(String).join(' ')).join('\n')
+    expect(serialized).toContain('[jiandanly:local-host]')
+    expect(serialized).toContain('tool.failed')
+    expect(serialized).toContain('web.search')
+    expect(serialized).toContain('web_search_disabled')
+    expect(serialized).not.toContain('private search token')
   })
 
   it('executes approved MCP calls through the local runtime adapter and feeds the observation back', async () => {
@@ -817,11 +1128,59 @@ class ScriptedGateway implements LLMGateway {
   }
 }
 
+class PairingValidatingGateway extends ScriptedGateway {
+  override async call(request: LLMGatewayRequest): Promise<LLMGatewayResponse> {
+    assertToolCallPairing(request.messages)
+    return super.call(request)
+  }
+}
+
 class FailingGateway implements LLMGateway {
   constructor(private readonly message: string) {}
 
   async call(): Promise<LLMGatewayResponse> {
     throw new Error(this.message)
+  }
+}
+
+class CancelOnFirstCallGateway implements LLMGateway {
+  readonly requests: LLMGatewayRequest[] = []
+
+  constructor(private readonly store: InMemoryLocalHostStore, private readonly runID: string) {}
+
+  async call(request: LLMGatewayRequest): Promise<LLMGatewayResponse> {
+    this.requests.push(request)
+    this.store.updateRunStatus(this.runID, 'canceled', { canceledAt: new Date().toISOString() })
+    this.store.appendEvent(this.runID, 'run.canceled', { reason: 'test_cancel' })
+    return {
+      requestId: 'req-canceled',
+      toolCalls: [{ id: 'call-time-after-cancel', name: 'time.now', arguments: {} }],
+    }
+  }
+}
+
+function assertToolCallPairing(messages: LLMGatewayRequest['messages']): void {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+    const required = new Set((message.toolCalls ?? []).map((call) => call.id))
+    if (required.size === 0) {
+      if (message.role === 'tool') {
+        throw new Error(`Orphan tool message ${message.toolCallId ?? 'unknown'}`)
+      }
+      continue
+    }
+    let cursor = index + 1
+    while (cursor < messages.length && messages[cursor].role === 'tool') {
+      const toolCallID = messages[cursor].toolCallId
+      if (toolCallID) {
+        required.delete(toolCallID)
+      }
+      cursor += 1
+    }
+    if (required.size > 0) {
+      throw new Error(`Missing tool messages for ${[...required].join(', ')}`)
+    }
+    index = cursor - 1
   }
 }
 

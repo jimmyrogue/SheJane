@@ -77,7 +77,7 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('需要权限：运行命令').first()).toBeVisible()
-    await page.getByRole('button', { name: '批准 运行命令' }).click()
+    await page.getByRole('button', { name: '允许一次' }).click()
 
     await expect(page.getByText('本地执行完成')).toBeVisible()
     await expect(page.getByText('验证通过：运行命令')).toBeVisible()

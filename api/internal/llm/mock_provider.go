@@ -21,6 +21,10 @@ func (p *MockProvider) Name() string {
 	return p.name
 }
 
+func (p *MockProvider) ProviderKind() ProviderKind {
+	return ProviderKindMock
+}
+
 func (p *MockProvider) Stream(ctx context.Context, request ChatRequest, model string) (<-chan Chunk, <-chan error) {
 	chunks := make(chan Chunk)
 	errs := make(chan error, 1)

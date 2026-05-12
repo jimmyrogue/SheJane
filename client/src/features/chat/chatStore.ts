@@ -140,13 +140,27 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
     case 'permission.resolved': {
       const tool = stringValue(payload.tool)
       const decision = payload.decision === 'approve' ? 'approve' : 'deny'
+      const scope = payload.scope === 'run' ? 'run' : 'once'
+      const approvedLabel = scope === 'run' ? '本会话已允许' : '权限已批准'
       return {
         type: event.event_type,
-        label: `${decision === 'approve' ? '权限已批准' : '权限已拒绝'}：${toolActionLabel(tool)}`,
+        label: `${decision === 'approve' ? approvedLabel : '权限已拒绝'}：${toolActionLabel(tool)}`,
         eventId,
         permissionRequestId: stringValue(payload.request_id),
         permissionTool: toolActionLabel(tool),
         permissionDecision: decision,
+        permissionScope: scope,
+      }
+    }
+    case 'permission.auto_approved': {
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: `本会话自动允许：${toolActionLabel(tool)}`,
+        eventId,
+        permissionTool: toolActionLabel(tool),
+        permissionDecision: 'approve',
+        permissionScope: 'run',
       }
     }
     case 'artifact.created': {
@@ -191,6 +205,10 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const tool = stringValue(payload.tool)
       return { type: event.event_type, label: `操作完成：${toolActionLabel(tool)}`, eventId, artifactId: stringValue(payload.artifact_id) }
     }
+    case 'run.budget_warning': {
+      const label = payload.reason === 'long_running' ? '任务较长，仍在继续执行' : '工具步数达到上限，正在整理已有结果'
+      return { type: event.event_type, label, eventId }
+    }
     case 'run.completed':
       return { type: event.event_type, label: '任务完成', eventId }
     case 'run.failed':
@@ -221,9 +239,14 @@ function toolActionLabel(tool: string): string {
     'clipboard.read': '读取剪贴板',
     'clipboard.write': '写入剪贴板',
     'task.verify': '验证任务结果',
-    'browser.open': '打开受控网页',
+    'browser.open': '打开网页',
+    'browser.search': '搜索网页',
     'browser.snapshot': '观察网页',
-    'browser.close': '关闭受控网页',
+    'browser.screenshot': '页面截图',
+    'browser.click': '点击网页元素',
+    'browser.type': '输入网页文本',
+    'browser.scroll': '滚动网页',
+    'browser.close': '关闭网页',
     'environment.observe': '观察本地环境',
     'shell.run': '运行命令',
     'web.fetch': '读取网页',

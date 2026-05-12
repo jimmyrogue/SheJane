@@ -30,7 +30,7 @@ func TestOpenAICompatibleProviderRequestsUsageInStream(t *testing.T) {
 	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
 	chunks, errs := provider.Stream(context.Background(), ChatRequest{
 		Messages: []Message{{Role: "user", Content: "hello"}},
-	}, "deepseek-chat")
+	}, "deepseek-v4-flash")
 
 	for range chunks {
 	}
@@ -91,7 +91,30 @@ func TestOpenAICompatibleProviderStreamsContentAndUsageOnlyEvent(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
+func TestOpenAICompatibleProviderStreamErrorIncludesResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"messages.2.reasoning_content is not allowed"}}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
+	chunks, errs := provider.Stream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}, "deepseek-chat")
+
+	for range chunks {
+	}
+	err := <-errs
+	if err == nil {
+		t.Fatal("Stream returned nil error, want provider status error")
+	}
+	if !strings.Contains(err.Error(), "deepseek-fast returned status 400") ||
+		!strings.Contains(err.Error(), "reasoning_content is not allowed") {
+		t.Fatalf("Stream error = %q, want status and response body", err.Error())
+	}
+}
+
+func TestDeepSeekV4ProviderCompletesWithToolCalls(t *testing.T) {
 	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -119,7 +142,7 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
+	provider := NewOpenAICompatibleProviderWithProfile("deepseek-fast", server.URL, "test-key", DeepSeekV4Profile())
 	response, err := provider.CompleteWithTools(context.Background(), ChatRequest{
 		Messages: []Message{
 			{Role: "user", Content: "read file"},
@@ -133,7 +156,7 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 				"type": "object",
 			},
 		}},
-	}, "deepseek-chat")
+	}, "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("CompleteWithTools returned error: %v", err)
 	}
@@ -151,9 +174,19 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 	if assistant["reasoning_content"] != "I should inspect README.md first." {
 		t.Fatalf("assistant reasoning_content = %#v", assistant["reasoning_content"])
 	}
+	thinking, ok := payload["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("thinking missing from request payload: %#v", payload)
+	}
+	if thinking["type"] != "enabled" {
+		t.Fatalf("thinking.type = %#v, want enabled", thinking["type"])
+	}
+	if payload["reasoning_effort"] != "max" {
+		t.Fatalf("reasoning_effort = %#v, want max", payload["reasoning_effort"])
+	}
 	toolMessage := messages[2].(map[string]any)
-	if toolMessage["name"] != "file__read" {
-		t.Fatalf("tool message name = %#v, want provider-safe file__read", toolMessage["name"])
+	if _, ok := toolMessage["name"]; ok {
+		t.Fatalf("tool message should not include name for DeepSeek/OpenAI-compatible schema: %#v", toolMessage)
 	}
 	requestToolName := tools[0].(map[string]any)["function"].(map[string]any)["name"]
 	if requestToolName != "file__read" {
@@ -167,5 +200,84 @@ func TestOpenAICompatibleProviderCompletesWithToolCalls(t *testing.T) {
 	}
 	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Name != "file.read" || response.ToolCalls[0].Arguments["path"] != "README.md" {
 		t.Fatalf("tool calls = %#v", response.ToolCalls)
+	}
+}
+
+func TestOpenAICompatibleProviderDoesNotSendDeepSeekOnlyFields(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{
+				"message": {
+					"content": "done",
+					"tool_calls": []
+				},
+				"finish_reason": "stop"
+			}],
+			"usage": {"prompt_tokens": 8, "completion_tokens": 2}
+		}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAICompatibleProviderWithProfile("openai-compatible", server.URL, "test-key", OpenAICompatibleProfile())
+	_, err := provider.CompleteWithTools(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "user", Content: "read file"},
+			{Role: "assistant", ReasoningContent: "provider-specific reasoning", ToolCalls: []ToolCall{{ID: "call-prev", Name: "browser.search", Arguments: map[string]any{"query": "Jiandanly"}}}},
+			{Role: "tool", ToolCallID: "call-prev", Name: "browser.search", Content: "search result"},
+		},
+		Tools: []ToolDefinition{{
+			Name:        "browser.search",
+			Description: "search the web",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	}, "gpt-4o-mini")
+	if err != nil {
+		t.Fatalf("CompleteWithTools returned error: %v", err)
+	}
+	if _, ok := payload["thinking"]; ok {
+		t.Fatalf("openai-compatible payload should not include DeepSeek thinking: %#v", payload)
+	}
+	if _, ok := payload["reasoning_effort"]; ok {
+		t.Fatalf("openai-compatible payload should not include DeepSeek reasoning_effort: %#v", payload)
+	}
+	messages := payload["messages"].([]any)
+	toolMessage := messages[2].(map[string]any)
+	if _, ok := toolMessage["name"]; ok {
+		t.Fatalf("tool message should omit name unless profile allows it: %#v", toolMessage)
+	}
+	assistant := messages[1].(map[string]any)
+	if _, ok := assistant["reasoning_content"]; ok {
+		t.Fatalf("openai-compatible assistant message should not include DeepSeek reasoning_content: %#v", assistant)
+	}
+	toolCalls := assistant["tool_calls"].([]any)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	if function["name"] != "browser__search" {
+		t.Fatalf("request tool name = %#v, want browser__search", function["name"])
+	}
+}
+
+func TestOpenAICompatibleProviderCompleteWithToolsErrorIncludesResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"tool messages must follow assistant tool_calls"}}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
+	_, err := provider.CompleteWithTools(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}, "deepseek-chat")
+	if err == nil {
+		t.Fatal("CompleteWithTools returned nil error, want provider status error")
+	}
+	if !strings.Contains(err.Error(), "deepseek-fast returned status 400") ||
+		!strings.Contains(err.Error(), "tool messages must follow assistant tool_calls") {
+		t.Fatalf("CompleteWithTools error = %q, want status and response body", err.Error())
 	}
 }

@@ -11,6 +11,7 @@ import type {
   MemoryKind,
   PermissionDecision,
   PermissionRequest,
+  PermissionScope,
   RunStatus,
   StoredHarnessMessage,
   WorkspaceAuthorization,
@@ -146,6 +147,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       toolName: input.toolName,
       arguments: input.arguments,
       status: 'pending',
+      scope: 'once',
       createdAt: new Date().toISOString(),
     }
     this.permissions.set(permission.id, permission)
@@ -160,7 +162,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return [...this.permissions.values()].filter((permission) => permission.runId === runID)
   }
 
-  resolvePermission(id: string, decision: PermissionDecision): PermissionRequest | undefined {
+  resolvePermission(id: string, decision: PermissionDecision, scope: PermissionScope = 'once'): PermissionRequest | undefined {
     const permission = this.permissions.get(id)
     if (!permission) {
       return undefined
@@ -168,6 +170,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     const next: PermissionRequest = {
       ...permission,
       status: decision === 'approve' ? 'approved' : 'denied',
+      scope: decision === 'approve' ? scope : 'once',
       resolvedAt: new Date().toISOString(),
     }
     this.permissions.set(id, next)

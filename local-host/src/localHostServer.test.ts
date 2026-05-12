@@ -266,9 +266,10 @@ describe('local host daemon foundation', () => {
     const approved = await fetch(`${baseURL}/local/v1/permissions/${permission?.payload.request_id}`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'approve' }),
+      body: JSON.stringify({ decision: 'approve', scope: 'run' }),
     })
     expect(approved.status).toBe(202)
+    await expect(approved.json()).resolves.toMatchObject({ decision: 'approve', scope: 'run', status: 'recorded' })
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('approved')
   })
 

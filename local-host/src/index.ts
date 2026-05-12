@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { createLocalHostServer } from './server.js'
 import { SQLiteLocalHostStore } from './state/sqliteStore.js'
 import { LocalCloudSessionManager } from './llm/cloudSession.js'
+import { localHostDebugEnabled } from './debugLogger.js'
 
 const host = process.env.JIANDANLY_LOCAL_HOST_ADDR || '127.0.0.1'
 const port = Number(process.env.JIANDANLY_LOCAL_HOST_PORT || '17371')
@@ -28,6 +29,23 @@ const server = createLocalHostServer({ pairingToken, store, cloudSession })
 server.listen(port, host, () => {
   // eslint-disable-next-line no-console
   console.log(`Jiandanly Local Agent Harness listening on http://${host}:${port}`)
+  if (localHostDebugEnabled()) {
+    // eslint-disable-next-line no-console
+    console.log(
+      '[jiandanly:local-host]',
+      'debug.enabled',
+      JSON.stringify({
+        browser_engine: process.env.JIANDANLY_BROWSER_ENGINE ?? 'playwright',
+        browser_headless: process.env.JIANDANLY_BROWSER_HEADLESS ?? 'true',
+        browser_timeout_ms: process.env.JIANDANLY_BROWSER_TIMEOUT_MS ?? '15000',
+        browser_search_url: process.env.JIANDANLY_BROWSER_SEARCH_URL ?? 'https://cn.bing.com/search?q={query}',
+        allow_proxy_fake_ips: process.env.JIANDANLY_ALLOW_PROXY_FAKE_IPS ?? 'true',
+        local_max_steps: process.env.JIANDANLY_LOCAL_MAX_STEPS ?? 'unlimited',
+        local_step_warning_interval: process.env.JIANDANLY_LOCAL_STEP_WARNING_INTERVAL ?? '20',
+        cloud_base_url: cloudBaseURL ?? 'http://localhost:8080',
+      }),
+    )
+  }
 })
 
 process.on('SIGINT', shutdown)

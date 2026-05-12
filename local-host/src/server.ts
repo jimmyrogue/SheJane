@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path'
 import { runHarness } from './harness/runner.js'
 import type { LLMGateway } from './llm/gateway.js'
 import { LocalCloudSessionManager } from './llm/cloudSession.js'
+import { logLocalHostError } from './debugLogger.js'
 import { localHostTools } from './tools/registry.js'
 import {
   localHostVersion,
@@ -40,6 +41,10 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
   }
   return createServer((request, response) => {
     handleRequest(request, response, resolvedOptions).catch((error: unknown) => {
+      logLocalHostError('request.failed', error, {
+        method: request.method,
+        url: request.url,
+      })
       const message = error instanceof Error ? error.message : 'Internal server error'
       writeJSON(response, 500, { error: message })
     })
@@ -235,8 +240,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
 
   const permissionMatch = url.pathname.match(/^\/local\/v1\/permissions\/([^/]+)$/)
   if (request.method === 'POST' && permissionMatch) {
-    const body = await readJSONBody<{ decision?: unknown }>(request)
+    const body = await readJSONBody<{ decision?: unknown; scope?: unknown }>(request)
     const decision = body.decision === 'approve' ? 'approve' : body.decision === 'deny' ? 'deny' : undefined
+    const scope = body.scope === 'run' ? 'run' : 'once'
     if (!decision) {
       writeJSON(response, 400, { error: 'permission_decision_required' })
       return
@@ -246,7 +252,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       writeJSON(response, 404, { error: 'permission_not_found' })
       return
     }
-    const resolved = await options.store.resolvePermission(permission.id, decision)
+    const resolved = await options.store.resolvePermission(permission.id, decision, scope)
     if (!resolved) {
       writeJSON(response, 404, { error: 'permission_not_found' })
       return
@@ -266,6 +272,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     writeJSON(response, 202, {
       request_id: permissionMatch[1],
       decision,
+      scope: resolved.scope,
       status: 'recorded',
     })
     return
@@ -424,6 +431,7 @@ function serializePermission(permission: PermissionRequest) {
     tool_name: permission.toolName,
     arguments: permission.arguments,
     status: permission.status,
+    scope: permission.scope,
     created_at: permission.createdAt,
     resolved_at: permission.resolvedAt,
   }

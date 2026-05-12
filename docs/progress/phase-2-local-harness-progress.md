@@ -1,4 +1,4 @@
-# Phase 2.3a-2.16 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, and Browser Observation
+# Phase 2.3a-2.17 Progress - Local Agent Harness Foundation, Loop, Context, Web, MCP, Tool Batching, Error Handling, UI, Workspace Governance, Recovery, Session Bridge, Universal Tool Primitives, Browser Observation, and Playwright Managed Browser
 
 Updated: 2026-05-11
 
@@ -28,6 +28,7 @@ This phase proves:
 - Electron login can attach a short-lived cloud session to the paired Local Host without copying access tokens by hand.
 - Universal tool primitives provide general work-agent verbs for listing, reading, searching, writing, opening, clipboard access, and verification.
 - Controlled browser and environment observation let the Harness inspect a managed page and local environment metadata without broad computer control.
+- Playwright Managed Browser gives the Harness a real Chromium page for search, open, snapshot, screenshot, click, type, scroll, and close actions under explicit permission boundaries.
 
 ## Completed
 
@@ -147,6 +148,10 @@ This phase proves:
   - DeepSeek thinking-mode `reasoning_content` is captured from tool-call responses and replayed on subsequent assistant messages.
   - Local Host stores and forwards `reasoningContent` inside run/checkpoint messages but does not expose it as visible UI reasoning.
   - Verified a real two-step Local Harness run against DeepSeek: model requested `time.now`, Local Host executed it, the follow-up model call completed, and the run reached `run.completed`.
+- [x] Phase 2.14b.1 Provider Profile Compatibility:
+  - Added explicit provider kind/profile handling for `deepseek-v4`, `openai-compatible`, `anthropic`, and `mock`.
+  - DeepSeek-only fields such as `thinking` and `reasoning_effort` are scoped to the DeepSeek profile, while generic OpenAI-compatible providers avoid those fields by default.
+  - Admin provider status now includes provider kind without exposing API keys.
 - [x] Phase 2.14c Debuggability / Error Surfacing:
   - `POST /api/v1/agent/llm` now returns 402 for quota exhaustion during final settlement instead of generic 500.
   - Local Host cloud gateway errors now include cloud API `code` and `message`, so UI run failures can show actionable reasons such as quota exhaustion.
@@ -171,13 +176,25 @@ This phase proves:
   - Added `browser.close` for clearing the managed page context.
   - Added permission-gated `environment.observe` for platform, foreground app, window title, and screen-permission metadata.
   - Added `browser.observed`, `environment.observed`, `ui.action.requested`, and `ui.action.completed` semantic events.
-  - Updated client timeline labels to show user-facing actions such as `打开受控网页`, `观察网页`, and `观察环境`.
+  - Updated client timeline labels to show user-facing actions such as `打开网页`, `观察网页`, and `观察环境`.
+- [x] Phase 2.17 Playwright Managed Browser MVP:
+  - Added `playwright` as a Local Host runtime dependency and `npm run browser:install` for explicit Chromium installation.
+  - Added default Playwright browser adapter with `JIANDANLY_BROWSER_ENGINE=playwright`, `JIANDANLY_BROWSER_HEADLESS=true`, `JIANDANLY_BROWSER_TIMEOUT_MS=15000`, and `JIANDANLY_BROWSER_SEARCH_URL`.
+  - Added `browser.search`, `browser.screenshot`, `browser.click`, `browser.type`, and `browser.scroll`.
+  - Upgraded `browser.open` / `browser.snapshot` to use a reusable Playwright page/context by default while keeping the fetch-backed adapter available for tests and fallback.
+  - Screenshot output is stored as a local artifact; the model receives only an artifact reference and summary.
+  - Browser search/open/click/type require permission; snapshot/screenshot/scroll/close are allow tools.
+  - URL guardrails continue to block localhost, private networks, non-HTTP(S), and browser-internal schemes before navigation.
+  - Client timeline labels now show `搜索网页`, `页面截图`, `点击网页元素`, `输入网页文本`, and `滚动网页`.
+  - Changed `JIANDANLY_LOCAL_MAX_STEPS` into an optional hard safety cap instead of a default limit; the Local Harness now runs until the model finishes, the user cancels, a pause/error occurs, or an explicit cap is configured.
+  - Added `JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` for soft long-running warnings that do not stop the run.
+  - Browser 4xx/5xx pages are now recoverable `browser_http_error` tool failures rather than successful observations.
 
 ## Current Boundaries
 
 - Real local file read/search is available only when the run has an authorized workspace path.
 - Shell commands are permission-gated and execute only after explicit approval through the local permission API.
-- Browser observation is limited to Local Host managed page contexts; it does not read or control existing Chrome/Safari tabs.
+- Browser control is limited to Local Host managed Playwright Chromium contexts; it does not read or control existing Chrome/Safari tabs.
 - `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without a cloud session or headless cloud LLM env configuration it uses a static fallback response.
 - The SQLite runtime store uses Node's built-in `node:sqlite`, which is currently experimental in Node 22. This is acceptable for Phase 2.3a foundation but should be revisited before production packaging if Electron's bundled Node runtime differs.
 - Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, optional Tavily `web.search`, and MCP allowlist guardrails.
@@ -194,9 +211,9 @@ This phase proves:
 - Phase 2.14c adds CLI-level observability, but in-app log inspection and one-click current-run diagnostic export are still future work.
 - Phase 2.14d adds a minimal write path, but only for explicit `file.write` approvals inside authorized workspace roots; destructive shell commands still require separate approval.
 - Phase 2.15 adds general work-agent primitives; clipboard operations are text-only, `open.url` supports only `http`/`https`, and `open.file` is limited to authorized workspace files.
-- Phase 2.16 adds controlled page snapshotting and environment metadata, but not clicking, typing, form submission, screen OCR, or app-window control.
+- Phase 2.17 adds Playwright managed browser search/open/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, user-browser tab inspection, screen OCR, or app-window control.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
-- Browser action control, screen/app control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
+- Screen/app control, richer run recovery UI, diagnostics import/replay, and Playwright/visual verification loops are still pending.
 
 ## Verification
 
@@ -214,6 +231,9 @@ This phase proves:
 - `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts`
 - `cd local-host && npm test -- --run src/harness/runner.test.ts -t "browser and environment"`
 - `cd client && npm test -- --run src/features/chat/chatStore.test.ts -t "browser and environment"`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts src/harness/runner.test.ts`
+- `cd client && npm test -- --run src/features/chat/chatStore.test.ts`
+- `cd local-host && npm run build`
 - `cd local-host && npm test -- --run`
 - `cd local-host && npm run build`
 - `cd client && npm test -- --run src/App.test.tsx src/features/chat/chatStore.test.ts`
@@ -226,6 +246,6 @@ Full workspace verification is tracked in the implementation closeout.
 
 ## Next
 
-- Phase 2.17 candidate: controlled browser actions for click/type/navigation with explicit permission and deterministic adapter tests.
 - Add diagnostics import/replay before broadening long-running local automation.
-- Add screen/app control only after browser observation and action primitives are stable.
+- Add browser visual verification loops after screenshot artifacts are stable.
+- Add screen/app control only after managed browser actions remain reliable in manual smoke.

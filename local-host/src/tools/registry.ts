@@ -249,7 +249,7 @@ export const localHostTools: ToolDefinition[] = [
   },
   {
     name: 'browser.open',
-    description: 'Open a public http(s) URL in the Local Host managed browser context after explicit user approval, then capture a structured page snapshot.',
+    description: 'Open a public http(s) URL in the Playwright-managed browser after explicit user approval, then capture a structured page snapshot.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -266,8 +266,26 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'ask',
   },
   {
+    name: 'browser.search',
+    description: 'Search the public web in the Playwright-managed browser after explicit user approval, then capture a structured results-page snapshot.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: { type: 'string' },
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: false,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'ask',
+  },
+  {
     name: 'browser.snapshot',
-    description: 'Read the current Local Host managed browser page title, URL, visible text, links, forms, and buttons.',
+    description: 'Read the current Playwright-managed browser page title, URL, visible text, links, forms, buttons, and interactive element refs.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -282,8 +300,79 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'browser.screenshot',
+    description: 'Capture a PNG screenshot of the current managed browser page and store it as a local artifact.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        fullPage: { type: 'boolean' },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 4096,
+    permissionPolicy: 'allow',
+  },
+  {
+    name: 'browser.click',
+    description: 'Click an interactive element by snapshot ref in the managed browser after explicit user approval.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['ref'],
+      properties: {
+        ref: { type: 'string' },
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: false,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'ask',
+  },
+  {
+    name: 'browser.type',
+    description: 'Type plain text into an interactive element by snapshot ref in the managed browser after explicit user approval.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['ref', 'text'],
+      properties: {
+        ref: { type: 'string' },
+        text: { type: 'string' },
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: false,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'ask',
+  },
+  {
+    name: 'browser.scroll',
+    description: 'Scroll the current managed browser page and return an updated structured snapshot.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        direction: { type: 'string', enum: ['up', 'down'] },
+        amount: { type: 'number', minimum: 100, maximum: 5000 },
+        maxTextCharacters: { type: 'number', minimum: 1, maximum: 60000 },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 65536,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'browser.close',
-    description: 'Close the current Local Host managed browser page context.',
+    description: 'Close the current Playwright-managed browser page context.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

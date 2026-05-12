@@ -102,6 +102,7 @@ export interface AdminWalletTransaction {
 export interface AdminProviderStatus {
   mode: string
   provider: string
+  kind: string
   base_url: string
   model: string
   mock: boolean

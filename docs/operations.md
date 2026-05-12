@@ -63,6 +63,7 @@ docker compose up -d --build api
 
 ```dotenv
 MOCK_LLM=false
+FAST_PROVIDER_KIND=deepseek-v4
 FAST_PROVIDER_BASE_URL=https://api.deepseek.com
 FAST_PROVIDER_API_KEY=你的 DeepSeek API Key
 FAST_MODEL=deepseek-v4-flash
@@ -84,10 +85,13 @@ make smoke-real-llm
 
 ```dotenv
 ANTHROPIC_API_KEY=
+DEEP_PROVIDER_KIND=deepseek-v4
 DEEP_PROVIDER_BASE_URL=https://api.deepseek.com
 DEEP_PROVIDER_API_KEY=同一个或单独的 DeepSeek API Key
 DEEP_MODEL=deepseek-v4-pro
 ```
+
+`FAST_PROVIDER_KIND` / `DEEP_PROVIDER_KIND` 可显式选择 `deepseek-v4`、`openai-compatible` 或 `anthropic`。未设置时，`https://api.deepseek.com` 会自动按 `deepseek-v4` 处理，其它 OpenAI-compatible 地址按通用兼容模式处理。
 
 ## Stripe 订阅与 Webhook
 
@@ -189,7 +193,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.16 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.16 起 Local Host 支持受控 `browser.*` 页面观察和 `environment.observe` 本地环境观察；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
+- **Phase 2.3-2.17 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
@@ -199,6 +203,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 ```bash
 cd local-host
 npm install
+npm run browser:install
 JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
 ```
 
@@ -231,6 +236,22 @@ make dev-electron
 
 登录成功后，client 会调用 `POST /local/v1/session` 注入短期云端 session。Local Host 不会把 access token 写入 SQLite、diagnostics 或 API 响应；`GET /local/v1/session` 只返回是否已连接、cloud base URL 和更新时间。
 
+托管浏览器环境变量：
+
+```dotenv
+JIANDANLY_LOCAL_MAX_STEPS=
+JIANDANLY_LOCAL_STEP_WARNING_INTERVAL=20
+JIANDANLY_BROWSER_ENGINE=playwright
+JIANDANLY_BROWSER_HEADLESS=true
+JIANDANLY_BROWSER_TIMEOUT_MS=15000
+JIANDANLY_BROWSER_SEARCH_URL=https://cn.bing.com/search?q={query}
+JIANDANLY_ALLOW_PROXY_FAKE_IPS=true
+```
+
+`JIANDANLY_LOCAL_MAX_STEPS` 是可选硬安全阀。默认留空，表示不按工具轮数硬停止，Local Harness 会像 Claude Code 风格的交互式 loop 一样持续运行直到模型给出无工具最终答案、用户取消、权限暂停、额度/模型错误或显式配置的硬上限触发。设置为正整数时，达到上限会再发起一次不带工具的 finalization 调用，让模型基于已收集证据给出阶段性答案。`JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` 只发出软提醒和系统提示，不会停止 run；设为 `0` 可关闭。
+默认 `headless=true`，避免 Electron 手动测试时额外弹出浏览器窗口；需要观察真实 Chromium 时可临时设为 `false`。
+`JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 用于兼容 Clash、Surge 等本地代理/TUN 的 fake-ip DNS（常见为 `198.18.0.0/15`）。如果部署在不使用本地代理的服务器环境，可以设为 `false`，让 SSRF guard 继续拦截该保留网段。
+
 本地开发日志：
 
 ```bash
@@ -242,6 +263,23 @@ make logs-llm-errors   # 查看最近 LLM 调用和错误原因
 ```
 
 如果 UI 里只看到 `Cloud LLM gateway returned HTTP ...`，优先运行 `make logs-llm-errors`。这会从 `llm_call_records.error_message` 里看到真实原因，例如 provider 400、额度不足、结算失败或上游模型错误。
+
+如果 UI timeline 只显示“工具失败”但没有具体原因，打开 Local Host debug 日志：
+
+```bash
+JIANDANLY_LOCAL_HOST_DEBUG=1 make dev-electron
+make logs-local-host
+```
+
+`make dev-electron` 默认会用 `JIANDANLY_LOCAL_HOST_DEBUG=1` 启动 Local Host，并把日志写到 `.dev-logs/local-host.log`。日志会输出 `tool.requested`、`tool.failed`、`verification.completed`、`run.budget_warning`、`run.failed` 等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页能力时重点看：
+
+- `web_search_disabled`：未配置 `TAVILY_API_KEY`，这是旧 `web.search` 工具，不是 Playwright 浏览器搜索。
+- `browser_page_required`：模型在未打开托管浏览器页面时调用了 snapshot/screenshot/scroll。
+- `browser_open_failed` / `browser_search_failed`：通常是 Chromium 未安装、目标被 URL guard 拦截、DNS/网络失败或 Playwright 启动失败。
+- `browser_http_error`：页面成功打开但 HTTP 状态是 4xx/5xx，例如搜索到的旧 API 已经 404；这是可恢复错误，模型应换来源或基于已有证据说明限制。
+- `browser_navigation_blocked`：点击后跳转到了被禁止的 localhost、私网或非 HTTP(S) 目标。
+- `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `JIANDANLY_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
+- `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
 
 启用 Phase 2.6+ 可选搜索和 MCP：
 
@@ -267,14 +305,20 @@ Phase 2.15 通用工具原语：
 
 旧 `file.read`、`file.search`、`file.write` 仍保留，用于兼容已有 run 和测试；新模型提示会优先引导使用 `fs.*`。
 
-Phase 2.16 浏览器与环境观察：
+Phase 2.17 Playwright 托管浏览器：
 
-- `browser.open`：在 Local Host 管理的受控页面上下文中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。
-- `browser.snapshot`：读取受控页面的标题、URL、可见文本、主要链接、表单和按钮；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
-- `browser.close`：关闭当前受控页面上下文。
+- `browser.search`：使用 `JIANDANLY_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
+- `browser.open`：在 Playwright 托管 Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。
+- `browser.snapshot`：读取托管页面的标题、URL、可见文本、主要链接、表单、按钮和可交互元素 refs；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
+- `browser.screenshot`：截取当前托管页面 PNG，并保存为本地 artifact；模型上下文只拿到 artifact id 和摘要，不直接塞 base64。
+- `browser.click`、`browser.type`：按 snapshot 中的 `ref` 点击或输入，每次都需要用户批准；密码和一次性验证码输入会被阻止。
+- `browser.scroll`：滚动当前托管页面并返回新的 snapshot，默认允许。
+- `browser.close`：关闭当前托管浏览器 page/context/browser。
 - `environment.observe`：读取基础本地环境元数据，例如平台、前台应用和窗口标题；每次都需要用户批准，不采集屏幕截图。
 - 事件流会额外出现 `browser.observed`、`environment.observed`、`ui.action.requested` 和 `ui.action.completed`，client 会显示为“观察网页”“观察环境”“请求操作”等普通用户文案。
-- 本阶段不做点击、输入、提交表单、屏幕 OCR、系统设置修改或读取用户现有浏览器标签页。
+- 默认使用 headless Chromium；调试时可设 `JIANDANLY_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
+- CloakBrowser 只作为未来可选 engine 预留，不进入默认依赖，也不打包 binary。
+- 本阶段不做提交订单、支付、发帖、发送邮件、读取用户现有浏览器标签页、Chrome extension/native messaging、屏幕 OCR 或系统设置修改。
 
 测试本地 health：
 
@@ -287,9 +331,9 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.16 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、受控 `browser.open` / `browser.snapshot` / `browser.close`、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
+- Phase 2.17 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
-- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、真实浏览器点击/输入、IDE 控制和 Playwright/截图验证。
+- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制和 Playwright 视觉验证循环。
 
 ## 自动化测试与 Smoke
 

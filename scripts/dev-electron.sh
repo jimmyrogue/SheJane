@@ -94,6 +94,7 @@ start_local_host() {
     JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
       JIANDANLY_LOCAL_HOST_PORT="$LOCAL_HOST_PORT" \
       JIANDANLY_CLOUD_BASE_URL="$API_BASE_URL" \
+      JIANDANLY_LOCAL_HOST_DEBUG="${JIANDANLY_LOCAL_HOST_DEBUG:-1}" \
       npm run dev >"$log_file" 2>&1
   ) &
   PIDS+=("$!")

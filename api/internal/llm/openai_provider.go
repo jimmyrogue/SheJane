@@ -6,29 +6,45 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+const providerErrorBodyLimit = 4096
 
 type OpenAICompatibleProvider struct {
 	name    string
 	baseURL string
 	apiKey  string
 	client  *http.Client
+	profile ProviderProfile
 }
 
 func NewOpenAICompatibleProvider(name string, baseURL string, apiKey string) *OpenAICompatibleProvider {
+	return NewOpenAICompatibleProviderWithProfile(name, baseURL, apiKey, ProfileForProviderKind(InferOpenAIProviderKind("", baseURL)))
+}
+
+func NewOpenAICompatibleProviderWithProfile(name string, baseURL string, apiKey string, profile ProviderProfile) *OpenAICompatibleProvider {
+	if profile.Kind == "" {
+		profile = OpenAICompatibleProfile()
+	}
 	return &OpenAICompatibleProvider{
 		name:    name,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		client:  &http.Client{Timeout: 90 * time.Second},
+		profile: profile,
 	}
 }
 
 func (p *OpenAICompatibleProvider) Name() string {
 	return p.name
+}
+
+func (p *OpenAICompatibleProvider) ProviderKind() ProviderKind {
+	return p.profile.Kind
 }
 
 func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatRequest, model string) (<-chan Chunk, <-chan error) {
@@ -40,10 +56,12 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 		defer close(errs)
 
 		payload := map[string]any{
-			"model":          model,
-			"messages":       request.Messages,
-			"stream":         true,
-			"stream_options": map[string]bool{"include_usage": true},
+			"model":    model,
+			"messages": openAIMessages(request.Messages, nil, p.profile),
+			"stream":   true,
+		}
+		if p.profile.IncludeStreamUsage {
+			payload["stream_options"] = map[string]bool{"include_usage": true}
 		}
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -69,7 +87,7 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 		defer resp.Body.Close()
 
 		if resp.StatusCode >= 300 {
-			errs <- fmt.Errorf("%s returned status %d", p.name, resp.StatusCode)
+			errs <- providerStatusError(p.name, resp.StatusCode, resp.Body)
 			return
 		}
 
@@ -120,8 +138,14 @@ func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, reques
 	toolNames, reverseToolNames := openAIToolNameMaps(request.Tools)
 	payload := map[string]any{
 		"model":    model,
-		"messages": openAIMessages(request.Messages, toolNames),
+		"messages": openAIMessages(request.Messages, toolNames, p.profile),
 		"stream":   false,
+	}
+	if p.profile.SupportsThinking && p.profile.ThinkingType != "" {
+		payload["thinking"] = map[string]string{"type": p.profile.ThinkingType}
+	}
+	if p.profile.AgentReasoningEffort != "" {
+		payload["reasoning_effort"] = p.profile.AgentReasoningEffort
 	}
 	if len(request.Tools) > 0 {
 		payload["tools"] = openAITools(request.Tools, toolNames)
@@ -145,7 +169,7 @@ func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, reques
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return Completion{}, fmt.Errorf("%s returned status %d", p.name, resp.StatusCode)
+		return Completion{}, providerStatusError(p.name, resp.StatusCode, resp.Body)
 	}
 	var event openAICompletionEvent
 	if err := json.NewDecoder(resp.Body).Decode(&event); err != nil {
@@ -213,6 +237,29 @@ type openAICompletionEvent struct {
 	} `json:"usage"`
 }
 
+func providerStatusError(provider string, status int, body io.Reader) error {
+	if body == nil {
+		return fmt.Errorf("%s returned status %d", provider, status)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, providerErrorBodyLimit+1))
+	if err != nil {
+		return fmt.Errorf("%s returned status %d", provider, status)
+	}
+	snippet := strings.TrimSpace(string(data))
+	if snippet == "" {
+		return fmt.Errorf("%s returned status %d", provider, status)
+	}
+	truncated := len(data) > providerErrorBodyLimit
+	if truncated {
+		snippet = strings.TrimSpace(string(data[:providerErrorBodyLimit]))
+	}
+	snippet = strings.Join(strings.Fields(snippet), " ")
+	if truncated {
+		snippet += "..."
+	}
+	return fmt.Errorf("%s returned status %d: %s", provider, status, snippet)
+}
+
 func openAITools(tools []ToolDefinition, names map[string]string) []map[string]any {
 	result := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
@@ -228,7 +275,7 @@ func openAITools(tools []ToolDefinition, names map[string]string) []map[string]a
 	return result
 }
 
-func openAIMessages(messages []Message, toolNames map[string]string) []map[string]any {
+func openAIMessages(messages []Message, toolNames map[string]string, profile ProviderProfile) []map[string]any {
 	result := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		item := map[string]any{
@@ -238,10 +285,10 @@ func openAIMessages(messages []Message, toolNames map[string]string) []map[strin
 		if message.ToolCallID != "" {
 			item["tool_call_id"] = message.ToolCallID
 		}
-		if message.Name != "" {
+		if message.Name != "" && (message.Role != "tool" || profile.AllowToolMessageName) {
 			item["name"] = forwardToolName(message.Name, toolNames)
 		}
-		if message.Role == "assistant" && message.ReasoningContent != "" {
+		if message.Role == "assistant" && profile.SupportsThinking && message.ReasoningContent != "" {
 			item["reasoning_content"] = message.ReasoningContent
 		}
 		if len(message.ToolCalls) > 0 {

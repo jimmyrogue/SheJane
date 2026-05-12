@@ -45,6 +45,7 @@ import {
   type LocalCloudSession,
   type LocalHostConfig,
   type LocalHostProbe,
+  type LocalPermissionScope,
   type LocalRun as LocalHarnessRun,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
@@ -273,7 +274,7 @@ export function App() {
     return conversation
   }
 
-  async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny') {
+  async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
       setNotice('本地 Harness 未连接')
       return
@@ -289,7 +290,7 @@ export function App() {
     message.status = 'streaming'
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
-      await resolveLocalPermission(requestID, decision, localHostConfig)
+      await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => appendLocalRunEvent(message, event, seenEventIDs),
         onDelta: (delta, event) => appendLocalDelta(message, delta, event, seenEventIDs),
@@ -764,7 +765,7 @@ export function App() {
                     <AgentTimeline
                       message={message}
                       onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
-                      onPermissionDecision={(requestID, decision) => void handlePermissionDecision(message.id, requestID, decision)}
+                      onPermissionDecision={(requestID, decision, scope) => void handlePermissionDecision(message.id, requestID, decision, scope)}
                     />
                   ) : null}
                 </article>
@@ -887,7 +888,7 @@ function AgentTimeline({
 }: {
   message: ChatMessage
   onOpenArtifact: (artifactID: string) => void
-  onPermissionDecision: (requestID: string, decision: 'approve' | 'deny') => void
+  onPermissionDecision: (requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
   return (
     <div className="agent-timeline">
@@ -896,13 +897,17 @@ function AgentTimeline({
           <small>{event.label}</small>
           {event.permissionRequestId && event.type === 'permission.required' && !isPermissionResolved(message, event.permissionRequestId) ? (
             <span className="timeline-actions">
-              <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve')}>
+              <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve', 'once')}>
                 <CheckCircle2 size={13} />
-                批准 {event.permissionTool || '工具'}
+                允许一次
+              </button>
+              <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve', 'run')}>
+                <CheckCircle2 size={13} />
+                本会话始终允许
               </button>
               <button onClick={() => onPermissionDecision(event.permissionRequestId!, 'deny')}>
                 <X size={13} />
-                拒绝 {event.permissionTool || '工具'}
+                拒绝
               </button>
             </span>
           ) : null}

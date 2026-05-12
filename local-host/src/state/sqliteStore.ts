@@ -13,6 +13,7 @@ import type {
   MemoryKind,
   PermissionDecision,
   PermissionRequest,
+  PermissionScope,
   RunStatus,
   StoredHarnessMessage,
   WorkspaceAuthorization,
@@ -49,6 +50,7 @@ interface PermissionRow {
   tool_name: string
   arguments_json: string
   status: 'pending' | 'approved' | 'denied'
+  scope?: PermissionScope
   created_at: string
   resolved_at: string | null
 }
@@ -130,6 +132,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
         tool_name TEXT NOT NULL,
         arguments_json TEXT NOT NULL,
         status TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'once',
         created_at TEXT NOT NULL,
         resolved_at TEXT,
         FOREIGN KEY(run_id) REFERENCES local_runs(id) ON DELETE CASCADE
@@ -179,6 +182,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       );
       CREATE INDEX IF NOT EXISTS idx_local_workspaces_last_used ON local_workspaces(last_used_at);
     `)
+    ensureColumn(this.db, 'local_permissions', 'scope', "TEXT NOT NULL DEFAULT 'once'")
   }
 
   authorizeWorkspace(input: { path: string; label?: string }): WorkspaceAuthorization {
@@ -322,14 +326,15 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       toolName: input.toolName,
       arguments: input.arguments,
       status: 'pending',
+      scope: 'once',
       createdAt: new Date().toISOString(),
     }
     this.db
       .prepare(
-        `INSERT INTO local_permissions (id, run_id, tool_call_id, tool_name, arguments_json, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO local_permissions (id, run_id, tool_call_id, tool_name, arguments_json, status, scope, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(permission.id, permission.runId, permission.toolCallId, permission.toolName, JSON.stringify(permission.arguments), permission.status, permission.createdAt)
+      .run(permission.id, permission.runId, permission.toolCallId, permission.toolName, JSON.stringify(permission.arguments), permission.status, permission.scope, permission.createdAt)
     return permission
   }
 
@@ -343,10 +348,11 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return rows.map(deserializePermission)
   }
 
-  resolvePermission(id: string, decision: PermissionDecision): PermissionRequest | undefined {
+  resolvePermission(id: string, decision: PermissionDecision, scope: PermissionScope = 'once'): PermissionRequest | undefined {
     const status = decision === 'approve' ? 'approved' : 'denied'
+    const resolvedScope = decision === 'approve' ? scope : 'once'
     const resolvedAt = new Date().toISOString()
-    this.db.prepare('UPDATE local_permissions SET status = ?, resolved_at = ? WHERE id = ?').run(status, resolvedAt, id)
+    this.db.prepare('UPDATE local_permissions SET status = ?, scope = ?, resolved_at = ? WHERE id = ?').run(status, resolvedScope, resolvedAt, id)
     return this.permissionByID(id)
   }
 
@@ -517,9 +523,18 @@ function deserializePermission(row: PermissionRow): PermissionRequest {
     toolName: row.tool_name,
     arguments: JSON.parse(row.arguments_json) as Record<string, unknown>,
     status: row.status,
+    scope: row.scope === 'run' ? 'run' : 'once',
     createdAt: row.created_at,
     resolvedAt: row.resolved_at ?? undefined,
   }
+}
+
+function ensureColumn(db: DatabaseSyncInstance, tableName: string, columnName: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as unknown as Array<{ name: string }>
+  if (columns.some((column) => column.name === columnName)) {
+    return
+  }
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`)
 }
 
 function deserializeArtifact(row: ArtifactRow): LocalArtifact {

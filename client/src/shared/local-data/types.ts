@@ -9,6 +9,7 @@ export interface AgentTimelineItem {
   permissionRequestId?: string
   permissionTool?: string
   permissionDecision?: 'approve' | 'deny'
+  permissionScope?: 'once' | 'run'
   artifactId?: string
   artifactTitle?: string
   artifactTool?: string

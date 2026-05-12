@@ -110,10 +110,47 @@ describe('chat store', () => {
       label: '观察环境：Preview - Invoice.pdf',
     })
     expect(timelineItem({ event_type: 'ui.action.requested', payload: { tool: 'browser.open' } })).toMatchObject({
-      label: '请求操作：打开受控网页',
+      label: '请求操作：打开网页',
     })
     expect(timelineItem({ event_type: 'ui.action.completed', payload: { tool: 'browser.open' } })).toMatchObject({
-      label: '操作完成：打开受控网页',
+      label: '操作完成：打开网页',
+    })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.search' } })).toMatchObject({
+      label: '调用工具：搜索网页',
+    })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.screenshot' } })).toMatchObject({
+      label: '调用工具：页面截图',
+    })
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-click', tool: 'browser.click' } })).toMatchObject({
+      label: '需要权限：点击网页元素',
+      permissionTool: '点击网页元素',
+    })
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-type', tool: 'browser.type' } })).toMatchObject({
+      label: '需要权限：输入网页文本',
+      permissionTool: '输入网页文本',
+    })
+    expect(timelineItem({ event_type: 'tool.completed', payload: { tool: 'browser.scroll' } })).toMatchObject({
+      label: '工具完成：滚动网页',
+    })
+  })
+
+  it('renders local harness budget warnings with a readable label', () => {
+    expect(timelineItem({ event_type: 'run.budget_warning', payload: { reason: 'max_steps_reached', max_steps: 12 } })).toMatchObject({
+      label: '工具步数达到上限，正在整理已有结果',
+    })
+    expect(timelineItem({ event_type: 'run.budget_warning', payload: { reason: 'long_running', step: 20 } })).toMatchObject({
+      label: '任务较长，仍在继续执行',
+    })
+  })
+
+  it('renders run-scoped permission approvals and automatic approvals', () => {
+    expect(timelineItem({ event_type: 'permission.resolved', payload: { request_id: 'perm-shell', decision: 'approve', tool: 'shell.run', scope: 'run' } })).toMatchObject({
+      label: '本会话已允许：运行命令',
+      permissionScope: 'run',
+    })
+    expect(timelineItem({ event_type: 'permission.auto_approved', payload: { tool: 'shell.run', scope: 'run' } })).toMatchObject({
+      label: '本会话自动允许：运行命令',
+      permissionScope: 'run',
     })
   })
 })

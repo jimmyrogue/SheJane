@@ -298,6 +298,7 @@ function mockFetch(role: 'admin' | 'user') {
           {
             mode: 'fast',
             provider: 'deepseek-fast',
+            kind: 'deepseek-v4',
             base_url: 'https://api.deepseek.com',
             model: 'deepseek-v4-flash',
             mock: false,
