@@ -1064,10 +1064,26 @@ function evaluateFinalAnswerGuardrail(
   if (acknowledgesResearchLimitations(content)) {
     return undefined
   }
-  const collectedSources = researchPolicyState(options).collectedSourceURLs.size
+  const collectedSourceURLs = researchPolicyState(options).collectedSourceURLs
+  const collectedSources = collectedSourceURLs.size
   const targetSources = requiredSourceCountForFinalGuard(options.run.goal)
   const latestBrowserVerificationFailed = latestVerificationFailed(events, 'browser.verify')
   const latestBrowserVerificationPassed = latestVerificationPassed(events, 'browser.verify')
+  const citedURLs = citedCanonicalURLs(content)
+  const uncollectedCitedURLs = citedURLs.filter((url) => !collectedSourceURLs.has(url))
+  if (claimsResearchEvidence(content) && uncollectedCitedURLs.length > 0) {
+    return {
+      reason: 'uncollected_source_cited',
+      collectedSources,
+      targetSources,
+      instruction: [
+        'Output guardrail: the draft final answer cited URLs that were not collected as usable source pages in this run.',
+        `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
+        `Uncollected cited URLs: ${uncollectedCitedURLs.join(', ')}.`,
+        'Only cite URLs from source.collected as opened/read/verified sources. If another URL is necessary, call browser.open followed by browser.read first; otherwise rewrite the answer to cite only collected sources.',
+      ].join('\n'),
+    }
+  }
   if (collectedSources < targetSources && !latestBrowserVerificationPassed && claimsSourceCollection(content)) {
     return {
       reason: 'insufficient_research_sources',
@@ -1129,6 +1145,17 @@ function claimsVerification(content: string): boolean {
 
 function acknowledgesResearchLimitations(content: string): boolean {
   return /(未能|无法|不能|尚未|没有|不足|失败|限制|只(?:能|是)基于搜索结果|无法确认|could not|unable|not able|insufficient|limited)/i.test(content)
+}
+
+function citedCanonicalURLs(content: string): string[] {
+  const urls = new Set<string>()
+  for (const match of content.matchAll(/https?:\/\/[^\s)\]）}>"'，。；;、]+/gi)) {
+    const canonical = canonicalSourceURL(match[0].replace(/[,.!?，。！？]+$/g, ''))
+    if (canonical) {
+      urls.add(canonical)
+    }
+  }
+  return [...urls]
 }
 
 function latestVerificationFailed(events: LocalEvent[], toolName: string): boolean {

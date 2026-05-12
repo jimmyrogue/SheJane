@@ -402,6 +402,7 @@ Pairing:
 - Keep provider/web HTTP error observations concise so large 404/blocked pages do not pollute model context. **Done.**
 - Avoid false `login_required` classification when a readable article merely contains header login links. **Done.**
 - Add a final-answer output guardrail so research answers cannot claim sources were opened/read/verified when `source.collected` or `browser.verify` evidence does not support that claim. **Done.**
+- Reject final answers that cite URLs outside the collected `source.collected` set unless the model first opens and reads those sources. **Done.**
 - Expose budget tuning with `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`. **Done.**
 
 ## 9. Test Strategy

@@ -223,6 +223,7 @@ This phase proves:
   - `web.fetch` HTTP error observations now return concise summaries instead of large HTML/CSS bodies.
   - Login-required classification now avoids false positives from ordinary article header login links.
   - Final research answers are guarded against unsupported claims that sources were opened/read/verified when no source or verification evidence supports them.
+  - Final research answers now reject cited URLs that were not collected through `source.collected`.
   - Added env knobs: `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`.
 
 ## Current Boundaries

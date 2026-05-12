@@ -1455,6 +1455,56 @@ describe('harness runner', () => {
     )
   })
 
+  it('blocks final answers that cite URLs not collected as research sources', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '搜索今天的公开科技新闻，打开 2 个来源并列出来源。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.read',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.read',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-uncited',
+        content: '来源：[Source A](https://example.com/a)；[Source C](https://example.net/c)。两个来源均已打开验证。',
+      },
+      {
+        requestId: 'req-corrected',
+        content: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(2)
+    expect(gateway.requests[1].messages.at(-1)?.content).toContain('Output guardrail')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'uncollected_source_cited',
+            collected_sources: 2,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+          }),
+        }),
+      ]),
+    )
+  })
+
   it('executes approved MCP calls through the local runtime adapter and feeds the observation back', async () => {
     const serverPath = await writeFakeMCPServer()
     const store = new InMemoryLocalHostStore()
