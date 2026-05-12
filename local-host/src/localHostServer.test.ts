@@ -273,6 +273,46 @@ describe('local host daemon foundation', () => {
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('approved')
   })
 
+  it('does not execute a resolved permission request more than once', async () => {
+    const workspace = await tempWorkspace()
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-shell', name: 'shell.run', arguments: { command: 'printf x >> approved.txt' } }],
+      },
+      { requestId: 'req-2', content: 'Approved command completed once.' },
+    ])
+    const baseURL = await startServer(gateway)
+    await authorizeWorkspace(baseURL, workspace)
+    const created = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Run command once.', workspace_path: workspace }),
+    })
+    const run = await created.json()
+    const stream = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const events = parseSSE(await stream.text())
+    const permission = events.find((event) => event.event_type === 'permission.required')
+    const requestID = String(permission?.payload.request_id)
+
+    const approved = await fetch(`${baseURL}/local/v1/permissions/${requestID}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve', scope: 'run' }),
+    })
+    expect(approved.status).toBe(202)
+    await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('x')
+
+    const duplicate = await fetch(`${baseURL}/local/v1/permissions/${requestID}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve', scope: 'run' }),
+    })
+    expect(duplicate.status).toBe(200)
+    await expect(duplicate.json()).resolves.toMatchObject({ decision: 'approve', scope: 'run', status: 'already_resolved' })
+    await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('x')
+  })
+
   it('serves large tool output artifacts through the artifact endpoint', async () => {
     const workspace = await tempWorkspace()
     const largeContent = 'artifact-api '.repeat(900)

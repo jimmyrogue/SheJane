@@ -257,6 +257,15 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       writeJSON(response, 404, { error: 'permission_not_found' })
       return
     }
+    if (permission.status !== 'pending') {
+      writeJSON(response, 200, {
+        request_id: permissionMatch[1],
+        decision: permission.status === 'approved' ? 'approve' : 'deny',
+        scope: permission.scope,
+        status: 'already_resolved',
+      })
+      return
+    }
     const resolved = await options.store.resolvePermission(permission.id, decision, scope)
     if (!resolved) {
       writeJSON(response, 404, { error: 'permission_not_found' })

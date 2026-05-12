@@ -129,7 +129,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; optional `web.search` is advertised only when Tavily is configured. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; optional `web.search` is advertised only when Tavily is configured and is preferred as the web discovery layer before browser-based evidence collection. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -396,7 +396,12 @@ Pairing:
 - Count usable non-search sources by canonical URL and block duplicate source collection. **Done.**
 - Add a research preflight guard that blocks extra `browser.search`, `browser.open`, or `web.fetch` calls after the run has enough real sources or exceeds configured search/navigation budgets. **Done.**
 - Hide optional Tavily-backed `web.search` from the tool list unless `TAVILY_API_KEY` or an injected Tavily key is configured. **Done.**
+- Prefer Tavily-backed `web.search` for public web discovery when configured, then use `browser.open` / `browser.read` for evidence collection; fall back to `browser.search` when Tavily is unavailable or insufficient. **Done.**
+- Block `open.url` during research/evidence collection so the agent does not launch the user's system browser when it should use the managed browser. **Done.**
+- Block shell-based network fetching during research/evidence collection so the agent cannot bypass `web.*` / `browser.*` evidence tools with `curl` or `wget`. **Done.**
 - Keep provider/web HTTP error observations concise so large 404/blocked pages do not pollute model context. **Done.**
+- Avoid false `login_required` classification when a readable article merely contains header login links. **Done.**
+- Add a final-answer output guardrail so research answers cannot claim sources were opened/read/verified when `source.collected` or `browser.verify` evidence does not support that claim. **Done.**
 - Expose budget tuning with `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`. **Done.**
 
 ## 9. Test Strategy
@@ -408,6 +413,7 @@ Pairing:
 - `file.read` stays inside authorized workspace.
 - `fs.list`, `fs.read`, `fs.search`, and `fs.write` stay inside authorized workspace.
 - `open.url`, `open.file`, and clipboard tools require explicit permission.
+- `open.url` opens the user's system default browser and is blocked for research/evidence collection unless the user explicitly asks for an external browser open.
 - `task.verify` covers simple file, content, URL, and boolean checks.
 - `browser.open` and `browser.search` require explicit permission and block localhost/private-network targets before navigation.
 - `browser.read` returns `browser_page_required` when there is no managed browser page.

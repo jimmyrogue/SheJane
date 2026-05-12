@@ -281,6 +281,7 @@ make logs-local-host
 - `browser_duplicate_observation`：同一 run 内第三次重复相同搜索 query 或 URL open 被拦截；模型应换关键词、换来源或总结已有证据。
 - `research_enough_sources`：已收集足够的可用非搜索页来源；模型应停止继续搜索/打开网页，直接基于已有来源回答。
 - `research_search_budget_exhausted` / `research_navigation_budget_exhausted`：当前 run 已达到搜索或候选来源打开预算；模型应收束回答或说明仍缺少的证据。
+- `run.output_guardrail`：最终回答声称已打开/读取/核实来源，但事件流里没有足够 `source.collected` 或最近 `browser.verify` 失败；Harness 会要求模型继续取证或明确说明限制。
 - `browser_navigation_blocked`：点击后跳转到了被禁止的 localhost、私网或非 HTTP(S) 目标。
 - `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `JIANDANLY_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
 - `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
@@ -305,19 +306,20 @@ JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/p
 npm run dev
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时不会出现在提供给模型的工具列表里，旧 run 或手工调用仍会得到可恢复的 disabled-tool observation。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时不会出现在提供给模型的工具列表里，旧 run 或手工调用仍会得到可恢复的 disabled-tool observation。`make dev-electron` 会读取项目根目录 `.env` 并把变量传给 Local Host；配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有 Tavily 不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 研究策略预算可用环境变量微调：
 
 - `JIANDANLY_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
 - `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
 - `JIANDANLY_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
+- 调试时可运行 `make logs-local-host`，启动日志里的 `tavily_configured: true` 表示 Local Host 进程已读到 `TAVILY_API_KEY`；如果改 `.env` 后仍为 false，需要重启 Local Host。
 
 Phase 2.15 通用工具原语：
 
 - `fs.list`、`fs.read`、`fs.search`：只读工具，只能访问已授权 workspace 内路径。
 - `fs.write`：写入 UTF-8 文本文件，只能写授权 workspace 内路径，每次都需要用户批准。
-- `open.url`：打开 `http` / `https` URL，每次都需要用户批准；不支持 `file://` 等本地协议。
+- `open.url`：用用户系统默认浏览器打开 `http` / `https` URL，每次都需要用户批准；不支持 `file://` 等本地协议，也不用于 Agent 网页研究取证。
 - `open.file`：用系统默认应用打开授权 workspace 内文件，每次都需要用户批准。
 - `clipboard.read`、`clipboard.write`：只处理纯文本，每次都需要用户批准。
 - `task.verify`：用于验证文件存在、文件包含文本、URL 格式和布尔断言。
@@ -327,7 +329,7 @@ Phase 2.15 通用工具原语：
 Phase 2.17-2.20 Playwright 托管浏览器：
 
 - `browser.search`：使用 `JIANDANLY_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
-- `browser.open`：在 Playwright 托管 Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。
+- `browser.open`：在 Local Host 自己管理的 Playwright Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。研究任务应使用 `browser.open` + `browser.read` 收集来源，而不是 `open.url`。
 - `browser.read`：读取当前托管页面的标题、URL、meta 描述、正文和关键链接；长正文保存为 artifact，模型上下文只拿到来源元数据和 artifact 引用。
 - `browser.verify`：验证当前托管页面是否包含期望文本、是否处于 usable 状态；验证失败是可恢复 observation，可按需保存页面截图 artifact。
 - `browser.snapshot`：读取托管页面的标题、URL、可见文本、主要链接、表单、按钮和可交互元素 refs；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
@@ -338,7 +340,9 @@ Phase 2.17-2.20 Playwright 托管浏览器：
 - `environment.observe`：读取基础本地环境元数据，例如平台、前台应用和窗口标题；每次都需要用户批准，不采集屏幕截图。
 - 事件流会额外出现 `browser.observed`、`source.collected`、`environment.observed`、`ui.action.requested` 和 `ui.action.completed`，client 会显示为“观察网页”“收集来源”“观察环境”“请求操作”等普通用户文案。
 - 当前消息 timeline 的“诊断”按钮会读取 `GET /local/v1/runs/{id}/diagnostics`，只展示状态、计数、最新 checkpoint 摘要和最近来源/验证/错误事件；不会展示 artifact 正文或完整 checkpoint messages。
-- 浏览器观察会返回 `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`；只有 usable 且不是搜索结果页的 `browser.read` / `browser.snapshot` 页面会进入 `source.collected`。
+- 浏览器观察会返回 `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`；只有 usable 且不是搜索结果页的 `browser.read` / `browser.snapshot` 页面会进入 `source.collected`。页面头部普通“登录/注册”导航不会单独导致 `login_required`，只有显式要求登录、密码/登录表单或登录后查看类页面才会被判为登录页。
+- 研究任务中如果模型误调用 `open.url`，Local Harness 会返回 `research_external_open_blocked`，不会请求权限，也不会打开用户系统浏览器。
+- 研究任务中如果模型误用 `shell.run` 执行 `curl` / `wget` / URL 抓取，Local Harness 会返回 `research_shell_network_blocked`，要求改用 `web.search` / `web.fetch` 或 `browser.open` / `browser.read`。
 - 同一 run 内第三次重复相同搜索 query 或打开相同 URL 会被拦截为可恢复 observation，避免模型在同一来源上绕圈。
 - 默认使用 headless Chromium；调试时可设 `JIANDANLY_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
 - CloakBrowser 只作为未来可选 engine 预留，不进入默认依赖，也不打包 binary。

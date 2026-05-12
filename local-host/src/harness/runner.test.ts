@@ -1273,6 +1273,7 @@ describe('harness runner', () => {
     await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { tavilyApiKey: '' } })
 
     expect(gateway.requests[0].tools.map((tool) => tool.name)).not.toContain('web.search')
+    expect(gateway.requests[0].messages[0].content).toContain('use browser.search for public web discovery')
 
     const configuredStore = new InMemoryLocalHostStore()
     const configuredRun = configuredStore.createRun({ goal: 'Inspect Tavily tools.' })
@@ -1287,7 +1288,171 @@ describe('harness runner', () => {
       toolOptions: { tavilyApiKey: 'tvly-test' },
     })
 
-    expect(configuredGateway.requests[0].tools.map((tool) => tool.name)).toContain('web.search')
+    const configuredToolNames = configuredGateway.requests[0].tools.map((tool) => tool.name)
+    expect(configuredToolNames).toContain('web.search')
+    expect(configuredToolNames.indexOf('web.search')).toBeLessThan(configuredToolNames.indexOf('browser.search'))
+    expect(configuredGateway.requests[0].messages[0].content).toContain('use web.search first for public web search discovery')
+    expect(configuredGateway.requests[0].messages[0].content).not.toContain('use browser.search by default')
+  })
+
+  it('blocks external system URL opens during web research instead of asking for permission', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '搜索今天的公开科技新闻，打开 2 个来源并列出来源。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'web.search', arguments: { query: '科技新闻', maxResults: 2 } }],
+      },
+      {
+        requestId: 'req-external-open',
+        toolCalls: [{ id: 'call-external-open', name: 'open.url', arguments: { url: 'https://example.com/news' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: '我不会用系统浏览器打开网页，应该改用 browser.open/browser.read 收集证据。',
+      },
+    ])
+    const opened: Array<{ kind: string; target: string }> = []
+    const fetcher = async () =>
+      new Response(
+        JSON.stringify({
+          results: [{ title: '科技新闻', url: 'https://example.com/news', content: '新闻摘要' }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: {
+        tavilyApiKey: 'tvly-test',
+        fetcher: fetcher as typeof fetch,
+        opener: async (target) => opened.push(target),
+      },
+    })
+
+    expect(opened).toEqual([])
+    expect(store.listPermissions(run.id).map((permission) => permission.toolName)).not.toContain('open.url')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'open.url',
+            tool_call_id: 'call-external-open',
+            error_code: 'research_external_open_blocked',
+            recoverable: true,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '我不会用系统浏览器打开网页，应该改用 browser.open/browser.read 收集证据。',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks shell network fetches during web research instead of asking for permission', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '搜索今天的公开科技新闻，打开 2 个来源并列出来源。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-shell-curl',
+        toolCalls: [{ id: 'call-shell-curl', name: 'shell.run', arguments: { command: 'curl -sL https://example.com/news' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: '我不会用 shell 抓网页，应该改用 web.search/web.fetch 或 browser.open/browser.read。',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listPermissions(run.id).map((permission) => permission.toolName)).not.toContain('shell.run')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'shell.run',
+            tool_call_id: 'call-shell-curl',
+            error_code: 'research_shell_network_blocked',
+            recoverable: true,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '我不会用 shell 抓网页，应该改用 web.search/web.fetch 或 browser.open/browser.read。',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks overconfident final answers when research has no collected sources', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '搜索今天的公开科技新闻，打开 2 个来源并列出来源。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'web.search', arguments: { query: '科技新闻', maxResults: 2 } }],
+      },
+      {
+        requestId: 'req-overconfident',
+        content: '我已经完整打开并核实两个来源，下面是总结。',
+      },
+      {
+        requestId: 'req-limited-final',
+        content: '我只能基于搜索结果给出初步总结，尚未收集到可引用的已打开来源。',
+      },
+    ])
+    const fetcher = async () =>
+      new Response(
+        JSON.stringify({
+          answer: '科技新闻搜索结果。',
+          results: [
+            { title: '科技新闻 A', url: 'https://example.com/a', content: 'A 摘要' },
+            { title: '科技新闻 B', url: 'https://example.com/b', content: 'B 摘要' },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: { tavilyApiKey: 'tvly-test', fetcher: fetcher as typeof fetch },
+    })
+
+    expect(gateway.requests).toHaveLength(3)
+    expect(gateway.requests[2].messages.at(-1)?.content).toContain('Output guardrail')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'insufficient_research_sources',
+            collected_sources: 0,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '我只能基于搜索结果给出初步总结，尚未收集到可引用的已打开来源。',
+          }),
+        }),
+      ]),
+    )
   })
 
   it('executes approved MCP calls through the local runtime adapter and feeds the observation back', async () => {

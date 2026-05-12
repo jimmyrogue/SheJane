@@ -192,6 +192,46 @@ describe('browser and environment observation tools', () => {
     })
   })
 
+  it('does not classify article pages as login-required just because the header has login links', async () => {
+    const snapshot = {
+      url: 'http://finance.people.com.cn/n1/2026/0512/c1004-40718050.html',
+      title: '脑控听觉技术可精准实现“听你想听”--经济·科技--人民网',
+      description: '科技日报北京5月11日电，美国哥伦比亚大学祖克曼研究所研究团队首次直接证明脑控听觉技术。',
+      visibleText:
+        '首页 党政 要闻 客户端无障碍举报登录 人民网>>经济·科技 脑控听觉技术可精准实现“听你想听” 2026年05月12日08:55 | 来源：科技日报 科技日报北京5月11日电 美国哥伦比亚大学祖克曼研究所研究团队首次直接证明，一种脑控听觉技术能够帮助人们在复杂环境中精准放大自己真正想听的声音。相关成果发表于最新一期《自然·神经科学》杂志。',
+      links: [{ text: '首页', url: 'http://www.people.com.cn/' }],
+      forms: [],
+      buttons: [],
+      elements: [{ ref: 'link-1', role: 'link', name: '登录', text: '登录', href: 'http://passport.people.com.cn/' }],
+    }
+
+    const result = await executeTool(
+      { id: 'open-article', name: 'browser.open', arguments: { url: snapshot.url } },
+      run,
+      {
+        resolveHostname: async () => ['93.184.216.34'],
+        browser: {
+          open: async () => snapshot,
+          search: async () => snapshot,
+          snapshot: async () => snapshot,
+          screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+          click: async () => snapshot,
+          type: async () => snapshot,
+          scroll: async () => snapshot,
+          close: async () => undefined,
+        },
+      } as any,
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: expect.objectContaining({
+        observation_status: 'usable',
+        title: snapshot.title,
+      }),
+    })
+  })
+
   it('reads the current managed browser page with source metadata and observation status', async () => {
     const snapshot = {
       url: 'https://example.com/report',

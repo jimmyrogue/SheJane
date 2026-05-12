@@ -163,7 +163,7 @@ export const localHostTools: ToolDefinition[] = [
   },
   {
     name: 'open.url',
-    description: 'Open a public http(s) URL in the system default browser after explicit user approval.',
+    description: 'Open a public http(s) URL in the user system default browser after explicit user approval. Do not use for web research or evidence collection; use browser.open/browser.read instead.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

@@ -216,7 +216,13 @@ This phase proves:
   - Source collection is deduplicated by canonical URL and now prefers `browser.read` / `browser.snapshot` evidence over shallow opens.
   - A research preflight guard blocks further `browser.search`, `browser.open`, or `web.fetch` calls after enough real sources are collected or search/navigation budgets are exhausted.
   - Optional Tavily-backed `web.search` is hidden from advertised model tools unless `TAVILY_API_KEY` or an injected Tavily key is configured.
+  - When Tavily is configured, `web.search` is advertised before `browser.search` and the harness prompt treats it as the preferred discovery layer before browser evidence collection.
+  - Research runs now block `open.url` before permission, so mistaken external URL opens cannot launch the user's system browser during evidence collection.
+  - Research runs now block shell-based network fetching (`curl`, `wget`, or raw URLs) before permission so the model cannot bypass web/browser evidence tools.
+  - Permission resolution is idempotent; submitting the same permission request again no longer re-executes the approved tool.
   - `web.fetch` HTTP error observations now return concise summaries instead of large HTML/CSS bodies.
+  - Login-required classification now avoids false positives from ordinary article header login links.
+  - Final research answers are guarded against unsupported claims that sources were opened/read/verified when no source or verification evidence supports them.
   - Added env knobs: `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`.
 
 ## Current Boundaries
@@ -278,6 +284,8 @@ This phase proves:
 - `cd e2e && npm test -- --grep "paired Local Harness"`
 - `cd local-host && npm test -- --run src/harness/runner.test.ts -t "search result pages|Tavily web.search"`
 - `cd local-host && npm test -- --run src/tools/webTools.test.ts -t "HTTP error observations"`
+- `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts -t "does not classify article pages"`
+- `cd local-host && npm test -- --run src/harness/runner.test.ts -t "overconfident final answers"`
 - `make test`
 - `make build`
 - `E2E_CLIENT_PORT=55273 E2E_ADMIN_PORT=55274 make test-e2e`

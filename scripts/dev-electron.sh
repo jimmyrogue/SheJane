@@ -2,6 +2,36 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+load_dotenv() {
+  local file="${ROOT_DIR}/.env"
+  [[ -f "$file" ]] || return 0
+
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    line="${line#export }"
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    if [[ -z "${!key-}" ]]; then
+      export "$key=$value"
+    fi
+  done < "$file"
+}
+
+load_dotenv
+
 LOG_DIR="${JIANDANLY_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
 TOKEN="${JIANDANLY_LOCAL_HOST_TOKEN:-dev-local-token}"
 API_PORT="${API_PORT:-8080}"

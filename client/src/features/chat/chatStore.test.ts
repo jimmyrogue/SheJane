@@ -87,8 +87,8 @@ describe('chat store', () => {
 
   it('renders universal primitive tool events with user-facing action names', () => {
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-url', tool: 'open.url' } })).toMatchObject({
-      label: '需要权限：打开网页',
-      permissionTool: '打开网页',
+      label: '需要权限：用系统浏览器打开网页',
+      permissionTool: '用系统浏览器打开网页',
     })
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-write', tool: 'fs.write' } })).toMatchObject({
       label: '需要权限：写入文件',
@@ -110,10 +110,10 @@ describe('chat store', () => {
       label: '观察环境：Preview - Invoice.pdf',
     })
     expect(timelineItem({ event_type: 'ui.action.requested', payload: { tool: 'browser.open' } })).toMatchObject({
-      label: '请求操作：打开网页',
+      label: '请求操作：打开受控网页',
     })
     expect(timelineItem({ event_type: 'ui.action.completed', payload: { tool: 'browser.open' } })).toMatchObject({
-      label: '操作完成：打开网页',
+      label: '操作完成：打开受控网页',
     })
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'browser.search' } })).toMatchObject({
       label: '调用工具：搜索网页',

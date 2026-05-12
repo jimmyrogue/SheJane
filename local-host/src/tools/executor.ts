@@ -1669,13 +1669,42 @@ function classifyBrowserObservation(snapshot: BrowserSnapshot): BrowserObservati
   if (/(captcha|verify you are human|human verification|security check|访问验证|验证码|人机验证|安全验证)/i.test(combined)) {
     return 'captcha_like'
   }
-  if (/(login|sign in|log in|登录|注册|请先登录|账号密码|password)/i.test(combined)) {
+  if (looksLoginRequired(snapshot, combined)) {
     return 'login_required'
   }
   if (text.length === 0 && snapshot.links.length === 0 && snapshot.forms.length === 0 && snapshot.buttons.length === 0 && (snapshot.elements?.length ?? 0) === 0) {
     return 'empty'
   }
   return 'usable'
+}
+
+function looksLoginRequired(snapshot: BrowserSnapshot, combined: string): boolean {
+  if (looksLikeReadableArticle(snapshot)) {
+    return false
+  }
+  if (/(请先登录|登录后(?:查看|继续|访问|阅读)|注册后(?:查看|继续|访问|阅读)|账号密码|请输入密码|password|sign in to continue|log in to continue|authentication required|login required)/i.test(combined)) {
+    return true
+  }
+  const actionText = [
+    ...snapshot.buttons,
+    ...snapshot.forms.flatMap((form) => form.fields),
+    ...(snapshot.elements ?? []).flatMap((element) => [element.name, element.text ?? '']),
+  ].join(' ')
+  return snapshot.forms.length > 0
+    && snapshot.visibleText.length < 2000
+    && /(登录|注册|sign in|log in|login|password)/i.test(actionText)
+}
+
+function looksLikeReadableArticle(snapshot: BrowserSnapshot): boolean {
+  const text = snapshot.visibleText ?? ''
+  const title = snapshot.title ?? ''
+  return text.length > 100
+    && (
+      /来源[:：]/.test(text)
+      || /记者/.test(text)
+      || /发表于|发布于|published/i.test(text)
+      || /--/.test(title)
+    )
 }
 
 function browserObservationErrorCode(status: BrowserObservationStatus): string {
