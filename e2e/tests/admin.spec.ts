@@ -27,6 +27,11 @@ test.describe('admin simulated operations flows', () => {
     await expect(page.getByText(/run_1/)).toBeVisible()
     await expect(page.getByText('用户任务（18 字）')).toBeVisible()
     await expect(page.getByRole('button', { name: /取消|重试|删除/ })).toHaveCount(0)
+
+    await page.getByRole('tab', { name: '工具' }).click()
+    await expect(page.getByText('web.search')).toBeVisible()
+    await expect(page.getByText(/tavily/)).toBeVisible()
+    await expect(page.getByRole('button', { name: /修改|重试|删除/ })).toHaveCount(0)
   })
 
   test('validates credit adjustment reason before calling admin write APIs', async ({ page }) => {

@@ -138,14 +138,15 @@ describe('user client shell', () => {
     })
     fireEvent.click(screen.getByText('发送'))
 
-    expect((await screen.findAllByText('需要权限：运行命令')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByText('本会话始终允许'))
 
     expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
-    expect(await screen.findByText('本会话已允许：运行命令')).toBeInTheDocument()
-    expect(await screen.findByText('验证通过：运行命令')).toBeInTheDocument()
-    expect(await screen.findByText('收集来源：Example Source')).toBeInTheDocument()
-    expect(await screen.findByText('https://example.com/source')).toBeInTheDocument()
+    expect((await screen.findAllByText('任务完成')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('已收集 1 个来源')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('生成 1 个 Artifact')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('收集来源：Example Source')).not.toBeInTheDocument()
+    expect(screen.queryByText('https://example.com/source')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTitle('查看诊断 local-run'))
     expect(await screen.findByText('任务诊断：local-run')).toBeInTheDocument()
     expect(screen.getByText('状态 completed')).toBeInTheDocument()
@@ -256,7 +257,7 @@ describe('user client shell', () => {
     })
     fireEvent.click(screen.getByText('发送'))
 
-    expect((await screen.findAllByText('需要权限：运行命令')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces' && call.init?.method === 'POST')).toBe(true)
     await waitFor(() => {
       expect(

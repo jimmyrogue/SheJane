@@ -1,4 +1,5 @@
-import { parseAgentSSEBuffer, type AgentRunEvent } from '../api/sse'
+import type { AgentRunEvent } from '../api/sse'
+import { streamAgentSSE } from '../streaming/streamTransport'
 
 export interface DesktopBridge {
   platform: string
@@ -273,34 +274,11 @@ export async function streamLocalRun(
   if (!response.ok || !response.body) {
     throw new Error(await localErrorMessage(response))
   }
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let done = false
-  let completed = false
-  while (!done) {
-    const result = await reader.read()
-    done = result.done
-    buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !done })
-    const parsed = parseAgentSSEBuffer(buffer)
-    buffer = parsed.rest
-    for (const parsedEvent of parsed.events) {
-      if (parsedEvent.type !== 'agent') {
-        if (parsedEvent.type === 'done') {
-          completed = true
-        }
-        continue
-      }
-      handlers.onEvent(parsedEvent.event)
-      if (parsedEvent.event.event_type === 'llm.delta') {
-        const content = parsedEvent.event.payload?.content
-        if (typeof content === 'string') {
-          handlers.onDelta(content, parsedEvent.event)
-        }
-      }
-    }
-  }
-  return { completed }
+  const result = await streamAgentSSE(response, {
+    onEvent: (event) => handlers.onEvent(event),
+    onDelta: (content, event) => handlers.onDelta(content, event),
+  })
+  return { completed: result.completed }
 }
 
 export async function resolveLocalPermission(

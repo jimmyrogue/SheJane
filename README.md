@@ -17,7 +17,7 @@ Local Agent Harness 总规格见 [`spec.md`](spec.md)。
 - Phase 2.2 云端兼容 Agent Run：普通问题和附件问答都会创建 run、消费事件流、记录短期 `agent_events`，并在 admin 后台只读观察 run 摘要。
 - Phase 2.3a Local Agent Harness daemon foundation：新增 `local-host/` Node/TypeScript daemon，提供 loopback health/tools/runs/stream/cancel API、pairing token、本地 SQLite run/event store 和 Electron 探测。
 - Phase 2.4 Harness Loop MVP：Local Host 可调用云端 `/api/v1/agent/llm`，执行 `time.now`、授权 workspace 内 `file.read` / `file.search`，并对 `shell.run` 进入 permission-gated 流程。
-- Phase 2.5-2.21 Local Harness UI / Workspace / Browser Bridge：已加入本地 artifact、checkpoint、context compaction、memory、verification、`web.fetch` / 可选 Tavily `web.search` / stdio MCP runtime / 并发安全工具批处理 / 模型失败 durable handling、通用工具原语、Playwright 托管浏览器、页面搜索/阅读/验证/快照/截图/点击/输入/滚动、本地环境观察和研究策略控制，并在普通 client 中支持本地工作区授权、诊断、撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览、验证事件和观察事件展示。
+- Phase 2.5-2.22 Local Harness UI / Workspace / Browser Bridge：已加入本地 artifact、checkpoint、context compaction、memory、verification、`web.fetch` / 云端计费的 `web.search` / stdio MCP runtime / 并发安全工具批处理 / 模型失败 durable handling、通用工具原语、Playwright 托管浏览器、页面搜索/阅读/验证/快照/截图/点击/输入/滚动、本地环境观察、研究策略控制，以及 Cloud Tool Gateway。Tavily 等平台付费 API 只在 Cloud API 持有密钥和扣费，本地 Host 不保存第三方 provider key。
 - 独立管理后台 MVP：单独 React/Vite admin web，使用 shadcn/ui 组件体系，管理员可看概览、用户、用量、订单、模型状态，并执行启用/禁用用户和人工调整额外额度。
 - 管理后台审计：订单只读展示 Stripe session/subscription，审计页只读展示后台操作和关键账务事件。
 - Local-first 历史：Web 使用 IndexedDB；后端只保存调用 metadata 和账务数据，不保存完整聊天正文。
@@ -141,7 +141,7 @@ JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
 npm run electron
 ```
 
-Phase 2.21 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；最近本地任务支持恢复和下载脱敏诊断 JSON；消息 timeline 支持批准/拒绝权限请求、查看 artifact、打开当前 run 诊断面板、展示规则验证结果，并显示 `browser.observed` / `source.collected` / `environment.observed` 等观察事件。`mcp.call` 已可在 allowlist 和用户权限批准后调用本地 stdio MCP server；并发安全的读类工具会批量并行执行但保持 observation 顺序；模型网关异常会进入 `run.failed`；Playwright 托管浏览器支持搜索、打开、阅读、验证、快照、截图、点击、输入和滚动。研究策略控制会把搜索结果页排除在来源外，达到来源/搜索预算后阻止继续绕圈，并在未配置 Tavily 时不向模型暴露旧 `web.search` 工具；配置 Tavily 后会优先用 `web.search` 做搜索发现，再用浏览器工具收集真实来源证据。Local Harness 默认不设置工具轮数硬上限，`JIANDANLY_LOCAL_MAX_STEPS` 只作为可选安全阀；`JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` 默认每 20 个工具轮次发出长任务软提醒，但不停止任务。屏幕 OCR、IDE 控制、用户现有浏览器标签读取和更完整的 run 回放 UI 继续后置。
+Phase 2.22 已把这些本地能力接入普通 client：本地 Host 在线且已配对时，无附件消息会创建 Local Harness run；附件消息仍走云端兼容 run。用户可以用 Electron 原生目录选择器选择工作区，或手动填写路径后通过 Local Host 授权、诊断和撤销。Local Host 会拒绝未授权的 `workspace_path`；composer 会显示当前本地项目引用；最近本地任务支持恢复和下载脱敏诊断 JSON；消息 timeline 支持批准/拒绝权限请求、查看 artifact、打开当前 run 诊断面板、展示规则验证结果，并显示 `browser.observed` / `source.collected` / `environment.observed` 等观察事件。`mcp.call` 已可在 allowlist 和用户权限批准后调用本地 stdio MCP server；并发安全的读类工具会批量并行执行但保持 observation 顺序；模型网关异常会进入 `run.failed`；Playwright 托管浏览器支持搜索、打开、阅读、验证、快照、截图、点击、输入和滚动。研究策略控制会把搜索结果页排除在来源外，达到来源/搜索预算后阻止继续绕圈；Cloud API 配置 Tavily 后，本地 Harness 会优先暴露并使用云端计费的 `web.search` 做搜索发现，再用浏览器工具收集真实来源证据。Local Harness 默认不设置工具轮数硬上限，`JIANDANLY_LOCAL_MAX_STEPS` 只作为可选安全阀；`JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` 默认每 20 个工具轮次发出长任务软提醒，但不停止任务。屏幕 OCR、IDE 控制、用户现有浏览器标签读取和更完整的 run 回放 UI 继续后置。
 
 Electron 是 Local Harness 的主入口。Phase 2.14 已加入本地 session bridge：用户在 Electron 正常登录后，client 会通过 paired loopback API 把当前云端 access token 注入 Local Host 内存 session；Local Host 再用这个短期 token 调 `/api/v1/agent/llm` 并扣该用户额度。退出登录时会调用 `DELETE /local/v1/session` 清掉本地 session。开发者不再需要手动复制 `JIANDANLY_CLOUD_ACCESS_TOKEN`；环境变量仍保留为 smoke 和无 UI 调试兜底。
 
@@ -286,6 +286,7 @@ make test-ci
 - `make test-e2e`：启动隔离的 client/admin Vite dev server（默认 `55173/55174`），使用 `e2e/` Playwright Chromium 模拟注册、统一 composer、附件 Agent Run、本地 Harness 权限/artifact/恢复和 admin tabs。
 - `make test-ci`：`make test` + `make build` + Playwright simulated E2E；GitHub Actions 默认跑这条。
 - `make smoke-local-host`：启动真实 Local Host daemon，检查 health、未配对 401、工具注册表和 mock run event stream。
+- `make smoke-agent-research`：连接已登录的 Local Host，自动执行“请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。”，自动批准安全浏览器权限，导出 diagnostics 与分析报告到 `.tmp/agent-research-smoke/`。
 - `make smoke-docker-local`：用 disposable Compose project + `MOCK_LLM=true` 启动本地闭环，验证 API health、注册、mock chat 扣额度、admin overview。
 
 真实服务 smoke 需要显式运行，避免误消耗额度、创建 Stripe test object 或上传 S3 文件：
@@ -293,6 +294,7 @@ make test-ci
 ```bash
 RUN_EXTERNAL_SMOKE=1 make smoke-external
 make smoke-real-llm
+make smoke-agent-research
 make smoke-stripe-webhook
 make smoke-s3-document
 ```

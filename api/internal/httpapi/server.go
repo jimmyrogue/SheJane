@@ -71,6 +71,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/agent/runs/{id}/stream", s.requireAuth(s.agentRunStream))
 	s.mux.HandleFunc("POST /api/v1/agent/runs/{id}/cancel", s.requireAuth(s.agentRunCancel))
 	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.agentLLMGateway))
+	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
+	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.agentToolExecute))
 	s.mux.HandleFunc("POST /api/v1/agent/tool-events", s.requireAuth(s.agentToolEvents))
 	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
@@ -87,6 +89,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/orders", s.requireAdmin(s.adminOrders))
 	s.mux.HandleFunc("GET /api/v1/admin/providers", s.requireAdmin(s.adminProviders))
 	s.mux.HandleFunc("GET /api/v1/admin/agent-runs", s.requireAdmin(s.adminAgentRuns))
+	s.mux.HandleFunc("GET /api/v1/admin/tool-calls", s.requireAdmin(s.adminToolCalls))
 	s.mux.HandleFunc("GET /api/v1/admin/audit-logs", s.requireAdmin(s.adminAuditLogs))
 }
 
@@ -1136,6 +1139,15 @@ func (s *Server) adminLLMCalls(w http.ResponseWriter, r *http.Request, user stor
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminLLMCallRecord]{Code: 0, Message: "ok", Data: records})
+}
+
+func (s *Server) adminToolCalls(w http.ResponseWriter, r *http.Request, user store.User) {
+	records, err := s.app.Store.AdminExternalToolCalls(r.Context(), adminListOptions(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取工具调用记录失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminExternalToolCallRecord]{Code: 0, Message: "ok", Data: records})
 }
 
 func (s *Server) adminOrders(w http.ResponseWriter, r *http.Request, user store.User) {

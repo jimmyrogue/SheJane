@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool } from './executor.js'
 import type { LocalRun } from '../types.js'
 
@@ -11,6 +11,10 @@ const run: LocalRun = {
 }
 
 describe('web tools', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('fetches text from public http sources and extracts readable text', async () => {
     const result = await executeTool(
       { id: 'call-fetch', name: 'web.fetch', arguments: { url: 'https://example.com/page', maxBytes: 4096 } },
@@ -86,55 +90,65 @@ describe('web tools', () => {
     expect(result.content).not.toContain('oversized-css-and-html oversized-css-and-html oversized-css-and-html oversized-css-and-html oversized-css-and-html')
   })
 
-  it('uses Tavily search when configured and keeps result size bounded', async () => {
-    let request: Request | undefined
+  it('routes web.search through the cloud tool gateway and never reads a local Tavily key', async () => {
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-local-should-not-be-used')
+    let gatewayRequest: unknown
     const result = await executeTool(
       { id: 'call-search', name: 'web.search', arguments: { query: 'Jiandanly harness', maxResults: 2 } },
       run,
       {
-        tavilyApiKey: 'tvly-test',
-        tavilyBaseURL: 'https://api.tavily.local',
-        fetcher: async (input, init) => {
-          request = new Request(input, init)
-          return new Response(
-            JSON.stringify({
-              query: 'Jiandanly harness',
-              answer: 'Harnesses wrap models with tools and state.',
+        cloudToolGateway: {
+          async execute(request) {
+            gatewayRequest = request
+            return {
+              ok: true,
+              content: '1. Harness docs\nhttps://example.com/harness\nTools, memory, and verification.',
+              data: {
+                provider: 'tavily',
+                results_count: 1,
+                source: 'web.search',
+                request_id: 'tool_req_1',
+              },
+              usage: {
+                credits_cost: 20,
+              },
               results: [
-                { title: 'Harness docs', url: 'https://example.com/harness', content: 'Tools, memory, and verification.', score: 0.9 },
-                { title: 'Agent docs', url: 'https://example.com/agent', content: 'Agent loop and guardrails.', score: 0.8 },
+                {
+                  title: 'Harness docs',
+                  url: 'https://example.com/harness',
+                  content: 'Tools, memory, and verification.',
+                  score: 0.9,
+                },
               ],
-            }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
-          )
+            } as any
+          },
         },
       },
     )
 
-    expect(request?.url).toBe('https://api.tavily.local/search')
-    expect(request?.headers.get('authorization')).toBe('Bearer tvly-test')
-    await expect(request?.json()).resolves.toMatchObject({
-      query: 'Jiandanly harness',
-      search_depth: 'basic',
-      include_answer: true,
-      include_raw_content: false,
-      max_results: 2,
+    expect(gatewayRequest).toMatchObject({
+      tool: 'web.search',
+      toolCallId: 'call-search',
+      arguments: { query: 'Jiandanly harness', maxResults: 2 },
     })
     expect(result).toMatchObject({
       ok: true,
-      data: expect.objectContaining({ provider: 'tavily', results_count: 2 }),
+      data: expect.objectContaining({ provider: 'tavily', results_count: 1, request_id: 'tool_req_1' }),
     })
     expect(result.content).toContain('Harness docs')
     expect(result.content).toContain('https://example.com/harness')
+    expect(JSON.stringify(result)).not.toContain('tvly-local-should-not-be-used')
   })
 
-  it('reports web.search as disabled when Tavily is not configured', async () => {
-    const result = await executeTool({ id: 'call-search-disabled', name: 'web.search', arguments: { query: 'anything' } }, run, { tavilyApiKey: '' })
+  it('reports web.search as requiring a cloud session when no cloud tool gateway is available', async () => {
+    vi.stubEnv('TAVILY_API_KEY', 'tvly-local-should-not-enable-search')
+    const result = await executeTool({ id: 'call-search-disabled', name: 'web.search', arguments: { query: 'anything' } }, run, {})
 
     expect(result).toMatchObject({
       ok: false,
-      errorCode: 'web_search_disabled',
+      errorCode: 'cloud_session_required',
       recoverable: true,
     })
+    expect(JSON.stringify(result)).not.toContain('tvly-local-should-not-enable-search')
   })
 })

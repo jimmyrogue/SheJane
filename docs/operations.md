@@ -193,7 +193,7 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.21 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/verify/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Phase 2.20 起普通 client 可直接从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON；Phase 2.21 起研究策略会排除搜索结果页来源、达到来源/搜索预算后阻止继续浏览、未配置 Tavily 时隐藏 `web.search`；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
+- **Phase 2.3-2.22 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/verify/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Phase 2.20 起普通 client 可直接从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON；Phase 2.21 起研究策略会排除搜索结果页来源并达到来源/搜索预算后阻止继续浏览；Phase 2.22 起 Tavily 等平台付费搜索只走 Cloud Tool Gateway，Local Host 不保存第三方 API key；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
@@ -273,7 +273,8 @@ make logs-local-host
 
 `make dev-electron` 默认会用 `JIANDANLY_LOCAL_HOST_DEBUG=1` 启动 Local Host，并把日志写到 `.dev-logs/local-host.log`。日志会输出 `tool.requested`、`tool.failed`、`verification.completed`、`run.budget_warning`、`run.failed` 等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页能力时重点看：
 
-- `web_search_disabled`：未配置 `TAVILY_API_KEY`，这是旧 `web.search` 工具，不是 Playwright 浏览器搜索。
+- `cloud_session_required`：本地 `web.search` 需要登录后的 Cloud Tool Gateway session；Electron 正常登录后会自动注入。
+- `web_search_disabled`：Cloud API 未配置 Tavily，`web.search` 不会暴露给模型；托管浏览器搜索 `browser.search` 仍可作为 fallback。
 - `browser_page_required`：模型在未打开托管浏览器页面时调用了 read/snapshot/screenshot/scroll。
 - `browser_open_failed` / `browser_search_failed`：通常是 Chromium 未安装、目标被 URL guard 拦截、DNS/网络失败或 Playwright 启动失败。
 - `browser_http_error`：页面成功打开但 HTTP 状态是 4xx/5xx，例如搜索到的旧 API 已经 404；这是可恢复错误，模型应换来源或基于已有证据说明限制。
@@ -295,25 +296,27 @@ Phase 2.19-2.20 Electron 手动 smoke：
 5. 点击当前消息 timeline 的“诊断”，确认诊断面板只显示 run 状态、事件/权限/artifact 计数、最新 checkpoint 摘要和最近来源/验证/错误事件。
 6. 点击“导出当前诊断”，确认下载的 JSON 不包含 artifact 正文或完整 checkpoint messages。
 
-启用 Phase 2.6+ 可选搜索和 MCP：
+启用 Phase 2.22 云端工具网关搜索和本地 MCP：
 
 ```bash
-cd local-host
-JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
-TAVILY_API_KEY=tvly-... \
-JIANDANLY_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read \
-JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}' \
-npm run dev
+# .env / API 环境，只给 Cloud API 读取
+TAVILY_API_KEY=tvly-...
+TAVILY_BASE_URL=https://api.tavily.com
+TAVILY_SEARCH_CREDITS=20
+
+# Local Host 只保留本地 MCP 配置，不保存 Tavily / Stripe / AWS / LLM provider key
+JIANDANLY_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read
+JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}'
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Tavily；未配置 `TAVILY_API_KEY` 时不会出现在提供给模型的工具列表里，旧 run 或手工调用仍会得到可恢复的 disabled-tool observation。`make dev-electron` 会读取项目根目录 `.env` 并把变量传给 Local Host；配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有 Tavily 不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态向 `/api/v1/agent/tool-capabilities` 查询能力，并通过 `/api/v1/agent/tools/execute` 执行和扣费。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。Cloud API 配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有云端搜索不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 研究策略预算可用环境变量微调：
 
 - `JIANDANLY_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
 - `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
 - `JIANDANLY_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
-- 调试时可运行 `make logs-local-host`，启动日志里的 `tavily_configured: true` 表示 Local Host 进程已读到 `TAVILY_API_KEY`；如果改 `.env` 后仍为 false，需要重启 Local Host。
+- 调试时可运行 `make logs-local-host`，启动日志不应出现 `tavily_configured` 或任何 provider key；如果需要确认云端搜索是否可用，先登录 Electron，再看模型是否收到 `web.search` 工具，或用 admin 的“工具调用”页查看 `web.search` 记录。
 
 Phase 2.15 通用工具原语：
 
@@ -359,7 +362,7 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.21 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.verify` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、研究策略预算、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、可选 Tavily `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览和验证结果展示。
+- Phase 2.22 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.verify` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、研究策略预算、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、云端 `/api/v1/agent/tools/execute` 非 LLM 工具扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、Cloud Tool Gateway 计费版 `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client/admin 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览、验证结果展示和 admin 工具调用只读观察。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
 - 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制、桌面 OCR 或 LLM-as-judge 视觉裁判。
 
@@ -382,19 +385,23 @@ make test-ci
 - `make test-e2e`：运行 `e2e/` Playwright Chromium simulated E2E。测试会启动隔离的 client/admin dev server（默认 `55173/55174`），并用 route mocking 模拟 API、S3 PUT、Agent SSE 和 Local Host loopback API。
 - `make test-ci`：`make test` + `make build` + `make test-e2e`。GitHub Actions 的 PR 默认门禁使用这条命令。
 - `make smoke-local-host`：启动真实 Local Host daemon，检查 `/health`、未配对 `/tools` 返回 401、配对后工具列表包含 `mcp.call`，并创建/stream 一个 deterministic local run。
+- `make smoke-agent-research`：连接当前 Local Host，创建真实研究 run，自动批准 `browser.search` / `browser.open` 的 run-scoped 权限，导出 `diagnostics.json`、`analysis.json` 和 `analysis.md` 到 `.tmp/agent-research-smoke/`。这条需要 Local Host 已有 cloud session：通常先通过 Electron 登录；或在命令环境显式传入 `JIANDANLY_CLOUD_ACCESS_TOKEN`。
 - `make smoke-docker-local`：用 disposable Docker Compose project 启动 API/client/admin/postgres/redis，强制 `MOCK_LLM=true`，验证注册、mock chat 扣额度和 admin overview。默认端口是 API `18080`、client `15173`、admin `15174`，避免影响普通开发栈。
 
 真实服务 smoke：
 
 ```bash
 RUN_EXTERNAL_SMOKE=1 make smoke-external
+make smoke-agent-research
 ```
 
-这条会串联：
+`RUN_EXTERNAL_SMOKE=1 make smoke-external` 会串联：
 
 - `make smoke-real-llm`：要求 API 已用 `MOCK_LLM=false` 和真实 provider key 启动。
 - `make smoke-stripe-webhook`：合成 Stripe webhook 并验证订阅状态生命周期。
 - `make smoke-s3-document`：创建文档 presigned upload，向真实 S3 PUT 一个小 PDF source object，并通过文档删除接口做 best-effort 清理。
+
+`make smoke-agent-research` 单独运行，因为它需要一个已登录或已注入 cloud session 的 Local Host；它适合回归网页研究、来源收集、Tavily 计费和输出护栏。
 
 注意：
 

@@ -52,6 +52,27 @@ type LLMCallRecord struct {
 	FinishedAt           time.Time `json:"finished_at,omitempty"`
 }
 
+type ExternalToolCallRecord struct {
+	RequestID       string         `json:"request_id"`
+	UserID          string         `json:"user_id"`
+	WalletID        string         `json:"wallet_id"`
+	ReservationID   string         `json:"reservation_id"`
+	RunID           string         `json:"run_id"`
+	ToolCallID      string         `json:"tool_call_id"`
+	Tool            string         `json:"tool"`
+	Provider        string         `json:"provider"`
+	Units           int            `json:"units"`
+	CreditsCost     int64          `json:"credits_cost"`
+	Status          string         `json:"status"`
+	ErrorCode       string         `json:"error_code,omitempty"`
+	ErrorMessage    string         `json:"error_message,omitempty"`
+	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
+	ResponseContent string         `json:"-"`
+	ResponseData    map[string]any `json:"-"`
+	StartedAt       time.Time      `json:"started_at"`
+	FinishedAt      time.Time      `json:"finished_at,omitempty"`
+}
+
 type AgentAttachment struct {
 	Type       string `json:"type"`
 	DocumentID string `json:"document_id,omitempty"`
@@ -141,6 +162,11 @@ type AdminLLMCallRecord struct {
 	UserEmail string `json:"user_email"`
 }
 
+type AdminExternalToolCallRecord struct {
+	ExternalToolCallRecord
+	UserEmail string `json:"user_email"`
+}
+
 type AdminPaymentOrder struct {
 	PaymentOrder
 	UserID       string `json:"user_id"`
@@ -179,6 +205,10 @@ type Store interface {
 	FinishLLMCall(ctx context.Context, requestID string, status string, inputTokens int, outputTokens int, creditsCost int64, errorMessage string) error
 	LLMCallsByUser(ctx context.Context, userID string) ([]LLMCallRecord, error)
 
+	CreateExternalToolCall(ctx context.Context, record ExternalToolCallRecord) (ExternalToolCallRecord, bool, error)
+	ExternalToolCallByIdempotencyKey(ctx context.Context, userID string, idempotencyKey string) (ExternalToolCallRecord, error)
+	FinishExternalToolCall(ctx context.Context, requestID string, status string, units int, creditsCost int64, errorCode string, errorMessage string, responseContent string, responseData map[string]any) error
+
 	CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error)
 	AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error)
 	UpdateAgentRunStatus(ctx context.Context, userID string, runID string, status string, errorCode string, errorMessage string) (AgentRun, error)
@@ -207,6 +237,7 @@ type Store interface {
 	UpdateUserStatus(ctx context.Context, actorUserID string, userID string, status string, reason string) (User, error)
 	AdjustExtraCredits(ctx context.Context, actorUserID string, userID string, delta int64, reason string) (*billing.Wallet, error)
 	AdminLLMCalls(ctx context.Context, opts AdminListOptions) ([]AdminLLMCallRecord, error)
+	AdminExternalToolCalls(ctx context.Context, opts AdminListOptions) ([]AdminExternalToolCallRecord, error)
 	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
 	AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error)
 	AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error)

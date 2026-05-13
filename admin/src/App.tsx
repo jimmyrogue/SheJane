@@ -55,17 +55,19 @@ import {
   type AdminOrder,
   type AdminOverview,
   type AdminProviderStatus,
+  type AdminToolCall,
   type AdminUserDetail,
   type AdminUserSummary,
   type AuthPayload,
 } from './shared/api/client'
 
-type AdminSection = 'overview' | 'users' | 'usage' | 'orders' | 'providers' | 'agent-runs' | 'audit'
+type AdminSection = 'overview' | 'users' | 'usage' | 'tool-calls' | 'orders' | 'providers' | 'agent-runs' | 'audit'
 
 const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 }> = [
   { id: 'overview', label: '概览', icon: BarChart3 },
   { id: 'users', label: '用户', icon: Users },
   { id: 'usage', label: '用量', icon: MessageSquareText },
+  { id: 'tool-calls', label: '工具', icon: Search },
   { id: 'orders', label: '订单', icon: ReceiptText },
   { id: 'providers', label: '模型', icon: Settings },
   { id: 'agent-runs', label: 'Agent', icon: Bot },
@@ -227,6 +229,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [users, setUsers] = useState<AdminUserSummary[]>([])
   const [calls, setCalls] = useState<AdminLLMCall[]>([])
+  const [toolCalls, setToolCalls] = useState<AdminToolCall[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [providers, setProviders] = useState<AdminProviderStatus[]>([])
   const [agentRuns, setAgentRuns] = useState<AdminAgentRun[]>([])
@@ -246,10 +249,11 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, userData, callData, orderData, providerData, agentRunData, auditData] = await Promise.all([
+      const [overviewData, userData, callData, toolCallData, orderData, providerData, agentRunData, auditData] = await Promise.all([
         api.adminOverview(),
         api.adminUsers(nextQuery),
         api.adminLLMCalls(),
+        api.adminToolCalls(),
         api.adminOrders(),
         api.adminProviders(),
         api.adminAgentRuns(),
@@ -258,6 +262,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
       setOverview(overviewData)
       setUsers(userData)
       setCalls(callData)
+      setToolCalls(toolCallData)
       setOrders(orderData)
       setProviders(providerData)
       setAgentRuns(agentRunData)
@@ -435,6 +440,10 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
             <TabsContent value="usage" className="mt-0">
               <UsageCard calls={calls} />
+            </TabsContent>
+
+            <TabsContent value="tool-calls" className="mt-0">
+              <ToolCallsCard calls={toolCalls} />
             </TabsContent>
 
             <TabsContent value="orders" className="mt-0">
@@ -655,6 +664,54 @@ function UsageCard({ calls }: { calls: AdminLLMCall[] }) {
               ))
             ) : (
               <EmptyTableRow columns={4} label="暂无调用记录" />
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ToolCallsCard({ calls }: { calls: AdminToolCall[] }) {
+  return (
+    <Card id="tool-calls" className="min-w-0">
+      <CardHeader>
+        <CardTitle>工具调用</CardTitle>
+        <CardDescription>非 LLM 第三方服务调用记录，只读展示扣费、provider 和失败原因。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>工具</TableHead>
+              <TableHead>用户</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead className="text-right">额度</TableHead>
+              <TableHead>Run</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {calls.length ? (
+              calls.slice(0, 10).map((call) => (
+                <TableRow key={call.request_id}>
+                  <TableCell>
+                    <div className="font-medium">{call.tool}</div>
+                    <div className="text-xs text-muted-foreground">{call.provider} · {call.units || 0} unit</div>
+                  </TableCell>
+                  <TableCell className="max-w-36 truncate">{call.user_email ?? call.user_id}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={call.status} />
+                    {call.error_code ? <div className="mt-1 max-w-44 truncate text-xs text-muted-foreground">{call.error_code}</div> : null}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
+                  <TableCell className="max-w-44 truncate">
+                    <div>{call.run_id || '-'}</div>
+                    <div className="text-xs text-muted-foreground">{formatDateTime(call.started_at)}</div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <EmptyTableRow columns={5} label="暂无工具调用记录" />
             )}
           </TableBody>
         </Table>

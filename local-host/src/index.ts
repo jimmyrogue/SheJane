@@ -40,9 +40,9 @@ server.listen(port, host, () => {
         browser_timeout_ms: process.env.JIANDANLY_BROWSER_TIMEOUT_MS ?? '15000',
         browser_search_url: process.env.JIANDANLY_BROWSER_SEARCH_URL ?? 'https://cn.bing.com/search?q={query}',
         allow_proxy_fake_ips: process.env.JIANDANLY_ALLOW_PROXY_FAKE_IPS ?? 'true',
-        tavily_configured: Boolean(process.env.TAVILY_API_KEY?.trim()),
         local_max_steps: process.env.JIANDANLY_LOCAL_MAX_STEPS ?? 'unlimited',
         local_step_warning_interval: process.env.JIANDANLY_LOCAL_STEP_WARNING_INTERVAL ?? '20',
+        cloud_tool_gateway: cloudSession.state().connected ? 'session' : 'requires_login',
         cloud_base_url: cloudBaseURL ?? 'http://localhost:8080',
       }),
     )

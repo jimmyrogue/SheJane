@@ -18,6 +18,7 @@ interface SendMessageInput {
     id: string
     name: string
   }
+  onConversationUpdate?: (conversation: Conversation) => void
 }
 
 export function createChatStore(deps: ChatStoreDeps) {
@@ -53,6 +54,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       conversation.messages = [...conversation.messages, userMessage, assistantMessage]
       conversation.updatedAt = timestamp
       await deps.localData.save(conversation)
+      input.onConversationUpdate?.(cloneConversation(conversation))
 
       try {
         const run = await deps.api.createAgentRun({
@@ -66,14 +68,17 @@ export function createChatStore(deps: ChatStoreDeps) {
         })
         assistantMessage.runId = run.id
         assistantMessage.runOrigin = 'cloud'
+        input.onConversationUpdate?.(cloneConversation(conversation))
         const streamHandlers = {
           onDelta: (delta: string) => {
             assistantMessage.content += delta
+            input.onConversationUpdate?.(cloneConversation(conversation))
           },
           onEvent: (event: AgentRunEvent) => {
             const item = timelineItem(event)
             if (item) {
               assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), item]
+              input.onConversationUpdate?.(cloneConversation(conversation))
             }
           },
         }
@@ -81,9 +86,11 @@ export function createChatStore(deps: ChatStoreDeps) {
         assistantMessage.status = 'done'
         assistantMessage.requestId = result.requestId
         assistantMessage.creditsCost = result.creditsCost
+        input.onConversationUpdate?.(cloneConversation(conversation))
       } catch (error) {
         assistantMessage.status = 'error'
         assistantMessage.content = error instanceof Error ? error.message : '发送失败'
+        input.onConversationUpdate?.(cloneConversation(conversation))
         throw error
       } finally {
         conversation.updatedAt = now()
@@ -92,6 +99,16 @@ export function createChatStore(deps: ChatStoreDeps) {
 
       return conversation
     },
+  }
+}
+
+function cloneConversation(conversation: Conversation): Conversation {
+  return {
+    ...conversation,
+    messages: conversation.messages.map((message) => ({
+      ...message,
+      agentEvents: message.agentEvents ? [...message.agentEvents] : undefined,
+    })),
   }
 }
 

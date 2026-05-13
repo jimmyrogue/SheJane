@@ -1,10 +1,32 @@
 # Jiandanly TODO
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 This file tracks known follow-up issues that are intentionally deferred. Keep each item small, evidence-based, and actionable.
 
+## Recently Closed
+
+### Phase 2.22 - Tavily / platform key leakage risk
+
+- **Status:** Closed in Phase 2.22.
+- **Change:** Tavily-backed `web.search` now runs through Cloud Tool Gateway, is metered with wallet credits, writes `external_tool_call_records`, and is visible in admin as read-only tool calls.
+- **Boundary:** Local Host no longer reads Tavily provider env vars; `make dev-electron` starts Local Host / client / Electron with an allowlist environment so cloud-only provider, Stripe, and AWS secrets are not inherited.
+
 ## Local Agent Harness
+
+### P1 - Do not exhaust research navigation budget on weak candidates before target sources
+
+- **Issue:** The research navigation budget can be consumed by blocked/weak candidates such as Reuters 401 pages, TechCrunch category pages, repeated reads, and duplicate fetches before the run collects the requested number of strong sources.
+- **Evidence:** Run `2602e44b-65ae-431a-9bf0-4b9e44f10e61` collected only one strong source (`https://www.cnbc.com/2026/05/12/qualcomm-chip-stocks-record-ai.html`). The later BBC article open/fetch was blocked by `research_navigation_budget_exhausted` after weak candidates had already consumed the source navigation budget.
+- **Expected:** Failed, blocked, portal/listing, duplicate, or already-opened attempts should have a smaller budget cost than new credible article/detail candidates. The harness should preserve enough budget to collect the requested number of strong sources.
+- **Likely fix:** Track navigation budget by `source_attempt_kind` and count only unique credible candidate article/detail navigations against the strict source budget; keep a separate lower-severity diagnostic counter for weak/failed attempts.
+
+### P1 - Treat insufficient-source research finals as partial, not successful completion
+
+- **Issue:** A research run can complete with fewer collected sources than requested if the final answer acknowledges limitations, even when the user explicitly requested a source count and source links.
+- **Evidence:** Run `2602e44b-65ae-431a-9bf0-4b9e44f10e61` completed with one collected source and one final citation, while the prompt requested two credible sources. The answer summarized a BBC item from search-result snippets and stated the original could not be fetched.
+- **Expected:** For tasks that explicitly require `N` credible sources, `run.completed` should only happen with at least `N` collected source URLs, or the run should complete with an explicit `partial`/`limited` reason and UI warning that the requested evidence threshold was not met.
+- **Likely fix:** Add a `run.completed_partial` / `reason=insufficient_sources_partial` path, or keep finalization retrying toward additional sources until hard research budgets are reached; make the analyzer and UI distinguish accepted partial answers from successful evidence-grounded answers.
 
 ### P1 - Tighten browser research source evidence
 

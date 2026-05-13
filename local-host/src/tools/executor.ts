@@ -19,12 +19,30 @@ export interface ToolExecutionResult {
   data?: Record<string, unknown>
   errorCode?: string
   recoverable?: boolean
+  usage?: Record<string, unknown>
   artifact?: {
     title: string
     content: string
     contentType: string
     metadata?: Record<string, unknown>
   }
+}
+
+export interface CloudToolExecuteRequest {
+  runId: string
+  toolCallId: string
+  tool: string
+  arguments: Record<string, unknown>
+  idempotencyKey: string
+}
+
+export interface CloudToolCapabilities {
+  tools: Record<string, { configured: boolean; provider?: string; credits_cost?: number; requires_auth?: boolean }>
+}
+
+export interface CloudToolGateway {
+  capabilities: () => Promise<CloudToolCapabilities>
+  execute: (request: CloudToolExecuteRequest) => Promise<ToolExecutionResult>
 }
 
 export interface BrowserElement {
@@ -98,8 +116,8 @@ export interface ToolExecutionOptions {
   browserObservationCounts?: Map<string, number>
   allowProxyFakeIPs?: boolean
   environment?: EnvironmentAdapter
-  tavilyApiKey?: string
-  tavilyBaseURL?: string
+  cloudToolGateway?: CloudToolGateway
+  cloudToolCapabilities?: CloudToolCapabilities
   mcpAllowlist?: string[]
   mcpServers?: Record<string, MCPServerConfig>
   mcpTimeoutMs?: number
@@ -168,7 +186,7 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
     case 'web.fetch':
       return fetchPublicURL(call, options)
     case 'web.search':
-      return searchWeb(call, options)
+      return searchWeb(call, run, options)
     case 'mcp.call':
       return callMCPTool(call, options)
     default:
@@ -825,72 +843,50 @@ async function fetchPublicURL(call: LLMToolCall, options: ToolExecutionOptions):
   }
 }
 
-async function searchWeb(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+async function searchWeb(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
   const query = typeof call.arguments.query === 'string' ? call.arguments.query.trim() : ''
   if (!query) {
     return { ok: false, content: 'A search query is required.', errorCode: 'query_required', recoverable: true }
   }
-  const apiKey = options.tavilyApiKey ?? process.env.TAVILY_API_KEY
-  if (!apiKey) {
+  if (!options.cloudToolGateway) {
     return {
       ok: false,
-      content: 'web.search is disabled because TAVILY_API_KEY is not configured.',
-      errorCode: 'web_search_disabled',
+      content: 'web.search requires an active cloud session because paid search providers are executed by the Cloud Tool Gateway.',
+      errorCode: 'cloud_session_required',
       recoverable: true,
+      data: {
+        source: 'web.search',
+      },
     }
   }
   const maxResults = typeof call.arguments.maxResults === 'number' ? Math.max(1, Math.min(call.arguments.maxResults, 10)) : 5
-  const baseURL = (options.tavilyBaseURL ?? process.env.TAVILY_BASE_URL ?? 'https://api.tavily.com').replace(/\/$/, '')
   try {
-    const response = await (options.fetcher ?? fetch)(`${baseURL}/search`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const result = await options.cloudToolGateway.execute({
+      runId: run.id,
+      toolCallId: call.id,
+      tool: 'web.search',
+      arguments: {
         query,
-        search_depth: 'basic',
-        include_answer: true,
-        include_raw_content: false,
-        max_results: maxResults,
-      }),
+        maxResults,
+      },
+      idempotencyKey: `${run.id}:${call.id}:web.search`,
     })
-    if (!response.ok) {
-      return { ok: false, content: `Tavily search returned HTTP ${response.status}.`, errorCode: 'web_search_failed', recoverable: true }
-    }
-    const body = (await response.json()) as {
-      answer?: string
-      results?: Array<{ title?: string; url?: string; content?: string; score?: number }>
-    }
-    const results = (body.results ?? []).slice(0, maxResults).map((result) => ({
-      title: result.title ?? '',
-      url: result.url ?? '',
-      content: (result.content ?? '').slice(0, 700),
-      score: result.score,
-    }))
-    const content = [
-      body.answer ? `Answer: ${body.answer}` : '',
-      ...results.map((result, index) => [`${index + 1}. ${result.title}`, result.url, result.content].filter(Boolean).join('\n')),
-    ]
-      .filter(Boolean)
-      .join('\n\n')
     return {
-      ok: true,
-      content,
+      ...result,
       data: {
-        provider: 'tavily',
-        results_count: results.length,
-        results,
         source: 'web.search',
+        ...(result.data ?? {}),
       },
     }
   } catch (error) {
     return {
       ok: false,
       content: error instanceof Error ? error.message : 'Search failed.',
-      errorCode: 'web_search_failed',
+      errorCode: 'cloud_tool_gateway_failed',
       recoverable: true,
+      data: {
+        source: 'web.search',
+      },
     }
   }
 }

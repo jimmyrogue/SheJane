@@ -16,6 +16,34 @@ afterEach(async () => {
   delete process.env.TAVILY_API_KEY
 })
 
+const webSearchCapability = {
+  tools: {
+    'web.search': {
+      configured: true,
+      provider: 'tavily',
+      credits_cost: 20,
+      requires_auth: true,
+    },
+  },
+}
+
+function fakeCloudToolGateway(content = 'Search results.', data: Record<string, unknown> = { provider: 'tavily', results_count: 1 }) {
+  return {
+    capabilities: async () => webSearchCapability,
+    execute: async () => ({
+      ok: true,
+      content,
+      data: {
+        source: 'web.search',
+        ...data,
+      },
+      usage: {
+        credits_cost: 20,
+      },
+    }),
+  }
+}
+
 describe('harness runner', () => {
   it('executes native tool calls and feeds observations back to the model', async () => {
     const workspace = await tempWorkspace()
@@ -574,7 +602,7 @@ describe('harness runner', () => {
       },
       {
         requestId: 'req-final',
-        content: 'Found a browser result and captured a screenshot artifact.',
+        content: 'I captured a browser screenshot artifact, but did not collect a source page.',
       },
     ])
     const snapshot = {
@@ -645,7 +673,7 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
-  it('collects source evidence from browser.read and stores long page text as an artifact', async () => {
+  it('collects source evidence from usable browser pages and stores long page text as an artifact', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Open a source, read it, and answer with evidence.' })
     store.appendEvent(run.id, 'run.created', { goal: run.goal })
@@ -660,7 +688,7 @@ describe('harness runner', () => {
       },
       {
         requestId: 'req-final',
-        content: 'Answered with the collected source.',
+        content: 'Answered with the collected source.\n\nSource: https://example.com/source',
       },
     ])
     const longText = `Example Source Report\n${'Evidence paragraph. '.repeat(120)}`
@@ -694,6 +722,7 @@ describe('harness runner', () => {
     await store.resolvePermission(permission.id, 'approve')
     await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id, toolOptions, artifactThresholdChars: 512 })
 
+    const openArtifact = store.listArtifacts(run.id).find((artifact) => artifact.toolName === 'browser.open')
     const readArtifact = store.listArtifacts(run.id).find((artifact) => artifact.toolName === 'browser.read')
     expect(readArtifact).toMatchObject({
       kind: 'tool_output',
@@ -716,10 +745,10 @@ describe('harness runner', () => {
         expect.objectContaining({
           eventType: 'source.collected',
           payload: expect.objectContaining({
-            tool: 'browser.read',
+            tool: 'browser.open',
             title: 'Example Source Report',
             url: 'https://example.com/source',
-            artifact_id: readArtifact!.id,
+            artifact_id: openArtifact!.id,
             observation_status: 'usable',
           }),
         }),
@@ -733,6 +762,65 @@ describe('harness runner', () => {
         }),
       ]),
     )
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('does not collect home or category pages as credible research sources', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Search today AI news, collect credible sources, and answer.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-open-category',
+        toolCalls: [{ id: 'call-open-category', name: 'browser.open', arguments: { url: 'https://techcrunch.com/category/artificial-intelligence/' } }],
+      },
+      {
+        requestId: 'req-open-home',
+        toolCalls: [{ id: 'call-open-home', name: 'browser.open', arguments: { url: 'https://techcrunch.com/' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: 'I could not collect a credible article source from those pages.',
+      },
+    ])
+    const category = {
+      url: 'https://techcrunch.com/category/artificial-intelligence/',
+      title: 'AI News & Artificial Intelligence | TechCrunch',
+      visibleText: 'Latest AI posts listing page.',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const home = {
+      url: 'https://techcrunch.com/',
+      title: 'TechCrunch | Startup and Technology News',
+      visibleText: 'Homepage with many sections.',
+      links: [],
+      forms: [],
+      buttons: [],
+      elements: [],
+    }
+    const toolOptions = {
+      resolveHostname: async () => ['93.184.216.34'],
+      browser: {
+        search: async () => category,
+        open: async ({ url }: { url: string }) => url.endsWith('/') && url === 'https://techcrunch.com/' ? home : category,
+        snapshot: async () => category,
+        screenshot: async () => ({ content: 'png', contentType: 'image/png', bytes: 3, title: 'screenshot' }),
+        click: async () => category,
+        type: async () => category,
+        scroll: async () => category,
+        close: async () => undefined,
+      },
+    } as any
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions })
+    const permission = store.listPermissions(run.id)[0]
+    await store.resolvePermission(permission.id, 'approve', 'run')
+    await runHarness({ run: store.getRun(run.id)!, store, llmGateway: gateway, emit: () => undefined, resumePermissionID: permission.id, toolOptions })
+
+    expect(store.listEvents(run.id).filter((event) => event.eventType === 'source.collected')).toHaveLength(0)
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
@@ -767,7 +855,7 @@ describe('harness runner', () => {
       },
       {
         requestId: 'req-final',
-        content: 'Answered from the two collected real sources.',
+        content: 'Answered from the two collected real sources.\n\nSources:\n1. https://example.com/source-a\n2. https://example.org/source-b',
       },
     ])
     const searchSnapshot = {
@@ -802,7 +890,6 @@ describe('harness runner', () => {
     }
     let currentSnapshot = searchSnapshot
     const toolOptions = {
-      tavilyApiKey: '',
       resolveHostname: async () => ['93.184.216.34'],
       browser: {
         search: async () => {
@@ -835,7 +922,7 @@ describe('harness runner', () => {
       'https://example.com/source-a',
       'https://example.org/source-b',
     ])
-    expect(sources.map((event) => event.payload.tool)).toEqual(['browser.read', 'browser.read'])
+    expect(sources.map((event) => event.payload.tool)).toEqual(['browser.open', 'browser.open'])
     expect(store.listEvents(run.id)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -849,7 +936,9 @@ describe('harness runner', () => {
         }),
         expect.objectContaining({
           eventType: 'run.completed',
-          payload: expect.objectContaining({ final: 'Answered from the two collected real sources.' }),
+          payload: expect.objectContaining({
+            final: 'Answered from the two collected real sources.\n\nSources:\n1. https://example.com/source-a\n2. https://example.org/source-b',
+          }),
         }),
       ]),
     )
@@ -871,7 +960,7 @@ describe('harness runner', () => {
       },
       {
         requestId: 'req-final',
-        content: 'The page was visually verified before answering.',
+        content: 'The page was visually verified before answering.\n\nSource: https://example.com/visual-report',
       },
     ])
     const snapshot = {
@@ -1236,12 +1325,12 @@ describe('harness runner', () => {
     )
   })
 
-  it('writes sanitized debug logs for failed tool observations when local debug is enabled', async () => {
+  it('writes sanitized debug logs for failed cloud search observations when local debug is enabled', async () => {
     process.env.JIANDANLY_LOCAL_HOST_DEBUG = '1'
     vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const store = new InMemoryLocalHostStore()
-    const run = store.createRun({ goal: 'Search without Tavily config.' })
+    const run = store.createRun({ goal: 'Search without cloud session.' })
     store.appendEvent(run.id, 'run.created', { goal: run.goal })
     const gateway = new ScriptedGateway([
       {
@@ -1260,23 +1349,23 @@ describe('harness runner', () => {
     expect(serialized).toContain('[jiandanly:local-host]')
     expect(serialized).toContain('tool.failed')
     expect(serialized).toContain('web.search')
-    expect(serialized).toContain('web_search_disabled')
+    expect(serialized).toContain('cloud_session_required')
     expect(serialized).not.toContain('private search token')
   })
 
-  it('hides optional Tavily web.search from the advertised tool list until configured', async () => {
+  it('hides optional cloud web.search from the advertised tool list until cloud capabilities report it configured', async () => {
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Inspect available tools.' })
     store.appendEvent(run.id, 'run.created', { goal: run.goal })
     const gateway = new ScriptedGateway([{ requestId: 'req-no-tavily', content: 'No search provider configured.' }])
 
-    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { tavilyApiKey: '' } })
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
 
     expect(gateway.requests[0].tools.map((tool) => tool.name)).not.toContain('web.search')
     expect(gateway.requests[0].messages[0].content).toContain('use browser.search for public web discovery')
 
     const configuredStore = new InMemoryLocalHostStore()
-    const configuredRun = configuredStore.createRun({ goal: 'Inspect Tavily tools.' })
+    const configuredRun = configuredStore.createRun({ goal: 'Inspect cloud search tools.' })
     configuredStore.appendEvent(configuredRun.id, 'run.created', { goal: configuredRun.goal })
     const configuredGateway = new ScriptedGateway([{ requestId: 'req-tavily', content: 'Search provider configured.' }])
 
@@ -1285,13 +1374,14 @@ describe('harness runner', () => {
       store: configuredStore,
       llmGateway: configuredGateway,
       emit: () => undefined,
-      toolOptions: { tavilyApiKey: 'tvly-test' },
+      toolOptions: { cloudToolGateway: fakeCloudToolGateway() },
     })
 
     const configuredToolNames = configuredGateway.requests[0].tools.map((tool) => tool.name)
     expect(configuredToolNames).toContain('web.search')
     expect(configuredToolNames.indexOf('web.search')).toBeLessThan(configuredToolNames.indexOf('browser.search'))
     expect(configuredGateway.requests[0].messages[0].content).toContain('use web.search first for public web search discovery')
+    expect(configuredGateway.requests[0].messages[0].content).toContain('cloud-metered discovery layer')
     expect(configuredGateway.requests[0].messages[0].content).not.toContain('use browser.search by default')
   })
 
@@ -1314,22 +1404,17 @@ describe('harness runner', () => {
       },
     ])
     const opened: Array<{ kind: string; target: string }> = []
-    const fetcher = async () =>
-      new Response(
-        JSON.stringify({
-          results: [{ title: '科技新闻', url: 'https://example.com/news', content: '新闻摘要' }],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      )
-
     await runHarness({
       run,
       store,
       llmGateway: gateway,
       emit: () => undefined,
       toolOptions: {
-        tavilyApiKey: 'tvly-test',
-        fetcher: fetcher as typeof fetch,
+        cloudToolGateway: fakeCloudToolGateway('1. 科技新闻\nhttps://example.com/news\n新闻摘要', {
+          provider: 'tavily',
+          results_count: 1,
+          results: [{ title: '科技新闻', url: 'https://example.com/news', content: '新闻摘要' }],
+        }),
         opener: async (target) => opened.push(target),
       },
     })
@@ -1414,24 +1499,21 @@ describe('harness runner', () => {
         content: '我只能基于搜索结果给出初步总结，尚未收集到可引用的已打开来源。',
       },
     ])
-    const fetcher = async () =>
-      new Response(
-        JSON.stringify({
-          answer: '科技新闻搜索结果。',
-          results: [
-            { title: '科技新闻 A', url: 'https://example.com/a', content: 'A 摘要' },
-            { title: '科技新闻 B', url: 'https://example.com/b', content: 'B 摘要' },
-          ],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      )
-
     await runHarness({
       run,
       store,
       llmGateway: gateway,
       emit: () => undefined,
-      toolOptions: { tavilyApiKey: 'tvly-test', fetcher: fetcher as typeof fetch },
+      toolOptions: {
+        cloudToolGateway: fakeCloudToolGateway('科技新闻搜索结果。', {
+          provider: 'tavily',
+          results_count: 2,
+          results: [
+            { title: '科技新闻 A', url: 'https://example.com/a', content: 'A 摘要' },
+            { title: '科技新闻 B', url: 'https://example.com/b', content: 'B 摘要' },
+          ],
+        }),
+      },
     })
 
     expect(gateway.requests).toHaveLength(3)
@@ -1499,6 +1581,636 @@ describe('harness runner', () => {
           eventType: 'run.completed',
           payload: expect.objectContaining({
             final: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks uncollected cited source links even when the final answer only says 来源链接', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-draft',
+        content: [
+          '摘要：今天有两条 AI 新闻。',
+          '',
+          '来源链接',
+          '1. https://example.com/a',
+          '2. https://example.net/not-opened',
+        ].join('\n'),
+      },
+      {
+        requestId: 'req-corrected',
+        content: '来源链接\n1. https://example.com/a\n2. https://example.com/b',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'uncollected_source_cited',
+            collected_sources: 2,
+            target_sources: 2,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '来源链接\n1. https://example.com/a\n2. https://example.com/b',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('requires collected source links in research final answers', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'tool.completed', {
+      tool: 'browser.open',
+      result: { observation_status: 'usable' },
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-draft',
+        content: '中文摘要：今天有两条 AI 新闻，但这里没有列出链接。',
+      },
+      {
+        requestId: 'req-corrected',
+        content: '中文摘要：今天有两条 AI 新闻。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'missing_source_links',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '中文摘要：今天有两条 AI 新闻。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('keeps output guardrails active when the first correction is still missing source links', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'tool.completed', {
+      tool: 'browser.open',
+      result: { observation_status: 'usable' },
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-draft',
+        content: '来源链接\n1. https://example.net/not-collected',
+      },
+      {
+        requestId: 'req-still-bad',
+        content: '中文摘要：今天有两条 AI 新闻，但仍然没有来源链接。',
+      },
+      {
+        requestId: 'req-corrected',
+        content: '中文摘要：今天有两条 AI 新闻。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const guardrails = store.listEvents(run.id).filter((event) => event.eventType === 'run.output_guardrail')
+    expect(guardrails.map((event) => event.payload.reason)).toEqual(['uncollected_source_cited', 'missing_source_links'])
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('does not accept a current-news answer with only one collected source and no source links', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'tool.completed', {
+      tool: 'browser.open',
+      result: { observation_status: 'usable' },
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-bad-final',
+        content: '以上是今天最新 AI 新闻的中文摘要。',
+      },
+      {
+        requestId: 'req-limited',
+        content: '目前只收集到 1 个可用来源，无法满足 2 个可信来源的要求。保守摘要请以该来源为准。\n\n来源链接\n1. https://example.com/a',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'insufficient_research_sources',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: expect.stringContaining('https://example.com/a'),
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('does not treat article facts as research limitation acknowledgements', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '搜索今天的公开 AI 新闻，打开 2 个来源并列出来源。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-draft',
+        content: [
+          '来源：[Source A](https://example.com/a)。',
+          '这篇报道说某模型尚未公开发布。',
+          '另见：[Uncollected](https://example.net/uncollected)。',
+        ].join('\n'),
+      },
+      {
+        requestId: 'req-corrected',
+        content: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'uncollected_source_cited',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks local workspace detours after enough web research sources are collected', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-detour',
+        toolCalls: [{ id: 'call-local-read', name: 'fs.read', arguments: { path: '/tmp/artifacts/not-real' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'fs.read',
+            error_code: 'research_enough_sources',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('blocks metered web.search after enough web research sources are collected', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-extra-search',
+        toolCalls: [{ id: 'call-web-search', name: 'web.search', arguments: { query: 'more AI news' } }],
+      },
+      {
+        requestId: 'req-final',
+        content: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+      },
+    ])
+    const cloudToolGateway = {
+      capabilities: async () => webSearchCapability,
+      execute: async () => {
+        throw new Error('web.search should be blocked before calling the cloud tool gateway')
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { cloudToolGateway } })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'tool.failed',
+          payload: expect.objectContaining({
+            tool: 'web.search',
+            tool_call_id: 'call-web-search',
+            error_code: 'research_enough_sources',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '来源：[Source A](https://example.com/a)；[Source B](https://example.com/b)。',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('forces a no-tool final answer after repeated research policy blocks with enough sources', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search-again',
+        toolCalls: [{ id: 'call-web-search', name: 'web.search', arguments: { query: 'more AI news' } }],
+      },
+      {
+        requestId: 'req-interleaved-time',
+        toolCalls: [{ id: 'call-time', name: 'time.now', arguments: {} }],
+      },
+      {
+        requestId: 'req-open-again',
+        toolCalls: [{ id: 'call-open-a', name: 'browser.open', arguments: { url: 'https://example.com/a' } }],
+      },
+      {
+        requestId: 'req-finalize',
+        content: '中文摘要：已基于两个来源总结。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+      },
+    ])
+    const cloudToolGateway = {
+      capabilities: async () => webSearchCapability,
+      execute: async () => {
+        throw new Error('research policy blocks should prevent cloud tool calls')
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { cloudToolGateway } })
+
+    expect(gateway.requests).toHaveLength(4)
+    expect(gateway.requests[3].tools).toEqual([])
+    expect(gateway.requests[3].messages.at(-1)?.content).toContain('collected enough source evidence')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.budget_warning',
+          payload: expect.objectContaining({
+            reason: 'research_policy_repeated',
+            blocked_attempts: 2,
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            reason: 'research_policy_finalized',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('retries no-tool research finalization when the model emits raw tool markup', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search-again',
+        toolCalls: [{ id: 'call-web-search', name: 'web.search', arguments: { query: 'more AI news' } }],
+      },
+      {
+        requestId: 'req-open-again',
+        toolCalls: [{ id: 'call-open-a', name: 'browser.open', arguments: { url: 'https://example.com/a' } }],
+      },
+      {
+        requestId: 'req-tool-markup',
+        content: '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="browser.click"></｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>',
+      },
+      {
+        requestId: 'req-corrected',
+        content: '中文摘要：已基于两个来源总结。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+      },
+    ])
+    const cloudToolGateway = {
+      capabilities: async () => webSearchCapability,
+      execute: async () => {
+        throw new Error('research policy blocks should prevent cloud tool calls')
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { cloudToolGateway } })
+
+    expect(gateway.requests).toHaveLength(4)
+    expect(gateway.requests[2].tools).toEqual([])
+    expect(gateway.requests[3].tools).toEqual([])
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'tool_call_markup_in_final',
+          }),
+        }),
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            final: '中文摘要：已基于两个来源总结。\n\n来源链接\n1. https://example.com/a\n2. https://example.com/b',
+          }),
+        }),
+      ]),
+    )
+  })
+
+  it('falls back to collected source links when no-tool finalization keeps emitting tool markup', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const toolMarkup = '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="browser.verify"></｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>'
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search-again',
+        toolCalls: [{ id: 'call-web-search', name: 'web.search', arguments: { query: 'more AI news' } }],
+      },
+      {
+        requestId: 'req-open-again',
+        toolCalls: [{ id: 'call-open-a', name: 'browser.open', arguments: { url: 'https://example.com/a' } }],
+      },
+      { requestId: 'req-tool-markup-1', content: toolMarkup },
+      { requestId: 'req-tool-markup-2', content: toolMarkup },
+      { requestId: 'req-tool-markup-3', content: toolMarkup },
+      { requestId: 'req-tool-markup-4', content: toolMarkup },
+    ])
+    const cloudToolGateway = {
+      capabilities: async () => webSearchCapability,
+      execute: async () => {
+        throw new Error('research policy blocks should prevent cloud tool calls')
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { cloudToolGateway } })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            reason: 'research_policy_finalized_fallback',
+            final: expect.stringContaining('https://example.com/a'),
+          }),
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id).find((event) => event.eventType === 'run.completed')?.payload.final).toContain('https://example.com/b')
+  })
+
+  it('falls back after repeated no-tool markup to avoid an extra research finalization round', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source A',
+      url: 'https://example.com/a',
+      observation_status: 'usable',
+    })
+    store.appendEvent(run.id, 'source.collected', {
+      tool: 'browser.open',
+      title: 'Source B',
+      url: 'https://example.com/b',
+      observation_status: 'usable',
+    })
+    const toolMarkup = '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="browser.verify"></｜｜DSML｜｜invoke>\n</｜｜DSML｜｜tool_calls>'
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search-again',
+        toolCalls: [{ id: 'call-web-search', name: 'web.search', arguments: { query: 'more AI news' } }],
+      },
+      {
+        requestId: 'req-open-again',
+        toolCalls: [{ id: 'call-open-a', name: 'browser.open', arguments: { url: 'https://example.com/a' } }],
+      },
+      { requestId: 'req-tool-markup-1', content: toolMarkup },
+      { requestId: 'req-tool-markup-2', content: toolMarkup },
+      { requestId: 'req-unneeded-third-llm', content: 'This response should not be requested.' },
+    ])
+    const cloudToolGateway = {
+      capabilities: async () => webSearchCapability,
+      execute: async () => {
+        throw new Error('research policy blocks should prevent cloud tool calls')
+      },
+    }
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined, toolOptions: { cloudToolGateway } })
+
+    expect(gateway.requests).toHaveLength(4)
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.completed',
+          payload: expect.objectContaining({
+            reason: 'research_policy_finalized_fallback',
+            final: expect.stringContaining('https://example.com/a'),
+          }),
+        }),
+      ]),
+    )
+    expect(store.listEvents(run.id).find((event) => event.eventType === 'run.completed')?.payload.final).toContain('https://example.com/b')
+  })
+
+  it('requires the requested number of credible sources in final answer guardrails', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '请搜索今天最新的 AI 新闻，收集 2 个可信来源，给我一个中文摘要，并列出来源链接。' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-search',
+        toolCalls: [{ id: 'call-search', name: 'web.search', arguments: { query: 'AI news today' } }],
+      },
+      {
+        requestId: 'req-draft',
+        content: '我已收集两个可信来源：来源：https://example.com/a 和 https://example.com/b。',
+      },
+      {
+        requestId: 'req-limited',
+        content: '我只能基于搜索结果给出初步总结，尚未收集到可引用的已打开来源。',
+      },
+    ])
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: {
+        cloudToolGateway: fakeCloudToolGateway('Search result snippets.', {
+          provider: 'tavily',
+          results_count: 2,
+          results: [
+            { title: 'A', url: 'https://example.com/a', content: 'A' },
+            { title: 'B', url: 'https://example.com/b', content: 'B' },
+          ],
+        }),
+      },
+    })
+
+    expect(store.listEvents(run.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'run.output_guardrail',
+          payload: expect.objectContaining({
+            reason: 'uncollected_source_cited',
+            collected_sources: 0,
+            target_sources: 2,
           }),
         }),
       ]),

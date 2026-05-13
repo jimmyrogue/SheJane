@@ -72,6 +72,26 @@ export interface AdminLLMCall {
   finished_at?: string
 }
 
+export interface AdminToolCall {
+  request_id: string
+  user_id: string
+  user_email?: string
+  wallet_id: string
+  reservation_id?: string
+  run_id?: string
+  tool_call_id?: string
+  tool: string
+  provider: string
+  units: number
+  credits_cost: number
+  status: string
+  error_code?: string
+  error_message?: string
+  idempotency_key?: string
+  started_at: string
+  finished_at?: string
+}
+
 export interface AdminOrder {
   id: string
   wallet_id: string
@@ -181,6 +201,10 @@ export class AdminAPI {
 
   async adminLLMCalls(): Promise<AdminLLMCall[]> {
     return this.get<AdminLLMCall[]>('/api/v1/admin/llm-calls')
+  }
+
+  async adminToolCalls(): Promise<AdminToolCall[]> {
+    return this.get<AdminToolCall[]>('/api/v1/admin/tool-calls')
   }
 
   async adminOrders(): Promise<AdminOrder[]> {

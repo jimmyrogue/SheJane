@@ -245,6 +245,10 @@ async function handleAdminAPI(route: Route, role: 'admin' | 'user'): Promise<voi
     await json(route, { code: 0, message: 'ok', data: [{ request_id: 'req-1', user_id: 'user-1', user_email: 'user@example.com', mode: 'fast', scene: 'agent', model: 'deepseek-v4-flash', provider: 'deepseek', input_tokens: 12, output_tokens: 18, credits_cost: 30, status: 'completed', started_at: '2026-05-10T00:00:00Z' }] })
     return
   }
+  if (url.endsWith('/api/v1/admin/tool-calls')) {
+    await json(route, { code: 0, message: 'ok', data: [{ request_id: 'tool-req-1', user_id: 'user-1', user_email: 'user@example.com', wallet_id: 'wallet-1', reservation_id: 'res-1', run_id: 'run_1', tool_call_id: 'call-search-1', tool: 'web.search', provider: 'tavily', units: 1, credits_cost: 20, status: 'done', started_at: '2026-05-10T00:00:00Z', finished_at: '2026-05-10T00:00:01Z' }] })
+    return
+  }
   if (url.endsWith('/api/v1/admin/orders')) {
     await json(route, { code: 0, message: 'ok', data: [{ id: 'order_1', wallet_id: 'wallet-1', user_id: 'admin-1', user_email: 'admin@example.com', type: 'subscription', amount_cny: 3900, status: 'pending', checkout_url: '', stripe_checkout_session_id: 'cs_test_1', stripe_subscription_id: 'sub_test_123', plan_code: 'pro', wallet_status: 'active', idempotency_key: 'order-key', created_at: '2026-05-10T00:00:00Z' }] })
     return

@@ -1,4 +1,4 @@
-.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external
+.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external
 
 test: api-test client-test admin-test local-host-test
 
@@ -69,6 +69,9 @@ logs-dev:
 
 smoke-local-host:
 	./scripts/smoke-local-host.sh
+
+smoke-agent-research:
+	cd local-host && npm run smoke:research
 
 smoke-docker-local:
 	./scripts/smoke-docker-local.sh

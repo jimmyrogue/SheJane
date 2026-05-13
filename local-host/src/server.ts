@@ -40,6 +40,7 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
     ...options,
     cloudSession: options.cloudSession ?? new LocalCloudSessionManager(),
     toolOptionsByRun: new Map<string, ToolExecutionOptions>(),
+    activeRuns: new Map<string, Promise<void>>(),
   }
   return createServer((request, response) => {
     handleRequest(request, response, resolvedOptions).catch((error: unknown) => {
@@ -56,6 +57,7 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
 type ResolvedLocalHostServerOptions = LocalHostServerOptions & {
   cloudSession: LocalCloudSessionManager
   toolOptionsByRun: Map<string, ToolExecutionOptions>
+  activeRuns: Map<string, Promise<void>>
 }
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse, options: ResolvedLocalHostServerOptions): Promise<void> {
@@ -99,7 +101,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     const accessToken = typeof body.access_token === 'string' ? body.access_token : ''
     const cloudBaseURL = typeof body.cloud_base_url === 'string' ? body.cloud_base_url : undefined
     try {
-      writeJSON(response, 200, options.cloudSession.setSession({ cloudBaseURL, accessToken }))
+      const state = options.cloudSession.setSession({ cloudBaseURL, accessToken })
+      clearCloudToolGateways(options)
+      writeJSON(response, 200, state)
     } catch (error) {
       writeJSON(response, 400, {
         error: error instanceof Error ? error.message : 'cloud_session_invalid',
@@ -109,7 +113,9 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   }
 
   if (request.method === 'DELETE' && url.pathname === '/local/v1/session') {
-    writeJSON(response, 200, options.cloudSession.clearSession())
+    const state = options.cloudSession.clearSession()
+    clearCloudToolGateways(options)
+    writeJSON(response, 200, state)
     return
   }
 
@@ -276,15 +282,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       writeJSON(response, 404, { error: 'run_not_found' })
       return
     }
-    await runHarness({
-      run,
-      store: options.store,
-      llmGateway: currentLLMGateway(options),
-      emit: () => undefined,
-      resumePermissionID: permission.id,
-      toolOptions: toolOptionsForRun(options, run.id),
-    })
-    cleanupRunToolOptions(options, run.id)
+    startManagedRun(options, run, permission.id)
     writeJSON(response, 202, {
       request_id: permissionMatch[1],
       decision,
@@ -311,6 +309,38 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   writeJSON(response, 404, { error: 'not_found' })
 }
 
+function startManagedRun(options: ResolvedLocalHostServerOptions, run: LocalRun, resumePermissionID?: string): Promise<void> {
+  const existing = options.activeRuns.get(run.id)
+  if (existing) {
+    return existing
+  }
+  const task = runHarness({
+    run,
+    store: options.store,
+    llmGateway: currentLLMGateway(options),
+    emit: () => undefined,
+    resumePermissionID,
+    toolOptions: toolOptionsForRun(options, run.id),
+  })
+    .catch((error: unknown) => {
+      logLocalHostError('run.failed', error, { run_id: run.id })
+      const fresh = options.store.getRun(run.id)
+      if (fresh && !terminalStatuses.has(fresh.status)) {
+        options.store.updateRunStatus(run.id, 'failed')
+        options.store.appendEvent(run.id, 'run.failed', {
+          error_code: 'runner_failed',
+          message: error instanceof Error ? error.message : 'Local runner failed.',
+        })
+      }
+    })
+    .finally(() => {
+      options.activeRuns.delete(run.id)
+      cleanupRunToolOptions(options, run.id)
+    })
+  options.activeRuns.set(run.id, task)
+  return task
+}
+
 async function streamRun(response: ServerResponse, run: LocalRun, options: ResolvedLocalHostServerOptions): Promise<void> {
   writeCORS(response)
   response.writeHead(200, {
@@ -324,20 +354,33 @@ async function streamRun(response: ServerResponse, run: LocalRun, options: Resol
   for (const event of events) {
     writeSSE(response, event)
   }
+  let nextSeq = events.length > 0 ? Math.max(...events.map((event) => event.seq)) + 1 : 1
 
   if (run.status === 'queued' || run.status === 'running') {
-    await runHarness({
-      run,
-      store,
-      llmGateway: currentLLMGateway(options),
-      emit: (event) => writeSSE(response, event),
-      toolOptions: toolOptionsForRun(options, run.id),
-    })
-    cleanupRunToolOptions(options, run.id)
+    startManagedRun(options, run)
+  }
+
+  while (!response.destroyed) {
+    const freshEvents = store.listEvents(run.id).filter((event) => event.seq >= nextSeq)
+    for (const event of freshEvents) {
+      writeSSE(response, event)
+      nextSeq = event.seq + 1
+    }
+
+    const freshRun = store.getRun(run.id)
+    const activeTask = options.activeRuns.get(run.id)
+    if (!activeTask && (!freshRun || terminalStatuses.has(freshRun.status) || freshRun.status === 'waiting_permission')) {
+      break
+    }
+    await Promise.race([sleep(100), activeTask?.catch(() => undefined) ?? sleep(100)])
   }
 
   response.write('data: [DONE]\n\n')
   response.end()
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function toolOptionsForRun(options: ResolvedLocalHostServerOptions, runID: string): ToolExecutionOptions {
@@ -346,6 +389,7 @@ function toolOptionsForRun(options: ResolvedLocalHostServerOptions, runID: strin
     toolOptions = {}
     options.toolOptionsByRun.set(runID, toolOptions)
   }
+  toolOptions.cloudToolGateway = toolOptions.cloudToolGateway ?? options.cloudSession.toolGateway()
   return toolOptions
 }
 
@@ -353,6 +397,13 @@ function cleanupRunToolOptions(options: ResolvedLocalHostServerOptions, runID: s
   const status = options.store.getRun(runID)?.status
   if (status && terminalStatuses.has(status)) {
     options.toolOptionsByRun.delete(runID)
+  }
+}
+
+function clearCloudToolGateways(options: ResolvedLocalHostServerOptions): void {
+  for (const toolOptions of options.toolOptionsByRun.values()) {
+    delete toolOptions.cloudToolGateway
+    delete toolOptions.cloudToolCapabilities
   }
 }
 

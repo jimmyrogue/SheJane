@@ -46,6 +46,11 @@ type Config struct {
 	DocumentTextLimit  int
 	DocumentTTLHours   int
 	AgentRunTTLHours   int
+
+	TavilyAPIKey        string
+	TavilyBaseURL       string
+	TavilySearchCredits int64
+	ToolGatewayTimeout  time.Duration
 }
 
 func Default() Config {
@@ -82,6 +87,10 @@ func Default() Config {
 		DocumentTextLimit:   60_000,
 		DocumentTTLHours:    168,
 		AgentRunTTLHours:    168,
+		TavilyAPIKey:        "",
+		TavilyBaseURL:       "https://api.tavily.com",
+		TavilySearchCredits: 20,
+		ToolGatewayTimeout:  15 * time.Second,
 	}
 }
 
@@ -119,6 +128,10 @@ func Load() Config {
 	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)
 	cfg.DocumentTTLHours = getEnvInt("DOCUMENT_TTL_HOURS", cfg.DocumentTTLHours)
 	cfg.AgentRunTTLHours = getEnvInt("AGENT_RUN_TTL_HOURS", cfg.AgentRunTTLHours)
+	cfg.TavilyAPIKey = getEnv("TAVILY_API_KEY", cfg.TavilyAPIKey)
+	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)
+	cfg.TavilySearchCredits = getEnvInt64("TAVILY_SEARCH_CREDITS", cfg.TavilySearchCredits)
+	cfg.ToolGatewayTimeout = time.Duration(getEnvInt("TOOL_GATEWAY_TIMEOUT_MS", int(cfg.ToolGatewayTimeout/time.Millisecond))) * time.Millisecond
 	return cfg
 }
 

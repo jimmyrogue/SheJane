@@ -23,6 +23,7 @@ type MemoryStore struct {
 	refresh      map[string]RefreshToken
 	wallets      map[string]*billing.Wallet
 	llmCalls     map[string]LLMCallRecord
+	toolCalls    map[string]ExternalToolCallRecord
 	agentRuns    map[string]AgentRun
 	agentEvents  map[string][]AgentEvent
 	documents    map[string]documents.Document
@@ -38,6 +39,7 @@ func NewMemoryStore() *MemoryStore {
 		refresh:      make(map[string]RefreshToken),
 		wallets:      make(map[string]*billing.Wallet),
 		llmCalls:     make(map[string]LLMCallRecord),
+		toolCalls:    make(map[string]ExternalToolCallRecord),
 		agentRuns:    make(map[string]AgentRun),
 		agentEvents:  make(map[string][]AgentEvent),
 		documents:    make(map[string]documents.Document),
@@ -237,6 +239,65 @@ func (s *MemoryStore) LLMCallsByUser(ctx context.Context, userID string) ([]LLMC
 		return records[i].StartedAt.After(records[j].StartedAt)
 	})
 	return records, nil
+}
+
+func (s *MemoryStore) CreateExternalToolCall(ctx context.Context, record ExternalToolCallRecord) (ExternalToolCallRecord, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if record.IdempotencyKey != "" {
+		for _, existing := range s.toolCalls {
+			if existing.UserID == record.UserID && existing.IdempotencyKey == record.IdempotencyKey {
+				return cloneExternalToolCall(existing), false, nil
+			}
+		}
+	}
+	if record.StartedAt.IsZero() {
+		record.StartedAt = time.Now().UTC()
+	}
+	if record.Status == "" {
+		record.Status = "running"
+	}
+	if record.ResponseData == nil {
+		record.ResponseData = map[string]any{}
+	}
+	s.toolCalls[record.RequestID] = cloneExternalToolCall(record)
+	return cloneExternalToolCall(record), true, nil
+}
+
+func (s *MemoryStore) ExternalToolCallByIdempotencyKey(ctx context.Context, userID string, idempotencyKey string) (ExternalToolCallRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if idempotencyKey == "" {
+		return ExternalToolCallRecord{}, ErrNotFound
+	}
+	for _, record := range s.toolCalls {
+		if record.UserID == userID && record.IdempotencyKey == idempotencyKey {
+			return cloneExternalToolCall(record), nil
+		}
+	}
+	return ExternalToolCallRecord{}, ErrNotFound
+}
+
+func (s *MemoryStore) FinishExternalToolCall(ctx context.Context, requestID string, status string, units int, creditsCost int64, errorCode string, errorMessage string, responseContent string, responseData map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.toolCalls[requestID]
+	if !ok {
+		return ErrNotFound
+	}
+	record.Status = status
+	record.Units = units
+	record.CreditsCost = creditsCost
+	record.ErrorCode = errorCode
+	record.ErrorMessage = errorMessage
+	record.ResponseContent = responseContent
+	record.ResponseData = cloneMap(responseData)
+	record.FinishedAt = time.Now().UTC()
+	s.toolCalls[requestID] = record
+	return nil
 }
 
 func (s *MemoryStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {
@@ -697,6 +758,34 @@ func (s *MemoryStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions) 
 	return records[offset:minInt(offset+limit, len(records))], nil
 }
 
+func (s *MemoryStore) AdminExternalToolCalls(ctx context.Context, opts AdminListOptions) ([]AdminExternalToolCallRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	records := make([]AdminExternalToolCallRecord, 0, len(s.toolCalls))
+	for _, record := range s.toolCalls {
+		if opts.UserID != "" && record.UserID != opts.UserID {
+			continue
+		}
+		if opts.Status != "" && record.Status != opts.Status {
+			continue
+		}
+		item := AdminExternalToolCallRecord{ExternalToolCallRecord: cloneExternalToolCall(record)}
+		if user, ok := s.usersByID[record.UserID]; ok {
+			item.UserEmail = user.Email
+		}
+		records = append(records, item)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].StartedAt.After(records[j].StartedAt)
+	})
+	if offset > len(records) {
+		return []AdminExternalToolCallRecord{}, nil
+	}
+	return records[offset:minInt(offset+limit, len(records))], nil
+}
+
 func (s *MemoryStore) AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -899,6 +988,22 @@ func minInt(a int, b int) int {
 		return a
 	}
 	return b
+}
+
+func cloneExternalToolCall(record ExternalToolCallRecord) ExternalToolCallRecord {
+	record.ResponseData = cloneMap(record.ResponseData)
+	return record
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func newID(prefix string) string {

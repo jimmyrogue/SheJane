@@ -2874,7 +2874,8 @@ docker-logs:
 - [x] Phase 2.3a：新增 `local-host/` daemon foundation；云端不扩展成本地工具执行器
 - [x] Phase 2.4：实现 `/api/v1/agent/llm` 和 `/api/v1/agent/tool-events`，让 Local Harness 通过云端统一计费和审计摘要
 - [x] Phase 2.5：Local Host 支持 artifact、checkpoint resume、context compaction 和基础本地 memory；云端仍只接收计费和摘要
-- [x] Phase 2.6：Local Host 支持规则验证事件、SSRF 防护 `web.fetch`、可选 Tavily `web.search` 和 MCP allowlist 护栏；云端仍不执行本地工具
+- [x] Phase 2.6：Local Host 支持规则验证事件、SSRF 防护 `web.fetch`、早期可选 Tavily `web.search` 和 MCP allowlist 护栏
+- [x] Phase 2.22：Tavily `web.search` 从 Local Host 迁移到 Cloud Tool Gateway；Cloud API 持有 provider key、执行第三方调用、写 `external_tool_call_records`、使用 wallet credits 扣费，并通过 admin 只读接口观察工具调用
 - [x] Phase 2.9：Local Host 支持 workspace 授权诊断、撤销和 client 本地项目引用；云端仍不保存本地私有文件内容
 - [x] Phase 2.10：Local Host 支持最近 run 列表、基于 stream 的手动恢复和脱敏诊断导出；云端仍只接收计费和摘要
 - [x] Phase 2.11：Local Host 支持真实 stdio MCP runtime adapter；`mcp.call` 仍必须经过 allowlist 和本地用户权限批准，云端不执行本地 MCP

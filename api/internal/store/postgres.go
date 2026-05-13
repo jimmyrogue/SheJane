@@ -247,6 +247,84 @@ func (s *PostgresStore) LLMCallsByUser(ctx context.Context, userID string) ([]LL
 	return records, rows.Err()
 }
 
+func (s *PostgresStore) CreateExternalToolCall(ctx context.Context, record ExternalToolCallRecord) (ExternalToolCallRecord, bool, error) {
+	responseData := record.ResponseData
+	if responseData == nil {
+		responseData = map[string]any{}
+	}
+	responseJSON, err := json.Marshal(responseData)
+	if err != nil {
+		return ExternalToolCallRecord{}, false, err
+	}
+	var created ExternalToolCallRecord
+	var responseBytes []byte
+	err = s.db.QueryRowContext(ctx, `
+		INSERT INTO external_tool_call_records (
+			request_id, user_id, wallet_id, reservation_id, run_id, tool_call_id, tool, provider,
+			units, credits_cost, status, error_code, error_message, idempotency_key,
+			response_content, response_data, started_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		ON CONFLICT (idempotency_key) DO NOTHING
+		RETURNING request_id, user_id::text, wallet_id::text, COALESCE(reservation_id::text,''),
+			COALESCE(run_id,''), COALESCE(tool_call_id,''), tool, provider, units, credits_cost, status,
+			COALESCE(error_code,''), COALESCE(error_message,''), COALESCE(idempotency_key,''),
+			COALESCE(response_content,''), response_data, started_at, COALESCE(finished_at, '0001-01-01'::timestamptz)
+	`, record.RequestID, record.UserID, record.WalletID, nullableString(record.ReservationID), nullableString(record.RunID), nullableString(record.ToolCallID), record.Tool, record.Provider, record.Units, record.CreditsCost, fallbackString(record.Status, "running"), nullableString(record.ErrorCode), nullableString(record.ErrorMessage), nullableString(record.IdempotencyKey), nullableString(record.ResponseContent), responseJSON, nonZeroTime(record.StartedAt)).
+		Scan(&created.RequestID, &created.UserID, &created.WalletID, &created.ReservationID, &created.RunID, &created.ToolCallID, &created.Tool, &created.Provider, &created.Units, &created.CreditsCost, &created.Status, &created.ErrorCode, &created.ErrorMessage, &created.IdempotencyKey, &created.ResponseContent, &responseBytes, &created.StartedAt, &created.FinishedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		existing, existingErr := s.ExternalToolCallByIdempotencyKey(ctx, record.UserID, record.IdempotencyKey)
+		return existing, false, existingErr
+	}
+	if err != nil {
+		return ExternalToolCallRecord{}, false, err
+	}
+	if err := json.Unmarshal(responseBytes, &created.ResponseData); err != nil {
+		return ExternalToolCallRecord{}, false, err
+	}
+	return created, true, nil
+}
+
+func (s *PostgresStore) ExternalToolCallByIdempotencyKey(ctx context.Context, userID string, idempotencyKey string) (ExternalToolCallRecord, error) {
+	var record ExternalToolCallRecord
+	var responseBytes []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT request_id, user_id::text, wallet_id::text, COALESCE(reservation_id::text,''),
+			COALESCE(run_id,''), COALESCE(tool_call_id,''), tool, provider, units, credits_cost, status,
+			COALESCE(error_code,''), COALESCE(error_message,''), COALESCE(idempotency_key,''),
+			COALESCE(response_content,''), response_data, started_at, COALESCE(finished_at, '0001-01-01'::timestamptz)
+		FROM external_tool_call_records
+		WHERE user_id=$1 AND idempotency_key=$2
+	`, userID, idempotencyKey).
+		Scan(&record.RequestID, &record.UserID, &record.WalletID, &record.ReservationID, &record.RunID, &record.ToolCallID, &record.Tool, &record.Provider, &record.Units, &record.CreditsCost, &record.Status, &record.ErrorCode, &record.ErrorMessage, &record.IdempotencyKey, &record.ResponseContent, &responseBytes, &record.StartedAt, &record.FinishedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ExternalToolCallRecord{}, ErrNotFound
+		}
+		return ExternalToolCallRecord{}, err
+	}
+	if err := json.Unmarshal(responseBytes, &record.ResponseData); err != nil {
+		return ExternalToolCallRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *PostgresStore) FinishExternalToolCall(ctx context.Context, requestID string, status string, units int, creditsCost int64, errorCode string, errorMessage string, responseContent string, responseData map[string]any) error {
+	if responseData == nil {
+		responseData = map[string]any{}
+	}
+	responseJSON, err := json.Marshal(responseData)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE external_tool_call_records
+		SET status=$2, units=$3, credits_cost=$4, error_code=$5, error_message=$6,
+			response_content=$7, response_data=$8, finished_at=NOW()
+		WHERE request_id=$1
+	`, requestID, status, units, creditsCost, nullableString(errorCode), nullableString(errorMessage), nullableString(responseContent), responseJSON)
+	return err
+}
+
 func (s *PostgresStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {
 	if run.ID == "" {
 		run.ID = newUUID()
@@ -818,6 +896,41 @@ func (s *PostgresStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions
 	return records, rows.Err()
 }
 
+func (s *PostgresStore) AdminExternalToolCalls(ctx context.Context, opts AdminListOptions) ([]AdminExternalToolCallRecord, error) {
+	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.request_id, c.user_id::text, c.wallet_id::text, COALESCE(c.reservation_id::text, ''),
+			COALESCE(c.run_id,''), COALESCE(c.tool_call_id,''), c.tool, c.provider, c.units, c.credits_cost,
+			c.status, COALESCE(c.error_code,''), COALESCE(c.error_message,''), COALESCE(c.idempotency_key,''),
+			COALESCE(c.response_content,''), c.response_data, c.started_at, COALESCE(c.finished_at, '0001-01-01'::timestamptz),
+			u.email
+		FROM external_tool_call_records c
+		JOIN users u ON u.id = c.user_id
+		WHERE ($1='' OR c.user_id::text=$1)
+			AND ($2='' OR c.status=$2)
+		ORDER BY c.started_at DESC
+		LIMIT $3 OFFSET $4
+	`, opts.UserID, opts.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]AdminExternalToolCallRecord, 0)
+	for rows.Next() {
+		var item AdminExternalToolCallRecord
+		var responseBytes []byte
+		if err := rows.Scan(&item.RequestID, &item.UserID, &item.WalletID, &item.ReservationID, &item.RunID, &item.ToolCallID, &item.Tool, &item.Provider, &item.Units, &item.CreditsCost, &item.Status, &item.ErrorCode, &item.ErrorMessage, &item.IdempotencyKey, &item.ResponseContent, &responseBytes, &item.StartedAt, &item.FinishedAt, &item.UserEmail); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(responseBytes, &item.ResponseData); err != nil {
+			return nil, err
+		}
+		records = append(records, item)
+	}
+	return records, rows.Err()
+}
+
 func (s *PostgresStore) AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error) {
 	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, `
@@ -1139,6 +1252,13 @@ func hashToken(token string) string {
 func nullableString(value string) any {
 	if value == "" {
 		return nil
+	}
+	return value
+}
+
+func fallbackString(value string, fallback string) string {
+	if value == "" {
+		return fallback
 	}
 	return value
 }

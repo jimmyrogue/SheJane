@@ -121,11 +121,29 @@ start_local_host() {
   echo "Starting Local Agent Harness at ${LOCAL_HOST_URL}"
   (
     cd "${ROOT_DIR}/local-host"
-    JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
-      JIANDANLY_LOCAL_HOST_PORT="$LOCAL_HOST_PORT" \
-      JIANDANLY_CLOUD_BASE_URL="$API_BASE_URL" \
-      JIANDANLY_LOCAL_HOST_DEBUG="${JIANDANLY_LOCAL_HOST_DEBUG:-1}" \
-      npm run dev >"$log_file" 2>&1
+    local env_cmd=(
+      env -i
+      "PATH=$PATH"
+      "HOME=$HOME"
+      "USER=${USER:-}"
+      "TMPDIR=${TMPDIR:-/tmp}"
+      "SHELL=${SHELL:-/bin/zsh}"
+      "JIANDANLY_LOCAL_HOST_TOKEN=$TOKEN"
+      "JIANDANLY_LOCAL_HOST_PORT=$LOCAL_HOST_PORT"
+      "JIANDANLY_LOCAL_HOST_URL=$LOCAL_HOST_URL"
+      "JIANDANLY_CLOUD_BASE_URL=$API_BASE_URL"
+      "JIANDANLY_LOCAL_HOST_DEBUG=${JIANDANLY_LOCAL_HOST_DEBUG:-1}"
+    )
+    [[ -n "${JIANDANLY_LOCAL_HOST_DB:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_HOST_DB=$JIANDANLY_LOCAL_HOST_DB")
+    [[ -n "${JIANDANLY_LOCAL_HOST_ADDR:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_HOST_ADDR=$JIANDANLY_LOCAL_HOST_ADDR")
+    [[ -n "${JIANDANLY_BROWSER_ENGINE:-}" ]] && env_cmd+=("JIANDANLY_BROWSER_ENGINE=$JIANDANLY_BROWSER_ENGINE")
+    [[ -n "${JIANDANLY_BROWSER_HEADLESS:-}" ]] && env_cmd+=("JIANDANLY_BROWSER_HEADLESS=$JIANDANLY_BROWSER_HEADLESS")
+    [[ -n "${JIANDANLY_BROWSER_TIMEOUT_MS:-}" ]] && env_cmd+=("JIANDANLY_BROWSER_TIMEOUT_MS=$JIANDANLY_BROWSER_TIMEOUT_MS")
+    [[ -n "${JIANDANLY_BROWSER_SEARCH_URL:-}" ]] && env_cmd+=("JIANDANLY_BROWSER_SEARCH_URL=$JIANDANLY_BROWSER_SEARCH_URL")
+    [[ -n "${JIANDANLY_ALLOW_PROXY_FAKE_IPS:-}" ]] && env_cmd+=("JIANDANLY_ALLOW_PROXY_FAKE_IPS=$JIANDANLY_ALLOW_PROXY_FAKE_IPS")
+    [[ -n "${JIANDANLY_LOCAL_MAX_STEPS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MAX_STEPS=$JIANDANLY_LOCAL_MAX_STEPS")
+    [[ -n "${JIANDANLY_LOCAL_STEP_WARNING_INTERVAL:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_STEP_WARNING_INTERVAL=$JIANDANLY_LOCAL_STEP_WARNING_INTERVAL")
+    "${env_cmd[@]}" npm run dev >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
   wait_for_url "${LOCAL_HOST_URL}/local/v1/health" "Local Host" "$log_file"
@@ -141,7 +159,13 @@ start_client_dev_server() {
   echo "Starting client dev server at ${CLIENT_DEV_URL}"
   (
     cd "${ROOT_DIR}/client"
-    VITE_API_BASE_URL="$API_BASE_URL" \
+    env -i \
+      "PATH=$PATH" \
+      "HOME=$HOME" \
+      "USER=${USER:-}" \
+      "TMPDIR=${TMPDIR:-/tmp}" \
+      "SHELL=${SHELL:-/bin/zsh}" \
+      "VITE_API_BASE_URL=$API_BASE_URL" \
       npm run dev -- --host 127.0.0.1 --port "$CLIENT_DEV_PORT" >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
@@ -152,10 +176,17 @@ launch_electron() {
   echo "Launching Electron. Close the app window to stop local dev helper processes."
   (
     cd "${ROOT_DIR}/client"
-    ELECTRON_DEV=true \
-      ELECTRON_DEV_URL="$CLIENT_DEV_URL" \
-      JIANDANLY_LOCAL_HOST_URL="$LOCAL_HOST_URL" \
-      JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
+    env -i \
+      "PATH=$PATH" \
+      "HOME=$HOME" \
+      "USER=${USER:-}" \
+      "TMPDIR=${TMPDIR:-/tmp}" \
+      "SHELL=${SHELL:-/bin/zsh}" \
+      "ELECTRON_DEV=true" \
+      "ELECTRON_DEV_URL=$CLIENT_DEV_URL" \
+      "JIANDANLY_LOCAL_HOST_URL=$LOCAL_HOST_URL" \
+      "JIANDANLY_LOCAL_HOST_TOKEN=$TOKEN" \
+      "VITE_API_BASE_URL=$API_BASE_URL" \
       npm run electron
   ) &
   local electron_pid="$!"

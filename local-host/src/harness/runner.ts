@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises'
 import { basename, isAbsolute, resolve } from 'node:path'
 import { localHostTools } from '../tools/registry.js'
 import { executeTool, type ToolExecutionOptions, type ToolExecutionResult } from '../tools/executor.js'
-import { StaticLLMGateway, type HarnessMessage, type LLMGateway, type LLMToolCall } from '../llm/gateway.js'
+import { StaticLLMGateway, type HarnessMessage, type LLMGateway, type LLMGatewayResponse, type LLMToolCall } from '../llm/gateway.js'
 import { logLocalHostEvent } from '../debugLogger.js'
 import {
   localHostVersion,
@@ -18,6 +18,15 @@ const defaultContextLimitChars = 24000
 const defaultResearchMaxSearches = 3
 const defaultResearchMaxSourceNavigations = 5
 const defaultResearchTargetSources = 2
+const defaultResearchPolicyFinalizeBlocks = 2
+const terminalRunStatuses = new Set<LocalRun['status']>(['completed', 'failed', 'canceled'])
+
+interface FinalAnswerGuardrailResult {
+  reason: string
+  collectedSources: number
+  targetSources: number
+  instruction: string
+}
 
 export interface HarnessRunOptions {
   run: LocalRun
@@ -33,6 +42,13 @@ export interface HarnessRunOptions {
 }
 
 export async function runHarness(options: HarnessRunOptions): Promise<void> {
+  await hydrateCloudToolCapabilities(options)
+
+  const currentRun = options.store.getRun(options.run.id) ?? options.run
+  if (terminalRunStatuses.has(currentRun.status)) {
+    return
+  }
+
   if (options.resumePermissionID) {
     await resumePermission(options)
     return
@@ -61,9 +77,13 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
   let lastToolName = lastToolNameFromMessages(messages)
   const maxSteps = resolvedMaxSteps(options)
   const stepWarningInterval = resolvedStepWarningInterval(options)
+  let researchPolicyBlocks = 0
 
   for (let step = startStep; maxSteps === undefined || step < maxSteps; step += 1) {
     if (isRunCanceled(options, run.id)) {
+      return
+    }
+    if (isRunTerminal(options, run.id)) {
       return
     }
     if (shouldEmitLongRunWarning(step, stepWarningInterval)) {
@@ -84,6 +104,9 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
       return
     }
     if (isRunCanceled(options, run.id)) {
+      return
+    }
+    if (isRunTerminal(options, run.id)) {
       return
     }
     append(options, 'llm.started', { request_id: response.requestId ?? '', step: step + 1 })
@@ -109,6 +132,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
     }
 
     messages.push({ role: 'assistant', content: response.content ?? '', reasoningContent: response.reasoningContent, toolCalls })
+    let shouldFinalizeResearch = false
     for (let index = 0; index < toolCalls.length;) {
       const call = toolCalls[index]
       append(options, 'tool.requested', { tool: call.name, tool_call_id: call.id, arguments: call.arguments })
@@ -120,6 +144,12 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
       const researchPolicyResult = evaluateResearchPolicy(options, call)
       if (researchPolicyResult) {
         messages.push(appendSyntheticToolResult(options, call, run, researchPolicyResult))
+        if (isResearchConvergenceBlock(researchPolicyResult.errorCode) && hasEnoughResearchSources(options)) {
+          researchPolicyBlocks += 1
+          shouldFinalizeResearch ||= shouldFinalizeAfterResearchPolicy(options, researchPolicyBlocks)
+        } else {
+          researchPolicyBlocks = 0
+        }
         index += 1
         continue
       }
@@ -169,7 +199,14 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
           ? [await executeAndAppend(options, batch[0], run)]
           : await Promise.all(batch.map((batchedCall) => executeAndAppend(options, batchedCall, run)))
       messages.push(...observations)
+      if (!hasEnoughResearchSources(options)) {
+        researchPolicyBlocks = 0
+      }
       index += batch.length
+    }
+    if (shouldFinalizeResearch) {
+      await finalizeAfterResearchPolicyBlocks(options, gateway, run, messages, researchPolicyBlocks, step + 1)
+      return
     }
   }
 
@@ -186,40 +223,217 @@ async function finalizeAfterStepBudget(
   lastToolName: string | undefined,
   maxSteps: number,
 ): Promise<void> {
+  await finalizeWithoutTools(options, gateway, run, messages, {
+    warningPayload: {
+      reason: 'max_steps_reached',
+      max_steps: maxSteps,
+      last_tool: lastToolName,
+    },
+    phase: 'finalize',
+    step: maxSteps + 1,
+    completedReason: 'max_steps_finalized',
+    failureCode: 'max_steps_exceeded',
+    failureMessage: lastToolName
+      ? `Agent exceeded local max steps. Last requested tool: ${lastToolName}.`
+      : 'Agent exceeded local max steps.',
+    instruction:
+      'The local tool step budget is exhausted. Do not call any more tools. Produce the best final answer using the observations already gathered. Be explicit about uncertainty, missing data, failed sources, or pages that returned errors.',
+  })
+}
+
+async function finalizeAfterResearchPolicyBlocks(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  messages: HarnessMessage[],
+  blockedAttempts: number,
+  step: number,
+): Promise<void> {
+  const state = researchPolicyState(options)
+  const collectedURLs = [...state.collectedSourceURLs]
+  await finalizeWithoutTools(options, gateway, run, messages, {
+    warningPayload: {
+      reason: 'research_policy_repeated',
+      blocked_attempts: blockedAttempts,
+      collected_sources: collectedURLs.length,
+      collected_source_urls: collectedURLs,
+    },
+    phase: 'research_finalize',
+    step,
+    completedReason: 'research_policy_finalized',
+    failureCode: 'research_policy_finalization_failed',
+    failureMessage: 'Agent repeatedly requested blocked research tools after enough sources were collected.',
+    instruction: [
+      'The run has collected enough source evidence, and repeated additional browsing/search attempts were blocked by the research policy.',
+      'Do not call any more tools. Produce the final answer now using only the observations and collected sources already in the conversation.',
+      `Collected source URLs: ${collectedURLs.join(', ') || '(none)'}.`,
+      'If the evidence is incomplete, say so briefly, but do not request more web searches, browser opens, local files, or fetches.',
+      'For a Chinese user request, answer in Chinese and include a clear 来源链接 section using only the collected source URLs.',
+    ].join('\n'),
+  })
+}
+
+async function finalizeWithoutTools(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  messages: HarnessMessage[],
+  finalization: {
+    warningPayload: Record<string, unknown>
+    phase: string
+    step: number
+    completedReason: string
+    failureCode: string
+    failureMessage: string
+    instruction: string
+  },
+): Promise<void> {
   append(options, 'run.budget_warning', {
-    reason: 'max_steps_reached',
-    max_steps: maxSteps,
-    last_tool: lastToolName,
+    ...finalization.warningPayload,
   })
   const finalMessages: HarnessMessage[] = [
     ...messages,
     {
       role: 'system',
-      content:
-        'The local tool step budget is exhausted. Do not call any more tools. Produce the best final answer using the observations already gathered. Be explicit about uncertainty, missing data, failed sources, or pages that returned errors.',
+      content: finalization.instruction,
     },
   ]
   const response = await callModelOrFail(options, gateway, run, finalMessages, [])
   if (!response) {
     return
   }
-  append(options, 'llm.started', { request_id: response.requestId ?? '', step: maxSteps + 1, phase: 'finalize' })
+  append(options, 'llm.started', { request_id: response.requestId ?? '', step: finalization.step, phase: finalization.phase })
   if (response.content) {
     append(options, 'llm.delta', { request_id: response.requestId ?? '', content: response.content })
   }
-  if ((response.toolCalls ?? []).length === 0 && response.content) {
-    options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
-    append(options, 'run.completed', { final: response.content, reason: 'max_steps_finalized' })
+  if ((response.toolCalls ?? []).length === 0 && response.content && await completeFinalAnswer(options, gateway, run, finalMessages, response, finalization)) {
     return
   }
   options.store.updateRunStatus(run.id, 'failed')
   append(options, 'run.failed', {
-    error_code: 'max_steps_exceeded',
-    message: lastToolName
-      ? `Agent exceeded local max steps. Last requested tool: ${lastToolName}.`
-      : 'Agent exceeded local max steps.',
-    last_tool: lastToolName,
+    error_code: finalization.failureCode,
+    message: finalization.failureMessage,
   })
+}
+
+async function completeFinalAnswer(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  finalMessages: HarnessMessage[],
+  response: LLMGatewayResponse,
+  finalization: {
+    phase: string
+    step: number
+    completedReason: string
+  },
+): Promise<boolean> {
+  let current = response
+  let currentMessages = finalMessages
+  let repeatedToolMarkupGuardrails = 0
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if ((current.toolCalls ?? []).length > 0 || !current.content) {
+      return false
+    }
+    const outputGuardrail = evaluateFinalAnswerGuardrail(options, current.content, { ignorePreviousGuardrail: true })
+    if (!outputGuardrail) {
+      options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
+      append(options, 'run.completed', { final: current.content, reason: finalization.completedReason })
+      return true
+    }
+    append(options, 'run.output_guardrail', {
+      reason: outputGuardrail.reason,
+      collected_sources: outputGuardrail.collectedSources,
+      target_sources: outputGuardrail.targetSources,
+    })
+    if (outputGuardrail.reason === 'tool_call_markup_in_final') {
+      repeatedToolMarkupGuardrails += 1
+    } else {
+      repeatedToolMarkupGuardrails = 0
+    }
+    if (repeatedToolMarkupGuardrails >= 2) {
+      const fallback = buildConservativeFinalAnswer(options, finalization.completedReason)
+      if (fallback) {
+        options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
+        append(options, 'run.completed', { final: fallback, reason: `${finalization.completedReason}_fallback` })
+        return true
+      }
+    }
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: current.content },
+      { role: 'system', content: outputGuardrail.instruction },
+    ]
+    const retry = await callModelOrFail(options, gateway, run, currentMessages, [])
+    if (!retry) {
+      return true
+    }
+    append(options, 'llm.started', {
+      request_id: retry.requestId ?? '',
+      step: finalization.step + attempt + 1,
+      phase: `${finalization.phase}_guardrail`,
+    })
+    if (retry.content) {
+      append(options, 'llm.delta', { request_id: retry.requestId ?? '', content: retry.content })
+    }
+    current = retry
+  }
+  const fallback = buildConservativeFinalAnswer(options, finalization.completedReason)
+  if (fallback) {
+    options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
+    append(options, 'run.completed', { final: fallback, reason: `${finalization.completedReason}_fallback` })
+    return true
+  }
+  return false
+}
+
+function buildConservativeFinalAnswer(options: HarnessRunOptions, completedReason: string): string | undefined {
+  if (!completedReason.includes('research')) {
+    return undefined
+  }
+  const sources = collectedSourcesForFinal(options)
+  if (sources.length === 0) {
+    return undefined
+  }
+  const wantsChinese = /[\u4e00-\u9fff]/.test(options.run.goal)
+  if (wantsChinese) {
+    return [
+      '我已经收集到可用来源，但模型在最终整理阶段反复尝试继续调用工具。下面先给出基于已收集来源的保守摘要：',
+      '',
+      '## 摘要',
+      ...sources.map((source, index) => `${index + 1}. ${source.title ? `《${source.title}》` : '该来源'}可作为本次回答的证据来源；进一步细节建议以原文为准。`),
+      '',
+      '## 来源链接',
+      ...sources.map((source, index) => `${index + 1}. ${source.url}`),
+    ].join('\n')
+  }
+  return [
+    'I collected usable sources, but the model repeatedly attempted to call tools during finalization. Here is a conservative answer based on the collected sources:',
+    '',
+    '## Summary',
+    ...sources.map((source, index) => `${index + 1}. ${source.title ? `${source.title}` : 'This source'} is available as evidence for this answer; use the original page for exact details.`),
+    '',
+    '## Sources',
+    ...sources.map((source, index) => `${index + 1}. ${source.url}`),
+  ].join('\n')
+}
+
+function collectedSourcesForFinal(options: HarnessRunOptions): Array<{ title?: string; url: string }> {
+  const sources = new Map<string, { title?: string; url: string }>()
+  for (const event of options.store.listEvents(options.run.id)) {
+    if (event.eventType !== 'source.collected') {
+      continue
+    }
+    const url = typeof event.payload.url === 'string' ? canonicalSourceURL(event.payload.url) : undefined
+    if (!url || sources.has(url)) {
+      continue
+    }
+    sources.set(url, {
+      url,
+      title: typeof event.payload.title === 'string' ? event.payload.title : undefined,
+    })
+  }
+  return [...sources.values()].slice(0, 5)
 }
 
 async function callModelOrFail(options: HarnessRunOptions, gateway: LLMGateway, run: LocalRun, messages: HarnessMessage[], tools = localHostTools) {
@@ -622,7 +836,7 @@ function buildInitialMessages(store: LocalHostStore, run: LocalRun, options: Har
 
 function initialHarnessSystemPrompt(options: HarnessRunOptions): string {
   const searchPolicy = tavilyConfigured(options)
-    ? 'For public web research, use web.search first for public web search discovery. Treat web.search as the Tavily-backed discovery layer: use it to quickly find candidate source URLs, then use browser.open and browser.read to collect page text and source metadata from promising sources. Use browser.search only when web.search is unavailable, insufficient, or when interacting with a search results page is necessary.'
+    ? 'For public web research, use web.search first for public web search discovery. Treat web.search as the cloud-metered discovery layer: use it to quickly find candidate source URLs, then use browser.open and browser.read to collect page text and source metadata from promising sources. Use browser.search only when web.search is unavailable, insufficient, or when interacting with a search results page is necessary.'
     : 'For public web research, use browser.search for public web discovery, open promising sources, then use browser.read to collect the page text and source metadata.'
 
   return [
@@ -841,6 +1055,11 @@ function isRunCanceled(options: HarnessRunOptions, runID: string): boolean {
   return options.store.getRun(runID)?.status === 'canceled'
 }
 
+function isRunTerminal(options: HarnessRunOptions, runID: string): boolean {
+  const status = options.store.getRun(runID)?.status
+  return status ? terminalRunStatuses.has(status) : false
+}
+
 function lastToolNameFromMessages(messages: HarnessMessage[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
@@ -922,7 +1141,7 @@ function appendSemanticToolEvents(options: HarnessRunOptions, call: LLMToolCall,
 }
 
 function isCollectableSourceTool(toolName: string): boolean {
-  return toolName === 'browser.read' || toolName === 'browser.snapshot'
+  return toolName === 'browser.open' || toolName === 'browser.read' || toolName === 'browser.snapshot'
 }
 
 function isCollectableSourceURL(rawURL: string, title?: string): boolean {
@@ -943,10 +1162,38 @@ function isCollectableSourceURL(rawURL: string, title?: string): boolean {
     if (title && /\b(search|搜索)\b/i.test(title) && query.has('q')) {
       return false
     }
+    if (isLikelyPortalSourceURL(url)) {
+      return false
+    }
     return true
   } catch {
     return false
   }
+}
+
+function isLikelyPortalSourceURL(url: URL): boolean {
+  const path = url.pathname.replace(/\/+$/, '') || '/'
+  if (path === '/') {
+    return true
+  }
+  const segments = path.split('/').filter(Boolean).map((segment) => segment.toLowerCase())
+  if (segments.length === 0) {
+    return true
+  }
+  const first = segments[0]
+  if (['category', 'categories', 'search', 'tag', 'tags', 'topic', 'topics'].includes(first)) {
+    return true
+  }
+  if (segments.includes('search')) {
+    return true
+  }
+  if (segments.length <= 2) {
+    const last = segments.at(-1) ?? ''
+    if (/^(news|technology|tech|ai|artificial-intelligence|startup|startups|articles?)$/i.test(last)) {
+      return true
+    }
+  }
+  return false
 }
 
 function hasCollectedSource(options: HarnessRunOptions, rawURL: string): boolean {
@@ -972,11 +1219,19 @@ function canonicalSourceURL(rawURL: string): string | undefined {
 }
 
 function evaluateResearchPolicy(options: HarnessRunOptions, call: LLMToolCall): ToolExecutionResult | undefined {
-  if (!isResearchNavigationTool(call.name)) {
+  if (!isResearchNavigationTool(call.name) && !isLocalWorkspaceResearchDetourTool(call.name)) {
     return undefined
   }
   const state = researchPolicyState(options)
   const budget = resolvedResearchBudget()
+  const targetSources = Math.max(budget.targetSources, requiredSourceCountForFinalGuard(options.run.goal))
+  if (goalRequiresResearchEvidence(options.run.goal) && isLocalWorkspaceResearchDetourTool(call.name) && state.collectedSourceURLs.size >= targetSources) {
+    return researchPolicyBlocked(
+      'research_enough_sources',
+      `Already collected ${state.collectedSourceURLs.size} usable non-search sources. Stop browsing or reading local workspace files and answer from the collected sources unless the user explicitly asks for local files.`,
+      { collected_sources: state.collectedSourceURLs.size, target_sources: targetSources },
+    )
+  }
   if (call.name === 'open.url') {
     const url = typeof call.arguments.url === 'string' ? canonicalSourceURL(call.arguments.url) : undefined
     if (goalRequiresResearchEvidence(options.run.goal) && !goalExplicitlyRequestsSystemBrowserOpen(options.run.goal)) {
@@ -1003,18 +1258,18 @@ function evaluateResearchPolicy(options: HarnessRunOptions, call: LLMToolCall): 
     }
     return undefined
   }
-  if (call.name === 'browser.search') {
-    if (state.collectedSourceURLs.size >= budget.targetSources) {
+  if (isResearchSearchTool(call.name)) {
+    if (state.collectedSourceURLs.size >= targetSources) {
       return researchPolicyBlocked(
         'research_enough_sources',
         `Already collected ${state.collectedSourceURLs.size} usable non-search sources. Stop browsing and answer from the collected sources unless the user explicitly asks for more.`,
-        { collected_sources: state.collectedSourceURLs.size, target_sources: budget.targetSources },
+        { collected_sources: state.collectedSourceURLs.size, target_sources: targetSources },
       )
     }
     if (state.searchCalls >= budget.maxSearches) {
       return researchPolicyBlocked(
         'research_search_budget_exhausted',
-        `This run has already used ${state.searchCalls} browser searches. Use the existing search results and opened sources instead of searching again.`,
+        `This run has already used ${state.searchCalls} web searches. Use the existing search results and opened sources instead of searching again.`,
         { search_calls: state.searchCalls, max_searches: budget.maxSearches },
       )
     }
@@ -1029,11 +1284,11 @@ function evaluateResearchPolicy(options: HarnessRunOptions, call: LLMToolCall): 
       { url },
     )
   }
-  if (state.collectedSourceURLs.size >= budget.targetSources) {
+  if (state.collectedSourceURLs.size >= targetSources) {
     return researchPolicyBlocked(
       'research_enough_sources',
       `Already collected ${state.collectedSourceURLs.size} usable non-search sources. Stop browsing and answer from the collected sources unless the user explicitly asks for more.`,
-      { collected_sources: state.collectedSourceURLs.size, target_sources: budget.targetSources, url },
+      { collected_sources: state.collectedSourceURLs.size, target_sources: targetSources, url },
     )
   }
   if (state.sourceNavigations >= budget.maxSourceNavigations) {
@@ -1046,12 +1301,57 @@ function evaluateResearchPolicy(options: HarnessRunOptions, call: LLMToolCall): 
   return undefined
 }
 
+function isResearchConvergenceBlock(errorCode: string | undefined): boolean {
+  return errorCode === 'research_enough_sources'
+    || errorCode === 'research_source_already_collected'
+    || errorCode === 'research_search_budget_exhausted'
+    || errorCode === 'research_navigation_budget_exhausted'
+}
+
+function shouldFinalizeAfterResearchPolicy(options: HarnessRunOptions, blockedAttempts: number): boolean {
+  if (!goalRequiresResearchEvidence(options.run.goal)) {
+    return false
+  }
+  if (blockedAttempts < resolvedResearchPolicyFinalizeBlocks()) {
+    return false
+  }
+  return hasEnoughResearchSources(options)
+}
+
+function hasEnoughResearchSources(options: HarnessRunOptions): boolean {
+  if (!goalRequiresResearchEvidence(options.run.goal)) {
+    return false
+  }
+  const state = researchPolicyState(options)
+  const budget = resolvedResearchBudget()
+  const targetSources = Math.max(budget.targetSources, requiredSourceCountForFinalGuard(options.run.goal))
+  return state.collectedSourceURLs.size >= targetSources
+}
+
 function evaluateFinalAnswerGuardrail(
   options: HarnessRunOptions,
   content: string,
-): { reason: string; collectedSources: number; targetSources: number; instruction: string } | undefined {
-  if (hasOutputGuardrailAlreadyFired(options)) {
+  settings: { ignorePreviousGuardrail?: boolean } = {},
+): FinalAnswerGuardrailResult | undefined {
+  if (!settings.ignorePreviousGuardrail && hasOutputGuardrailLimitReached(options)) {
     return undefined
+  }
+  const collectedSourceURLs = researchPolicyState(options).collectedSourceURLs
+  const collectedSources = collectedSourceURLs.size
+  const targetSources = requiredSourceCountForFinalGuard(options.run.goal)
+  if (looksLikeToolCallMarkup(content)) {
+    return {
+      reason: 'tool_call_markup_in_final',
+      collectedSources,
+      targetSources,
+      instruction: [
+        'Output guardrail: the draft final answer contains raw tool-call markup or an attempted tool invocation.',
+        'No tools are available in this finalization round. Do not emit XML/DSML/JSON tool calls, function calls, or invoke blocks.',
+        'Rewrite as a plain natural-language final answer.',
+        `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
+        'If sources were requested, include a 来源链接 section using only the collected source URLs.',
+      ].join('\n'),
+    }
   }
   const events = options.store.listEvents(options.run.id)
   const usedResearchTools = events.some((event) => {
@@ -1061,17 +1361,12 @@ function evaluateFinalAnswerGuardrail(
   if (!usedResearchTools || !goalRequiresResearchEvidence(options.run.goal)) {
     return undefined
   }
-  if (acknowledgesResearchLimitations(content)) {
-    return undefined
-  }
-  const collectedSourceURLs = researchPolicyState(options).collectedSourceURLs
-  const collectedSources = collectedSourceURLs.size
-  const targetSources = requiredSourceCountForFinalGuard(options.run.goal)
   const latestBrowserVerificationFailed = latestVerificationFailed(events, 'browser.verify')
   const latestBrowserVerificationPassed = latestVerificationPassed(events, 'browser.verify')
   const citedURLs = citedCanonicalURLs(content)
   const uncollectedCitedURLs = citedURLs.filter((url) => !collectedSourceURLs.has(url))
-  if (claimsResearchEvidence(content) && uncollectedCitedURLs.length > 0) {
+  const acknowledgedLimitations = acknowledgesResearchLimitations(content)
+  if (uncollectedCitedURLs.length > 0) {
     return {
       reason: 'uncollected_source_cited',
       collectedSources,
@@ -1081,6 +1376,47 @@ function evaluateFinalAnswerGuardrail(
         `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
         `Uncollected cited URLs: ${uncollectedCitedURLs.join(', ')}.`,
         'Only cite URLs from source.collected as opened/read/verified sources. If another URL is necessary, call browser.open followed by browser.read first; otherwise rewrite the answer to cite only collected sources.',
+      ].join('\n'),
+    }
+  }
+  if (collectedSources < targetSources && !acknowledgedLimitations && goalRequiresResearchEvidence(options.run.goal)) {
+    return {
+      reason: 'insufficient_research_sources',
+      collectedSources,
+      targetSources,
+      instruction: [
+        'Output guardrail: the draft final answer answered the research request without enough collected usable source pages.',
+        `Collected sources: ${collectedSources}; target sources: ${targetSources}.`,
+        `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
+        'Either call browser.open followed by browser.read on additional credible article/detail pages, or clearly state the limitation and cite the collected source URLs that are available.',
+      ].join('\n'),
+    }
+  }
+  if (goalRequestsSourceLinks(options.run.goal) && collectedSources > 0 && citedURLs.length === 0) {
+    return {
+      reason: 'missing_source_links',
+      collectedSources,
+      targetSources,
+      instruction: [
+        'Output guardrail: the user requested source links, but the draft final answer did not include any collected source URL.',
+        `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
+        'Rewrite the final answer and include a clear 来源链接 section using the collected source URLs. If fewer sources than requested were collected, state that limitation explicitly.',
+      ].join('\n'),
+    }
+  }
+  if (acknowledgedLimitations) {
+    return undefined
+  }
+  if (collectedSources >= targetSources && citedURLs.length < targetSources) {
+    return {
+      reason: 'missing_source_links',
+      collectedSources,
+      targetSources,
+      instruction: [
+        'Output guardrail: the user requested source links, and this run collected enough usable sources, but the draft final answer did not include enough cited URLs.',
+        `Collected source URLs: ${[...collectedSourceURLs].join(', ') || '(none)'}.`,
+        `Cited URLs in draft: ${citedURLs.join(', ') || '(none)'}.`,
+        'Rewrite the final answer and include a clear 来源链接 section using only collected source URLs.',
       ].join('\n'),
     }
   }
@@ -1111,12 +1447,16 @@ function evaluateFinalAnswerGuardrail(
   return undefined
 }
 
-function hasOutputGuardrailAlreadyFired(options: HarnessRunOptions): boolean {
-  return options.store.listEvents(options.run.id).some((event) => event.eventType === 'run.output_guardrail')
+function hasOutputGuardrailLimitReached(options: HarnessRunOptions): boolean {
+  return options.store.listEvents(options.run.id).filter((event) => event.eventType === 'run.output_guardrail').length >= 3
 }
 
 function goalRequiresResearchEvidence(goal: string): boolean {
   return /(搜索|新闻|来源|网页|公开|核实|验证|source|research|web|cite|citation)/i.test(goal)
+}
+
+function goalRequestsSourceLinks(goal: string): boolean {
+  return /(来源链接|列出来源|来源[:：]|链接[:：]|source links?|citations?|cite)/i.test(goal)
 }
 
 function goalExplicitlyRequestsSystemBrowserOpen(goal: string): boolean {
@@ -1131,12 +1471,16 @@ function looksLikeShellNetworkFetch(command: string): boolean {
   return /\b(curl|wget|httpie|aria2c)\b/i.test(command) || /https?:\/\//i.test(command)
 }
 
+function looksLikeToolCallMarkup(content: string): boolean {
+  return /(<\s*(?:tool_calls?|function_call|invoke)\b|<｜｜DSML｜｜(?:tool_calls?|invoke)|<\/｜｜DSML｜｜tool_calls>|"tool_calls"\s*:|"function_call"\s*:)/i.test(content)
+}
+
 function claimsResearchEvidence(content: string): boolean {
-  return /(已(?:经)?(?:完整)?(?:打开|获取|读取|阅读|核实|验证|收集)|全文|来源清单|来源[:：]|链接[:：]|source|citation|verified|opened|collected)/i.test(content)
+  return /(已(?:经)?(?:完整)?(?:打开|获取|读取|阅读|核实|验证|收集)|全文|来源清单|来源链接|来源[:：]|链接[:：]|source|citation|verified|opened|collected)/i.test(content)
 }
 
 function claimsSourceCollection(content: string): boolean {
-  return /(已(?:经)?(?:完整)?(?:打开|获取|读取|阅读|收集).{0,12}(来源|网页|页面|文章)|来源清单|来源[:：]|链接[:：]|opened.{0,20}sources|collected.{0,20}sources|read.{0,20}sources)/i.test(content)
+  return /(已(?:经)?(?:完整)?(?:打开|获取|读取|阅读|收集).{0,12}(来源|网页|页面|文章)|来源清单|来源链接|来源[:：]|链接[:：]|opened.{0,20}sources|collected.{0,20}sources|read.{0,20}sources)/i.test(content)
 }
 
 function claimsVerification(content: string): boolean {
@@ -1144,7 +1488,7 @@ function claimsVerification(content: string): boolean {
 }
 
 function acknowledgesResearchLimitations(content: string): boolean {
-  return /(未能|无法|不能|尚未|没有|不足|失败|限制|只(?:能|是)基于搜索结果|无法确认|could not|unable|not able|insufficient|limited)/i.test(content)
+  return /((未能|无法|不能|不会|尚未|没有|不足|失败|限制).{0,24}(收集|打开|读取|阅读|核实|验证|访问|来源|网页|页面|证据|系统浏览器|shell)|(收集|打开|读取|阅读|核实|验证|访问).{0,24}(未能|无法|不能|不会|尚未|没有|不足|失败|限制)|只(?:能|是)?基于搜索结果|无法确认|could not|unable|not able|did not collect|insufficient|limited)/i.test(content)
 }
 
 function citedCanonicalURLs(content: string): string[] {
@@ -1181,7 +1525,7 @@ function latestVerificationPassed(events: LocalEvent[], toolName: string): boole
 }
 
 function requiredSourceCountForFinalGuard(goal: string): number {
-  const arabic = goal.match(/(\d+)\s*(?:个|篇|条)?\s*(?:来源|信源|source|sources)/i)
+  const arabic = goal.match(/(\d+)\s*(?:个|篇|条)?\s*(?:可信|可靠|独立|公开|可引用|credible|reliable)?\s*(?:来源|信源|source|sources)/i)
   if (arabic) {
     const value = Number(arabic[1])
     if (Number.isFinite(value) && value > 0) {
@@ -1195,7 +1539,20 @@ function requiredSourceCountForFinalGuard(goal: string): number {
 }
 
 function isResearchNavigationTool(toolName: string): boolean {
-  return toolName === 'browser.search' || toolName === 'browser.open' || toolName === 'web.fetch' || toolName === 'open.url' || toolName === 'shell.run'
+  return isResearchSearchTool(toolName) || toolName === 'browser.open' || toolName === 'web.fetch' || toolName === 'open.url' || toolName === 'shell.run'
+}
+
+function isResearchSearchTool(toolName: string): boolean {
+  return toolName === 'browser.search' || toolName === 'web.search'
+}
+
+function isLocalWorkspaceResearchDetourTool(toolName: string): boolean {
+  return toolName === 'workspace.open'
+    || toolName === 'file.read'
+    || toolName === 'fs.read'
+    || toolName === 'file.search'
+    || toolName === 'fs.search'
+    || toolName === 'fs.list'
 }
 
 function researchPolicyBlocked(errorCode: string, message: string, data: Record<string, unknown>): ToolExecutionResult {
@@ -1225,7 +1582,7 @@ function researchPolicyState(options: HarnessRunOptions): { searchCalls: number;
   for (const event of options.store.listEvents(options.run.id)) {
     if (event.eventType === 'tool.completed' || event.eventType === 'tool.failed') {
       const tool = typeof event.payload.tool === 'string' ? event.payload.tool : ''
-      if (tool === 'browser.search') {
+      if (isResearchSearchTool(tool)) {
         searchCalls += 1
       }
       if (tool === 'browser.open' || tool === 'web.fetch') {
@@ -1248,6 +1605,10 @@ function resolvedResearchBudget(): { maxSearches: number; maxSourceNavigations: 
     maxSourceNavigations: resolvedPositiveInteger(process.env.JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS, defaultResearchMaxSourceNavigations, 1, 50),
     targetSources: resolvedPositiveInteger(process.env.JIANDANLY_RESEARCH_TARGET_SOURCES, defaultResearchTargetSources, 1, 10),
   }
+}
+
+function resolvedResearchPolicyFinalizeBlocks(): number {
+  return resolvedPositiveInteger(process.env.JIANDANLY_RESEARCH_POLICY_FINALIZE_BLOCKS, defaultResearchPolicyFinalizeBlocks, 1, 20)
 }
 
 function resolvedPositiveInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -1282,8 +1643,19 @@ function filterAdvertisedTools(tools: typeof localHostTools, options: HarnessRun
 }
 
 function tavilyConfigured(options: HarnessRunOptions): boolean {
-  const configured = options.toolOptions?.tavilyApiKey ?? process.env.TAVILY_API_KEY
-  return Boolean(typeof configured === 'string' && configured.trim())
+  return options.toolOptions?.cloudToolCapabilities?.tools?.['web.search']?.configured === true
+}
+
+async function hydrateCloudToolCapabilities(options: HarnessRunOptions): Promise<void> {
+  const toolOptions = options.toolOptions
+  if (!toolOptions?.cloudToolGateway || toolOptions.cloudToolCapabilities) {
+    return
+  }
+  try {
+    toolOptions.cloudToolCapabilities = await toolOptions.cloudToolGateway.capabilities()
+  } catch {
+    toolOptions.cloudToolCapabilities = { tools: {} }
+  }
 }
 
 function isUserVisibleActionTool(toolName: string): boolean {

@@ -172,6 +172,11 @@ describe('local host daemon foundation', () => {
   it('accepts a paired cloud session without persisting or returning the access token', async () => {
     const cloudCalls: Array<{ authorization?: string; body: unknown }> = []
     const cloudBaseURL = await startCloudGateway(async (request, response) => {
+      if (request.method === 'GET' && request.url === '/api/v1/agent/tool-capabilities') {
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ code: 0, message: 'ok', data: { tools: { 'web.search': { configured: false, provider: 'tavily', credits_cost: 20, requires_auth: true } } } }))
+        return
+      }
       let raw = ''
       for await (const chunk of request) {
         raw += chunk
@@ -270,6 +275,9 @@ describe('local host daemon foundation', () => {
     })
     expect(approved.status).toBe(202)
     await expect(approved.json()).resolves.toMatchObject({ decision: 'approve', scope: 'run', status: 'recorded' })
+    const resumed = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const resumedEvents = parseSSE(await resumed.text())
+    expect(resumedEvents.at(-1)?.event_type).toBe('run.completed')
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('approved')
   })
 
@@ -301,6 +309,9 @@ describe('local host daemon foundation', () => {
       body: JSON.stringify({ decision: 'approve', scope: 'run' }),
     })
     expect(approved.status).toBe(202)
+    const resumed = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const resumedEvents = parseSSE(await resumed.text())
+    expect(resumedEvents.at(-1)?.event_type).toBe('run.completed')
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('x')
 
     const duplicate = await fetch(`${baseURL}/local/v1/permissions/${requestID}`, {
@@ -311,6 +322,41 @@ describe('local host daemon foundation', () => {
     expect(duplicate.status).toBe(200)
     await expect(duplicate.json()).resolves.toMatchObject({ decision: 'approve', scope: 'run', status: 'already_resolved' })
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('x')
+  })
+
+  it('does not start a duplicate runner when a stream reconnects during permission resume', async () => {
+    const workspace = await tempWorkspace()
+    const gateway = new DelayedSecondGateway()
+    const baseURL = await startServer(gateway)
+    await authorizeWorkspace(baseURL, workspace)
+    const created = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Run a slow approved command.', workspace_path: workspace }),
+    })
+    const run = await created.json()
+    const stream = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const events = parseSSE(await stream.text())
+    const permission = events.find((event) => event.event_type === 'permission.required')
+    const requestID = String(permission?.payload.request_id)
+
+    const approved = fetch(`${baseURL}/local/v1/permissions/${requestID}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'approve', scope: 'run' }),
+    })
+    await gateway.waitForSecondRequest()
+
+    const resumed = fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    await delay(25)
+    expect(gateway.requests).toHaveLength(2)
+
+    gateway.releaseSecondRequest()
+    expect((await approved).status).toBe(202)
+    const resumedEvents = parseSSE(await (await resumed).text())
+    expect(resumedEvents.filter((event) => event.event_type === 'run.completed')).toHaveLength(1)
+    expect(gateway.requests).toHaveLength(2)
+    await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('slow')
   })
 
   it('serves large tool output artifacts through the artifact endpoint', async () => {
@@ -566,6 +612,46 @@ class ScriptedGateway implements LLMGateway {
     }
     return response
   }
+}
+
+class DelayedSecondGateway implements LLMGateway {
+  readonly requests: LLMGatewayRequest[] = []
+  private secondStarted!: () => void
+  private secondRelease!: () => void
+  private readonly secondStartedPromise = new Promise<void>((resolve) => {
+    this.secondStarted = resolve
+  })
+  private readonly secondReleasePromise = new Promise<void>((resolve) => {
+    this.secondRelease = resolve
+  })
+
+  async call(request: LLMGatewayRequest): Promise<LLMGatewayResponse> {
+    this.requests.push(request)
+    if (this.requests.length === 1) {
+      return {
+        requestId: 'req-permission',
+        toolCalls: [{ id: 'call-shell', name: 'shell.run', arguments: { command: 'printf slow > approved.txt' } }],
+      }
+    }
+    if (this.requests.length === 2) {
+      this.secondStarted()
+      await this.secondReleasePromise
+      return { requestId: 'req-final', content: 'Approved slow command completed.' }
+    }
+    throw new Error('Duplicate runner requested an extra model call')
+  }
+
+  waitForSecondRequest(): Promise<void> {
+    return this.secondStartedPromise
+  }
+
+  releaseSecondRequest(): void {
+    this.secondRelease()
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function tempWorkspace(): Promise<string> {

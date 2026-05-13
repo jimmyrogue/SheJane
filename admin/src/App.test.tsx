@@ -43,6 +43,10 @@ describe('admin web app', () => {
     selectAdminTab('Agent')
     expect(await screen.findByText((content) => content.includes('run_1'))).toBeInTheDocument()
     expect(screen.queryByText((content) => content.includes('deepseek-v4-flash'))).not.toBeInTheDocument()
+
+    selectAdminTab('工具')
+    expect(await screen.findByText('web.search')).toBeInTheDocument()
+    expect(await screen.findByText((content) => content.includes('tavily'))).toBeInTheDocument()
   })
 
   it('renders a dedicated admin shell with a refresh action', async () => {
@@ -225,6 +229,30 @@ function mockFetch(role: 'admin' | 'user') {
     }
     if (url.endsWith('/api/v1/admin/llm-calls')) {
       return jsonResponse({ code: 0, message: 'ok', data: [] })
+    }
+    if (url.endsWith('/api/v1/admin/tool-calls')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: [
+          {
+            request_id: 'tool_req_1',
+            user_id: 'admin-1',
+            user_email: 'admin@example.com',
+            wallet_id: 'wallet-1',
+            reservation_id: 'res-1',
+            run_id: 'run_1',
+            tool_call_id: 'call-search-1',
+            tool: 'web.search',
+            provider: 'tavily',
+            units: 1,
+            credits_cost: 20,
+            status: 'done',
+            started_at: '2026-05-10T00:00:00Z',
+            finished_at: '2026-05-10T00:00:01Z',
+          },
+        ],
+      })
     }
     if (url.endsWith('/api/v1/admin/orders')) {
       return jsonResponse({

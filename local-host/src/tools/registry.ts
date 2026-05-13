@@ -471,7 +471,7 @@ export const localHostTools: ToolDefinition[] = [
   },
   {
     name: 'web.search',
-    description: 'Search the public web through the configured local search provider. Tavily is supported in this MVP.',
+    description: 'Search the public web through the cloud metered tool gateway when the account has an enabled search provider.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

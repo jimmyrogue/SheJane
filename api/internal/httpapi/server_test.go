@@ -354,6 +354,166 @@ func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	}
 }
 
+func TestAgentToolCapabilitiesRequireAuthAndHideUnconfiguredTavily(t *testing.T) {
+	server := newTestServer(t)
+
+	unauth := httptest.NewRequest(http.MethodGet, "/api/v1/agent/tool-capabilities", nil)
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth capabilities status = %d, want 401", unauthRecorder.Code)
+	}
+
+	token := registerAndToken(t, server)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/tool-capabilities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("capabilities status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "tvly") || strings.Contains(recorder.Body.String(), "api_key") {
+		t.Fatalf("capabilities leaked secret-like data: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"web.search"`) || !strings.Contains(recorder.Body.String(), `"configured":false`) {
+		t.Fatalf("capabilities missing disabled web.search: %s", recorder.Body.String())
+	}
+}
+
+func TestAgentToolGatewayExecutesTavilySearchAndChargesCredits(t *testing.T) {
+	var tavilyRequests int
+	var authHeader string
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tavilyRequests++
+		authHeader = r.Header.Get("Authorization")
+		if r.Method != http.MethodPost || r.URL.Path != "/search" {
+			t.Fatalf("unexpected Tavily request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode Tavily body: %v", err)
+		}
+		if body["query"] != "agent harness" || body["max_results"] != float64(2) {
+			t.Fatalf("Tavily body = %#v", body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"answer": "Agent harnesses wrap models with tools.",
+			"results": []map[string]any{
+				{"title": "Harness docs", "url": "https://example.com/harness", "content": "Tools and state.", "score": 0.9},
+				{"title": "Agent docs", "url": "https://example.com/agent", "content": "Loops and guardrails.", "score": 0.8},
+			},
+		})
+	}))
+	defer tavily.Close()
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+		cfg.TavilyAPIKey = "tvly-cloud-secret"
+		cfg.TavilyBaseURL = tavily.URL
+		cfg.TavilySearchCredits = 20
+	})
+	token := registerAndToken(t, server)
+	before := billingBalance(t, server, token)
+
+	body := `{"run_id":"local-run-1","tool_call_id":"call-search-1","tool":"web.search","arguments":{"query":"agent harness","maxResults":2},"idempotency_key":"local-run-1:call-search-1"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tools/execute", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("tool execute status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if authHeader != "Bearer tvly-cloud-secret" {
+		t.Fatalf("Tavily auth header = %q", authHeader)
+	}
+	if tavilyRequests != 1 {
+		t.Fatalf("Tavily requests = %d, want 1", tavilyRequests)
+	}
+	if strings.Contains(recorder.Body.String(), "tvly-cloud-secret") {
+		t.Fatalf("tool response leaked Tavily key: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"provider":"tavily"`) || !strings.Contains(recorder.Body.String(), `"credits_cost":20`) {
+		t.Fatalf("tool response missing provider/usage: %s", recorder.Body.String())
+	}
+	after := billingBalance(t, server, token)
+	if before.MonthlyRemaining-after.MonthlyRemaining != 20 {
+		t.Fatalf("monthly remaining before=%d after=%d, want cost 20", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	adminBody := adminToolCallsBody(t, server, adminToken)
+	if !strings.Contains(adminBody, `"tool":"web.search"`) || !strings.Contains(adminBody, `"provider":"tavily"`) {
+		t.Fatalf("admin tool calls missing web.search record: %s", adminBody)
+	}
+}
+
+func TestAgentToolGatewayDoesNotDoubleChargeIdempotentRetry(t *testing.T) {
+	var tavilyRequests int
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tavilyRequests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{{"title": "Once", "url": "https://example.com/once", "content": "One result."}},
+		})
+	}))
+	defer tavily.Close()
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.TavilyAPIKey = "tvly-cloud-secret"
+		cfg.TavilyBaseURL = tavily.URL
+		cfg.TavilySearchCredits = 20
+	})
+	token := registerAndToken(t, server)
+	body := `{"run_id":"local-run-2","tool_call_id":"call-search-2","tool":"web.search","arguments":{"query":"agent harness"},"idempotency_key":"same-call"}`
+
+	before := billingBalance(t, server, token)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tools/execute", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("retry %d status = %d, body = %s", i, recorder.Code, recorder.Body.String())
+		}
+	}
+	after := billingBalance(t, server, token)
+	if tavilyRequests != 1 {
+		t.Fatalf("Tavily requests = %d, want 1", tavilyRequests)
+	}
+	if before.MonthlyRemaining-after.MonthlyRemaining != 20 {
+		t.Fatalf("monthly remaining before=%d after=%d, want one charge", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+}
+
+func TestAgentToolGatewayReleasesCreditsWhenTavilyFails(t *testing.T) {
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, strings.Repeat("provider failed ", 100), http.StatusBadGateway)
+	}))
+	defer tavily.Close()
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.TavilyAPIKey = "tvly-cloud-secret"
+		cfg.TavilyBaseURL = tavily.URL
+		cfg.TavilySearchCredits = 20
+	})
+	token := registerAndToken(t, server)
+	before := billingBalance(t, server, token)
+
+	body := `{"run_id":"local-run-3","tool_call_id":"call-search-3","tool":"web.search","arguments":{"query":"agent harness"},"idempotency_key":"failing-call"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tools/execute", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("tool execute status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), strings.Repeat("provider failed ", 20)) {
+		t.Fatalf("provider error body was not truncated: %s", recorder.Body.String())
+	}
+	after := billingBalance(t, server, token)
+	if after.MonthlyRemaining != before.MonthlyRemaining {
+		t.Fatalf("monthly remaining before=%d after=%d, want release", before.MonthlyRemaining, after.MonthlyRemaining)
+	}
+}
+
 func TestAgentLLMGatewayReturnsPaymentRequiredWhenSettlementExceedsBalance(t *testing.T) {
 	cfg := config.Default()
 	cfg.JWTSecret = "test-secret"
@@ -1120,6 +1280,18 @@ func adminOrdersBody(t *testing.T, server http.Handler, token string) string {
 	server.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("admin orders status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	return recorder.Body.String()
+}
+
+func adminToolCallsBody(t *testing.T, server http.Handler, token string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/tool-calls", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("admin tool calls status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	return recorder.Body.String()
 }

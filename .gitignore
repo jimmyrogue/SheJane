@@ -25,6 +25,7 @@ output/
 logs/
 tmp/
 temp/
+.tmp/
 .cache/
 
 # Node / Vite / React

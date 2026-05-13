@@ -1,7 +1,7 @@
 # 简单（Jiandan）前端技术方案
 
-**版本：** v1.3
-**更新：** 2026-05-11
+**版本：** v1.4
+**更新：** 2026-05-13
 **适用阶段：** Phase 1-5 分阶段落地
 
 > 本文档补充 `project-plan.md`、`backend-spec.md` 与 [`spec.md`](spec.md) 中缺失的前端客户端设计。前端采用 Hybrid Local-first：长期聊天历史和个人工作数据默认保存在客户端，本地体验先闭环，并从 Phase 2 起演进为统一 Agentic Chat 与 Local Agent Harness。
@@ -123,6 +123,10 @@ jiandanly-client/
 
 - Phase 1 只支持基础文本聊天和 `fast` / `deep` 模式。
 - SSE client 负责解析 OpenAI-compatible stream，并把增量内容写入当前 assistant message。
+- Phase 3 起新增 `StreamTransport` 抽象：当前实现仍基于 fetch/SSE，后续 Electron 可以替换为 MessagePort transport，而不影响 React 侧 controller。
+- 流式 UI 使用 renderer buffer：网络 delta 先写入 ref，UI 以固定节奏批量释放，避免每个 token 都触发 React setState。
+- 中文内容优先使用 `Intl.Segmenter('zh')` 分段；英文按 word/chunk 释放。streaming 阶段渲染轻量文本，done 后再渲染 Markdown / GFM。
+- 自动滚动只在用户接近底部时跟随；用户上滑查看历史时不强行拉回。
 - 发送前先在本地创建 `client_conversation_id`、user message 和空 assistant message，再把 `client_conversation_id` / `client_message_id` 随请求发给后端。
 - 客户端断线后保留已收到的本地增量内容，允许用户手动重试；真正可靠恢复从 Phase 2.2 的 Agent Run events 开始补齐。
 - 发送前展示额度不足、未登录等明确错误；团队钱包错误只在 Phase 5 出现。
@@ -183,6 +187,19 @@ jiandanly-client/
 - 本地数据管理：查看本地占用、导入、导出、清空本地聊天历史。
 - Electron 可额外显示本地权限状态，但不在 Phase 1 实现。
 
+### 3.11 Phase 3 UI Component Split
+
+客户端主界面从单一 `App.tsx` 拆为可测试组件：
+
+- `AuthScreen`：登录/注册。
+- `ConversationSidebar`：本地会话、附件、本地工作区、最近本地 run、导入导出。
+- `ChatThread` / `MessageBubble`：消息流、平滑 streaming、完成后 Markdown 渲染。
+- `AgentTimeline`：工具、权限、来源、验证、artifact、诊断入口。
+- `Composer`：统一输入、附件 chip、本地项目 chip、发送状态。
+- `ArtifactPanel` / `DiagnosticsPanel`：右侧 Sheet，不挤占主对话区域。
+
+组件视觉基于 shadcn/ui 与 Tailwind v4 semantic tokens；业务状态仍由本地 IndexedDB 和 controller 管理。
+
 ---
 
 ## 四、Local Agent Harness 前端路线
@@ -218,6 +235,15 @@ Phase 2.3 先证明 Electron 能发现本地 Harness，不执行危险工具：
 - React 启动后只在 Electron 环境探测 `GET /local/v1/health`。
 - UI 显示“本地 Harness”或“云端受限”。
 - Web 环境不主动访问本地端口。
+
+### 4.4 Phase 3：Electron-first Shell
+
+Phase 3 不把流式通道迁到 Electron main。原因是当前瓶颈主要在 React 渲染节奏，而不是 IPC：
+
+- 本阶段：fetch/SSE -> renderer buffer -> smooth text scheduler -> React batched render。
+- 后续：Electron main / Local Host 高频事件可以通过 preload 暴露受限 bridge，并用 `MessagePort` 替换 transport。
+- preload 继续只暴露最小安全 API，不直接暴露完整 `ipcRenderer`。
+- OpenBridge 可参考的部分是 bridge contract、embedded React chat surface、deferred markdown 和 smart auto-scroll；不复制其 provider/BYOK 架构。
 - 非 health 的本地 API 必须带 pairing token。
 
 ### 4.4 Phase 2.4：Harness Loop 与本地工具

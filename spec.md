@@ -83,6 +83,8 @@ flowchart TB
 - If the harness is unavailable, the UI degrades to cloud-limited mode.
 - Timeline renders events: run status, selected skills, tool calls, permission requests, artifacts, verification results, errors, and final answer.
 - The renderer never receives raw filesystem or shell powers. It talks to loopback APIs or preload-safe metadata only.
+- Phase 3 makes Electron the primary product shell. The React client uses shadcn/ui, a grouped Agent timeline, right-side artifact/diagnostics sheets, and a smooth streaming renderer.
+- Streaming is hybrid: fetch/SSE remains the first transport, while a `StreamTransport` interface reserves a future Electron MessagePort transport. UI smoothness is handled in the renderer by buffering deltas and releasing word/segment batches.
 
 ### 4.2 Local Agent Harness
 
@@ -129,7 +131,7 @@ Cloud must not:
 | Component | Jiandanly implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
-| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; optional `web.search` is advertised only when Tavily is configured and is preferred as the web discovery layer before browser-based evidence collection. |
+| 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; Phase 2.22 moves paid/provider-key tools such as Tavily-backed `web.search` behind the Cloud Tool Gateway, so Local Host advertises `web.search` only when the cloud capability endpoint reports it configured. |
 | 3. Memory | Three local layers: always-loaded index, on-demand topic notes, searchable raw run/event history. Memory is a hint, not truth; verify before acting. |
 | 4. Context Management | Compaction, observation masking, artifact references, and just-in-time retrieval. Large files and shell output become artifacts plus summaries. |
 | 5. Prompt Construction | Priority: cloud system policy -> local harness policy -> tool definitions -> permissions -> memory index -> compacted history -> current user goal. Untrusted content is clearly marked. |
@@ -279,7 +281,7 @@ Pairing:
 
 - Add verification loops. **Done for rule checks on file/search/shell/web/MCP tool observations.**
 - Add local MCP allowlist. **Done as `mcp.call` guardrail.**
-- Add local `web.fetch` and optional `web.search`. **Done with SSRF protection for fetch and Tavily-backed search when `TAVILY_API_KEY` is configured.**
+- Add local `web.fetch` and optional `web.search`. **Done with SSRF protection for fetch; Tavily-backed `web.search` moved to Cloud Tool Gateway in Phase 2.22 so provider keys stay cloud-only and usage is metered.**
 - Admin observes summaries, errors, latency, and cost only.
 
 ### Phase 2.7: Local Harness UI Bridge
@@ -395,8 +397,9 @@ Pairing:
 - Treat search engine result pages as navigation aids, not citation sources. **Done.**
 - Count usable non-search sources by canonical URL and block duplicate source collection. **Done.**
 - Add a research preflight guard that blocks extra `browser.search`, `browser.open`, or `web.fetch` calls after the run has enough real sources or exceeds configured search/navigation budgets. **Done.**
-- Hide optional Tavily-backed `web.search` from the tool list unless `TAVILY_API_KEY` or an injected Tavily key is configured. **Done.**
-- Prefer Tavily-backed `web.search` for public web discovery when configured, then use `browser.open` / `browser.read` for evidence collection; fall back to `browser.search` when Tavily is unavailable or insufficient. **Done.**
+- Hide optional Tavily-backed `web.search` from the tool list unless Cloud Tool Gateway reports `web.search.configured=true`. **Done.**
+- Prefer cloud-metered `web.search` for public web discovery when configured, then use `browser.open` / `browser.read` for evidence collection; fall back to `browser.search` when cloud search is unavailable or insufficient. **Done.**
+- Route paid third-party services through Cloud API, record `external_tool_call_records`, charge wallet credits, and keep provider keys out of Local Host process env. **Done in Phase 2.22 for Tavily.**
 - Block `open.url` during research/evidence collection so the agent does not launch the user's system browser when it should use the managed browser. **Done.**
 - Block shell-based network fetching during research/evidence collection so the agent cannot bypass `web.*` / `browser.*` evidence tools with `curl` or `wget`. **Done.**
 - Keep provider/web HTTP error observations concise so large 404/blocked pages do not pollute model context. **Done.**

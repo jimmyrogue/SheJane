@@ -32,7 +32,7 @@ This phase proves:
 - Browser research can collect usable sources, classify bad pages, avoid repeated browsing loops, and expose source evidence to the client timeline.
 - Browser verification can check the current managed page against expected text/status and optionally capture screenshot artifacts.
 - Current local runs can be inspected from the message timeline through a redacted diagnostics panel and exported as JSON.
-- Research policy prevents search result pages from becoming sources, hides optional Tavily `web.search` when unconfigured, and asks the model to stop browsing once enough real sources are collected.
+- Research policy prevents search result pages from becoming sources, hides cloud-metered `web.search` when Cloud Tool Gateway reports it unconfigured, and asks the model to stop browsing once enough real sources are collected.
 
 ## Completed
 
@@ -91,7 +91,7 @@ This phase proves:
 - [x] Phase 2.6 Verification / MCP / Web MVP:
   - Added `verification.started` and `verification.completed` events for shell exit codes, file tools, web fetch/search, and MCP calls.
   - Added `web.fetch` with URL validation, DNS resolution, SSRF blocking, timeout, response size limit, text-only enforcement, HTML text extraction, and source metadata.
-  - Added optional Tavily-backed `web.search` using `TAVILY_API_KEY`; missing config returns a recoverable disabled-tool observation.
+  - Added the original optional Tavily-backed `web.search`; Phase 2.22 later moved this provider-key path behind Cloud Tool Gateway.
   - Added `mcp.call` guardrail with `JIANDANLY_MCP_ALLOWLIST`; allowlisted tools are recognized but not executed until a real local MCP runtime adapter is added.
 - [x] Phase 2.7 Local Harness UI Bridge MVP:
   - Added pairing-token aware client helpers for local run creation, event streaming, permission resolution, and artifact retrieval.
@@ -215,8 +215,8 @@ This phase proves:
   - Search result pages are now treated as navigation aids and are excluded from `source.collected`.
   - Source collection is deduplicated by canonical URL and now prefers `browser.read` / `browser.snapshot` evidence over shallow opens.
   - A research preflight guard blocks further `browser.search`, `browser.open`, or `web.fetch` calls after enough real sources are collected or search/navigation budgets are exhausted.
-  - Optional Tavily-backed `web.search` is hidden from advertised model tools unless `TAVILY_API_KEY` or an injected Tavily key is configured.
-  - When Tavily is configured, `web.search` is advertised before `browser.search` and the harness prompt treats it as the preferred discovery layer before browser evidence collection.
+  - Optional search-provider `web.search` is hidden from advertised model tools unless Cloud Tool Gateway reports it configured.
+  - When cloud search is configured, `web.search` is advertised before `browser.search` and the harness prompt treats it as the preferred discovery layer before browser evidence collection.
   - Research runs now block `open.url` before permission, so mistaken external URL opens cannot launch the user's system browser during evidence collection.
   - Research runs now block shell-based network fetching (`curl`, `wget`, or raw URLs) before permission so the model cannot bypass web/browser evidence tools.
   - Permission resolution is idempotent; submitting the same permission request again no longer re-executes the approved tool.
@@ -225,6 +225,13 @@ This phase proves:
   - Final research answers are guarded against unsupported claims that sources were opened/read/verified when no source or verification evidence supports them.
   - Final research answers now reject cited URLs that were not collected through `source.collected`.
   - Added env knobs: `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`.
+- [x] Phase 2.22 Cloud Tool Gateway and Metered External Services:
+  - Moved Tavily-backed `web.search` out of Local Host and behind Cloud API.
+  - Added `GET /api/v1/agent/tool-capabilities` and `POST /api/v1/agent/tools/execute`.
+  - Metered `web.search` through wallet credits with `TAVILY_SEARCH_CREDITS`, usage reservation/settlement, and idempotency-key replay.
+  - Added `external_tool_call_records` and admin read-only `GET /api/v1/admin/tool-calls`.
+  - Kept platform provider keys cloud-only; `make dev-electron` starts Local Host, client, and Electron with an allowlist environment instead of inheriting root `.env` secrets.
+  - Added a read-only admin "工具" page for external tool calls.
 
 ## Current Boundaries
 
@@ -233,7 +240,7 @@ This phase proves:
 - Browser control is limited to Local Host managed Playwright Chromium contexts; it does not read or control existing Chrome/Safari tabs.
 - `/local/v1/runs/{id}/stream` now runs the MVP Harness loop. Without a cloud session or headless cloud LLM env configuration it uses a static fallback response.
 - The SQLite runtime store uses Node's built-in `node:sqlite`, which is currently experimental in Node 22. This is acceptable for Phase 2.3a foundation but should be revisited before production packaging if Electron's bundled Node runtime differs.
-- Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, optional Tavily `web.search`, and MCP allowlist guardrails.
+- Phase 2.6 adds rule verification events, SSRF-protected `web.fetch`, the original optional search provider path, and MCP allowlist guardrails; Phase 2.22 moves paid search providers to Cloud Tool Gateway.
 - Phase 2.7 adds a manual workspace path field, permission approve/deny controls, artifact preview, and verification timeline rendering.
 - Phase 2.8 adds native Electron directory selection and persistent Local Host workspace authorization rules.
 - Phase 2.9 adds workspace revocation, path-level authorization diagnostics, and visible local project references in the composer.
@@ -251,6 +258,7 @@ This phase proves:
 - Phase 2.19 adds page-evidence verification through `browser.verify`; it is not an OCR or LLM vision judge.
 - Phase 2.20 adds current-run diagnostics viewing and export; diagnostics import/replay is still pending.
 - Phase 2.21 adds research policy control; it is a soft reliability guard, not a full planner or source-quality ranking engine.
+- Phase 2.22 moves paid/provider-key third-party services behind Cloud Tool Gateway; Local Host no longer reads Tavily or other platform secret env vars.
 - Phase 2.17-2.21 browser tooling covers Playwright managed browser search/open/read/verify/snapshot/screenshot/click/type/scroll/close, environment metadata, optional hard step caps, soft long-running warnings, source-budget preflight, and max-step finalization only when a cap is explicitly configured, but not order submission, payments, posting, email sending, login-state browsing, user-browser tab inspection, screen OCR, or app-window control.
 - Workspace authorization is root-based; a run may use the authorized root or a child path, but not arbitrary unapproved paths.
 - Screen/app control, richer run recovery UI, diagnostics import/replay, desktop OCR, and LLM-as-judge visual verification are still pending.
@@ -285,6 +293,9 @@ This phase proves:
 - `cd e2e && npm test -- --grep "paired Local Harness"`
 - `cd local-host && npm test -- --run src/harness/runner.test.ts -t "search result pages|Tavily web.search"`
 - `cd local-host && npm test -- --run src/tools/webTools.test.ts -t "HTTP error observations"`
+- `cd api && go test ./internal/httpapi -run 'TestAgentTool'`
+- `cd local-host && npm test -- --run src/tools/webTools.test.ts src/harness/runner.test.ts`
+- `cd admin && npm test -- --run src/App.test.tsx`
 - `cd local-host && npm test -- --run src/tools/browserEnvironment.test.ts -t "does not classify article pages"`
 - `cd local-host && npm test -- --run src/harness/runner.test.ts -t "overconfident final answers"`
 - `make test`

@@ -1,5 +1,7 @@
 import { CloudLLMGateway } from './cloudGateway.js'
 import type { LLMGateway } from './gateway.js'
+import { CloudToolGatewayClient } from '../tools/cloudToolGateway.js'
+import type { CloudToolGateway } from '../tools/executor.js'
 
 export interface CloudSessionInput {
   cloudBaseURL?: string
@@ -68,6 +70,17 @@ export class LocalCloudSessionManager {
       return undefined
     }
     return new CloudLLMGateway({
+      baseURL: this.session.cloudBaseURL,
+      accessToken: this.session.accessToken,
+      fetcher: this.options.fetcher,
+    })
+  }
+
+  toolGateway(): CloudToolGateway | undefined {
+    if (!this.session) {
+      return undefined
+    }
+    return new CloudToolGatewayClient({
       baseURL: this.session.cloudBaseURL,
       accessToken: this.session.accessToken,
       fetcher: this.options.fetcher,
