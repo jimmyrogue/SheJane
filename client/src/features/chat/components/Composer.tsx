@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { FileText, FolderOpen, Loader2, Paperclip, Send, Trash2, Upload, X } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -197,9 +196,10 @@ export function Composer({
             </Button>
           ) : null}
         </div>
-        <Button className="send-button" disabled={isSending || !draft.trim()} onClick={onSend}>
+        <span className="composer-kbd">⌘↵</span>
+        <Button className="send-button" aria-label="发送" disabled={isSending || !draft.trim()} onClick={onSend}>
           <Send size={16} />
-          发送
+          <span className="sr-only">发送</span>
         </Button>
       </div>
       <Dialog open={attachmentDialogOpen} onOpenChange={setAttachmentDialogOpen}>
@@ -315,13 +315,12 @@ const documentAccept =
 function ModeToggle({ mode, onChange }: { mode: ChatMode; onChange: (mode: ChatMode) => void }) {
   return (
     <div className="segmented">
-      <Button variant={mode === 'fast' ? 'default' : 'outline'} size="sm" onClick={() => onChange('fast')}>
+      <Button className="btn-chip" variant={mode === 'fast' ? 'default' : 'outline'} size="sm" onClick={() => onChange('fast')}>
         快速
       </Button>
-      <Button variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => onChange('deep')}>
+      <Button className="btn-chip" variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => onChange('deep')}>
         深度
       </Button>
-      <Badge variant="secondary">Agentic Chat</Badge>
     </div>
   )
 }

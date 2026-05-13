@@ -11,6 +11,7 @@ export function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payl
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const pageClassName = window.jiandanDesktop ? 'auth-page electron-auth-page' : 'auth-page'
 
   async function submit() {
     setError('')
@@ -26,11 +27,20 @@ export function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payl
   }
 
   return (
-    <main className="auth-page">
+    <main className={pageClassName}>
       <Card className="auth-panel">
+        <div className="window-titlebar auth-titlebar">
+          <div className="traffic-lights" aria-hidden="true">
+            <span className="tl-red" />
+            <span className="tl-amber" />
+            <span className="tl-green" />
+          </div>
+          <div className="titlebar-title">Jiandanly · Sign in</div>
+          <div className="titlebar-actions" />
+        </div>
         <CardHeader>
-          <div className="brand auth-brand">
-            <span className="brand-mark">简</span>
+          <div className="auth-brand">
+            <span className="logo">简</span>
             <div>
               <CardTitle>简单 Jiandan</CardTitle>
               <small>把复杂的工作，简单做完</small>

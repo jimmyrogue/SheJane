@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
+import { Sparkles } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/shared/local-data/types'
@@ -54,13 +54,13 @@ export function MessageBubble({
 
   return (
     <article className={cn('message', message.role)}>
+      <div className={isAssistant ? 'avatar-bot' : 'avatar'}>
+        {isAssistant ? <Sparkles size={14} /> : '我'}
+      </div>
       <div className="message-bubble-inner">
-        <div className="mb-3 flex items-center gap-2">
-          <Avatar className="size-7 rounded-md">
-            <AvatarFallback className="rounded-md text-xs">{message.role === 'user' ? '我' : '简'}</AvatarFallback>
-          </Avatar>
-          <span className="text-sm font-medium">{message.role === 'user' ? '我' : '简单'}</span>
-          {message.status === 'streaming' ? <Badge variant="secondary">streaming</Badge> : null}
+        <div className="message-meta">
+          <span>{message.role === 'user' ? '我' : '简单'}</span>
+          {message.status === 'streaming' ? <Badge variant="secondary">running</Badge> : null}
           {message.runOrigin ? <Badge variant="outline">{message.runOrigin === 'local' ? 'Local Harness' : 'Cloud Run'}</Badge> : null}
         </div>
         <div className="message-content">
@@ -77,8 +77,8 @@ export function MessageBubble({
             <MarkdownContent content={content} />
           )}
         </div>
+        {children}
       </div>
-      {children}
     </article>
   )
 }

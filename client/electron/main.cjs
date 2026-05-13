@@ -4,18 +4,26 @@ const path = require('node:path')
 const isDev = process.env.ELECTRON_DEV === 'true'
 
 function createWindow() {
-  const window = new BrowserWindow({
+  const windowOptions = {
     width: 1220,
     height: 820,
     minWidth: 960,
     minHeight: 680,
     title: '简单 Jiandan',
+    backgroundColor: '#FAFAF9',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-  })
+  }
+
+  if (process.platform === 'darwin') {
+    windowOptions.titleBarStyle = 'hiddenInset'
+    windowOptions.trafficLightPosition = { x: 16, y: 13 }
+  }
+
+  const window = new BrowserWindow(windowOptions)
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)

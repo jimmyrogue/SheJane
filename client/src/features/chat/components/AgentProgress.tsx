@@ -1,7 +1,6 @@
-import { AlertCircle, CheckCircle2, Download, Eye, Loader2, ShieldCheck, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, Download, Eye, Loader2, ShieldCheck, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { AgentTimelineItem, ChatMessage } from '@/shared/local-data/types'
@@ -43,61 +42,70 @@ export function AgentProgress({
   const Icon = progressIcon(progress.tone)
 
   return (
-    <Card className={cn('agent-progress mt-4 shadow-none', `agent-progress-${progress.tone}`)} data-state={progress.tone}>
-      <CardContent className="agent-progress-content">
-        <div className="agent-progress-main">
-          <span className="agent-progress-icon" aria-hidden="true">
-            <Icon />
-          </span>
-          <div className="agent-progress-copy">
-            <span className="agent-progress-label" key={progress.label}>
-              {progress.label}
-            </span>
-            {progress.detail ? <small>{progress.detail}</small> : null}
-          </div>
-        </div>
+    <div className={cn('tool-card agent-progress mt-4', `agent-progress-${progress.tone}`)} data-state={progress.tone}>
+      <div className="tool-card-header">
+        <span className={cn('dot', dotClass(progress.tone))} />
+        <Icon className="tool-card-icon" aria-hidden="true" />
+        <span className="name" key={progress.label}>{progress.label}</span>
+        {progress.detail ? <span className="meta">· {progress.detail}</span> : null}
+        <ChevronDown className="tool-card-caret" aria-hidden="true" />
+      </div>
 
-        <div className="agent-progress-meta" aria-label="任务摘要">
-          {progress.sourcesCount > 0 ? <Badge variant="outline">已收集 {progress.sourcesCount} 个来源</Badge> : null}
-          {progress.artifactsCount > 0 ? <Badge variant="outline">生成 {progress.artifactsCount} 个 Artifact</Badge> : null}
-          {progress.latestArtifactID ? (
-            <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
-              <Eye size={13} />
-              查看 artifact
-            </Button>
-          ) : null}
-          {progress.diagnosticsRunID && onOpenDiagnostics ? (
-            <Button
-              className="agent-progress-action"
-              size="sm"
-              variant="outline"
-              title={`查看诊断 ${progress.diagnosticsRunID}`}
-              onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
-            >
-              <Download size={13} />
-              诊断
-            </Button>
-          ) : null}
-        </div>
-
-        {progress.pendingPermission ? (
-          <div className="agent-progress-permission-actions">
-            <Button size="sm" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'once')}>
-              <CheckCircle2 size={13} />
-              允许一次
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'run')}>
-              <ShieldCheck size={13} />
-              本会话始终允许
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'deny')}>
-              <X size={13} />
-              拒绝
-            </Button>
+      <div className="tool-card-results agent-progress-results" aria-label="任务摘要">
+        {progress.sourcesCount > 0 ? (
+          <div className="row">
+            <span>已收集 {progress.sourcesCount} 个来源</span>
+            <Badge variant="outline">source</Badge>
           </div>
         ) : null}
-      </CardContent>
-    </Card>
+        {progress.artifactsCount > 0 ? (
+          <div className="row">
+            <span>生成 {progress.artifactsCount} 个 Artifact</span>
+            <Badge variant="outline">artifact</Badge>
+          </div>
+        ) : null}
+        {progress.latestArtifactID ? (
+          <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
+            <Eye size={13} />
+            查看 artifact
+          </Button>
+        ) : null}
+        {progress.diagnosticsRunID && onOpenDiagnostics ? (
+          <Button
+            className="agent-progress-action"
+            size="sm"
+            variant="outline"
+            title={`查看诊断 ${progress.diagnosticsRunID}`}
+            onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
+          >
+            <Download size={13} />
+            诊断
+          </Button>
+        ) : null}
+        {!progress.sourcesCount && !progress.artifactsCount && !progress.latestArtifactID && !progress.diagnosticsRunID ? (
+          <div className="row muted">
+            <span>{progress.tone === 'working' ? '正在执行，完成后会在这里显示结果。' : '没有额外结果。'}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {progress.pendingPermission ? (
+        <div className="agent-progress-permission-actions">
+          <Button size="sm" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'once')}>
+            <CheckCircle2 size={13} />
+            允许一次
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'run')}>
+            <ShieldCheck size={13} />
+            本会话始终允许
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'deny')}>
+            <X size={13} />
+            拒绝
+          </Button>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -276,4 +284,10 @@ function progressIcon(tone: ProgressTone) {
   if (tone === 'done') return CheckCircle2
   if (tone === 'failed') return AlertCircle
   return Loader2
+}
+
+function dotClass(tone: ProgressTone): string {
+  if (tone === 'failed') return 'dot-danger'
+  if (tone === 'working' || tone === 'permission') return 'dot-warning'
+  return 'dot-success'
 }

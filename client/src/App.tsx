@@ -1,4 +1,4 @@
-import { LogOut } from 'lucide-react'
+import { ChevronDown, LogOut, MoreHorizontal, PanelLeft, Search, Share2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
@@ -650,79 +650,112 @@ export function App() {
     return <AuthScreen onAuthed={handleAuth} api={api} />
   }
 
+  const shellClassName = window.jiandanDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
+
   return (
-    <main className="app-shell">
-      <ConversationSidebar
-        conversations={conversations}
-        activeID={activeID}
-        balance={balance}
-        onNewConversation={startNewConversation}
-        onSelectConversation={selectConversation}
-        onExportConversation={(conversationID) => void exportConversationData(conversationID)}
-        onImportLocalData={(file) => void importLocalData(file)}
-      />
-
-      <TooltipProvider>
-      <section className="workspace">
-        <header className="topbar">
-          <div />
-          <div className="account">
-            {localHost ? (
-              <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
-                {localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
-              </span>
-            ) : null}
-            <span>{auth.user.email}</span>
-            <button onClick={startCheckout}>升级</button>
-            <button className="icon-button" title="退出登录" onClick={logout}>
-              <LogOut size={17} />
-            </button>
+    <TooltipProvider>
+      <main className={shellClassName}>
+        <div className="window-titlebar">
+          <div className="traffic-lights" aria-hidden="true">
+            <span className="tl-red" />
+            <span className="tl-amber" />
+            <span className="tl-green" />
           </div>
-        </header>
+          <div className="titlebar-title">{activeConversation?.title ?? 'Jiandanly · AI Agent'}</div>
+          <div className="titlebar-actions" aria-label="窗口操作">
+            <PanelLeft size={14} />
+            <Search size={14} />
+          </div>
+        </div>
 
-        <ChatThread
-          conversation={activeConversation}
-          onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
-          onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
-          onPermissionDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
-        />
+        <div className="app-shell">
+          <ConversationSidebar
+            conversations={conversations}
+            activeID={activeID}
+            balance={balance}
+            userEmail={auth.user.email}
+            onNewConversation={startNewConversation}
+            onSelectConversation={selectConversation}
+            onExportConversation={(conversationID) => void exportConversationData(conversationID)}
+            onImportLocalData={(file) => void importLocalData(file)}
+          />
 
-        {notice ? <div className="notice">{notice}</div> : null}
+          <section className="workspace">
+            <header className="topbar">
+              <div className="chat-toolbar-title">
+                <span>{activeConversation?.title ?? '新对话'}</span>
+                <ChevronDown size={14} aria-hidden="true" />
+                <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt) : '本地优先对话'}</small>
+              </div>
+              <div className="account">
+                {localHost ? (
+                  <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
+                    <span className={localHost.online && localHostConfig?.token ? 'status-dot success' : 'status-dot warning'} />
+                    {localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
+                  </span>
+                ) : null}
+                <span className="model-pill">
+                  <span className="status-dot success" />
+                  {mode === 'deep' ? 'Deep agent' : 'Fast agent'}
+                </span>
+                <button className="toolbar-icon-button" title="分享" aria-label="分享">
+                  <Share2 size={15} />
+                </button>
+                <button className="toolbar-icon-button" title="更多" aria-label="更多">
+                  <MoreHorizontal size={15} />
+                </button>
+                <span className="account-email">{auth.user.email}</span>
+                <button className="btn-ghost atlas-upgrade" onClick={startCheckout}>升级</button>
+                <button className="toolbar-icon-button" title="退出登录" onClick={logout}>
+                  <LogOut size={15} />
+                </button>
+              </div>
+            </header>
 
-        <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
-        <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
+            <ChatThread
+              conversation={activeConversation}
+              onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
+              onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
+              onPermissionDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
+            />
 
-        <Composer
-          mode={mode}
-          onModeChange={setMode}
-          draft={draft}
-          onDraftChange={setDraft}
-          isSending={isSending}
-          documents={documents}
-          attachedDocumentID={attachedDocumentID}
-          attachedDocument={attachedDocument}
-          isUploading={isUploading}
-          localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
-          canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
-          canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
-          localProject={
-            !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected
-              ? localProject
-              : undefined
-          }
-          onUploadDocument={(file) => void uploadDocument(file)}
-          onAttachDocument={setAttachedDocumentID}
-          onDeleteDocument={(document) => void deleteDocument(document)}
-          onDetachDocument={() => setAttachedDocumentID(undefined)}
-          onPickWorkspace={() => chooseWorkspaceDirectory()}
-          onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
-          onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
-          onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
-          onSend={() => void sendMessage()}
-        />
-      </section>
-      </TooltipProvider>
-    </main>
+            {notice ? <div className="notice">{notice}</div> : null}
+
+            <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
+            <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
+
+            <Composer
+              mode={mode}
+              onModeChange={setMode}
+              draft={draft}
+              onDraftChange={setDraft}
+              isSending={isSending}
+              documents={documents}
+              attachedDocumentID={attachedDocumentID}
+              attachedDocument={attachedDocument}
+              isUploading={isUploading}
+              localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
+              canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
+              canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
+              localProject={
+                !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected
+                  ? localProject
+                  : undefined
+              }
+              onUploadDocument={(file) => void uploadDocument(file)}
+              onAttachDocument={setAttachedDocumentID}
+              onDeleteDocument={(document) => void deleteDocument(document)}
+              onDetachDocument={() => setAttachedDocumentID(undefined)}
+              onPickWorkspace={() => chooseWorkspaceDirectory()}
+              onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
+              onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
+              onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
+              onSend={() => void sendMessage()}
+            />
+          </section>
+        </div>
+      </main>
+    </TooltipProvider>
   )
 }
 
@@ -741,6 +774,25 @@ function localHostStatusLabel(
     return '本地待登录'
   }
   return '本地 Harness'
+}
+
+function formatRelativeTime(value: string): string {
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) {
+    return '最近更新'
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000))
+  if (minutes < 1) {
+    return '刚刚更新'
+  }
+  if (minutes < 60) {
+    return `${minutes} 分钟前`
+  }
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) {
+    return `${hours} 小时前`
+  }
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value))
 }
 
 function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>) {

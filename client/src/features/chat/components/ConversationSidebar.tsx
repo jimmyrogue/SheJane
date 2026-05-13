@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Download, Ellipsis, MessageSquare, Plus, Upload } from 'lucide-react'
+import { Download, Ellipsis, FolderOpen, History, MessageCircle, Plus, Settings, Upload, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,6 +16,7 @@ export function ConversationSidebar({
   conversations,
   activeID,
   balance,
+  userEmail,
   onNewConversation,
   onSelectConversation,
   onExportConversation,
@@ -24,6 +25,7 @@ export function ConversationSidebar({
   conversations: Conversation[]
   activeID?: string
   balance?: WalletBalance | null
+  userEmail: string
   onNewConversation: () => void
   onSelectConversation: (conversationID: string) => void
   onExportConversation: (conversationID: string) => void
@@ -35,50 +37,70 @@ export function ConversationSidebar({
 
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <span className="brand-mark">简</span>
-        <div>
-          <strong>简单 Jiandan</strong>
-          <small>AI, simplified.</small>
-        </div>
-      </div>
-
-      <Button className="primary-action" onClick={onNewConversation}>
-        <Plus size={18} />
-        新对话
+      <Button className="sidebar-newchat" aria-label="新对话" onClick={onNewConversation}>
+        <Plus size={15} />
+        <span>新对话</span>
+        <span className="kbd">⌘N</span>
       </Button>
 
-      <div className="conversation-list">
-        {conversations.map((conversation) => (
-          <div className={conversation.id === activeID ? 'conversation-row active' : 'conversation-row'} key={conversation.id}>
-            <Button
-              className="conversation"
-              variant="ghost"
-              onClick={() => onSelectConversation(conversation.id)}
-            >
-              <MessageSquare size={16} />
-              <span>{conversation.title}</span>
-            </Button>
-            <Button
-              className="conversation-more"
-              variant="ghost"
-              size="icon-xs"
-              title={`更多 ${conversation.title}`}
-              aria-label={`更多 ${conversation.title}`}
-              onClick={() => setActionConversationID(conversation.id)}
-            >
-              <Ellipsis size={16} />
-            </Button>
-          </div>
-        ))}
+      <div className="sidebar-section">
+        <div className="sidebar-section-label">Workspace</div>
+        <button className="sidebar-item active" type="button">
+          <MessageCircle size={14} />
+          <span>Chats</span>
+        </button>
+        <button className="sidebar-item" type="button">
+          <Wrench size={14} />
+          <span>Tools</span>
+          <span className="badge">{conversations.length || 1}</span>
+        </button>
+        <button className="sidebar-item" type="button">
+          <FolderOpen size={14} />
+          <span>Projects</span>
+        </button>
+        <button className="sidebar-item" type="button">
+          <History size={14} />
+          <span>History</span>
+        </button>
       </div>
 
-      {balance ? (
-        <div className="sidebar-quota">
-          <span>本月 <strong>{balance.monthly_remaining}</strong></span>
-          <span className="plan">{balance.plan_code ?? 'free'}</span>
+      <div className="sidebar-section conversation-list">
+        <div className="sidebar-section-label">Recent</div>
+        {conversations.length ? (
+          conversations.map((conversation) => (
+            <div className={conversation.id === activeID ? 'conversation-row active' : 'conversation-row'} key={conversation.id}>
+              <Button
+                className="conversation"
+                variant="ghost"
+                onClick={() => onSelectConversation(conversation.id)}
+              >
+                <span>{conversation.title}</span>
+              </Button>
+              <Button
+                className="conversation-more"
+                variant="ghost"
+                size="icon-xs"
+                title={`更多 ${conversation.title}`}
+                aria-label={`更多 ${conversation.title}`}
+                onClick={() => setActionConversationID(conversation.id)}
+              >
+                <Ellipsis size={15} />
+              </Button>
+            </div>
+          ))
+        ) : (
+          <div className="sidebar-empty">还没有本地对话</div>
+        )}
+      </div>
+
+      <div className="sidebar-footer">
+        <div className="avatar">{avatarInitials(userEmail)}</div>
+        <div className="sidebar-footer-copy">
+          <div className="name">{userEmail.split('@')[0] || 'Jiandanly'}</div>
+          <div className="plan">{balance ? `${balance.plan_code ?? 'free'} · ${balance.monthly_remaining}` : 'Local-first'}</div>
         </div>
-      ) : null}
+        <Settings size={15} aria-hidden="true" />
+      </div>
 
       <input
         ref={importInputRef}
@@ -128,4 +150,9 @@ export function ConversationSidebar({
       </Dialog>
     </aside>
   )
+}
+
+function avatarInitials(email: string): string {
+  const label = email.trim().split('@')[0] || 'JD'
+  return label.slice(0, 2).toUpperCase()
 }
