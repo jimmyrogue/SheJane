@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import { IDBFactory } from 'fake-indexeddb'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -16,7 +17,9 @@ const balance = {
 
 describe('user client shell', () => {
   beforeEach(() => {
-    indexedDB.deleteDatabase('jiandanly-chat')
+    const freshIndexedDB = new IDBFactory()
+    Object.defineProperty(globalThis, 'indexedDB', { value: freshIndexedDB, configurable: true })
+    Object.defineProperty(window, 'indexedDB', { value: freshIndexedDB, configurable: true })
     localStorage.clear()
     window.jiandanDesktop = undefined
   })
@@ -62,7 +65,9 @@ describe('user client shell', () => {
     await screen.findByText('user@example.com')
 
     expect(screen.queryByText('文档阅读')).not.toBeInTheDocument()
-    expect(screen.getByText('附件资料')).toBeInTheDocument()
+    expect(screen.queryByText('附件资料')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
+    expect(await screen.findByText('当前对话附件')).toBeInTheDocument()
     expect(screen.getByLabelText('上传附件')).toBeInTheDocument()
     expect(screen.getByText('roadmap.pdf')).toBeInTheDocument()
   })
@@ -79,6 +84,7 @@ describe('user client shell', () => {
     const file = new File(['hello'], 'brief.docx', {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     })
+    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
     fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
 
     expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
@@ -95,6 +101,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
+    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
     fireEvent.click(screen.getByText('roadmap.pdf'))
     expect(screen.getByText('已附加 roadmap.pdf')).toBeInTheDocument()
 
@@ -132,7 +139,7 @@ describe('user client shell', () => {
 
     await screen.findByText('user@example.com')
     expect((await screen.findAllByText('本地 Harness')).length).toBeGreaterThan(0)
-    fireEvent.change(screen.getByLabelText('本地工作区路径'), { target: { value: '/tmp/jiandanly-workspace' } })
+    await bindWorkspace('/tmp/jiandanly-workspace')
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
       target: { value: '运行本地检查' },
     })
@@ -161,6 +168,11 @@ describe('user client shell', () => {
     expect(createObjectURL).toHaveBeenCalled()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:current-diagnostics')
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toBe(true)
+    expect(calls.some((call) =>
+      call.url === 'http://127.0.0.1:17371/local/v1/runs'
+      && call.init?.method === 'POST'
+      && call.init.body === JSON.stringify({ goal: '运行本地检查', workspace_path: '/tmp/jiandanly-workspace' }),
+    )).toBe(true)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/diagnostics')).toBe(true)
     expect(calls.some((call) =>
       call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell'
@@ -219,7 +231,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.change(screen.getByLabelText('本地工作区路径'), { target: { value: '/tmp/jiandanly-workspace' } })
+    await bindWorkspace('/tmp/jiandanly-workspace')
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
       target: { value: '读取大文件' },
     })
@@ -249,9 +261,12 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.click(await screen.findByText('选择'))
+    fireEvent.click(await readyWorkspaceButton())
+    fireEvent.click(await screen.findByText('选择文件夹'))
 
-    expect(await screen.findByText('已授权：picked-workspace')).toBeInTheDocument()
+    expect(await screen.findByLabelText('当前对话工作区路径')).toHaveValue('/tmp/picked-workspace')
+    fireEvent.click(screen.getByText('授权并绑定'))
+    expect(await screen.findByText('本地项目：picked-workspace')).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
       target: { value: '检查这个项目' },
     })
@@ -268,8 +283,7 @@ describe('user client shell', () => {
     })
   })
 
-  it('shows, diagnoses, and revokes local project references', async () => {
-    localStorage.setItem('jiandanly-local-workspace', '/tmp/project')
+  it('keeps workspace authorization in the composer dialog instead of the sidebar', async () => {
     const calls = mockFetch('user', {
       workspaces: [{ id: 'workspace-1', path: '/tmp/project', label: 'project' }],
     })
@@ -286,24 +300,21 @@ describe('user client shell', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
-    expect(await screen.findByText('本地项目：project')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('诊断 project'))
+    await screen.findByText('user@example.com')
+    expect(screen.queryByText('本地工作区')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('本地工作区路径')).not.toBeInTheDocument()
+    expect(screen.queryByText('授权当前路径')).not.toBeInTheDocument()
+    fireEvent.click(await readyWorkspaceButton())
+    fireEvent.change(await screen.findByLabelText('当前对话工作区路径'), { target: { value: '/tmp/project' } })
+    fireEvent.click(screen.getByText('诊断路径'))
     expect(await screen.findByText('路径已授权：project')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTitle('撤销 project'))
-    expect(await screen.findByText('工作区授权已撤销：project')).toBeInTheDocument()
-    await waitFor(() => expect(screen.queryByText('本地项目：project')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByText('授权并绑定'))
+    expect(await screen.findByText('本地项目：project')).toBeInTheDocument()
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces/diagnose' && call.init?.method === 'POST')).toBe(true)
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces/workspace-1' && call.init?.method === 'DELETE')).toBe(true)
   })
 
-  it('recovers recent local runs and exports diagnostics', async () => {
-    const createObjectURL = vi.fn(() => 'blob:diagnostics')
-    const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
-    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-    const calls = mockFetch('user', {
+  it('hides recent local runs from the sidebar', async () => {
+    mockFetch('user', {
       localRuns: [
         {
           id: 'recover-run',
@@ -328,17 +339,98 @@ describe('user client shell', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
-    expect(await screen.findByText('Resume workspace scan')).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('恢复 Resume workspace scan'))
-    expect(await screen.findByText('恢复后的本地结果')).toBeInTheDocument()
+    await screen.findByText('user@example.com')
+    expect(screen.queryByText('最近本地任务')).not.toBeInTheDocument()
+    expect(screen.queryByText('Resume workspace scan')).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByTitle('导出诊断 Resume workspace scan'))
-    expect(await screen.findByText('诊断已导出：recover-run')).toBeInTheDocument()
-    expect(createObjectURL).toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:diagnostics')
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/recover-run/diagnostics')).toBe(true)
+  it('moves import and export into each conversation more menu', async () => {
+    mockFetch('user')
+    const createObjectURL = vi.fn(() => 'blob:conversation-export')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    expect(screen.queryByText('导出此对话')).not.toBeInTheDocument()
+    expect(screen.queryByText('导入聊天数据')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), { target: { value: '你好' } })
+    fireEvent.click(screen.getByText('发送'))
+
+    fireEvent.click(await screen.findByTitle('更多 你好'))
+    expect(await screen.findByText('导出此对话')).toBeInTheDocument()
+    expect(screen.getByText('导入聊天数据')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('导出此对话'))
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:conversation-export')
+    expect(await screen.findByText('已导出对话：你好')).toBeInTheDocument()
+  })
+
+  it('stores workspace references per conversation', async () => {
+    const calls = mockFetch('user', {
+      workspaces: [{ id: 'workspace-one', path: '/tmp/one', label: 'one' }],
+    })
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    await bindWorkspace('/tmp/one')
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+      target: { value: '第一个任务' },
+    })
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
+    await waitFor(() => expect(screen.queryByText('本地项目：one')).not.toBeInTheDocument())
+    await bindWorkspace('/tmp/two')
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+      target: { value: '第二个任务' },
+    })
+    fireEvent.click(screen.getByText('发送'))
+
+    await waitFor(() => {
+      const bodies = calls
+        .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+        .map((call) => call.init?.body)
+      expect(bodies).toHaveLength(2)
+      expect(bodies).toContain(JSON.stringify({ goal: '第一个任务', workspace_path: '/tmp/one' }))
+      expect(bodies).toContain(JSON.stringify({ goal: '第二个任务', workspace_path: '/tmp/two' }))
+    })
   })
 })
+
+async function readyWorkspaceButton(): Promise<HTMLElement> {
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: '工作区' })).not.toBeDisabled()
+  })
+  return screen.getByRole('button', { name: '工作区' })
+}
+
+async function bindWorkspace(path: string) {
+  const label = path.split('/').filter(Boolean).at(-1) ?? path
+  fireEvent.click(await readyWorkspaceButton())
+  fireEvent.change(await screen.findByLabelText('当前对话工作区路径'), { target: { value: path } })
+  fireEvent.click(screen.getByText('授权并绑定'))
+  expect(await screen.findByText(`本地项目：${label}`)).toBeInTheDocument()
+}
 
 function mockFetch(
   role: 'admin' | 'user',

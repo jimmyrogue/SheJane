@@ -1,4 +1,4 @@
-import { LogOut, WalletCards } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
@@ -16,7 +16,7 @@ import { ConversationSidebar } from './features/chat/components/ConversationSide
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
   clearLocalCloudSession,
@@ -28,7 +28,6 @@ import {
   listAuthorizedWorkspaces,
   listLocalRuns,
   probeLocalHost,
-  revokeLocalWorkspace,
   resolveLocalPermission,
   setLocalCloudSession,
   streamLocalRun,
@@ -39,6 +38,7 @@ import {
   type LocalPermissionScope,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
+  type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
 
@@ -48,8 +48,10 @@ export function App() {
   const api = useMemo(() => new JiandanAPI(), [])
   const localData = useMemo(() => new LocalConversationStore(), [])
   const chat = useMemo(() => createChatStore({ localData, api }), [api, localData])
-  const liveConversationRef = useRef<Conversation | null>(null)
+  const liveConversationRef = useRef<{ conversation: Conversation; navigationVersion: number } | null>(null)
   const liveRenderTimerRef = useRef<number>()
+  const activeIDRef = useRef<string | undefined>()
+  const navigationVersionRef = useRef(0)
 
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -65,7 +67,7 @@ export function App() {
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
-  const [localWorkspacePath, setLocalWorkspacePath] = useState(() => localStorage.getItem('jiandanly-local-workspace') ?? '')
+  const [pendingWorkspace, setPendingWorkspace] = useState<ConversationWorkspace | undefined>()
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
@@ -78,6 +80,10 @@ export function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    activeIDRef.current = activeID
+  }, [activeID])
 
   useEffect(() => {
     void localData.list().then((items) => {
@@ -160,8 +166,15 @@ export function App() {
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
-  const selectedWorkspace = findWorkspaceByPath(authorizedWorkspaces, localWorkspacePath)
-  const localProjectLabel = selectedWorkspace?.label ?? workspaceLabelFromPath(localWorkspacePath)
+  const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
+  const selectedWorkspace = activeWorkspace ? findWorkspaceByPath(authorizedWorkspaces, activeWorkspace.path) : undefined
+  const localProject = activeWorkspace
+    ? {
+        label: selectedWorkspace?.label ?? activeWorkspace.label,
+        path: activeWorkspace.path,
+        authorized: Boolean(selectedWorkspace || activeWorkspace.authorized),
+      }
+    : undefined
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -171,14 +184,30 @@ export function App() {
     setDocuments(items)
   }
 
-  async function refreshConversations(nextActiveID?: string) {
+  async function refreshConversations(nextActiveID?: string, options: { preserveEmptyActive?: boolean } = {}) {
     const items = await localData.list()
     setConversations(items)
-    setActiveID(nextActiveID ?? items[0]?.id)
+    setActiveID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
+  }
+
+  function startNewConversation() {
+    navigationVersionRef.current += 1
+    setActiveID(undefined)
+    setPendingWorkspace(undefined)
+    setDraft('')
+  }
+
+  function selectConversation(id: string) {
+    navigationVersionRef.current += 1
+    setPendingWorkspace(undefined)
+    setActiveID(id)
   }
 
   function scheduleConversationRender(conversation: Conversation) {
-    liveConversationRef.current = cloneConversation(conversation)
+    liveConversationRef.current = {
+      conversation: cloneConversation(conversation),
+      navigationVersion: navigationVersionRef.current,
+    }
     if (liveRenderTimerRef.current !== undefined) {
       return
     }
@@ -189,8 +218,10 @@ export function App() {
       if (!next) {
         return
       }
-      setActiveID(next.id)
-      setConversations((items) => upsertConversation(items, next))
+      if (navigationVersionRef.current === next.navigationVersion || activeIDRef.current === next.conversation.id) {
+        setActiveID(next.conversation.id)
+      }
+      setConversations((items) => upsertConversation(items, next.conversation))
     }, 33)
   }
 
@@ -205,6 +236,7 @@ export function App() {
     }
     setIsSending(true)
     setNotice('')
+    const navigationVersionAtSend = navigationVersionRef.current
     try {
       const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
@@ -223,7 +255,10 @@ export function App() {
             onConversationUpdate: scheduleConversationRender,
           })
       setDraft('')
-      await refreshConversations(conversation.id)
+      const userNavigatedWhileSending = navigationVersionRef.current !== navigationVersionAtSend
+      await refreshConversations(userNavigatedWhileSending ? activeIDRef.current : conversation.id, {
+        preserveEmptyActive: userNavigatedWhileSending && !activeIDRef.current,
+      })
       setBalance(await api.balance())
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '发送失败')
@@ -244,6 +279,9 @@ export function App() {
 
     const timestamp = new Date().toISOString()
     const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp)
+    if (!conversation.workspace && pendingWorkspace) {
+      conversation.workspace = { ...pendingWorkspace }
+    }
     const userMessage: ChatMessage = {
       id: createLocalID('msg'),
       role: 'user',
@@ -270,7 +308,7 @@ export function App() {
       const run = await createLocalRun(
         {
           goal: text,
-          workspacePath: localWorkspacePath.trim() || undefined,
+          workspacePath: conversation.workspace?.path.trim() || undefined,
         },
         localHostConfig,
       )
@@ -448,91 +486,81 @@ export function App() {
     setNotice(`诊断已导出：${runDiagnostics.run.id}`)
   }
 
-  async function chooseWorkspaceDirectory() {
+  async function chooseWorkspaceDirectory(): Promise<string | undefined> {
     const selectedPath = await window.jiandanDesktop?.selectWorkspaceDirectory?.()
     if (!selectedPath) {
-      return
+      return undefined
     }
-    await authorizeWorkspace(selectedPath)
+    return selectedPath
   }
 
-  async function authorizeWorkspace(path = localWorkspacePath) {
+  async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
     if (!localHostConfig?.token) {
-      setNotice('本地 Harness 未配对，无法授权工作区')
-      return
+      throw new Error('本地 Harness 未配对，无法授权工作区')
     }
     const nextPath = path.trim()
     if (!nextPath) {
-      setNotice('请先填写本地工作区路径')
-      return
+      throw new Error('请先填写本地工作区路径')
     }
-    try {
-      const workspace = await authorizeLocalWorkspace(nextPath, localHostConfig)
-      setLocalWorkspacePath(workspace.path)
-      localStorage.setItem('jiandanly-local-workspace', workspace.path)
-      setAuthorizedWorkspaces((items) => upsertWorkspace(items, workspace))
-      setNotice(`工作区已授权：${workspace.label}`)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '工作区授权失败')
-    }
+    const workspace = await authorizeLocalWorkspace(nextPath, localHostConfig)
+    setAuthorizedWorkspaces((items) => upsertWorkspace(items, workspace))
+    await saveActiveConversationWorkspace({
+      path: workspace.path,
+      label: workspace.label,
+      authorized: true,
+      authorizationId: workspace.id,
+    })
+    setNotice(`当前对话已绑定工作区：${workspace.label}`)
+    return workspace
   }
 
-  async function diagnoseWorkspace(path = localWorkspacePath) {
+  async function diagnoseWorkspace(path: string): Promise<LocalWorkspaceDiagnosis> {
     if (!localHostConfig?.token) {
-      setNotice('本地 Harness 未配对，无法诊断工作区')
-      return
+      throw new Error('本地 Harness 未配对，无法诊断工作区')
     }
     const nextPath = path.trim()
     if (!nextPath) {
-      setNotice('请先填写本地工作区路径')
-      return
+      throw new Error('请先填写本地工作区路径')
     }
-    try {
-      const diagnosis = await diagnoseLocalWorkspace(nextPath, localHostConfig)
-      if (diagnosis.authorized) {
-        setNotice(`路径已授权：${diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path)}`)
-        return
-      }
-      if (diagnosis.reason === 'not_found') {
-        setNotice('路径不存在，请重新选择工作区')
-        return
-      }
-      if (diagnosis.reason === 'not_directory') {
-        setNotice('路径不是文件夹，请选择工作区目录')
-        return
-      }
-      setNotice('路径存在，但尚未授权')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '工作区诊断失败')
-    }
+    return diagnoseLocalWorkspace(nextPath, localHostConfig)
   }
 
-  async function revokeWorkspace(workspace: LocalWorkspaceAuthorization) {
-    if (!localHostConfig?.token) {
-      setNotice('本地 Harness 未配对，无法撤销工作区')
+  async function saveActiveConversationWorkspace(workspace: ConversationWorkspace | undefined) {
+    if (!activeID) {
+      setPendingWorkspace(workspace)
       return
     }
-    try {
-      const revoked = await revokeLocalWorkspace(workspace.id, localHostConfig)
-      setAuthorizedWorkspaces((items) => items.filter((item) => item.id !== revoked.id))
-      if (pathInsideWorkspace(revoked.path, localWorkspacePath)) {
-        setLocalWorkspacePath('')
-        localStorage.removeItem('jiandanly-local-workspace')
-      }
-      setNotice(`工作区授权已撤销：${revoked.label}`)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '工作区撤销失败')
+    const timestamp = new Date().toISOString()
+    const conversation = (await localData.get(activeID)) ?? createConversation('新对话', timestamp)
+    if (workspace) {
+      conversation.workspace = workspace
+    } else {
+      delete conversation.workspace
     }
+    conversation.updatedAt = timestamp
+    await localData.save(conversation)
+    setActiveID(conversation.id)
+    setConversations((items) => upsertConversation(items, cloneConversation(conversation)))
   }
 
-  async function exportLocalData() {
-    const payload = await localData.exportAll()
+  async function exportConversationData(conversationID: string) {
+    const conversation = await localData.get(conversationID)
+    if (!conversation) {
+      setNotice('找不到要导出的对话')
+      return
+    }
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      conversations: [conversation],
+    } as const
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
     const link = document.createElement('a')
     link.href = url
-    link.download = `jiandan-conversations-${new Date().toISOString().slice(0, 10)}.json`
+    link.download = `jiandan-conversation-${safeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.json`
     link.click()
     URL.revokeObjectURL(url)
+    setNotice(`已导出对话：${conversation.title}`)
   }
 
   async function importLocalData(file: File | undefined) {
@@ -627,46 +655,17 @@ export function App() {
       <ConversationSidebar
         conversations={conversations}
         activeID={activeID}
-        documents={documents}
-        attachedDocumentID={attachedDocumentID}
-        isUploading={isUploading}
-        localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
-        localWorkspacePath={localWorkspacePath}
-        canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
-        authorizedWorkspaces={authorizedWorkspaces}
-        localRuns={localRuns}
-        onNewConversation={() => setActiveID(undefined)}
-        onSelectConversation={setActiveID}
-        onUploadDocument={(file) => void uploadDocument(file)}
-        onAttachDocument={setAttachedDocumentID}
-        onDeleteDocument={(document) => void deleteDocument(document)}
-        onWorkspacePathChange={(path) => {
-          setLocalWorkspacePath(path)
-          localStorage.setItem('jiandanly-local-workspace', path)
-        }}
-        onPickWorkspace={() => void chooseWorkspaceDirectory()}
-        onAuthorizeWorkspace={() => void authorizeWorkspace()}
-        onDiagnoseWorkspace={(path) => void diagnoseWorkspace(path)}
-        onRevokeWorkspace={(workspace) => void revokeWorkspace(workspace)}
-        onRecoverLocalRun={(run) => void recoverLocalRun(run)}
-        onExportLocalRunDiagnostics={(run) => void exportLocalRunDiagnostics(run)}
-        onExportLocalData={exportLocalData}
+        balance={balance}
+        onNewConversation={startNewConversation}
+        onSelectConversation={selectConversation}
+        onExportConversation={(conversationID) => void exportConversationData(conversationID)}
         onImportLocalData={(file) => void importLocalData(file)}
       />
 
       <TooltipProvider>
       <section className="workspace">
         <header className="topbar">
-          <div className="quota">
-            <WalletCards size={20} />
-            <span>
-              本月额度 <strong>{balance?.monthly_remaining ?? 0}</strong>
-            </span>
-            <span>
-              额外额度 <strong>{balance?.extra_credits_balance ?? 0}</strong>
-            </span>
-            <span className="plan">{balance?.plan_code ?? 'free_trial'}</span>
-          </div>
+          <div />
           <div className="account">
             {localHost ? (
               <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
@@ -699,21 +698,26 @@ export function App() {
           draft={draft}
           onDraftChange={setDraft}
           isSending={isSending}
+          documents={documents}
+          attachedDocumentID={attachedDocumentID}
           attachedDocument={attachedDocument}
+          isUploading={isUploading}
+          localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
+          canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
+          canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
           localProject={
-            !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected && localWorkspacePath.trim()
-              ? {
-                  label: localProjectLabel,
-                  path: localWorkspacePath.trim(),
-                  authorized: Boolean(selectedWorkspace),
-                }
+            !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected
+              ? localProject
               : undefined
           }
+          onUploadDocument={(file) => void uploadDocument(file)}
+          onAttachDocument={setAttachedDocumentID}
+          onDeleteDocument={(document) => void deleteDocument(document)}
           onDetachDocument={() => setAttachedDocumentID(undefined)}
-          onClearLocalProject={() => {
-            setLocalWorkspacePath('')
-            localStorage.removeItem('jiandanly-local-workspace')
-          }}
+          onPickWorkspace={() => chooseWorkspaceDirectory()}
+          onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
+          onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
+          onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
           onSend={() => void sendMessage()}
         />
       </section>
@@ -819,6 +823,7 @@ function upsertConversation(items: Conversation[], conversation: Conversation): 
 function cloneConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
+    workspace: conversation.workspace ? { ...conversation.workspace } : undefined,
     messages: conversation.messages.map((message) => ({
       ...message,
       agentEvents: message.agentEvents ? [...message.agentEvents] : undefined,
@@ -829,14 +834,6 @@ function cloneConversation(conversation: Conversation): Conversation {
 function findWorkspaceByPath(items: LocalWorkspaceAuthorization[], path: string): LocalWorkspaceAuthorization | undefined {
   const normalized = path.trim()
   return normalized ? items.find((item) => pathInsideWorkspace(item.path, normalized)) : undefined
-}
-
-function workspaceLabelFromPath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed) {
-    return ''
-  }
-  return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed
 }
 
 function pathInsideWorkspace(root: string, target: string): boolean {
@@ -850,6 +847,10 @@ function pathInsideWorkspace(root: string, target: string): boolean {
 
 function trimPath(path: string): string {
   return path.trim().replace(/[\\/]+$/u, '')
+}
+
+function safeFilename(value: string): string {
+  return value.trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 48) || 'conversation'
 }
 
 function createConversation(firstMessage: string, timestamp: string): Conversation {

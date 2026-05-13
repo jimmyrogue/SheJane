@@ -11,6 +11,7 @@ export interface RecordedRequest {
 
 export interface MockState {
   requests: RecordedRequest[]
+  localWorkspaces: Array<{ id: string; path: string; label: string }>
 }
 
 const balance = {
@@ -25,7 +26,7 @@ const balance = {
 }
 
 export async function installClientMocks(page: Page, options: { localHost?: boolean; recentRun?: boolean } = {}): Promise<MockState> {
-  const state: MockState = { requests: [] }
+  const state: MockState = { requests: [], localWorkspaces: [] }
 
   if (options.localHost) {
     await page.addInitScript({
@@ -293,8 +294,33 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
     await rawJSON(route, { connected: false })
     return
   }
+  if (url.endsWith('/local/v1/workspaces/diagnose')) {
+    const body = safeJSON(request.postData() ?? '{}') as { path?: string }
+    const workspace = state.localWorkspaces.find((item) => item.path === body.path)
+    await rawJSON(route, {
+      path: body.path,
+      exists: true,
+      is_directory: true,
+      authorized: Boolean(workspace),
+      reason: workspace ? 'authorized' : 'not_authorized',
+      workspace,
+    })
+    return
+  }
+  if (url.endsWith('/local/v1/workspaces') && request.method() === 'POST') {
+    const body = safeJSON(request.postData() ?? '{}') as { path?: string }
+    const path = body.path ?? ''
+    const workspace = {
+      id: `workspace-${state.localWorkspaces.length + 1}`,
+      path,
+      label: path.split('/').filter(Boolean).at(-1) ?? path,
+    }
+    state.localWorkspaces = [workspace, ...state.localWorkspaces.filter((item) => item.path !== path)]
+    await rawJSON(route, { ...workspace, created_at: '2026-05-11T00:00:00Z', last_used_at: '2026-05-11T00:00:00Z' }, 201)
+    return
+  }
   if (url.endsWith('/local/v1/workspaces')) {
-    await rawJSON(route, { workspaces: [] })
+    await rawJSON(route, { workspaces: state.localWorkspaces })
     return
   }
   if (url.endsWith('/local/v1/runs') && request.method() === 'POST') {

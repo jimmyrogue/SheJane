@@ -31,12 +31,20 @@ export interface ChatMessage {
   agentEvents?: AgentTimelineItem[]
 }
 
+export interface ConversationWorkspace {
+  path: string
+  label: string
+  authorized: boolean
+  authorizationId?: string
+}
+
 export interface Conversation {
   id: string
   title: string
   archived: boolean
   createdAt: string
   updatedAt: string
+  workspace?: ConversationWorkspace
   messages: ChatMessage[]
 }
 

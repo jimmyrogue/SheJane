@@ -53,28 +53,30 @@ export function MessageBubble({
   const content = message.content || waitingText
 
   return (
-    <article className={cn('message group rounded-lg border bg-card/80 p-4 shadow-sm', message.role)}>
-      <div className="mb-3 flex items-center gap-2">
-        <Avatar className="size-7 rounded-md">
-          <AvatarFallback className="rounded-md text-xs">{message.role === 'user' ? '我' : '简'}</AvatarFallback>
-        </Avatar>
-        <span className="text-sm font-medium">{message.role === 'user' ? '我' : '简单'}</span>
-        {message.status === 'streaming' ? <Badge variant="secondary">streaming</Badge> : null}
-        {message.runOrigin ? <Badge variant="outline">{message.runOrigin === 'local' ? 'Local Harness' : 'Cloud Run'}</Badge> : null}
-      </div>
-      <div className="message-content text-[15px] leading-7">
-        {isAssistant && message.status === 'streaming' ? (
-          <p className="streaming-text whitespace-pre-wrap break-words">
-            {stream.segments.map((segment) => (
-              <span className="stream-segment" key={segment.id}>
-                {segment.text}
-              </span>
-            ))}
-            {!stream.text && waitingText ? waitingText : null}
-          </p>
-        ) : (
-          <MarkdownContent content={content} />
-        )}
+    <article className={cn('message', message.role)}>
+      <div className="message-bubble-inner">
+        <div className="mb-3 flex items-center gap-2">
+          <Avatar className="size-7 rounded-md">
+            <AvatarFallback className="rounded-md text-xs">{message.role === 'user' ? '我' : '简'}</AvatarFallback>
+          </Avatar>
+          <span className="text-sm font-medium">{message.role === 'user' ? '我' : '简单'}</span>
+          {message.status === 'streaming' ? <Badge variant="secondary">streaming</Badge> : null}
+          {message.runOrigin ? <Badge variant="outline">{message.runOrigin === 'local' ? 'Local Harness' : 'Cloud Run'}</Badge> : null}
+        </div>
+        <div className="message-content">
+          {isAssistant && message.status === 'streaming' ? (
+            <p className="streaming-text whitespace-pre-wrap break-words">
+              {stream.segments.map((segment) => (
+                <span className="stream-segment" key={segment.id}>
+                  {segment.text}
+                </span>
+              ))}
+              {!stream.text && waitingText ? waitingText : null}
+            </p>
+          ) : (
+            <MarkdownContent content={content} />
+          )}
+        </div>
       </div>
       {children}
     </article>

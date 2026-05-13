@@ -31,6 +31,7 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '创建账号' }).click()
     await expect(page.getByText('user@example.com')).toBeVisible()
 
+    await page.getByRole('button', { name: /附件/ }).click()
     await page.getByText('roadmap.pdf').click()
     await expect(page.getByText('已附加 roadmap.pdf')).toBeVisible()
     await page.getByPlaceholder('描述你的问题、任务，或让简单阅读附件').fill('这份文档的结论是什么？')
@@ -51,6 +52,7 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '创建账号' }).click()
     await expect(page.getByText('user@example.com')).toBeVisible()
 
+    await page.getByRole('button', { name: /附件/ }).click()
     await page.getByLabel('上传附件').setInputFiles({
       name: 'brief.docx',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -72,7 +74,10 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '创建账号' }).click()
 
     await expect(page.getByText('本地 Harness').first()).toBeVisible()
-    await page.getByLabel('本地工作区路径').fill('/tmp/jiandanly-workspace')
+    await page.getByRole('button', { name: '工作区' }).click()
+    await page.getByLabel('当前对话工作区路径').fill('/tmp/jiandanly-workspace')
+    await page.getByRole('button', { name: '授权并绑定' }).click()
+    await expect(page.getByText('本地项目：jiandanly-workspace')).toBeVisible()
     await page.getByPlaceholder('描述你的问题、任务，或让简单阅读附件').fill('运行本地检查')
     await page.getByRole('button', { name: '发送' }).click()
 
@@ -104,7 +109,7 @@ test.describe('client simulated user flows', () => {
     expect(requestWasMade(state, '/api/v1/agent/runs')).toBe(false)
   })
 
-  test('recovers recent local runs and downloads redacted diagnostics', async ({ page }) => {
+  test('hides recent local runs from the primary UI', async ({ page }) => {
     const state = await installClientMocks(page, { localHost: true, recentRun: true })
 
     await page.goto(clientURL)
@@ -112,15 +117,9 @@ test.describe('client simulated user flows', () => {
     await page.getByLabel('密码').fill('secret123')
     await page.getByRole('button', { name: '创建账号' }).click()
 
-    await expect(page.getByText('Resume workspace scan')).toBeVisible()
-    await page.getByTitle('恢复 Resume workspace scan').click()
-    await expect(page.getByText('恢复后的本地结果')).toBeVisible()
-
-    const downloadPromise = page.waitForEvent('download')
-    await page.getByTitle('导出诊断 Resume workspace scan').click()
-    const download = await downloadPromise
-    expect(download.suggestedFilename()).toBe('jiandanly-local-run-recover-run-diagnostics.json')
-    await expect(page.getByText('诊断已导出：recover-run')).toBeVisible()
-    expect(requestWasMade(state, '/local/v1/runs/recover-run/diagnostics')).toBe(true)
+    await expect(page.getByText('Resume workspace scan')).toHaveCount(0)
+    await expect(page.getByText('最近本地任务')).toHaveCount(0)
+    expect(requestWasMade(state, '/local/v1/runs')).toBe(true)
+    expect(requestWasMade(state, '/local/v1/runs/recover-run/diagnostics')).toBe(false)
   })
 })

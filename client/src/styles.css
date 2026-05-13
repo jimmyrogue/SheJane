@@ -7,7 +7,7 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(0.985 0 0);
+  --background: oklch(0.992 0.002 85);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
@@ -30,7 +30,7 @@
   --chart-3: oklch(0.52 0 0);
   --chart-4: oklch(0.66 0 0);
   --chart-5: oklch(0.78 0 0);
-  --radius: 0.5rem;
+  --radius: 0.625rem;
   --sidebar: oklch(0.965 0 0);
   --sidebar-foreground: oklch(0.16 0 0);
   --sidebar-primary: oklch(0.145 0 0);
@@ -39,9 +39,17 @@
   --sidebar-accent-foreground: oklch(0.18 0 0);
   --sidebar-border: oklch(0.84 0 0);
   --sidebar-ring: oklch(0.42 0 0);
+  --user-bubble: oklch(0.955 0.004 255);
+  --user-bubble-border: oklch(0.88 0.006 255);
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.06), 0 1px 2px oklch(0 0 0 / 0.04);
+  --shadow-md: 0 4px 12px oklch(0 0 0 / 0.07), 0 1px 3px oklch(0 0 0 / 0.04);
   color: var(--foreground);
   background: var(--background);
   font-family: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -97,6 +105,13 @@ body {
   background: var(--background);
 }
 
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
 button,
 input,
 textarea,
@@ -119,20 +134,26 @@ a {
 .app-shell {
   display: grid;
   grid-template-columns: minmax(248px, 292px) minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--background);
 }
 
 .sidebar {
   display: flex;
   min-width: 0;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  position: sticky;
+  top: 0;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px;
   border-right: 1px solid var(--border);
   background: var(--sidebar);
   color: var(--sidebar-foreground);
-  padding: 18px;
+  padding: 16px 12px;
+  overflow-y: auto;
 }
 
 .brand {
@@ -140,18 +161,22 @@ a {
   min-width: 0;
   align-items: center;
   gap: 10px;
+  padding: 4px 6px 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--sidebar-border);
 }
 
 .brand-mark {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--foreground);
   color: var(--background);
+  font-size: 18px;
   font-weight: 800;
 }
 
@@ -188,9 +213,19 @@ a {
   flex: 1;
   flex-direction: column;
   gap: 4px;
+  min-height: 80px;
+}
+
+.conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
 }
 
 .conversation,
+.conversation-more,
 .local-actions button,
 .account button,
 .icon-button {
@@ -200,7 +235,16 @@ a {
 .conversation {
   width: 100%;
   justify-content: flex-start;
+  border-radius: 8px;
+  padding: 0 8px;
+  font-size: 13.5px;
   color: var(--muted-foreground);
+  opacity: 0.85;
+  transition: background 120ms, opacity 120ms;
+}
+
+.conversation:hover {
+  opacity: 1;
 }
 
 .conversation span {
@@ -211,8 +255,33 @@ a {
 }
 
 .conversation.active {
-  background: var(--accent);
-  color: var(--foreground);
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  opacity: 1;
+  font-weight: 500;
+}
+
+.conversation-row.active {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  opacity: 1;
+  font-weight: 500;
+}
+
+.conversation-row.active .conversation {
+  color: var(--sidebar-accent-foreground);
+  opacity: 1;
+  font-weight: 500;
+}
+
+.conversation-more {
+  width: 30px;
+  opacity: 0.62;
+}
+
+.conversation-row:hover .conversation-more,
+.conversation-more:focus-visible {
+  opacity: 1;
 }
 
 .sidebar-section {
@@ -226,18 +295,28 @@ a {
   justify-content: space-between;
   gap: 10px;
   color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 720;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 8px;
+  margin-top: 10px;
+  margin-bottom: 2px;
 }
 
 .section-heading small {
-  font-weight: 650;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .local-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .local-actions button {
@@ -245,11 +324,30 @@ a {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--sidebar-border);
   border-radius: 8px;
-  background: var(--card);
-  color: var(--foreground);
-  font-weight: 650;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.local-actions button:hover {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.sidebar-quota {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.sidebar-quota strong {
+  color: var(--sidebar-foreground);
 }
 
 .document-upload,
@@ -282,11 +380,19 @@ a {
   opacity: 0;
 }
 
+.document-upload-dialog {
+  width: 100%;
+}
+
 .document-list {
   display: flex;
   max-height: 210px;
   flex-direction: column;
   gap: 6px;
+}
+
+.document-list-dialog {
+  max-height: min(320px, 45dvh);
 }
 
 .document-list-item {
@@ -449,22 +555,24 @@ select {
 .workspace {
   display: grid;
   min-width: 0;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
-  background: oklch(0.975 0 0);
+  overflow: hidden;
+  background: var(--background);
 }
 
 .topbar {
   display: flex;
   min-width: 0;
-  min-height: 64px;
+  min-height: 52px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in oklab, var(--background) 88%, transparent);
+  background: color-mix(in oklab, var(--background) 92%, transparent);
   padding: 0 clamp(16px, 3vw, 28px);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
 }
 
 .quota,
@@ -506,7 +614,9 @@ select {
   border-radius: 8px;
   background: var(--card);
   color: var(--foreground);
-  padding: 0 11px;
+  padding: 0 10px;
+  min-height: 32px;
+  font-size: 13px;
 }
 
 .icon-button {
@@ -533,28 +643,45 @@ select {
   height: 100%;
   max-width: 900px;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
   margin: 0 auto;
   overflow: auto;
-  padding: 0 4px 8px 0;
+  padding: 0 4px 24px 0;
 }
 
 .message {
   display: block;
 }
 
-.message > div:first-child {
-  min-width: 0;
-}
-
-.message > div:first-child > span {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-weight: 720;
-}
-
+/* User message — right-aligned bubble */
 .message.user {
-  background: var(--muted);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.message.user .message-bubble-inner {
+  max-width: 74%;
+  background: var(--user-bubble);
+  border: 1px solid var(--user-bubble-border);
+  border-radius: 20px 20px 5px 20px;
+  padding: 12px 16px 11px;
+  box-shadow: var(--shadow-xs);
+  margin-left: auto;
+}
+
+/* Hide avatar/label header for user messages */
+.message.user .mb-3 {
+  display: none;
+}
+
+/* Assistant message — left-aligned, no decoration */
+.message.assistant .message-bubble-inner {
+  padding: 2px 0;
+}
+
+.message .message-content {
+  font-size: 15px;
+  line-height: 1.78;
 }
 
 .message .message-content p,
@@ -563,7 +690,7 @@ select {
 .message .message-content pre {
   margin: 0;
   color: var(--foreground);
-  line-height: 1.72;
+  line-height: 1.78;
   white-space: pre-wrap;
 }
 
@@ -571,12 +698,32 @@ select {
 .message .message-content ul + p,
 .message .message-content ol + p,
 .message .message-content pre + p {
-  margin-top: 0.75rem;
+  margin-top: 0.9rem;
 }
 
 .agent-progress {
   border: 1px solid var(--border);
+  border-radius: 12px;
   background: color-mix(in oklab, var(--card) 88%, var(--muted));
+  box-shadow: var(--shadow-xs);
+}
+
+.agent-progress-working {
+  border-left: 3px solid oklch(0.6 0.15 255);
+  background: color-mix(in oklab, var(--card) 95%, oklch(0.6 0.15 255));
+}
+
+.agent-progress-done {
+  border-left: 3px solid oklch(0.55 0.12 155);
+}
+
+.agent-progress-failed {
+  border-left: 3px solid oklch(0.55 0.12 25);
+}
+
+.agent-progress-permission {
+  border-left: 3px solid oklch(0.65 0.12 75);
+  background: color-mix(in oklab, var(--card) 94%, oklch(0.65 0.12 75));
 }
 
 .agent-progress-content {
@@ -748,18 +895,36 @@ select {
 }
 
 .composer {
-  display: grid;
+  margin: 0 clamp(14px, 3vw, 28px) 20px;
+  align-self: end;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+  padding: 0;
+}
+
+.composer-chips {
+  padding: 12px 14px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 10px;
   gap: 10px;
-  border-top: 1px solid var(--border);
-  background: var(--background);
-  padding: 16px clamp(14px, 3vw, 28px) 20px;
 }
 
 .composer-controls {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -818,10 +983,19 @@ select {
   padding: 10px 12px;
 }
 
-.document-status.failed,
-.auth-error {
+.document-status.failed {
   color: var(--foreground);
   font-weight: 720;
+}
+
+.auth-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: oklch(0.96 0.02 25);
+  border: 1px solid oklch(0.88 0.04 25);
+  color: oklch(0.4 0.1 25);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .segmented,
@@ -845,9 +1019,57 @@ select {
 }
 
 .composer-input {
+  display: block;
+}
+
+.workspace-dialog-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px;
   gap: 10px;
+}
+
+.attachment-dialog-body,
+.conversation-action-list {
+  display: grid;
+  gap: 10px;
+}
+
+.empty-inline {
+  margin: 0;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  padding: 18px;
+  text-align: center;
+}
+
+.workspace-dialog-note {
+  display: block;
+  min-height: 18px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.button-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.composer textarea {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 14px 14px 4px;
+  min-height: 80px;
+  resize: none;
+  box-shadow: none;
+  width: 100%;
 }
 
 textarea {
@@ -855,6 +1077,13 @@ textarea {
   min-height: 86px;
   resize: vertical;
   padding: 13px;
+}
+
+.send-button {
+  border-radius: 10px !important;
+  padding: 0 16px !important;
+  min-height: 36px !important;
+  font-weight: 600 !important;
 }
 
 .send-button:disabled {
@@ -871,10 +1100,11 @@ textarea {
 }
 
 .auth-panel {
-  width: min(420px, 100%);
+  width: min(400px, 100%);
   border: 1px solid var(--border);
+  border-radius: 16px;
   background: var(--card);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 8%);
+  box-shadow: var(--shadow-md);
 }
 
 .auth-brand small {
@@ -942,11 +1172,14 @@ label {
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
+    height: auto;
     min-height: auto;
-    max-height: 42vh;
+    max-height: 32dvh;
+    position: relative;
     border-right: 0;
     border-bottom: 1px solid var(--border);
     overflow: auto;
@@ -966,11 +1199,12 @@ label {
   }
 
   .workspace {
-    min-height: 58vh;
+    height: auto;
+    min-height: 0;
   }
 
   .chat-surface {
-    min-height: min(62vh, 680px);
+    min-height: 0;
   }
 
   .topbar,
@@ -982,8 +1216,8 @@ label {
   }
 
   .composer {
-    position: sticky;
     bottom: 0;
+    margin: 0 10px 10px;
   }
 
   .composer-input {
