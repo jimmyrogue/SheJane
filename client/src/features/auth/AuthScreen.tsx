@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import type { AuthPayload, JiandanAPI } from '@/shared/api/client'
+import type { AuthClient } from '@/shared/api/authClient'
+import type { AuthPayload } from '@/shared/api/client'
 
-export function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payload: AuthPayload) => Promise<void> }) {
+export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; onAuthed: (payload: AuthPayload) => Promise<void> }) {
   const [mode, setMode] = useState<'login' | 'register'>('register')
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
@@ -20,8 +21,8 @@ export function AuthScreen({ api, onAuthed }: { api: JiandanAPI; onAuthed: (payl
     try {
       const payload =
         mode === 'register'
-          ? await api.register({ email, password, name: name || email.split('@')[0] })
-          : await api.login({ email, password })
+          ? await authClient.register({ email, password, name: name || email.split('@')[0] })
+          : await authClient.login({ email, password })
       await onAuthed(payload)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '登录失败')

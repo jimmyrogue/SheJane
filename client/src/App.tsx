@@ -8,6 +8,7 @@ import {
   type UserDocument,
   type WalletBalance,
 } from './shared/api/client'
+import { createAuthClient } from './shared/api/authClient'
 import { createChatStore, timelineItem } from './features/chat/chatStore'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
@@ -46,6 +47,7 @@ const documentMaxBytes = 30 * 1024 * 1024
 
 export function App() {
   const api = useMemo(() => new JiandanAPI(), [])
+  const authClient = useMemo(() => createAuthClient(api), [api])
   const localData = useMemo(() => new LocalConversationStore(), [])
   const chat = useMemo(() => createChatStore({ localData, api }), [api, localData])
   const liveConversationRef = useRef<{ conversation: Conversation; navigationVersion: number } | null>(null)
@@ -93,7 +95,7 @@ export function App() {
   }, [localData])
 
   useEffect(() => {
-    api
+    authClient
       .refresh()
       .then((payload) => {
         api.setAccessToken(payload.access_token)
@@ -105,7 +107,7 @@ export function App() {
         setDocuments(items)
       })
       .catch(() => undefined)
-  }, [api])
+  }, [api, authClient])
 
   useEffect(() => {
     const config = getDesktopLocalHostConfig()
@@ -627,7 +629,7 @@ export function App() {
   }
 
   if (!auth) {
-    return <AuthScreen onAuthed={handleAuth} api={api} />
+    return <AuthScreen onAuthed={handleAuth} authClient={authClient} />
   }
 
   const shellClassName = window.jiandanDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'

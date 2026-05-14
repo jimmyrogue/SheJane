@@ -54,6 +54,55 @@ describe('user client shell', () => {
     expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
   })
 
+  it('restores an Electron login session through the desktop auth bridge on startup', async () => {
+    const calls = mockFetch('user')
+    const refresh = vi.fn().mockResolvedValue({
+      access_token: 'electron-token',
+      user: {
+        id: 'electron-1',
+        email: 'electron@example.com',
+        name: 'Electron',
+        role: 'user',
+        status: 'active',
+      },
+    })
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      auth: {
+        register: vi.fn(),
+        login: vi.fn(),
+        refresh,
+        logout: vi.fn(),
+      },
+    }
+
+    render(<App />)
+
+    await screen.findByText('electron@example.com')
+    expect(refresh).toHaveBeenCalled()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
+  })
+
+  it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
+    const calls = mockFetch('user')
+    const refresh = vi.fn().mockRejectedValue(new Error('expired'))
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      auth: {
+        register: vi.fn(),
+        login: vi.fn(),
+        refresh,
+        logout: vi.fn(),
+      },
+    }
+
+    render(<App />)
+
+    expect(await screen.findByText('创建账号')).toBeInTheDocument()
+    expect(refresh).toHaveBeenCalled()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
+  })
+
   it('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
     mockFetch('user')
 

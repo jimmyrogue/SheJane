@@ -1,5 +1,6 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron')
 const path = require('node:path')
+const { createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 
@@ -37,7 +38,27 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow)
+function apiBaseURL() {
+  return process.env.JIANDANLY_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080'
+}
+
+function registerAuthHandlers() {
+  const auth = createElectronAuthHandlers({
+    apiBaseURL: apiBaseURL(),
+    cookies: session.defaultSession.cookies,
+    fetchImpl: globalThis.fetch,
+  })
+
+  ipcMain.handle('jiandanly:auth-register', (_event, input) => auth.register(input))
+  ipcMain.handle('jiandanly:auth-login', (_event, input) => auth.login(input))
+  ipcMain.handle('jiandanly:auth-refresh', () => auth.refresh())
+  ipcMain.handle('jiandanly:auth-logout', () => auth.logout())
+}
+
+app.whenReady().then(() => {
+  registerAuthHandlers()
+  createWindow()
+})
 
 ipcMain.handle('jiandanly:select-workspace-directory', async () => {
   const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
