@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 
@@ -14,9 +15,10 @@ export function MessageBubble({
   message: ChatMessage
   children?: React.ReactNode
 }) {
+  const { locale, t } = useI18n()
   const previousMessageIDRef = useRef(message.id)
   const previousContentRef = useRef('')
-  const stream = useSmoothTextStream({ locale: 'zh', segmentsPerTick: 3, tickMs: 22 })
+  const stream = useSmoothTextStream({ locale, segmentsPerTick: 3, tickMs: 22 })
   const isAssistant = message.role === 'assistant'
 
   useEffect(() => {
@@ -49,18 +51,18 @@ export function MessageBubble({
     }
   }, [isAssistant, message.content, message.id, message.status, stream])
 
-  const waitingText = message.status === 'waiting_permission' ? '等待你批准本地工具调用。' : ''
+  const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
   const content = message.content || waitingText
 
   return (
     <article className={cn('message', message.role)}>
       <div className={isAssistant ? 'avatar-bot' : 'avatar'}>
-        {isAssistant ? <IconSparkles size={14} /> : '我'}
+        {isAssistant ? <IconSparkles size={14} /> : t('message.me')}
       </div>
       <div className="message-bubble-inner">
         <div className="message-meta">
-          <span>{message.role === 'user' ? '我' : '简单'}</span>
-          {message.status === 'streaming' ? <Badge variant="secondary">处理中</Badge> : null}
+          <span>{message.role === 'user' ? t('message.me') : t('message.assistant')}</span>
+          {message.status === 'streaming' ? <Badge variant="secondary">{t('message.processing')}</Badge> : null}
         </div>
         <div className="message-content">
           {isAssistant && message.status === 'streaming' ? (

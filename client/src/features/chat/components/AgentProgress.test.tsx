@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentProgress, deriveAgentProgress } from './AgentProgress'
+import { I18nProvider } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 
 function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -31,7 +33,7 @@ describe('AgentProgress', () => {
       ],
     })
 
-    render(
+    renderAgentProgress(
       <AgentProgress
         message={current}
         onOpenArtifact={vi.fn()}
@@ -62,7 +64,7 @@ describe('AgentProgress', () => {
       ],
     })
 
-    render(
+    renderAgentProgress(
       <AgentProgress
         message={current}
         onOpenArtifact={onOpenArtifact}
@@ -102,3 +104,7 @@ describe('AgentProgress', () => {
     ).toMatchObject({ tone: 'working', label: '正在阅读网页正文' })
   })
 })
+
+function renderAgentProgress(node: ReactElement) {
+  return render(<I18nProvider>{node}</I18nProvider>)
+}

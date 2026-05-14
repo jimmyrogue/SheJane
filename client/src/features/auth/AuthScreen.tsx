@@ -21,17 +21,19 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { AuthClient } from '@/shared/api/authClient'
 import type { AuthPayload } from '@/shared/api/client'
+import { LocaleSwitcher, useI18n, type TranslationKey } from '@/shared/i18n/i18n'
 
 type AuthMode = 'login' | 'register'
 
 const passwordChecks = [
-  { key: 'length', label: '12+ characters' },
-  { key: 'number', label: 'Number' },
-  { key: 'mixedCase', label: 'Mixed case' },
-  { key: 'symbol', label: 'Symbol' },
+  { key: 'length', labelKey: 'auth.password.check.length' },
+  { key: 'number', labelKey: 'auth.password.check.number' },
+  { key: 'mixedCase', labelKey: 'auth.password.check.mixedCase' },
+  { key: 'symbol', labelKey: 'auth.password.check.symbol' },
 ] as const
 
 export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; onAuthed: (payload: AuthPayload) => Promise<void> }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState<AuthMode>('register')
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
@@ -49,7 +51,7 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
   async function submit() {
     setError('')
     if (isRegistering && !acceptedTerms) {
-      setError('Please accept the terms before creating an account.')
+      setError(t('auth.error.acceptTerms'))
       return
     }
     setIsSubmitting(true)
@@ -59,51 +61,51 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
         : await authClient.login({ email, password })
       await onAuthed(payload)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Authentication failed')
+      setError(caught instanceof Error ? caught.message : t('auth.error.failed'))
     } finally {
       setIsSubmitting(false)
     }
   }
 
   function showUnavailable(feature: string) {
-    setError(`${feature} is not available yet.`)
+    setError(t('auth.error.unavailable', { feature }))
   }
 
   return (
     <main className={pageClassName}>
       <Card className="auth-panel">
-        <div className="auth-titlebar" aria-hidden="true">
-          <div className="traffic-lights">
+        <div className="auth-titlebar">
+          <div className="traffic-lights" aria-hidden="true">
             <span className="tl-red" />
             <span className="tl-amber" />
             <span className="tl-green" />
           </div>
           <div className="auth-titlebar-title">Jiandanly</div>
+          <LocaleSwitcher className="auth-language-switch" />
         </div>
 
         <div className={isRegistering ? 'auth-layout register' : 'auth-layout login'}>
           <BrandPanel mode={mode} />
 
-          <section className="auth-form-panel" aria-label={isRegistering ? 'Create your account' : 'Sign in'}>
+          <section className="auth-form-panel" aria-label={isRegistering ? t('auth.panelLabel.register') : t('auth.panelLabel.login')}>
             <div className="auth-mode-link">
-              <span>{isRegistering ? 'Already have an account?' : 'New to Jiandanly?'}</span>
+              <span>{isRegistering ? t('auth.mode.hasAccount') : t('auth.mode.noAccount')}</span>
               <button type="button" onClick={() => setMode(isRegistering ? 'login' : 'register')}>
-                {isRegistering ? 'Sign in' : 'Create account'}
-                <span className="sr-only">{isRegistering ? '登录' : '注册'}</span>
+                {isRegistering ? t('auth.mode.signIn') : t('auth.mode.create')}
               </button>
             </div>
 
             <div className="auth-form-wrap">
               <div className="auth-form-heading">
-                <h1>{isRegistering ? 'Create your account' : 'Welcome back'}</h1>
-                <p>{isRegistering ? 'Free forever. Upgrade when you outgrow it.' : 'Sign in to continue your work.'}</p>
+                <h1>{isRegistering ? t('auth.heading.register') : t('auth.heading.login')}</h1>
+                <p>{isRegistering ? t('auth.subheading.register') : t('auth.subheading.login')}</p>
               </div>
 
               <SSOButtons compact={isRegistering} onSelect={showUnavailable} />
 
               <div className="auth-divider" aria-hidden="true">
                 <span />
-                <small>or with email</small>
+                <small>{t('auth.divider')}</small>
                 <span />
               </div>
 
@@ -115,42 +117,42 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
                 }}
               >
                 {isRegistering ? (
-                  <AuthField id="auth-name" label="Name" icon={<IconUser size={14} />}>
+                  <AuthField id="auth-name" label={t('auth.name.label')} icon={<IconUser size={14} />}>
                     <Input
                       id="auth-name"
-                      aria-label="名称"
+                      aria-label={t('auth.name.label')}
                       autoComplete="name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      placeholder="Leon Zhang"
+                      placeholder={t('auth.name.placeholder')}
                     />
                   </AuthField>
                 ) : null}
 
                 <AuthField
                   id="auth-email"
-                  label="Email"
+                  label={t('auth.email.label')}
                   icon={<IconMail size={14} />}
                   success={Boolean(email) && emailLooksValid}
                 >
                   <Input
                     id="auth-email"
-                    aria-label="邮箱"
+                    aria-label={t('auth.email.label')}
                     autoComplete="email"
                     inputMode="email"
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@example.com"
+                    placeholder={t('auth.email.placeholder')}
                   />
                 </AuthField>
 
                 <AuthField
                   id="auth-password"
-                  label="Password"
+                  label={t('auth.password.label')}
                   action={
                     isRegistering ? undefined : (
-                      <button type="button" onClick={() => showUnavailable('Password reset')}>
-                        Forgot?
+                      <button type="button" onClick={() => showUnavailable(t('auth.password.forgot'))}>
+                        {t('auth.password.forgot')}
                       </button>
                     )
                   }
@@ -159,7 +161,7 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
                     <button
                       className="auth-input-action"
                       type="button"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      aria-label={showPassword ? t('auth.password.hide') : t('auth.password.show')}
                       onClick={() => setShowPassword((current) => !current)}
                     >
                       {showPassword ? <IconEyeOff size={14} /> : <IconEye size={14} />}
@@ -168,12 +170,12 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
                 >
                   <Input
                     id="auth-password"
-                    aria-label="密码"
+                    aria-label={t('auth.password.label')}
                     autoComplete={isRegistering ? 'new-password' : 'current-password'}
                     value={password}
                     type={showPassword ? 'text' : 'password'}
                     onChange={(event) => setPassword(event.target.value)}
-                    placeholder={isRegistering ? 'At least 8 characters' : 'Enter your password'}
+                    placeholder={isRegistering ? t('auth.password.placeholder.register') : t('auth.password.placeholder.login')}
                   />
                 </AuthField>
 
@@ -197,10 +199,14 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
                   <span>
                     {isRegistering ? (
                       <>
-                        I agree to the <a href="#terms">Terms of Service</a> and <a href="#privacy">Privacy Policy</a>.
+                        {t('auth.terms.prefix')}
+                        <a href="#terms">{t('auth.termsLink')}</a>
+                        {t('auth.terms.middle')}
+                        <a href="#privacy">{t('auth.privacyLink')}</a>
+                        {t('auth.terms.suffix')}
                       </>
                     ) : (
-                      'Keep me signed in on this device'
+                      t('auth.rememberDevice')
                     )}
                   </span>
                 </div>
@@ -212,9 +218,10 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
                 ) : null}
 
                 <Button className="auth-submit" type="submit" disabled={isSubmitting} aria-busy={isSubmitting}>
-                  {isSubmitting ? (isRegistering ? 'Creating...' : 'Signing in...') : (isRegistering ? 'Create account' : 'Sign in')}
+                  {isSubmitting
+                    ? (isRegistering ? t('auth.submit.creating') : t('auth.submit.signingIn'))
+                    : (isRegistering ? t('auth.submit.create') : t('auth.submit.login'))}
                   <IconArrowRight size={14} />
-                  <span className="sr-only">{isRegistering ? '创建账号' : '登录'}</span>
                 </Button>
               </form>
             </div>
@@ -228,6 +235,7 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
 }
 
 function BrandPanel({ mode }: { mode: AuthMode }) {
+  const { t } = useI18n()
   const isRegistering = mode === 'register'
 
   return (
@@ -240,11 +248,9 @@ function BrandPanel({ mode }: { mode: AuthMode }) {
       </div>
 
       <div className="auth-brand-story">
-        <h2>{isRegistering ? <>Get started in<br />under a minute.</> : <>Your AI agent,<br />now on your desktop.</>}</h2>
+        <h2>{renderMultiline(isRegistering ? t('auth.brand.registerTitle') : t('auth.brand.loginTitle'))}</h2>
         <p>
-          {isRegistering
-            ? 'Free for personal use. No credit card required. Upgrade when the workflow outgrows the basics.'
-            : 'Run multi-step tasks across your tools, code and files with full control over every action.'}
+          {isRegistering ? t('auth.brand.registerBody') : t('auth.brand.loginBody')}
         </p>
         {isRegistering ? <SignupSteps /> : <LoginFeatures />}
       </div>
@@ -255,11 +261,13 @@ function BrandPanel({ mode }: { mode: AuthMode }) {
 }
 
 function LoginFeatures() {
+  const { t } = useI18n()
+
   return (
     <div className="auth-feature-list">
-      <FeatureItem icon={<IconTools size={12} />} tone="success" text="Built-in tools and MCP connectors" />
-      <FeatureItem icon={<IconShieldCheck size={12} />} tone="warning" text="Human review for sensitive actions" />
-      <FeatureItem icon={<IconFolder size={12} />} tone="info" text="Local-first workspace, files stay on disk" />
+      <FeatureItem icon={<IconTools size={12} />} tone="success" text={t('auth.features.tools')} />
+      <FeatureItem icon={<IconShieldCheck size={12} />} tone="warning" text={t('auth.features.review')} />
+      <FeatureItem icon={<IconFolder size={12} />} tone="info" text={t('auth.features.local')} />
     </div>
   )
 }
@@ -274,11 +282,13 @@ function FeatureItem({ icon, tone, text }: { icon: ReactNode; tone: 'success' | 
 }
 
 function SignupSteps() {
+  const { t } = useI18n()
+
   return (
     <div className="auth-steps">
-      <StepItem number="1" title="Create your account" text="Email, Google, Apple, or GitHub." active />
-      <StepItem number="2" title="Pick your tools" text="Connect GitHub, Notion, Slack, or start fresh." />
-      <StepItem number="3" title="Run your first task" text="From spec to working code in minutes." />
+      <StepItem number="1" title={t('auth.steps.one.title')} text={t('auth.steps.one.text')} active />
+      <StepItem number="2" title={t('auth.steps.two.title')} text={t('auth.steps.two.text')} />
+      <StepItem number="3" title={t('auth.steps.three.title')} text={t('auth.steps.three.text')} />
     </div>
   )
 }
@@ -296,14 +306,16 @@ function StepItem({ number, title, text, active = false }: { number: string; tit
 }
 
 function TestimonialCard() {
+  const { t } = useI18n()
+
   return (
     <div className="auth-note-card">
-      <p>"Jiandanly replaced three separate dev tools for me. Seeing tool calls unfold in real time makes the agent feel trustworthy."</p>
+      <p>{t('auth.note.quote')}</p>
       <div className="auth-note-person">
         <span className="avatar">LZ</span>
         <div>
           <strong>Leon Zhang</strong>
-          <small>Product engineer · Shanghai</small>
+          <small>{t('auth.note.person')}</small>
         </div>
       </div>
     </div>
@@ -311,33 +323,36 @@ function TestimonialCard() {
 }
 
 function FreePlanCard() {
+  const { t } = useI18n()
+
   return (
     <div className="auth-note-card">
       <div className="auth-plan-title">
         <IconGift size={16} />
-        <strong>Free plan includes</strong>
+        <strong>{t('auth.plan.title')}</strong>
       </div>
-      <p>50 agent runs / month · Local chat history<br />Document reading · Community support</p>
+      <p>{renderMultiline(t('auth.plan.body'))}</p>
     </div>
   )
 }
 
 function SSOButtons({ compact, onSelect }: { compact: boolean; onSelect: (feature: string) => void }) {
-  const googleLabel = compact ? 'Google' : 'Continue with Google'
-  const appleLabel = compact ? 'Apple' : 'Continue with Apple'
-  const githubLabel = compact ? 'GitHub' : 'Continue with GitHub'
+  const { t } = useI18n()
+  const googleLabel = compact ? t('auth.sso.google') : t('auth.sso.googleFull')
+  const appleLabel = compact ? t('auth.sso.apple') : t('auth.sso.appleFull')
+  const githubLabel = compact ? t('auth.sso.github') : t('auth.sso.githubFull')
 
   return (
     <div className={compact ? 'auth-sso compact' : 'auth-sso'}>
-      <button type="button" aria-label={googleLabel} onClick={() => onSelect('Google sign-in')}>
+      <button type="button" aria-label={googleLabel} onClick={() => onSelect(t('auth.sso.googleFeature'))}>
         <GoogleLogo size={compact ? 14 : 15} />
         {googleLabel}
       </button>
-      <button type="button" aria-label={appleLabel} onClick={() => onSelect('Apple sign-in')}>
+      <button type="button" aria-label={appleLabel} onClick={() => onSelect(t('auth.sso.appleFeature'))}>
         <IconBrandAppleFilled size={compact ? 14 : 16} />
         {appleLabel}
       </button>
-      <button type="button" aria-label={githubLabel} onClick={() => onSelect('GitHub sign-in')}>
+      <button type="button" aria-label={githubLabel} onClick={() => onSelect(t('auth.sso.githubFeature'))}>
         <IconBrandGithubFilled size={compact ? 14 : 16} />
         {githubLabel}
       </button>
@@ -378,9 +393,12 @@ function AuthField({
 }
 
 function PasswordStrength({ strength }: { strength: ReturnType<typeof passwordStrength> }) {
+  const { t } = useI18n()
+  const level = strength.level ? t(strength.level) : t('auth.password.empty')
+
   return (
     <div className="auth-password-meter">
-      <div className="auth-strength-bars" aria-label={`Password strength ${strength.level || 'empty'}`}>
+      <div className="auth-strength-bars" aria-label={t('auth.password.strength', { level })}>
         {[0, 1, 2, 3].map((index) => (
           <span className={index < strength.score ? strength.tone : ''} key={index} />
         ))}
@@ -391,7 +409,7 @@ function PasswordStrength({ strength }: { strength: ReturnType<typeof passwordSt
           return (
             <span className={passed ? 'passed' : ''} key={item.key}>
               {passed ? <IconCheck size={11} /> : <IconCircle size={11} />}
-              {item.label}
+              {t(item.labelKey)}
             </span>
           )
         })}
@@ -401,13 +419,15 @@ function PasswordStrength({ strength }: { strength: ReturnType<typeof passwordSt
 }
 
 function AuthFooter() {
+  const { t } = useI18n()
+
   return (
     <footer className="auth-footer">
       <span>© 2026 Jiandanly</span>
-      <nav aria-label="Legal">
-        <a href="#privacy">Privacy</a>
-        <a href="#terms">Terms</a>
-        <a href="#support">Support</a>
+      <nav aria-label={t('auth.footer.legal')}>
+        <a href="#privacy">{t('auth.footer.privacy')}</a>
+        <a href="#terms">{t('auth.footer.terms')}</a>
+        <a href="#support">{t('auth.footer.support')}</a>
       </nav>
     </footer>
   )
@@ -432,7 +452,7 @@ function passwordStrength(password: string) {
     symbol: /[!@#$%^&*(),.?":{}|<>]/.test(password),
   }
   const score = Object.values(checks).filter(Boolean).length
-  const level = ['', 'Weak', 'Fair', 'Strong', 'Excellent'][score]
+  const level = ['', 'auth.password.level.weak', 'auth.password.level.fair', 'auth.password.level.strong', 'auth.password.level.excellent'][score] as TranslationKey | ''
   const tone = ['', 'danger', 'warning', 'success', 'success'][score]
   return { checks, score, level, tone }
 }
@@ -443,4 +463,14 @@ function isValidEmail(value: string): boolean {
 
 function checkboxClass(checked: boolean): string {
   return checked ? 'auth-checkbox checked' : 'auth-checkbox'
+}
+
+function renderMultiline(value: string): ReactNode {
+  const lines = value.split('\n')
+  return lines.map((line, index) => (
+    <span key={`${line}-${index}`}>
+      {index > 0 ? <br /> : null}
+      {line}
+    </span>
+  ))
 }

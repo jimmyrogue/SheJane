@@ -17,6 +17,7 @@ import { Composer } from './features/chat/components/Composer'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
+import { I18nProvider, LocaleSwitcher, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
@@ -46,10 +47,19 @@ import {
 const documentMaxBytes = 30 * 1024 * 1024
 
 export function App() {
+  return (
+    <I18nProvider>
+      <AppContent />
+    </I18nProvider>
+  )
+}
+
+function AppContent() {
+  const { locale, t } = useI18n()
   const api = useMemo(() => new JiandanAPI(), [])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const localData = useMemo(() => new LocalConversationStore(), [])
-  const chat = useMemo(() => createChatStore({ localData, api }), [api, localData])
+  const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
   const liveConversationRef = useRef<{ conversation: Conversation; navigationVersion: number } | null>(null)
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
@@ -177,7 +187,7 @@ export function App() {
         authorized: Boolean(selectedWorkspace || activeWorkspace.authorized),
       }
     : undefined
-  const topbarStatus = topbarStatusInfo(localHost, localHostConfig, localCloudSession, mode)
+  const topbarStatus = topbarStatusInfo(localHost, localHostConfig, localCloudSession, mode, t)
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -230,11 +240,11 @@ export function App() {
 
   async function sendMessage() {
     if (!auth) {
-      setNotice('请先登录后再发送消息')
+      setNotice(t('app.notice.loginBeforeSending'))
       return
     }
     if (attachedDocument && attachedDocument.status !== 'ready') {
-      setNotice('文档尚未解析完成')
+      setNotice(t('app.notice.documentNotReady'))
       return
     }
     setIsSending(true)
@@ -264,7 +274,7 @@ export function App() {
       })
       setBalance(await api.balance())
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '发送失败')
+      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       await refreshConversations(activeID)
     } finally {
       setIsSending(false)
@@ -273,15 +283,15 @@ export function App() {
 
   async function sendLocalHarnessMessage(content: string): Promise<Conversation> {
     if (!localHostConfig) {
-      throw new Error('本地服务未连接')
+      throw new Error(t('app.notice.localHostDisconnected'))
     }
     const text = content.trim()
     if (!text) {
-      throw new Error('消息不能为空')
+      throw new Error(t('app.notice.emptyMessage'))
     }
 
     const timestamp = new Date().toISOString()
-    const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp)
+    const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
     if (!conversation.workspace && pendingWorkspace) {
       conversation.workspace = { ...pendingWorkspace }
     }
@@ -321,7 +331,7 @@ export function App() {
       const seenEventIDs = new Set<string>()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
           scheduleConversationRender(conversation)
         },
         onDelta: (delta, event) => {
@@ -333,7 +343,7 @@ export function App() {
       scheduleConversationRender(conversation)
     } catch (error) {
       assistantMessage.status = 'error'
-      assistantMessage.content = error instanceof Error ? error.message : '本地服务执行失败'
+      assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
       scheduleConversationRender(conversation)
       throw error
     } finally {
@@ -346,13 +356,13 @@ export function App() {
 
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
-      setNotice('本地服务未连接')
+      setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     const conversation = await localData.get(activeID)
     const message = conversation?.messages.find((item) => item.id === messageID)
     if (!conversation || !message?.runId) {
-      setNotice('找不到需要继续的本地任务')
+      setNotice(t('app.notice.missingLocalTask'))
       return
     }
 
@@ -363,7 +373,7 @@ export function App() {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs)
+          appendLocalRunEvent(message, event, seenEventIDs, t)
           scheduleConversationRender(conversation)
         },
         onDelta: (delta, event) => {
@@ -375,7 +385,7 @@ export function App() {
       scheduleConversationRender(conversation)
     } catch (error) {
       message.status = 'error'
-      message.content = error instanceof Error ? error.message : '本地权限处理失败'
+      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
       setNotice(message.content)
       scheduleConversationRender(conversation)
     } finally {
@@ -387,28 +397,28 @@ export function App() {
 
   async function openLocalArtifact(artifactID: string) {
     if (!localHostConfig) {
-      setNotice('本地服务未连接')
+      setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     setNotice('')
     try {
       setArtifactPreview(await getLocalArtifact(artifactID, localHostConfig))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Artifact 读取失败')
+      setNotice(error instanceof Error ? error.message : t('app.notice.artifactReadFailed'))
     }
   }
 
   async function recoverLocalRun(run: LocalHarnessRun) {
     if (!localHostConfig) {
-      setNotice('本地服务未连接')
+      setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     const timestamp = new Date().toISOString()
-    const conversation = createConversation(run.goal, timestamp)
+    const conversation = createConversation(run.goal, timestamp, t('chat.newConversation'))
     const userMessage: ChatMessage = {
       id: createLocalID('msg'),
       role: 'user',
-      content: `恢复本地任务：${run.goal}`,
+      content: t('app.notice.recoverLocalRun', { goal: run.goal }),
       createdAt: timestamp,
       status: 'done',
     }
@@ -430,7 +440,7 @@ export function App() {
       const seenEventIDs = new Set<string>()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
           scheduleConversationRender(conversation)
         },
         onDelta: (delta, event) => {
@@ -444,7 +454,7 @@ export function App() {
       setLocalRuns(freshRuns)
     } catch (error) {
       assistantMessage.status = 'error'
-      assistantMessage.content = error instanceof Error ? error.message : '本地任务恢复失败'
+      assistantMessage.content = error instanceof Error ? error.message : t('app.notice.recoverLocalRunFailed')
       setNotice(assistantMessage.content)
       scheduleConversationRender(conversation)
     } finally {
@@ -456,28 +466,28 @@ export function App() {
 
   async function exportLocalRunDiagnostics(run: LocalHarnessRun) {
     if (!localHostConfig) {
-      setNotice('本地服务未连接')
+      setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     try {
       const diagnostics = await getLocalRunDiagnostics(run.id, localHostConfig)
       downloadLocalRunDiagnostics(diagnostics)
-      setNotice(`诊断已导出：${diagnostics.run.id}`)
+      setNotice(t('app.notice.diagnosticsExported', { id: diagnostics.run.id }))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '本地任务诊断导出失败')
+      setNotice(error instanceof Error ? error.message : t('app.notice.diagnosticsExportFailed'))
     }
   }
 
   async function openLocalRunDiagnostics(runID: string) {
     if (!localHostConfig) {
-      setNotice('本地服务未连接')
+      setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     try {
       setRunDiagnostics(await getLocalRunDiagnostics(runID, localHostConfig))
       setNotice('')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '本地任务诊断读取失败')
+      setNotice(error instanceof Error ? error.message : t('app.notice.diagnosticsReadFailed'))
     }
   }
 
@@ -486,7 +496,7 @@ export function App() {
       return
     }
     downloadLocalRunDiagnostics(runDiagnostics)
-    setNotice(`诊断已导出：${runDiagnostics.run.id}`)
+    setNotice(t('app.notice.diagnosticsExported', { id: runDiagnostics.run.id }))
   }
 
   async function chooseWorkspaceDirectory(): Promise<string | undefined> {
@@ -499,11 +509,11 @@ export function App() {
 
   async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
     if (!localHostConfig?.token) {
-      throw new Error('本地服务未配对，无法授权工作区')
+      throw new Error(t('app.notice.localHostNotPairedAuthorize'))
     }
     const nextPath = path.trim()
     if (!nextPath) {
-      throw new Error('请先填写本地工作区路径')
+      throw new Error(t('app.notice.emptyWorkspacePath'))
     }
     const workspace = await authorizeLocalWorkspace(nextPath, localHostConfig)
     setAuthorizedWorkspaces((items) => upsertWorkspace(items, workspace))
@@ -513,17 +523,17 @@ export function App() {
       authorized: true,
       authorizationId: workspace.id,
     })
-    setNotice(`当前对话已绑定工作区：${workspace.label}`)
+    setNotice(t('app.notice.workspaceBound', { label: workspace.label }))
     return workspace
   }
 
   async function diagnoseWorkspace(path: string): Promise<LocalWorkspaceDiagnosis> {
     if (!localHostConfig?.token) {
-      throw new Error('本地服务未配对，无法诊断工作区')
+      throw new Error(t('app.notice.localHostNotPairedDiagnose'))
     }
     const nextPath = path.trim()
     if (!nextPath) {
-      throw new Error('请先填写本地工作区路径')
+      throw new Error(t('app.notice.emptyWorkspacePath'))
     }
     return diagnoseLocalWorkspace(nextPath, localHostConfig)
   }
@@ -534,7 +544,7 @@ export function App() {
       return
     }
     const timestamp = new Date().toISOString()
-    const conversation = (await localData.get(activeID)) ?? createConversation('新对话', timestamp)
+    const conversation = (await localData.get(activeID)) ?? createConversation(t('chat.newConversation'), timestamp, t('chat.newConversation'))
     if (workspace) {
       conversation.workspace = workspace
     } else {
@@ -549,7 +559,7 @@ export function App() {
   async function exportConversationData(conversationID: string) {
     const conversation = await localData.get(conversationID)
     if (!conversation) {
-      setNotice('找不到要导出的对话')
+      setNotice(t('app.notice.conversationMissing'))
       return
     }
     const payload = {
@@ -563,7 +573,7 @@ export function App() {
     link.download = `jiandan-conversation-${safeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.json`
     link.click()
     URL.revokeObjectURL(url)
-    setNotice(`已导出对话：${conversation.title}`)
+    setNotice(t('app.notice.conversationExported', { title: conversation.title }))
   }
 
   async function importLocalData(file: File | undefined) {
@@ -572,7 +582,7 @@ export function App() {
     }
     await localData.importAll(await file.text())
     await refreshConversations()
-    setNotice('本地聊天数据已导入')
+    setNotice(t('app.notice.localDataImported'))
   }
 
   async function uploadDocument(file: File | undefined) {
@@ -580,16 +590,16 @@ export function App() {
       return
     }
     if (!auth) {
-      setNotice('请先登录后再上传文档')
+      setNotice(t('app.notice.loginBeforeUpload'))
       return
     }
     const contentType = normalizeDocumentContentType(file)
     if (!contentType) {
-      setNotice('仅支持 PDF、DOCX、XLSX 文件')
+      setNotice(t('app.notice.unsupportedDocument'))
       return
     }
     if (file.size <= 0 || file.size > documentMaxBytes) {
-      setNotice('文件大小不能超过 30MB')
+      setNotice(t('app.notice.documentTooLarge'))
       return
     }
     setNotice('')
@@ -608,14 +618,14 @@ export function App() {
         body: file,
       })
       if (!uploadResponse.ok) {
-        throw new Error(`S3 上传失败：HTTP ${uploadResponse.status}`)
+        throw new Error(t('app.notice.s3UploadFailed', { status: uploadResponse.status }))
       }
       const completed = await api.completeDocument(upload.document.id)
       setDocuments((items) => upsertDocument(items, completed))
       setAttachedDocumentID(completed.id)
-      setNotice('文档已解析完成，已附加到当前对话')
+      setNotice(t('app.notice.documentReady'))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '文档上传失败')
+      setNotice(error instanceof Error ? error.message : t('app.notice.documentUploadFailed'))
     } finally {
       setIsUploading(false)
     }
@@ -625,7 +635,7 @@ export function App() {
     const deleted = await api.deleteDocument(document.id)
     setDocuments((items) => items.filter((item) => item.id !== deleted.id))
     setAttachedDocumentID((current) => (current === deleted.id ? undefined : current))
-    setNotice('文档已删除')
+    setNotice(t('app.notice.documentDeleted'))
   }
 
   if (!auth) {
@@ -643,8 +653,8 @@ export function App() {
             <span className="tl-amber" />
             <span className="tl-green" />
           </div>
-          <div className="titlebar-title">{activeConversation?.title ?? 'Jiandanly · AI Agent'}</div>
-          <div className="titlebar-actions" aria-label="窗口操作">
+          <div className="titlebar-title">{activeConversation?.title ?? t('app.title')}</div>
+          <div className="titlebar-actions" aria-label={t('app.windowActions')}>
             <IconLayoutSidebarLeftCollapse size={14} />
             <IconSearch size={14} />
           </div>
@@ -665,15 +675,15 @@ export function App() {
           <section className="workspace">
             <header className="topbar">
               <div className="chat-toolbar-title">
-                <span>{activeConversation?.title ?? '新对话'}</span>
+                <span>{activeConversation?.title ?? t('app.newChat')}</span>
                 <IconChevronDown size={14} aria-hidden="true" />
-                <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt) : '本地优先对话'}</small>
+                <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt, locale, t) : t('app.localFirstChat')}</small>
               </div>
               <div className="account">
                 <span className="sr-only">{auth.user.email}</span>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="toolbar-icon-button" title="更多" aria-label="更多">
+                    <button className="toolbar-icon-button" title={t('app.more')} aria-label={t('app.more')}>
                       <IconDots size={15} />
                     </button>
                   </DropdownMenuTrigger>
@@ -687,13 +697,16 @@ export function App() {
                       }}
                     >
                       <IconDownload data-icon="inline-start" />
-                      <span>导出当前对话</span>
+                      <span>{t('app.exportCurrentConversation')}</span>
                     </DropdownMenuItem>
+                    <div className="topbar-menu-locale">
+                      <LocaleSwitcher className="menu-locale-switcher" />
+                    </div>
                     <DropdownMenuSeparator />
-                    <div className="topbar-status-row" aria-label={`当前本地状态：${topbarStatus.detail}`}>
+                    <div className="topbar-status-row" aria-label={t('app.currentLocalStatusA11y', { detail: topbarStatus.detail })}>
                       <span className={`topbar-status-dot ${topbarStatus.tone}`} aria-hidden="true" />
                       <div>
-                        <span>当前本地状态</span>
+                        <span>{t('app.currentLocalStatus')}</span>
                         <small>{topbarStatus.detail}</small>
                       </div>
                     </div>
@@ -724,7 +737,7 @@ export function App() {
               attachedDocumentID={attachedDocumentID}
               attachedDocument={attachedDocument}
               isUploading={isUploading}
-              localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
+              localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
               canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
               canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
               localProject={
@@ -753,17 +766,18 @@ function localHostStatusLabel(
   localHost: LocalHostProbe | null,
   config: LocalHostConfig | null,
   session: LocalCloudSession | null,
+  t: Translator,
 ): string {
   if (!localHost?.online) {
-    return '云端受限'
+    return t('app.localStatus.cloudOnly')
   }
   if (!config?.token) {
-    return '本地未配对'
+    return t('app.localStatus.unpaired')
   }
   if (!session?.connected) {
-    return '本地待登录'
+    return t('app.localStatus.loginPending')
   }
-  return '本地服务已连接'
+  return t('app.localStatus.connected')
 }
 
 function topbarStatusInfo(
@@ -771,43 +785,44 @@ function topbarStatusInfo(
   config: LocalHostConfig | null,
   session: LocalCloudSession | null,
   mode: ChatMode,
+  t: Translator,
 ): { tone: 'online' | 'warning'; detail: string } {
-  const modeLabel = mode === 'deep' ? '深度模式' : '快速模式'
+  const modeLabel = mode === 'deep' ? t('app.mode.deep') : t('app.mode.fast')
   if (!localHost) {
-    return { tone: 'online', detail: `云端服务可用 · 当前为${modeLabel}` }
+    return { tone: 'online', detail: t('app.topbar.cloudReady', { mode: modeLabel }) }
   }
   if (!localHost.online) {
-    return { tone: 'warning', detail: `本地服务未连接 · 当前为${modeLabel}` }
+    return { tone: 'warning', detail: t('app.topbar.offline', { mode: modeLabel }) }
   }
   if (!config?.token) {
-    return { tone: 'warning', detail: `本地服务待配对 · 当前为${modeLabel}` }
+    return { tone: 'warning', detail: t('app.topbar.unpaired', { mode: modeLabel }) }
   }
   if (!session?.connected) {
-    return { tone: 'warning', detail: `本地服务待登录 · 当前为${modeLabel}` }
+    return { tone: 'warning', detail: t('app.topbar.loginPending', { mode: modeLabel }) }
   }
-  return { tone: 'online', detail: `本地服务已连接 · 当前为${modeLabel}` }
+  return { tone: 'online', detail: t('app.topbar.connected', { mode: modeLabel }) }
 }
 
-function formatRelativeTime(value: string): string {
+function formatRelativeTime(value: string, locale: 'zh' | 'en', t: Translator): string {
   const time = new Date(value).getTime()
   if (!Number.isFinite(time)) {
-    return '最近更新'
+    return t('relative.invalid')
   }
   const minutes = Math.max(0, Math.round((Date.now() - time) / 60000))
   if (minutes < 1) {
-    return '刚刚更新'
+    return t('relative.now')
   }
   if (minutes < 60) {
-    return `${minutes} 分钟前`
+    return t('relative.minutesAgo', { count: minutes })
   }
   const hours = Math.round(minutes / 60)
   if (hours < 24) {
-    return `${hours} 小时前`
+    return t('relative.hoursAgo', { count: hours })
   }
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
 }
 
-function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>) {
+function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>, t: Translator) {
   if (event.event_type === 'llm.delta') {
     return
   }
@@ -817,7 +832,7 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
   if (event.id) {
     seenEventIDs.add(event.id)
   }
-  const item = timelineItem(event)
+  const item = timelineItem(event, t)
   if (item) {
     message.agentEvents = [...(message.agentEvents ?? []), item]
   }
@@ -917,10 +932,10 @@ function safeFilename(value: string): string {
   return value.trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 48) || 'conversation'
 }
 
-function createConversation(firstMessage: string, timestamp: string): Conversation {
+function createConversation(firstMessage: string, timestamp: string, fallbackTitle: string): Conversation {
   return {
     id: createLocalID('conv'),
-    title: firstMessage.slice(0, 24) || '新对话',
+    title: firstMessage.slice(0, 24) || fallbackTitle,
     archived: false,
     createdAt: timestamp,
     updatedAt: timestamp,

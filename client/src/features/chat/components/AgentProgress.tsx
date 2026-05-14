@@ -11,6 +11,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { AgentTimelineItem, ChatMessage } from '@/shared/local-data/types'
 
@@ -43,7 +44,8 @@ export function AgentProgress({
   onOpenDiagnostics?: (runID: string) => void
   onPermissionDecision: (requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
-  const progress = deriveAgentProgress(message)
+  const { t } = useI18n()
+  const progress = deriveAgentProgress(message, t)
   if (!progress) {
     return null
   }
@@ -60,23 +62,23 @@ export function AgentProgress({
         <IconChevronDown className="tool-card-caret" aria-hidden="true" />
       </div>
 
-      <div className="tool-card-results agent-progress-results" aria-label="任务摘要">
+      <div className="tool-card-results agent-progress-results" aria-label={t('agent.summary')}>
         {progress.sourcesCount > 0 ? (
           <div className="row">
-            <span>已收集 {progress.sourcesCount} 个来源</span>
+            <span>{t('agent.sourcesCount', { count: progress.sourcesCount })}</span>
             <Badge variant="outline">source</Badge>
           </div>
         ) : null}
         {progress.artifactsCount > 0 ? (
           <div className="row">
-            <span>生成 {progress.artifactsCount} 个 Artifact</span>
+            <span>{t('agent.artifactsCount', { count: progress.artifactsCount })}</span>
             <Badge variant="outline">artifact</Badge>
           </div>
         ) : null}
         {progress.latestArtifactID ? (
           <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
             <IconEye size={13} />
-            查看 artifact
+            {t('agent.viewArtifact')}
           </Button>
         ) : null}
         {progress.diagnosticsRunID && onOpenDiagnostics ? (
@@ -84,16 +86,16 @@ export function AgentProgress({
             className="agent-progress-action"
             size="sm"
             variant="outline"
-            title={`查看诊断 ${progress.diagnosticsRunID}`}
+            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID })}
             onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
           >
             <IconDownload size={13} />
-            诊断
+            {t('agent.diagnostics')}
           </Button>
         ) : null}
         {!progress.sourcesCount && !progress.artifactsCount && !progress.latestArtifactID && !progress.diagnosticsRunID ? (
           <div className="row muted">
-            <span>{progress.tone === 'working' ? '正在执行，完成后会在这里显示结果。' : '没有额外结果。'}</span>
+            <span>{progress.tone === 'working' ? t('agent.noResultsWorking') : t('agent.noResults')}</span>
           </div>
         ) : null}
       </div>
@@ -102,15 +104,15 @@ export function AgentProgress({
         <div className="agent-progress-permission-actions">
           <Button size="sm" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'once')}>
             <IconCircleCheck size={13} />
-            允许一次
+            {t('agent.allowOnce')}
           </Button>
           <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'run')}>
             <IconShieldCheck size={13} />
-            本会话始终允许
+            {t('agent.allowRun')}
           </Button>
           <Button size="sm" variant="outline" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'deny')}>
             <IconX size={13} />
-            拒绝
+            {t('agent.deny')}
           </Button>
         </div>
       ) : null}
@@ -118,9 +120,9 @@ export function AgentProgress({
   )
 }
 
-export function deriveAgentProgress(message: ChatMessage): AgentProgressState | null {
+export function deriveAgentProgress(message: ChatMessage, t: Translator = createTranslator('zh')): AgentProgressState | null {
   const events = message.agentEvents ?? []
-  const pendingPermission = findPendingPermission(events)
+  const pendingPermission = findPendingPermission(events, t)
   const sourcesCount = uniqueCount(events, (event) => (event.type === 'source.collected' ? event.sourceUrl || event.sourceTitle || event.eventId : undefined))
   const artifacts = uniqueValues(events, (event) => event.artifactId)
   const latestArtifactID = [...events].reverse().find((event) => event.artifactId)?.artifactId
@@ -133,8 +135,8 @@ export function deriveAgentProgress(message: ChatMessage): AgentProgressState | 
   if (pendingPermission) {
     return {
       tone: 'permission',
-      label: `等待批准：${pendingPermission.tool}`,
-      detail: '你可以只允许这一次，或在当前会话中始终允许同类操作。',
+      label: t('agent.waitingApproval', { tool: pendingPermission.tool }),
+      detail: t('agent.permissionDetail'),
       pendingPermission,
       sourcesCount,
       artifactsCount: artifacts.length,
@@ -147,8 +149,8 @@ export function deriveAgentProgress(message: ChatMessage): AgentProgressState | 
   if (latestFailure || message.status === 'error') {
     return {
       tone: 'failed',
-      label: latestFailure?.label || message.content || '任务失败',
-      detail: sourcesCount || artifacts.length ? '已保留可用来源和诊断信息。' : undefined,
+      label: latestFailure?.label || message.content || t('agent.failed'),
+      detail: sourcesCount || artifacts.length ? t('agent.failedDetail') : undefined,
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
@@ -160,8 +162,8 @@ export function deriveAgentProgress(message: ChatMessage): AgentProgressState | 
   if (latestCompletion || message.status === 'done') {
     return {
       tone: latestCompletion?.type === 'run.canceled' ? 'idle' : 'done',
-      label: latestCompletion?.label || '任务完成',
-      detail: completionDetail(sourcesCount, artifacts.length),
+      label: latestCompletion?.label || t('agent.completed'),
+      detail: completionDetail(sourcesCount, artifacts.length, t),
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
@@ -172,8 +174,8 @@ export function deriveAgentProgress(message: ChatMessage): AgentProgressState | 
   const latestActive = [...events].reverse().find((event) => isProgressEvent(event))
   return {
     tone: 'working',
-    label: latestActive ? activeLabel(latestActive) : defaultWorkingLabel(message),
-    detail: activeDetail(latestActive, sourcesCount),
+    label: latestActive ? activeLabel(latestActive, t) : defaultWorkingLabel(message, t),
+    detail: activeDetail(latestActive, sourcesCount, t),
     sourcesCount,
     artifactsCount: artifacts.length,
     latestArtifactID,
@@ -181,7 +183,7 @@ export function deriveAgentProgress(message: ChatMessage): AgentProgressState | 
   }
 }
 
-function findPendingPermission(events: AgentTimelineItem[]): PendingPermission | undefined {
+function findPendingPermission(events: AgentTimelineItem[], t: Translator): PendingPermission | undefined {
   const resolved = new Set<string>()
   for (const event of events) {
     if ((event.type === 'permission.resolved' || event.type === 'permission.auto_approved') && event.permissionRequestId) {
@@ -192,7 +194,7 @@ function findPendingPermission(events: AgentTimelineItem[]): PendingPermission |
     if (event.type === 'permission.required' && event.permissionRequestId && !resolved.has(event.permissionRequestId)) {
       return {
         requestID: event.permissionRequestId,
-        tool: event.permissionTool || event.label.replace(/^需要权限：/u, '') || '本地操作',
+        tool: event.permissionTool || stripKnownPrefix(event.label, ['需要权限：', 'Permission required: ']) || t('agent.localAction'),
       }
     }
   }
@@ -230,62 +232,71 @@ function isProgressEvent(event: AgentTimelineItem): boolean {
   ].includes(event.type)
 }
 
-function activeLabel(event: AgentTimelineItem): string {
+function activeLabel(event: AgentTimelineItem, t: Translator): string {
   if (event.type === 'tool.requested' || event.type === 'tool.started') {
-    return event.label.replace(/^调用工具：/u, '正在').replace(/^工具开始：/u, '正在')
+    return t('agent.toolRunning', { tool: stripKnownPrefix(event.label, ['调用工具：', '工具开始：', 'Tool started: ']) })
   }
   if (event.type === 'tool.completed') {
-    return event.label.replace(/^工具完成：/u, '已完成')
+    return t('agent.toolCompleted', { tool: stripKnownPrefix(event.label, ['工具完成：', 'Tool completed: ']) })
   }
   if (event.type === 'browser.observed') {
-    return event.label.replace(/^观察网页：/u, '已观察网页：')
+    return t('agent.browserObserved', { target: stripKnownPrefix(event.label, ['观察网页：', 'Observed page: ']) })
   }
   if (event.type === 'source.collected') {
-    return '正在整理来源'
+    return t('agent.organizingSources')
   }
   if (event.type === 'verification.completed') {
-    return event.verificationStatus === 'failed' ? event.label : '正在验证结果'
+    return event.verificationStatus === 'failed' ? event.label : t('agent.verifying')
   }
   if (event.type === 'skill.selected') {
-    return '正在选择处理方式'
+    return t('agent.selectingSkill')
   }
   if (event.type === 'ui.action.requested') {
-    return event.label.replace(/^请求操作：/u, '准备')
+    return t('agent.uiPreparing', { action: stripKnownPrefix(event.label, ['请求操作：', 'Action requested: ']) })
   }
   if (event.type === 'ui.action.completed') {
-    return event.label.replace(/^操作完成：/u, '已完成')
+    return t('agent.uiCompleted', { action: stripKnownPrefix(event.label, ['操作完成：', 'Action completed: ']) })
   }
-  return event.label || '正在处理'
+  return event.label || t('agent.processingFallback')
 }
 
-function activeDetail(event: AgentTimelineItem | undefined, sourcesCount: number): string | undefined {
+function activeDetail(event: AgentTimelineItem | undefined, sourcesCount: number, t: Translator): string | undefined {
   if (!event) {
     return undefined
   }
   if (sourcesCount > 0 && ['source.collected', 'browser.observed', 'tool.completed'].includes(event.type)) {
-    return '已有可用来源，正在判断是否还需要继续查证。'
+    return t('agent.detail.hasSources')
   }
   if (event.type === 'run.budget_warning') {
-    return '任务仍在继续，必要时会整理已有结果。'
+    return t('agent.detail.longRunning')
   }
   return undefined
 }
 
-function completionDetail(sourcesCount: number, artifactsCount: number): string | undefined {
+function completionDetail(sourcesCount: number, artifactsCount: number, t: Translator): string | undefined {
   if (sourcesCount > 0) {
-    return `已基于 ${sourcesCount} 个来源完成回答。`
+    return t('agent.detail.completedWithSources', { count: sourcesCount })
   }
   if (artifactsCount > 0) {
-    return `已生成 ${artifactsCount} 个可查看结果。`
+    return t('agent.detail.completedWithArtifacts', { count: artifactsCount })
   }
   return undefined
 }
 
-function defaultWorkingLabel(message: ChatMessage): string {
+function defaultWorkingLabel(message: ChatMessage, t: Translator): string {
   if (message.status === 'waiting_permission') {
-    return '等待你批准本地操作'
+    return t('agent.waitingLocalAction')
   }
-  return '正在思考'
+  return t('agent.working')
+}
+
+function stripKnownPrefix(value: string, prefixes: string[]): string {
+  for (const prefix of prefixes) {
+    if (value.startsWith(prefix)) {
+      return value.slice(prefix.length)
+    }
+  }
+  return value
 }
 
 function progressIcon(tone: ProgressTone) {

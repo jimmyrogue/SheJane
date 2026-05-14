@@ -1729,6 +1729,39 @@ button:active {
   box-shadow: var(--shadow-md);
 }
 
+.locale-switcher {
+  display: inline-flex;
+  min-width: 54px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0.5px solid var(--border-hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.locale-switcher:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.topbar-menu-locale {
+  padding: 3px 4px;
+}
+
+.menu-locale-switcher {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  padding: 0 8px;
+}
+
 .topbar-status-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -2333,6 +2366,10 @@ button:active {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.auth-language-switch {
+  justify-self: end;
 }
 
 .auth-layout {

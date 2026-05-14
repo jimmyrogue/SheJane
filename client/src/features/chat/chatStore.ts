@@ -1,11 +1,13 @@
 import type { ChatAPI } from '../../shared/api/client'
 import type { AgentRunEvent } from '../../shared/api/sse'
+import { createTranslator, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
 
 interface ChatStoreDeps {
   localData: LocalConversationStore
   api: ChatAPI
+  t?: Translator
   now?: () => string
 }
 
@@ -23,18 +25,19 @@ interface SendMessageInput {
 
 export function createChatStore(deps: ChatStoreDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
+  const t = deps.t ?? createTranslator('zh')
 
   return {
     async sendMessage(input: SendMessageInput): Promise<Conversation> {
       const text = input.content.trim()
       if (!text) {
-        throw new Error('消息不能为空')
+        throw new Error(t('chat.error.empty'))
       }
 
       const timestamp = now()
       const conversation =
         (input.conversationId ? await deps.localData.get(input.conversationId) : undefined) ??
-        createConversation(text, timestamp)
+        createConversation(text, timestamp, t)
 
       const userMessage: ChatMessage = {
         id: createLocalID('msg'),
@@ -75,7 +78,7 @@ export function createChatStore(deps: ChatStoreDeps) {
             input.onConversationUpdate?.(cloneConversation(conversation))
           },
           onEvent: (event: AgentRunEvent) => {
-            const item = timelineItem(event)
+            const item = timelineItem(event, t)
             if (item) {
               assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), item]
               input.onConversationUpdate?.(cloneConversation(conversation))
@@ -89,7 +92,7 @@ export function createChatStore(deps: ChatStoreDeps) {
         input.onConversationUpdate?.(cloneConversation(conversation))
       } catch (error) {
         assistantMessage.status = 'error'
-        assistantMessage.content = error instanceof Error ? error.message : '发送失败'
+        assistantMessage.content = error instanceof Error ? error.message : t('chat.error.sendFailed')
         input.onConversationUpdate?.(cloneConversation(conversation))
         throw error
       } finally {
@@ -112,10 +115,10 @@ function cloneConversation(conversation: Conversation): Conversation {
   }
 }
 
-function createConversation(firstMessage: string, timestamp: string): Conversation {
+function createConversation(firstMessage: string, timestamp: string, t: Translator): Conversation {
   return {
     id: createLocalID('conv'),
-    title: firstMessage.slice(0, 24) || '新对话',
+    title: firstMessage.slice(0, 24) || t('chat.newConversation'),
     archived: false,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -130,7 +133,7 @@ function formatUserMessage(text: string, document?: { name: string }): string {
   return `📎 ${document.name}\n${text}`
 }
 
-export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
+export function timelineItem(event: AgentRunEvent, t: Translator = createTranslator('zh')): AgentTimelineItem | null {
   if (event.event_type === 'llm.delta') {
     return null
   }
@@ -138,34 +141,34 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
   const eventId = event.id
   switch (event.event_type) {
     case 'skill.selected':
-      return { type: event.event_type, label: `选择能力：${stringValue(payload.skill) || 'direct-answer'}`, eventId }
+      return { type: event.event_type, label: t('chat.timeline.skillSelected', { skill: stringValue(payload.skill) || 'direct-answer' }), eventId }
     case 'tool.requested':
-      return { type: event.event_type, label: `调用工具：${toolActionLabel(stringValue(payload.tool))}`, eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolRequested', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
     case 'tool.completed':
-      return { type: event.event_type, label: `工具完成：${toolActionLabel(stringValue(payload.tool))}`, eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
     case 'tool.failed':
-      return { type: event.event_type, label: `工具失败：${toolActionLabel(stringValue(payload.tool))}`, eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolFailed', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
     case 'permission.required': {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `需要权限：${toolActionLabel(tool)}`,
+        label: t('chat.timeline.permissionRequired', { tool: toolActionLabel(tool, t) }),
         eventId,
         permissionRequestId: stringValue(payload.request_id),
-        permissionTool: toolActionLabel(tool),
+        permissionTool: toolActionLabel(tool, t),
       }
     }
     case 'permission.resolved': {
       const tool = stringValue(payload.tool)
       const decision = payload.decision === 'approve' ? 'approve' : 'deny'
       const scope = payload.scope === 'run' ? 'run' : 'once'
-      const approvedLabel = scope === 'run' ? '本会话已允许' : '权限已批准'
+      const approvedLabel = scope === 'run' ? t('chat.timeline.permissionApprovedRun') : t('chat.timeline.permissionApprovedOnce')
       return {
         type: event.event_type,
-        label: `${decision === 'approve' ? approvedLabel : '权限已拒绝'}：${toolActionLabel(tool)}`,
+        label: `${decision === 'approve' ? approvedLabel : t('chat.timeline.permissionDenied')}${t('chat.timeline.labelJoiner')}${toolActionLabel(tool, t)}`,
         eventId,
         permissionRequestId: stringValue(payload.request_id),
-        permissionTool: toolActionLabel(tool),
+        permissionTool: toolActionLabel(tool, t),
         permissionDecision: decision,
         permissionScope: scope,
       }
@@ -174,9 +177,9 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `本会话自动允许：${toolActionLabel(tool)}`,
+        label: t('chat.timeline.permissionAutoApproved', { tool: toolActionLabel(tool, t) }),
         eventId,
-        permissionTool: toolActionLabel(tool),
+        permissionTool: toolActionLabel(tool, t),
         permissionDecision: 'approve',
         permissionScope: 'run',
       }
@@ -186,7 +189,7 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `Artifact：${title || tool}`,
+        label: t('chat.timeline.artifact', { title: title || tool }),
         eventId,
         artifactId: stringValue(payload.artifact_id),
         artifactTitle: title,
@@ -198,7 +201,7 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const tool = stringValue(payload.tool)
       return {
         type: event.event_type,
-        label: `${status === 'passed' ? '验证通过' : '验证失败'}：${toolActionLabel(tool)}`,
+        label: `${status === 'passed' ? t('chat.timeline.verificationPassed') : t('chat.timeline.verificationFailed')}${t('chat.timeline.labelJoiner')}${toolActionLabel(tool, t)}`,
         eventId,
         verificationStatus: status,
       }
@@ -206,14 +209,14 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
     case 'browser.observed': {
       const title = stringValue(payload.title)
       const url = stringValue(payload.url)
-      return { type: event.event_type, label: `观察网页：${title || url || '当前页面'}`, eventId, artifactId: stringValue(payload.artifact_id) }
+      return { type: event.event_type, label: t('chat.timeline.browserObserved', { target: title || url || t('chat.timeline.currentPage') }), eventId, artifactId: stringValue(payload.artifact_id) }
     }
     case 'source.collected': {
       const title = stringValue(payload.title)
       const url = stringValue(payload.url)
       return {
         type: event.event_type,
-        label: `收集来源：${title || url || '网页来源'}`,
+        label: t('chat.timeline.sourceCollected', { target: title || url || t('chat.timeline.webSource') }),
         eventId,
         artifactId: stringValue(payload.artifact_id),
         sourceTitle: title,
@@ -224,27 +227,27 @@ export function timelineItem(event: AgentRunEvent): AgentTimelineItem | null {
       const app = stringValue(payload.foreground_app)
       const title = stringValue(payload.window_title)
       const platform = stringValue(payload.platform)
-      const target = app && title ? `${app} - ${title}` : app || title || platform || '本地环境'
-      return { type: event.event_type, label: `观察环境：${target}`, eventId }
+      const target = app && title ? `${app} - ${title}` : app || title || platform || t('chat.timeline.localEnvironment')
+      return { type: event.event_type, label: t('chat.timeline.environmentObserved', { target }), eventId }
     }
     case 'ui.action.requested': {
       const tool = stringValue(payload.tool)
-      return { type: event.event_type, label: `请求操作：${toolActionLabel(tool)}`, eventId }
+      return { type: event.event_type, label: t('chat.timeline.uiRequested', { tool: toolActionLabel(tool, t) }), eventId }
     }
     case 'ui.action.completed': {
       const tool = stringValue(payload.tool)
-      return { type: event.event_type, label: `操作完成：${toolActionLabel(tool)}`, eventId, artifactId: stringValue(payload.artifact_id) }
+      return { type: event.event_type, label: t('chat.timeline.uiCompleted', { tool: toolActionLabel(tool, t) }), eventId, artifactId: stringValue(payload.artifact_id) }
     }
     case 'run.budget_warning': {
-      const label = payload.reason === 'long_running' ? '任务较长，仍在继续执行' : '工具步数达到上限，正在整理已有结果'
+      const label = payload.reason === 'long_running' ? t('chat.timeline.budgetLong') : t('chat.timeline.budgetMax')
       return { type: event.event_type, label, eventId }
     }
     case 'run.completed':
-      return { type: event.event_type, label: '任务完成', eventId }
+      return { type: event.event_type, label: t('chat.timeline.runCompleted'), eventId }
     case 'run.failed':
-      return { type: event.event_type, label: stringValue(payload.message) || '任务失败', eventId }
+      return { type: event.event_type, label: stringValue(payload.message) || t('chat.timeline.runFailed'), eventId }
     case 'run.canceled':
-      return { type: event.event_type, label: '任务已取消', eventId }
+      return { type: event.event_type, label: t('chat.timeline.runCanceled'), eventId }
     default:
       return { type: event.event_type, label: event.event_type, eventId }
   }
@@ -254,38 +257,38 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
-function toolActionLabel(tool: string): string {
+function toolActionLabel(tool: string, t: Translator): string {
   const labels: Record<string, string> = {
-    'fs.list': '列出文件',
-    'fs.read': '读取文件',
-    'fs.search': '搜索文件',
-    'fs.write': '写入文件',
-    'file.read': '读取文件',
-    'file.search': '搜索文件',
-    'file.write': '写入文件',
-    'workspace.open': '打开工作区',
-    'open.url': '用系统浏览器打开网页',
-    'open.file': '打开文件',
-    'clipboard.read': '读取剪贴板',
-    'clipboard.write': '写入剪贴板',
-    'task.verify': '验证任务结果',
-    'browser.open': '打开受控网页',
-    'browser.search': '搜索网页',
-    'browser.snapshot': '观察网页',
-    'browser.read': '阅读网页正文',
-    'browser.verify': '验证网页',
-    'browser.screenshot': '页面截图',
-    'browser.click': '点击网页元素',
-    'browser.type': '输入网页文本',
-    'browser.scroll': '滚动网页',
-    'browser.close': '关闭网页',
-    'environment.observe': '观察本地环境',
-    'shell.run': '运行命令',
-    'web.fetch': '读取网页',
-    'web.search': '搜索网页',
-    'mcp.call': '调用扩展工具',
-    'document.read': '阅读文档',
-    'time.now': '读取时间',
+    'fs.list': t('chat.tool.fs.list'),
+    'fs.read': t('chat.tool.fs.read'),
+    'fs.search': t('chat.tool.fs.search'),
+    'fs.write': t('chat.tool.fs.write'),
+    'file.read': t('chat.tool.fs.read'),
+    'file.search': t('chat.tool.fs.search'),
+    'file.write': t('chat.tool.fs.write'),
+    'workspace.open': t('chat.tool.workspace.open'),
+    'open.url': t('chat.tool.open.url'),
+    'open.file': t('chat.tool.open.file'),
+    'clipboard.read': t('chat.tool.clipboard.read'),
+    'clipboard.write': t('chat.tool.clipboard.write'),
+    'task.verify': t('chat.tool.task.verify'),
+    'browser.open': t('chat.tool.browser.open'),
+    'browser.search': t('chat.tool.browser.search'),
+    'browser.snapshot': t('chat.tool.browser.snapshot'),
+    'browser.read': t('chat.tool.browser.read'),
+    'browser.verify': t('chat.tool.browser.verify'),
+    'browser.screenshot': t('chat.tool.browser.screenshot'),
+    'browser.click': t('chat.tool.browser.click'),
+    'browser.type': t('chat.tool.browser.type'),
+    'browser.scroll': t('chat.tool.browser.scroll'),
+    'browser.close': t('chat.tool.browser.close'),
+    'environment.observe': t('chat.tool.environment.observe'),
+    'shell.run': t('chat.tool.shell.run'),
+    'web.fetch': t('chat.tool.web.fetch'),
+    'web.search': t('chat.tool.web.search'),
+    'mcp.call': t('chat.tool.mcp.call'),
+    'document.read': t('chat.tool.document.read'),
+    'time.now': t('chat.tool.time.now'),
   }
-  return labels[tool] || tool || '工具'
+  return labels[tool] || tool || t('chat.tool.fallback')
 }

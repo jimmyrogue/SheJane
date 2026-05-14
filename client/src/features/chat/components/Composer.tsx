@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { useI18n, type Translator, type Locale } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
 import type { ChatMode } from '@/shared/local-data/types'
 import type { LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
@@ -75,6 +76,7 @@ export function Composer({
   onClearLocalProject: () => void
   onSend: () => void
 }) {
+  const { locale, t } = useI18n()
   const hasChips = Boolean(attachedDocument || localProject)
   const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false)
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
@@ -100,15 +102,15 @@ export function Composer({
   async function diagnoseWorkspace() {
     const path = workspacePath.trim()
     if (!path) {
-      setWorkspaceStatus('请先填写或选择一个文件夹路径。')
+      setWorkspaceStatus(t('composer.workspace.emptyPath'))
       return
     }
     setWorkspaceBusy(true)
     try {
       const diagnosis = await onDiagnoseWorkspace(path)
-      setWorkspaceStatus(workspaceDiagnosisMessage(diagnosis))
+      setWorkspaceStatus(workspaceDiagnosisMessage(diagnosis, t))
     } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : '工作区诊断失败')
+      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.diagnoseFailed'))
     } finally {
       setWorkspaceBusy(false)
     }
@@ -117,16 +119,16 @@ export function Composer({
   async function authorizeWorkspace() {
     const path = workspacePath.trim()
     if (!path) {
-      setWorkspaceStatus('请先填写或选择一个文件夹路径。')
+      setWorkspaceStatus(t('composer.workspace.emptyPath'))
       return
     }
     setWorkspaceBusy(true)
     try {
       const workspace = await onAuthorizeWorkspace(path)
-      setWorkspaceStatus(`已绑定：${workspace.label}`)
+      setWorkspaceStatus(t('composer.workspace.bound', { label: workspace.label }))
       setWorkspaceDialogOpen(false)
     } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : '工作区授权失败')
+      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.authFailed'))
     } finally {
       setWorkspaceBusy(false)
     }
@@ -140,25 +142,25 @@ export function Composer({
             <>
               <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
                 {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
-                <span>已附加 {attachedDocument.original_name}</span>
+                <span>{t('composer.attachedDocument', { name: attachedDocument.original_name })}</span>
                 <small>
-                  {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at)}
+                  {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at, locale)}
                 </small>
-                <Button size="icon-xs" variant="ghost" title="移除附件" onClick={onDetachDocument}>
+                <Button size="icon-xs" variant="ghost" title={t('composer.removeAttachment')} onClick={onDetachDocument}>
                   <IconX size={14} />
                 </Button>
               </div>
               {attachedDocument.status === 'failed' ? (
-                <div className="document-status failed">{attachedDocument.error_message || '解析失败'}</div>
+                <div className="document-status failed">{attachedDocument.error_message || t('composer.parseFailed')}</div>
               ) : null}
             </>
           ) : null}
           {!attachedDocument && localProject ? (
             <div className={`local-project-chip ${localProject.authorized ? '' : 'pending'}`}>
               <IconFolderOpen size={15} />
-              <span>本地项目：{localProject.label}</span>
-              <small>{localProject.authorized ? '已授权' : '待授权'} · {localProject.path}</small>
-              <Button size="icon-xs" variant="ghost" title="移除本地项目引用" onClick={onClearLocalProject}>
+              <span>{t('composer.localProject', { label: localProject.label })}</span>
+              <small>{localProject.authorized ? t('composer.authorized') : t('composer.pendingAuth')} · {localProject.path}</small>
+              <Button size="icon-xs" variant="ghost" title={t('composer.removeWorkspace')} onClick={onClearLocalProject}>
                 <IconX size={14} />
               </Button>
             </div>
@@ -168,7 +170,7 @@ export function Composer({
       <div className="composer-input">
         <Textarea
           value={draft}
-          placeholder="描述你的问题、任务，或让简单阅读附件"
+          placeholder={t('composer.placeholder')}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
@@ -184,11 +186,11 @@ export function Composer({
             type="button"
             variant="outline"
             size="sm"
-            title="为当前对话选择或上传附件"
+            title={t('composer.attachmentTitle')}
             onClick={() => setAttachmentDialogOpen(true)}
           >
             <IconPaperclip data-icon="inline-start" />
-            附件
+            {t('composer.attachmentButton')}
             {documents.length > 0 ? <span className="button-count">{documents.length}</span> : null}
           </Button>
           {!attachedDocument ? (
@@ -197,34 +199,34 @@ export function Composer({
               variant="outline"
               size="sm"
               disabled={!canUseLocalWorkspace}
-              title={canUseLocalWorkspace ? '为当前对话绑定本地工作区' : localStatusLabel}
+              title={canUseLocalWorkspace ? t('composer.workspaceTitle') : localStatusLabel}
               onClick={() => setWorkspaceDialogOpen(true)}
             >
               <IconFolderOpen data-icon="inline-start" />
-              工作区
+              {t('composer.workspaceButton')}
             </Button>
           ) : null}
         </div>
         <span className="composer-kbd">⌘↵</span>
-        <Button className="send-button" aria-label="发送" disabled={isSending || !draft.trim()} onClick={onSend}>
+        <Button className="send-button" aria-label={t('composer.send')} disabled={isSending || !draft.trim()} onClick={onSend}>
           <IconArrowUp size={16} />
-          <span className="sr-only">发送</span>
+          <span className="sr-only">{t('composer.send')}</span>
         </Button>
       </div>
       <Dialog open={attachmentDialogOpen} onOpenChange={setAttachmentDialogOpen}>
         <DialogContent className="attachment-dialog sm:max-w-[560px]">
           <DialogHeader>
-            <DialogTitle>当前对话附件</DialogTitle>
+            <DialogTitle>{t('composer.attachmentDialog.title')}</DialogTitle>
             <DialogDescription>
-              附件只会绑定到当前这次提问。上传后的文件仍由云端完成解析，聊天历史继续保存在本地。
+              {t('composer.attachmentDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className="attachment-dialog-body">
             <label className="document-upload document-upload-dialog">
               <IconUpload size={18} />
-              <span>{isUploading ? '上传解析中' : '上传附件'}</span>
+              <span>{isUploading ? t('composer.uploading') : t('composer.upload')}</span>
               <input
-                aria-label="上传附件"
+                aria-label={t('composer.upload')}
                 type="file"
                 accept={documentAccept}
                 disabled={isUploading}
@@ -236,7 +238,7 @@ export function Composer({
             </label>
             <div className="document-list document-list-dialog">
               {documents.length === 0 ? (
-                <p className="empty-inline">还没有可用附件。</p>
+                <p className="empty-inline">{t('composer.noAttachments')}</p>
               ) : (
                 documents.map((document) => (
                   <div className={document.id === attachedDocumentID ? 'document-list-item active' : 'document-list-item'} key={document.id}>
@@ -251,7 +253,7 @@ export function Composer({
                       <span>{document.original_name}</span>
                       <small>{document.status}</small>
                     </button>
-                    <button className="document-delete" title={`删除 ${document.original_name}`} onClick={() => onDeleteDocument(document)}>
+                    <button className="document-delete" title={t('composer.deleteDocument', { name: document.original_name })} onClick={() => onDeleteDocument(document)}>
                       <IconTrash size={14} />
                     </button>
                   </div>
@@ -262,11 +264,11 @@ export function Composer({
           <DialogFooter>
             {attachedDocument ? (
               <Button type="button" variant="outline" onClick={onDetachDocument}>
-                移除当前附件
+                {t('composer.detachCurrent')}
               </Button>
             ) : null}
             <Button type="button" variant="ghost" onClick={() => setAttachmentDialogOpen(false)}>
-              关闭
+              {t('composer.close')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -274,20 +276,20 @@ export function Composer({
       <Dialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen}>
         <DialogContent className="workspace-dialog sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>当前对话工作区</DialogTitle>
+            <DialogTitle>{t('composer.workspaceDialog.title')}</DialogTitle>
             <DialogDescription>
-              工作区只绑定到当前对话。Local Host 仍会在本机校验路径授权，发送任务时只使用这个对话的工作区。
+              {t('composer.workspaceDialog.description')}
             </DialogDescription>
           </DialogHeader>
           <div className="workspace-dialog-body">
             <label className="workspace-path-field">
               <span>
                 <IconFolderOpen />
-                文件夹路径
+                {t('composer.workspacePath')}
               </span>
               <div className="workspace-path-row">
                 <Input
-                  aria-label="当前对话工作区路径"
+                  aria-label={t('composer.workspacePathLabel')}
                   value={workspacePath}
                   disabled={workspaceBusy}
                   placeholder="/Users/you/project"
@@ -295,21 +297,21 @@ export function Composer({
                 />
                 {canPickWorkspace ? (
                   <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void pickWorkspace()}>
-                    选择文件夹
+                    {t('composer.pickFolder')}
                   </Button>
                 ) : null}
               </div>
             </label>
             <small className="workspace-dialog-note">
-              {workspaceStatus || (canUseLocalWorkspace ? `状态：${localStatusLabel}` : `暂不可用：${localStatusLabel}`)}
+              {workspaceStatus || (canUseLocalWorkspace ? t('composer.workspaceStatus', { status: localStatusLabel }) : t('composer.workspaceUnavailable', { status: localStatusLabel }))}
             </small>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void diagnoseWorkspace()}>
-              诊断路径
+              {t('composer.diagnosePath')}
             </Button>
             <Button type="button" disabled={workspaceBusy || !canUseLocalWorkspace} onClick={() => void authorizeWorkspace()}>
-              {workspaceBusy ? '处理中' : '授权并绑定'}
+              {workspaceBusy ? t('composer.processing') : t('composer.authorizeBind')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -322,13 +324,15 @@ const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.docx,.xlsx'
 
 function ModeToggle({ mode, onChange }: { mode: ChatMode; onChange: (mode: ChatMode) => void }) {
+  const { t } = useI18n()
+
   return (
     <div className="segmented">
       <Button className="btn-chip" variant={mode === 'fast' ? 'default' : 'outline'} size="sm" onClick={() => onChange('fast')}>
-        快速
+        {t('composer.mode.fast')}
       </Button>
       <Button className="btn-chip" variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => onChange('deep')}>
-        深度
+        {t('composer.mode.deep')}
       </Button>
     </div>
   )
@@ -344,25 +348,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, locale: Locale): string {
   try {
-    return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit' }).format(new Date(value))
+    return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
   } catch {
     return value
   }
 }
 
-function workspaceDiagnosisMessage(diagnosis: LocalWorkspaceDiagnosis): string {
+function workspaceDiagnosisMessage(diagnosis: LocalWorkspaceDiagnosis, t: Translator): string {
   if (diagnosis.authorized) {
-    return `路径已授权：${diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path)}`
+    return t('composer.workspace.pathAuthorized', { label: diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path) })
   }
   if (diagnosis.reason === 'not_found') {
-    return '路径不存在，请重新选择工作区。'
+    return t('composer.workspace.notFound')
   }
   if (diagnosis.reason === 'not_directory') {
-    return '路径不是文件夹，请选择工作区目录。'
+    return t('composer.workspace.notDirectory')
   }
-  return '路径存在，但尚未授权。'
+  return t('composer.workspace.notAuthorized')
 }
 
 function workspaceLabelFromPath(path: string): string {

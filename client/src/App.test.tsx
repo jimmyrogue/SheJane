@@ -108,7 +108,9 @@ describe('user client shell', () => {
 
     render(<App />)
 
-    expect(await screen.findByText(/Get started in/)).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
+
+    expect(screen.getByText(/Get started in/)).toBeInTheDocument()
     expect(screen.getByText(/Free forever/)).toBeInTheDocument()
     expect(screen.getByText('Google')).toBeInTheDocument()
     expect(screen.getByText('Apple')).toBeInTheDocument()
@@ -120,6 +122,54 @@ describe('user client shell', () => {
     expect(screen.getByText(/Your AI agent/)).toBeInTheDocument()
     expect(screen.getByText(/Keep me signed in on this device/)).toBeInTheDocument()
     expect(screen.getByText('Continue with Google')).toBeInTheDocument()
+  })
+
+  it('switches the client between Chinese and English and persists the choice', async () => {
+    mockFetch('user')
+
+    const { unmount } = render(<App />)
+
+    expect(await screen.findByText(/一分钟内开始使用/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'English' }))
+
+    expect(screen.getByText(/Get started in/)).toBeInTheDocument()
+    expect(localStorage.getItem('jiandanly.locale')).toBe('en')
+
+    unmount()
+    render(<App />)
+
+    expect(await screen.findByText(/Get started in/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '中文' }))
+    expect(screen.getByText(/一分钟内开始使用/)).toBeInTheDocument()
+    expect(localStorage.getItem('jiandanly.locale')).toBe('zh')
+  })
+
+  it('localizes the sidebar navigation labels in Chinese and English', async () => {
+    mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    expect(screen.getAllByText('工作区').length).toBeGreaterThan(0)
+    expect(screen.getByText('对话')).toBeInTheDocument()
+    expect(screen.getAllByText('工具').length).toBeGreaterThan(0)
+    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.getByText('历史')).toBeInTheDocument()
+    expect(screen.getByText('最近')).toBeInTheDocument()
+    expect(screen.queryByText('WORKSPACE')).not.toBeInTheDocument()
+
+    openMoreMenu(await screen.findByTitle('更多'))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
+
+    expect(screen.getByText('WORKSPACE')).toBeInTheDocument()
+    expect(screen.getByText('Chats')).toBeInTheDocument()
+    expect(screen.getByText('Tools')).toBeInTheDocument()
+    expect(screen.getByText('Projects')).toBeInTheDocument()
+    expect(screen.getByText('History')).toBeInTheDocument()
+    expect(screen.getByText('RECENT')).toBeInTheDocument()
   })
 
   it('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
