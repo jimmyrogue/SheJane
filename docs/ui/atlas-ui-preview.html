@@ -1522,6 +1522,368 @@
     </div>
   </section>
 
+  <!-- ============ Screen 7: Sign In ============ -->
+  <section class="section">
+    <div class="section-label">07</div>
+    <h2 class="section-title">登录页</h2>
+    <p class="section-desc">双栏 1:1 布局。左侧品牌叙事 + testimonial；右侧 3 个 SSO + email/password 表单。聚焦输入框用 1px 黑色边框。</p>
+
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <span class="tl-red"></span><span class="tl-amber"></span><span class="tl-green"></span>
+        </div>
+        <div class="titlebar-title">Atlas</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; min-height: 580px;">
+
+        <div style="background: var(--bg-sidebar); padding: 40px 36px; display: flex; flex-direction: column; justify-content: space-between; border-right: 0.5px solid var(--border-hairline);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; background: var(--text-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #FAFAF9;">
+              <i class="ti ti-sparkles" style="font-size: 14px;"></i>
+            </div>
+            <span style="font-size: 13px; font-weight: 500;">Atlas</span>
+          </div>
+
+          <div>
+            <div style="font-size: 24px; font-weight: 500; line-height: 1.3; letter-spacing: -0.3px;">Your AI agent,<br>now on your desktop.</div>
+            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.65; margin-top: 14px; max-width: 320px;">Run multi-step tasks across your tools, code and files — with full control over every action.</div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 26px;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--accent-success-bg); color: var(--accent-success-text); display: flex; align-items: center; justify-content: center;">
+                  <i class="ti ti-tools" style="font-size: 12px;"></i>
+                </div>
+                <span style="font-size: 12.5px;">12+ built-in tools and MCP connectors</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--accent-warning-bg); color: var(--accent-warning-text); display: flex; align-items: center; justify-content: center;">
+                  <i class="ti ti-shield-check" style="font-size: 12px;"></i>
+                </div>
+                <span style="font-size: 12.5px;">Human-in-the-loop for every sensitive action</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: #EAEFF4; color: var(--accent-info); display: flex; align-items: center; justify-content: center;">
+                  <i class="ti ti-folder" style="font-size: 12px;"></i>
+                </div>
+                <span style="font-size: 12.5px;">Local-first workspace, your files stay on disk</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="background: #FFFFFF; border: 0.5px solid var(--border-hairline); border-radius: 10px; padding: 14px 16px;">
+            <div style="font-size: 12.5px; line-height: 1.6;">"Atlas replaced three separate dev tools for me. The agent panel showing tool calls in real time is a killer feature."</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+              <div class="avatar" style="width: 22px; height: 22px; font-size: 10px;">MK</div>
+              <div>
+                <div style="font-size: 11.5px; font-weight: 500;">Mei Kobayashi</div>
+                <div style="font-size: 10.5px; color: var(--text-tertiary);">iOS engineer · Tokyo</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background: #FFFFFF; padding: 56px 44px 36px; display: flex; flex-direction: column;">
+          <div style="display: flex; justify-content: flex-end; font-size: 12px; color: var(--text-secondary);">
+            New to Atlas? <a href="#" style="color: var(--text-primary); text-decoration: none; font-weight: 500; margin-left: 4px;">Create account</a>
+          </div>
+
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 340px; margin: 0 auto; width: 100%;">
+            <div style="font-size: 22px; font-weight: 500; letter-spacing: -0.2px;">Welcome back</div>
+            <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">Sign in to continue your work.</div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 26px;">
+              <button class="btn-ghost" style="padding: 10px 12px; justify-content: center; font-size: 13px;">
+                <svg width="15" height="15" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z"/><path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.038l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.962L3.964 7.294C4.672 5.167 6.656 3.58 9 3.58z"/></svg>
+                Continue with Google
+              </button>
+              <button class="btn-ghost" style="padding: 10px 12px; justify-content: center; font-size: 13px;">
+                <i class="ti ti-brand-apple-filled" style="font-size: 16px;"></i> Continue with Apple
+              </button>
+              <button class="btn-ghost" style="padding: 10px 12px; justify-content: center; font-size: 13px;">
+                <i class="ti ti-brand-github-filled" style="font-size: 16px;"></i> Continue with GitHub
+              </button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px; margin: 22px 0;">
+              <div style="flex: 1; height: 0.5px; background: var(--border-hairline);"></div>
+              <span style="font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.6px;">or with email</span>
+              <div style="flex: 1; height: 0.5px; background: var(--border-hairline);"></div>
+            </div>
+
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Email</label>
+              <div style="border: 0.5px solid var(--border-strong); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <i class="ti ti-mail" style="font-size: 14px; color: var(--text-tertiary);"></i>
+                <span style="font-size: 13px;">leon@example.com</span>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500;">Password</label>
+                <a href="#" style="font-size: 11px; color: var(--text-secondary); text-decoration: none;">Forgot?</a>
+              </div>
+              <div style="border: 1px solid var(--text-primary); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <i class="ti ti-lock" style="font-size: 14px; color: var(--text-secondary);"></i>
+                <span style="font-size: 13px; letter-spacing: 2px;">••••••••••</span>
+                <i class="ti ti-eye-off" style="font-size: 14px; color: var(--text-tertiary); margin-left: auto; cursor: pointer;"></i>
+              </div>
+            </div>
+
+            <label style="display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-secondary); margin-top: 14px; cursor: pointer;">
+              <span style="width: 14px; height: 14px; border-radius: 3px; background: var(--text-primary); display: flex; align-items: center; justify-content: center;">
+                <i class="ti ti-check" style="font-size: 10px; color: #FFFFFF;"></i>
+              </span>
+              Keep me signed in on this device
+            </label>
+
+            <button class="btn-primary" style="margin-top: 20px; padding: 11px 14px; font-size: 13px; font-weight: 500; justify-content: center;">
+              Sign in <i class="ti ti-arrow-right" style="font-size: 14px;"></i>
+            </button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-tertiary); margin-top: 24px;">
+            <span>© 2026 Atlas</span>
+            <div style="display: flex; gap: 14px;">
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Privacy</a>
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Terms</a>
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Support</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Screen 8: Sign Up ============ -->
+  <section class="section">
+    <div class="section-label">08</div>
+    <h2 class="section-title">注册页</h2>
+    <p class="section-desc">左侧 3 步引导（当前步高亮）+ 免费套餐说明；右侧紧凑表单。邮箱实时校验通过用绿色对勾 + 绿色边框；密码强度用 4 段色块。</p>
+
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <span class="tl-red"></span><span class="tl-amber"></span><span class="tl-green"></span>
+        </div>
+        <div class="titlebar-title">Atlas</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; min-height: 620px;">
+
+        <div style="background: var(--bg-sidebar); padding: 40px 36px; display: flex; flex-direction: column; justify-content: space-between; border-right: 0.5px solid var(--border-hairline);">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="width: 24px; height: 24px; background: var(--text-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #FAFAF9;">
+              <i class="ti ti-sparkles" style="font-size: 14px;"></i>
+            </div>
+            <span style="font-size: 13px; font-weight: 500;">Atlas</span>
+          </div>
+
+          <div>
+            <div style="font-size: 24px; font-weight: 500; line-height: 1.3; letter-spacing: -0.3px;">Get started in<br>under a minute.</div>
+            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.65; margin-top: 14px; max-width: 320px;">Free for personal use. No credit card required. Cancel any time.</div>
+
+            <div style="margin-top: 32px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; gap: 12px; align-items: flex-start;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--text-primary); color: #FFFFFF; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; flex-shrink: 0;">1</div>
+                <div>
+                  <div style="font-size: 13px; font-weight: 500;">Create your account</div>
+                  <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px; line-height: 1.55;">Email, Google, Apple, or GitHub.</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 12px; align-items: flex-start;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: #FFFFFF; color: var(--text-tertiary); border: 0.5px solid var(--border-strong); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; flex-shrink: 0;">2</div>
+                <div>
+                  <div style="font-size: 13px; color: var(--text-secondary);">Pick your tools</div>
+                  <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.55;">Connect GitHub, Notion, Slack — or start fresh.</div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 12px; align-items: flex-start;">
+                <div style="width: 22px; height: 22px; border-radius: 50%; background: #FFFFFF; color: var(--text-tertiary); border: 0.5px solid var(--border-strong); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; flex-shrink: 0;">3</div>
+                <div>
+                  <div style="font-size: 13px; color: var(--text-secondary);">Run your first task</div>
+                  <div style="font-size: 12px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.55;">From spec to working code in minutes.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="background: #FFFFFF; border: 0.5px solid var(--border-hairline); border-radius: 10px; padding: 14px 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <i class="ti ti-gift" style="font-size: 16px; color: var(--accent-success-text);"></i>
+              <span style="font-size: 12.5px; font-weight: 500;">Free plan includes</span>
+            </div>
+            <div style="font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.7;">
+              50 agent runs / month · 3 connected tools<br>Up to 200 messages · Community support
+            </div>
+          </div>
+        </div>
+
+        <div style="background: #FFFFFF; padding: 48px 44px 36px; display: flex; flex-direction: column;">
+          <div style="display: flex; justify-content: flex-end; font-size: 12px; color: var(--text-secondary);">
+            Already have an account? <a href="#" style="color: var(--text-primary); text-decoration: none; font-weight: 500; margin-left: 4px;">Sign in</a>
+          </div>
+
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 340px; margin: 0 auto; width: 100%;">
+            <div style="font-size: 22px; font-weight: 500; letter-spacing: -0.2px;">Create your account</div>
+            <div style="font-size: 13px; color: var(--text-secondary); margin-top: 4px;">Free forever. Upgrade when you outgrow it.</div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 22px;">
+              <button class="btn-ghost" style="padding: 9px 8px; justify-content: center; font-size: 12px;">
+                <svg width="14" height="14" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z"/><path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.038l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.962L3.964 7.294C4.672 5.167 6.656 3.58 9 3.58z"/></svg>
+                Google
+              </button>
+              <button class="btn-ghost" style="padding: 9px 8px; justify-content: center; font-size: 12px;">
+                <i class="ti ti-brand-apple-filled" style="font-size: 14px;"></i> Apple
+              </button>
+              <button class="btn-ghost" style="padding: 9px 8px; justify-content: center; font-size: 12px;">
+                <i class="ti ti-brand-github-filled" style="font-size: 14px;"></i> GitHub
+              </button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px; margin: 20px 0 18px;">
+              <div style="flex: 1; height: 0.5px; background: var(--border-hairline);"></div>
+              <span style="font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.6px;">or with email</span>
+              <div style="flex: 1; height: 0.5px; background: var(--border-hairline);"></div>
+            </div>
+
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Name</label>
+              <div style="border: 0.5px solid var(--border-strong); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <i class="ti ti-user" style="font-size: 14px; color: var(--text-tertiary);"></i>
+                <span style="font-size: 13px;">Leon Zhang</span>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Email</label>
+              <div style="border: 0.5px solid var(--accent-success); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <i class="ti ti-mail" style="font-size: 14px; color: var(--text-tertiary);"></i>
+                <span style="font-size: 13px; flex: 1;">leon@example.com</span>
+                <i class="ti ti-check" style="font-size: 14px; color: var(--accent-success-text);"></i>
+              </div>
+            </div>
+
+            <div style="margin-bottom: 4px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Password</label>
+              <div style="border: 1px solid var(--text-primary); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <i class="ti ti-lock" style="font-size: 14px; color: var(--text-secondary);"></i>
+                <span style="font-size: 13px; letter-spacing: 2px; flex: 1;">••••••••••••</span>
+                <i class="ti ti-eye" style="font-size: 14px; color: var(--text-tertiary); cursor: pointer;"></i>
+              </div>
+
+              <div style="display: flex; gap: 4px; margin-top: 10px;">
+                <div style="flex: 1; height: 3px; background: var(--accent-success); border-radius: 2px;"></div>
+                <div style="flex: 1; height: 3px; background: var(--accent-success); border-radius: 2px;"></div>
+                <div style="flex: 1; height: 3px; background: var(--accent-success); border-radius: 2px;"></div>
+                <div style="flex: 1; height: 3px; background: #EAE7E0; border-radius: 2px;"></div>
+              </div>
+
+              <div style="display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px;">
+                <span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--accent-success-text);">
+                  <i class="ti ti-check" style="font-size: 11px;"></i> 12+ characters
+                </span>
+                <span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--accent-success-text);">
+                  <i class="ti ti-check" style="font-size: 11px;"></i> Number
+                </span>
+                <span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--accent-success-text);">
+                  <i class="ti ti-check" style="font-size: 11px;"></i> Mixed case
+                </span>
+                <span style="display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-tertiary);">
+                  <i class="ti ti-circle" style="font-size: 11px;"></i> Symbol
+                </span>
+              </div>
+            </div>
+
+            <label style="display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; color: var(--text-secondary); margin-top: 18px; cursor: pointer; line-height: 1.55;">
+              <span style="width: 14px; height: 14px; border-radius: 3px; background: var(--text-primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;">
+                <i class="ti ti-check" style="font-size: 10px; color: #FFFFFF;"></i>
+              </span>
+              <span>I agree to the <a href="#" style="color: var(--text-primary); text-decoration: underline;">Terms of Service</a> and <a href="#" style="color: var(--text-primary); text-decoration: underline;">Privacy Policy</a>.</span>
+            </label>
+
+            <button class="btn-primary" style="margin-top: 18px; padding: 11px 14px; font-size: 13px; font-weight: 500; justify-content: center;">
+              Create account <i class="ti ti-arrow-right" style="font-size: 14px;"></i>
+            </button>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-tertiary); margin-top: 24px;">
+            <span>© 2026 Atlas</span>
+            <div style="display: flex; gap: 14px;">
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Privacy</a>
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Terms</a>
+              <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Support</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Screen 9: Forgot Password ============ -->
+  <section class="section">
+    <div class="section-label">09</div>
+    <h2 class="section-title">忘记密码页</h2>
+    <p class="section-desc">单栏居中布局，最小化干扰。带返回链接、key 图标、警告提示卡。</p>
+
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <span class="tl-red"></span><span class="tl-amber"></span><span class="tl-green"></span>
+        </div>
+        <div class="titlebar-title">Atlas</div>
+      </div>
+
+      <div style="background: #FFFFFF; min-height: 520px; display: flex; flex-direction: column; align-items: center; padding: 56px 32px 36px;">
+
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 48px;">
+          <div style="width: 28px; height: 28px; background: var(--text-primary); border-radius: 7px; display: flex; align-items: center; justify-content: center; color: #FAFAF9;">
+            <i class="ti ti-sparkles" style="font-size: 16px;"></i>
+          </div>
+          <span style="font-size: 14px; font-weight: 500;">Atlas</span>
+        </div>
+
+        <div style="width: 100%; max-width: 380px;">
+          <a href="#" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); text-decoration: none; margin-bottom: 22px;">
+            <i class="ti ti-arrow-left" style="font-size: 13px;"></i> Back to sign in
+          </a>
+
+          <div style="width: 44px; height: 44px; border-radius: 12px; background: var(--bg-sidebar); display: flex; align-items: center; justify-content: center; color: var(--text-primary); margin-bottom: 18px;">
+            <i class="ti ti-key" style="font-size: 22px;"></i>
+          </div>
+
+          <div style="font-size: 22px; font-weight: 500; letter-spacing: -0.2px;">Reset your password</div>
+          <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-top: 6px;">Enter the email associated with your account. We'll send you a link to set a new password.</div>
+
+          <div style="margin-top: 26px;">
+            <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Email</label>
+            <div style="border: 1px solid var(--text-primary); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+              <i class="ti ti-mail" style="font-size: 14px; color: var(--text-secondary);"></i>
+              <span style="font-size: 13px;">leon@example.com</span>
+            </div>
+          </div>
+
+          <button class="btn-primary" style="width: 100%; margin-top: 16px; padding: 11px 14px; font-size: 13px; font-weight: 500; justify-content: center;">
+            Send reset link
+          </button>
+
+          <div style="margin-top: 22px; padding: 12px 14px; background: var(--accent-warning-bg); border-radius: var(--radius-md); display: flex; gap: 10px; align-items: flex-start;">
+            <i class="ti ti-info-circle" style="font-size: 14px; color: var(--accent-warning-text); margin-top: 1px;"></i>
+            <div style="font-size: 12px; color: #5C4731; line-height: 1.55;">Didn't sign up with email? Try signing in with <strong>Google</strong>, <strong>Apple</strong>, or <strong>GitHub</strong> instead.</div>
+          </div>
+        </div>
+
+        <div style="margin-top: auto; padding-top: 36px; display: flex; gap: 14px; font-size: 11px; color: var(--text-tertiary);">
+          <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Privacy</a>
+          <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Terms</a>
+          <a href="#" style="color: var(--text-tertiary); text-decoration: none;">Support</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="footnote">
     Atlas UI design preview · 浏览器内截图导出： <code>Cmd/Ctrl + Shift + S</code> 或开发者工具截屏
   </div>
