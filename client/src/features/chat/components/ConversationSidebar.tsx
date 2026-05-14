@@ -6,11 +6,13 @@ import {
   IconFolderOpen,
   IconFolders,
   IconHistory,
+  IconLayoutSidebarLeftCollapse,
   IconLoader2,
   IconMessageCircle,
   IconPencil,
   IconPin,
   IconPlus,
+  IconSearch,
   IconSettings,
   IconTrash,
   IconTool,
@@ -65,6 +67,7 @@ export function ConversationSidebar({
   onRenameConversation,
   onAddConversationToProject,
   onDeleteConversation,
+  onCollapseSidebar,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -78,6 +81,7 @@ export function ConversationSidebar({
   onRenameConversation: (conversationID: string, title: string) => void
   onAddConversationToProject: (conversationID: string, projectName: string) => void
   onDeleteConversation: (conversationID: string) => void
+  onCollapseSidebar: () => void
 }) {
   const { t } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -188,6 +192,17 @@ export function ConversationSidebar({
 
   return (
     <aside className="sidebar">
+      <div className="sidebar-window-controls">
+        <div className="sidebar-window-actions" aria-label={t('app.windowActions')}>
+          <button className="sidebar-window-control-button" type="button" title={t('app.collapseSidebar')} aria-label={t('app.collapseSidebar')} onClick={onCollapseSidebar}>
+            <IconLayoutSidebarLeftCollapse aria-hidden="true" />
+          </button>
+          <button className="sidebar-window-control-button" type="button" title={t('app.search')} aria-label={t('app.search')}>
+            <IconSearch aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
       <Button className="sidebar-newchat" aria-label={t('app.newChat')} onClick={onNewConversation}>
         <IconPlus size={15} />
         <span>{t('app.newChat')}</span>

@@ -11,17 +11,18 @@ function createWindow() {
     minWidth: 960,
     minHeight: 680,
     title: '简单 Jiandan',
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 18, y: 17 },
+        }
+      : {}),
     backgroundColor: '#FAFAF9',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.cjs'),
     },
-  }
-
-  if (process.platform === 'darwin') {
-    windowOptions.titleBarStyle = 'hiddenInset'
-    windowOptions.trafficLightPosition = { x: 16, y: 13 }
   }
 
   const window = new BrowserWindow(windowOptions)

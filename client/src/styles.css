@@ -257,11 +257,48 @@ a {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(248px, 292px) minmax(0, 1fr);
+  position: relative;
+  grid-template-columns: clamp(176px, var(--sidebar-width, 220px), 340px) minmax(0, 1fr);
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
   background: var(--background);
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: clamp(176px, var(--sidebar-width, 220px), 340px);
+  display: flex;
+  width: 12px;
+  align-items: stretch;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  transform: translateX(-50%);
+}
+
+.sidebar-resize-handle::after {
+  display: block;
+  width: 1px;
+  background: transparent;
+  content: "";
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resize-handle[data-resizing="true"]::after {
+  background: var(--border-strong);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 65%);
+}
+
+.sidebar-resizing,
+.sidebar-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .sidebar {
@@ -1461,12 +1498,7 @@ button:active {
   box-shadow: none;
 }
 
-.electron-window-shell .traffic-lights,
-.electron-auth-page .traffic-lights {
-  visibility: hidden;
-}
-
-.electron-window-shell .window-titlebar,
+.electron-window-shell .sidebar-window-controls,
 .electron-window-shell .topbar,
 .electron-auth-page {
   -webkit-app-region: drag;
@@ -1483,7 +1515,6 @@ button:active {
 .electron-window-shell [data-slot="dropdown-menu-content"],
 .electron-window-shell .account,
 .electron-window-shell .composer,
-.electron-window-shell .sidebar,
 .electron-auth-page .auth-panel,
 .electron-auth-page button,
 .electron-auth-page input,
@@ -1492,6 +1523,16 @@ button:active {
 }
 
 [data-slot="dropdown-menu-content"] {
+  -webkit-app-region: no-drag;
+}
+
+.electron-window-shell .sidebar-window-controls {
+  -webkit-app-region: drag;
+  justify-content: flex-start;
+  padding-left: 84px;
+}
+
+.electron-window-shell .sidebar-window-control-button {
   -webkit-app-region: no-drag;
 }
 
@@ -1504,29 +1545,6 @@ button:active {
   border-bottom: 0.5px solid var(--border-hairline);
   background: var(--bg-sidebar);
   padding: 0 14px;
-}
-
-.traffic-lights {
-  display: flex;
-  gap: 6px;
-}
-
-.traffic-lights span {
-  width: 11px;
-  height: 11px;
-  border-radius: 999px;
-}
-
-.tl-red {
-  background: #E8918C;
-}
-
-.tl-amber {
-  background: #E5C079;
-}
-
-.tl-green {
-  background: #A8C49A;
 }
 
 .titlebar-title {
@@ -1546,19 +1564,65 @@ button:active {
 }
 
 .app-shell {
-  grid-template-columns: 220px minmax(0, 1fr);
-  height: calc(100% - 36px);
+  position: relative;
+  grid-template-columns: clamp(176px, var(--sidebar-width, 220px), 340px) minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   background: var(--bg-app);
+}
+
+.electron-window-shell .sidebar-resize-handle {
+  -webkit-app-region: no-drag;
 }
 
 .sidebar {
   height: 100%;
   min-height: 0;
-  gap: 12px;
+  gap: 10px;
   border-right: 0.5px solid var(--border-hairline);
   background: var(--bg-sidebar);
-  padding: 14px 10px;
+  padding: 8px 10px 14px;
+}
+
+.sidebar-window-controls {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 8px;
+  color: var(--text-tertiary);
+}
+
+.sidebar-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-window-control-button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  padding: 0;
+}
+
+.sidebar-window-control-button:hover,
+.sidebar-window-control-button:focus-visible {
+  background: color-mix(in srgb, #FFFFFF 76%, var(--bg-sidebar));
+  color: var(--text-primary);
+  outline: none;
+}
+
+.sidebar-window-control-button svg {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-newchat {
@@ -2701,6 +2765,7 @@ button:active {
 }
 
 .auth-titlebar-title {
+  grid-column: 2;
   overflow: hidden;
   color: var(--text-tertiary);
   font-size: 12px;
@@ -2710,6 +2775,7 @@ button:active {
 }
 
 .auth-language-switch {
+  grid-column: 3;
   justify-self: end;
 }
 
@@ -3385,6 +3451,10 @@ select {
   .app-shell {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .sidebar-resize-handle {
+    display: none;
   }
 
   .sidebar {

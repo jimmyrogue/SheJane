@@ -39,6 +39,9 @@ describe('user client shell', () => {
 
     await screen.findByText('user@example.com')
     expect(screen.queryByText('管理后台')).not.toBeInTheDocument()
+    expect(document.querySelector('.window-titlebar')).toBeNull()
+    expect(screen.getByRole('button', { name: '收起侧栏' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '搜索' })).toBeInTheDocument()
   })
 
   it('does not include the admin entry even for admin users', async () => {
@@ -52,6 +55,34 @@ describe('user client shell', () => {
     await screen.findByText('admin@example.com')
     expect(screen.queryByText('管理后台')).not.toBeInTheDocument()
     expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
+  })
+
+  it('lets users resize the sidebar within fixed bounds and persists the width', async () => {
+    mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    const resizeHandle = screen.getByRole('separator', { name: '调整侧栏宽度' })
+    const shell = resizeHandle.closest('.app-shell') as HTMLElement
+
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('220px')
+    expect(resizeHandle).toHaveAttribute('aria-valuemin', '176')
+    expect(resizeHandle).toHaveAttribute('aria-valuemax', '340')
+
+    fireEvent.keyDown(resizeHandle, { key: 'Home' })
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('176px')
+    expect(resizeHandle).toHaveAttribute('aria-valuenow', '176')
+
+    fireEvent.keyDown(resizeHandle, { key: 'End' })
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('340px')
+    await waitFor(() => expect(localStorage.getItem('jiandanly.sidebar.width.v1')).toBe('340'))
+
+    fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('176px')
   })
 
   it('restores an Electron login session through the desktop auth bridge on startup', async () => {

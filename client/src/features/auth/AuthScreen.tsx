@@ -75,11 +75,6 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
     <main className={pageClassName}>
       <Card className="auth-panel">
         <div className="auth-titlebar">
-          <div className="traffic-lights" aria-hidden="true">
-            <span className="tl-red" />
-            <span className="tl-amber" />
-            <span className="tl-green" />
-          </div>
           <div className="auth-titlebar-title">Jiandanly</div>
           <LocaleSwitcher className="auth-language-switch" />
         </div>

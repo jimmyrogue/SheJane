@@ -1,5 +1,5 @@
-import { IconChevronDown, IconDots, IconDownload, IconLayoutSidebarLeftCollapse, IconSearch } from '@tabler/icons-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { IconChevronDown, IconDots, IconDownload } from '@tabler/icons-react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Toaster } from '@/components/ui/sonner'
@@ -48,6 +48,11 @@ import {
 
 const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
+const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
+const defaultSidebarWidth = 220
+const minSidebarWidth = 176
+const maxSidebarWidth = 340
+const sidebarKeyboardStep = 12
 
 interface ConversationRenderContext {
   navigationVersionAtStart: number
@@ -56,6 +61,34 @@ interface ConversationRenderContext {
 interface PendingConversationRender {
   conversation: Conversation
   context: ConversationRenderContext
+}
+
+function clampSidebarWidth(width: number): number {
+  return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, Math.round(width)))
+}
+
+function readSidebarWidth(): number {
+  if (typeof window === 'undefined') {
+    return defaultSidebarWidth
+  }
+  try {
+    const rawWidth = window.localStorage.getItem(sidebarWidthStorageKey)
+    if (!rawWidth) {
+      return defaultSidebarWidth
+    }
+    const parsedWidth = Number(rawWidth)
+    return Number.isFinite(parsedWidth) ? clampSidebarWidth(parsedWidth) : defaultSidebarWidth
+  } catch {
+    return defaultSidebarWidth
+  }
+}
+
+function writeSidebarWidth(width: number) {
+  try {
+    window.localStorage.setItem(sidebarWidthStorageKey, String(clampSidebarWidth(width)))
+  } catch {
+    // Local storage can be unavailable in restricted browser contexts.
+  }
 }
 
 export function App() {
@@ -77,6 +110,7 @@ function AppContent() {
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
+  const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
 
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -88,6 +122,8 @@ function AppContent() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
@@ -107,6 +143,43 @@ function AppContent() {
       duration: 3200,
     })
   }
+
+  useEffect(() => {
+    writeSidebarWidth(sidebarWidth)
+  }, [sidebarWidth])
+
+  useEffect(() => {
+    if (!isResizingSidebar) {
+      return undefined
+    }
+
+    document.body.classList.add('sidebar-resizing')
+
+    function handlePointerMove(event: PointerEvent) {
+      const resizeState = sidebarResizeStateRef.current
+      if (!resizeState || !Number.isFinite(event.clientX)) {
+        return
+      }
+      const nextWidth = clampSidebarWidth(resizeState.startWidth + event.clientX - resizeState.startX)
+      setSidebarWidth(nextWidth)
+    }
+
+    function finishResize() {
+      sidebarResizeStateRef.current = null
+      setIsResizingSidebar(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', finishResize)
+    window.addEventListener('pointercancel', finishResize)
+
+    return () => {
+      document.body.classList.remove('sidebar-resizing')
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', finishResize)
+      window.removeEventListener('pointercancel', finishResize)
+    }
+  }, [isResizingSidebar])
 
   useEffect(() => {
     return () => {
@@ -765,24 +838,53 @@ function AppContent() {
   }
 
   const shellClassName = window.jiandanDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
+  const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
+
+  function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return
+    }
+    if (!Number.isFinite(event.clientX)) {
+      return
+    }
+    event.preventDefault()
+    sidebarResizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+    }
+    setIsResizingSidebar(true)
+  }
+
+  function handleSidebarResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setSidebarWidth((current) => clampSidebarWidth(current - sidebarKeyboardStep))
+      return
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      setSidebarWidth((current) => clampSidebarWidth(current + sidebarKeyboardStep))
+      return
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      setSidebarWidth(minSidebarWidth)
+      return
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      setSidebarWidth(maxSidebarWidth)
+    }
+  }
+
+  function toggleSidebarCollapse() {
+    setSidebarWidth((current) => current <= minSidebarWidth + 4 ? defaultSidebarWidth : minSidebarWidth)
+  }
 
   return (
     <TooltipProvider>
       <main className={shellClassName}>
-        <div className="window-titlebar">
-          <div className="traffic-lights" aria-hidden="true">
-            <span className="tl-red" />
-            <span className="tl-amber" />
-            <span className="tl-green" />
-          </div>
-          <div className="titlebar-title">{activeConversation?.title ?? t('app.title')}</div>
-          <div className="titlebar-actions" aria-label={t('app.windowActions')}>
-            <IconLayoutSidebarLeftCollapse size={14} />
-            <IconSearch size={14} />
-          </div>
-        </div>
-
-        <div className="app-shell">
+        <div className="app-shell" style={appShellStyle}>
           <ConversationSidebar
             conversations={conversations}
             activeID={activeID}
@@ -796,6 +898,21 @@ function AppContent() {
             onRenameConversation={(conversationID, title) => void renameConversation(conversationID, title)}
             onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
+            onCollapseSidebar={toggleSidebarCollapse}
+          />
+
+          <div
+            className="sidebar-resize-handle"
+            role="separator"
+            aria-label={t('app.resizeSidebar')}
+            aria-orientation="vertical"
+            aria-valuemin={minSidebarWidth}
+            aria-valuemax={maxSidebarWidth}
+            aria-valuenow={sidebarWidth}
+            data-resizing={isResizingSidebar ? 'true' : undefined}
+            tabIndex={0}
+            onKeyDown={handleSidebarResizeKeyDown}
+            onPointerDown={beginSidebarResize}
           />
 
           <section className="workspace">

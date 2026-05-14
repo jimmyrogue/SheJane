@@ -139,6 +139,7 @@ function sidebarElement(
         onRenameConversation={handlers.onRenameConversation ?? vi.fn()}
         onAddConversationToProject={handlers.onAddConversationToProject ?? vi.fn()}
         onDeleteConversation={handlers.onDeleteConversation ?? vi.fn()}
+        onCollapseSidebar={vi.fn()}
       />
     </I18nProvider>
   )
