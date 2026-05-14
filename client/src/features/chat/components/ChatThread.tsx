@@ -1,6 +1,6 @@
 import { AgentProgress } from './AgentProgress'
 import { MessageBubble } from './MessageBubble'
-import { Code2, FileText, Palette, Search } from 'lucide-react'
+import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
 import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { Conversation } from '@/shared/local-data/types'
 import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
@@ -42,19 +42,19 @@ export function ChatThread({
           <p>本地保存聊天历史，云端只处理账号、计费和必要的模型请求。</p>
           <div className="suggest-grid" aria-label="建议任务">
             <button className="suggest-tile" type="button">
-              <span className="tag tag-code"><Code2 size={14} /> Code</span>
+              <span className="tag tag-code"><IconCodeDots size={14} /> Code</span>
               <span className="text">让 Agent 帮你拆解一个实现任务</span>
             </button>
             <button className="suggest-tile" type="button">
-              <span className="tag tag-write"><FileText size={14} /> Write</span>
+              <span className="tag tag-write"><IconWriting size={14} /> Write</span>
               <span className="text">整理文档、规格或发布说明</span>
             </button>
             <button className="suggest-tile" type="button">
-              <span className="tag tag-research"><Search size={14} /> Research</span>
+              <span className="tag tag-research"><IconSearch size={14} /> Research</span>
               <span className="text">收集信息并产出可追溯结论</span>
             </button>
             <button className="suggest-tile" type="button">
-              <span className="tag tag-create"><Palette size={14} /> Create</span>
+              <span className="tag tag-create"><IconPalette size={14} /> Create</span>
               <span className="text">生成界面方向、草稿或检查清单</span>
             </button>
           </div>

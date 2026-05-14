@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import type { LocalArtifact } from '@/shared/local-host/client'
@@ -20,7 +20,7 @@ export function ArtifactPanel({
               <SheetDescription>{artifact?.tool_name ?? 'local artifact'}</SheetDescription>
             </div>
             <Button className="icon-button light" size="icon-sm" variant="ghost" title="关闭 artifact" onClick={onClose}>
-              <X size={15} />
+              <IconX size={15} />
             </Button>
           </div>
         </SheetHeader>

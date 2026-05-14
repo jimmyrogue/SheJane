@@ -1,5 +1,6 @@
-import { ChevronDown, LogOut, MoreHorizontal, PanelLeft, Search, Share2 } from 'lucide-react'
+import { IconChevronDown, IconDots, IconDownload, IconLayoutSidebarLeftCollapse, IconSearch } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   JiandanAPI,
@@ -19,7 +20,6 @@ import { createLocalID, LocalConversationStore } from './shared/local-data/local
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
-  clearLocalCloudSession,
   createLocalRun,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -175,6 +175,7 @@ export function App() {
         authorized: Boolean(selectedWorkspace || activeWorkspace.authorized),
       }
     : undefined
+  const topbarStatus = topbarStatusInfo(localHost, localHostConfig, localCloudSession, mode)
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -270,7 +271,7 @@ export function App() {
 
   async function sendLocalHarnessMessage(content: string): Promise<Conversation> {
     if (!localHostConfig) {
-      throw new Error('本地 Harness 未连接')
+      throw new Error('本地服务未连接')
     }
     const text = content.trim()
     if (!text) {
@@ -330,7 +331,7 @@ export function App() {
       scheduleConversationRender(conversation)
     } catch (error) {
       assistantMessage.status = 'error'
-      assistantMessage.content = error instanceof Error ? error.message : '本地 Harness 执行失败'
+      assistantMessage.content = error instanceof Error ? error.message : '本地服务执行失败'
       scheduleConversationRender(conversation)
       throw error
     } finally {
@@ -343,7 +344,7 @@ export function App() {
 
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
-      setNotice('本地 Harness 未连接')
+      setNotice('本地服务未连接')
       return
     }
     const conversation = await localData.get(activeID)
@@ -384,7 +385,7 @@ export function App() {
 
   async function openLocalArtifact(artifactID: string) {
     if (!localHostConfig) {
-      setNotice('本地 Harness 未连接')
+      setNotice('本地服务未连接')
       return
     }
     setNotice('')
@@ -397,7 +398,7 @@ export function App() {
 
   async function recoverLocalRun(run: LocalHarnessRun) {
     if (!localHostConfig) {
-      setNotice('本地 Harness 未连接')
+      setNotice('本地服务未连接')
       return
     }
     const timestamp = new Date().toISOString()
@@ -453,7 +454,7 @@ export function App() {
 
   async function exportLocalRunDiagnostics(run: LocalHarnessRun) {
     if (!localHostConfig) {
-      setNotice('本地 Harness 未连接')
+      setNotice('本地服务未连接')
       return
     }
     try {
@@ -467,7 +468,7 @@ export function App() {
 
   async function openLocalRunDiagnostics(runID: string) {
     if (!localHostConfig) {
-      setNotice('本地 Harness 未连接')
+      setNotice('本地服务未连接')
       return
     }
     try {
@@ -496,7 +497,7 @@ export function App() {
 
   async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
     if (!localHostConfig?.token) {
-      throw new Error('本地 Harness 未配对，无法授权工作区')
+      throw new Error('本地服务未配对，无法授权工作区')
     }
     const nextPath = path.trim()
     if (!nextPath) {
@@ -516,7 +517,7 @@ export function App() {
 
   async function diagnoseWorkspace(path: string): Promise<LocalWorkspaceDiagnosis> {
     if (!localHostConfig?.token) {
-      throw new Error('本地 Harness 未配对，无法诊断工作区')
+      throw new Error('本地服务未配对，无法诊断工作区')
     }
     const nextPath = path.trim()
     if (!nextPath) {
@@ -570,27 +571,6 @@ export function App() {
     await localData.importAll(await file.text())
     await refreshConversations()
     setNotice('本地聊天数据已导入')
-  }
-
-  async function startCheckout() {
-    if (!auth) {
-      setNotice('请先登录后再升级')
-      return
-    }
-    const checkout = await api.createSubscriptionCheckout()
-    window.location.href = checkout.checkout_url
-  }
-
-  async function logout() {
-    await Promise.allSettled([
-      api.logout(),
-      localHostConfig?.token ? clearLocalCloudSession(localHostConfig) : Promise.resolve(),
-    ])
-    setLocalCloudSessionState(null)
-    setAuth(null)
-    setBalance(null)
-    setDocuments([])
-    setAttachedDocumentID(undefined)
   }
 
   async function uploadDocument(file: File | undefined) {
@@ -663,8 +643,8 @@ export function App() {
           </div>
           <div className="titlebar-title">{activeConversation?.title ?? 'Jiandanly · AI Agent'}</div>
           <div className="titlebar-actions" aria-label="窗口操作">
-            <PanelLeft size={14} />
-            <Search size={14} />
+            <IconLayoutSidebarLeftCollapse size={14} />
+            <IconSearch size={14} />
           </div>
         </div>
 
@@ -684,31 +664,39 @@ export function App() {
             <header className="topbar">
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? '新对话'}</span>
-                <ChevronDown size={14} aria-hidden="true" />
+                <IconChevronDown size={14} aria-hidden="true" />
                 <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt) : '本地优先对话'}</small>
               </div>
               <div className="account">
-                {localHost ? (
-                  <span className={localHost.online && localHostConfig?.token ? 'host-chip online' : 'host-chip offline'}>
-                    <span className={localHost.online && localHostConfig?.token ? 'status-dot success' : 'status-dot warning'} />
-                    {localHostStatusLabel(localHost, localHostConfig, localCloudSession)}
-                  </span>
-                ) : null}
-                <span className="model-pill">
-                  <span className="status-dot success" />
-                  {mode === 'deep' ? 'Deep agent' : 'Fast agent'}
-                </span>
-                <button className="toolbar-icon-button" title="分享" aria-label="分享">
-                  <Share2 size={15} />
-                </button>
-                <button className="toolbar-icon-button" title="更多" aria-label="更多">
-                  <MoreHorizontal size={15} />
-                </button>
-                <span className="account-email">{auth.user.email}</span>
-                <button className="btn-ghost atlas-upgrade" onClick={startCheckout}>升级</button>
-                <button className="toolbar-icon-button" title="退出登录" onClick={logout}>
-                  <LogOut size={15} />
-                </button>
+                <span className="sr-only">{auth.user.email}</span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="toolbar-icon-button" title="更多" aria-label="更多">
+                      <IconDots size={15} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="topbar-menu">
+                    <DropdownMenuItem
+                      disabled={!activeID}
+                      onSelect={() => {
+                        if (activeID) {
+                          void exportConversationData(activeID)
+                        }
+                      }}
+                    >
+                      <IconDownload data-icon="inline-start" />
+                      <span>导出当前对话</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <div className="topbar-status-row" aria-label={`当前本地状态：${topbarStatus.detail}`}>
+                      <span className={`topbar-status-dot ${topbarStatus.tone}`} aria-hidden="true" />
+                      <div>
+                        <span>当前本地状态</span>
+                        <small>{topbarStatus.detail}</small>
+                      </div>
+                    </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </header>
 
@@ -773,7 +761,29 @@ function localHostStatusLabel(
   if (!session?.connected) {
     return '本地待登录'
   }
-  return '本地 Harness'
+  return '本地服务已连接'
+}
+
+function topbarStatusInfo(
+  localHost: LocalHostProbe | null,
+  config: LocalHostConfig | null,
+  session: LocalCloudSession | null,
+  mode: ChatMode,
+): { tone: 'online' | 'warning'; detail: string } {
+  const modeLabel = mode === 'deep' ? '深度模式' : '快速模式'
+  if (!localHost) {
+    return { tone: 'online', detail: `云端服务可用 · 当前为${modeLabel}` }
+  }
+  if (!localHost.online) {
+    return { tone: 'warning', detail: `本地服务未连接 · 当前为${modeLabel}` }
+  }
+  if (!config?.token) {
+    return { tone: 'warning', detail: `本地服务待配对 · 当前为${modeLabel}` }
+  }
+  if (!session?.connected) {
+    return { tone: 'warning', detail: `本地服务待登录 · 当前为${modeLabel}` }
+  }
+  return { tone: 'online', detail: `本地服务已连接 · 当前为${modeLabel}` }
 }
 
 function formatRelativeTime(value: string): string {

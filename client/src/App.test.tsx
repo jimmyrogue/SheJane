@@ -138,7 +138,12 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    expect((await screen.findAllByText('本地 Harness')).length).toBeGreaterThan(0)
+    openMoreMenu(await screen.findByTitle('更多'))
+    expect(await screen.findByText('当前本地状态')).toBeInTheDocument()
+    expect(screen.getByText(/本地服务已连接/)).toBeInTheDocument()
+    expect(screen.queryByText('Fast agent')).not.toBeInTheDocument()
+    expect(screen.queryByText('Local Harness')).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await bindWorkspace('/tmp/jiandanly-workspace')
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
       target: { value: '运行本地检查' },
@@ -182,7 +187,7 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
   })
 
-  it('syncs the cloud login session into the paired Local Harness and clears it on logout', async () => {
+  it('syncs the cloud login session into the paired Local Harness and shows local status in the topbar menu', async () => {
     const calls = mockFetch('user')
     window.jiandanDesktop = {
       platform: 'darwin',
@@ -209,10 +214,9 @@ describe('user client shell', () => {
       ).toBe(true)
     })
 
-    fireEvent.click(screen.getByTitle('退出登录'))
-
-    await screen.findByText('创建账号')
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/session' && call.init?.method === 'DELETE')).toBe(true)
+    openMoreMenu(await screen.findByTitle('更多'))
+    expect(await screen.findByText('当前本地状态')).toBeInTheDocument()
+    expect(screen.getByText(/本地服务已连接/)).toBeInTheDocument()
   })
 
   it('previews local artifacts from the agent timeline', async () => {
@@ -364,7 +368,18 @@ describe('user client shell', () => {
     fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), { target: { value: '你好' } })
     fireEvent.click(screen.getByText('发送'))
 
-    fireEvent.click(await screen.findByTitle('更多 你好'))
+    await screen.findByTitle('更多 你好')
+    openMoreMenu(screen.getByTitle('更多'))
+    expect(await screen.findByText('导出当前对话')).toBeInTheDocument()
+    expect(screen.getByText('当前本地状态')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('导出当前对话'))
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:conversation-export')
+    expect(await screen.findByText('已导出对话：你好')).toBeInTheDocument()
+    createObjectURL.mockClear()
+    revokeObjectURL.mockClear()
+
+    fireEvent.click(screen.getByTitle('更多 你好'))
     expect(await screen.findByText('导出此对话')).toBeInTheDocument()
     expect(screen.getByText('导入聊天数据')).toBeInTheDocument()
     fireEvent.click(screen.getByText('导出此对话'))
@@ -430,6 +445,11 @@ async function bindWorkspace(path: string) {
   fireEvent.change(await screen.findByLabelText('当前对话工作区路径'), { target: { value: path } })
   fireEvent.click(screen.getByText('授权并绑定'))
   expect(await screen.findByText(`本地项目：${label}`)).toBeInTheDocument()
+}
+
+function openMoreMenu(trigger: HTMLElement) {
+  trigger.focus()
+  fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
 }
 
 function mockFetch(

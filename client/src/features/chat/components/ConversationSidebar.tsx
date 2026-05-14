@@ -1,5 +1,16 @@
 import { useRef, useState } from 'react'
-import { Download, Ellipsis, FolderOpen, History, MessageCircle, Plus, Settings, Upload, Wrench } from 'lucide-react'
+import {
+  IconDots,
+  IconDownload,
+  IconFolderOpen,
+  IconFolders,
+  IconHistory,
+  IconMessageCircle,
+  IconPlus,
+  IconSettings,
+  IconTool,
+  IconUpload,
+} from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -38,7 +49,7 @@ export function ConversationSidebar({
   return (
     <aside className="sidebar">
       <Button className="sidebar-newchat" aria-label="新对话" onClick={onNewConversation}>
-        <Plus size={15} />
+        <IconPlus size={15} />
         <span>新对话</span>
         <span className="kbd">⌘N</span>
       </Button>
@@ -46,20 +57,20 @@ export function ConversationSidebar({
       <div className="sidebar-section">
         <div className="sidebar-section-label">Workspace</div>
         <button className="sidebar-item active" type="button">
-          <MessageCircle size={14} />
+          <IconMessageCircle size={14} />
           <span>Chats</span>
         </button>
         <button className="sidebar-item" type="button">
-          <Wrench size={14} />
+          <IconTool size={14} />
           <span>Tools</span>
           <span className="badge">{conversations.length || 1}</span>
         </button>
         <button className="sidebar-item" type="button">
-          <FolderOpen size={14} />
+          <IconFolders size={14} />
           <span>Projects</span>
         </button>
         <button className="sidebar-item" type="button">
-          <History size={14} />
+          <IconHistory size={14} />
           <span>History</span>
         </button>
       </div>
@@ -84,7 +95,7 @@ export function ConversationSidebar({
                 aria-label={`更多 ${conversation.title}`}
                 onClick={() => setActionConversationID(conversation.id)}
               >
-                <Ellipsis size={15} />
+                <IconDots size={15} />
               </Button>
             </div>
           ))
@@ -99,7 +110,7 @@ export function ConversationSidebar({
           <div className="name">{userEmail.split('@')[0] || 'Jiandanly'}</div>
           <div className="plan">{balance ? `${balance.plan_code ?? 'free'} · ${balance.monthly_remaining}` : 'Local-first'}</div>
         </div>
-        <Settings size={15} aria-hidden="true" />
+        <IconSettings size={15} aria-hidden="true" />
       </div>
 
       <input
@@ -133,11 +144,11 @@ export function ConversationSidebar({
                 }
               }}
             >
-              <Download data-icon="inline-start" />
+              <IconDownload data-icon="inline-start" />
               导出此对话
             </Button>
             <Button type="button" variant="outline" onClick={() => importInputRef.current?.click()}>
-              <Upload data-icon="inline-start" />
+              <IconUpload data-icon="inline-start" />
               导入聊天数据
             </Button>
           </div>

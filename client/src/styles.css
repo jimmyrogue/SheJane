@@ -120,6 +120,17 @@
   box-sizing: border-box;
 }
 
+svg.tabler-icon {
+  display: block;
+  flex-shrink: 0;
+  stroke-width: 1.75;
+}
+
+button svg.tabler-icon,
+[role="button"] svg.tabler-icon {
+  pointer-events: none;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -249,7 +260,6 @@ a {
 .conversation,
 .conversation-more,
 .local-actions button,
-.account button,
 .icon-button {
   min-height: 38px;
 }
@@ -629,16 +639,6 @@ select {
 .host-chip.offline {
   background: var(--muted);
   color: var(--muted-foreground);
-}
-
-.account button {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--foreground);
-  padding: 0 10px;
-  min-height: 32px;
-  font-size: 13px;
 }
 
 .icon-button {
@@ -1376,6 +1376,35 @@ button:active {
   visibility: hidden;
 }
 
+.electron-window-shell .window-titlebar,
+.electron-window-shell .topbar,
+.electron-auth-page {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.electron-window-shell button,
+.electron-window-shell input,
+.electron-window-shell textarea,
+.electron-window-shell select,
+.electron-window-shell a,
+.electron-window-shell [role="button"],
+.electron-window-shell [data-slot="dialog-content"],
+.electron-window-shell [data-slot="dropdown-menu-content"],
+.electron-window-shell .account,
+.electron-window-shell .composer,
+.electron-window-shell .sidebar,
+.electron-auth-page .auth-panel,
+.electron-auth-page button,
+.electron-auth-page input,
+.electron-auth-page a {
+  -webkit-app-region: no-drag;
+}
+
+[data-slot="dropdown-menu-content"] {
+  -webkit-app-region: no-drag;
+}
+
 .window-titlebar {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr) 90px;
@@ -1678,12 +1707,56 @@ button:active {
   font-size: 12px;
 }
 
-.account-email {
-  max-width: 190px;
-  overflow: hidden;
+.topbar-status-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-success);
+  box-shadow: 0 0 0 3px var(--accent-success-bg);
+}
+
+.topbar-status-dot.warning {
+  background: var(--accent-warning);
+  box-shadow: 0 0 0 3px var(--accent-warning-bg);
+}
+
+.topbar-menu {
+  min-width: 220px;
+  border: 0.5px solid var(--border-hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.topbar-status-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 8px 7px;
+}
+
+.topbar-status-row .topbar-status-dot {
+  margin-top: 5px;
+}
+
+.topbar-status-row span,
+.topbar-status-row small {
+  display: block;
+}
+
+.topbar-status-row span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.topbar-status-row small {
+  margin-top: 2px;
   color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .model-pill,
@@ -1746,6 +1819,17 @@ button:active {
   color: var(--text-secondary);
   padding: 0;
   line-height: 0;
+}
+
+.toolbar-icon-button,
+.icon-button,
+.conversation-more,
+.document-delete,
+.attachment-chip button,
+.local-project-chip button,
+.send-button {
+  align-items: center;
+  justify-content: center;
 }
 
 .toolbar-icon-button svg,
@@ -2427,10 +2511,6 @@ select {
 
   .titlebar-actions {
     gap: 7px;
-  }
-
-  .account-email {
-    display: none;
   }
 
   .toolbar-icon-button,

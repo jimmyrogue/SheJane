@@ -1,4 +1,4 @@
-import { CheckCircle2, Download, Eye, X } from 'lucide-react'
+import { IconCircleCheck, IconDownload, IconEye, IconX } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -36,22 +36,22 @@ export function AgentTimeline({
             {event.permissionRequestId && event.type === 'permission.required' && !isPermissionResolved(message, event.permissionRequestId) ? (
               <span className="timeline-actions flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve', 'once')}>
-                  <CheckCircle2 size={13} />
+                  <IconCircleCheck size={13} />
                   允许一次
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(event.permissionRequestId!, 'approve', 'run')}>
-                  <CheckCircle2 size={13} />
+                  <IconCircleCheck size={13} />
                   本会话始终允许
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => onPermissionDecision(event.permissionRequestId!, 'deny')}>
-                  <X size={13} />
+                  <IconX size={13} />
                   拒绝
                 </Button>
               </span>
             ) : null}
             {event.artifactId ? (
               <Button className="timeline-artifact-button" size="sm" variant="ghost" onClick={() => onOpenArtifact(event.artifactId!)}>
-                <Eye size={13} />
+                <IconEye size={13} />
                 查看 artifact
               </Button>
             ) : null}
@@ -60,7 +60,7 @@ export function AgentTimeline({
       ))}
       {message.runId && onOpenDiagnostics && hasLocalDiagnosticSignal(message) ? (
         <Button className="timeline-artifact-button" size="sm" variant="outline" title={`查看诊断 ${message.runId}`} onClick={() => onOpenDiagnostics(message.runId!)}>
-          <Download size={13} />
+          <IconDownload size={13} />
           诊断
         </Button>
       ) : null}

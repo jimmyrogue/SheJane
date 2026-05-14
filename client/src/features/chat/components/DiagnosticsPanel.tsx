@@ -1,4 +1,4 @@
-import { Download, X } from 'lucide-react'
+import { IconDownload, IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -21,15 +21,15 @@ export function DiagnosticsPanel({
           <div className="flex items-start justify-between gap-3">
             <div>
               <SheetTitle>任务诊断：{diagnostics?.run.id}</SheetTitle>
-              <SheetDescription>{diagnostics?.run.goal || 'Local Harness run'}</SheetDescription>
+              <SheetDescription>{diagnostics?.run.goal || '本地任务'}</SheetDescription>
             </div>
             <div className="diagnostics-actions flex gap-2">
               <Button type="button" size="sm" variant="outline" onClick={onExport}>
-                <Download size={14} />
+                <IconDownload size={14} />
                 导出当前诊断
               </Button>
               <Button className="icon-button light" size="icon-sm" variant="ghost" title="关闭诊断" onClick={onClose}>
-                <X size={15} />
+                <IconX size={15} />
               </Button>
             </div>
           </div>

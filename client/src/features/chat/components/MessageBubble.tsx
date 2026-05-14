@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Sparkles } from 'lucide-react'
+import { IconSparkles } from '@tabler/icons-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
@@ -55,13 +55,12 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className={isAssistant ? 'avatar-bot' : 'avatar'}>
-        {isAssistant ? <Sparkles size={14} /> : '我'}
+        {isAssistant ? <IconSparkles size={14} /> : '我'}
       </div>
       <div className="message-bubble-inner">
         <div className="message-meta">
           <span>{message.role === 'user' ? '我' : '简单'}</span>
-          {message.status === 'streaming' ? <Badge variant="secondary">running</Badge> : null}
-          {message.runOrigin ? <Badge variant="outline">{message.runOrigin === 'local' ? 'Local Harness' : 'Cloud Run'}</Badge> : null}
+          {message.status === 'streaming' ? <Badge variant="secondary">处理中</Badge> : null}
         </div>
         <div className="message-content">
           {isAssistant && message.status === 'streaming' ? (

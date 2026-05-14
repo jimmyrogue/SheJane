@@ -1,4 +1,13 @@
-import { AlertCircle, CheckCircle2, ChevronDown, Download, Eye, Loader2, ShieldCheck, X } from 'lucide-react'
+import {
+  IconAlertCircle,
+  IconChevronDown,
+  IconCircleCheck,
+  IconDownload,
+  IconEye,
+  IconLoader2,
+  IconShieldCheck,
+  IconX,
+} from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -48,7 +57,7 @@ export function AgentProgress({
         <Icon className="tool-card-icon" aria-hidden="true" />
         <span className="name" key={progress.label}>{progress.label}</span>
         {progress.detail ? <span className="meta">· {progress.detail}</span> : null}
-        <ChevronDown className="tool-card-caret" aria-hidden="true" />
+        <IconChevronDown className="tool-card-caret" aria-hidden="true" />
       </div>
 
       <div className="tool-card-results agent-progress-results" aria-label="任务摘要">
@@ -66,7 +75,7 @@ export function AgentProgress({
         ) : null}
         {progress.latestArtifactID ? (
           <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
-            <Eye size={13} />
+            <IconEye size={13} />
             查看 artifact
           </Button>
         ) : null}
@@ -78,7 +87,7 @@ export function AgentProgress({
             title={`查看诊断 ${progress.diagnosticsRunID}`}
             onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
           >
-            <Download size={13} />
+            <IconDownload size={13} />
             诊断
           </Button>
         ) : null}
@@ -92,15 +101,15 @@ export function AgentProgress({
       {progress.pendingPermission ? (
         <div className="agent-progress-permission-actions">
           <Button size="sm" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'once')}>
-            <CheckCircle2 size={13} />
+            <IconCircleCheck size={13} />
             允许一次
           </Button>
           <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'run')}>
-            <ShieldCheck size={13} />
+            <IconShieldCheck size={13} />
             本会话始终允许
           </Button>
           <Button size="sm" variant="outline" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'deny')}>
-            <X size={13} />
+            <IconX size={13} />
             拒绝
           </Button>
         </div>
@@ -280,10 +289,10 @@ function defaultWorkingLabel(message: ChatMessage): string {
 }
 
 function progressIcon(tone: ProgressTone) {
-  if (tone === 'permission') return ShieldCheck
-  if (tone === 'done') return CheckCircle2
-  if (tone === 'failed') return AlertCircle
-  return Loader2
+  if (tone === 'permission') return IconShieldCheck
+  if (tone === 'done') return IconCircleCheck
+  if (tone === 'failed') return IconAlertCircle
+  return IconLoader2
 }
 
 function dotClass(tone: ProgressTone): string {

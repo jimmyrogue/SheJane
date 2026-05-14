@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { FileText, FolderOpen, Loader2, Paperclip, Send, Trash2, Upload, X } from 'lucide-react'
+import {
+  IconArrowUp,
+  IconFileText,
+  IconFolderOpen,
+  IconLoader2,
+  IconPaperclip,
+  IconTrash,
+  IconUpload,
+  IconX,
+} from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -130,13 +139,13 @@ export function Composer({
           {attachedDocument ? (
             <>
               <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
-                {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <Loader2 size={15} /> : <FileText size={15} />}
+                {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
                 <span>已附加 {attachedDocument.original_name}</span>
                 <small>
                   {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at)}
                 </small>
                 <Button size="icon-xs" variant="ghost" title="移除附件" onClick={onDetachDocument}>
-                  <X size={14} />
+                  <IconX size={14} />
                 </Button>
               </div>
               {attachedDocument.status === 'failed' ? (
@@ -146,11 +155,11 @@ export function Composer({
           ) : null}
           {!attachedDocument && localProject ? (
             <div className={`local-project-chip ${localProject.authorized ? '' : 'pending'}`}>
-              <FolderOpen size={15} />
+              <IconFolderOpen size={15} />
               <span>本地项目：{localProject.label}</span>
               <small>{localProject.authorized ? '已授权' : '待授权'} · {localProject.path}</small>
               <Button size="icon-xs" variant="ghost" title="移除本地项目引用" onClick={onClearLocalProject}>
-                <X size={14} />
+                <IconX size={14} />
               </Button>
             </div>
           ) : null}
@@ -178,7 +187,7 @@ export function Composer({
             title="为当前对话选择或上传附件"
             onClick={() => setAttachmentDialogOpen(true)}
           >
-            <Paperclip data-icon="inline-start" />
+            <IconPaperclip data-icon="inline-start" />
             附件
             {documents.length > 0 ? <span className="button-count">{documents.length}</span> : null}
           </Button>
@@ -191,14 +200,14 @@ export function Composer({
               title={canUseLocalWorkspace ? '为当前对话绑定本地工作区' : localStatusLabel}
               onClick={() => setWorkspaceDialogOpen(true)}
             >
-              <FolderOpen data-icon="inline-start" />
+              <IconFolderOpen data-icon="inline-start" />
               工作区
             </Button>
           ) : null}
         </div>
         <span className="composer-kbd">⌘↵</span>
         <Button className="send-button" aria-label="发送" disabled={isSending || !draft.trim()} onClick={onSend}>
-          <Send size={16} />
+          <IconArrowUp size={16} />
           <span className="sr-only">发送</span>
         </Button>
       </div>
@@ -212,7 +221,7 @@ export function Composer({
           </DialogHeader>
           <div className="attachment-dialog-body">
             <label className="document-upload document-upload-dialog">
-              <Upload size={18} />
+              <IconUpload size={18} />
               <span>{isUploading ? '上传解析中' : '上传附件'}</span>
               <input
                 aria-label="上传附件"
@@ -238,12 +247,12 @@ export function Composer({
                         setAttachmentDialogOpen(false)
                       }}
                     >
-                      <FileText size={16} />
+                      <IconFileText size={16} />
                       <span>{document.original_name}</span>
                       <small>{document.status}</small>
                     </button>
                     <button className="document-delete" title={`删除 ${document.original_name}`} onClick={() => onDeleteDocument(document)}>
-                      <Trash2 size={14} />
+                      <IconTrash size={14} />
                     </button>
                   </div>
                 ))
@@ -273,7 +282,7 @@ export function Composer({
           <div className="workspace-dialog-body">
             <label className="workspace-path-field">
               <span>
-                <FolderOpen />
+                <IconFolderOpen />
                 文件夹路径
               </span>
               <div className="workspace-path-row">
