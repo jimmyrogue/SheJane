@@ -103,6 +103,25 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
   })
 
+  it('renders the Atlas two-column auth structure for sign up and sign in', async () => {
+    mockFetch('user')
+
+    render(<App />)
+
+    expect(await screen.findByText(/Get started in/)).toBeInTheDocument()
+    expect(screen.getByText(/Free forever/)).toBeInTheDocument()
+    expect(screen.getByText('Google')).toBeInTheDocument()
+    expect(screen.getByText('Apple')).toBeInTheDocument()
+    expect(screen.getByText('GitHub')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Sign in/i }))
+
+    expect(screen.getByText(/Your AI agent/)).toBeInTheDocument()
+    expect(screen.getByText(/Keep me signed in on this device/)).toBeInTheDocument()
+    expect(screen.getByText('Continue with Google')).toBeInTheDocument()
+  })
+
   it('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
     mockFetch('user')
 
