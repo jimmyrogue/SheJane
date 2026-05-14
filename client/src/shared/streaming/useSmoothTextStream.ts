@@ -16,7 +16,7 @@ export interface SmoothTextStreamState {
   segments: StreamSegment[]
   text: string
   isStreaming: boolean
-  start: () => void
+  start: (initialText?: string) => void
   pushChunk: (chunk: string) => void
   finish: () => void
   cancel: () => void
@@ -96,12 +96,12 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
     }
   }, [])
 
-  const start = useCallback(() => {
+  const start = useCallback((initialText = '') => {
     stopTimer()
     bufferRef.current = ''
     queueRef.current = []
-    idRef.current = 0
-    setSegments([])
+    idRef.current = initialText ? 1 : 0
+    setSegments(initialText ? [{ id: 0, text: initialText }] : [])
     setIsStreaming(true)
     timerRef.current = window.setTimeout(tick, tickMs)
   }, [stopTimer, tick, tickMs])
@@ -123,6 +123,7 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
   const cancel = useCallback(() => {
     bufferRef.current = ''
     queueRef.current = []
+    setSegments([])
     setIsStreaming(false)
     stopTimer()
   }, [stopTimer])

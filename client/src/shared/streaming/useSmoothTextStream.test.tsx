@@ -72,4 +72,22 @@ describe('useSmoothTextStream', () => {
 
     expect(result.current.text).toBe('hello world')
   })
+
+  it('can start from already displayed text without replaying it', () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() => useSmoothTextStream({ locale: 'zh', segmentsPerTick: 3, tickMs: 24 }))
+
+    act(() => {
+      result.current.start('第一段。')
+    })
+
+    expect(result.current.text).toBe('第一段。')
+
+    act(() => {
+      result.current.pushChunk('第二段。')
+      vi.advanceTimersByTime(24)
+    })
+
+    expect(result.current.text).toBe('第一段。第二段。')
+  })
 })

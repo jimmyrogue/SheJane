@@ -38,12 +38,18 @@ export interface ConversationWorkspace {
   authorizationId?: string
 }
 
+export interface ConversationProject {
+  name: string
+}
+
 export interface Conversation {
   id: string
   title: string
   archived: boolean
+  pinned?: boolean
   createdAt: string
   updatedAt: string
+  project?: ConversationProject
   workspace?: ConversationWorkspace
   messages: ChatMessage[]
 }

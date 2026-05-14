@@ -11,9 +11,13 @@ import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 export function MessageBubble({
   message,
   children,
+  initialStreamText = '',
+  onStreamTextCommit,
 }: {
   message: ChatMessage
   children?: React.ReactNode
+  initialStreamText?: string
+  onStreamTextCommit?: (messageID: string, displayedText: string) => void
 }) {
   const { locale, t } = useI18n()
   const previousMessageIDRef = useRef(message.id)
@@ -35,8 +39,9 @@ export function MessageBubble({
       return
     }
     if (!stream.isStreaming) {
-      stream.start()
-      previousContentRef.current = ''
+      const seedText = message.content.startsWith(initialStreamText) ? initialStreamText : ''
+      stream.start(seedText)
+      previousContentRef.current = seedText
     }
     if (message.content.startsWith(previousContentRef.current)) {
       const delta = message.content.slice(previousContentRef.current.length)
@@ -49,7 +54,13 @@ export function MessageBubble({
       stream.pushChunk(message.content)
       previousContentRef.current = message.content
     }
-  }, [isAssistant, message.content, message.id, message.status, stream])
+  }, [initialStreamText, isAssistant, message.content, message.id, message.status, stream])
+
+  useEffect(() => {
+    if (isAssistant && message.status === 'streaming' && stream.text) {
+      onStreamTextCommit?.(message.id, stream.text)
+    }
+  }, [isAssistant, message.id, message.status, onStreamTextCommit, stream.text])
 
   const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
   const content = message.content || waitingText

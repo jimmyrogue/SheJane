@@ -1884,6 +1884,186 @@
     </div>
   </section>
 
+  <!-- ============ Screen 10: Confirm Dialog Variants ============ -->
+  <section class="section">
+    <div class="section-label">10</div>
+    <h2 class="section-title">确认框 · 4 种语义变体</h2>
+    <p class="section-desc">图标永远在左上 32×32 圆角方块。只有 Destructive 主按钮用红色，Warning 仍用默认黑。</p>
+
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <span class="tl-red"></span><span class="tl-amber"></span><span class="tl-green"></span>
+        </div>
+        <div class="titlebar-title">Atlas · Confirm dialogs</div>
+      </div>
+
+      <div style="background: var(--bg-sidebar-soft); padding: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+
+        <!-- Neutral -->
+        <div>
+          <div class="section-label" style="margin-bottom: 8px;">01 · Neutral</div>
+          <div style="background: rgba(44,44,42,0.25); padding: 24px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; min-height: 240px;">
+            <div style="background: #FFFFFF; border-radius: var(--radius-lg); width: 100%; max-width: 380px; overflow: hidden; border: 0.5px solid var(--border-strong); box-shadow: 0 12px 36px -12px rgba(0,0,0,0.2);">
+              <div style="padding: 20px 22px 0;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--bg-sidebar); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <i class="ti ti-info-circle" style="font-size: 18px; color: var(--text-primary);"></i>
+                  </div>
+                  <div style="flex: 1; padding-top: 2px;">
+                    <div style="font-size: 14px; font-weight: 500; letter-spacing: -0.1px;">Save changes to spec?</div>
+                    <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.55;">You've made edits to <span style="font-family: var(--font-mono); background: var(--bg-sidebar); padding: 1px 5px; border-radius: 4px; font-size: 11.5px;">SPEC.md</span>. Save them before closing?</div>
+                  </div>
+                </div>
+              </div>
+              <div style="padding: 16px 22px 18px; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                <button class="btn-ghost" style="padding: 7px 14px; font-size: 12.5px;">Discard</button>
+                <button class="btn-primary" style="padding: 7px 14px; font-size: 12.5px; font-weight: 500;">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Warning -->
+        <div>
+          <div class="section-label" style="margin-bottom: 8px;">02 · Warning</div>
+          <div style="background: rgba(44,44,42,0.25); padding: 24px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; min-height: 240px;">
+            <div style="background: #FFFFFF; border-radius: var(--radius-lg); width: 100%; max-width: 380px; overflow: hidden; border: 0.5px solid var(--border-strong); box-shadow: 0 12px 36px -12px rgba(0,0,0,0.2);">
+              <div style="padding: 20px 22px 0;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--accent-warning-bg); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <i class="ti ti-alert-triangle" style="font-size: 18px; color: var(--accent-warning-text);"></i>
+                  </div>
+                  <div style="flex: 1; padding-top: 2px;">
+                    <div style="font-size: 14px; font-weight: 500; letter-spacing: -0.1px;">Disconnect GitHub?</div>
+                    <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.55;">Running agents using GitHub tools will fail. You can reconnect anytime from Tools settings.</div>
+                  </div>
+                </div>
+              </div>
+              <div style="padding: 16px 22px 18px; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                <button class="btn-ghost" style="padding: 7px 14px; font-size: 12.5px;">Cancel</button>
+                <button class="btn-primary" style="padding: 7px 14px; font-size: 12.5px; font-weight: 500;">Disconnect</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Destructive -->
+        <div>
+          <div class="section-label" style="margin-bottom: 8px;">03 · Destructive</div>
+          <div style="background: rgba(44,44,42,0.25); padding: 24px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; min-height: 240px;">
+            <div style="background: #FFFFFF; border-radius: var(--radius-lg); width: 100%; max-width: 380px; overflow: hidden; border: 0.5px solid var(--border-strong); box-shadow: 0 12px 36px -12px rgba(0,0,0,0.2);">
+              <div style="padding: 20px 22px 0;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--accent-danger-bg); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <i class="ti ti-trash" style="font-size: 18px; color: var(--accent-danger-text);"></i>
+                  </div>
+                  <div style="flex: 1; padding-top: 2px;">
+                    <div style="font-size: 14px; font-weight: 500; letter-spacing: -0.1px;">Delete this conversation?</div>
+                    <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.55;"><span style="font-weight: 500; color: var(--text-primary);">Flight deal alert spec</span> and all 47 messages will be permanently deleted. This action cannot be undone.</div>
+                  </div>
+                </div>
+              </div>
+              <div style="padding: 16px 22px 18px; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                <button class="btn-ghost" style="padding: 7px 14px; font-size: 12.5px;">Cancel</button>
+                <button style="padding: 7px 14px; font-size: 12.5px; background: var(--accent-danger-text); color: #FFFFFF; border: none; border-radius: var(--radius-md); cursor: pointer; font-family: inherit; font-weight: 500;">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Success -->
+        <div>
+          <div class="section-label" style="margin-bottom: 8px;">04 · Success</div>
+          <div style="background: rgba(44,44,42,0.25); padding: 24px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; min-height: 240px;">
+            <div style="background: #FFFFFF; border-radius: var(--radius-lg); width: 100%; max-width: 380px; overflow: hidden; border: 0.5px solid var(--border-strong); box-shadow: 0 12px 36px -12px rgba(0,0,0,0.2);">
+              <div style="padding: 20px 22px 0;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--accent-success-bg); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                    <i class="ti ti-check" style="font-size: 18px; color: var(--accent-success-text);"></i>
+                  </div>
+                  <div style="flex: 1; padding-top: 2px;">
+                    <div style="font-size: 14px; font-weight: 500; letter-spacing: -0.1px;">Task completed</div>
+                    <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.55;">Agent finished <span style="font-weight: 500; color: var(--text-primary);">Build flight alert backend</span> in 3m 42s. Created 6 files, ran 11 tool calls.</div>
+                  </div>
+                </div>
+              </div>
+              <div style="padding: 16px 22px 18px; display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                <button class="btn-ghost" style="padding: 7px 14px; font-size: 12.5px;">View diff</button>
+                <button class="btn-primary" style="padding: 7px 14px; font-size: 12.5px; font-weight: 500;">Done</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Screen 11: High-friction Destructive ============ -->
+  <section class="section">
+    <div class="section-label">11</div>
+    <h2 class="section-title">高强度确认框（防误操作）</h2>
+    <p class="section-desc">三层防御：列出具体后果 + 要求输入精确字符串 + 主按钮带 trash 图标。用于注销账户、清空全部数据等不可逆操作。</p>
+
+    <div class="window">
+      <div class="titlebar">
+        <div class="traffic-lights">
+          <span class="tl-red"></span><span class="tl-amber"></span><span class="tl-green"></span>
+        </div>
+        <div class="titlebar-title">Atlas · Delete account</div>
+      </div>
+
+      <div style="background: rgba(44,44,42,0.35); padding: 40px; border-radius: 0; display: flex; align-items: center; justify-content: center; min-height: 460px;">
+
+        <div style="background: #FFFFFF; border-radius: var(--radius-lg); width: 100%; max-width: 440px; overflow: hidden; border: 0.5px solid var(--border-strong); box-shadow: 0 16px 48px -12px rgba(0,0,0,0.25);">
+
+          <div style="padding: 22px 24px 0;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--accent-danger-bg); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <i class="ti ti-alert-octagon" style="font-size: 18px; color: var(--accent-danger-text);"></i>
+              </div>
+              <div style="flex: 1; padding-top: 2px;">
+                <div style="font-size: 15px; font-weight: 500; letter-spacing: -0.1px;">Delete your account?</div>
+                <div style="font-size: 12.5px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6;">This will permanently delete your account, all 23 conversations, 12 connected tools, and revoke all OAuth tokens. <strong style="color: var(--text-primary);">This cannot be undone.</strong></div>
+              </div>
+            </div>
+
+            <div style="margin-top: 18px; padding: 12px 14px; background: var(--accent-danger-bg); border: 0.5px solid var(--accent-danger-border); border-radius: var(--radius-md);">
+              <div style="font-size: 11px; color: var(--accent-danger-text); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 500; margin-bottom: 6px;">What will be deleted</div>
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5C2D2A;">
+                  <i class="ti ti-x" style="font-size: 12px;"></i> 23 conversations and 142 messages
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5C2D2A;">
+                  <i class="ti ti-x" style="font-size: 12px;"></i> 12 connected tools and their credentials
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #5C2D2A;">
+                  <i class="ti ti-x" style="font-size: 12px;"></i> Your subscription (Pro plan, renews May 28)
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top: 18px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight: 500; display: block; margin-bottom: 6px;">Type <span style="font-family: var(--font-mono); background: var(--bg-sidebar); padding: 1px 6px; border-radius: 4px; font-size: 11px; color: var(--text-primary);">delete my account</span> to confirm</label>
+              <div style="border: 1px solid var(--text-primary); border-radius: var(--radius-md); padding: 9px 12px; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 13px; font-family: var(--font-mono); color: var(--text-primary);">delete my account</span>
+                <i class="ti ti-check" style="font-size: 14px; color: var(--accent-success-text); margin-left: auto;"></i>
+              </div>
+            </div>
+          </div>
+
+          <div style="padding: 18px 24px 20px; display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; border-top: 0.5px solid var(--border-hairline);">
+            <button class="btn-ghost" style="padding: 8px 14px; font-size: 12.5px;">Keep account</button>
+            <button style="padding: 8px 14px; font-size: 12.5px; background: var(--accent-danger-text); color: #FFFFFF; border: none; border-radius: var(--radius-md); cursor: pointer; font-family: inherit; font-weight: 500; display: flex; align-items: center; gap: 6px;">
+              <i class="ti ti-trash" style="font-size: 13px;"></i> Permanently delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="footnote">
     Atlas UI design preview · 浏览器内截图导出： <code>Cmd/Ctrl + Shift + S</code> 或开发者工具截屏
   </div>

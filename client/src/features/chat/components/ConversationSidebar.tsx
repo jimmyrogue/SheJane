@@ -1,16 +1,32 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   IconDots,
   IconDownload,
+  IconFolderPlus,
   IconFolderOpen,
   IconFolders,
   IconHistory,
+  IconLoader2,
   IconMessageCircle,
+  IconPencil,
+  IconPin,
   IconPlus,
   IconSettings,
+  IconTrash,
   IconTool,
   IconUpload,
 } from '@tabler/icons-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -20,9 +36,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
 import type { Conversation } from '@/shared/local-data/types'
+
+type ConversationSidebarStatus = 'needs_attention' | 'running'
+
+const seenConversationVersionsStorageKey = 'jiandanly.sidebar.seenConversationVersions.v1'
 
 export function ConversationSidebar({
   conversations,
@@ -33,6 +61,10 @@ export function ConversationSidebar({
   onSelectConversation,
   onExportConversation,
   onImportLocalData,
+  onTogglePinConversation,
+  onRenameConversation,
+  onAddConversationToProject,
+  onDeleteConversation,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -42,11 +74,117 @@ export function ConversationSidebar({
   onSelectConversation: (conversationID: string) => void
   onExportConversation: (conversationID: string) => void
   onImportLocalData: (file?: File) => void
+  onTogglePinConversation: (conversationID: string) => void
+  onRenameConversation: (conversationID: string, title: string) => void
+  onAddConversationToProject: (conversationID: string, projectName: string) => void
+  onDeleteConversation: (conversationID: string) => void
 }) {
   const { t } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
-  const [actionConversationID, setActionConversationID] = useState<string>()
-  const actionConversation = conversations.find((conversation) => conversation.id === actionConversationID)
+  const [renameConversationID, setRenameConversationID] = useState<string>()
+  const [projectConversationID, setProjectConversationID] = useState<string>()
+  const [deleteConversationID, setDeleteConversationID] = useState<string>()
+  const [renameTitle, setRenameTitle] = useState('')
+  const [projectName, setProjectName] = useState('')
+  const [seenConversationVersions, setSeenConversationVersions] = useState<Record<string, string>>(readSeenConversationVersions)
+  const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
+  const projectConversation = conversations.find((conversation) => conversation.id === projectConversationID)
+  const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
+  const deleteConversationTitle = deleteConversation?.title ?? t('sidebar.dialog.currentConversation')
+  const deleteMessageCount = deleteConversation?.messages.length ?? 0
+  const activeConversation = conversations.find((conversation) => conversation.id === activeID)
+  const pinnedConversations = conversations.filter((conversation) => conversation.pinned)
+  const recentConversations = conversations.filter((conversation) => !conversation.pinned)
+
+  useEffect(() => {
+    if (!activeConversation) {
+      return
+    }
+    const version = conversationSidebarVersion(activeConversation)
+    if (!version) {
+      return
+    }
+    setSeenConversationVersions((current) => {
+      if (current[activeConversation.id] === version) {
+        return current
+      }
+      const next = { ...current, [activeConversation.id]: version }
+      writeSeenConversationVersions(next)
+      return next
+    })
+  }, [activeConversation])
+
+  function renderConversationRow(conversation: Conversation) {
+    return (
+      <div className={conversation.id === activeID ? 'conversation-row active' : 'conversation-row'} key={conversation.id}>
+        <Button
+          className="conversation"
+          variant="ghost"
+          onClick={() => onSelectConversation(conversation.id)}
+        >
+          <span>{conversation.title}</span>
+        </Button>
+        <ConversationStatusIndicator
+          status={conversationSidebarStatus(
+            conversation,
+            conversation.id === activeID,
+            seenConversationVersions[conversation.id],
+          )}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              className="conversation-more"
+              variant="ghost"
+              size="icon-xs"
+              title={t('sidebar.moreFor', { title: conversation.title })}
+              aria-label={t('sidebar.moreFor', { title: conversation.title })}
+            >
+              <IconDots size={15} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="conversation-row-menu">
+            <DropdownMenuItem onSelect={() => onTogglePinConversation(conversation.id)}>
+              <IconPin />
+              <span>{conversation.pinned ? t('sidebar.actions.unpin') : t('sidebar.actions.pin')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                setRenameConversationID(conversation.id)
+                setRenameTitle(conversation.title)
+              }}
+            >
+              <IconPencil />
+              <span>{t('sidebar.actions.rename')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                setProjectConversationID(conversation.id)
+                setProjectName(conversation.project?.name ?? '')
+              }}
+            >
+              <IconFolderPlus />
+              <span>{t('sidebar.actions.addToProject')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onExportConversation(conversation.id)}>
+              <IconDownload />
+              <span>{t('sidebar.dialog.export')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => importInputRef.current?.click()}>
+              <IconUpload />
+              <span>{t('sidebar.dialog.import')}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="conversation-row-menu-danger" onSelect={() => setDeleteConversationID(conversation.id)}>
+              <IconTrash />
+              <span>{t('sidebar.actions.delete')}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    )
+  }
 
   return (
     <aside className="sidebar">
@@ -77,32 +215,19 @@ export function ConversationSidebar({
         </button>
       </div>
 
+      {pinnedConversations.length ? (
+        <div className="sidebar-section pinned-conversation-list">
+          <div className="sidebar-section-label">{t('sidebar.pinned')}</div>
+          {pinnedConversations.map(renderConversationRow)}
+        </div>
+      ) : null}
+
       <div className="sidebar-section conversation-list">
         <div className="sidebar-section-label">{t('sidebar.recent')}</div>
-        {conversations.length ? (
-          conversations.map((conversation) => (
-            <div className={conversation.id === activeID ? 'conversation-row active' : 'conversation-row'} key={conversation.id}>
-              <Button
-                className="conversation"
-                variant="ghost"
-                onClick={() => onSelectConversation(conversation.id)}
-              >
-                <span>{conversation.title}</span>
-              </Button>
-              <Button
-                className="conversation-more"
-                variant="ghost"
-                size="icon-xs"
-                title={t('sidebar.moreFor', { title: conversation.title })}
-                aria-label={t('sidebar.moreFor', { title: conversation.title })}
-                onClick={() => setActionConversationID(conversation.id)}
-              >
-                <IconDots size={15} />
-              </Button>
-            </div>
-          ))
+        {recentConversations.length ? (
+          recentConversations.map(renderConversationRow)
         ) : (
-          <div className="sidebar-empty">{t('sidebar.empty')}</div>
+          <div className="sidebar-empty">{conversations.length ? t('sidebar.emptyRecent') : t('sidebar.empty')}</div>
         )}
       </div>
 
@@ -123,46 +248,183 @@ export function ConversationSidebar({
         onChange={(event) => {
           onImportLocalData(event.currentTarget.files?.[0])
           event.currentTarget.value = ''
-          setActionConversationID(undefined)
         }}
       />
-      <Dialog open={Boolean(actionConversation)} onOpenChange={(open) => !open && setActionConversationID(undefined)}>
+      <Dialog open={Boolean(renameConversation)} onOpenChange={(open) => !open && setRenameConversationID(undefined)}>
         <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
           <DialogHeader>
-            <DialogTitle>{t('sidebar.dialog.title')}</DialogTitle>
+            <DialogTitle>{t('sidebar.rename.title')}</DialogTitle>
             <DialogDescription>
-              {t('sidebar.dialog.description', { title: actionConversation?.title ?? t('sidebar.dialog.currentConversation') })}
+              {t('sidebar.rename.description', { title: renameConversation?.title ?? t('sidebar.dialog.currentConversation') })}
             </DialogDescription>
           </DialogHeader>
-          <div className="conversation-action-list">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!actionConversation}
+          <form
+            className="conversation-action-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!renameConversation || !renameTitle.trim()) {
+                return
+              }
+              onRenameConversation(renameConversation.id, renameTitle.trim())
+              setRenameConversationID(undefined)
+            }}
+          >
+            <label htmlFor="conversation-rename-input">{t('sidebar.rename.nameLabel')}</label>
+            <Input
+              id="conversation-rename-input"
+              value={renameTitle}
+              onChange={(event) => setRenameTitle(event.currentTarget.value)}
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRenameConversationID(undefined)}>
+                {t('sidebar.dialog.close')}
+              </Button>
+              <Button type="submit" disabled={!renameTitle.trim()}>
+                {t('sidebar.rename.save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(projectConversation)} onOpenChange={(open) => !open && setProjectConversationID(undefined)}>
+        <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{t('sidebar.project.title')}</DialogTitle>
+            <DialogDescription>
+              {t('sidebar.project.description', { title: projectConversation?.title ?? t('sidebar.dialog.currentConversation') })}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="conversation-action-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!projectConversation || !projectName.trim()) {
+                return
+              }
+              onAddConversationToProject(projectConversation.id, projectName.trim())
+              setProjectConversationID(undefined)
+            }}
+          >
+            <label htmlFor="conversation-project-input">{t('sidebar.project.nameLabel')}</label>
+            <Input
+              id="conversation-project-input"
+              value={projectName}
+              onChange={(event) => setProjectName(event.currentTarget.value)}
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setProjectConversationID(undefined)}>
+                {t('sidebar.dialog.close')}
+              </Button>
+              <Button type="submit" disabled={!projectName.trim()}>
+                {t('sidebar.project.save')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={Boolean(deleteConversation)} onOpenChange={(open) => !open && setDeleteConversationID(undefined)}>
+        <AlertDialogContent className="conversation-delete-dialog">
+          <AlertDialogHeader className="conversation-delete-header">
+            <AlertDialogMedia className="conversation-delete-media">
+              <IconTrash aria-hidden="true" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>{t('sidebar.delete.title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{deleteConversationTitle}</strong>
+              {t('sidebar.delete.descriptionAfterTitle', { count: deleteMessageCount })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="conversation-delete-footer">
+            <AlertDialogCancel variant="outline" autoFocus onClick={() => setDeleteConversationID(undefined)}>
+              <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={!deleteConversation}
               onClick={() => {
-                if (actionConversation) {
-                  onExportConversation(actionConversation.id)
-                  setActionConversationID(undefined)
+                if (deleteConversation) {
+                  onDeleteConversation(deleteConversation.id)
+                  setDeleteConversationID(undefined)
                 }
               }}
             >
-              <IconDownload data-icon="inline-start" />
-              {t('sidebar.dialog.export')}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => importInputRef.current?.click()}>
-              <IconUpload data-icon="inline-start" />
-              {t('sidebar.dialog.import')}
-            </Button>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setActionConversationID(undefined)}>
-              {t('sidebar.dialog.close')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <span className="conversation-delete-button-label">{t('sidebar.delete.confirm')}</span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   )
+}
+
+function ConversationStatusIndicator({ status }: { status: ConversationSidebarStatus | null }) {
+  const { t } = useI18n()
+  if (status === 'running') {
+    return (
+      <span className="conversation-status-slot conversation-status-loading" role="status" aria-label={t('sidebar.status.running')}>
+        <IconLoader2 size={14} aria-hidden="true" />
+      </span>
+    )
+  }
+  if (status === 'needs_attention') {
+    return <span className="conversation-status-slot conversation-status-attention" role="status" aria-label={t('sidebar.status.needsAttention')} />
+  }
+  return <span className="conversation-status-slot" aria-hidden="true" />
+}
+
+function conversationSidebarStatus(conversation: Conversation, isActive: boolean, seenVersion?: string): ConversationSidebarStatus | null {
+  const latestAssistant = [...conversation.messages].reverse().find((message) => message.role === 'assistant')
+  if (!latestAssistant) {
+    return null
+  }
+  if (latestAssistant.status === 'streaming' || latestAssistant.status === 'pending') {
+    return 'running'
+  }
+  const currentVersion = conversationSidebarVersion(conversation)
+  if (!isActive && currentVersion !== seenVersion && (latestAssistant.status === 'done' || latestAssistant.status === 'waiting_permission')) {
+    return 'needs_attention'
+  }
+  return null
+}
+
+function conversationSidebarVersion(conversation: Conversation): string {
+  const latestAssistant = [...conversation.messages].reverse().find((message) => message.role === 'assistant')
+  if (!latestAssistant) {
+    return ''
+  }
+  return [
+    latestAssistant.id,
+    latestAssistant.status,
+    latestAssistant.content.length,
+    latestAssistant.agentEvents?.length ?? 0,
+    conversation.updatedAt,
+  ].join(':')
+}
+
+function readSeenConversationVersions(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(seenConversationVersionsStorageKey)
+    if (!raw) {
+      return {}
+    }
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {}
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeSeenConversationVersions(value: Record<string, string>) {
+  try {
+    window.localStorage.setItem(seenConversationVersionsStorageKey, JSON.stringify(value))
+  } catch {
+    // Ignore storage failures; the in-memory state still keeps the current session correct.
+  }
 }
 
 function avatarInitials(email: string): string {

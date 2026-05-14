@@ -4,8 +4,11 @@ import { LocalConversationStore } from './localConversations'
 import type { Conversation } from './types'
 
 describe('LocalConversationStore', () => {
-  beforeEach(() => {
-    indexedDB.deleteDatabase('jiandanly-test')
+  beforeEach(async () => {
+    await Promise.all([
+      deleteDatabase('jiandanly-test'),
+      deleteDatabase('jiandanly-test-pinned'),
+    ])
   })
 
   it('saves, lists, exports, imports, and deletes local conversations', async () => {
@@ -38,4 +41,34 @@ describe('LocalConversationStore', () => {
     await store.importAll(exported)
     expect(await store.list()).toHaveLength(1)
   })
+
+  it('keeps pinned conversations before regular recent conversations', async () => {
+    const store = new LocalConversationStore('jiandanly-test-pinned')
+    await store.save(conversation('older-pinned', '固定会话', '2026-05-10T00:00:00.000Z', true))
+    await store.save(conversation('newer-regular', '普通会话', '2026-05-11T00:00:00.000Z'))
+    await store.save(conversation('newest-pinned', '更新固定会话', '2026-05-12T00:00:00.000Z', true))
+
+    expect((await store.list()).map((item) => item.id)).toEqual(['newest-pinned', 'older-pinned', 'newer-regular'])
+  })
 })
+
+function conversation(id: string, title: string, updatedAt: string, pinned = false): Conversation {
+  return {
+    id,
+    title,
+    archived: false,
+    pinned,
+    createdAt: '2026-05-10T00:00:00.000Z',
+    updatedAt,
+    messages: [],
+  }
+}
+
+function deleteDatabase(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(name)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+    request.onblocked = () => resolve()
+  })
+}

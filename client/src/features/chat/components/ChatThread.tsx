@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from 'react'
 import { AgentProgress } from './AgentProgress'
 import { MessageBubble } from './MessageBubble'
 import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
@@ -18,16 +19,33 @@ export function ChatThread({
   onPermissionDecision: (messageID: string, requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
   const { t } = useI18n()
+  const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
   const messageCount = conversation?.messages.length ?? 0
   const lastMessageContent = conversation?.messages.at(-1)?.content ?? ''
   const scrollRef = useSmartAutoScroll<HTMLDivElement>([messageCount, lastMessageContent.length], { bottomThreshold: 120 })
+  const handleStreamTextCommit = useCallback((messageID: string, displayedText: string) => {
+    streamDisplayCacheRef.current.set(messageID, displayedText)
+  }, [])
+
+  useEffect(() => {
+    for (const message of conversation?.messages ?? []) {
+      if (message.status !== 'streaming') {
+        streamDisplayCacheRef.current.delete(message.id)
+      }
+    }
+  }, [conversation])
 
   return (
     <section className="chat-surface">
       {conversation?.messages.length ? (
         <div className="messages" ref={scrollRef}>
           {conversation.messages.map((message) => (
-            <MessageBubble message={message} key={message.id}>
+            <MessageBubble
+              message={message}
+              key={message.id}
+              initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}
+              onStreamTextCommit={handleStreamTextCommit}
+            >
               <AgentProgress
                 message={message}
                 onOpenArtifact={onOpenArtifact}

@@ -1,6 +1,8 @@
 import { IconChevronDown, IconDots, IconDownload, IconLayoutSidebarLeftCollapse, IconSearch } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   JiandanAPI,
@@ -45,11 +47,22 @@ import {
 } from './shared/local-host/client'
 
 const documentMaxBytes = 30 * 1024 * 1024
+const appNoticeToastID = 'jiandanly-app-notice'
+
+interface ConversationRenderContext {
+  navigationVersionAtStart: number
+}
+
+interface PendingConversationRender {
+  conversation: Conversation
+  context: ConversationRenderContext
+}
 
 export function App() {
   return (
     <I18nProvider>
       <AppContent />
+      <Toaster position="top-center" offset={52} duration={3200} visibleToasts={1} />
     </I18nProvider>
   )
 }
@@ -60,7 +73,7 @@ function AppContent() {
   const authClient = useMemo(() => createAuthClient(api), [api])
   const localData = useMemo(() => new LocalConversationStore(), [])
   const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
-  const liveConversationRef = useRef<{ conversation: Conversation; navigationVersion: number } | null>(null)
+  const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
@@ -75,7 +88,6 @@ function AppContent() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
-  const [notice, setNotice] = useState('')
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
@@ -85,11 +97,23 @@ function AppContent() {
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
   const [runDiagnostics, setRunDiagnostics] = useState<LocalRunDiagnostics | null>(null)
 
+  function setNotice(message: string) {
+    if (!message.trim()) {
+      toast.dismiss(appNoticeToastID)
+      return
+    }
+    toast.message(message, {
+      id: appNoticeToastID,
+      duration: 3200,
+    })
+  }
+
   useEffect(() => {
     return () => {
       if (liveRenderTimerRef.current !== undefined) {
         window.clearTimeout(liveRenderTimerRef.current)
       }
+      pendingConversationRendersRef.current.clear()
     }
   }, [])
 
@@ -100,7 +124,7 @@ function AppContent() {
   useEffect(() => {
     void localData.list().then((items) => {
       setConversations(items)
-      setActiveID(items[0]?.id)
+      setActiveConversationID(items[0]?.id)
     })
   }, [localData])
 
@@ -200,12 +224,12 @@ function AppContent() {
   async function refreshConversations(nextActiveID?: string, options: { preserveEmptyActive?: boolean } = {}) {
     const items = await localData.list()
     setConversations(items)
-    setActiveID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
+    setActiveConversationID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
   }
 
   function startNewConversation() {
     navigationVersionRef.current += 1
-    setActiveID(undefined)
+    setActiveConversationID(undefined)
     setPendingWorkspace(undefined)
     setDraft('')
   }
@@ -213,28 +237,49 @@ function AppContent() {
   function selectConversation(id: string) {
     navigationVersionRef.current += 1
     setPendingWorkspace(undefined)
-    setActiveID(id)
+    setActiveConversationID(id)
   }
 
-  function scheduleConversationRender(conversation: Conversation) {
-    liveConversationRef.current = {
+  function setActiveConversationID(nextActiveID: string | undefined) {
+    activeIDRef.current = nextActiveID
+    setActiveID(nextActiveID)
+  }
+
+  function createConversationRenderContext(): ConversationRenderContext {
+    return { navigationVersionAtStart: navigationVersionRef.current }
+  }
+
+  async function refreshConversationsAfterStream(conversationID: string, context: ConversationRenderContext) {
+    const userNavigatedWhileStreaming = navigationVersionRef.current !== context.navigationVersionAtStart
+    await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : conversationID, {
+      preserveEmptyActive: userNavigatedWhileStreaming && !activeIDRef.current,
+    })
+  }
+
+  function scheduleConversationRender(conversation: Conversation, context: ConversationRenderContext) {
+    pendingConversationRendersRef.current.set(conversation.id, {
       conversation: cloneConversation(conversation),
-      navigationVersion: navigationVersionRef.current,
-    }
+      context,
+    })
     if (liveRenderTimerRef.current !== undefined) {
       return
     }
     liveRenderTimerRef.current = window.setTimeout(() => {
       liveRenderTimerRef.current = undefined
-      const next = liveConversationRef.current
-      liveConversationRef.current = null
-      if (!next) {
+      const pending = Array.from(pendingConversationRendersRef.current.values())
+      pendingConversationRendersRef.current.clear()
+      if (!pending.length) {
         return
       }
-      if (navigationVersionRef.current === next.navigationVersion || activeIDRef.current === next.conversation.id) {
-        setActiveID(next.conversation.id)
+      setConversations((items) => pending.reduce((nextItems, item) => upsertConversation(nextItems, item.conversation), items))
+      const focusTarget = pending.find(
+        (item) =>
+          activeIDRef.current === item.conversation.id ||
+          navigationVersionRef.current === item.context.navigationVersionAtStart,
+      )
+      if (focusTarget) {
+        setActiveConversationID(focusTarget.conversation.id)
       }
-      setConversations((items) => upsertConversation(items, next.conversation))
     }, 33)
   }
 
@@ -249,11 +294,11 @@ function AppContent() {
     }
     setIsSending(true)
     setNotice('')
-    const navigationVersionAtSend = navigationVersionRef.current
+    const renderContext = createConversationRenderContext()
     try {
       const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
-        ? await sendLocalHarnessMessage(draft)
+        ? await sendLocalHarnessMessage(draft, renderContext)
         : await chat.sendMessage({
             conversationId: activeID,
             content: draft,
@@ -265,23 +310,23 @@ function AppContent() {
                   name: attachedDocument.original_name,
                 }
               : undefined,
-            onConversationUpdate: scheduleConversationRender,
+            onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
           })
       setDraft('')
-      const userNavigatedWhileSending = navigationVersionRef.current !== navigationVersionAtSend
-      await refreshConversations(userNavigatedWhileSending ? activeIDRef.current : conversation.id, {
-        preserveEmptyActive: userNavigatedWhileSending && !activeIDRef.current,
-      })
+      await refreshConversationsAfterStream(conversation.id, renderContext)
       setBalance(await api.balance())
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
-      await refreshConversations(activeID)
+      const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
+      await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
+        preserveEmptyActive: userNavigatedWhileStreaming && !activeIDRef.current,
+      })
     } finally {
       setIsSending(false)
     }
   }
 
-  async function sendLocalHarnessMessage(content: string): Promise<Conversation> {
+  async function sendLocalHarnessMessage(content: string, context: ConversationRenderContext): Promise<Conversation> {
     if (!localHostConfig) {
       throw new Error(t('app.notice.localHostDisconnected'))
     }
@@ -315,7 +360,7 @@ function AppContent() {
     conversation.messages = [...conversation.messages, userMessage, assistantMessage]
     conversation.updatedAt = timestamp
     await localData.save(conversation)
-    scheduleConversationRender(conversation)
+    scheduleConversationRender(conversation, context)
 
     try {
       const run = await createLocalRun(
@@ -327,24 +372,24 @@ function AppContent() {
       )
       assistantMessage.runId = run.id
       setLocalRuns((items) => upsertLocalRun(items, run))
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, context)
         },
         onDelta: (delta, event) => {
           appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, context)
         },
       })
       finalizeLocalRunStatus(assistantMessage)
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, context)
     } catch (error) {
       assistantMessage.status = 'error'
       assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, context)
       throw error
     } finally {
       conversation.updatedAt = new Date().toISOString()
@@ -368,30 +413,31 @@ function AppContent() {
 
     setNotice('')
     message.status = 'streaming'
+    const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
           appendLocalDelta(message, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, renderContext)
         },
       })
       finalizeLocalRunStatus(message)
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, renderContext)
     } catch (error) {
       message.status = 'error'
       message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
       setNotice(message.content)
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()
       await localData.save(conversation)
-      await refreshConversations(conversation.id)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
     }
   }
 
@@ -434,33 +480,34 @@ function AppContent() {
     }
     conversation.messages = [userMessage, assistantMessage]
     await localData.save(conversation)
-    scheduleConversationRender(conversation)
+    const renderContext = createConversationRenderContext()
+    scheduleConversationRender(conversation, renderContext)
     setNotice('')
     try {
       const seenEventIDs = new Set<string>()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
           appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation)
+          scheduleConversationRender(conversation, renderContext)
         },
       })
       finalizeLocalRunStatus(assistantMessage)
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, renderContext)
       const freshRuns = await listLocalRuns(localHostConfig)
       setLocalRuns(freshRuns)
     } catch (error) {
       assistantMessage.status = 'error'
       assistantMessage.content = error instanceof Error ? error.message : t('app.notice.recoverLocalRunFailed')
       setNotice(assistantMessage.content)
-      scheduleConversationRender(conversation)
+      scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()
       await localData.save(conversation)
-      await refreshConversations(conversation.id)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
     }
   }
 
@@ -552,8 +599,83 @@ function AppContent() {
     }
     conversation.updatedAt = timestamp
     await localData.save(conversation)
-    setActiveID(conversation.id)
+    setActiveConversationID(conversation.id)
     setConversations((items) => upsertConversation(items, cloneConversation(conversation)))
+  }
+
+  async function updateConversationMetadata(
+    conversationID: string,
+    update: (conversation: Conversation) => void,
+    options: { touch?: boolean } = {},
+  ): Promise<Conversation | undefined> {
+    const conversation = await localData.get(conversationID)
+    if (!conversation) {
+      setNotice(t('app.notice.conversationMissing'))
+      return undefined
+    }
+    update(conversation)
+    if (options.touch ?? true) {
+      conversation.updatedAt = new Date().toISOString()
+    }
+    await localData.save(conversation)
+    await refreshConversations(activeIDRef.current, { preserveEmptyActive: !activeIDRef.current })
+    return conversation
+  }
+
+  async function togglePinConversation(conversationID: string) {
+    const conversation = await updateConversationMetadata(
+      conversationID,
+      (item) => {
+        item.pinned = !item.pinned
+      },
+      { touch: false },
+    )
+    if (conversation) {
+      setNotice(t(conversation.pinned ? 'app.notice.conversationPinned' : 'app.notice.conversationUnpinned', { title: conversation.title }))
+    }
+  }
+
+  async function renameConversation(conversationID: string, title: string) {
+    const nextTitle = title.trim()
+    if (!nextTitle) {
+      return
+    }
+    const conversation = await updateConversationMetadata(conversationID, (item) => {
+      item.title = nextTitle
+    })
+    if (conversation) {
+      setNotice(t('app.notice.conversationRenamed', { title: conversation.title }))
+    }
+  }
+
+  async function addConversationToProject(conversationID: string, projectName: string) {
+    const nextProjectName = projectName.trim()
+    if (!nextProjectName) {
+      return
+    }
+    const conversation = await updateConversationMetadata(conversationID, (item) => {
+      item.project = { name: nextProjectName }
+    })
+    if (conversation) {
+      setNotice(t('app.notice.conversationAddedToProject', { title: conversation.title, project: nextProjectName }))
+    }
+  }
+
+  async function deleteConversationData(conversationID: string) {
+    const conversation = await localData.get(conversationID)
+    if (!conversation) {
+      setNotice(t('app.notice.conversationMissing'))
+      return
+    }
+    const deletedActive = activeIDRef.current === conversationID
+    await localData.delete(conversationID)
+    if (deletedActive) {
+      setPendingWorkspace(undefined)
+    }
+    await refreshConversations(deletedActive ? undefined : activeIDRef.current, {
+      preserveEmptyActive: !deletedActive && !activeIDRef.current,
+    })
+    setNotice(t('app.notice.conversationDeleted', { title: conversation.title }))
   }
 
   async function exportConversationData(conversationID: string) {
@@ -670,6 +792,10 @@ function AppContent() {
             onSelectConversation={selectConversation}
             onExportConversation={(conversationID) => void exportConversationData(conversationID)}
             onImportLocalData={(file) => void importLocalData(file)}
+            onTogglePinConversation={(conversationID) => void togglePinConversation(conversationID)}
+            onRenameConversation={(conversationID, title) => void renameConversation(conversationID, title)}
+            onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
+            onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
           />
 
           <section className="workspace">
@@ -721,8 +847,6 @@ function AppContent() {
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
               onPermissionDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
             />
-
-            {notice ? <div className="notice">{notice}</div> : null}
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
             <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
@@ -896,18 +1020,28 @@ function upsertLocalRun(items: LocalHarnessRun[], run: LocalHarnessRun): LocalHa
 }
 
 function upsertConversation(items: Conversation[], conversation: Conversation): Conversation[] {
-  return [conversation, ...items.filter((item) => item.id !== conversation.id)]
+  return sortConversationsForSidebar([conversation, ...items.filter((item) => item.id !== conversation.id)])
 }
 
 function cloneConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
+    project: conversation.project ? { ...conversation.project } : undefined,
     workspace: conversation.workspace ? { ...conversation.workspace } : undefined,
     messages: conversation.messages.map((message) => ({
       ...message,
       agentEvents: message.agentEvents ? [...message.agentEvents] : undefined,
     })),
   }
+}
+
+function sortConversationsForSidebar(items: Conversation[]): Conversation[] {
+  return [...items].sort((a, b) => {
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) {
+      return a.pinned ? -1 : 1
+    }
+    return b.updatedAt.localeCompare(a.updatedAt)
+  })
 }
 
 function findWorkspaceByPath(items: LocalWorkspaceAuthorization[], path: string): LocalWorkspaceAuthorization | undefined {

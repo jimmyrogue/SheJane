@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 
@@ -233,6 +233,85 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs/run-doc/stream'))).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-ready/ask'))).toBe(false)
     expect(calls.some((call) => call.url.endsWith('/api/v1/chat/completions'))).toBe(false)
+  })
+
+  it('keeps a blank new chat active when an older cloud stream updates in the background', async () => {
+    const agentStream = createDeferredAgentStream('run-doc')
+    mockFetch('user', { agentStream })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+      target: { value: '旧任务' },
+    })
+    fireEvent.click(screen.getByText('发送'))
+
+    await screen.findByText('旧任务')
+    fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
+    expect(await screen.findByText('把复杂的工作，简单做完')).toBeInTheDocument()
+
+    act(() => {
+      agentStream.emit({ event_type: 'llm.delta', payload: { content: '旧回答' } })
+      agentStream.emit({ event_type: 'run.completed', payload: { request_id: 'req-old-1', credits_cost: 2 } })
+      agentStream.done()
+    })
+    await settleStreamRender()
+
+    expect(screen.getByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(screen.queryByText('旧回答')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '旧任务' }))
+    expect(await screen.findByText('旧回答')).toBeInTheDocument()
+  })
+
+  it('keeps a new chat active when an older local harness stream updates after permission waiting', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    mockFetch('user', { localRunStream })
+    window.jiandanDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await screen.findByText('user@example.com')
+    await bindWorkspace('/tmp/jiandanly-workspace')
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+      target: { value: '运行本地检查' },
+    })
+    fireEvent.click(screen.getByText('发送'))
+
+    await screen.findByText('运行本地检查')
+    act(() => {
+      localRunStream.emit({ id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } })
+    })
+    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
+    expect(await screen.findByText('把复杂的工作，简单做完')).toBeInTheDocument()
+
+    act(() => {
+      localRunStream.emit({ id: 'local-event-2', event_type: 'llm.delta', payload: { content: '本地执行完成' } })
+      localRunStream.emit({ id: 'local-event-3', event_type: 'run.completed', payload: { final: '本地执行完成' } })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    expect(screen.getByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(screen.queryByText('本地执行完成')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '运行本地检查' }))
+    expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
   })
 
   it('uses the paired local harness for workspace tasks and can approve permission requests', async () => {
@@ -493,11 +572,13 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('导出当前对话'))
     await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:conversation-export')
-    expect(await screen.findByText('已导出对话：你好')).toBeInTheDocument()
+    const exportToast = await screen.findByText('已导出对话：你好')
+    expect(exportToast.closest('[data-sonner-toast]')).toBeTruthy()
+    expect(document.querySelector('.notice')).toBeNull()
     createObjectURL.mockClear()
     revokeObjectURL.mockClear()
 
-    fireEvent.click(screen.getByTitle('更多 你好'))
+    openMoreMenu(screen.getByTitle('更多 你好'))
     expect(await screen.findByText('导出此对话')).toBeInTheDocument()
     expect(screen.getByText('导入聊天数据')).toBeInTheDocument()
     fireEvent.click(screen.getByText('导出此对话'))
@@ -570,11 +651,65 @@ function openMoreMenu(trigger: HTMLElement) {
   fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
 }
 
+async function settleStreamRender() {
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 90))
+  })
+}
+
+interface DeferredAgentStream {
+  emit: (event: { id?: string; event_type: string; payload: Record<string, unknown> }) => void
+  done: () => void
+  response: () => Response
+}
+
+function createDeferredAgentStream(runID: string): DeferredAgentStream {
+  const encoder = new TextEncoder()
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined
+  let seq = 0
+  const stream = new ReadableStream<Uint8Array>({
+    start(nextController) {
+      controller = nextController
+    },
+  })
+  return {
+    emit(event) {
+      seq += 1
+      controller?.enqueue(
+        encoder.encode(
+          `event: agent.event\ndata: ${JSON.stringify({
+            id: event.id ?? `event-${seq}`,
+            run_id: runID,
+            seq,
+            created_at: '2026-05-10T00:00:00Z',
+            ...event,
+          })}\n\n`,
+        ),
+      )
+    },
+    done() {
+      controller?.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller?.close()
+    },
+    response() {
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'X-Request-ID': 'req-doc-1',
+        },
+      })
+    },
+  }
+}
+
 function mockFetch(
   role: 'admin' | 'user',
   options: {
     workspaces?: Array<{ id: string; path: string; label: string }>
     localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
+    agentStream?: DeferredAgentStream
+    localRunStream?: DeferredAgentStream
   } = {},
 ) {
   const calls: Array<{ url: string; init?: RequestInit }> = []
@@ -674,6 +809,9 @@ function mockFetch(
       return new Response(JSON.stringify({ workspaces }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/stream') {
+      if (options.localRunStream) {
+        return options.localRunStream.response()
+      }
       const permissionApproved = calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell')
       return agentSSE(
         permissionApproved
@@ -882,6 +1020,9 @@ function mockFetch(
       }, 201)
     }
     if (url.endsWith('/api/v1/agent/runs/run-doc/stream')) {
+      if (options.agentStream) {
+        return options.agentStream.response()
+      }
       return agentSSE([
         { event_type: 'skill.selected', payload: { skill: 'document-analysis' } },
         { event_type: 'tool.completed', payload: { tool: 'document.read' } },

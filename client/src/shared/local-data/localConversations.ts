@@ -10,7 +10,7 @@ export class LocalConversationStore {
   async list(): Promise<Conversation[]> {
     const store = await this.objectStore('readonly')
     const conversations = await requestToPromise<Conversation[]>(store.getAll())
-    return conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    return conversations.sort(compareConversations)
   }
 
   async get(id: string): Promise<Conversation | undefined> {
@@ -70,6 +70,13 @@ export class LocalConversationStore {
 
     return this.dbPromise
   }
+}
+
+function compareConversations(a: Conversation, b: Conversation): number {
+  if (Boolean(a.pinned) !== Boolean(b.pinned)) {
+    return a.pinned ? -1 : 1
+  }
+  return b.updatedAt.localeCompare(a.updatedAt)
 }
 
 function requestToPromise<T = unknown>(request: IDBRequest<T>): Promise<T> {
