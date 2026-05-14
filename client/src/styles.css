@@ -1528,8 +1528,9 @@ button:active {
 
 .electron-window-shell .sidebar-window-controls {
   -webkit-app-region: drag;
+  min-height: 38px;
   justify-content: flex-start;
-  padding-left: 84px;
+  padding-left: 78px;
 }
 
 .electron-window-shell .sidebar-window-control-button {
@@ -1573,6 +1574,10 @@ button:active {
 
 .electron-window-shell .sidebar-resize-handle {
   -webkit-app-region: no-drag;
+}
+
+.electron-window-shell .sidebar {
+  padding-top: 0.3rem;
 }
 
 .sidebar {
@@ -3375,6 +3380,7 @@ select {
 }
 
 .electron-auth-page .auth-titlebar {
+  min-height: 38px;
   -webkit-app-region: drag;
 }
 

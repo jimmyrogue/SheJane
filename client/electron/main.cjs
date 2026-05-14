@@ -13,8 +13,8 @@ function createWindow() {
     title: '简单 Jiandan',
     ...(process.platform === 'darwin'
       ? {
-          titleBarStyle: 'hiddenInset',
-          trafficLightPosition: { x: 18, y: 17 },
+          titleBarStyle: 'hidden',
+          trafficLightPosition: { x: 14, y: 14 },
         }
       : {}),
     backgroundColor: '#FAFAF9',
