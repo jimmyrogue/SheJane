@@ -175,13 +175,19 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   }
 
   if (request.method === 'POST' && url.pathname === '/local/v1/runs') {
-    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown; history?: unknown }>(request)
+    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown; history?: unknown; parent_run_id?: unknown; parentRunId?: unknown }>(request)
     const goal = typeof body.goal === 'string' ? body.goal.trim() : ''
     if (!goal) {
       writeJSON(response, 400, { error: 'goal_required' })
       return
     }
     const history = sanitizeRunHistory(body.history)
+    const parentRunId =
+      typeof body.parent_run_id === 'string' && body.parent_run_id.trim()
+        ? body.parent_run_id.trim()
+        : typeof body.parentRunId === 'string' && body.parentRunId.trim()
+          ? body.parentRunId.trim()
+          : undefined
     const workspacePath =
       typeof body.workspace_path === 'string'
         ? resolve(body.workspace_path)
@@ -195,11 +201,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       })
       return
     }
-    const run = options.store.createRun({ goal, workspacePath, history })
+    const run = options.store.createRun({ goal, workspacePath, history, parentRunId })
     options.store.appendEvent(run.id, 'run.created', {
       goal,
       workspace_path: workspacePath,
       history_messages: history?.length ?? 0,
+      parent_run_id: parentRunId ?? null,
     })
     writeJSON(response, 201, serializeRun(run, options.store.countEvents(run.id)))
     return

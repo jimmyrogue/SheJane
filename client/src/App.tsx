@@ -462,12 +462,17 @@ function AppContent() {
     await localData.save(conversation)
     scheduleConversationRender(conversation, context)
 
+    const parentRunId = [...priorMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.runOrigin === 'local' && Boolean(message.runId))?.runId
+
     try {
       const run = await createLocalRun(
         {
           goal: text,
           workspacePath: conversation.workspace?.path.trim() || undefined,
           history: deriveAgentHistory(priorMessages),
+          parentRunId,
         },
         localHostConfig,
       )

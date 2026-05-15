@@ -83,7 +83,7 @@ describe('desktop local host client', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
-        body: JSON.stringify({ goal: 'Inspect workspace', workspace_path: '/tmp/project' }),
+        body: JSON.stringify({ goal: 'Inspect workspace', workspace_path: '/tmp/project', history: [] }),
       }),
     )
   })

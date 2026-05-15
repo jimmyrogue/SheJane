@@ -126,6 +126,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
         messages.push({ role: 'system', content: outputGuardrail.instruction })
         continue
       }
+      persistRunFinal(options, step + 1, messages, response.content ?? '')
       options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
       append(options, 'run.completed', { final: response.content ?? '' })
       return
@@ -337,6 +338,7 @@ async function completeFinalAnswer(
     }
     const outputGuardrail = evaluateFinalAnswerGuardrail(options, current.content, { ignorePreviousGuardrail: true })
     if (!outputGuardrail) {
+      persistRunFinal(options, finalization.step, currentMessages, current.content)
       options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
       append(options, 'run.completed', { final: current.content, reason: finalization.completedReason })
       return true
@@ -354,6 +356,7 @@ async function completeFinalAnswer(
     if (repeatedToolMarkupGuardrails >= 2) {
       const fallback = buildConservativeFinalAnswer(options, finalization.completedReason)
       if (fallback) {
+        persistRunFinal(options, finalization.step, currentMessages, fallback)
         options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
         append(options, 'run.completed', { final: fallback, reason: `${finalization.completedReason}_fallback` })
         return true
@@ -380,6 +383,7 @@ async function completeFinalAnswer(
   }
   const fallback = buildConservativeFinalAnswer(options, finalization.completedReason)
   if (fallback) {
+    persistRunFinal(options, finalization.step, currentMessages, fallback)
     options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
     append(options, 'run.completed', { final: fallback, reason: `${finalization.completedReason}_fallback` })
     return true
@@ -830,9 +834,27 @@ function buildInitialMessages(store: LocalHostStore, run: LocalRun, options: Har
       ].join('\n\n'),
     })
   }
-  // Seed prior conversation turns so follow-ups keep task context
-  // (e.g. ask weather → "which city?" → "杭州" continues the weather task).
-  if (run.history && run.history.length > 0) {
+  // Seed prior conversation context so follow-ups keep task continuity.
+  // Preferred: the immediately-preceding local run's full STRUCTURED transcript
+  // (incl. assistant tool_calls + tool observations) — its run_final checkpoint
+  // transitively contains the whole conversation. Drop its leading system
+  // prelude (this run rebuilds system/memory/topics fresh). The run loop's
+  // maybeCompactMessages (size) + prepareMessagesForModel (tool-pair integrity)
+  // keep it safe each step. Fall back to flat text history when no structured
+  // parent transcript is available (first turn / pruned DB / cross-restart).
+  const parentTranscript = run.parentRunId
+    ? store.latestCheckpoint(run.parentRunId)?.messages
+    : undefined
+  if (parentTranscript && parentTranscript.length > 0) {
+    let started = false
+    for (const message of parentTranscript) {
+      if (!started && message.role === 'system') {
+        continue
+      }
+      started = true
+      messages.push(message)
+    }
+  } else if (run.history && run.history.length > 0) {
     for (const turn of run.history) {
       if ((turn.role === 'user' || turn.role === 'assistant') && turn.content.trim()) {
         messages.push({ role: turn.role, content: turn.content })
@@ -975,6 +997,23 @@ function createCheckpointEvent(options: HarnessRunOptions, step: number, reason:
     step,
     reason,
     messages: checkpoint.messages.length,
+  })
+}
+
+// Persist the run's full structured transcript (incl. assistant tool_calls and
+// tool observations) on completion, so a follow-up run can be seeded with it
+// for cross-turn tool-structure replay (Claude Code / Codex "resume" style).
+function persistRunFinal(options: HarnessRunOptions, step: number, messages: HarnessMessage[], finalContent: string): void {
+  const transcript: HarnessMessage[] = finalContent
+    ? [...messages, { role: 'assistant', content: finalContent }]
+    : [...messages]
+  // Persist the checkpoint only (no checkpoint.created event): this is internal
+  // session state for parent-run seeding, not user-facing timeline noise.
+  options.store.createCheckpoint({
+    runId: options.run.id,
+    step,
+    reason: 'run_final',
+    messages: transcript.map(toStoredMessage),
   })
 }
 

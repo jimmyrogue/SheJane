@@ -33,6 +33,7 @@ interface RunRow {
   completed_at: string | null
   canceled_at: string | null
   history: string | null
+  parent_run_id: string | null
 }
 
 interface EventRow {
@@ -185,6 +186,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     `)
     ensureColumn(this.db, 'local_permissions', 'scope', "TEXT NOT NULL DEFAULT 'once'")
     ensureColumn(this.db, 'local_runs', 'history', 'TEXT')
+    ensureColumn(this.db, 'local_runs', 'parent_run_id', 'TEXT')
   }
 
   authorizeWorkspace(input: { path: string; label?: string }): WorkspaceAuthorization {
@@ -229,9 +231,10 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return deserializeWorkspace(row)
   }
 
-  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[] }): LocalRun {
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string }): LocalRun {
     const now = new Date().toISOString()
     const history = input.history && input.history.length > 0 ? input.history : undefined
+    const parentRunId = input.parentRunId || undefined
     const run: LocalRun = {
       id: randomUUID(),
       goal: input.goal,
@@ -240,11 +243,12 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       createdAt: now,
       updatedAt: now,
       history,
+      parentRunId,
     }
     this.db
       .prepare(
-        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at, history)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at, history, parent_run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         run.id,
@@ -254,6 +258,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
         run.createdAt,
         run.updatedAt,
         history ? JSON.stringify(history) : null,
+        parentRunId ?? null,
       )
     return run
   }
@@ -514,6 +519,7 @@ function deserializeRun(row: RunRow): LocalRun {
     completedAt: row.completed_at ?? undefined,
     canceledAt: row.canceled_at ?? undefined,
     history: parseRunHistory(row.history),
+    parentRunId: row.parent_run_id ?? undefined,
   }
 }
 

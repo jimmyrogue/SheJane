@@ -530,7 +530,9 @@ describe('local host daemon foundation', () => {
       run: expect.objectContaining({ id: run.id, status: 'completed' }),
       events: expect.arrayContaining([expect.objectContaining({ event_type: 'artifact.created' })]),
       artifacts: [expect.objectContaining({ tool_name: 'file.read', bytes: largeContent.length })],
-      latest_checkpoint: null,
+      // Completed runs now persist a final structured transcript checkpoint
+      // (used to seed follow-up runs for cross-turn tool replay).
+      latest_checkpoint: expect.objectContaining({ reason: 'run_final' }),
     })
     expect(JSON.stringify(body)).not.toContain(largeContent)
     expect(body.artifacts[0]).not.toHaveProperty('content')

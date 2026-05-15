@@ -2357,6 +2357,95 @@ describe('harness runner', () => {
       ]),
     )
   })
+
+  it('persists a run_final checkpoint capturing the full structured transcript', async () => {
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'notes.txt'), 'tool replay source content', 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Read notes.txt.', workspacePath: workspace })
+    const gateway = new ScriptedGateway([
+      { requestId: 'r1', toolCalls: [{ id: 'c1', name: 'file.read', arguments: { path: 'notes.txt' } }] },
+      { requestId: 'r2', content: 'Done reading.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const checkpoint = store.latestCheckpoint(run.id)
+    expect(checkpoint?.reason).toBe('run_final')
+    expect(checkpoint?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          toolCalls: expect.arrayContaining([expect.objectContaining({ id: 'c1', name: 'file.read' })]),
+        }),
+        expect.objectContaining({ role: 'tool', toolCallId: 'c1', name: 'file.read' }),
+        expect.objectContaining({ role: 'assistant', content: 'Done reading.' }),
+      ]),
+    )
+  })
+
+  it('seeds a follow-up run from the parent structured transcript with tool pairs intact', async () => {
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'notes.txt'), 'remembered value 42', 'utf8')
+    const store = new InMemoryLocalHostStore()
+    const first = store.createRun({ goal: 'Read notes.txt and remember it.', workspacePath: workspace })
+    await runHarness({
+      run: first,
+      store,
+      llmGateway: new ScriptedGateway([
+        { requestId: 'r1', toolCalls: [{ id: 'c1', name: 'file.read', arguments: { path: 'notes.txt' } }] },
+        { requestId: 'r2', content: 'Noted: remembered value 42.' },
+      ]),
+      emit: () => undefined,
+    })
+
+    const follow = store.createRun({
+      goal: 'Use the value you just read.',
+      workspacePath: workspace,
+      parentRunId: first.id,
+    })
+    // PairingValidatingGateway throws on any orphan/incomplete tool pairing.
+    const gateway2 = new PairingValidatingGateway([{ requestId: 'r3', content: 'Using 42.' }])
+    await runHarness({ run: follow, store, llmGateway: gateway2, emit: () => undefined })
+
+    const seeded = gateway2.requests[0].messages
+    expect(seeded[0].role).toBe('system')
+    expect(seeded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          toolCalls: expect.arrayContaining([expect.objectContaining({ id: 'c1' })]),
+        }),
+        expect.objectContaining({ role: 'tool', toolCallId: 'c1', content: expect.stringContaining('remembered value 42') }),
+        expect.objectContaining({ role: 'assistant', content: 'Noted: remembered value 42.' }),
+        expect.objectContaining({ role: 'user', content: 'Use the value you just read.' }),
+      ]),
+    )
+    expect(store.getRun(follow.id)?.status).toBe('completed')
+  })
+
+  it('falls back to flat history when the parent run has no transcript', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({
+      goal: 'Continue please.',
+      workspacePath: workspace,
+      parentRunId: 'nonexistent-run',
+      history: [{ role: 'user', content: 'earlier question about X' }],
+    })
+    const gateway = new ScriptedGateway([{ requestId: 'r1', content: 'Answer.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const seeded = gateway.requests[0].messages
+    expect(seeded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: 'earlier question about X' }),
+        expect.objectContaining({ role: 'user', content: 'Continue please.' }),
+      ]),
+    )
+    expect(seeded.some((message) => message.role === 'tool')).toBe(false)
+  })
 })
 
 class ScriptedGateway implements LLMGateway {

@@ -25,6 +25,12 @@ export interface LocalRun {
   canceledAt?: string
   /** Prior conversation turns used to seed the harness for multi-turn context. */
   history?: StoredHarnessMessage[]
+  /**
+   * Immediately-preceding local run. Its final structured transcript (incl.
+   * tool_use/tool_result) seeds this run for cross-turn tool replay; falls
+   * back to flat `history` when its transcript is unavailable.
+   */
+  parentRunId?: string
 }
 
 export type PermissionDecision = 'approve' | 'deny'
@@ -202,7 +208,7 @@ export interface LocalHostStore {
   listAuthorizedWorkspaces(): WorkspaceAuthorization[]
   findAuthorizedWorkspace(path: string): WorkspaceAuthorization | undefined
   revokeWorkspace(id: string): WorkspaceAuthorization | undefined
-  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[] }): LocalRun
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string }): LocalRun
   listRuns(limit?: number): LocalRun[]
   getRun(id: string): LocalRun | undefined
   updateRunWorkspace(id: string, workspacePath: string): LocalRun | undefined
