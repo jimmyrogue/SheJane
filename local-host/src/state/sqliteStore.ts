@@ -32,6 +32,7 @@ interface RunRow {
   updated_at: string
   completed_at: string | null
   canceled_at: string | null
+  history: string | null
 }
 
 interface EventRow {
@@ -183,6 +184,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       CREATE INDEX IF NOT EXISTS idx_local_workspaces_last_used ON local_workspaces(last_used_at);
     `)
     ensureColumn(this.db, 'local_permissions', 'scope', "TEXT NOT NULL DEFAULT 'once'")
+    ensureColumn(this.db, 'local_runs', 'history', 'TEXT')
   }
 
   authorizeWorkspace(input: { path: string; label?: string }): WorkspaceAuthorization {
@@ -227,8 +229,9 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return deserializeWorkspace(row)
   }
 
-  createRun(input: { goal: string; workspacePath?: string }): LocalRun {
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[] }): LocalRun {
     const now = new Date().toISOString()
+    const history = input.history && input.history.length > 0 ? input.history : undefined
     const run: LocalRun = {
       id: randomUUID(),
       goal: input.goal,
@@ -236,13 +239,22 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       status: 'queued',
       createdAt: now,
       updatedAt: now,
+      history,
     }
     this.db
       .prepare(
-        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at, history)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(run.id, run.goal, run.workspacePath ?? null, run.status, run.createdAt, run.updatedAt)
+      .run(
+        run.id,
+        run.goal,
+        run.workspacePath ?? null,
+        run.status,
+        run.createdAt,
+        run.updatedAt,
+        history ? JSON.stringify(history) : null,
+      )
     return run
   }
 
@@ -501,6 +513,29 @@ function deserializeRun(row: RunRow): LocalRun {
     updatedAt: row.updated_at,
     completedAt: row.completed_at ?? undefined,
     canceledAt: row.canceled_at ?? undefined,
+    history: parseRunHistory(row.history),
+  }
+}
+
+function parseRunHistory(raw: string | null | undefined): StoredHarnessMessage[] | undefined {
+  if (!raw) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      return undefined
+    }
+    const messages = parsed.filter(
+      (item): item is StoredHarnessMessage =>
+        !!item &&
+        typeof item === 'object' &&
+        typeof (item as StoredHarnessMessage).role === 'string' &&
+        typeof (item as StoredHarnessMessage).content === 'string',
+    )
+    return messages.length > 0 ? messages : undefined
+  } catch {
+    return undefined
   }
 }
 

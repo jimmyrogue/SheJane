@@ -33,12 +33,18 @@ export interface AgentAttachment {
   name?: string
 }
 
+export interface AgentHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface CreateAgentRunRequest {
   goal: string
   mode: ChatMode
   clientConversationId: string
   clientMessageId: string
   attachments: AgentAttachment[]
+  history?: AgentHistoryMessage[]
 }
 
 export interface AgentRun {
@@ -215,6 +221,7 @@ export class JiandanAPI implements ChatAPI {
       client_conversation_id: request.clientConversationId,
       client_message_id: request.clientMessageId,
       attachments: request.attachments,
+      history: request.history ?? [],
     }, true)
   }
 

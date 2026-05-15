@@ -90,11 +90,19 @@ type AgentRun struct {
 	ClientConversationID string            `json:"client_conversation_id,omitempty"`
 	ClientMessageID      string            `json:"client_message_id,omitempty"`
 	Attachments          []AgentAttachment `json:"attachments,omitempty"`
+	History              []HistoryMessage  `json:"-"`
 	ErrorCode            string            `json:"error_code,omitempty"`
 	ErrorMessage         string            `json:"error_message,omitempty"`
 	ExpiresAt            time.Time         `json:"expires_at"`
 	CreatedAt            time.Time         `json:"created_at"`
 	UpdatedAt            time.Time         `json:"updated_at"`
+}
+
+// HistoryMessage is a prior conversation turn used to seed an agent run with
+// multi-turn context (kept server-side only; not serialized to API clients).
+type HistoryMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type AgentEvent struct {

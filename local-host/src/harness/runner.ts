@@ -830,6 +830,15 @@ function buildInitialMessages(store: LocalHostStore, run: LocalRun, options: Har
       ].join('\n\n'),
     })
   }
+  // Seed prior conversation turns so follow-ups keep task context
+  // (e.g. ask weather → "which city?" → "杭州" continues the weather task).
+  if (run.history && run.history.length > 0) {
+    for (const turn of run.history) {
+      if ((turn.role === 'user' || turn.role === 'assistant') && turn.content.trim()) {
+        messages.push({ role: turn.role, content: turn.content })
+      }
+    }
+  }
   messages.push({ role: 'user', content: run.goal })
   return messages
 }

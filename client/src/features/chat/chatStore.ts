@@ -1,5 +1,6 @@
 import type { ChatAPI } from '../../shared/api/client'
 import type { AgentRunEvent } from '../../shared/api/sse'
+import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
@@ -54,7 +55,8 @@ export function createChatStore(deps: ChatStoreDeps) {
         status: 'streaming',
       }
 
-      conversation.messages = [...conversation.messages, userMessage, assistantMessage]
+      const priorMessages = conversation.messages
+      conversation.messages = [...priorMessages, userMessage, assistantMessage]
       conversation.updatedAt = timestamp
       await deps.localData.save(conversation)
       input.onConversationUpdate?.(cloneConversation(conversation))
@@ -68,6 +70,7 @@ export function createChatStore(deps: ChatStoreDeps) {
           attachments: input.document
             ? [{ type: 'document', document_id: input.document.id, name: input.document.name }]
             : [],
+          history: deriveAgentHistory(priorMessages),
         })
         assistantMessage.runId = run.id
         assistantMessage.runOrigin = 'cloud'

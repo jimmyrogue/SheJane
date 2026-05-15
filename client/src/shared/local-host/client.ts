@@ -154,7 +154,7 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
 }
 
 export async function createLocalRun(
-  input: { goal: string; workspacePath?: string },
+  input: { goal: string; workspacePath?: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> },
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
 ): Promise<LocalRun> {
@@ -164,6 +164,7 @@ export async function createLocalRun(
     body: JSON.stringify({
       goal: input.goal,
       workspace_path: input.workspacePath || undefined,
+      history: input.history ?? [],
     }),
   })
   return decodeLocalResponse<LocalRun>(response)

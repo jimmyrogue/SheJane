@@ -16,6 +16,7 @@ import {
   type LocalRunDiagnostics,
   type PermissionRequest,
   type LocalRun,
+  type StoredHarnessMessage,
   type SerializedArtifact,
   type SerializedArtifactSummary,
   type SerializedCheckpointSummary,
@@ -174,12 +175,13 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   }
 
   if (request.method === 'POST' && url.pathname === '/local/v1/runs') {
-    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown }>(request)
+    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown; history?: unknown }>(request)
     const goal = typeof body.goal === 'string' ? body.goal.trim() : ''
     if (!goal) {
       writeJSON(response, 400, { error: 'goal_required' })
       return
     }
+    const history = sanitizeRunHistory(body.history)
     const workspacePath =
       typeof body.workspace_path === 'string'
         ? resolve(body.workspace_path)
@@ -193,8 +195,12 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       })
       return
     }
-    const run = options.store.createRun({ goal, workspacePath })
-    options.store.appendEvent(run.id, 'run.created', { goal, workspace_path: workspacePath })
+    const run = options.store.createRun({ goal, workspacePath, history })
+    options.store.appendEvent(run.id, 'run.created', {
+      goal,
+      workspace_path: workspacePath,
+      history_messages: history?.length ?? 0,
+    })
     writeJSON(response, 201, serializeRun(run, options.store.countEvents(run.id)))
     return
   }
@@ -439,6 +445,41 @@ async function readJSONBody<T>(request: IncomingMessage): Promise<T> {
     return {} as T
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
+}
+
+// Defensive cap mirroring the client-side trim, so a misbehaving/old client
+// can never blow the model context window via the run-creation `history`.
+const MAX_HISTORY_MESSAGES = 40
+const MAX_HISTORY_MESSAGE_CHARS = 8000
+const MAX_HISTORY_TOTAL_CHARS = 24000
+
+function sanitizeRunHistory(raw: unknown): StoredHarnessMessage[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined
+  }
+  const cleaned: StoredHarnessMessage[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') {
+      continue
+    }
+    const role = (item as { role?: unknown }).role
+    const content = (item as { content?: unknown }).content
+    if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string') {
+      continue
+    }
+    const trimmed = content.trim().slice(0, MAX_HISTORY_MESSAGE_CHARS)
+    if (!trimmed) {
+      continue
+    }
+    cleaned.push({ role, content: trimmed })
+  }
+  let recent = cleaned.slice(-MAX_HISTORY_MESSAGES)
+  let total = recent.reduce((sum, message) => sum + message.content.length, 0)
+  while (recent.length > 1 && total > MAX_HISTORY_TOTAL_CHARS) {
+    total -= recent[0].content.length
+    recent = recent.slice(1)
+  }
+  return recent.length > 0 ? recent : undefined
 }
 
 function serializeRun(run: LocalRun, eventsCount?: number): SerializedRun {

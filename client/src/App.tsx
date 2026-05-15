@@ -15,6 +15,7 @@ import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
 import { Composer } from './features/chat/components/Composer'
+import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
@@ -455,7 +456,8 @@ function AppContent() {
       agentEvents: [],
     }
 
-    conversation.messages = [...conversation.messages, userMessage, assistantMessage]
+    const priorMessages = conversation.messages
+    conversation.messages = [...priorMessages, userMessage, assistantMessage]
     conversation.updatedAt = timestamp
     await localData.save(conversation)
     scheduleConversationRender(conversation, context)
@@ -465,6 +467,7 @@ function AppContent() {
         {
           goal: text,
           workspacePath: conversation.workspace?.path.trim() || undefined,
+          history: deriveAgentHistory(priorMessages),
         },
         localHostConfig,
       )

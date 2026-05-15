@@ -399,6 +399,7 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		ClientConversationID string                  `json:"client_conversation_id"`
 		ClientMessageID      string                  `json:"client_message_id"`
 		Attachments          []store.AgentAttachment `json:"attachments"`
+		History              []store.HistoryMessage  `json:"history"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -409,6 +410,7 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		return
 	}
 	mode := llm.NormalizeMode(body.Mode)
+	history := sanitizeAgentHistory(body.History)
 	now := time.Now().UTC()
 	run := store.AgentRun{
 		ID:                   s.app.NewUUID(),
@@ -421,6 +423,7 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		ClientConversationID: strings.TrimSpace(body.ClientConversationID),
 		ClientMessageID:      strings.TrimSpace(body.ClientMessageID),
 		Attachments:          sanitizeAgentAttachments(body.Attachments),
+		History:              history,
 		ExpiresAt:            now.Add(time.Duration(s.app.Config.AgentRunTTLHours) * time.Hour),
 		CreatedAt:            now,
 		UpdatedAt:            now,
@@ -722,17 +725,15 @@ func (s *Server) executeAgentRun(w io.Writer, r *http.Request, user store.User, 
 	}
 	_ = s.appendAgentEvent(ctx, w, run.ID, "run.started", map[string]any{"status": run.Status})
 
-	messages := []llm.Message{{Role: "user", Content: run.Goal}}
+	historyMessages := agentHistoryToLLM(run.History)
+	messages := append(append([]llm.Message{}, historyMessages...), llm.Message{Role: "user", Content: run.Goal})
 	if len(run.Attachments) > 0 {
 		_ = s.appendAgentEvent(ctx, w, run.ID, "skill.selected", map[string]any{"skill": "document-analysis", "reason": "attachment_present"})
 		systemContext, ok := s.loadAgentDocumentContext(ctx, w, user, run)
 		if !ok {
 			return
 		}
-		messages = []llm.Message{
-			{Role: "system", Content: systemContext},
-			{Role: "user", Content: run.Goal},
-		}
+		messages = append([]llm.Message{{Role: "system", Content: systemContext}}, messages...)
 	} else {
 		_ = s.appendAgentEvent(ctx, w, run.ID, "skill.selected", map[string]any{"skill": "direct-answer", "reason": "no_tool_required"})
 	}
@@ -1473,6 +1474,56 @@ func sanitizeAgentAttachments(items []store.AgentAttachment) []store.AgentAttach
 		result = append(result, item)
 	}
 	return result
+}
+
+// Defensive cap mirroring the client-side trim so an old/misbehaving client
+// can never blow the model context window via the run-creation history.
+const (
+	maxAgentHistoryMessages     = 40
+	maxAgentHistoryMessageChars = 8000
+	maxAgentHistoryTotalChars   = 24000
+)
+
+func sanitizeAgentHistory(items []store.HistoryMessage) []store.HistoryMessage {
+	cleaned := make([]store.HistoryMessage, 0, len(items))
+	for _, item := range items {
+		role := strings.TrimSpace(item.Role)
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(item.Content)
+		if content == "" {
+			continue
+		}
+		content = truncateString(content, maxAgentHistoryMessageChars)
+		cleaned = append(cleaned, store.HistoryMessage{Role: role, Content: content})
+	}
+	if len(cleaned) > maxAgentHistoryMessages {
+		cleaned = cleaned[len(cleaned)-maxAgentHistoryMessages:]
+	}
+	total := 0
+	for _, item := range cleaned {
+		total += len(item.Content)
+	}
+	for len(cleaned) > 1 && total > maxAgentHistoryTotalChars {
+		total -= len(cleaned[0].Content)
+		cleaned = cleaned[1:]
+	}
+	return cleaned
+}
+
+func agentHistoryToLLM(items []store.HistoryMessage) []llm.Message {
+	messages := make([]llm.Message, 0, len(items))
+	for _, item := range items {
+		if item.Role != "user" && item.Role != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(item.Content) == "" {
+			continue
+		}
+		messages = append(messages, llm.Message{Role: item.Role, Content: item.Content})
+	}
+	return messages
 }
 
 func summarizeAgentGoal(goal string, attachmentCount int) string {

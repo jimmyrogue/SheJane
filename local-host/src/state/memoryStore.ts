@@ -59,7 +59,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return workspace
   }
 
-  createRun(input: { goal: string; workspacePath?: string }): LocalRun {
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[] }): LocalRun {
     const now = new Date().toISOString()
     const run: LocalRun = {
       id: randomUUID(),
@@ -68,6 +68,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       status: 'queued',
       createdAt: now,
       updatedAt: now,
+      history: input.history && input.history.length > 0 ? input.history : undefined,
     }
     this.runs.set(run.id, run)
     this.events.set(run.id, [])

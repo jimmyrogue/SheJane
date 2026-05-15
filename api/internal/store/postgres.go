@@ -352,21 +352,25 @@ func (s *PostgresStore) CreateAgentRun(ctx context.Context, run AgentRun) (Agent
 	if err != nil {
 		return AgentRun{}, err
 	}
+	history, err := json.Marshal(run.History)
+	if err != nil {
+		return AgentRun{}, err
+	}
 	return scanAgentRun(s.db.QueryRowContext(ctx, `
 		INSERT INTO agent_runs (
 			id, user_id, origin, status, mode, goal, goal_summary,
-			client_conversation_id, client_message_id, attachments, expires_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),NULLIF($9, ''),$10,$11,$12,$13)
+			client_conversation_id, client_message_id, attachments, expires_at, created_at, updated_at, history
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),NULLIF($9, ''),$10,$11,$12,$13,$14)
 		RETURNING id::text, user_id::text, origin, status, mode, goal, goal_summary,
-			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text, COALESCE(history::text,'[]'),
 			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
-	`, run.ID, run.UserID, run.Origin, run.Status, run.Mode, run.Goal, run.GoalSummary, run.ClientConversationID, run.ClientMessageID, json.RawMessage(attachments), run.ExpiresAt, run.CreatedAt, run.UpdatedAt))
+	`, run.ID, run.UserID, run.Origin, run.Status, run.Mode, run.Goal, run.GoalSummary, run.ClientConversationID, run.ClientMessageID, json.RawMessage(attachments), run.ExpiresAt, run.CreatedAt, run.UpdatedAt, json.RawMessage(history)))
 }
 
 func (s *PostgresStore) AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error) {
 	return scanAgentRun(s.db.QueryRowContext(ctx, `
 		SELECT id::text, user_id::text, origin, status, mode, goal, goal_summary,
-			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text, COALESCE(history::text,'[]'),
 			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
 		FROM agent_runs
 		WHERE user_id=$1 AND id=$2
@@ -379,7 +383,7 @@ func (s *PostgresStore) UpdateAgentRunStatus(ctx context.Context, userID string,
 		SET status=$3, error_code=NULLIF($4, ''), error_message=NULLIF($5, ''), updated_at=NOW()
 		WHERE user_id=$1 AND id=$2
 		RETURNING id::text, user_id::text, origin, status, mode, goal, goal_summary,
-			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text,
+			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), attachments::text, COALESCE(history::text,'[]'),
 			COALESCE(error_code,''), COALESCE(error_message,''), expires_at, created_at, updated_at
 	`, userID, runID, status, errorCode, truncateString(errorMessage, 500)))
 }
@@ -1231,7 +1235,8 @@ func scanDocument(row rowScanner) (documents.Document, error) {
 func scanAgentRun(row rowScanner) (AgentRun, error) {
 	var run AgentRun
 	var attachmentsText string
-	err := row.Scan(&run.ID, &run.UserID, &run.Origin, &run.Status, &run.Mode, &run.Goal, &run.GoalSummary, &run.ClientConversationID, &run.ClientMessageID, &attachmentsText, &run.ErrorCode, &run.ErrorMessage, &run.ExpiresAt, &run.CreatedAt, &run.UpdatedAt)
+	var historyText string
+	err := row.Scan(&run.ID, &run.UserID, &run.Origin, &run.Status, &run.Mode, &run.Goal, &run.GoalSummary, &run.ClientConversationID, &run.ClientMessageID, &attachmentsText, &historyText, &run.ErrorCode, &run.ErrorMessage, &run.ExpiresAt, &run.CreatedAt, &run.UpdatedAt)
 	if err != nil {
 		return AgentRun{}, mapNotFound(err)
 	}
@@ -1239,6 +1244,12 @@ func scanAgentRun(row rowScanner) (AgentRun, error) {
 		attachmentsText = "[]"
 	}
 	if err := json.Unmarshal([]byte(attachmentsText), &run.Attachments); err != nil {
+		return AgentRun{}, err
+	}
+	if historyText == "" {
+		historyText = "[]"
+	}
+	if err := json.Unmarshal([]byte(historyText), &run.History); err != nil {
 		return AgentRun{}, err
 	}
 	return run, nil
