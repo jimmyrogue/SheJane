@@ -69,6 +69,8 @@ const zh = {
   'relative.now': '刚刚更新',
   'relative.minutesAgo': '{count} 分钟前',
   'relative.hoursAgo': '{count} 小时前',
+  'relative.daysAgo': '{count} 天前',
+  'relative.weeksAgo': '{count} 周前',
 
   'auth.panelLabel.register': '创建你的账号',
   'auth.panelLabel.login': '登录',
@@ -159,6 +161,9 @@ const zh = {
   'sidebar.status.needsAttention': '需要用户操作',
   'sidebar.status.running': '对话正在执行',
   'sidebar.localFirst': 'Local-first',
+  'sidebar.account.menu': '账户菜单',
+  'sidebar.account.language': '语言',
+  'sidebar.account.logout': '退出登录',
   'sidebar.dialog.title': '对话更多功能',
   'sidebar.dialog.description': '{title} 的低频操作放在这里，避免侧栏变成工具箱。',
   'sidebar.dialog.currentConversation': '当前对话',
@@ -420,6 +425,8 @@ const en: Record<TranslationKey, string> = {
   'relative.now': 'Just updated',
   'relative.minutesAgo': '{count} min ago',
   'relative.hoursAgo': '{count} hr ago',
+  'relative.daysAgo': '{count} d ago',
+  'relative.weeksAgo': '{count} wk ago',
 
   'auth.panelLabel.register': 'Create your account',
   'auth.panelLabel.login': 'Sign in',
@@ -510,6 +517,9 @@ const en: Record<TranslationKey, string> = {
   'sidebar.status.needsAttention': 'Needs user action',
   'sidebar.status.running': 'Chat is running',
   'sidebar.localFirst': 'Local-first',
+  'sidebar.account.menu': 'Account menu',
+  'sidebar.account.language': 'Language',
+  'sidebar.account.logout': 'Log out',
   'sidebar.dialog.title': 'More chat actions',
   'sidebar.dialog.description': 'Low-frequency actions for {title} live here so the sidebar stays focused.',
   'sidebar.dialog.currentConversation': 'Current chat',
@@ -739,6 +749,33 @@ export function formatTranslation(template: string, values: TranslationValues = 
     const value = values[key]
     return value === undefined ? '' : String(value)
   })
+}
+
+export function formatRelativeTime(value: string, locale: Locale, t: Translator): string {
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) {
+    return t('relative.invalid')
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000))
+  if (minutes < 1) {
+    return t('relative.now')
+  }
+  if (minutes < 60) {
+    return t('relative.minutesAgo', { count: minutes })
+  }
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) {
+    return t('relative.hoursAgo', { count: hours })
+  }
+  const days = Math.round(hours / 24)
+  if (days < 7) {
+    return t('relative.daysAgo', { count: days })
+  }
+  const weeks = Math.round(days / 7)
+  if (weeks < 5) {
+    return t('relative.weeksAgo', { count: weeks })
+  }
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {

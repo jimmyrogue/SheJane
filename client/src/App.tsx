@@ -19,7 +19,7 @@ import { Composer } from './features/chat/components/Composer'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
-import { I18nProvider, LocaleSwitcher, useI18n, type Translator } from './shared/i18n/i18n'
+import { I18nProvider, LocaleSwitcher, useI18n, formatRelativeTime, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
@@ -884,6 +884,7 @@ function AppContent() {
   return (
     <TooltipProvider>
       <main className={shellClassName}>
+        <div className="window-drag-layer" aria-hidden="true" />
         <div className="app-shell" style={appShellStyle}>
           <ConversationSidebar
             conversations={conversations}
@@ -899,6 +900,9 @@ function AppContent() {
             onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={toggleSidebarCollapse}
+            onLogout={() => {
+              void authClient.logout().finally(() => setAuth(null))
+            }}
           />
 
           <div
@@ -1042,25 +1046,6 @@ function topbarStatusInfo(
     return { tone: 'warning', detail: t('app.topbar.loginPending', { mode: modeLabel }) }
   }
   return { tone: 'online', detail: t('app.topbar.connected', { mode: modeLabel }) }
-}
-
-function formatRelativeTime(value: string, locale: 'zh' | 'en', t: Translator): string {
-  const time = new Date(value).getTime()
-  if (!Number.isFinite(time)) {
-    return t('relative.invalid')
-  }
-  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000))
-  if (minutes < 1) {
-    return t('relative.now')
-  }
-  if (minutes < 60) {
-    return t('relative.minutesAgo', { count: minutes })
-  }
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) {
-    return t('relative.hoursAgo', { count: hours })
-  }
-  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
 }
 
 function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>, t: Translator) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  IconChevronDown,
   IconDots,
   IconDownload,
   IconFolderPlus,
@@ -8,15 +9,16 @@ import {
   IconHistory,
   IconLayoutSidebarLeftCollapse,
   IconLoader2,
+  IconLogout,
   IconMessageCircle,
   IconPencil,
   IconPin,
   IconPlus,
   IconSearch,
-  IconSettings,
   IconTrash,
   IconTool,
   IconUpload,
+  IconWorld,
 } from '@tabler/icons-react'
 import {
   AlertDialog,
@@ -46,7 +48,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { useI18n } from '@/shared/i18n/i18n'
+import { useI18n, formatRelativeTime, type Translator } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
 import type { Conversation } from '@/shared/local-data/types'
 
@@ -68,6 +70,7 @@ export function ConversationSidebar({
   onAddConversationToProject,
   onDeleteConversation,
   onCollapseSidebar,
+  onLogout,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -82,8 +85,9 @@ export function ConversationSidebar({
   onAddConversationToProject: (conversationID: string, projectName: string) => void
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
+  onLogout?: () => void
 }) {
-  const { t } = useI18n()
+  const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
   const [renameConversationID, setRenameConversationID] = useState<string>()
   const [projectConversationID, setProjectConversationID] = useState<string>()
@@ -128,6 +132,9 @@ export function ConversationSidebar({
         >
           <span>{conversation.title}</span>
         </Button>
+        <span className="conversation-time" aria-hidden="true">
+          {formatRelativeTime(conversation.updatedAt, locale, t)}
+        </span>
         <ConversationStatusIndicator
           status={conversationSidebarStatus(
             conversation,
@@ -246,14 +253,48 @@ export function ConversationSidebar({
         )}
       </div>
 
-      <div className="sidebar-footer">
-        <div className="avatar">{avatarInitials(userEmail)}</div>
-        <div className="sidebar-footer-copy">
-          <div className="name">{userEmail.split('@')[0] || t('app.productName')}</div>
-          <div className="plan">{balance ? `${balance.plan_code ?? 'free'} · ${balance.monthly_remaining}` : t('sidebar.localFirst')}</div>
-        </div>
-        <IconSettings size={15} aria-hidden="true" />
-      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" className="sidebar-account" aria-label={t('sidebar.account.menu')}>
+            <span className="sidebar-account-avatar">{avatarInitials(userEmail)}</span>
+            <span className="sidebar-account-meta">
+              <span className="sidebar-account-name">{accountName(userEmail) || t('app.productName')}</span>
+              <span className="sidebar-account-dot" aria-hidden="true">·</span>
+              <span className="sidebar-account-plan">{planLabel(balance, t)}</span>
+            </span>
+            <IconChevronDown size={14} className="sidebar-account-caret" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="top" sideOffset={8} className="sidebar-account-menu">
+          <div className="sidebar-account-head">
+            <span className="sidebar-account-avatar lg">{avatarInitials(userEmail)}</span>
+            <div className="sidebar-account-head-copy">
+              <div className="sidebar-account-head-email">{userEmail}</div>
+              <div className="sidebar-account-head-plan">{planLabel(balance, t)}</div>
+            </div>
+          </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setLocale(locale === 'zh' ? 'en' : 'zh')
+            }}
+          >
+            <IconWorld />
+            <span>{t('sidebar.account.language')}</span>
+            <span className="sidebar-account-item-hint">{locale === 'zh' ? 'English' : '中文'}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="sidebar-account-menu-danger"
+            disabled={!onLogout}
+            onSelect={() => onLogout?.()}
+          >
+            <IconLogout />
+            <span>{t('sidebar.account.logout')}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <input
         ref={importInputRef}
@@ -445,4 +486,16 @@ function writeSeenConversationVersions(value: Record<string, string>) {
 function avatarInitials(email: string): string {
   const label = email.trim().split('@')[0] || 'JD'
   return label.slice(0, 2).toUpperCase()
+}
+
+function accountName(email: string): string {
+  return email.trim().split('@')[0] ?? ''
+}
+
+function planLabel(balance: WalletBalance | null | undefined, t: Translator): string {
+  if (!balance) {
+    return t('sidebar.localFirst')
+  }
+  const code = (balance.plan_code ?? 'free').trim()
+  return code.charAt(0).toUpperCase() + code.slice(1)
 }
