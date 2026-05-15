@@ -34,15 +34,17 @@ describe('deriveAgentHistory', () => {
     expect(history).toEqual([{ role: 'user', content: '正常一句' }])
   })
 
-  it('caps to the most recent N messages', () => {
+  it('caps to the most recent N messages and prepends an omission marker', () => {
     const many = Array.from({ length: 30 }, (_, i) => msg({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }))
     const history = deriveAgentHistory(many, { maxMessages: 5 })
-    expect(history).toHaveLength(5)
-    expect(history[history.length - 1].content).toBe('m29')
-    expect(history[0].content).toBe('m25')
+    // 5 kept turns + 1 synthetic marker
+    expect(history).toHaveLength(6)
+    expect(history[0].role).toBe('user')
+    expect(history[0].content).toContain('已省略更早的 25 轮')
+    expect(history.slice(1).map((t) => t.content)).toEqual(['m25', 'm26', 'm27', 'm28', 'm29'])
   })
 
-  it('drops oldest turns until within the char budget', () => {
+  it('drops oldest turns until within the char budget (with marker)', () => {
     const history = deriveAgentHistory(
       [
         msg({ role: 'user', content: 'A'.repeat(100) }),
@@ -51,6 +53,19 @@ describe('deriveAgentHistory', () => {
       ],
       { maxChars: 150 },
     )
-    expect(history.map((turn) => turn.content[0])).toEqual(['C'])
+    expect(history).toHaveLength(2)
+    expect(history[0].content).toContain('已省略更早的 2 轮')
+    expect(history[1].content).toBe('C'.repeat(100))
+  })
+
+  it('adds no marker when nothing is omitted', () => {
+    const history = deriveAgentHistory([
+      msg({ role: 'user', content: '只有一轮' }),
+      msg({ role: 'assistant', content: '回复' }),
+    ])
+    expect(history).toEqual([
+      { role: 'user', content: '只有一轮' },
+      { role: 'assistant', content: '回复' },
+    ])
   })
 })

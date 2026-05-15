@@ -8,6 +8,17 @@ import type { ChatMessage } from '@/shared/local-data/types'
 const DEFAULT_MAX_MESSAGES = 20
 const DEFAULT_MAX_CHARS = 12000
 
+// Deterministic (no-LLM) compaction marker: when older turns are elided by the
+// caps, tell the model context was truncated instead of silently dropping it,
+// so it won't mistake a partial thread for the whole conversation. (LLM-based
+// summarization compaction is the separate phase-3 enhancement.)
+function omittedTurnsMarker(count: number): AgentHistoryMessage {
+  return {
+    role: 'user',
+    content: `【上下文提示｜对话较长，已省略更早的 ${count} 轮，仅保留最近内容；如需更早信息请重述。】`,
+  }
+}
+
 export interface DeriveAgentHistoryOptions {
   maxMessages?: number
   maxChars?: number
@@ -46,6 +57,11 @@ export function deriveAgentHistory(
   while (recent.length > 1 && total > maxChars) {
     total -= recent[0].content.length
     recent = recent.slice(1)
+  }
+
+  const omitted = turns.length - recent.length
+  if (omitted > 0) {
+    return [omittedTurnsMarker(omitted), ...recent]
   }
   return recent
 }
