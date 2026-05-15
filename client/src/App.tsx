@@ -1,4 +1,4 @@
-import { IconChevronDown, IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
+import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -18,7 +18,7 @@ import { Composer } from './features/chat/components/Composer'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
-import { I18nProvider, useI18n, formatRelativeTime, type Translator } from './shared/i18n/i18n'
+import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
@@ -120,7 +120,7 @@ export function App() {
 }
 
 function AppContent() {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const api = useMemo(() => new JiandanAPI(), [])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const localData = useMemo(() => new LocalConversationStore(), [])
@@ -308,7 +308,6 @@ function AppContent() {
         authorized: Boolean(selectedWorkspace || activeWorkspace.authorized),
       }
     : undefined
-  const topbarStatus = topbarStatusInfo(localHost, localHostConfig, localCloudSession, mode, t)
 
   async function handleAuth(payload: AuthPayload) {
     api.setAccessToken(payload.access_token)
@@ -389,16 +388,18 @@ function AppContent() {
       setNotice(t('app.notice.documentNotReady'))
       return
     }
+    const content = draft
     setIsSending(true)
     setNotice('')
+    setDraft('')
     const renderContext = createConversationRenderContext()
     try {
       const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
-        ? await sendLocalHarnessMessage(draft, renderContext)
+        ? await sendLocalHarnessMessage(content, renderContext)
         : await chat.sendMessage({
             conversationId: activeID,
-            content: draft,
+            content,
             mode,
             scene: 'chat',
             document: attachedDocument
@@ -409,10 +410,10 @@ function AppContent() {
               : undefined,
             onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
           })
-      setDraft('')
       await refreshConversationsAfterStream(conversation.id, renderContext)
       setBalance(await api.balance())
     } catch (error) {
+      setDraft((current) => current || content)
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
       await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
@@ -919,7 +920,6 @@ function AppContent() {
             activeID={activeID}
             balance={balance}
             userEmail={auth.user.email}
-            status={topbarStatus}
             onNewConversation={startNewConversation}
             onSelectConversation={selectConversation}
             onExportConversation={(conversationID) => void exportConversationData(conversationID)}
@@ -963,8 +963,6 @@ function AppContent() {
               ) : null}
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
-                <IconChevronDown size={14} aria-hidden="true" />
-                <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt, locale, t) : t('app.localFirstChat')}</small>
               </div>
             </header>
 
@@ -1029,29 +1027,6 @@ function localHostStatusLabel(
     return t('app.localStatus.loginPending')
   }
   return t('app.localStatus.connected')
-}
-
-function topbarStatusInfo(
-  localHost: LocalHostProbe | null,
-  config: LocalHostConfig | null,
-  session: LocalCloudSession | null,
-  mode: ChatMode,
-  t: Translator,
-): { tone: 'online' | 'warning'; detail: string } {
-  const modeLabel = mode === 'deep' ? t('app.mode.deep') : t('app.mode.fast')
-  if (!localHost) {
-    return { tone: 'online', detail: t('app.topbar.cloudReady', { mode: modeLabel }) }
-  }
-  if (!localHost.online) {
-    return { tone: 'warning', detail: t('app.topbar.offline', { mode: modeLabel }) }
-  }
-  if (!config?.token) {
-    return { tone: 'warning', detail: t('app.topbar.unpaired', { mode: modeLabel }) }
-  }
-  if (!session?.connected) {
-    return { tone: 'warning', detail: t('app.topbar.loginPending', { mode: modeLabel }) }
-  }
-  return { tone: 'online', detail: t('app.topbar.connected', { mode: modeLabel }) }
 }
 
 function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>, t: Translator) {

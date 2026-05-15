@@ -2047,32 +2047,6 @@ button:active {
   text-align: center;
 }
 
-.avatar {
-  display: flex;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--avatar-bg);
-  color: var(--avatar-text);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.avatar-bot {
-  display: flex;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border-radius: 6px;
-  border: 0.5px solid var(--border-hairline);
-  background: #FFF8F1;
-}
 
 .sidebar-account {
   position: relative;
@@ -2236,47 +2210,6 @@ button:active {
 .sidebar-account-menu .sidebar-account-menu-danger,
 .sidebar-account-menu .sidebar-account-menu-danger svg {
   color: #B63B35;
-}
-
-.sidebar-account-status {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  gap: 8px;
-  padding: 7px 8px 8px;
-}
-
-.sidebar-account-status-dot {
-  display: block;
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border-radius: 999px;
-  background: var(--accent-success);
-  box-shadow: 0 0 0 3px var(--accent-success-bg);
-}
-
-.sidebar-account-status-dot.warning {
-  background: var(--accent-warning);
-  box-shadow: 0 0 0 3px var(--accent-warning-bg);
-}
-
-.sidebar-account-status-copy span,
-.sidebar-account-status-copy small {
-  display: block;
-}
-
-.sidebar-account-status-copy span {
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.35;
-}
-
-.sidebar-account-status-copy small {
-  margin-top: 2px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .workspace {
@@ -2466,43 +2399,45 @@ button:active {
 }
 
 .message,
-.message.user {
-  display: flex;
-  justify-content: flex-start;
-  gap: 12px;
+.message.user,
+.message.assistant {
+  display: block;
+  gap: 0;
   padding: 0;
 }
 
 .message-bubble-inner,
 .message.user .message-bubble-inner,
 .message.assistant .message-bubble-inner {
-  max-width: min(920px, 100%);
+  max-width: min(820px, 100%);
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   margin: 0;
-  padding: 3px 0 0;
-}
-
-.message-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 22px;
-  margin-bottom: 2px;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.message.user .message-meta {
-  display: none;
+  padding: 0;
 }
 
 .message .message-content {
   color: var(--text-primary);
   font-size: 13px;
   line-height: 1.65;
+}
+
+/* Claude/Codex-desktop style: user input is a tinted rounded bubble,
+   the agent reply is plain text with no background. No avatars/labels. */
+.message.user .message-content {
+  display: inline-block;
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  background: var(--bg-sidebar);
+  color: var(--text-primary);
+  padding: 9px 13px;
+}
+
+.message.assistant .message-content {
+  background: transparent;
+  padding: 0;
 }
 
 .message .message-content p,
@@ -2829,8 +2764,7 @@ button:active {
 }
 
 .logo img,
-.auth-wordmark-mark img,
-.avatar-bot img {
+.auth-wordmark-mark img {
   display: block;
   width: 100%;
   height: 100%;

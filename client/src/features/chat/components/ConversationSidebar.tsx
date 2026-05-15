@@ -72,13 +72,11 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
-  status,
 }: {
   conversations: Conversation[]
   activeID?: string
   balance?: WalletBalance | null
   userEmail: string
-  status?: { tone: 'online' | 'warning'; detail: string }
   onNewConversation: () => void
   onSelectConversation: (conversationID: string) => void
   onExportConversation: (conversationID: string) => void
@@ -344,21 +342,6 @@ export function ConversationSidebar({
               <div className="sidebar-account-head-plan">{planLabel(balance, t)}</div>
             </div>
           </div>
-          {status ? (
-            <>
-              <DropdownMenuSeparator />
-              <div
-                className="sidebar-account-status"
-                aria-label={t('app.currentLocalStatusA11y', { detail: status.detail })}
-              >
-                <span className={`sidebar-account-status-dot ${status.tone}`} aria-hidden="true" />
-                <div className="sidebar-account-status-copy">
-                  <span>{t('app.currentLocalStatus')}</span>
-                  <small>{status.detail}</small>
-                </div>
-              </div>
-            </>
-          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(event) => {
@@ -368,7 +351,7 @@ export function ConversationSidebar({
           >
             <IconWorld />
             <span>{t('sidebar.account.language')}</span>
-            <span className="sidebar-account-item-hint">{locale === 'zh' ? 'English' : '中文'}</span>
+            <span className="sidebar-account-item-hint">{locale === 'zh' ? '中文' : 'English'}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

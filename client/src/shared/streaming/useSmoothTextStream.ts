@@ -19,6 +19,7 @@ export interface SmoothTextStreamState {
   start: (initialText?: string) => void
   pushChunk: (chunk: string) => void
   finish: () => void
+  end: () => void
   cancel: () => void
 }
 
@@ -45,6 +46,7 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
   const queueRef = useRef<string[]>([])
   const timerRef = useRef<number | undefined>()
   const idRef = useRef(0)
+  const endedRef = useRef(false)
 
   useEffect(() => {
     onCommitRef.current = options.onCommit
@@ -82,13 +84,6 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
     }
   }, [locale])
 
-  const tick = useCallback(() => {
-    drainBufferToQueue(false)
-    const next = queueRef.current.splice(0, segmentsPerTick)
-    appendSegments(next)
-    timerRef.current = window.setTimeout(tick, tickMs)
-  }, [appendSegments, drainBufferToQueue, segmentsPerTick, tickMs])
-
   const stopTimer = useCallback(() => {
     if (timerRef.current !== undefined) {
       window.clearTimeout(timerRef.current)
@@ -96,11 +91,25 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
     }
   }, [])
 
+  const tick = useCallback(() => {
+    const ended = endedRef.current
+    drainBufferToQueue(ended)
+    const next = queueRef.current.splice(0, segmentsPerTick)
+    appendSegments(next)
+    if (ended && queueRef.current.length === 0 && !bufferRef.current) {
+      setIsStreaming(false)
+      stopTimer()
+      return
+    }
+    timerRef.current = window.setTimeout(tick, tickMs)
+  }, [appendSegments, drainBufferToQueue, segmentsPerTick, tickMs, stopTimer])
+
   const start = useCallback((initialText = '') => {
     stopTimer()
     bufferRef.current = ''
     queueRef.current = []
     idRef.current = initialText ? 1 : 0
+    endedRef.current = false
     setSegments(initialText ? [{ id: 0, text: initialText }] : [])
     setIsStreaming(true)
     timerRef.current = window.setTimeout(tick, tickMs)
@@ -120,9 +129,21 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
     stopTimer()
   }, [appendSegments, drainBufferToQueue, stopTimer])
 
+  // Graceful end: no more input is coming, but keep revealing the already
+  // buffered text at the normal animation cadence instead of dumping it all
+  // at once (that is what `finish` does). The tick loop stops itself once the
+  // buffer and queue are fully drained.
+  const end = useCallback(() => {
+    endedRef.current = true
+    if (timerRef.current === undefined) {
+      timerRef.current = window.setTimeout(tick, tickMs)
+    }
+  }, [tick, tickMs])
+
   const cancel = useCallback(() => {
     bufferRef.current = ''
     queueRef.current = []
+    endedRef.current = false
     setSegments([])
     setIsStreaming(false)
     stopTimer()
@@ -139,6 +160,7 @@ export function useSmoothTextStream(options: SmoothTextStreamOptions = {}): Smoo
     start,
     pushChunk,
     finish,
+    end,
     cancel,
   }
 }

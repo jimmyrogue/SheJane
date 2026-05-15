@@ -1,9 +1,7 @@
 import { useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
@@ -32,9 +30,22 @@ export function MessageBubble({
       stream.cancel()
     }
     if (!isAssistant || message.status !== 'streaming') {
-      previousContentRef.current = message.content
       if (stream.isStreaming) {
-        stream.finish()
+        // Run finished, but the typewriter may still have buffered text.
+        // Push whatever tail just arrived, then let it drain at animation
+        // speed (stream.end) instead of snapping the full reply in at once.
+        if (message.content.startsWith(previousContentRef.current)) {
+          const delta = message.content.slice(previousContentRef.current.length)
+          if (delta) {
+            stream.pushChunk(delta)
+          }
+        } else {
+          stream.pushChunk(message.content)
+        }
+        previousContentRef.current = message.content
+        stream.end()
+      } else {
+        previousContentRef.current = message.content
       }
       return
     }
@@ -64,19 +75,13 @@ export function MessageBubble({
 
   const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
   const content = message.content || waitingText
+  const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
 
   return (
     <article className={cn('message', message.role)}>
-      <div className={isAssistant ? 'avatar-bot' : 'avatar'}>
-        {isAssistant ? <img src={appLogoURL} alt="" aria-hidden="true" /> : t('message.me')}
-      </div>
       <div className="message-bubble-inner">
-        <div className="message-meta">
-          <span>{message.role === 'user' ? t('message.me') : t('message.assistant')}</span>
-          {message.status === 'streaming' ? <Badge variant="secondary">{t('message.processing')}</Badge> : null}
-        </div>
         <div className="message-content">
-          {isAssistant && message.status === 'streaming' ? (
+          {showStream ? (
             <p className="streaming-text whitespace-pre-wrap break-words">
               {stream.segments.map((segment) => (
                 <span className="stream-segment" key={segment.id}>
