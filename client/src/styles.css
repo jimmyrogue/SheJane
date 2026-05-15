@@ -770,121 +770,80 @@ select {
   margin-top: 0.9rem;
 }
 
-.agent-progress {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--card) 88%, var(--muted));
-  box-shadow: var(--shadow-xs);
-}
-
-.agent-progress-working {
-  border-left: 3px solid oklch(0.6 0.15 255);
-  background: color-mix(in oklab, var(--card) 95%, oklch(0.6 0.15 255));
-}
-
-.agent-progress-done {
-  border-left: 3px solid oklch(0.55 0.12 155);
-}
-
-.agent-progress-failed {
-  border-left: 3px solid oklch(0.55 0.12 25);
-}
-
+/* Agent progress: de-emphasized Claude Code / Codex style — no card, no
+   border, no background. Just a muted text line that expands. Status is
+   conveyed by a single tiny dot. The tone selectors are kept (so the
+   data-state hook still works) but carry no chrome. */
+.agent-progress,
+.agent-progress-working,
+.agent-progress-done,
+.agent-progress-failed,
 .agent-progress-permission {
-  border-left: 3px solid oklch(0.65 0.12 75);
-  background: color-mix(in oklab, var(--card) 94%, oklch(0.65 0.12 75));
+  margin-top: 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.agent-progress-content {
-  display: grid;
-  gap: 10px;
+.agent-progress-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: transparent;
 }
 
-.agent-progress-main {
+.agent-progress-dot.dot-danger {
+  background: var(--accent-danger);
+}
+
+.agent-progress-dot.dot-warning {
+  background: var(--accent-warning);
+}
+
+.agent-progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-progress-step {
   display: flex;
   min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.agent-progress-icon {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--background);
-  color: var(--foreground);
-}
-
-.agent-progress-icon svg {
-  width: 14px;
-  height: 14px;
-}
-
-.agent-progress-working .agent-progress-icon svg {
-  animation: progress-spin 1.1s linear infinite;
-}
-
-.agent-progress-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.agent-progress-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--foreground);
-  font-size: 13px;
-  font-weight: 720;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  animation: progress-label-in 180ms ease-out both;
-}
-
-.agent-progress-copy small {
+  align-items: baseline;
+  gap: 6px;
   color: var(--muted-foreground);
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
-.agent-progress-meta,
-.agent-progress-permission-actions {
-  display: flex;
+.agent-progress-step-group {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-progress-step-label {
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.agent-progress-action {
-  gap: 5px;
-}
-
-.agent-progress-permission-actions {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
-.agent-progress-failed {
-  background: var(--muted);
-}
-
-.agent-progress-permission {
-  background: var(--card);
-}
-
-.agent-timeline {
-  display: none;
-}
-
-.timeline-source-link {
-  max-width: 260px;
+  flex: 1 1 auto;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-progress-step-failed .agent-progress-step-label {
+  color: var(--accent-danger-text);
+}
+
+.agent-progress-step-source {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -927,8 +886,8 @@ select {
 }
 
 .diagnostics-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
+  display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
 }
 
@@ -952,6 +911,67 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Approval bar: the single place all permission prompts are surfaced —
+   docked just above the composer, not in the message list. It is meant to
+   be noticed (it blocks the run on the user), so it keeps a clear surface
+   and prominent action buttons, unlike the de-emphasized progress lines. */
+.approval-bar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 0 18px 10px;
+  border: 0.5px solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sidebar-soft);
+  padding: 10px 14px;
+}
+
+.approval-bar-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.approval-bar-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.approval-bar-detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.approval-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approval-bar-actions button {
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+@media (max-width: 560px) {
+  .approval-bar {
+    align-items: stretch;
+  }
+
+  .approval-bar-actions {
+    width: 100%;
+  }
+
+  .approval-bar-actions > * {
+    flex: 1;
+  }
 }
 
 .composer {
@@ -1315,22 +1335,6 @@ label {
     padding: 12px;
   }
 
-  .agent-progress-main {
-    align-items: flex-start;
-  }
-
-  .agent-progress-meta,
-  .agent-progress-permission-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .agent-progress-meta > *,
-  .agent-progress-permission-actions > * {
-    width: 100%;
-    justify-content: center;
-  }
-
   .diagnostics-actions {
     width: 100%;
   }
@@ -1454,7 +1458,19 @@ button:active {
   -webkit-app-region: no-drag;
 }
 
-[data-slot="dropdown-menu-content"] {
+/* These shadcn surfaces render in a body-level Radix portal, OUTSIDE the
+   .electron-window-shell subtree, so the scoped no-drag rule above never
+   reaches them. The fixed .window-drag-layer (top 38px, app-region: drag)
+   geometrically overlaps any panel header that sits at the top of the
+   window, and Electron derives the native drag region from geometry
+   regardless of z-index/stacking — eating clicks on buttons inside that
+   strip (e.g. the diagnostics "export" button). app-region: no-drag is a
+   geometric carve-out that applies to the element's whole rectangle, so
+   tagging the portaled content root clears the entire panel. */
+[data-slot="dropdown-menu-content"],
+[data-slot="sheet-content"],
+[data-slot="dialog-content"],
+[data-slot="alert-dialog-content"] {
   -webkit-app-region: no-drag;
 }
 
@@ -2467,60 +2483,81 @@ button:active {
 }
 
 .tool-card {
-  overflow: hidden;
-  margin-top: 12px;
-  border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-lg);
-  background: #FFFFFF;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-.tool-card-header {
+/* Summary row: just a quiet text line, no box. For info states it is a
+   <button> toggle, so reset native button chrome; feedback is a colour
+   shift only (no background, no layout shift). */
+.agent-progress-summary {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-  background: var(--bg-sidebar);
-  padding: 8px 12px;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: var(--muted-foreground);
+  font: inherit;
   font-size: 12px;
+  text-align: left;
 }
 
-.tool-card-header .name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+button.agent-progress-summary {
+  cursor: pointer;
+  transition: color 120ms ease;
 }
 
-.tool-card-header .meta {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-tertiary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-card-icon {
-  width: 14px;
-  height: 14px;
+button.agent-progress-summary:hover .name,
+button.agent-progress-summary:hover .tool-card-caret {
   color: var(--text-secondary);
 }
 
+button.agent-progress-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.agent-progress .tool-card-header .name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-progress .tool-card-header .meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tool-card-caret {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
   margin-left: auto;
   color: var(--text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.agent-progress[data-expanded="true"] .tool-card-caret {
+  transform: rotate(180deg);
 }
 
 .tool-card-results {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border-top: 0.5px dashed var(--border-hairline);
-  padding: 10px 12px;
-  color: var(--text-secondary);
+  padding: 6px 0 2px 11px;
+  color: var(--muted-foreground);
   font-size: 12px;
 }
 
@@ -2535,33 +2572,10 @@ button:active {
   color: var(--text-tertiary);
 }
 
-.agent-progress-working,
-.agent-progress-permission {
-  border-color: var(--avatar-bg);
-  background: #FBF8F3;
-}
-
-.agent-progress-working .tool-card-header,
-.agent-progress-permission .tool-card-header {
-  background: transparent;
-}
-
-.agent-progress-failed {
-  border-color: var(--accent-danger-border);
-  background: var(--accent-danger-bg);
-}
-
-.agent-progress-failed .tool-card-header {
-  background: var(--accent-danger-bg);
-  color: var(--accent-danger-text);
-}
-
-.agent-progress-working .tool-card-icon {
-  animation: progress-spin 1.1s linear infinite;
-}
-
-.agent-progress-working .dot-warning,
-.agent-progress-permission .dot-warning {
+/* The only activity cue: the tiny status dot pulses while running / waiting.
+   Everything else stays static and monochrome. */
+.agent-progress-working .agent-progress-dot,
+.agent-progress-permission .agent-progress-dot {
   animation: atlas-pulse 1.4s infinite;
 }
 
@@ -2575,19 +2589,14 @@ button:active {
   font-weight: 400;
 }
 
-.agent-progress-permission-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  border-top: 0.5px dashed var(--border-hairline);
-  padding: 10px 12px;
-}
 
-.agent-progress-permission-actions button {
-  min-height: 28px;
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  font-weight: 400;
+@media (prefers-reduced-motion: reduce) {
+  .tool-card-caret,
+  .agent-progress-working .agent-progress-dot,
+  .agent-progress-permission .agent-progress-dot {
+    transition: none;
+    animation: none;
+  }
 }
 
 .composer {
@@ -3353,9 +3362,5 @@ select {
 
   .suggest-grid {
     grid-template-columns: 1fr;
-  }
-
-  .agent-progress-permission-actions {
-    flex-direction: column;
   }
 }

@@ -289,6 +289,9 @@ const zh = {
   'agent.timeline.run': '任务',
   'agent.timeline.artifact': 'Artifact',
   'agent.timeline.event': '事件',
+  'agent.stepsCount': '{count} 步',
+  'agent.expandSteps': '展开步骤',
+  'agent.collapseSteps': '收起步骤',
 
   'diagnostics.title': '任务诊断：{id}',
   'diagnostics.defaultGoal': '本地任务',
@@ -649,6 +652,9 @@ const en: Record<TranslationKey, string> = {
   'agent.timeline.run': 'Task',
   'agent.timeline.artifact': 'Artifact',
   'agent.timeline.event': 'Event',
+  'agent.stepsCount': '{count} step(s)',
+  'agent.expandSteps': 'Expand steps',
+  'agent.collapseSteps': 'Collapse steps',
 
   'diagnostics.title': 'Task diagnostics: {id}',
   'diagnostics.defaultGoal': 'Local task',

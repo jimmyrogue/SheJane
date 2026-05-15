@@ -22,36 +22,27 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 describe('AgentProgress', () => {
   afterEach(() => cleanup())
 
-  it('prioritizes the current pending permission and does not render every prior event', () => {
-    const onDecision = vi.fn()
-    const current = message({
-      status: 'waiting_permission',
-      agentEvents: [
-        { type: 'source.collected', label: '收集来源：Example Source', sourceTitle: 'Example Source', sourceUrl: 'https://example.com/source' },
-        { type: 'verification.completed', label: '验证通过：搜索网页', verificationStatus: 'passed' },
-        { type: 'permission.required', label: '需要权限：运行命令', permissionRequestId: 'perm-shell', permissionTool: '运行命令' },
-      ],
-    })
-
-    renderAgentProgress(
+  it('does not render permission prompts inline (they move to the approval bar)', () => {
+    const { container } = renderAgentProgress(
       <AgentProgress
-        message={current}
+        message={message({
+          status: 'waiting_permission',
+          agentEvents: [
+            { type: 'source.collected', label: '收集来源：Example Source', sourceTitle: 'Example Source', sourceUrl: 'https://example.com/source' },
+            { type: 'permission.required', label: '需要权限：运行命令', permissionRequestId: 'perm-shell', permissionTool: '运行命令' },
+          ],
+        })}
         onOpenArtifact={vi.fn()}
         onOpenDiagnostics={vi.fn()}
-        onPermissionDecision={onDecision}
       />,
     )
 
-    expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument()
-    expect(screen.getByText('已收集 1 个来源')).toBeInTheDocument()
-    expect(screen.queryByText('收集来源：Example Source')).not.toBeInTheDocument()
-    expect(screen.queryByText('验证通过：搜索网页')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('本会话始终允许'))
-    expect(onDecision).toHaveBeenCalledWith('perm-shell', 'approve', 'run')
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
+    expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('summarizes sources and artifacts while keeping preview and diagnostics actions', () => {
+  it('collapses the completed summary by default and reveals sources, artifacts and diagnostics on expand', () => {
     const onOpenArtifact = vi.fn()
     const onOpenDiagnostics = vi.fn()
     const current = message({
@@ -69,11 +60,17 @@ describe('AgentProgress', () => {
         message={current}
         onOpenArtifact={onOpenArtifact}
         onOpenDiagnostics={onOpenDiagnostics}
-        onPermissionDecision={vi.fn()}
       />,
     )
 
+    // Collapsed by default: only the muted summary line, no detail rows.
     expect(screen.getByText('任务完成')).toBeInTheDocument()
+    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
+
     expect(screen.getByText('已收集 2 个来源')).toBeInTheDocument()
     expect(screen.getByText('生成 1 个 Artifact')).toBeInTheDocument()
 
@@ -82,6 +79,31 @@ describe('AgentProgress', () => {
 
     fireEvent.click(screen.getByTitle('查看诊断 run-local'))
     expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
+  })
+
+  it('keeps the failed state muted and only shows the failing steps when expanded', () => {
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        { type: 'tool.requested', label: '调用工具：打开受控网页' },
+        { type: 'tool.failed', label: '验证失败：打开受控网页', verificationStatus: 'failed' },
+      ],
+    })
+
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(container.querySelector('.agent-progress-failed')).toBeInTheDocument()
+    // Step labels are hidden until the row is expanded.
+    expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
+    expect(screen.getByText('调用工具：打开受控网页')).toBeInTheDocument()
   })
 
   it('derives failed and active progress labels from existing timeline items', () => {

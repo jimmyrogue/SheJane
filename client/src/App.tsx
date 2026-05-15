@@ -18,6 +18,8 @@ import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
+import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
+import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
@@ -299,6 +301,7 @@ function AppContent() {
   }, [api, auth, localHost?.online, localHostConfig])
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
+  const pendingApproval = findConversationPendingApproval(activeConversation, t)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
   const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
   const selectedWorkspace = activeWorkspace ? findWorkspaceByPath(authorizedWorkspaces, activeWorkspace.path) : undefined
@@ -978,11 +981,15 @@ function AppContent() {
               conversation={activeConversation}
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
-              onPermissionDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
             <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
+
+            <PendingApprovalBar
+              approval={pendingApproval}
+              onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
+            />
 
             <Composer
               mode={mode}

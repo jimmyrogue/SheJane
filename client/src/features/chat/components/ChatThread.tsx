@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from 'react'
 import { AgentProgress } from './AgentProgress'
 import { MessageBubble } from './MessageBubble'
 import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
-import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { Conversation } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
@@ -12,12 +11,10 @@ export function ChatThread({
   conversation,
   onOpenArtifact,
   onOpenDiagnostics,
-  onPermissionDecision,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
   onOpenDiagnostics: (runID: string) => void
-  onPermissionDecision: (messageID: string, requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
   const { t } = useI18n()
   const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
@@ -51,7 +48,6 @@ export function ChatThread({
                 message={message}
                 onOpenArtifact={onOpenArtifact}
                 onOpenDiagnostics={onOpenDiagnostics}
-                onPermissionDecision={(requestID, decision, scope) => onPermissionDecision(message.id, requestID, decision, scope)}
               />
             </MessageBubble>
           ))}

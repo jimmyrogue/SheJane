@@ -19,26 +19,40 @@ export function DiagnosticsPanel({
 
   return (
     <Sheet modal={false} open={Boolean(diagnostics)} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="diagnostics-preview w-[min(760px,94vw)] overflow-hidden sm:max-w-[760px]" showOverlay={false}>
-        <SheetHeader>
+      <SheetContent
+        className="diagnostics-preview flex w-[min(760px,94vw)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[760px]"
+        showOverlay={false}
+        showCloseButton={false}
+      >
+        <SheetHeader className="shrink-0 gap-3 border-b p-4">
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <SheetTitle>{t('diagnostics.title', { id: diagnostics?.run.id })}</SheetTitle>
-              <SheetDescription>{diagnostics?.run.goal || t('diagnostics.defaultGoal')}</SheetDescription>
+            <div className="min-w-0 flex-1">
+              <SheetTitle className="truncate" title={diagnostics?.run.id}>
+                {t('diagnostics.title', { id: diagnostics?.run.id })}
+              </SheetTitle>
+              <SheetDescription className="truncate">
+                {diagnostics?.run.goal || t('diagnostics.defaultGoal')}
+              </SheetDescription>
             </div>
-            <div className="diagnostics-actions flex gap-2">
+            <div className="diagnostics-actions flex shrink-0 items-center gap-2">
               <Button type="button" size="sm" variant="outline" onClick={onExport}>
                 <IconDownload size={14} />
                 {t('diagnostics.export')}
               </Button>
-              <Button className="icon-button light" size="icon-sm" variant="ghost" title={t('diagnostics.close')} onClick={onClose}>
+              <Button
+                className="icon-button light"
+                size="icon-sm"
+                variant="ghost"
+                title={t('diagnostics.close')}
+                onClick={onClose}
+              >
                 <IconX size={15} />
               </Button>
             </div>
           </div>
         </SheetHeader>
         {diagnostics ? (
-          <div className="mt-4 space-y-4">
+          <div className="flex-1 space-y-4 overflow-auto p-4">
             <div className="diagnostics-summary flex flex-wrap gap-2">
               <Badge variant="outline">{t('diagnostics.status', { status: diagnostics.run.status })}</Badge>
               <Badge variant="outline">{t('diagnostics.events', { count: diagnostics.events.length })}</Badge>
@@ -54,11 +68,14 @@ export function DiagnosticsPanel({
                 })}
               </small>
             ) : null}
-            <ul className="diagnostics-events max-h-[calc(100vh-260px)] space-y-2 overflow-auto">
+            <ul className="diagnostics-events space-y-2">
               {diagnosticEvents(diagnostics).map((event, index) => (
-                <li className="flex gap-2 rounded-md border bg-card p-2 text-sm" key={`${event.id ?? event.event_type}-${index}`}>
-                  <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs">{event.event_type}</code>
-                  <span>{diagnosticEventDetail(event)}</span>
+                <li
+                  className="flex items-start gap-2 rounded-md border bg-card p-2 text-sm"
+                  key={`${event.id ?? event.event_type}-${index}`}
+                >
+                  <code className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs">{event.event_type}</code>
+                  <span className="min-w-0 break-words">{diagnosticEventDetail(event)}</span>
                 </li>
               ))}
             </ul>

@@ -1,18 +1,9 @@
-import {
-  IconAlertCircle,
-  IconChevronDown,
-  IconCircleCheck,
-  IconDownload,
-  IconEye,
-  IconLoader2,
-  IconShieldCheck,
-  IconX,
-} from '@tabler/icons-react'
+import { useState } from 'react'
+import { IconChevronDown, IconDownload, IconEye } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
-import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { AgentTimelineItem, ChatMessage } from '@/shared/local-data/types'
 
 type ProgressTone = 'working' | 'permission' | 'done' | 'failed' | 'idle'
@@ -37,87 +28,152 @@ export function AgentProgress({
   message,
   onOpenArtifact,
   onOpenDiagnostics,
-  onPermissionDecision,
 }: {
   message: ChatMessage
   onOpenArtifact: (artifactID: string) => void
   onOpenDiagnostics?: (runID: string) => void
-  onPermissionDecision: (requestID: string, decision: 'approve' | 'deny', scope?: LocalPermissionScope) => void
 }) {
   const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
   const progress = deriveAgentProgress(message, t)
-  if (!progress) {
+  // Permission prompts are no longer shown inline — they are surfaced once in
+  // the approval bar above the composer. The remaining info states collapse
+  // to a single muted line and expand on click.
+  if (!progress || progress.tone === 'permission') {
     return null
   }
 
-  const Icon = progressIcon(progress.tone)
+  const events = message.agentEvents ?? []
+  const bodyOpen = expanded
+  const bodyId = `agent-progress-body-${message.id}`
+  const steps = expanded ? stepEvents(events) : []
+  const summaryMeta = progress.detail
+    ? events.length > 0
+      ? `${t('agent.stepsCount', { count: events.length })} · ${progress.detail}`
+      : progress.detail
+    : events.length > 0
+      ? t('agent.stepsCount', { count: events.length })
+      : undefined
+
+  const summaryInner = (
+    <>
+      <span className={cn('agent-progress-dot', dotClass(progress.tone))} aria-hidden="true" />
+      <span className="name" key={progress.label}>{progress.label}</span>
+      {summaryMeta ? <span className="meta">· {summaryMeta}</span> : null}
+      <IconChevronDown className="tool-card-caret" aria-hidden="true" />
+    </>
+  )
 
   return (
-    <div className={cn('tool-card agent-progress mt-4', `agent-progress-${progress.tone}`)} data-state={progress.tone}>
-      <div className="tool-card-header">
-        <span className={cn('dot', dotClass(progress.tone))} />
-        <Icon className="tool-card-icon" aria-hidden="true" />
-        <span className="name" key={progress.label}>{progress.label}</span>
-        {progress.detail ? <span className="meta">· {progress.detail}</span> : null}
-        <IconChevronDown className="tool-card-caret" aria-hidden="true" />
-      </div>
+    <div
+      className={cn('tool-card agent-progress mt-4', `agent-progress-${progress.tone}`)}
+      data-state={progress.tone}
+      data-expanded={bodyOpen}
+    >
+      <button
+        type="button"
+        className="tool-card-header agent-progress-summary"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        aria-label={expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {summaryInner}
+      </button>
 
-      <div className="tool-card-results agent-progress-results" aria-label={t('agent.summary')}>
-        {progress.sourcesCount > 0 ? (
-          <div className="row">
-            <span>{t('agent.sourcesCount', { count: progress.sourcesCount })}</span>
-            <Badge variant="outline">source</Badge>
-          </div>
-        ) : null}
-        {progress.artifactsCount > 0 ? (
-          <div className="row">
-            <span>{t('agent.artifactsCount', { count: progress.artifactsCount })}</span>
-            <Badge variant="outline">artifact</Badge>
-          </div>
-        ) : null}
-        {progress.latestArtifactID ? (
-          <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
-            <IconEye size={13} />
-            {t('agent.viewArtifact')}
-          </Button>
-        ) : null}
-        {progress.diagnosticsRunID && onOpenDiagnostics ? (
-          <Button
-            className="agent-progress-action"
-            size="sm"
-            variant="outline"
-            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID })}
-            onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
-          >
-            <IconDownload size={13} />
-            {t('agent.diagnostics')}
-          </Button>
-        ) : null}
-        {!progress.sourcesCount && !progress.artifactsCount && !progress.latestArtifactID && !progress.diagnosticsRunID ? (
-          <div className="row muted">
-            <span>{progress.tone === 'working' ? t('agent.noResultsWorking') : t('agent.noResults')}</span>
-          </div>
-        ) : null}
-      </div>
+      {bodyOpen ? (
+        <div className="tool-card-results agent-progress-results" id={bodyId} aria-label={t('agent.summary')}>
+          {steps.length > 0 ? (
+            <ul className="agent-progress-steps">
+              {steps.map((event, index) => (
+                <li
+                  className={cn('agent-progress-step', isFailedEvent(event) && 'agent-progress-step-failed')}
+                  key={`${event.eventId ?? event.type}-${index}`}
+                >
+                  {isFailedEvent(event) ? <span className="agent-progress-dot dot-danger" aria-hidden="true" /> : null}
+                  <span className="agent-progress-step-group">{timelineGroup(event, t)}</span>
+                  <span className="agent-progress-step-label">{event.label}</span>
+                  {event.sourceUrl ? (
+                    <a
+                      className="agent-progress-step-source"
+                      href={event.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {event.sourceUrl}
+                    </a>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
 
-      {progress.pendingPermission ? (
-        <div className="agent-progress-permission-actions">
-          <Button size="sm" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'once')}>
-            <IconCircleCheck size={13} />
-            {t('agent.allowOnce')}
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'approve', 'run')}>
-            <IconShieldCheck size={13} />
-            {t('agent.allowRun')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => onPermissionDecision(progress.pendingPermission!.requestID, 'deny')}>
-            <IconX size={13} />
-            {t('agent.deny')}
-          </Button>
+          {progress.sourcesCount > 0 ? (
+            <div className="row">
+              <span>{t('agent.sourcesCount', { count: progress.sourcesCount })}</span>
+              <Badge variant="outline">source</Badge>
+            </div>
+          ) : null}
+          {progress.artifactsCount > 0 ? (
+            <div className="row">
+              <span>{t('agent.artifactsCount', { count: progress.artifactsCount })}</span>
+              <Badge variant="outline">artifact</Badge>
+            </div>
+          ) : null}
+          {progress.latestArtifactID ? (
+            <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
+              <IconEye size={13} />
+              {t('agent.viewArtifact')}
+            </Button>
+          ) : null}
+          {progress.diagnosticsRunID && onOpenDiagnostics ? (
+            <Button
+              className="agent-progress-action"
+              size="sm"
+              variant="outline"
+              title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID })}
+              onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
+            >
+              <IconDownload size={13} />
+              {t('agent.diagnostics')}
+            </Button>
+          ) : null}
+          {!steps.length && !progress.sourcesCount && !progress.artifactsCount && !progress.latestArtifactID && !progress.diagnosticsRunID ? (
+            <div className="row muted">
+              <span>{progress.tone === 'working' ? t('agent.noResultsWorking') : t('agent.noResults')}</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
   )
+}
+
+const STEP_HIDDEN_TYPES = new Set([
+  'run.completed',
+  'run.canceled',
+  'run.failed',
+  'permission.resolved',
+  'permission.auto_approved',
+])
+
+function stepEvents(events: AgentTimelineItem[]): AgentTimelineItem[] {
+  return events.filter((event) => !STEP_HIDDEN_TYPES.has(event.type))
+}
+
+function isFailedEvent(event: AgentTimelineItem): boolean {
+  return event.type === 'run.failed' || event.type === 'tool.failed' || event.verificationStatus === 'failed'
+}
+
+function timelineGroup(event: AgentTimelineItem, t: Translator): string {
+  if (event.type.startsWith('permission')) return t('agent.timeline.permission')
+  if (event.type.startsWith('tool')) return t('agent.timeline.tool')
+  if (event.type.startsWith('browser')) return t('agent.timeline.browser')
+  if (event.type === 'source.collected') return t('agent.timeline.source')
+  if (event.type.startsWith('verification')) return t('agent.timeline.verification')
+  if (event.type.startsWith('run')) return t('agent.timeline.run')
+  if (event.type.startsWith('artifact')) return t('agent.timeline.artifact')
+  return t('agent.timeline.event')
 }
 
 export function deriveAgentProgress(message: ChatMessage, t: Translator = createTranslator('zh')): AgentProgressState | null {
@@ -297,13 +353,6 @@ function stripKnownPrefix(value: string, prefixes: string[]): string {
     }
   }
   return value
-}
-
-function progressIcon(tone: ProgressTone) {
-  if (tone === 'permission') return IconShieldCheck
-  if (tone === 'done') return IconCircleCheck
-  if (tone === 'failed') return IconAlertCircle
-  return IconLoader2
 }
 
 function dotClass(tone: ProgressTone): string {

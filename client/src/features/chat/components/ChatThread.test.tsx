@@ -44,7 +44,6 @@ function renderThreadElement(conversation: Conversation) {
         conversation={conversation}
         onOpenArtifact={() => undefined}
         onOpenDiagnostics={() => undefined}
-        onPermissionDecision={() => undefined}
       />
     </I18nProvider>
   )
