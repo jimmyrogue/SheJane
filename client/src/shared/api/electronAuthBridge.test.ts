@@ -2,7 +2,8 @@ import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { createElectronAuthHandlers } = require('../../../electron/auth-bridge.cjs') as {
+const { authIPCResult, createElectronAuthHandlers, unwrapAuthIPCResult } = require('../../../electron/auth-bridge.cjs') as {
+  authIPCResult: <T>(action: () => Promise<T>) => Promise<{ ok: true, data: T } | { ok: false, error: string }>
   createElectronAuthHandlers: (options: {
     apiBaseURL: string
     cookies: CookieStore
@@ -12,6 +13,7 @@ const { createElectronAuthHandlers } = require('../../../electron/auth-bridge.cj
     refresh: () => Promise<unknown>
     logout: () => Promise<void>
   }
+  unwrapAuthIPCResult: <T>(result: { ok: true, data: T } | { ok: false, error: string } | T) => T
 }
 
 interface CookieStore {
@@ -90,6 +92,15 @@ describe('Electron auth bridge helpers', () => {
       }),
     }))
     expect(cookies.remove).toHaveBeenCalledWith('http://localhost:8080/', 'jiandan_refresh')
+  })
+
+  it('serializes expected auth IPC failures so the main handler does not reject', async () => {
+    const result = await authIPCResult(async () => {
+      throw new Error('未登录或登录已过期')
+    })
+
+    expect(result).toEqual({ ok: false, error: '未登录或登录已过期' })
+    expect(() => unwrapAuthIPCResult(result)).toThrow('未登录或登录已过期')
   })
 })
 

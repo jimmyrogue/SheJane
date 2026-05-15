@@ -23,6 +23,27 @@ function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cook
   }
 }
 
+async function authIPCResult(action) {
+  try {
+    return { ok: true, data: await action() }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : '请求失败',
+    }
+  }
+}
+
+function unwrapAuthIPCResult(result) {
+  if (result?.ok === false) {
+    throw new Error(result.error || '请求失败')
+  }
+  if (result?.ok === true) {
+    return result.data
+  }
+  return result
+}
+
 async function authRequest({ baseURL, cookies, fetchImpl, path, body, includeCookie = false }) {
   const headers = {
     'Content-Type': 'application/json',
@@ -188,8 +209,10 @@ function cookieURL(baseURL) {
 
 module.exports = {
   REFRESH_COOKIE_NAME,
+  authIPCResult,
   clearRefreshCookie,
   createElectronAuthHandlers,
   parseSetCookieHeader,
   refreshCookieHeader,
+  unwrapAuthIPCResult,
 }

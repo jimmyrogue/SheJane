@@ -1,5 +1,6 @@
 {
   "name": "jiandanly-client",
+  "productName": "简单 AI",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest",
-    "electron": "electron electron/main.cjs"
+    "electron": "../scripts/run-branded-electron.sh electron/main.cjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

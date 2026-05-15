@@ -2752,21 +2752,26 @@ button:active {
 
 .auth-page {
   display: grid;
+  width: 100vw;
+  min-height: 100dvh;
   height: 100dvh;
   overflow: auto;
-  place-items: center;
+  place-items: stretch;
   background: #EFEDE8;
-  padding: 20px;
+  padding: 0;
 }
 
 .auth-panel {
-  width: min(880px, calc(100vw - 32px));
+  display: grid;
+  width: 100%;
+  min-height: 100dvh;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
-  border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: 0;
   background: var(--bg-surface);
-  box-shadow: 0 20px 48px -28px rgba(44, 44, 42, 0.28), 0 1px 2px rgba(44, 44, 42, 0.05);
+  box-shadow: none;
   padding: 0;
 }
 
@@ -2798,11 +2803,12 @@ button:active {
 .auth-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  min-height: 620px;
+  min-height: 0;
+  height: 100%;
 }
 
 .auth-layout.login {
-  min-height: 580px;
+  min-height: 0;
 }
 
 .auth-brand-panel {
@@ -2813,7 +2819,7 @@ button:active {
   gap: 32px;
   border-right: 0.5px solid var(--border-hairline);
   background: var(--bg-sidebar);
-  padding: 40px 36px;
+  padding: clamp(40px, 6vw, 72px) clamp(34px, 5vw, 64px);
 }
 
 .auth-wordmark {
@@ -3020,11 +3026,11 @@ button:active {
   min-width: 0;
   flex-direction: column;
   background: #FFFFFF;
-  padding: 48px 44px 36px;
+  padding: clamp(44px, 6vw, 72px) clamp(36px, 5vw, 64px) clamp(34px, 4vw, 48px);
 }
 
 .auth-layout.login .auth-form-panel {
-  padding-top: 56px;
+  padding-top: clamp(52px, 7vw, 84px);
 }
 
 .auth-mode-link {
@@ -3416,12 +3422,14 @@ select {
 
 @media (max-width: 900px) {
   .auth-page {
-    align-items: start;
-    padding: 14px;
+    height: auto;
+    align-items: stretch;
+    padding: 0;
   }
 
   .auth-panel {
-    width: min(100%, 560px);
+    width: 100%;
+    min-height: 100dvh;
   }
 
   .auth-titlebar {
@@ -3438,6 +3446,7 @@ select {
     gap: 22px;
     border-right: 0;
     border-bottom: 0.5px solid var(--border-hairline);
+    min-height: 34dvh;
     padding: 28px 26px;
   }
 

@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron')
 const path = require('node:path')
-const { createElectronAuthHandlers } = require('./auth-bridge.cjs')
+const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 const appName = '简单 AI'
@@ -55,10 +55,10 @@ function registerAuthHandlers() {
     fetchImpl: globalThis.fetch,
   })
 
-  ipcMain.handle('jiandanly:auth-register', (_event, input) => auth.register(input))
-  ipcMain.handle('jiandanly:auth-login', (_event, input) => auth.login(input))
-  ipcMain.handle('jiandanly:auth-refresh', () => auth.refresh())
-  ipcMain.handle('jiandanly:auth-logout', () => auth.logout())
+  ipcMain.handle('jiandanly:auth-register', (_event, input) => authIPCResult(() => auth.register(input)))
+  ipcMain.handle('jiandanly:auth-login', (_event, input) => authIPCResult(() => auth.login(input)))
+  ipcMain.handle('jiandanly:auth-refresh', () => authIPCResult(() => auth.refresh()))
+  ipcMain.handle('jiandanly:auth-logout', () => authIPCResult(() => auth.logout()))
 }
 
 app.whenReady().then(() => {

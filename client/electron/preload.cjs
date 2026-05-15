@@ -1,4 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron')
+const { unwrapAuthIPCResult } = require('./auth-bridge.cjs')
+
+async function invokeAuth(channel, input) {
+  return unwrapAuthIPCResult(await ipcRenderer.invoke(channel, input))
+}
 
 contextBridge.exposeInMainWorld('jiandanDesktop', {
   platform: process.platform,
@@ -7,10 +12,10 @@ contextBridge.exposeInMainWorld('jiandanDesktop', {
     token: process.env.JIANDANLY_LOCAL_HOST_TOKEN || '',
   },
   auth: {
-    register: (input) => ipcRenderer.invoke('jiandanly:auth-register', input),
-    login: (input) => ipcRenderer.invoke('jiandanly:auth-login', input),
-    refresh: () => ipcRenderer.invoke('jiandanly:auth-refresh'),
-    logout: () => ipcRenderer.invoke('jiandanly:auth-logout'),
+    register: (input) => invokeAuth('jiandanly:auth-register', input),
+    login: (input) => invokeAuth('jiandanly:auth-login', input),
+    refresh: () => invokeAuth('jiandanly:auth-refresh'),
+    logout: () => invokeAuth('jiandanly:auth-logout'),
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('jiandanly:select-workspace-directory'),
 })
