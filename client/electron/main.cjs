@@ -4,7 +4,7 @@ const { createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 const appName = '简单 AI'
-const appIconPath = path.join(__dirname, '../src/shared/assets/logo.png')
+const appIconPath = path.join(__dirname, 'assets/app-icon.png')
 
 function createWindow() {
   const windowOptions = {
