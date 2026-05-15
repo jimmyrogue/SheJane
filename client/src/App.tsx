@@ -1,7 +1,6 @@
-import { IconChevronDown, IconDots, IconDownload } from '@tabler/icons-react'
+import { IconChevronDown, IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
@@ -19,7 +18,7 @@ import { Composer } from './features/chat/components/Composer'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import type { AgentRunEvent } from './shared/api/sse'
-import { I18nProvider, LocaleSwitcher, useI18n, formatRelativeTime, type Translator } from './shared/i18n/i18n'
+import { I18nProvider, useI18n, formatRelativeTime, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
@@ -49,6 +48,7 @@ import {
 const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
+const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
 const maxSidebarWidth = 340
@@ -80,6 +80,25 @@ function readSidebarWidth(): number {
     return Number.isFinite(parsedWidth) ? clampSidebarWidth(parsedWidth) : defaultSidebarWidth
   } catch {
     return defaultSidebarWidth
+  }
+}
+
+function readSidebarCollapsed(): boolean {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  try {
+    return window.localStorage.getItem(sidebarCollapsedStorageKey) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(sidebarCollapsedStorageKey, collapsed ? '1' : '0')
+  } catch {
+    // Local storage can be unavailable in restricted browser contexts.
   }
 }
 
@@ -123,6 +142,7 @@ function AppContent() {
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
@@ -147,6 +167,10 @@ function AppContent() {
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
+
+  useEffect(() => {
+    writeSidebarCollapsed(sidebarCollapsed)
+  }, [sidebarCollapsed])
 
   useEffect(() => {
     if (!isResizingSidebar) {
@@ -877,20 +901,25 @@ function AppContent() {
     }
   }
 
-  function toggleSidebarCollapse() {
-    setSidebarWidth((current) => current <= minSidebarWidth + 4 ? defaultSidebarWidth : minSidebarWidth)
+  function collapseSidebar() {
+    setSidebarCollapsed(true)
+  }
+
+  function expandSidebar() {
+    setSidebarCollapsed(false)
   }
 
   return (
     <TooltipProvider>
       <main className={shellClassName}>
         <div className="window-drag-layer" aria-hidden="true" />
-        <div className="app-shell" style={appShellStyle}>
+        <div className="app-shell" style={appShellStyle} data-collapsed={sidebarCollapsed ? 'true' : undefined}>
           <ConversationSidebar
             conversations={conversations}
             activeID={activeID}
             balance={balance}
             userEmail={auth.user.email}
+            status={topbarStatus}
             onNewConversation={startNewConversation}
             onSelectConversation={selectConversation}
             onExportConversation={(conversationID) => void exportConversationData(conversationID)}
@@ -899,7 +928,7 @@ function AppContent() {
             onRenameConversation={(conversationID, title) => void renameConversation(conversationID, title)}
             onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
-            onCollapseSidebar={toggleSidebarCollapse}
+            onCollapseSidebar={collapseSidebar}
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
             }}
@@ -921,44 +950,21 @@ function AppContent() {
 
           <section className="workspace">
             <header className="topbar">
+              {sidebarCollapsed ? (
+                <button
+                  type="button"
+                  className="topbar-expand-button"
+                  title={t('app.expandSidebar')}
+                  aria-label={t('app.expandSidebar')}
+                  onClick={expandSidebar}
+                >
+                  <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
+                </button>
+              ) : null}
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
                 <IconChevronDown size={14} aria-hidden="true" />
                 <small>{activeConversation ? formatRelativeTime(activeConversation.updatedAt, locale, t) : t('app.localFirstChat')}</small>
-              </div>
-              <div className="account">
-                <span className="sr-only">{auth.user.email}</span>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="toolbar-icon-button" title={t('app.more')} aria-label={t('app.more')}>
-                      <IconDots size={15} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="topbar-menu">
-                    <DropdownMenuItem
-                      disabled={!activeID}
-                      onSelect={() => {
-                        if (activeID) {
-                          void exportConversationData(activeID)
-                        }
-                      }}
-                    >
-                      <IconDownload data-icon="inline-start" />
-                      <span>{t('app.exportCurrentConversation')}</span>
-                    </DropdownMenuItem>
-                    <div className="topbar-menu-locale">
-                      <LocaleSwitcher className="menu-locale-switcher" />
-                    </div>
-                    <DropdownMenuSeparator />
-                    <div className="topbar-status-row" aria-label={t('app.currentLocalStatusA11y', { detail: topbarStatus.detail })}>
-                      <span className={`topbar-status-dot ${topbarStatus.tone}`} aria-hidden="true" />
-                      <div>
-                        <span>{t('app.currentLocalStatus')}</span>
-                        <small>{topbarStatus.detail}</small>
-                      </div>
-                    </div>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
             </header>
 

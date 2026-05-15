@@ -19,6 +19,7 @@ import {
   IconTool,
   IconUpload,
   IconWorld,
+  IconX,
 } from '@tabler/icons-react'
 import {
   AlertDialog,
@@ -71,11 +72,13 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
+  status,
 }: {
   conversations: Conversation[]
   activeID?: string
   balance?: WalletBalance | null
   userEmail: string
+  status?: { tone: 'online' | 'warning'; detail: string }
   onNewConversation: () => void
   onSelectConversation: (conversationID: string) => void
   onExportConversation: (conversationID: string) => void
@@ -95,14 +98,20 @@ export function ConversationSidebar({
   const [renameTitle, setRenameTitle] = useState('')
   const [projectName, setProjectName] = useState('')
   const [seenConversationVersions, setSeenConversationVersions] = useState<Record<string, string>>(readSeenConversationVersions)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const projectConversation = conversations.find((conversation) => conversation.id === projectConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
   const deleteConversationTitle = deleteConversation?.title ?? t('sidebar.dialog.currentConversation')
   const deleteMessageCount = deleteConversation?.messages.length ?? 0
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
-  const pinnedConversations = conversations.filter((conversation) => conversation.pinned)
-  const recentConversations = conversations.filter((conversation) => !conversation.pinned)
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const matchesQuery = (conversation: Conversation) =>
+    !normalizedQuery || conversation.title.toLowerCase().includes(normalizedQuery)
+  const pinnedConversations = conversations.filter((conversation) => conversation.pinned && matchesQuery(conversation))
+  const recentConversations = conversations.filter((conversation) => !conversation.pinned && matchesQuery(conversation))
 
   useEffect(() => {
     if (!activeConversation) {
@@ -121,6 +130,21 @@ export function ConversationSidebar({
       return next
     })
   }, [activeConversation])
+
+  useEffect(() => {
+    if (searchOpen) {
+      searchInputRef.current?.focus()
+    }
+  }, [searchOpen])
+
+  function toggleSearch() {
+    setSearchOpen((open) => {
+      if (open) {
+        setSearchQuery('')
+      }
+      return !open
+    })
+  }
 
   function renderConversationRow(conversation: Conversation) {
     return (
@@ -204,11 +228,52 @@ export function ConversationSidebar({
           <button className="sidebar-window-control-button" type="button" title={t('app.collapseSidebar')} aria-label={t('app.collapseSidebar')} onClick={onCollapseSidebar}>
             <IconLayoutSidebarLeftCollapse aria-hidden="true" />
           </button>
-          <button className="sidebar-window-control-button" type="button" title={t('app.search')} aria-label={t('app.search')}>
+          <button
+            className={searchOpen ? 'sidebar-window-control-button active' : 'sidebar-window-control-button'}
+            type="button"
+            title={t('app.search')}
+            aria-label={t('app.search')}
+            aria-pressed={searchOpen}
+            onClick={toggleSearch}
+          >
             <IconSearch aria-hidden="true" />
           </button>
         </div>
       </div>
+
+      {searchOpen ? (
+        <div className="sidebar-search">
+          <IconSearch className="sidebar-search-icon" size={14} aria-hidden="true" />
+          <Input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                toggleSearch()
+              }
+            }}
+            placeholder={t('sidebar.searchPlaceholder')}
+            aria-label={t('app.search')}
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              className="sidebar-search-clear"
+              title={t('sidebar.searchClear')}
+              aria-label={t('sidebar.searchClear')}
+              onClick={() => {
+                setSearchQuery('')
+                searchInputRef.current?.focus()
+              }}
+            >
+              <IconX size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <Button className="sidebar-newchat" aria-label={t('app.newChat')} onClick={onNewConversation}>
         <IconPlus size={15} />
@@ -249,7 +314,13 @@ export function ConversationSidebar({
         {recentConversations.length ? (
           recentConversations.map(renderConversationRow)
         ) : (
-          <div className="sidebar-empty">{conversations.length ? t('sidebar.emptyRecent') : t('sidebar.empty')}</div>
+          <div className="sidebar-empty">
+            {normalizedQuery
+              ? t('sidebar.searchEmpty')
+              : conversations.length
+                ? t('sidebar.emptyRecent')
+                : t('sidebar.empty')}
+          </div>
         )}
       </div>
 
@@ -273,6 +344,21 @@ export function ConversationSidebar({
               <div className="sidebar-account-head-plan">{planLabel(balance, t)}</div>
             </div>
           </div>
+          {status ? (
+            <>
+              <DropdownMenuSeparator />
+              <div
+                className="sidebar-account-status"
+                aria-label={t('app.currentLocalStatusA11y', { detail: status.detail })}
+              >
+                <span className={`sidebar-account-status-dot ${status.tone}`} aria-hidden="true" />
+                <div className="sidebar-account-status-copy">
+                  <span>{t('app.currentLocalStatus')}</span>
+                  <small>{status.detail}</small>
+                </div>
+              </div>
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(event) => {

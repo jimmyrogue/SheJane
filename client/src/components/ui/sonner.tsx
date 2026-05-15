@@ -1,12 +1,12 @@
 "use client"
 
-import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { IconAlertOctagon, IconAlertTriangle, IconCircleCheck, IconInfoCircle, IconLoader2 } from "@tabler/icons-react"
 
+// This project is intentionally light-only (no .dark palette). Toasts stay light
+// unless an explicit `theme` prop overrides it.
 const Toaster = ({ theme: themeProp, ...props }: ToasterProps) => {
-  const { theme: nextTheme } = useTheme()
-  const theme = themeProp ?? (nextTheme === "dark" ? "dark" : "light")
+  const theme = themeProp ?? "light"
 
   return (
     <Sonner
