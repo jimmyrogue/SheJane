@@ -9,7 +9,8 @@ export const localeStorageKey = 'jiandanly.locale'
 const zh = {
   'language.switchTitle': '切换语言',
 
-  'app.title': 'Jiandanly · AI Agent',
+  'app.productName': '简单 AI',
+  'app.title': '简单 AI',
   'app.windowActions': '窗口操作',
   'app.newChat': '新对话',
   'app.localFirstChat': '本地优先对话',
@@ -127,7 +128,7 @@ const zh = {
   'auth.steps.two.text': '连接 GitHub、Notion、Slack，或直接开始。',
   'auth.steps.three.title': '运行第一个任务',
   'auth.steps.three.text': '几分钟内从规格到可运行结果。',
-  'auth.note.quote': '“Jiandanly 替我合并了好几个开发工具。实时看到工具调用过程，让 Agent 更值得信任。”',
+  'auth.note.quote': '“简单 AI 替我合并了好几个开发工具。实时看到工具调用过程，让 Agent 更值得信任。”',
   'auth.note.person': '产品工程师 · 上海',
   'auth.plan.title': '免费版包含',
   'auth.plan.body': '每月 50 次 Agent 运行 · 本地聊天历史\n文档阅读 · 社区支持',
@@ -194,7 +195,7 @@ const zh = {
 
   'message.waitingPermission': '等待你批准本地工具调用。',
   'message.me': '我',
-  'message.assistant': '简单',
+  'message.assistant': '简单 AI',
   'message.processing': '处理中',
 
   'composer.attachedDocument': '已附加 {name}',
@@ -204,7 +205,7 @@ const zh = {
   'composer.authorized': '已授权',
   'composer.pendingAuth': '待授权',
   'composer.removeWorkspace': '移除本地项目引用',
-  'composer.placeholder': '描述你的问题、任务，或让简单阅读附件',
+  'composer.placeholder': '描述你的问题、任务，或让简单 AI 阅读附件',
   'composer.attachmentButton': '附件',
   'composer.attachmentTitle': '为当前对话选择或上传附件',
   'composer.workspaceButton': '工作区',
@@ -359,7 +360,8 @@ export type Translator = (key: TranslationKey, values?: TranslationValues) => st
 const en: Record<TranslationKey, string> = {
   'language.switchTitle': 'Switch language',
 
-  'app.title': 'Jiandanly · AI Agent',
+  'app.productName': 'EasyAI',
+  'app.title': 'EasyAI',
   'app.windowActions': 'Window controls',
   'app.newChat': 'New chat',
   'app.localFirstChat': 'Local-first chat',
@@ -422,7 +424,7 @@ const en: Record<TranslationKey, string> = {
   'auth.panelLabel.register': 'Create your account',
   'auth.panelLabel.login': 'Sign in',
   'auth.mode.hasAccount': 'Already have an account?',
-  'auth.mode.noAccount': 'New to Jiandanly?',
+  'auth.mode.noAccount': 'New to EasyAI?',
   'auth.mode.signIn': 'Sign in',
   'auth.mode.create': 'Create account',
   'auth.heading.register': 'Create your account',
@@ -477,7 +479,7 @@ const en: Record<TranslationKey, string> = {
   'auth.steps.two.text': 'Connect GitHub, Notion, Slack, or start fresh.',
   'auth.steps.three.title': 'Run your first task',
   'auth.steps.three.text': 'From spec to working code in minutes.',
-  'auth.note.quote': '"Jiandanly replaced three separate dev tools for me. Seeing tool calls unfold in real time makes the agent feel trustworthy."',
+  'auth.note.quote': '"EasyAI replaced three separate dev tools for me. Seeing tool calls unfold in real time makes the agent feel trustworthy."',
   'auth.note.person': 'Product engineer · Shanghai',
   'auth.plan.title': 'Free plan includes',
   'auth.plan.body': '50 agent runs / month · Local chat history\nDocument reading · Community support',
@@ -544,7 +546,7 @@ const en: Record<TranslationKey, string> = {
 
   'message.waitingPermission': 'Waiting for you to approve the local tool call.',
   'message.me': 'Me',
-  'message.assistant': 'Jiandanly',
+  'message.assistant': 'EasyAI',
   'message.processing': 'Processing',
 
   'composer.attachedDocument': 'Attached {name}',
@@ -554,7 +556,7 @@ const en: Record<TranslationKey, string> = {
   'composer.authorized': 'Authorized',
   'composer.pendingAuth': 'Pending authorization',
   'composer.removeWorkspace': 'Remove local project reference',
-  'composer.placeholder': 'Describe a question, task, or ask Jiandanly to read an attachment',
+  'composer.placeholder': 'Describe a question, task, or ask EasyAI to read an attachment',
   'composer.attachmentButton': 'Attach',
   'composer.attachmentTitle': 'Choose or upload an attachment for this chat',
   'composer.workspaceButton': 'Workspace',

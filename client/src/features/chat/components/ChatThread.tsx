@@ -4,6 +4,7 @@ import { MessageBubble } from './MessageBubble'
 import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
 import type { LocalPermissionScope } from '@/shared/local-host/client'
 import type { Conversation } from '@/shared/local-data/types'
+import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
 
@@ -57,7 +58,9 @@ export function ChatThread({
         </div>
       ) : (
         <div className="empty-state welcome-body">
-          <div className="logo" aria-hidden="true">{t('welcome.logo')}</div>
+          <div className="logo" aria-hidden="true">
+            <img src={appLogoURL} alt="" />
+          </div>
           <h1>{t('welcome.title')}</h1>
           <p>{t('welcome.subtitle')}</p>
           <div className="suggest-grid" aria-label={t('welcome.suggestions')}>

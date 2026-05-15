@@ -254,7 +254,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('roadmap.pdf'))
     expect(screen.getByText('已附加 roadmap.pdf')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '这份文档的结论是什么？' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -276,7 +276,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await screen.findByText('user@example.com')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '旧任务' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -317,7 +317,7 @@ describe('user client shell', () => {
 
     await screen.findByText('user@example.com')
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '运行本地检查' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -373,7 +373,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('Local Harness')).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '运行本地检查' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -464,7 +464,7 @@ describe('user client shell', () => {
 
     await screen.findByText('user@example.com')
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '读取大文件' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -499,7 +499,7 @@ describe('user client shell', () => {
     expect(await screen.findByLabelText('当前对话工作区路径')).toHaveValue('/tmp/picked-workspace')
     fireEvent.click(screen.getByText('授权并绑定'))
     expect(await screen.findByText('本地项目：picked-workspace')).toBeInTheDocument()
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '检查这个项目' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -593,7 +593,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('导出此对话')).not.toBeInTheDocument()
     expect(screen.queryByText('导入聊天数据')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), { target: { value: '你好' } })
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), { target: { value: '你好' } })
     fireEvent.click(screen.getByText('发送'))
 
     await screen.findByTitle('更多 你好')
@@ -637,7 +637,7 @@ describe('user client shell', () => {
 
     await screen.findByText('user@example.com')
     await bindWorkspace('/tmp/one')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '第一个任务' },
     })
     fireEvent.click(screen.getByText('发送'))
@@ -646,7 +646,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
     await waitFor(() => expect(screen.queryByText('本地项目：one')).not.toBeInTheDocument())
     await bindWorkspace('/tmp/two')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单阅读附件'), {
+    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
       target: { value: '第二个任务' },
     })
     fireEvent.click(screen.getByText('发送'))

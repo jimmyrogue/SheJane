@@ -12,7 +12,6 @@ import {
   IconLock,
   IconMail,
   IconShieldCheck,
-  IconSparkles,
   IconTools,
   IconUser,
 } from '@tabler/icons-react'
@@ -21,6 +20,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { AuthClient } from '@/shared/api/authClient'
 import type { AuthPayload } from '@/shared/api/client'
+import { appLogoURL } from '@/shared/assets/logo'
 import { LocaleSwitcher, useI18n, type TranslationKey } from '@/shared/i18n/i18n'
 
 type AuthMode = 'login' | 'register'
@@ -75,7 +75,7 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
     <main className={pageClassName}>
       <Card className="auth-panel">
         <div className="auth-titlebar">
-          <div className="auth-titlebar-title">Jiandanly</div>
+          <div className="auth-titlebar-title">{t('app.productName')}</div>
           <LocaleSwitcher className="auth-language-switch" />
         </div>
 
@@ -234,12 +234,12 @@ function BrandPanel({ mode }: { mode: AuthMode }) {
   const isRegistering = mode === 'register'
 
   return (
-    <section className="auth-brand-panel" aria-label="Jiandanly">
+    <section className="auth-brand-panel" aria-label={t('app.productName')}>
       <div className="auth-wordmark">
         <span className="auth-wordmark-mark">
-          <IconSparkles size={14} />
+          <img src={appLogoURL} alt="" aria-hidden="true" />
         </span>
-        <span>Jiandanly</span>
+        <span>{t('app.productName')}</span>
       </div>
 
       <div className="auth-brand-story">
@@ -418,7 +418,7 @@ function AuthFooter() {
 
   return (
     <footer className="auth-footer">
-      <span>© 2026 Jiandanly</span>
+      <span>© 2026 {t('app.productName')}</span>
       <nav aria-label={t('auth.footer.legal')}>
         <a href="#privacy">{t('auth.footer.privacy')}</a>
         <a href="#terms">{t('auth.footer.terms')}</a>

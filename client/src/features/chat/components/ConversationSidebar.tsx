@@ -249,7 +249,7 @@ export function ConversationSidebar({
       <div className="sidebar-footer">
         <div className="avatar">{avatarInitials(userEmail)}</div>
         <div className="sidebar-footer-copy">
-          <div className="name">{userEmail.split('@')[0] || 'Jiandanly'}</div>
+          <div className="name">{userEmail.split('@')[0] || t('app.productName')}</div>
           <div className="plan">{balance ? `${balance.plan_code ?? 'free'} · ${balance.monthly_remaining}` : t('sidebar.localFirst')}</div>
         </div>
         <IconSettings size={15} aria-hidden="true" />

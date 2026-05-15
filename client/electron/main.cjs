@@ -3,6 +3,8 @@ const path = require('node:path')
 const { createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
+const appName = '简单 AI'
+const appIconPath = path.join(__dirname, '../src/shared/assets/logo.png')
 
 function createWindow() {
   const windowOptions = {
@@ -10,13 +12,14 @@ function createWindow() {
     height: 820,
     minWidth: 960,
     minHeight: 680,
-    title: '简单 Jiandan',
+    title: appName,
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hidden',
           trafficLightPosition: { x: 14, y: 14 },
         }
       : {}),
+    icon: appIconPath,
     backgroundColor: '#FAFAF9',
     webPreferences: {
       contextIsolation: true,
@@ -39,6 +42,8 @@ function createWindow() {
   }
 }
 
+app.setName(appName)
+
 function apiBaseURL() {
   return process.env.JIANDANLY_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080'
 }
@@ -57,6 +62,10 @@ function registerAuthHandlers() {
 }
 
 app.whenReady().then(() => {
+  app.setName(appName)
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(appIconPath)
+  }
   registerAuthHandlers()
   createWindow()
 })

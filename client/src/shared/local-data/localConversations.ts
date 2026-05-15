@@ -39,7 +39,7 @@ export class LocalConversationStore {
   async importAll(payload: ConversationExport | string): Promise<void> {
     const parsed = typeof payload === 'string' ? (JSON.parse(payload) as ConversationExport) : payload
     if (parsed.version !== 1 || !Array.isArray(parsed.conversations)) {
-      throw new Error('Unsupported Jiandan conversation export')
+      throw new Error('Unsupported EasyAI conversation export')
     }
     const store = await this.objectStore('readwrite')
     await Promise.all(parsed.conversations.map((conversation) => requestToPromise(store.put(conversation))))

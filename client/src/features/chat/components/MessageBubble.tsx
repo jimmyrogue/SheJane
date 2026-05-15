@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { IconSparkles } from '@tabler/icons-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
@@ -68,7 +68,7 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className={isAssistant ? 'avatar-bot' : 'avatar'}>
-        {isAssistant ? <IconSparkles size={14} /> : t('message.me')}
+        {isAssistant ? <img src={appLogoURL} alt="" aria-hidden="true" /> : t('message.me')}
       </div>
       <div className="message-bubble-inner">
         <div className="message-meta">
