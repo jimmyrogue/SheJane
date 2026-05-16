@@ -18,29 +18,35 @@ export function PendingQuestionBar({
   const [otherText, setOtherText] = useState<Record<number, string>>({})
   const [step, setStep] = useState(0)
 
-  const answers = useMemo(() => {
+  const computeAnswers = (
+    sel: Record<number, string[]>,
+    oth: Record<number, string>,
+  ): Record<string, string[]> | null => {
     if (!question) {
       return null
     }
     const result: Record<string, string[]> = {}
     for (let qi = 0; qi < question.questions.length; qi += 1) {
-      const item = question.questions[qi]
-      const picks = selected[qi] ?? []
+      const q = question.questions[qi]
+      const picks = sel[qi] ?? []
       const labels = picks.filter((value) => value !== OTHER)
-      if (picks.includes(OTHER)) {
-        const free = (otherText[qi] ?? '').trim()
-        if (!free) {
-          return null
-        }
+      const free = (oth[qi] ?? '').trim()
+      if (free) {
         labels.push(free)
       }
       if (labels.length === 0) {
         return null
       }
-      result[item.question] = labels
+      result[q.question] = labels
     }
     return result
-  }, [question, selected, otherText])
+  }
+
+  const answers = useMemo(
+    () => computeAnswers(selected, otherText),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [question, selected, otherText],
+  )
 
   if (!question) {
     return null
@@ -51,45 +57,57 @@ export function PendingQuestionBar({
   const item = question.questions[activeStep]
   const multi = item.multiSelect === true
   const picks = selected[activeStep] ?? []
+  const isLast = activeStep >= total - 1
+  const otherValue = otherText[activeStep] ?? ''
 
-  const isAnswered = (qi: number): boolean => {
-    const q = question.questions[qi]
-    if (!q) {
-      return false
+  const finish = (sel: Record<number, string[]>, oth: Record<number, string>) => {
+    const built = computeAnswers(sel, oth)
+    if (built) {
+      onAnswer(question.messageID, question.requestID, built)
     }
-    const chosen = selected[qi] ?? []
-    const labels = chosen.filter((value) => value !== OTHER)
-    if (chosen.includes(OTHER)) {
-      if (!(otherText[qi] ?? '').trim()) {
-        return false
-      }
-      return true
-    }
-    return labels.length > 0
   }
 
-  const currentAnswered = isAnswered(activeStep)
-  const isLast = activeStep >= total - 1
+  const advance = (sel: Record<number, string[]>, oth: Record<number, string>) => {
+    if (isLast) {
+      finish(sel, oth)
+    } else {
+      setStep(activeStep + 1)
+    }
+  }
 
-  const toggle = (qi: number, value: string) => {
+  // Single-select: a click is the answer — commit and move on automatically.
+  const chooseSingle = (value: string) => {
+    const nextSelected = { ...selected, [activeStep]: [value] }
+    const nextOther = { ...otherText, [activeStep]: '' }
+    setSelected(nextSelected)
+    setOtherText(nextOther)
+    advance(nextSelected, nextOther)
+  }
+
+  const toggleMulti = (value: string) => {
     setSelected((current) => {
-      const existing = current[qi] ?? []
-      if (multi) {
-        const next = existing.includes(value)
-          ? existing.filter((entry) => entry !== value)
-          : [...existing, value]
-        return { ...current, [qi]: next }
-      }
-      return { ...current, [qi]: [value] }
+      const existing = current[activeStep] ?? []
+      const next = existing.includes(value)
+        ? existing.filter((entry) => entry !== value)
+        : [...existing, value]
+      return { ...current, [activeStep]: next }
     })
   }
 
-  const submit = () => {
-    if (!answers) {
+  // The free-text path can't auto-advance, so it keeps an explicit confirm.
+  const confirmOther = () => {
+    const free = otherValue.trim()
+    if (!free) {
       return
     }
-    onAnswer(question.messageID, question.requestID, answers)
+    const nextSelected = { ...selected, [activeStep]: [OTHER] }
+    setSelected(nextSelected)
+    advance(nextSelected, otherText)
   }
+
+  const currentAnswered = multi
+    ? picks.length > 0 || otherValue.trim().length > 0
+    : false
 
   return (
     <div className="question-bar" role="region" aria-label={t('agent.question.title')}>
@@ -107,24 +125,17 @@ export function PendingQuestionBar({
             {multi ? <span className="question-multi-hint">{t('agent.question.multiHint')}</span> : null}
           </div>
           <div className="question-options" role={multi ? 'group' : 'radiogroup'}>
-            {[
-              ...item.options.map((option) => ({
-                value: option.label,
-                label: option.label,
-                description: option.description,
-              })),
-              { value: OTHER, label: t('agent.question.other'), description: undefined },
-            ].map((option) => {
-              const active = picks.includes(option.value)
+            {item.options.map((option) => {
+              const active = picks.includes(option.label)
               return (
                 <button
                   type="button"
-                  key={option.value}
+                  key={option.label}
                   className="question-option"
                   data-active={active}
                   role={multi ? 'checkbox' : 'radio'}
                   aria-checked={active}
-                  onClick={() => toggle(activeStep, option.value)}
+                  onClick={() => (multi ? toggleMulti(option.label) : chooseSingle(option.label))}
                 >
                   <span className="question-option-main">
                     <span className="question-option-label">{option.label}</span>
@@ -139,36 +150,71 @@ export function PendingQuestionBar({
               )
             })}
           </div>
-          {picks.includes(OTHER) ? (
+          {/* "Other" free-text is always visible — no need to pick an option
+              first. It keeps an explicit confirm since text can't auto-submit. */}
+          <div className="question-other-row">
             <input
               className="question-other-input"
               type="text"
-              value={otherText[activeStep] ?? ''}
+              value={otherValue}
               placeholder={t('agent.question.otherPlaceholder')}
-              onChange={(event) => setOtherText((current) => ({ ...current, [activeStep]: event.target.value }))}
+              aria-label={t('agent.question.other')}
+              onChange={(event) =>
+                setOtherText((current) => ({ ...current, [activeStep]: event.target.value }))
+              }
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !multi) {
+                  event.preventDefault()
+                  confirmOther()
+                }
+              }}
             />
-          ) : null}
+            {!multi ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="question-other-confirm"
+                disabled={!otherValue.trim()}
+                onClick={confirmOther}
+                aria-label={isLast ? t('agent.question.submit') : t('agent.question.next')}
+              >
+                {isLast ? <IconCheck size={15} /> : <IconArrowRight size={15} />}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
-      <div className="question-bar-actions">
-        {activeStep > 0 ? (
-          <Button size="sm" variant="outline" onClick={() => setStep(activeStep - 1)}>
-            <IconArrowLeft size={14} />
-            {t('agent.question.back')}
-          </Button>
-        ) : null}
-        {isLast ? (
-          <Button size="sm" disabled={!answers} onClick={submit}>
-            <IconCheck size={14} />
-            {t('agent.question.submit')}
-          </Button>
-        ) : (
-          <Button size="sm" disabled={!currentAnswered} onClick={() => setStep(activeStep + 1)}>
-            {t('agent.question.next')}
-            <IconArrowRight size={14} />
-          </Button>
-        )}
-      </div>
+      {/* Single-select advances on click, so it shows no Next/Submit — only an
+          optional Back. Multi-select still needs an explicit confirm. */}
+      {(activeStep > 0 || multi) && (
+        <div className="question-bar-actions">
+          {activeStep > 0 ? (
+            <Button size="sm" variant="ghost" onClick={() => setStep(activeStep - 1)}>
+              <IconArrowLeft size={14} />
+              {t('agent.question.back')}
+            </Button>
+          ) : (
+            <span />
+          )}
+          {multi ? (
+            isLast ? (
+              <Button size="sm" disabled={!answers} onClick={() => finish(selected, otherText)}>
+                <IconCheck size={14} />
+                {t('agent.question.submit')}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                disabled={!currentAnswered}
+                onClick={() => setStep(activeStep + 1)}
+              >
+                {t('agent.question.next')}
+                <IconArrowRight size={14} />
+              </Button>
+            )
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }

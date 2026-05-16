@@ -25,7 +25,7 @@ describe('PendingQuestionBar', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('asks multiple questions one at a time and forwards the combined answers', () => {
+  it('single-select auto-advances on click; multi-select keeps an explicit submit', () => {
     const onAnswer = renderBar({
       messageID: 'm1',
       requestID: 'q1',
@@ -40,18 +40,12 @@ describe('PendingQuestionBar', () => {
       ],
     })
 
-    // Step 1: only the first question is shown, "Next" gates progress.
+    // Step 1 is single-select: a click on the option is the answer (no need
+    // to press any Next/Submit button between steps).
     expect(screen.getByText('Color?')).toBeInTheDocument()
-    expect(screen.queryByText('Sizes?')).not.toBeInTheDocument()
-    const next = screen.getByRole('button', { name: '下一步' })
-    expect(next).toBeDisabled()
-    expect(screen.queryByRole('button', { name: '提交' })).not.toBeInTheDocument()
-
     fireEvent.click(screen.getByText('Red'))
-    expect(next).toBeEnabled()
-    fireEvent.click(next)
 
-    // Step 2: the second question appears, now with a "Submit".
+    // Auto-advanced to the multi-select step, which DOES show a submit.
     expect(screen.getByText('Sizes?')).toBeInTheDocument()
     expect(screen.queryByText('Color?')).not.toBeInTheDocument()
     const submit = screen.getByRole('button', { name: '提交' })
@@ -68,21 +62,32 @@ describe('PendingQuestionBar', () => {
     })
   })
 
-  it('requires free text when the "Other" option is chosen', () => {
+  it('single-select submits immediately on the last question click', () => {
+    const onAnswer = renderBar({
+      messageID: 'm3',
+      requestID: 'q3',
+      questions: [{ question: 'Pick', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }] }],
+    })
+
+    fireEvent.click(screen.getByText('A'))
+    expect(onAnswer).toHaveBeenCalledWith('m3', 'q3', { Pick: ['A'] })
+  })
+
+  it('the always-visible "Other" free-text path has its own confirm', () => {
     const onAnswer = renderBar({
       messageID: 'm2',
       requestID: 'q2',
       questions: [{ question: 'Pick', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }] }],
     })
 
-    fireEvent.click(screen.getByText('其他'))
-    const submit = screen.getByRole('button', { name: '提交' })
-    expect(submit).toBeDisabled()
+    // No need to choose an "Other" option first — the input is always shown.
+    const confirm = screen.getByRole('button', { name: '提交' })
+    expect(confirm).toBeDisabled()
 
     fireEvent.change(screen.getByPlaceholderText('输入你的答案…'), { target: { value: 'Custom' } })
-    expect(submit).toBeEnabled()
+    expect(confirm).toBeEnabled()
 
-    fireEvent.click(submit)
+    fireEvent.click(confirm)
     expect(onAnswer).toHaveBeenCalledWith('m2', 'q2', { Pick: ['Custom'] })
   })
 })

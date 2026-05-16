@@ -1039,18 +1039,19 @@ function AppContent() {
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
             <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
 
-            <PendingApprovalBar
-              approval={pendingApproval}
-              onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
-            />
+            <div className="composer-dock">
+              <PendingApprovalBar
+                approval={pendingApproval}
+                onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
+              />
 
-            <PendingQuestionBar
-              key={pendingQuestion?.requestID ?? 'no-question'}
-              question={pendingQuestion}
-              onAnswer={(messageID, requestID, answers) => void handleQuestionAnswer(messageID, requestID, answers)}
-            />
+              <PendingQuestionBar
+                key={pendingQuestion?.requestID ?? 'no-question'}
+                question={pendingQuestion}
+                onAnswer={(messageID, requestID, answers) => void handleQuestionAnswer(messageID, requestID, answers)}
+              />
 
-            <Composer
+              <Composer
               mode={mode}
               onModeChange={setMode}
               draft={draft}
@@ -1077,7 +1078,8 @@ function AppContent() {
               onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
               onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
               onSend={() => void sendMessage()}
-            />
+              />
+            </div>
           </section>
         </div>
       </main>

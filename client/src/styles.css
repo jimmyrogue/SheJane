@@ -1134,8 +1134,22 @@ select {
   }
 }
 
+.question-other-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.question-other-confirm {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding-inline: 10px;
+}
+
 .question-other-input {
   width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 0.5px solid var(--border-hairline);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
@@ -1165,6 +1179,27 @@ select {
   .question-bar-actions button {
     width: 100%;
   }
+}
+
+/* The approval / question cards float ABOVE the composer as an overlay so they
+   never compress the conversation. The dock only occupies the composer row. */
+.composer-dock {
+  position: relative;
+  min-width: 0;
+}
+
+.composer-dock .approval-bar,
+.composer-dock .question-bar {
+  position: absolute;
+  left: clamp(14px, 3vw, 28px);
+  right: clamp(14px, 3vw, 28px);
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  margin: 0;
+  max-height: min(62vh, 480px);
+  overflow: auto;
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .composer {
