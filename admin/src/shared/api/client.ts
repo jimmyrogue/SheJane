@@ -183,8 +183,19 @@ export class AdminAPI {
     return this.get<AdminOverview>('/api/v1/admin/overview')
   }
 
-  async adminUsers(query = ''): Promise<AdminUserSummary[]> {
-    return this.get<AdminUserSummary[]>(`/api/v1/admin/users${query ? `?q=${encodeURIComponent(query)}` : ''}`)
+  async adminUsers(query = '', limit?: number, offset?: number): Promise<AdminUserSummary[]> {
+    const params = new URLSearchParams()
+    if (query) {
+      params.set('q', query)
+    }
+    if (typeof limit === 'number') {
+      params.set('limit', String(limit))
+    }
+    if (typeof offset === 'number' && offset > 0) {
+      params.set('offset', String(offset))
+    }
+    const qs = params.toString()
+    return this.get<AdminUserSummary[]>(`/api/v1/admin/users${qs ? `?${qs}` : ''}`)
   }
 
   async adminUserDetail(userId: string): Promise<AdminUserDetail> {

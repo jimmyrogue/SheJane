@@ -185,7 +185,7 @@ function mockFetch(role: 'admin' | 'user') {
         },
       })
     }
-    if (url.endsWith('/api/v1/admin/users')) {
+    if (url.split('?')[0].endsWith('/api/v1/admin/users')) {
       return jsonResponse({
         code: 0,
         message: 'ok',

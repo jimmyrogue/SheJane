@@ -2,9 +2,9 @@ import {
   BarChart3,
   Ban,
   Bot,
+  ChevronDown,
   ClipboardList,
   Coins,
-  Database,
   KeyRound,
   Loader2,
   LogOut,
@@ -50,7 +50,6 @@ import {
   AdminAPI,
   type AdminAgentRun,
   type AdminAuditLog,
-  type AdminLLMCall,
   type AdminOrder,
   type AdminOverview,
   type AdminProviderStatus,
@@ -60,12 +59,13 @@ import {
   type AuthPayload,
 } from './shared/api/client'
 
-type AdminSection = 'overview' | 'users' | 'usage' | 'tool-calls' | 'orders' | 'providers' | 'agent-runs' | 'audit'
+type AdminSection = 'overview' | 'users' | 'tool-calls' | 'orders' | 'providers' | 'agent-runs' | 'audit'
+
+const PAGE_SIZE = 20
 
 const navItems: Array<{ id: AdminSection; label: string; icon: typeof BarChart3 }> = [
   { id: 'overview', label: '概览', icon: BarChart3 },
   { id: 'users', label: '用户', icon: Users },
-  { id: 'usage', label: '用量', icon: MessageSquareText },
   { id: 'tool-calls', label: '工具', icon: Search },
   { id: 'orders', label: '订单', icon: ReceiptText },
   { id: 'providers', label: '模型', icon: Settings },
@@ -227,7 +227,8 @@ function AccessDeniedScreen({ auth, onLogout }: { auth: AuthPayload; onLogout: (
 function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayload; onLogout: () => Promise<void> }) {
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [users, setUsers] = useState<AdminUserSummary[]>([])
-  const [calls, setCalls] = useState<AdminLLMCall[]>([])
+  const [page, setPage] = useState(0)
+  const [hasMoreUsers, setHasMoreUsers] = useState(false)
   const [toolCalls, setToolCalls] = useState<AdminToolCall[]>([])
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [providers, setProviders] = useState<AdminProviderStatus[]>([])
@@ -245,13 +246,24 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     void loadAdminData()
   }, [])
 
+  async function loadUsersPage(nextQuery: string, nextPage: number, keepSelection = false) {
+    const userData = await api.adminUsers(nextQuery, PAGE_SIZE, nextPage * PAGE_SIZE)
+    setUsers(userData)
+    setPage(nextPage)
+    setHasMoreUsers(userData.length === PAGE_SIZE)
+    const currentUserId = selectedUser?.user.id
+    const detailUserId =
+      keepSelection && currentUserId && userData.some((item) => item.user.id === currentUserId)
+        ? currentUserId
+        : userData[0]?.user.id
+    setSelectedUser(detailUserId ? await api.adminUserDetail(detailUserId) : null)
+  }
+
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, userData, callData, toolCallData, orderData, providerData, agentRunData, auditData] = await Promise.all([
+      const [overviewData, toolCallData, orderData, providerData, agentRunData, auditData] = await Promise.all([
         api.adminOverview(),
-        api.adminUsers(nextQuery),
-        api.adminLLMCalls(),
         api.adminToolCalls(),
         api.adminOrders(),
         api.adminProviders(),
@@ -259,17 +271,12 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
         api.adminAuditLogs(),
       ])
       setOverview(overviewData)
-      setUsers(userData)
-      setCalls(callData)
       setToolCalls(toolCallData)
       setOrders(orderData)
       setProviders(providerData)
       setAgentRuns(agentRunData)
       setAuditLogs(auditData)
-
-      const currentUserId = selectedUser?.user.id
-      const detailUserId = currentUserId && userData.some((item) => item.user.id === currentUserId) ? currentUserId : userData[0]?.user.id
-      setSelectedUser(detailUserId ? await api.adminUserDetail(detailUserId) : null)
+      await loadUsersPage(nextQuery, 0, true)
       if (announce) {
         setNotice('数据已刷新')
       }
@@ -282,7 +289,23 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
   async function searchUsers() {
     setNotice('')
-    await loadAdminData(query)
+    try {
+      await loadUsersPage(query, 0)
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载用户失败')
+    }
+  }
+
+  async function changeUsersPage(nextPage: number) {
+    if (nextPage < 0) {
+      return
+    }
+    setNotice('')
+    try {
+      await loadUsersPage(query, nextPage)
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载用户失败')
+    }
   }
 
   async function refreshAdminData() {
@@ -290,8 +313,13 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     await loadAdminData(query, true)
   }
 
+  // Click a user row to expand its detail; click the same row again to collapse.
   async function openUser(userId: string) {
     setNotice('')
+    if (selectedUser?.user.id === userId) {
+      setSelectedUser(null)
+      return
+    }
     setSelectedUser(await api.adminUserDetail(userId))
   }
 
@@ -421,14 +449,23 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
             </TabsContent>
 
             <TabsContent value="users" className="mt-0">
-              <section className="grid gap-4 xl:grid-cols-[minmax(300px,0.9fr)_minmax(0,1.4fr)]">
-                <UsersCard users={users} query={query} selectedUserId={selectedUser?.user.id} onQueryChange={setQuery} onSearch={searchUsers} onOpenUser={openUser} />
-                <UserDetailCard selectedUser={selectedUser} delta={delta} reason={reason} onDeltaChange={setDelta} onReasonChange={setReason} onAdjustCredits={adjustCredits} onUpdateStatus={updateStatus} />
-              </section>
-            </TabsContent>
-
-            <TabsContent value="usage" className="mt-0">
-              <UsageCard calls={calls} />
+              <UsersPanel
+                users={users}
+                query={query}
+                page={page}
+                hasMore={hasMoreUsers}
+                selectedUser={selectedUser}
+                delta={delta}
+                reason={reason}
+                onQueryChange={setQuery}
+                onSearch={searchUsers}
+                onChangePage={changeUsersPage}
+                onOpenUser={openUser}
+                onDeltaChange={setDelta}
+                onReasonChange={setReason}
+                onAdjustCredits={adjustCredits}
+                onUpdateStatus={updateStatus}
+              />
             </TabsContent>
 
             <TabsContent value="tool-calls" className="mt-0">
@@ -490,20 +527,38 @@ function MetricCard({ icon, label, value, helper }: { icon: ReactNode; label: st
   )
 }
 
-function UsersCard({
+function UsersPanel({
   users,
   query,
-  selectedUserId,
+  page,
+  hasMore,
+  selectedUser,
+  delta,
+  reason,
   onQueryChange,
   onSearch,
+  onChangePage,
   onOpenUser,
+  onDeltaChange,
+  onReasonChange,
+  onAdjustCredits,
+  onUpdateStatus,
 }: {
   users: AdminUserSummary[]
   query: string
-  selectedUserId?: string
+  page: number
+  hasMore: boolean
+  selectedUser: AdminUserDetail | null
+  delta: string
+  reason: string
   onQueryChange: (value: string) => void
   onSearch: () => Promise<void>
+  onChangePage: (nextPage: number) => Promise<void>
   onOpenUser: (userId: string) => Promise<void>
+  onDeltaChange: (value: string) => void
+  onReasonChange: (value: string) => void
+  onAdjustCredits: () => Promise<void>
+  onUpdateStatus: (status: 'active' | 'disabled') => Promise<void>
 }) {
   return (
     <Card id="users" className="min-w-0">
@@ -511,45 +566,81 @@ function UsersCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle>用户</CardTitle>
-            <CardDescription>搜索并查看用户、钱包和最近活动。</CardDescription>
+            <CardDescription>搜索用户，点击展开查看信息、钱包与用量。</CardDescription>
           </div>
-          <Badge variant="secondary">{users.length}</Badge>
+          <Badge variant="secondary">第 {page + 1} 页</Badge>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="flex gap-2">
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void onSearch()
+          }}
+        >
           <Input value={query} placeholder="搜索邮箱或名称" onChange={(event) => onQueryChange(event.target.value)} />
-          <Button variant="outline" size="icon" onClick={() => void onSearch()} aria-label="搜索用户">
+          <Button type="submit" variant="outline" size="icon" aria-label="搜索用户">
             <Search className="size-4" />
           </Button>
-        </div>
+        </form>
+
         <div className="grid gap-2">
           {users.length ? (
-            users.map((item) => (
-              <Button
-                key={item.user.id}
-                variant={item.user.id === selectedUserId ? 'secondary' : 'outline'}
-                className="h-auto justify-start px-3 py-3 text-left"
-                onClick={() => void onOpenUser(item.user.id)}
-              >
-                <div className="grid min-w-0 gap-1">
-                  <span className="truncate font-medium">{item.user.email}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {item.user.status} · 调用 {item.calls_count} · 额度 {formatNumber(item.credits_cost)}
-                  </span>
+            users.map((item) => {
+              const expanded = selectedUser?.user.id === item.user.id
+              return (
+                <div key={item.user.id} className="rounded-lg border">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-muted/50"
+                    aria-expanded={expanded}
+                    onClick={() => void onOpenUser(item.user.id)}
+                  >
+                    <div className="grid min-w-0 gap-1">
+                      <span className="truncate font-medium">{item.user.email}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {item.user.status} · 调用 {item.calls_count} · 额度 {formatNumber(item.credits_cost)}
+                      </span>
+                    </div>
+                    <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                  </button>
+                  {expanded && selectedUser ? (
+                    <div className="border-t p-3">
+                      <UserDetailBody
+                        selectedUser={selectedUser}
+                        delta={delta}
+                        reason={reason}
+                        onDeltaChange={onDeltaChange}
+                        onReasonChange={onReasonChange}
+                        onAdjustCredits={onAdjustCredits}
+                        onUpdateStatus={onUpdateStatus}
+                      />
+                    </div>
+                  ) : null}
                 </div>
-              </Button>
-            ))
+              )
+            })
           ) : (
             <EmptyState icon={<Users className="size-4" />} label="暂无用户" />
           )}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <Button variant="outline" size="sm" disabled={page <= 0} onClick={() => void onChangePage(page - 1)}>
+            上一页
+          </Button>
+          <span className="text-xs text-muted-foreground">第 {page + 1} 页 · 每页 {PAGE_SIZE} 条</span>
+          <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => void onChangePage(page + 1)}>
+            下一页
+          </Button>
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function UserDetailCard({
+function UserDetailBody({
   selectedUser,
   delta,
   reason,
@@ -558,7 +649,7 @@ function UserDetailCard({
   onAdjustCredits,
   onUpdateStatus,
 }: {
-  selectedUser: AdminUserDetail | null
+  selectedUser: AdminUserDetail
   delta: string
   reason: string
   onDeltaChange: (value: string) => void
@@ -566,88 +657,59 @@ function UserDetailCard({
   onAdjustCredits: () => Promise<void>
   onUpdateStatus: (status: 'active' | 'disabled') => Promise<void>
 }) {
-  const nextStatus = selectedUser?.user.status === 'disabled' ? 'active' : 'disabled'
-
+  const nextStatus = selectedUser.user.status === 'disabled' ? 'active' : 'disabled'
   return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle>用户详情</CardTitle>
-            <CardDescription>安全写操作必须填写原因，并由后端写入审计日志。</CardDescription>
-          </div>
-          <StatusBadge status={selectedUser?.user.status ?? 'none'} />
+    <div className="grid gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium">用户详情</span>
+        <StatusBadge status={selectedUser.user.status ?? 'none'} />
+      </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        <DetailItem label="邮箱" value={selectedUser.user.email} />
+        <DetailItem label="角色" value={selectedUser.user.role} />
+        <DetailItem label="本月剩余" value={formatNumber(selectedUser.wallet?.monthly_remaining ?? 0)} />
+        <DetailItem label="额外额度" value={formatNumber(selectedUser.wallet?.extra_credits_balance ?? 0)} />
+      </div>
+      <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 lg:grid-cols-[minmax(180px,1fr)_minmax(200px,1fr)_auto_auto]">
+        <div className="grid gap-2">
+          <Label htmlFor="admin-reason">操作原因</Label>
+          <Input id="admin-reason" value={reason} placeholder="操作原因" onChange={(event) => onReasonChange(event.target.value)} />
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-5">
-        {selectedUser ? (
-          <>
-            <div className="grid gap-3 md:grid-cols-4">
-              <DetailItem label="邮箱" value={selectedUser.user.email} />
-              <DetailItem label="角色" value={selectedUser.user.role} />
-              <DetailItem label="本月剩余" value={formatNumber(selectedUser.wallet?.monthly_remaining ?? 0)} />
-              <DetailItem label="额外额度" value={formatNumber(selectedUser.wallet?.extra_credits_balance ?? 0)} />
-            </div>
-            <div className="grid gap-3 rounded-lg border bg-muted/30 p-3 lg:grid-cols-[minmax(180px,1fr)_minmax(200px,1fr)_auto_auto]">
-              <div className="grid gap-2">
-                <Label htmlFor="admin-reason">操作原因</Label>
-                <Input id="admin-reason" value={reason} placeholder="操作原因" onChange={(event) => onReasonChange(event.target.value)} />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="admin-credit-delta">额外额度调整</Label>
-                <Input id="admin-credit-delta" value={delta} placeholder="额外额度调整，例如 1000 或 -500" onChange={(event) => onDeltaChange(event.target.value)} />
-              </div>
-              <div className="flex items-end">
-                <Button className="w-full lg:w-auto" onClick={() => void onAdjustCredits()}>
-                  <Coins className="size-4" />
-                  调整额度
-                </Button>
-              </div>
-              <div className="flex items-end">
-                <Button className="w-full lg:w-auto" variant={nextStatus === 'disabled' ? 'destructive' : 'secondary'} onClick={() => void onUpdateStatus(nextStatus)}>
-                  {nextStatus === 'disabled' ? <Ban className="size-4" /> : <UserCheck className="size-4" />}
-                  {nextStatus === 'disabled' ? '禁用用户' : '启用用户'}
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-3">
-              <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${tx.type} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
-              <ActivityList title="最近调用" items={selectedUser.calls.slice(0, 4).map((call) => `${call.provider}/${call.model} · ${call.status} · ${call.credits_cost}`)} />
-              <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${order.status}`)} />
-            </div>
-          </>
-        ) : (
-          <EmptyState icon={<Database className="size-4" />} label="选择一个用户查看详情" />
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function UsageCard({ calls }: { calls: AdminLLMCall[] }) {
-  return (
-    <Card id="usage" className="min-w-0">
-      <CardHeader>
-        <CardTitle>调用记录</CardTitle>
-        <CardDescription>全局 LLM 调用、状态和额度消耗。</CardDescription>
-      </CardHeader>
-      <CardContent>
+        <div className="grid gap-2">
+          <Label htmlFor="admin-credit-delta">额外额度调整</Label>
+          <Input id="admin-credit-delta" value={delta} placeholder="额外额度调整，例如 1000 或 -500" onChange={(event) => onDeltaChange(event.target.value)} />
+        </div>
+        <div className="flex items-end">
+          <Button className="w-full lg:w-auto" onClick={() => void onAdjustCredits()}>
+            <Coins className="size-4" />
+            调整额度
+          </Button>
+        </div>
+        <div className="flex items-end">
+          <Button className="w-full lg:w-auto" variant={nextStatus === 'disabled' ? 'destructive' : 'secondary'} onClick={() => void onUpdateStatus(nextStatus)}>
+            {nextStatus === 'disabled' ? <Ban className="size-4" /> : <UserCheck className="size-4" />}
+            {nextStatus === 'disabled' ? '禁用用户' : '启用用户'}
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-2">
+        <span className="text-sm font-medium">用量（最近调用）</span>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>用户</TableHead>
               <TableHead>模型</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>时间</TableHead>
               <TableHead className="text-right">额度</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {calls.length ? (
-              calls.slice(0, 8).map((call) => (
+            {selectedUser.calls.length ? (
+              selectedUser.calls.slice(0, 20).map((call) => (
                 <TableRow key={call.request_id}>
-                  <TableCell className="max-w-36 truncate">{call.user_email ?? call.user_id}</TableCell>
                   <TableCell className="max-w-40 truncate">{call.provider}/{call.model}</TableCell>
                   <TableCell><StatusBadge status={call.status} /></TableCell>
+                  <TableCell className="max-w-40 truncate text-muted-foreground">{call.started_at ?? '-'}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
                 </TableRow>
               ))
@@ -656,10 +718,15 @@ function UsageCard({ calls }: { calls: AdminLLMCall[] }) {
             )}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${tx.type} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
+        <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${order.status}`)} />
+      </div>
+    </div>
   )
 }
+
 
 function ToolCallsCard({ calls }: { calls: AdminToolCall[] }) {
   return (
