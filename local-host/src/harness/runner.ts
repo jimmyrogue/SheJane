@@ -27,7 +27,6 @@ const terminalRunStatuses = new Set<LocalRun['status']>(['completed', 'failed', 
 type InputGuardMode = 'off' | 'observe' | 'block' | 'confirm'
 type InputGuardVerdict = 'allow' | 'flag' | 'block'
 const inputGuardConfirmPrefix = 'input-guard:'
-const planConfirmPrefix = 'plan-confirm:'
 
 interface FinalAnswerGuardrailResult {
   reason: string
@@ -90,10 +89,6 @@ export async function runHarness(options: HarnessRunOptions): Promise<void> {
     return
   }
   const planned = await planRun(options, gateway, run)
-  if (planned === 'awaiting_confirm') {
-    // waiting_input + plan-confirm question created — resume via /local/v1/questions.
-    return
-  }
   await runLoop(options, gateway, run, planned ?? buildInitialMessages(options.store, run, options), 0)
 }
 
@@ -101,16 +96,17 @@ export async function runHarness(options: HarnessRunOptions): Promise<void> {
  * Phase 3 — Planning (Agentic Design Patterns Ch.6 + Ch.11 goal monitoring).
  * Brand-new runs only. Optionally generates a structured plan + success
  * criteria, injects it as a persistent system message (system messages survive
- * compaction, so the plan threads through every step at zero extra storage),
- * and optionally pauses for human plan confirmation. Default mode `off` =>
- * zero gateway calls, zero events, behaviour unchanged. Fail-open: any
- * planning/parse error falls back to the plain reactive loop.
+ * compaction, so the plan threads through every step at zero extra storage).
+ * The plan is the agent's own task decomposition and runs automatically — it
+ * is never gated on user confirmation. Default mode `off` => zero gateway
+ * calls, zero events, behaviour unchanged. Fail-open: any planning/parse error
+ * falls back to the plain reactive loop.
  */
 async function planRun(
   options: HarnessRunOptions,
   gateway: LLMGateway,
   run: LocalRun,
-): Promise<StoredHarnessMessage[] | 'awaiting_confirm' | undefined> {
+): Promise<StoredHarnessMessage[] | undefined> {
   const mode = resolvedPlanningMode(options)
   if (mode === 'off') {
     return undefined
@@ -134,40 +130,7 @@ async function planRun(
   const baseMessages = buildInitialMessages(options.store, run, options)
   const planMessages: StoredHarnessMessage[] = [...baseMessages, buildPlanMessage(plan)]
   createCheckpointEvent(options, 0, 'plan', planMessages)
-  if (!resolvedPlanningConfirm(options)) {
-    return planMessages
-  }
-  const question = options.store.createUserQuestion({
-    runId: run.id,
-    toolCallId: `${planConfirmPrefix}${run.id}`,
-    questions: [
-      {
-        question: `已为这个目标生成执行计划（${plan.steps.length} 步）。是否按此计划执行？`,
-        header: '计划确认',
-        body: [
-          ...plan.steps.map((step, index) => `${index + 1}. ${step.title}${step.detail ? `\n   ${step.detail}` : ''}`),
-          plan.successCriteria.length > 0
-            ? `\n成功标准：\n${plan.successCriteria.map((value, index) => `· ${value}`).join('\n')}`
-            : '',
-        ]
-          .filter((line) => line.length > 0)
-          .join('\n'),
-        options: [
-          { label: '按此计划执行', description: '采用上面生成的计划开始执行' },
-          { label: '不规划直接执行', description: '跳过计划，按原有反应式方式执行' },
-          { label: '取消', description: '终止本次运行' },
-        ],
-      },
-    ],
-  })
-  options.store.updateRunStatus(run.id, 'waiting_input')
-  append(options, 'question.asked', {
-    request_id: question.id,
-    tool_call_id: question.toolCallId,
-    questions: question.questions,
-    reason: 'plan_confirm',
-  })
-  return 'awaiting_confirm'
+  return planMessages
 }
 
 interface RunPlan {
@@ -283,46 +246,6 @@ function resolvedPlanningMode(_options: HarnessRunOptions): 'off' | 'auto' | 'al
 
 function resolvedPlanningModel(_options: HarnessRunOptions): string {
   return process.env.JIANDANLY_LOCAL_PLANNING_MODEL?.trim().toLowerCase() === 'deep' ? 'deep' : 'fast'
-}
-
-function resolvedPlanningConfirm(_options: HarnessRunOptions): boolean {
-  const raw = process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM?.trim().toLowerCase()
-  return raw === '1' || raw === 'true' || raw === 'on'
-}
-
-/**
- * Phase 3 M3 — resume after a human responded to the plan-confirm prompt.
- * "Use the plan" => run with the plan checkpoint; "skip planning" => run the
- * plain reactive loop; anything else => cancel (fail-safe).
- */
-async function resumePlanConfirm(
-  options: HarnessRunOptions,
-  run: LocalRun,
-  answers: Record<string, string[]>,
-): Promise<void> {
-  const selected = Object.values(answers).flat().map((value) => value.trim().toLowerCase())
-  const cancel = selected.some((value) => /取消|cancel|abort|stop/.test(value))
-  if (cancel) {
-    options.store.updateRunStatus(run.id, 'failed')
-    append(options, 'plan.canceled', { decision: 'user_cancel' })
-    append(options, 'run.failed', {
-      error_code: 'plan_canceled',
-      message: 'Run canceled by user at plan confirmation.',
-    })
-    return
-  }
-  const skipPlan = selected.some((value) => /不规划|无需规划|跳过|without plan|skip|no plan|reactive/.test(value))
-  options.store.updateRunStatus(run.id, 'running')
-  const gateway = options.llmGateway ?? new StaticLLMGateway()
-  if (skipPlan) {
-    append(options, 'plan.skipped', { reason: 'user_declined' })
-    await runLoop(options, gateway, run, buildInitialMessages(options.store, run, options), 0)
-    return
-  }
-  append(options, 'plan.confirmed', { decision: 'user_continue' })
-  const checkpoint = options.store.latestCheckpoint(run.id)
-  const messages = checkpoint?.messages ?? buildInitialMessages(options.store, run, options)
-  await runLoop(options, gateway, run, messages, 0)
 }
 
 /**
@@ -1185,10 +1108,6 @@ async function resumeQuestion(options: HarnessRunOptions): Promise<void> {
   }
   if (question.toolCallId.startsWith(inputGuardConfirmPrefix)) {
     await resumeInputGuardConfirm(options, run, answers)
-    return
-  }
-  if (question.toolCallId.startsWith(planConfirmPrefix)) {
-    await resumePlanConfirm(options, run, answers)
     return
   }
   options.store.updateRunStatus(run.id, 'running')

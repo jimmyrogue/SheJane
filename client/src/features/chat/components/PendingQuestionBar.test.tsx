@@ -85,22 +85,4 @@ describe('PendingQuestionBar', () => {
     fireEvent.click(submit)
     expect(onAnswer).toHaveBeenCalledWith('m2', 'q2', { Pick: ['Custom'] })
   })
-
-  it('renders the optional body (e.g. a plan) above the options', () => {
-    renderBar({
-      messageID: 'm3',
-      requestID: 'q3',
-      questions: [
-        {
-          question: '是否按此计划执行？',
-          header: '计划确认',
-          body: '1. 确定日期\n2. 预订住宿\n成功标准：\n· 预算可控',
-          options: [{ label: '按此计划执行' }, { label: '取消' }],
-        },
-      ],
-    })
-
-    expect(screen.getByText(/1\. 确定日期/)).toBeInTheDocument()
-    expect(screen.getByText(/成功标准/)).toBeInTheDocument()
-  })
 })

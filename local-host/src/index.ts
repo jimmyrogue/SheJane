@@ -47,7 +47,6 @@ server.listen(port, host, () => {
         local_tool_failure_limit: process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT ?? '0',
         local_planning: process.env.JIANDANLY_LOCAL_PLANNING ?? 'off',
         local_planning_model: process.env.JIANDANLY_LOCAL_PLANNING_MODEL ?? 'fast',
-        local_planning_confirm: process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM ?? '0',
         local_reflection: process.env.JIANDANLY_LOCAL_REFLECTION ?? 'off',
         local_reflection_model: process.env.JIANDANLY_LOCAL_REFLECTION_MODEL ?? 'fast',
         local_reflection_max_iters: process.env.JIANDANLY_LOCAL_REFLECTION_MAX_ITERS ?? '1',

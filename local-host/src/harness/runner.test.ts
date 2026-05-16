@@ -21,7 +21,6 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT
   delete process.env.JIANDANLY_LOCAL_PLANNING
   delete process.env.JIANDANLY_LOCAL_PLANNING_MODEL
-  delete process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM
   delete process.env.JIANDANLY_LOCAL_REFLECTION
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MODEL
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS
@@ -2980,9 +2979,8 @@ describe('explicit planning (Phase 3)', () => {
     expect(store.listEvents(run.id).map((event) => event.eventType)).toContain('plan.created')
   })
 
-  it('confirm mode pauses for plan approval then resumes with the plan', async () => {
+  it('plan runs automatically without any user confirmation', async () => {
     process.env.JIANDANLY_LOCAL_PLANNING = 'always'
-    process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM = '1'
     const store = new InMemoryLocalHostStore()
     const run = store.createRun({ goal: 'Give me a quick tip.' })
     const gateway = new ScriptedGateway([
@@ -2991,51 +2989,11 @@ describe('explicit planning (Phase 3)', () => {
     ])
 
     await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
-    expect(store.getRun(run.id)?.status).toBe('waiting_input')
-    const asked = store.listEvents(run.id).find((event) => event.eventType === 'question.asked')
-    expect(asked?.payload.reason).toBe('plan_confirm')
-    const requestID = String(asked?.payload.request_id)
-    const question = store.userQuestionByID(requestID)!
-    store.answerUserQuestion(requestID, { [question.questions[0].question]: ['按此计划执行'] })
-
-    await runHarness({
-      run: store.getRun(run.id)!,
-      store,
-      llmGateway: gateway,
-      emit: () => undefined,
-      resumeQuestionID: requestID,
-    })
 
     const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
-    expect(eventTypes).toContain('plan.confirmed')
+    expect(eventTypes).toContain('plan.created')
+    expect(eventTypes).not.toContain('question.asked')
     expect(store.getRun(run.id)?.status).toBe('completed')
-  })
-
-  it('confirm mode cancels the run when the user declines with cancel', async () => {
-    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
-    process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM = '1'
-    const store = new InMemoryLocalHostStore()
-    const run = store.createRun({ goal: 'Give me a quick tip.' })
-    const gateway = new ScriptedGateway([{ requestId: 'plan', content: planJSON }])
-
-    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
-    const requestID = String(
-      store.listEvents(run.id).find((event) => event.eventType === 'question.asked')?.payload.request_id,
-    )
-    const question = store.userQuestionByID(requestID)!
-    store.answerUserQuestion(requestID, { [question.questions[0].question]: ['取消'] })
-
-    await runHarness({
-      run: store.getRun(run.id)!,
-      store,
-      llmGateway: gateway,
-      emit: () => undefined,
-      resumeQuestionID: requestID,
-    })
-
-    const failed = store.listEvents(run.id).find((event) => event.eventType === 'run.failed')
-    expect(failed?.payload.error_code).toBe('plan_canceled')
-    expect(store.getRun(run.id)?.status).toBe('failed')
   })
 })
 

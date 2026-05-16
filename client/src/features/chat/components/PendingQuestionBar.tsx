@@ -106,7 +106,6 @@ export function PendingQuestionBar({
             <span className="question-text">{item.question}</span>
             {multi ? <span className="question-multi-hint">{t('agent.question.multiHint')}</span> : null}
           </div>
-          {item.body ? <pre className="question-body">{item.body}</pre> : null}
           <div className="question-options" role={multi ? 'group' : 'radiogroup'}>
             {[
               ...item.options.map((option) => ({

@@ -1039,22 +1039,6 @@ select {
   font-size: 11px;
 }
 
-.question-body {
-  margin: 0;
-  border: 1px solid var(--border-hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-canvas);
-  padding: 8px 10px;
-  max-height: 240px;
-  overflow: auto;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* One option per row — a uniform full-width selectable list (the "Other"
    choice uses the exact same row markup/style). */
 .question-options {
