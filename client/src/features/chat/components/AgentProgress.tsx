@@ -159,6 +159,9 @@ const STEP_HIDDEN_TYPES = new Set([
   'llm.usage',
 ])
 
+// skill.selected is emitted on every run as housekeeping — it is NOT a
+// user-facing operation, so it must not make the progress row appear for a
+// plain direct answer, nor become the headline.
 const OPERATION_TYPES = new Set([
   'tool.requested',
   'tool.started',
@@ -170,7 +173,6 @@ const OPERATION_TYPES = new Set([
   'verification.completed',
   'ui.action.requested',
   'ui.action.completed',
-  'skill.selected',
 ])
 
 const ACTIVITY_TYPES = new Set([
@@ -182,7 +184,6 @@ const ACTIVITY_TYPES = new Set([
   'verification.completed',
   'ui.action.requested',
   'ui.action.completed',
-  'skill.selected',
 ])
 
 const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([

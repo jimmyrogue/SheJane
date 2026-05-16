@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { IconCheck, IconCopy } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
-import { useI18n } from '@/shared/i18n/i18n'
+import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 
@@ -73,9 +74,26 @@ export function MessageBubble({
     }
   }, [isAssistant, message.id, message.status, onStreamTextCommit, stream.text])
 
+  const [copied, setCopied] = useState(false)
+  const copyResetRef = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copyResetRef.current), [])
+
+  const handleCopy = () => {
+    const text = message.content.trim()
+    if (!text) {
+      return
+    }
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true)
+      window.clearTimeout(copyResetRef.current)
+      copyResetRef.current = window.setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
   const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
   const content = message.content || waitingText
   const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
+  const messageTime = formatMessageTime(message.createdAt, locale, t)
 
   return (
     <article className={cn('message', message.role)}>
@@ -95,6 +113,20 @@ export function MessageBubble({
           )}
         </div>
         {children}
+        <div className="message-meta">
+          {message.content.trim() ? (
+            <button
+              type="button"
+              className="message-meta-action"
+              onClick={handleCopy}
+              title={copied ? t('message.copied') : t('message.copy')}
+              aria-label={copied ? t('message.copied') : t('message.copy')}
+            >
+              {copied ? <IconCheck size={14} aria-hidden="true" /> : <IconCopy size={14} aria-hidden="true" />}
+            </button>
+          ) : null}
+          {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
+        </div>
       </div>
     </article>
   )

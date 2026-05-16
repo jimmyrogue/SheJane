@@ -252,6 +252,53 @@ describe('harness runner', () => {
     )
   })
 
+  it('carries a run-scoped approval across follow-up turns via the parent chain', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const first = store.createRun({ goal: '北京天气', workspacePath: workspace })
+    store.appendEvent(first.id, 'run.created', { goal: first.goal })
+    const firstGateway = new ScriptedGateway([
+      { requestId: 'r1', toolCalls: [{ id: 'call-a', name: 'shell.run', arguments: { command: 'printf a > a.txt' } }] },
+      { requestId: 'r2', content: 'First done.' },
+    ])
+
+    await runHarness({ run: first, store, llmGateway: firstGateway, emit: () => undefined })
+    const permission = store.listPermissions(first.id)[0]
+    await store.resolvePermission(permission.id, 'approve', 'run')
+    await runHarness({
+      run: store.getRun(first.id)!,
+      store,
+      llmGateway: firstGateway,
+      emit: () => undefined,
+      resumePermissionID: permission.id,
+    })
+    expect(store.getRun(first.id)?.status).toBe('completed')
+
+    // Follow-up turn = a new run chained to the first via parentRunId.
+    const second = store.createRun({ goal: '杭州天气', workspacePath: workspace, parentRunId: first.id })
+    store.appendEvent(second.id, 'run.created', { goal: second.goal })
+    const secondGateway = new ScriptedGateway([
+      { requestId: 'r3', toolCalls: [{ id: 'call-b', name: 'shell.run', arguments: { command: 'printf b > b.txt' } }] },
+      { requestId: 'r4', content: 'Second done.' },
+    ])
+
+    await runHarness({ run: second, store, llmGateway: secondGateway, emit: () => undefined })
+
+    // No new approval prompt — the session-wide grant from the parent applies.
+    expect(store.listPermissions(second.id)).toHaveLength(0)
+    expect(store.listEvents(second.id).map((event) => event.eventType)).not.toContain('permission.required')
+    expect(store.listEvents(second.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'permission.auto_approved',
+          payload: expect.objectContaining({ tool: 'shell.run', scope: 'run' }),
+        }),
+      ]),
+    )
+    await expect(readFile(join(workspace, 'b.txt'), 'utf8')).resolves.toBe('b')
+    expect(store.getRun(second.id)?.status).toBe('completed')
+  })
+
   it('does not send incomplete multi-tool permission turns back to the model', async () => {
     const workspace = await tempWorkspace()
     const store = new InMemoryLocalHostStore()

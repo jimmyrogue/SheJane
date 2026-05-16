@@ -68,6 +68,9 @@ const zh = {
   'app.topbar.connected': '本地服务已连接 · 当前为{mode}',
   'relative.invalid': '最近更新',
   'relative.now': '刚刚更新',
+  'relative.justNow': '刚刚',
+  'message.copy': '复制',
+  'message.copied': '已复制',
   'relative.minutesAgo': '{count} 分钟前',
   'relative.hoursAgo': '{count} 小时前',
   'relative.daysAgo': '{count} 天前',
@@ -453,6 +456,9 @@ const en: Record<TranslationKey, string> = {
   'app.topbar.connected': 'Local service connected · currently {mode}',
   'relative.invalid': 'Recently updated',
   'relative.now': 'Just updated',
+  'relative.justNow': 'just now',
+  'message.copy': 'Copy',
+  'message.copied': 'Copied',
   'relative.minutesAgo': '{count} min ago',
   'relative.hoursAgo': '{count} hr ago',
   'relative.daysAgo': '{count} d ago',
@@ -834,6 +840,20 @@ export function formatRelativeTime(value: string, locale: Locale, t: Translator)
     return t('relative.weeksAgo', { count: weeks })
   }
   return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
+}
+
+/** Relative time for a chat message — like formatRelativeTime but the
+ *  under-a-minute case reads "刚刚 / just now" (not "刚刚更新"). */
+export function formatMessageTime(value: string, locale: Locale, t: Translator): string {
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) {
+    return ''
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - time) / 60000))
+  if (minutes < 1) {
+    return t('relative.justNow')
+  }
+  return formatRelativeTime(value, locale, t)
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {

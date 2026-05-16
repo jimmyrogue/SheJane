@@ -59,12 +59,14 @@ export function ThinkingIndicator({ message }: { message: ChatMessage }) {
   // Real-time: sum the per-call llm.usage timeline items as they stream in
   // (persisted in agentEvents, so reload/history still totals correctly).
   // Fall back to the run.completed total captured on the message.
-  const liveTokens = (message.agentEvents ?? []).reduce(
+  // Tokens for THIS turn only — sum the current message's own llm.usage
+  // items. Each turn is its own assistant message, so this naturally resets
+  // to zero at the start of every turn (no conversation-wide accumulation).
+  const turnTokens = (message.agentEvents ?? []).reduce(
     (sum, item) => (item.type === 'llm.usage' && typeof item.tokens === 'number' ? sum + item.tokens : sum),
     0,
   )
-  const totalTokens = liveTokens > 0 ? liveTokens : typeof message.tokens === 'number' ? message.tokens : 0
-  const tokensText = totalTokens > 0 ? t('agent.tokens', { count: formatTokens(totalTokens) }) : ''
+  const tokensText = turnTokens > 0 ? t('agent.tokens', { count: formatTokens(turnTokens) }) : ''
 
   let detail: string | null = null
   if (thinking) {

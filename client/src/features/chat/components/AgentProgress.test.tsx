@@ -83,6 +83,20 @@ describe('AgentProgress', () => {
     expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
   })
 
+  it('renders nothing for a tool-less direct answer (skill.selected is not an operation)', () => {
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'done',
+          agentEvents: [{ type: 'skill.selected', label: '处理方式：local-task-execution' }],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
   it('shows the current action with its concrete target while running', () => {
     renderAgentProgress(
       <AgentProgress

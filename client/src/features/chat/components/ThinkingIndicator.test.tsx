@@ -73,11 +73,21 @@ describe('ThinkingIndicator', () => {
     expect(container.querySelector('.thinking-time')).toBeNull()
   })
 
-  it('keeps the token total next to the static logo after completion', () => {
+  it('keeps this turn token total next to the static logo after completion', () => {
     const { container } = renderIndicator(
-      <ThinkingIndicator message={message({ status: 'done', tokens: 177_600 })} />,
+      <ThinkingIndicator
+        message={message({
+          status: 'done',
+          tokens: 999_999,
+          agentEvents: [
+            { type: 'llm.usage', label: '', tokens: 100_000 },
+            { type: 'llm.usage', label: '', tokens: 77_600 },
+          ],
+        })}
+      />,
     )
     expect(container.querySelector('.thinking-logo')).toHaveAttribute('data-active', 'false')
+    // Sums only this turn's llm.usage (ignores any conversation-wide field).
     expect(container.querySelector('.thinking-time')?.textContent).toBe('177.6k tokens')
   })
 })

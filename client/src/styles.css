@@ -779,7 +779,7 @@ select {
 .agent-progress-done,
 .agent-progress-failed,
 .agent-progress-permission {
-  margin-top: 10px;
+  margin-top: 18px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -2655,6 +2655,64 @@ button:active {
   padding: 0;
 }
 
+/* Per-message footer: copy + relative time. Floated into the gap just below
+   the message (absolute → consumes no layout height, so no empty band when
+   idle and no reflow/jump on hover). Fades in on hover/focus. */
+.message {
+  position: relative;
+}
+
+.message-meta {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.message:hover .message-meta,
+.message:focus-within .message-meta {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-meta {
+    transition: none;
+  }
+}
+
+.message-meta-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.message-meta-action:hover {
+  color: var(--text-secondary);
+}
+
+.message-meta-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+
 .message .message-content p,
 .message .message-content ul,
 .message .message-content ol,
@@ -2688,12 +2746,19 @@ button:active {
   background: transparent;
 }
 
+/* Higher specificity than the bare .tool-card reset above (which would
+   otherwise zero this out) — space the progress row from the answer. */
+.agent-progress.tool-card {
+  margin-top: 18px;
+}
+
 /* Summary row: just a quiet text line, no box. For info states it is a
    <button> toggle, so reset native button chrome; feedback is a colour
    shift only (no background, no layout shift). */
 .agent-progress-summary {
   display: flex;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 6px;
@@ -2723,6 +2788,7 @@ button.agent-progress-summary:focus-visible {
 
 .agent-progress .tool-card-header .name {
   min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--text-secondary);
   font-weight: 400;
@@ -2742,7 +2808,6 @@ button.agent-progress-summary:focus-visible {
   width: 12px;
   height: 12px;
   flex: 0 0 auto;
-  margin-left: auto;
   color: var(--text-tertiary);
   transition: transform 140ms ease;
 }

@@ -200,7 +200,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
         })
         return
       }
-      if (requiresPermission(call.name) && !hasRunPermissionGrant(options.store, run.id, call.name)) {
+      if (requiresPermission(call.name) && !hasRunPermissionGrant(options.store, run, call.name)) {
         createCheckpointEvent(options, step + 1, 'waiting_permission', messages)
         const permission = options.store.createPermission({
           runId: run.id,
@@ -1941,12 +1941,29 @@ function requiresPermission(toolName: string): boolean {
   return definition?.permissionPolicy === 'ask'
 }
 
-function hasRunPermissionGrant(store: LocalHostStore, runID: string, toolName: string): boolean {
-  return store.listPermissions(runID).some((permission) =>
-    permission.toolName === toolName
-    && permission.status === 'approved'
-    && permission.scope === 'run',
-  )
+/**
+ * "本会话始终允许" (scope: 'run') must persist for the whole conversation,
+ * not just the single run it was granted in. Follow-up turns are separate
+ * runs chained via parentRunId, so walk that chain and honour any ancestor
+ * run-scoped approval for the same tool.
+ */
+function hasRunPermissionGrant(store: LocalHostStore, run: LocalRun, toolName: string): boolean {
+  const seen = new Set<string>()
+  let current: LocalRun | undefined = run
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    const granted = store.listPermissions(current.id).some(
+      (permission) =>
+        permission.toolName === toolName &&
+        permission.status === 'approved' &&
+        permission.scope === 'run',
+    )
+    if (granted) {
+      return true
+    }
+    current = current.parentRunId ? store.getRun(current.parentRunId) : undefined
+  }
+  return false
 }
 
 function canRunConcurrently(toolName: string): boolean {
