@@ -75,6 +75,9 @@ describe('admin web app', () => {
     await screen.findByText('运营概览')
     selectAdminTab('用户')
 
+    // The list is a table; click a user row to open the detail dialog.
+    fireEvent.click(await screen.findByRole('button', { name: 'admin@example.com' }))
+
     const adjustButton = await screen.findByText('调整额度')
     fireEvent.click(adjustButton)
     expect(await screen.findByText('额度调整不能为 0')).toBeInTheDocument()

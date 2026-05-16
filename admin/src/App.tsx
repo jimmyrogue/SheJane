@@ -2,7 +2,6 @@ import {
   BarChart3,
   Ban,
   Bot,
-  ChevronDown,
   ClipboardList,
   Coins,
   KeyRound,
@@ -24,6 +23,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -246,17 +246,13 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     void loadAdminData()
   }, [])
 
-  async function loadUsersPage(nextQuery: string, nextPage: number, keepSelection = false) {
+  // List loading is independent of the open detail dialog so refreshing the
+  // list (search / page / post-write) never closes the dialog.
+  async function loadUsersPage(nextQuery: string, nextPage: number) {
     const userData = await api.adminUsers(nextQuery, PAGE_SIZE, nextPage * PAGE_SIZE)
     setUsers(userData)
     setPage(nextPage)
     setHasMoreUsers(userData.length === PAGE_SIZE)
-    const currentUserId = selectedUser?.user.id
-    const detailUserId =
-      keepSelection && currentUserId && userData.some((item) => item.user.id === currentUserId)
-        ? currentUserId
-        : userData[0]?.user.id
-    setSelectedUser(detailUserId ? await api.adminUserDetail(detailUserId) : null)
   }
 
   async function loadAdminData(nextQuery = query, announce = false) {
@@ -276,7 +272,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
       setProviders(providerData)
       setAgentRuns(agentRunData)
       setAuditLogs(auditData)
-      await loadUsersPage(nextQuery, 0, true)
+      await loadUsersPage(nextQuery, 0)
       if (announce) {
         setNotice('数据已刷新')
       }
@@ -313,14 +309,18 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     await loadAdminData(query, true)
   }
 
-  // Click a user row to expand its detail; click the same row again to collapse.
+  // Click a user row to open its detail dialog.
   async function openUser(userId: string) {
     setNotice('')
-    if (selectedUser?.user.id === userId) {
-      setSelectedUser(null)
-      return
+    try {
+      setSelectedUser(await api.adminUserDetail(userId))
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载用户详情失败')
     }
-    setSelectedUser(await api.adminUserDetail(userId))
+  }
+
+  function closeUser() {
+    setSelectedUser(null)
   }
 
   async function updateStatus(status: 'active' | 'disabled') {
@@ -461,6 +461,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
                 onSearch={searchUsers}
                 onChangePage={changeUsersPage}
                 onOpenUser={openUser}
+                onCloseUser={closeUser}
                 onDeltaChange={setDelta}
                 onReasonChange={setReason}
                 onAdjustCredits={adjustCredits}
@@ -539,6 +540,7 @@ function UsersPanel({
   onSearch,
   onChangePage,
   onOpenUser,
+  onCloseUser,
   onDeltaChange,
   onReasonChange,
   onAdjustCredits,
@@ -555,6 +557,7 @@ function UsersPanel({
   onSearch: () => Promise<void>
   onChangePage: (nextPage: number) => Promise<void>
   onOpenUser: (userId: string) => Promise<void>
+  onCloseUser: () => void
   onDeltaChange: (value: string) => void
   onReasonChange: (value: string) => void
   onAdjustCredits: () => Promise<void>
@@ -566,7 +569,7 @@ function UsersPanel({
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle>用户</CardTitle>
-            <CardDescription>搜索用户，点击展开查看信息、钱包与用量。</CardDescription>
+            <CardDescription>搜索用户，点击任一行查看信息、钱包与用量。</CardDescription>
           </div>
           <Badge variant="secondary">第 {page + 1} 页</Badge>
         </div>
@@ -585,45 +588,44 @@ function UsersPanel({
           </Button>
         </form>
 
-        <div className="grid gap-2">
-          {users.length ? (
-            users.map((item) => {
-              const expanded = selectedUser?.user.id === item.user.id
-              return (
-                <div key={item.user.id} className="rounded-lg border">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-muted/50"
-                    aria-expanded={expanded}
+        <div className="overflow-hidden rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>邮箱</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">调用</TableHead>
+                <TableHead className="text-right">额度消耗</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.length ? (
+                users.map((item) => (
+                  <TableRow
+                    key={item.user.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={item.user.email}
+                    className="cursor-pointer"
                     onClick={() => void onOpenUser(item.user.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        void onOpenUser(item.user.id)
+                      }
+                    }}
                   >
-                    <div className="grid min-w-0 gap-1">
-                      <span className="truncate font-medium">{item.user.email}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {item.user.status} · 调用 {item.calls_count} · 额度 {formatNumber(item.credits_cost)}
-                      </span>
-                    </div>
-                    <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                  </button>
-                  {expanded && selectedUser ? (
-                    <div className="border-t p-3">
-                      <UserDetailBody
-                        selectedUser={selectedUser}
-                        delta={delta}
-                        reason={reason}
-                        onDeltaChange={onDeltaChange}
-                        onReasonChange={onReasonChange}
-                        onAdjustCredits={onAdjustCredits}
-                        onUpdateStatus={onUpdateStatus}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })
-          ) : (
-            <EmptyState icon={<Users className="size-4" />} label="暂无用户" />
-          )}
+                    <TableCell className="max-w-60 truncate font-medium">{item.user.email}</TableCell>
+                    <TableCell><StatusBadge status={item.user.status} /></TableCell>
+                    <TableCell className="text-right tabular-nums">{item.calls_count}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatNumber(item.credits_cost)}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <EmptyTableRow columns={4} label="暂无用户" />
+              )}
+            </TableBody>
+          </Table>
         </div>
 
         <div className="flex items-center justify-between">
@@ -636,6 +638,28 @@ function UsersPanel({
           </Button>
         </div>
       </CardContent>
+
+      <Dialog open={Boolean(selectedUser)} onOpenChange={(open) => { if (!open) onCloseUser() }}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          {selectedUser ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="truncate">{selectedUser.user.email}</DialogTitle>
+                <DialogDescription>用户信息、钱包、用量与管理操作（写操作需填原因并入审计）。</DialogDescription>
+              </DialogHeader>
+              <UserDetailBody
+                selectedUser={selectedUser}
+                delta={delta}
+                reason={reason}
+                onDeltaChange={onDeltaChange}
+                onReasonChange={onReasonChange}
+                onAdjustCredits={onAdjustCredits}
+                onUpdateStatus={onUpdateStatus}
+              />
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
@@ -963,15 +987,6 @@ function ActivityList({ title, items }: { title: string; items: string[] }) {
       <div className="grid gap-2">
         {items.length ? items.map((item, index) => <div className="truncate text-xs text-muted-foreground" key={`${item}-${index}`}>{item}</div>) : <div className="text-xs text-muted-foreground">暂无数据</div>}
       </div>
-    </div>
-  )
-}
-
-function EmptyState({ icon, label }: { icon: ReactNode; label: string }) {
-  return (
-    <div className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground">
-      {icon}
-      {label}
     </div>
   )
 }
