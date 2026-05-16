@@ -1,10 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageBubble } from './MessageBubble'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -18,6 +21,33 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 }
 
 describe('MessageBubble meta', () => {
+  it('renders Markdown live while streaming (no raw ** flash)', () => {
+    vi.useFakeTimers()
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', status: 'streaming', content: '**你好**' })} />
+      </I18nProvider>,
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+
+    expect(container.querySelector('strong')?.textContent).toBe('你好')
+    expect(screen.queryByText('**你好**')).not.toBeInTheDocument()
+    // Typing caret is on while streaming.
+    expect(container.querySelector('.message-content.is-streaming')).toBeInTheDocument()
+  })
+
+  it('drops the streaming caret once the message is done', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', status: 'done', content: '完成。' })} />
+      </I18nProvider>,
+    )
+    expect(container.querySelector('.message-content.is-streaming')).not.toBeInTheDocument()
+  })
+
   it('shows the relative time and copies the message content', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
