@@ -5,7 +5,7 @@ import { isIP } from 'node:net'
 import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { dirname, relative, resolve, sep } from 'node:path'
 import type { LLMToolCall } from '../llm/gateway.js'
-import type { LocalRun } from '../types.js'
+import type { LocalMemoryEntry, LocalRun } from '../types.js'
 import { callStdioMCPTool, parseMCPServersConfig, type MCPServerConfig } from './mcpRuntime.js'
 
 type PlaywrightModule = typeof import('playwright')
@@ -121,6 +121,15 @@ export interface ToolExecutionOptions {
   mcpAllowlist?: string[]
   mcpServers?: Record<string, MCPServerConfig>
   mcpTimeoutMs?: number
+  /**
+   * Read-only window onto the user's long-term memory. The runner injects an
+   * adapter that prunes expired entries, runs the keyword search, then slides
+   * the expiry of the hits forward (Phase 6 TTL). Absent => memory.search is a
+   * no-op returning an empty result (feature off).
+   */
+  memory?: {
+    search: (query: string, limit: number) => LocalMemoryEntry[]
+  }
 }
 
 export async function executeTool(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions = {}): Promise<ToolExecutionResult> {
@@ -159,6 +168,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return writeClipboard(call, options)
     case 'task.verify':
       return verifyTask(call, run)
+    case 'memory.search':
+      return searchMemory(call, options)
     case 'browser.open':
       return openManagedBrowser(call, options)
     case 'browser.search':
@@ -482,6 +493,44 @@ async function verifyTask(call: LLMToolCall, run: LocalRun): Promise<ToolExecuti
     return { ok: false, content: `Unsupported verification check: ${check}`, errorCode: 'unsupported_verification_check', recoverable: true }
   } catch (error) {
     return verificationResult(check, false, error instanceof Error ? error.message : 'Verification failed.')
+  }
+}
+
+async function searchMemory(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const query = typeof call.arguments.query === 'string' ? call.arguments.query.trim() : ''
+  if (!query) {
+    return { ok: false, content: 'A query is required.', errorCode: 'query_required', recoverable: true }
+  }
+  const limit =
+    typeof call.arguments.limit === 'number' && Number.isFinite(call.arguments.limit)
+      ? Math.max(1, Math.min(Math.floor(call.arguments.limit), 10))
+      : 5
+  let entries: LocalMemoryEntry[] = []
+  try {
+    entries = options.memory ? options.memory.search(query, limit) : []
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Memory search failed.',
+      errorCode: 'memory_search_failed',
+      recoverable: true,
+    }
+  }
+  if (entries.length === 0) {
+    return {
+      ok: true,
+      content: 'No matching long-term memory found.',
+      data: { source: 'memory.search', query, count: 0, matches: [] },
+    }
+  }
+  const matches = entries.map((entry) => ({ title: entry.title, summary: entry.summary, content: entry.content }))
+  const content = entries
+    .map((entry) => `## ${entry.title}\n${entry.summary}\n${entry.content}`)
+    .join('\n\n')
+  return {
+    ok: true,
+    content,
+    data: { source: 'memory.search', query, count: entries.length, matches },
   }
 }
 

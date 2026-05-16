@@ -101,6 +101,7 @@ interface MemoryRow {
   content: string
   created_at: string
   updated_at: string
+  expires_at: string | null
 }
 
 interface WorkspaceRow {
@@ -212,6 +213,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     ensureColumn(this.db, 'local_permissions', 'scope', "TEXT NOT NULL DEFAULT 'once'")
     ensureColumn(this.db, 'local_runs', 'history', 'TEXT')
     ensureColumn(this.db, 'local_runs', 'parent_run_id', 'TEXT')
+    ensureColumn(this.db, 'local_memory', 'expires_at', 'TEXT')
   }
 
   authorizeWorkspace(input: { path: string; label?: string }): WorkspaceAuthorization {
@@ -509,7 +511,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return row ? deserializeCheckpoint(row) : undefined
   }
 
-  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string }): LocalMemoryEntry {
+  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string; expiresAt?: string }): LocalMemoryEntry {
     const now = new Date().toISOString()
     const id = input.id ?? randomUUID()
     const existing = this.db.prepare('SELECT * FROM local_memory WHERE id = ?').get(id) as MemoryRow | undefined
@@ -521,19 +523,21 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       content: input.content,
       createdAt: existing?.created_at ?? now,
       updatedAt: now,
+      expiresAt: input.expiresAt,
     }
     this.db
       .prepare(
-        `INSERT INTO local_memory (id, kind, title, summary, content, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO local_memory (id, kind, title, summary, content, created_at, updated_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            kind = excluded.kind,
            title = excluded.title,
            summary = excluded.summary,
            content = excluded.content,
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at,
+           expires_at = excluded.expires_at`,
       )
-      .run(entry.id, entry.kind, entry.title, entry.summary, entry.content, entry.createdAt, entry.updatedAt)
+      .run(entry.id, entry.kind, entry.title, entry.summary, entry.content, entry.createdAt, entry.updatedAt, entry.expiresAt ?? null)
     return entry
   }
 
@@ -542,16 +546,35 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return rows.map(deserializeMemory)
   }
 
-  searchMemoryTopics(query: string, limit = 3): LocalMemoryEntry[] {
+  searchMemoryTopics(query: string, limit = 3, nowISO = new Date().toISOString()): LocalMemoryEntry[] {
     const tokens = tokenize(query)
     const rows = this.db.prepare('SELECT * FROM local_memory WHERE kind = ?').all('topic') as unknown as MemoryRow[]
     return rows
       .map(deserializeMemory)
+      .filter((entry) => !entry.expiresAt || entry.expiresAt >= nowISO)
       .map((entry) => ({ entry, score: scoreMemory(entry, tokens) }))
       .filter((scored) => scored.score > 0)
       .sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title))
       .slice(0, limit)
       .map((scored) => scored.entry)
+  }
+
+  pruneExpiredMemory(nowISO = new Date().toISOString()): number {
+    const result = this.db
+      .prepare('DELETE FROM local_memory WHERE expires_at IS NOT NULL AND expires_at < ?')
+      .run(nowISO)
+    return Number(result.changes ?? 0)
+  }
+
+  refreshMemory(ids: string[], expiresAt: string): void {
+    if (ids.length === 0) {
+      return
+    }
+    const now = new Date().toISOString()
+    const stmt = this.db.prepare('UPDATE local_memory SET expires_at = ?, updated_at = ? WHERE id = ?')
+    for (const id of ids) {
+      stmt.run(expiresAt, now, id)
+    }
   }
 
   close(): void {
@@ -683,6 +706,7 @@ function deserializeMemory(row: MemoryRow): LocalMemoryEntry {
     content: row.content,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    expiresAt: row.expires_at ?? undefined,
   }
 }
 

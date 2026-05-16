@@ -248,6 +248,25 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'memory.search',
+    description:
+      "Search the user's durable long-term memory (persistent preferences, project background, and conclusions learned in past tasks). Call this with a focused query when prior context could change how you should respond; skip it when the task is self-contained.",
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'number' },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: true,
+    maxResultSize: 8192,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'browser.open',
     description: 'Open a public http(s) URL in the Playwright-managed browser after explicit user approval, then capture a structured page snapshot.',
     inputSchema: {

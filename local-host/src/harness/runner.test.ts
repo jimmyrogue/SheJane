@@ -33,6 +33,9 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MAX_ITERS
   delete process.env.JIANDANLY_LOCAL_ROUTING
+  delete process.env.JIANDANLY_LOCAL_MEMORY_WRITE
+  delete process.env.JIANDANLY_LOCAL_MEMORY_RECALL
+  delete process.env.JIANDANLY_LOCAL_MEMORY_TTL_DAYS
 })
 
 const webSearchCapability = {
@@ -1330,14 +1333,8 @@ describe('harness runner', () => {
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
-  it('loads memory index and matching topic notes into the first model request', async () => {
+  it('never force-injects memory and hides memory.search when recall is off (default)', async () => {
     const store = new InMemoryLocalHostStore()
-    store.upsertMemory({
-      kind: 'index',
-      title: 'Engineering habits',
-      summary: 'Prefer failing tests before implementation.',
-      content: 'Always verify RED before GREEN.',
-    })
     store.upsertMemory({
       kind: 'topic',
       title: 'Jiandanly local harness',
@@ -1346,13 +1343,40 @@ describe('harness runner', () => {
     })
     const run = store.createRun({ goal: 'Improve the Jiandanly local harness.' })
     store.appendEvent(run.id, 'run.created', { goal: run.goal })
-    const gateway = new ScriptedGateway([{ requestId: 'req-memory', content: 'Memory loaded.' }])
+    const gateway = new ScriptedGateway([{ requestId: 'req-memory', content: 'Done.' }])
 
     await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
 
     const prompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
-    expect(prompt).toContain('Prefer failing tests before implementation.')
-    expect(prompt).toContain('Do not move local file contents into the cloud control plane.')
+    expect(prompt).not.toContain('Do not move local file contents into the cloud control plane.')
+    expect(prompt).not.toContain('durable long-term memory')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'memory.search')).toBe(false)
+  })
+
+  it('exposes memory.search on demand when recall is auto and feeds hits back to the model', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_RECALL = 'auto'
+    const store = new InMemoryLocalHostStore()
+    store.upsertMemory({
+      kind: 'topic',
+      title: 'Jiandanly local harness',
+      summary: 'Local Harness owns tool execution and context.',
+      content: 'Do not move local file contents into the cloud control plane.',
+    })
+    const run = store.createRun({ goal: 'Improve the Jiandanly local harness.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', toolCalls: [{ id: 'call-mem', name: 'memory.search', arguments: { query: 'local harness' } }] },
+      { requestId: 'req-2', content: 'Used prior context.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).toContain('durable long-term memory')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'memory.search')).toBe(true)
+    const afterToolMessages = gateway.requests[1].messages.map((message) => message.content).join('\n')
+    expect(afterToolMessages).toContain('Do not move local file contents into the cloud control plane.')
+    expect(store.getRun(run.id)?.status).toBe('completed')
   })
 
   it('emits verification events for successful and failed tool observations', async () => {
@@ -3257,6 +3281,237 @@ describe('dynamic model routing (Phase 5)', () => {
     expect(
       store.listEvents(run.id).filter((event) => event.eventType === 'route.started'),
     ).toHaveLength(1)
+  })
+})
+
+describe('on-demand memory + TTL (Phase 6)', () => {
+  function memoryEventTypes(store: InMemoryLocalHostStore, runID: string): string[] {
+    return store.listEvents(runID).map((event) => event.eventType).filter((type) => type.startsWith('memory.'))
+  }
+
+  it('write-back stays inert when JIANDANLY_LOCAL_MEMORY_WRITE is off (default)', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Say hello.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Hello.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(1)
+    expect(memoryEventTypes(store, run.id)).toEqual([])
+    expect(store.searchMemoryTopics('hello', 10)).toEqual([])
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('write-back auto saves an extracted topic with a ~30 day sliding TTL', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Set up the project the usual way.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', content: 'All set.' },
+      {
+        requestId: 'req-2',
+        content:
+          '{"memories":[{"title":"Package manager preference","summary":"User prefers pnpm","content":"Always use pnpm for this user","permanent":false}]}',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    const saved = store.listEvents(run.id).find((event) => event.eventType === 'memory.write.saved')
+    expect(saved?.payload).toMatchObject({ count: 1, permanent_count: 0 })
+    const hits = store.searchMemoryTopics('pnpm package manager', 5)
+    expect(hits).toHaveLength(1)
+    const expiresAt = new Date(hits[0].expiresAt!).getTime()
+    const now = Date.now()
+    expect(expiresAt).toBeGreaterThan(now + 29 * 24 * 60 * 60 * 1000)
+    expect(expiresAt).toBeLessThan(now + 31 * 24 * 60 * 60 * 1000)
+  })
+
+  it('write-back marks user-emphasized memories as permanent (no expiry)', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Always remember: reply in Chinese forever.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', content: 'Understood.' },
+      {
+        requestId: 'req-2',
+        content:
+          '{"memories":[{"title":"Reply language","summary":"Always Chinese","content":"User insists on Chinese replies","permanent":true}]}',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const saved = store.listEvents(run.id).find((event) => event.eventType === 'memory.write.saved')
+    expect(saved?.payload).toMatchObject({ count: 1, permanent_count: 1 })
+    const hits = store.searchMemoryTopics('Chinese reply language', 5)
+    expect(hits).toHaveLength(1)
+    expect(hits[0].expiresAt).toBeUndefined()
+  })
+
+  it('write-back fails open on an unparseable extractor without flipping the run', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Do a thing.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', content: 'Thing done.' },
+      { requestId: 'req-2', content: 'sorry I cannot produce JSON' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    const types = memoryEventTypes(store, run.id)
+    expect(types).toContain('memory.write.started')
+    expect(types).toContain('memory.write.error')
+    expect(store.searchMemoryTopics('thing', 10)).toEqual([])
+  })
+
+  it('write-back skips when nothing durable is extracted', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Trivial.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', content: 'Trivial answer.' },
+      { requestId: 'req-2', content: '{"memories":[]}' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const skipped = store.listEvents(run.id).find((event) => event.eventType === 'memory.write.skipped')
+    expect(skipped?.payload).toMatchObject({ reason: 'nothing_durable' })
+  })
+
+  it('write-back dedupes the same title across runs by stable id', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const extraction = {
+      requestId: 'extract',
+      content:
+        '{"memories":[{"title":"Editor preference","summary":"VS Code","content":"User edits in VS Code","permanent":false}]}',
+    }
+    for (const goal of ['First task.', 'Second unrelated task.']) {
+      const run = store.createRun({ goal })
+      store.appendEvent(run.id, 'run.created', { goal })
+      await runHarness({
+        run,
+        store,
+        llmGateway: new ScriptedGateway([{ requestId: 'main', content: 'Done.' }, extraction]),
+        emit: () => undefined,
+      })
+    }
+
+    expect(store.searchMemoryTopics('editor VS Code preference', 10)).toHaveLength(1)
+  })
+
+  it('write-back fails open (run stays completed) when the extractor call throws', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Answer then attempt extraction.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    // Only one scripted response: the main answer. The follow-up extraction
+    // call has no scripted response, so ScriptedGateway throws — exercising
+    // the exception branch AFTER the run already completed.
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Final answer.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    const error = store.listEvents(run.id).find((event) => event.eventType === 'memory.write.error')
+    expect(error?.payload).toMatchObject({ reason: 'exception' })
+    expect(store.searchMemoryTopics('answer extraction', 10)).toEqual([])
+  })
+
+  it('end-to-end: a memory written in one run is recalled by memory.search in a later unrelated run', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    process.env.JIANDANLY_LOCAL_MEMORY_RECALL = 'auto'
+    const store = new InMemoryLocalHostStore()
+
+    // Run 1 — the agent finishes a task; write-back persists a durable pref.
+    const first = store.createRun({ goal: 'Configure the deploy pipeline.' })
+    store.appendEvent(first.id, 'run.created', { goal: first.goal })
+    await runHarness({
+      run: first,
+      store,
+      llmGateway: new ScriptedGateway([
+        { requestId: 'r1-main', content: 'Pipeline configured.' },
+        {
+          requestId: 'r1-extract',
+          content:
+            '{"memories":[{"title":"Deploy target","summary":"Deploys go to Fly.io","content":"This user always deploys to Fly.io in region nrt","permanent":false}]}',
+        },
+      ]),
+      emit: () => undefined,
+    })
+    expect(store.listEvents(first.id).find((e) => e.eventType === 'memory.write.saved')).toBeDefined()
+
+    // Run 2 — a brand-new, unrelated conversation. The agent decides to pull
+    // memory; the tool returns the fact written by run 1, fed back to the model.
+    const second = store.createRun({ goal: 'Where do we deploy this service again?' })
+    store.appendEvent(second.id, 'run.created', { goal: second.goal })
+    const secondGateway = new ScriptedGateway([
+      { requestId: 'r2-1', toolCalls: [{ id: 'call-mem', name: 'memory.search', arguments: { query: 'deploy target' } }] },
+      { requestId: 'r2-2', content: 'You deploy to Fly.io (nrt).' },
+      // Run 2 also has write-back on (process-level env); give it a clean
+      // "nothing new" extraction so the test stays deterministic.
+      { requestId: 'r2-extract', content: '{"memories":[]}' },
+    ])
+
+    await runHarness({ run: second, store, llmGateway: secondGateway, emit: () => undefined })
+
+    expect(store.getRun(second.id)?.status).toBe('completed')
+    const afterTool = secondGateway.requests[1].messages.map((message) => message.content).join('\n')
+    expect(afterTool).toContain('This user always deploys to Fly.io in region nrt')
+  })
+
+  it('searchMemoryTopics excludes expired entries and pruneExpiredMemory deletes them', () => {
+    const store = new InMemoryLocalHostStore()
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    store.upsertMemory({ id: 'mem_expired', kind: 'topic', title: 'Expired note', summary: 'stale', content: 'stale data', expiresAt: past })
+    store.upsertMemory({ id: 'mem_fresh', kind: 'topic', title: 'Fresh note', summary: 'live', content: 'live data', expiresAt: future })
+    store.upsertMemory({ id: 'mem_perm', kind: 'topic', title: 'Permanent note', summary: 'forever', content: 'forever data' })
+
+    expect(store.searchMemoryTopics('note', 10).map((entry) => entry.id).sort()).toEqual(['mem_fresh', 'mem_perm'])
+    expect(store.pruneExpiredMemory()).toBe(1)
+    expect(store.searchMemoryTopics('note', 10).map((entry) => entry.id).sort()).toEqual(['mem_fresh', 'mem_perm'])
+  })
+
+  it('refreshMemory slides expiry forward and leaves permanent entries untouched', () => {
+    const store = new InMemoryLocalHostStore()
+    const soon = new Date(Date.now() + 60 * 1000).toISOString()
+    store.upsertMemory({ id: 'mem_a', kind: 'topic', title: 'Alpha note', summary: 'alpha', content: 'alpha body', expiresAt: soon })
+    store.upsertMemory({ id: 'mem_perm', kind: 'topic', title: 'Perma note', summary: 'perma', content: 'perma body' })
+    const slid = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+
+    store.refreshMemory(['mem_a', 'mem_perm', 'mem_missing'], slid)
+
+    expect(store.searchMemoryTopics('alpha note', 5)[0].expiresAt).toBe(slid)
+    expect(store.searchMemoryTopics('perma note', 5)[0].expiresAt).toBe(slid)
+  })
+
+  it('memory.search refreshes the expiry of entries it returns (recall auto)', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_RECALL = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    store.upsertMemory({ id: 'mem_pref', kind: 'topic', title: 'Build tool', summary: 'uses bazel', content: 'project builds with bazel', expiresAt: soon })
+    const run = store.createRun({ goal: 'Build the project.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', toolCalls: [{ id: 'call-mem', name: 'memory.search', arguments: { query: 'build tool bazel' } }] },
+      { requestId: 'req-2', content: 'Built with bazel.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const refreshed = new Date(store.searchMemoryTopics('bazel build tool', 5)[0].expiresAt!).getTime()
+    expect(refreshed).toBeGreaterThan(new Date(soon).getTime())
   })
 })
 

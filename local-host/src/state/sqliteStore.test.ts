@@ -60,6 +60,28 @@ describe('SQLiteLocalHostStore phase 2.5 persistence', () => {
     )
     reopened.close()
   })
+
+  it('persists memory TTL: expiry round-trips, expired entries are pruned, permanent survives', async () => {
+    const dir = await tempDir()
+    const dbPath = join(dir, 'memory-ttl.db')
+    const store = new SQLiteLocalHostStore(dbPath)
+    const past = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    store.upsertMemory({ id: 'mem_exp', kind: 'topic', title: 'Expired', summary: 'stale', content: 'stale body', expiresAt: past })
+    store.upsertMemory({ id: 'mem_live', kind: 'topic', title: 'Live', summary: 'fresh', content: 'fresh body', expiresAt: future })
+    store.upsertMemory({ id: 'mem_perm', kind: 'topic', title: 'Permanent', summary: 'forever', content: 'forever body' })
+    store.close()
+
+    const reopened = new SQLiteLocalHostStore(dbPath)
+    expect(reopened.searchMemoryTopics('live fresh', 5)[0]?.expiresAt).toBe(future)
+    expect(reopened.searchMemoryTopics('permanent forever', 5)[0]?.expiresAt).toBeUndefined()
+    expect(reopened.searchMemoryTopics('stale expired', 5)).toEqual([])
+    expect(reopened.pruneExpiredMemory()).toBe(1)
+    const slid = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    reopened.refreshMemory(['mem_live'], slid)
+    expect(reopened.searchMemoryTopics('live fresh', 5)[0]?.expiresAt).toBe(slid)
+    reopened.close()
+  })
 })
 
 async function tempDir(): Promise<string> {

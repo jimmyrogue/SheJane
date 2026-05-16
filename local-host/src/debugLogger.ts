@@ -44,6 +44,10 @@ const loggedEvents = new Set([
   'reflection.applied',
   'reflection.skipped',
   'reflection.error',
+  'memory.write.started',
+  'memory.write.saved',
+  'memory.write.skipped',
+  'memory.write.error',
 ])
 
 export function localHostDebugEnabled(): boolean {

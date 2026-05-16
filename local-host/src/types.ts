@@ -130,6 +130,8 @@ export interface LocalMemoryEntry {
   content: string
   createdAt: string
   updatedAt: string
+  /** ISO timestamp; the entry is dropped once now passes it. Undefined = never expires (permanent). */
+  expiresAt?: string
 }
 
 export interface WorkspaceAuthorization {
@@ -270,8 +272,12 @@ export interface LocalHostStore {
   listArtifacts(runID: string): LocalArtifact[]
   createCheckpoint(input: { runId: string; step: number; reason: string; messages: StoredHarnessMessage[] }): LocalCheckpoint
   latestCheckpoint(runID: string): LocalCheckpoint | undefined
-  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string }): LocalMemoryEntry
+  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string; expiresAt?: string }): LocalMemoryEntry
   listMemoryIndex(): LocalMemoryEntry[]
-  searchMemoryTopics(query: string, limit?: number): LocalMemoryEntry[]
+  searchMemoryTopics(query: string, limit?: number, nowISO?: string): LocalMemoryEntry[]
+  /** Delete entries whose expiresAt is set and already in the past. Returns the count removed. */
+  pruneExpiredMemory(nowISO?: string): number
+  /** Slide the expiry of the given entries forward (no-op for ids that do not exist). */
+  refreshMemory(ids: string[], expiresAt: string): void
   close?(): void
 }

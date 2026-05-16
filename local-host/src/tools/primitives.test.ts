@@ -146,6 +146,77 @@ describe('universal tool primitives', () => {
   })
 })
 
+describe('memory.search tool (Phase 6)', () => {
+  const run = localRun('')
+
+  function memoryEntry(title: string, body: string) {
+    return {
+      id: `mem_${title}`,
+      kind: 'topic' as const,
+      title,
+      summary: `${title} summary`,
+      content: body,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  it('formats matching memory entries and echoes them in data.matches', async () => {
+    const result = await executeTool(
+      { id: 'mem', name: 'memory.search', arguments: { query: 'package manager' } },
+      run,
+      { memory: { search: () => [memoryEntry('Package manager', 'User prefers pnpm')] } },
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      data: { source: 'memory.search', query: 'package manager', count: 1 },
+    })
+    expect(result.content).toContain('Package manager')
+    expect(result.content).toContain('User prefers pnpm')
+    expect(result.data?.matches).toEqual([
+      { title: 'Package manager', summary: 'Package manager summary', content: 'User prefers pnpm' },
+    ])
+  })
+
+  it('clamps the requested limit to a sane range before querying memory', async () => {
+    let receivedLimit = -1
+    await executeTool(
+      { id: 'mem', name: 'memory.search', arguments: { query: 'anything', limit: 999 } },
+      run,
+      { memory: { search: (_q, limit) => { receivedLimit = limit; return [] } } },
+    )
+    expect(receivedLimit).toBe(10)
+  })
+
+  it('returns an empty ok result when memory has no match', async () => {
+    const result = await executeTool(
+      { id: 'mem', name: 'memory.search', arguments: { query: 'unknown topic' } },
+      run,
+      { memory: { search: () => [] } },
+    )
+    expect(result).toMatchObject({ ok: true, data: { source: 'memory.search', count: 0 } })
+    expect(result.content).toContain('No matching long-term memory found.')
+  })
+
+  it('is a safe no-op when no memory adapter is wired (recall off / defensive)', async () => {
+    const result = await executeTool(
+      { id: 'mem', name: 'memory.search', arguments: { query: 'anything' } },
+      run,
+      {},
+    )
+    expect(result).toMatchObject({ ok: true, data: { source: 'memory.search', count: 0 } })
+  })
+
+  it('rejects a blank query', async () => {
+    const result = await executeTool(
+      { id: 'mem', name: 'memory.search', arguments: { query: '   ' } },
+      run,
+      { memory: { search: () => [memoryEntry('Should not', 'be reached')] } },
+    )
+    expect(result).toMatchObject({ ok: false, errorCode: 'query_required' })
+  })
+})
+
 async function tempWorkspace(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'jiandanly-primitives-'))
   tempDirs.push(dir)

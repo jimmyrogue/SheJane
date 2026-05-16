@@ -268,7 +268,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return this.checkpoints.get(runID)?.at(-1)
   }
 
-  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string }): LocalMemoryEntry {
+  upsertMemory(input: { id?: string; kind: MemoryKind; title: string; summary: string; content: string; expiresAt?: string }): LocalMemoryEntry {
     const now = new Date().toISOString()
     const existing = input.id ? this.memory.get(input.id) : undefined
     const entry: LocalMemoryEntry = {
@@ -279,9 +279,30 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       content: input.content,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
+      expiresAt: input.expiresAt,
     }
     this.memory.set(entry.id, entry)
     return entry
+  }
+
+  pruneExpiredMemory(nowISO = new Date().toISOString()): number {
+    let removed = 0
+    for (const [id, entry] of this.memory) {
+      if (entry.expiresAt && entry.expiresAt < nowISO) {
+        this.memory.delete(id)
+        removed += 1
+      }
+    }
+    return removed
+  }
+
+  refreshMemory(ids: string[], expiresAt: string): void {
+    for (const id of ids) {
+      const entry = this.memory.get(id)
+      if (entry) {
+        this.memory.set(id, { ...entry, expiresAt, updatedAt: new Date().toISOString() })
+      }
+    }
   }
 
   listMemoryIndex(): LocalMemoryEntry[] {
@@ -290,10 +311,10 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       .sort((left, right) => left.title.localeCompare(right.title))
   }
 
-  searchMemoryTopics(query: string, limit = 3): LocalMemoryEntry[] {
+  searchMemoryTopics(query: string, limit = 3, nowISO = new Date().toISOString()): LocalMemoryEntry[] {
     const tokens = tokenize(query)
     return [...this.memory.values()]
-      .filter((entry) => entry.kind === 'topic')
+      .filter((entry) => entry.kind === 'topic' && (!entry.expiresAt || entry.expiresAt >= nowISO))
       .map((entry) => ({ entry, score: scoreMemory(entry, tokens) }))
       .filter((scored) => scored.score > 0)
       .sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title))
