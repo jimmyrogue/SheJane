@@ -13,6 +13,35 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Docker preflight FIRST — if the daemon can't be reached we bail out *before*
+# killing the user's running dev processes, instead of dumping a raw
+# `docker compose` connection error.
+ensure_docker() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "[dev-fresh] Docker daemon 未运行。请先启动 Docker 后重试。" >&2
+    exit 1
+  fi
+  echo "[dev-fresh] Docker 未运行，正在启动 Docker Desktop…"
+  open -a Docker >/dev/null 2>&1 || open -a "Docker Desktop" >/dev/null 2>&1 || {
+    echo "[dev-fresh] 无法自动启动 Docker Desktop。请手动打开 Docker 后重试。" >&2
+    exit 1
+  }
+  for _ in $(seq 1 90); do
+    if docker info >/dev/null 2>&1; then
+      echo "[dev-fresh] Docker 就绪。"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "[dev-fresh] 等待 Docker 启动超时（~3 分钟）。请确认 Docker Desktop 已打开后重试。" >&2
+  exit 1
+}
+
+ensure_docker
+
 echo "[dev-fresh] stopping stale dev processes…"
 pkill -f 'tsx src/index.ts' 2>/dev/null || true
 pkill -f 'vite' 2>/dev/null || true
