@@ -22,12 +22,9 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useI18n, type Translator, type Locale } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
-import type { ChatMode } from '@/shared/local-data/types'
 import type { LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
 
 export function Composer({
-  mode,
-  onModeChange,
   draft,
   onDraftChange,
   isSending,
@@ -49,8 +46,6 @@ export function Composer({
   onClearLocalProject,
   onSend,
 }: {
-  mode: ChatMode
-  onModeChange: (mode: ChatMode) => void
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
@@ -181,7 +176,6 @@ export function Composer({
       </div>
       <div className="composer-toolbar">
         <div className="composer-controls">
-          <ModeToggle mode={mode} onChange={onModeChange} />
           <Button
             type="button"
             variant="outline"
@@ -323,20 +317,6 @@ export function Composer({
 const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.pdf,.docx,.xlsx'
 
-function ModeToggle({ mode, onChange }: { mode: ChatMode; onChange: (mode: ChatMode) => void }) {
-  const { t } = useI18n()
-
-  return (
-    <div className="segmented">
-      <Button className="btn-chip" variant={mode === 'fast' ? 'default' : 'outline'} size="sm" onClick={() => onChange('fast')}>
-        {t('composer.mode.fast')}
-      </Button>
-      <Button className="btn-chip" variant={mode === 'deep' ? 'default' : 'outline'} size="sm" onClick={() => onChange('deep')}>
-        {t('composer.mode.deep')}
-      </Button>
-    </div>
-  )
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {

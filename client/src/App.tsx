@@ -141,7 +141,9 @@ function AppContent() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
-  const [mode, setMode] = useState<ChatMode>('fast')
+  // Model selection is automatic: the local agent picks fast/deep via Phase 5
+  // dynamic routing. This fixed value is only the cloud fallback chat default.
+  const mode: ChatMode = 'fast'
   const [documents, setDocuments] = useState<UserDocument[]>([])
   const [attachedDocumentID, setAttachedDocumentID] = useState<string>()
   const [balance, setBalance] = useState<WalletBalance | null>(null)
@@ -1052,8 +1054,6 @@ function AppContent() {
               />
 
               <Composer
-              mode={mode}
-              onModeChange={setMode}
               draft={draft}
               onDraftChange={setDraft}
               isSending={isSending}
