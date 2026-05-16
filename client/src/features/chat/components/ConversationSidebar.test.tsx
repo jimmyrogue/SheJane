@@ -104,6 +104,43 @@ describe('ConversationSidebar', () => {
     fireEvent.click(within(deleteDialog).getByRole('button', { name: '删除' }))
     expect(handlers.onDeleteConversation).toHaveBeenCalledWith('target-chat')
   })
+
+  it('shows remaining credits with a usage bar in the account menu', async () => {
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          balance={{
+            id: 'w1',
+            plan_code: 'free',
+            monthly_credit_limit: 1000,
+            monthly_credits_used: 200,
+            monthly_remaining: 800,
+            extra_credits_balance: 50,
+            period_end: '',
+            status: 'active',
+          }}
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onAddConversationToProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    expect(await screen.findByText('剩余额度')).toBeInTheDocument()
+    expect(screen.getByText('850')).toBeInTheDocument() // 800 monthly remaining + 50 extra
+    expect(screen.getByText(/本月已用 200 \/ 1,000/)).toBeInTheDocument()
+  })
 })
 
 function openConversationActions(title: string) {
