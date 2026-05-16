@@ -3,7 +3,7 @@ import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
+import type { AgentQuestionItem, AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
 
 interface ChatStoreDeps {
   localData: LocalConversationStore
@@ -143,14 +143,19 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
   const payload = event.payload ?? {}
   const eventId = event.id
   switch (event.event_type) {
+    case 'llm.usage': {
+      const input = Number(payload.input_tokens) || 0
+      const output = Number(payload.output_tokens) || 0
+      return { type: event.event_type, label: '', eventId, tokens: input + output }
+    }
     case 'skill.selected':
       return { type: event.event_type, label: t('chat.timeline.skillSelected', { skill: stringValue(payload.skill) || 'direct-answer' }), eventId }
     case 'tool.requested':
-      return { type: event.event_type, label: t('chat.timeline.toolRequested', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolRequested', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
     case 'tool.completed':
-      return { type: event.event_type, label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
     case 'tool.failed':
-      return { type: event.event_type, label: t('chat.timeline.toolFailed', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId }
+      return { type: event.event_type, label: t('chat.timeline.toolFailed', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
     case 'permission.required': {
       const tool = stringValue(payload.tool)
       return {
@@ -187,6 +192,25 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         permissionScope: 'run',
       }
     }
+    case 'question.asked': {
+      const questions = parseQuestionPayload(payload.questions)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.questionAsked'),
+        eventId,
+        questionRequestId: stringValue(payload.request_id),
+        questions,
+      }
+    }
+    case 'question.answered': {
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.questionAnswered'),
+        eventId,
+        questionRequestId: stringValue(payload.request_id),
+        questionAnswers: parseAnswerPayload(payload.answers),
+      }
+    }
     case 'artifact.created': {
       const title = stringValue(payload.title) || stringValue(payload.artifact_id)
       const tool = stringValue(payload.tool)
@@ -212,7 +236,7 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     case 'browser.observed': {
       const title = stringValue(payload.title)
       const url = stringValue(payload.url)
-      return { type: event.event_type, label: t('chat.timeline.browserObserved', { target: title || url || t('chat.timeline.currentPage') }), eventId, artifactId: stringValue(payload.artifact_id) }
+      return { type: event.event_type, label: t('chat.timeline.browserObserved', { target: title || url || t('chat.timeline.currentPage') }), eventId, artifactId: stringValue(payload.artifact_id), target: toolTarget(payload) }
     }
     case 'source.collected': {
       const title = stringValue(payload.title)
@@ -258,6 +282,92 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function truncate(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
+}
+
+/** A short, human concrete target for the current operation — a file name,
+ *  a URL host, the command, or the search query. */
+function toolTarget(payload: Record<string, unknown>): string {
+  const args =
+    payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
+      ? (payload.arguments as Record<string, unknown>)
+      : {}
+  const path = stringValue(args.path)
+  if (path) {
+    return path.split(/[\\/]/).filter(Boolean).pop() || path
+  }
+  const url = stringValue(args.url) || stringValue(payload.url)
+  if (url) {
+    try {
+      return new URL(url).hostname
+    } catch {
+      return truncate(url, 40)
+    }
+  }
+  const command = stringValue(args.command)
+  if (command) {
+    return truncate(command, 40)
+  }
+  const query = stringValue(args.query)
+  if (query) {
+    return truncate(query, 40)
+  }
+  const title = stringValue(payload.title)
+  return title ? truncate(title, 40) : ''
+}
+
+function parseAnswerPayload(value: unknown): Record<string, string[]> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const result: Record<string, string[]> = {}
+  for (const [question, picks] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(picks)) {
+      continue
+    }
+    const labels = picks.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    if (labels.length > 0) {
+      result[question] = labels
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined
+}
+
+function parseQuestionPayload(value: unknown): AgentQuestionItem[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const questions: AgentQuestionItem[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') {
+      continue
+    }
+    const item = raw as Record<string, unknown>
+    const question = stringValue(item.question)
+    const header = stringValue(item.header)
+    const rawOptions = Array.isArray(item.options) ? item.options : []
+    const options = rawOptions
+      .map((option) => {
+        if (!option || typeof option !== 'object') {
+          return undefined
+        }
+        const label = stringValue((option as Record<string, unknown>).label)
+        if (!label) {
+          return undefined
+        }
+        const description = stringValue((option as Record<string, unknown>).description)
+        return description ? { label, description } : { label }
+      })
+      .filter((option): option is { label: string; description?: string } => Boolean(option))
+    if (!question || options.length === 0) {
+      continue
+    }
+    questions.push({ question, header, multiSelect: item.multiSelect === true, options })
+  }
+  return questions
 }
 
 function toolActionLabel(tool: string, t: Translator): string {

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useRef } from 'react'
 import { AgentProgress } from './AgentProgress'
+import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
+import { ThinkingIndicator } from './ThinkingIndicator'
 import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
 import type { Conversation } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
@@ -38,19 +40,24 @@ export function ChatThread({
       {conversation?.messages.length ? (
         <div className="messages" ref={scrollRef}>
           {conversation.messages.map((message) => (
-            <MessageBubble
-              message={message}
-              key={message.id}
-              initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}
-              onStreamTextCommit={handleStreamTextCommit}
-            >
-              <AgentProgress
+            <Fragment key={message.id}>
+              <AnsweredQuestions message={message} />
+              <MessageBubble
                 message={message}
-                onOpenArtifact={onOpenArtifact}
-                onOpenDiagnostics={onOpenDiagnostics}
-              />
-            </MessageBubble>
+                initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}
+                onStreamTextCommit={handleStreamTextCommit}
+              >
+                <AgentProgress
+                  message={message}
+                  onOpenArtifact={onOpenArtifact}
+                  onOpenDiagnostics={onOpenDiagnostics}
+                />
+              </MessageBubble>
+            </Fragment>
           ))}
+          {conversation.messages.at(-1) ? (
+            <ThinkingIndicator message={conversation.messages[conversation.messages.length - 1]} />
+          ) : null}
         </div>
       ) : (
         <div className="empty-state welcome-body">

@@ -1,15 +1,33 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
 export type ChatMode = 'fast' | 'deep'
-export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'done' | 'error'
+export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
+
+export interface AgentQuestionChoice {
+  label: string
+  description?: string
+}
+
+export interface AgentQuestionItem {
+  question: string
+  header: string
+  multiSelect?: boolean
+  options: AgentQuestionChoice[]
+}
 
 export interface AgentTimelineItem {
   type: string
   label: string
   eventId?: string
+  tool?: string
+  target?: string
+  tokens?: number
   permissionRequestId?: string
   permissionTool?: string
   permissionDecision?: 'approve' | 'deny'
   permissionScope?: 'once' | 'run'
+  questionRequestId?: string
+  questions?: AgentQuestionItem[]
+  questionAnswers?: Record<string, string[]>
   artifactId?: string
   artifactTitle?: string
   artifactTool?: string
@@ -28,6 +46,7 @@ export interface ChatMessage {
   runId?: string
   runOrigin?: 'cloud' | 'local'
   creditsCost?: number
+  tokens?: number
   agentEvents?: AgentTimelineItem[]
 }
 

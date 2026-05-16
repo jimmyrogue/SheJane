@@ -16,6 +16,7 @@ import {
   type LocalRunDiagnostics,
   type PermissionRequest,
   type LocalRun,
+  type UserQuestionItem,
   type StoredHarnessMessage,
   type SerializedArtifact,
   type SerializedArtifactSummary,
@@ -28,6 +29,7 @@ import {
 
 const maxBodyBytes = 64 * 1024
 const terminalStatuses = new Set(['completed', 'failed', 'canceled'])
+const pausedForUserStatuses = new Set(['waiting_permission', 'waiting_input'])
 
 export interface LocalHostServerOptions {
   pairingToken: string
@@ -305,6 +307,40 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
     return
   }
 
+  const questionMatch = url.pathname.match(/^\/local\/v1\/questions\/([^/]+)$/)
+  if (request.method === 'POST' && questionMatch) {
+    const body = await readJSONBody<{ answers?: unknown }>(request)
+    const question = options.store.userQuestionByID(questionMatch[1])
+    if (!question) {
+      writeJSON(response, 404, { error: 'question_not_found' })
+      return
+    }
+    if (question.status !== 'pending') {
+      writeJSON(response, 200, {
+        request_id: questionMatch[1],
+        status: 'already_answered',
+      })
+      return
+    }
+    const answers = normalizeQuestionAnswers(body.answers, question.questions)
+    if (!answers) {
+      writeJSON(response, 400, { error: 'invalid_answers' })
+      return
+    }
+    options.store.answerUserQuestion(question.id, answers)
+    const run = options.store.getRun(question.runId)
+    if (!run) {
+      writeJSON(response, 404, { error: 'run_not_found' })
+      return
+    }
+    startManagedRun(options, run, undefined, question.id)
+    writeJSON(response, 202, {
+      request_id: questionMatch[1],
+      status: 'recorded',
+    })
+    return
+  }
+
   const artifactMatch = url.pathname.match(/^\/local\/v1\/artifacts\/([^/]+)$/)
   if (request.method === 'GET' && artifactMatch) {
     const artifact = options.store.getArtifact(artifactMatch[1])
@@ -322,7 +358,35 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   writeJSON(response, 404, { error: 'not_found' })
 }
 
-function startManagedRun(options: ResolvedLocalHostServerOptions, run: LocalRun, resumePermissionID?: string): Promise<void> {
+function normalizeQuestionAnswers(
+  raw: unknown,
+  questions: UserQuestionItem[],
+): Record<string, string[]> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+  const source = raw as Record<string, unknown>
+  const answers: Record<string, string[]> = {}
+  for (const item of questions) {
+    const value = source[item.question]
+    if (!Array.isArray(value)) {
+      return null
+    }
+    const choices = value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    if (choices.length === 0) {
+      return null
+    }
+    answers[item.question] = choices.map((choice) => choice.trim())
+  }
+  return answers
+}
+
+function startManagedRun(
+  options: ResolvedLocalHostServerOptions,
+  run: LocalRun,
+  resumePermissionID?: string,
+  resumeQuestionID?: string,
+): Promise<void> {
   const existing = options.activeRuns.get(run.id)
   if (existing) {
     return existing
@@ -333,6 +397,7 @@ function startManagedRun(options: ResolvedLocalHostServerOptions, run: LocalRun,
     llmGateway: currentLLMGateway(options),
     emit: () => undefined,
     resumePermissionID,
+    resumeQuestionID,
     toolOptions: toolOptionsForRun(options, run.id),
   })
     .catch((error: unknown) => {
@@ -382,7 +447,7 @@ async function streamRun(response: ServerResponse, run: LocalRun, options: Resol
 
     const freshRun = store.getRun(run.id)
     const activeTask = options.activeRuns.get(run.id)
-    if (!activeTask && (!freshRun || terminalStatuses.has(freshRun.status) || freshRun.status === 'waiting_permission')) {
+    if (!activeTask && (!freshRun || terminalStatuses.has(freshRun.status) || pausedForUserStatuses.has(freshRun.status))) {
       break
     }
     await Promise.race([sleep(100), activeTask?.catch(() => undefined) ?? sleep(100)])

@@ -281,6 +281,65 @@ describe('local host daemon foundation', () => {
     await expect(readFile(join(workspace, 'approved.txt'), 'utf8')).resolves.toBe('approved')
   })
 
+  it('answers a user.ask question through the questions endpoint and resumes the run', async () => {
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-ask',
+            name: 'user.ask',
+            arguments: {
+              questions: [
+                { question: 'Pick one', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }] },
+              ],
+            },
+          },
+        ],
+      },
+      { requestId: 'req-2', content: 'Chose A.' },
+    ])
+    const baseURL = await startServer(gateway)
+    const created = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Decide something.' }),
+    })
+    const run = await created.json()
+    const stream = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const events = parseSSE(await stream.text())
+    const asked = events.find((event) => event.event_type === 'question.asked')
+    expect(asked?.payload.request_id).toEqual(expect.any(String))
+    const requestID = String(asked?.payload.request_id)
+
+    const unknown = await fetch(`${baseURL}/local/v1/questions/does-not-exist`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: { 'Pick one': ['A'] } }),
+    })
+    expect(unknown.status).toBe(404)
+
+    const invalid = await fetch(`${baseURL}/local/v1/questions/${requestID}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: {} }),
+    })
+    expect(invalid.status).toBe(400)
+
+    const answered = await fetch(`${baseURL}/local/v1/questions/${requestID}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers: { 'Pick one': ['A'] } }),
+    })
+    expect(answered.status).toBe(202)
+    await expect(answered.json()).resolves.toMatchObject({ status: 'recorded' })
+
+    const resumed = await fetch(`${baseURL}/local/v1/runs/${run.id}/stream`, { headers: authHeaders() })
+    const resumedEvents = parseSSE(await resumed.text())
+    expect(resumedEvents.map((event) => event.event_type)).toContain('question.answered')
+    expect(resumedEvents.at(-1)?.event_type).toBe('run.completed')
+  })
+
   it('does not execute a resolved permission request more than once', async () => {
     const workspace = await tempWorkspace()
     const gateway = new ScriptedGateway([

@@ -308,6 +308,22 @@ export async function resolveLocalPermission(
   }
 }
 
+export async function answerLocalQuestion(
+  requestID: string,
+  answers: Record<string, string[]>,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<void> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/questions/${encodeURIComponent(requestID)}`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ answers }),
+  })
+  if (!response.ok) {
+    throw new Error(await localErrorMessage(response))
+  }
+}
+
 export async function getLocalArtifact(artifactID: string, config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalArtifact> {
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/artifacts/${encodeURIComponent(artifactID)}`, {
     method: 'GET',

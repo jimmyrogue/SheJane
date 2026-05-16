@@ -44,22 +44,23 @@ export function AgentProgress({
   }
 
   const events = message.agentEvents ?? []
+  // Only surface the progress line when there is real tool/operation activity;
+  // a plain direct answer needs no "thinking" row.
+  if (!events.some((event) => OPERATION_TYPES.has(event.type))) {
+    return null
+  }
   const bodyOpen = expanded
   const bodyId = `agent-progress-body-${message.id}`
   const steps = expanded ? stepEvents(events) : []
-  const summaryMeta = progress.detail
-    ? events.length > 0
-      ? `${t('agent.stepsCount', { count: events.length })} · ${progress.detail}`
-      : progress.detail
-    : events.length > 0
-      ? t('agent.stepsCount', { count: events.length })
-      : undefined
+  // While the run is active: the current action + its concrete target
+  // ("正在打开 weather.com"). Once finished: an aggregated tally of what was
+  // done ("读取 3 个文件 · 运行 2 条命令"). Never success/failure or step count.
+  const headline = summaryHeadline(events, message, t)
 
   const summaryInner = (
     <>
       <span className={cn('agent-progress-dot', dotClass(progress.tone))} aria-hidden="true" />
-      <span className="name" key={progress.label}>{progress.label}</span>
-      {summaryMeta ? <span className="meta">· {summaryMeta}</span> : null}
+      <span className="name" key={headline}>{headline}</span>
       <IconChevronDown className="tool-card-caret" aria-hidden="true" />
     </>
   )
@@ -155,7 +156,113 @@ const STEP_HIDDEN_TYPES = new Set([
   'run.failed',
   'permission.resolved',
   'permission.auto_approved',
+  'llm.usage',
 ])
+
+const OPERATION_TYPES = new Set([
+  'tool.requested',
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
+  'browser.observed',
+  'source.collected',
+  'artifact.created',
+  'verification.completed',
+  'ui.action.requested',
+  'ui.action.completed',
+  'skill.selected',
+])
+
+const ACTIVITY_TYPES = new Set([
+  'tool.requested',
+  'tool.started',
+  'tool.completed',
+  'tool.failed',
+  'browser.observed',
+  'verification.completed',
+  'ui.action.requested',
+  'ui.action.completed',
+  'skill.selected',
+])
+
+const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
+  'pending',
+  'streaming',
+  'waiting_permission',
+  'waiting_input',
+])
+
+function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (ACTIVITY_TYPES.has(events[index].type)) {
+      return withTarget(operationLabel(events[index], t), events[index].target)
+    }
+  }
+  return defaultWorkingLabel(message, t)
+}
+
+function withTarget(label: string, target?: string): string {
+  return target ? `${label} ${target}` : label
+}
+
+/**
+ * Claude Code-style headline: while the run is active show the current action
+ * and its concrete target; once finished show the aggregated tally of what was
+ * done. Falls back to the latest activity when no completed tools were tallied.
+ */
+function summaryHeadline(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
+  if (ACTIVE_RUN_STATUSES.has(message.status)) {
+    return currentActivityLabel(events, message, t)
+  }
+  return operationCountsLabel(events, t) || currentActivityLabel(events, message, t)
+}
+
+function operationLabel(event: AgentTimelineItem, t: Translator): string {
+  if (event.type === 'tool.failed') {
+    return t('agent.toolRunning', {
+      tool: stripKnownPrefix(event.label, ['工具失败：', '验证失败：', 'Tool failed: ']),
+    })
+  }
+  if (event.type === 'verification.completed') {
+    return t('agent.verifying')
+  }
+  return activeLabel(event, t)
+}
+
+const COUNT_BUCKETS: Array<{ key: Parameters<Translator>[0]; tools: Set<string> }> = [
+  { key: 'agent.count.filesRead', tools: new Set(['fs.read', 'file.read']) },
+  { key: 'agent.count.filesWritten', tools: new Set(['fs.write', 'file.write']) },
+  { key: 'agent.count.commands', tools: new Set(['shell.run']) },
+  { key: 'agent.count.pages', tools: new Set(['browser.open', 'web.fetch']) },
+  { key: 'agent.count.searches', tools: new Set(['web.search', 'browser.search']) },
+]
+
+function operationCountsLabel(events: AgentTimelineItem[], t: Translator): string {
+  const tallies = new Map<string, number>()
+  let other = 0
+  for (const event of events) {
+    if (event.type !== 'tool.completed' || !event.tool) {
+      continue
+    }
+    const bucket = COUNT_BUCKETS.find((entry) => entry.tools.has(event.tool as string))
+    if (bucket) {
+      tallies.set(bucket.key, (tallies.get(bucket.key) ?? 0) + 1)
+    } else {
+      other += 1
+    }
+  }
+  const parts: string[] = []
+  for (const bucket of COUNT_BUCKETS) {
+    const count = tallies.get(bucket.key)
+    if (count) {
+      parts.push(t(bucket.key, { count }))
+    }
+  }
+  if (other > 0) {
+    parts.push(t('agent.count.operations', { count: other }))
+  }
+  return parts.join(' · ')
+}
 
 function stepEvents(events: AgentTimelineItem[]): AgentTimelineItem[] {
   return events.filter((event) => !STEP_HIDDEN_TYPES.has(event.type))

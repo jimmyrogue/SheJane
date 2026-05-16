@@ -8,12 +8,14 @@ import type {
   LocalHostStore,
   LocalMemoryEntry,
   LocalRun,
+  LocalUserQuestion,
   MemoryKind,
   PermissionDecision,
   PermissionRequest,
   PermissionScope,
   RunStatus,
   StoredHarnessMessage,
+  UserQuestionItem,
   WorkspaceAuthorization,
 } from '../types.js'
 
@@ -21,6 +23,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
   private readonly runs = new Map<string, LocalRun>()
   private readonly events = new Map<string, LocalEvent[]>()
   private readonly permissions = new Map<string, PermissionRequest>()
+  private readonly userQuestions = new Map<string, LocalUserQuestion>()
   private readonly artifacts = new Map<string, LocalArtifact>()
   private readonly checkpoints = new Map<string, LocalCheckpoint[]>()
   private readonly memory = new Map<string, LocalMemoryEntry>()
@@ -176,6 +179,38 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       resolvedAt: new Date().toISOString(),
     }
     this.permissions.set(id, next)
+    return next
+  }
+
+  createUserQuestion(input: { runId: string; toolCallId: string; questions: UserQuestionItem[] }): LocalUserQuestion {
+    const question: LocalUserQuestion = {
+      id: randomUUID(),
+      runId: input.runId,
+      toolCallId: input.toolCallId,
+      questions: structuredClone(input.questions),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    }
+    this.userQuestions.set(question.id, question)
+    return question
+  }
+
+  userQuestionByID(id: string): LocalUserQuestion | undefined {
+    return this.userQuestions.get(id)
+  }
+
+  answerUserQuestion(id: string, answers: Record<string, string[]>): LocalUserQuestion | undefined {
+    const question = this.userQuestions.get(id)
+    if (!question) {
+      return undefined
+    }
+    const next: LocalUserQuestion = {
+      ...question,
+      status: 'answered',
+      answers: structuredClone(answers),
+      answeredAt: new Date().toISOString(),
+    }
+    this.userQuestions.set(id, next)
     return next
   }
 

@@ -506,4 +506,50 @@ export const localHostTools: ToolDefinition[] = [
     maxResultSize: 65536,
     permissionPolicy: 'ask',
   },
+  {
+    name: 'user.ask',
+    description:
+      'Ask the user one to four structured multiple-choice questions and pause until they answer. Use ONLY when you genuinely need the user to decide between concrete options (ambiguity, approach selection) and cannot reasonably proceed alone. Each question gets 2–4 options; the UI also offers a free-text "Other". The run pauses; the answers are returned to you as the tool result.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['questions'],
+      properties: {
+        questions: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 4,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['question', 'header', 'options'],
+            properties: {
+              question: { type: 'string', description: 'The full question to ask the user.' },
+              header: { type: 'string', maxLength: 12, description: 'Very short label/chip for the question.' },
+              multiSelect: { type: 'boolean', description: 'Allow selecting multiple options.' },
+              options: {
+                type: 'array',
+                minItems: 2,
+                maxItems: 4,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['label'],
+                  properties: {
+                    label: { type: 'string' },
+                    description: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: false,
+    maxResultSize: 8192,
+    permissionPolicy: 'allow',
+  },
 ]

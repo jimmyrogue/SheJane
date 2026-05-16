@@ -2446,6 +2446,126 @@ describe('harness runner', () => {
     )
     expect(seeded.some((message) => message.role === 'tool')).toBe(false)
   })
+
+  it('pauses on user.ask and resumes with the answer fed back as the tool result', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Decide the approach.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [
+          {
+            id: 'call-ask',
+            name: 'user.ask',
+            arguments: {
+              questions: [
+                {
+                  question: 'Which color do you want?',
+                  header: 'Color',
+                  options: [{ label: 'Red' }, { label: 'Blue', description: 'A calm tone' }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { requestId: 'req-2', content: 'Using your choice: Red.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.getRun(run.id)?.status).toBe('waiting_input')
+    const askedEvent = store.listEvents(run.id).find((event) => event.eventType === 'question.asked')
+    expect(askedEvent).toBeDefined()
+    const questionId = String(askedEvent!.payload.request_id)
+    const stored = store.userQuestionByID(questionId)
+    expect(stored).toMatchObject({ status: 'pending', toolCallId: 'call-ask' })
+    expect(stored?.questions[0]).toMatchObject({ header: 'Color', multiSelect: false })
+    expect(store.latestCheckpoint(run.id)?.reason).toBe('waiting_input')
+    expect(gateway.requests).toHaveLength(1)
+
+    store.answerUserQuestion(questionId, { 'Which color do you want?': ['Red'] })
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumeQuestionID: questionId,
+    })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    expect(store.listEvents(run.id).map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['question.asked', 'question.answered']),
+    )
+    expect(gateway.requests).toHaveLength(2)
+    const resumedTool = gateway.requests[1].messages.find(
+      (message) => message.role === 'tool' && message.toolCallId === 'call-ask',
+    )
+    expect(resumedTool).toBeDefined()
+    expect(resumedTool?.name).toBe('user.ask')
+    expect(String(resumedTool?.content)).toContain('Red')
+  })
+
+  it('rejects malformed user.ask arguments with a recoverable error and keeps running', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Maybe ask, maybe not.', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'req-1',
+        toolCalls: [{ id: 'call-bad', name: 'user.ask', arguments: { questions: [] } }],
+      },
+      { requestId: 'req-2', content: 'Recovered without asking.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).not.toContain('question.asked')
+    expect(eventTypes).toContain('tool.failed')
+    expect(gateway.requests).toHaveLength(2)
+    const recoveredTool = gateway.requests[1].messages.find(
+      (message) => message.role === 'tool' && message.toolCallId === 'call-bad',
+    )
+    expect(String(recoveredTool?.content)).toContain('invalid_user_ask_arguments')
+  })
+
+  it('re-prompts to user.ask when the model ends with a plain-text question', async () => {
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: '今天天气怎么样', workspacePath: workspace })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', content: '我还不知道你在哪个城市，请问你在哪个城市呢？' },
+      {
+        requestId: 'req-2',
+        toolCalls: [
+          {
+            id: 'call-ask',
+            name: 'user.ask',
+            arguments: {
+              questions: [
+                { question: '你在哪个城市？', header: '城市', options: [{ label: '北京' }, { label: '上海' }] },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('run.output_guardrail')
+    expect(eventTypes).toContain('question.asked')
+    expect(eventTypes).not.toContain('run.completed')
+    expect(store.getRun(run.id)?.status).toBe('waiting_input')
+    expect(gateway.requests).toHaveLength(2)
+  })
 })
 
 class ScriptedGateway implements LLMGateway {

@@ -33,11 +33,24 @@ export class CloudLLMGateway implements LLMGateway {
       throw new Error(await cloudGatewayErrorMessage(response))
     }
     const body = (await response.json()) as { code?: number; message?: string; data?: LLMGatewayResponse } & LLMGatewayResponse
-    if (body.data) {
-      return body.data
-    }
-    return body
+    const data = body.data ?? body
+    return { ...data, usage: parseUsage((data as { usage?: unknown }).usage) }
   }
+}
+
+function parseUsage(raw: unknown): LLMGatewayResponse['usage'] {
+  if (!raw || typeof raw !== 'object') {
+    return undefined
+  }
+  const source = raw as Record<string, unknown>
+  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  const inputTokens = num(source.input_tokens)
+  const outputTokens = num(source.output_tokens)
+  const creditsCost = num(source.credits_cost)
+  if (inputTokens === 0 && outputTokens === 0 && creditsCost === 0) {
+    return undefined
+  }
+  return { inputTokens, outputTokens, creditsCost }
 }
 
 async function cloudGatewayErrorMessage(response: Response): Promise<string> {

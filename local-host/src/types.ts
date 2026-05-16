@@ -1,6 +1,13 @@
 export const localHostVersion = '0.1.0'
 
-export type RunStatus = 'queued' | 'running' | 'waiting_permission' | 'completed' | 'failed' | 'canceled'
+export type RunStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_permission'
+  | 'waiting_input'
+  | 'completed'
+  | 'failed'
+  | 'canceled'
 export type PermissionPolicy = 'allow' | 'ask' | 'deny'
 
 export interface ToolDefinition {
@@ -47,6 +54,32 @@ export interface PermissionRequest {
   scope: PermissionScope
   createdAt: string
   resolvedAt?: string
+}
+
+export type UserQuestionStatus = 'pending' | 'answered'
+
+export interface UserQuestionChoice {
+  label: string
+  description?: string
+}
+
+export interface UserQuestionItem {
+  question: string
+  header: string
+  multiSelect?: boolean
+  options: UserQuestionChoice[]
+}
+
+export interface LocalUserQuestion {
+  id: string
+  runId: string
+  toolCallId: string
+  questions: UserQuestionItem[]
+  status: UserQuestionStatus
+  /** Keyed by the question text → selected option labels (or free text for "Other"). */
+  answers?: Record<string, string[]>
+  createdAt: string
+  answeredAt?: string
 }
 
 export interface StoredHarnessMessage {
@@ -220,6 +253,9 @@ export interface LocalHostStore {
   permissionByID(id: string): PermissionRequest | undefined
   listPermissions(runID: string): PermissionRequest[]
   resolvePermission(id: string, decision: PermissionDecision, scope?: PermissionScope): Promise<PermissionRequest | undefined> | PermissionRequest | undefined
+  createUserQuestion(input: { runId: string; toolCallId: string; questions: UserQuestionItem[] }): LocalUserQuestion
+  userQuestionByID(id: string): LocalUserQuestion | undefined
+  answerUserQuestion(id: string, answers: Record<string, string[]>): LocalUserQuestion | undefined
   createArtifact(input: {
     runId: string
     kind: ArtifactKind

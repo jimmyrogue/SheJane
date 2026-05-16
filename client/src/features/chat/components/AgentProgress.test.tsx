@@ -48,6 +48,7 @@ describe('AgentProgress', () => {
     const current = message({
       status: 'done',
       agentEvents: [
+        { type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' },
         { type: 'source.collected', label: '收集来源：Source A', sourceTitle: 'Source A', sourceUrl: 'https://a.example' },
         { type: 'source.collected', label: '收集来源：Source B', sourceTitle: 'Source B', sourceUrl: 'https://b.example' },
         { type: 'artifact.created', label: 'Artifact：browser output', artifactId: 'artifact-1', artifactTitle: 'browser output' },
@@ -63,8 +64,9 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Collapsed by default: only the muted summary line, no detail rows.
-    expect(screen.getByText('任务完成')).toBeInTheDocument()
+    // Finished: an aggregated tally, no success/failure word or step count.
+    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
+    expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
     expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
@@ -79,6 +81,22 @@ describe('AgentProgress', () => {
 
     fireEvent.click(screen.getByTitle('查看诊断 run-local'))
     expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
+  })
+
+  it('shows the current action with its concrete target while running', () => {
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：打开受控网页', tool: 'browser.open', target: 'weather.com' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('正在打开受控网页 weather.com')).toBeInTheDocument()
   })
 
   it('keeps the failed state muted and only shows the failing steps when expanded', () => {

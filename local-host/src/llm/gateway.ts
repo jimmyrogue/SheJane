@@ -22,11 +22,18 @@ export interface LLMGatewayRequest {
   tools: ToolDefinition[]
 }
 
+export interface LLMUsage {
+  inputTokens: number
+  outputTokens: number
+  creditsCost: number
+}
+
 export interface LLMGatewayResponse {
   requestId?: string
   content?: string
   reasoningContent?: string
   toolCalls?: LLMToolCall[]
+  usage?: LLMUsage
 }
 
 export interface LLMGateway {

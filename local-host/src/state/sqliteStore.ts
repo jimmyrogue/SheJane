@@ -10,12 +10,14 @@ import type {
   LocalHostStore,
   LocalMemoryEntry,
   LocalRun,
+  LocalUserQuestion,
   MemoryKind,
   PermissionDecision,
   PermissionRequest,
   PermissionScope,
   RunStatus,
   StoredHarnessMessage,
+  UserQuestionItem,
   WorkspaceAuthorization,
 } from '../types.js'
 
@@ -55,6 +57,17 @@ interface PermissionRow {
   scope?: PermissionScope
   created_at: string
   resolved_at: string | null
+}
+
+interface UserQuestionRow {
+  id: string
+  run_id: string
+  tool_call_id: string
+  questions_json: string
+  status: 'pending' | 'answered'
+  answers_json: string | null
+  created_at: string
+  answered_at: string | null
 }
 
 interface ArtifactRow {
@@ -140,6 +153,18 @@ export class SQLiteLocalHostStore implements LocalHostStore {
         FOREIGN KEY(run_id) REFERENCES local_runs(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_local_permissions_run ON local_permissions(run_id, created_at);
+      CREATE TABLE IF NOT EXISTS local_user_questions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        questions_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        answers_json TEXT,
+        created_at TEXT NOT NULL,
+        answered_at TEXT,
+        FOREIGN KEY(run_id) REFERENCES local_runs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_local_user_questions_run ON local_user_questions(run_id, created_at);
       CREATE TABLE IF NOT EXISTS local_artifacts (
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
@@ -373,6 +398,37 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return this.permissionByID(id)
   }
 
+  createUserQuestion(input: { runId: string; toolCallId: string; questions: UserQuestionItem[] }): LocalUserQuestion {
+    const question: LocalUserQuestion = {
+      id: randomUUID(),
+      runId: input.runId,
+      toolCallId: input.toolCallId,
+      questions: structuredClone(input.questions),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    }
+    this.db
+      .prepare(
+        `INSERT INTO local_user_questions (id, run_id, tool_call_id, questions_json, status, answers_json, created_at, answered_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(question.id, question.runId, question.toolCallId, JSON.stringify(question.questions), question.status, null, question.createdAt, null)
+    return question
+  }
+
+  userQuestionByID(id: string): LocalUserQuestion | undefined {
+    const row = this.db.prepare('SELECT * FROM local_user_questions WHERE id = ?').get(id) as UserQuestionRow | undefined
+    return row ? deserializeUserQuestion(row) : undefined
+  }
+
+  answerUserQuestion(id: string, answers: Record<string, string[]>): LocalUserQuestion | undefined {
+    const answeredAt = new Date().toISOString()
+    this.db
+      .prepare('UPDATE local_user_questions SET status = ?, answers_json = ?, answered_at = ? WHERE id = ?')
+      .run('answered', JSON.stringify(answers), answeredAt, id)
+    return this.userQuestionByID(id)
+  }
+
   createArtifact(input: {
     runId: string
     kind: ArtifactKind
@@ -567,6 +623,19 @@ function deserializePermission(row: PermissionRow): PermissionRequest {
     scope: row.scope === 'run' ? 'run' : 'once',
     createdAt: row.created_at,
     resolvedAt: row.resolved_at ?? undefined,
+  }
+}
+
+function deserializeUserQuestion(row: UserQuestionRow): LocalUserQuestion {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    toolCallId: row.tool_call_id,
+    questions: JSON.parse(row.questions_json) as UserQuestionItem[],
+    status: row.status === 'answered' ? 'answered' : 'pending',
+    answers: row.answers_json ? (JSON.parse(row.answers_json) as Record<string, string[]>) : undefined,
+    createdAt: row.created_at,
+    answeredAt: row.answered_at ?? undefined,
   }
 }
 

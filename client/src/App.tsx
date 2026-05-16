@@ -19,7 +19,9 @@ import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
+import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
+import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
@@ -30,6 +32,7 @@ import {
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
+  answerLocalQuestion,
   getLocalArtifact,
   listAuthorizedWorkspaces,
   listLocalRuns,
@@ -302,6 +305,7 @@ function AppContent() {
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   const pendingApproval = findConversationPendingApproval(activeConversation, t)
+  const pendingQuestion = pendingApproval ? null : findConversationPendingQuestion(activeConversation)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
   const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
   const selectedWorkspace = activeWorkspace ? findWorkspaceByPath(authorizedWorkspaces, activeWorkspace.path) : undefined
@@ -526,6 +530,48 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
+      await streamLocalRun(message.runId, localHostConfig, {
+        onEvent: (event) => {
+          appendLocalRunEvent(message, event, seenEventIDs, t)
+          scheduleConversationRender(conversation, renderContext)
+        },
+        onDelta: (delta, event) => {
+          appendLocalDelta(message, delta, event, seenEventIDs)
+          scheduleConversationRender(conversation, renderContext)
+        },
+      })
+      finalizeLocalRunStatus(message)
+      scheduleConversationRender(conversation, renderContext)
+    } catch (error) {
+      message.status = 'error'
+      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
+      setNotice(message.content)
+      scheduleConversationRender(conversation, renderContext)
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
+    }
+  }
+
+  async function handleQuestionAnswer(messageID: string, requestID: string, answers: Record<string, string[]>) {
+    if (!activeID || !localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const conversation = await localData.get(activeID)
+    const message = conversation?.messages.find((item) => item.id === messageID)
+    if (!conversation || !message?.runId) {
+      setNotice(t('app.notice.missingLocalTask'))
+      return
+    }
+
+    setNotice('')
+    message.status = 'streaming'
+    const renderContext = createConversationRenderContext()
+    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    try {
+      await answerLocalQuestion(requestID, answers, localHostConfig)
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)
@@ -991,6 +1037,12 @@ function AppContent() {
               onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
             />
 
+            <PendingQuestionBar
+              key={pendingQuestion?.requestID ?? 'no-question'}
+              question={pendingQuestion}
+              onAnswer={(messageID, requestID, answers) => void handleQuestionAnswer(messageID, requestID, answers)}
+            />
+
             <Composer
               mode={mode}
               onModeChange={setMode}
@@ -1054,9 +1106,24 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
   if (event.id) {
     seenEventIDs.add(event.id)
   }
+  if (event.event_type === 'run.completed') {
+    const payload = event.payload ?? {}
+    const input = Number(payload.input_tokens) || 0
+    const output = Number(payload.output_tokens) || 0
+    if (input > 0 || output > 0) {
+      message.tokens = input + output
+    }
+  }
   const item = timelineItem(event, t)
   if (item) {
     message.agentEvents = [...(message.agentEvents ?? []), item]
+    // When the run pauses for a user.ask, any prose the model streamed before
+    // calling the tool is just stalling chatter (incl. guardrail-rejected
+    // clarification text). Drop it so the message bubble only shows the real
+    // answer that streams in after the user responds.
+    if (item.type === 'question.asked') {
+      message.content = ''
+    }
   }
 }
 
@@ -1080,7 +1147,11 @@ function finalizeLocalRunStatus(message: ChatMessage) {
     message.status = 'done'
     return
   }
-  message.status = hasPendingPermission(events) ? 'waiting_permission' : 'done'
+  if (hasPendingPermission(events)) {
+    message.status = 'waiting_permission'
+    return
+  }
+  message.status = hasPendingQuestion(events) ? 'waiting_input' : 'done'
 }
 
 function hasPendingPermission(events: AgentTimelineItem[]): boolean {
@@ -1091,6 +1162,19 @@ function hasPendingPermission(events: AgentTimelineItem[]): boolean {
     }
     if (event.type === 'permission.resolved' && event.permissionRequestId) {
       pending.delete(event.permissionRequestId)
+    }
+  }
+  return pending.size > 0
+}
+
+function hasPendingQuestion(events: AgentTimelineItem[]): boolean {
+  const pending = new Set<string>()
+  for (const event of events) {
+    if (event.type === 'question.asked' && event.questionRequestId) {
+      pending.add(event.questionRequestId)
+    }
+    if (event.type === 'question.answered' && event.questionRequestId) {
+      pending.delete(event.questionRequestId)
     }
   }
   return pending.size > 0
