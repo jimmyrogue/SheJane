@@ -42,6 +42,7 @@ server.listen(port, host, () => {
         allow_proxy_fake_ips: process.env.JIANDANLY_ALLOW_PROXY_FAKE_IPS ?? 'true',
         local_max_steps: process.env.JIANDANLY_LOCAL_MAX_STEPS ?? 'unlimited',
         local_step_warning_interval: process.env.JIANDANLY_LOCAL_STEP_WARNING_INTERVAL ?? '20',
+        local_input_guard: process.env.JIANDANLY_LOCAL_INPUT_GUARD ?? 'off',
         cloud_tool_gateway: cloudSession.state().connected ? 'session' : 'requires_login',
         cloud_base_url: cloudBaseURL ?? 'http://localhost:8080',
       }),
