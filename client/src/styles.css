@@ -2419,54 +2419,15 @@ button:active {
 }
 
 .sidebar-account-balance {
-  margin: 2px 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-md);
-  background: var(--bg-canvas);
-  padding: 9px 11px;
+  gap: 1px;
+  padding: 2px 8px 8px;
 }
 
-.sidebar-account-balance .sab-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.sidebar-account-balance .sab-label {
-  color: var(--text-secondary);
-  font-size: 11.5px;
-}
-
-.sidebar-account-balance .sab-value {
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.sidebar-account-balance .sab-bar {
-  height: 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-  overflow: hidden;
-}
-
-.sidebar-account-balance .sab-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--text-primary);
-  opacity: 0.55;
-  transition: width 240ms ease;
-}
-
-.sidebar-account-balance .sab-caption {
+.sidebar-account-balance .sab-line {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 

@@ -578,28 +578,17 @@ function AccountBalance({ balance, t }: { balance: WalletBalance; t: Translator 
   const limit = Math.max(0, balance.monthly_credit_limit ?? 0)
   const used = Math.max(0, balance.monthly_credits_used ?? 0)
   const extra = Math.max(0, balance.extra_credits_balance ?? 0)
-  const remaining = Math.max(0, balance.monthly_remaining ?? 0) + extra
-  const unlimited = limit <= 0
-  const pct = unlimited ? 0 : Math.min(100, Math.round((used / limit) * 100))
+  const remaining = Math.max(0, balance.monthly_remaining ?? 0)
   return (
     <div className="sidebar-account-balance">
-      <div className="sab-row">
-        <span className="sab-label">{t('sidebar.account.creditsLeft')}</span>
-        <span className="sab-value">
-          {unlimited ? t('sidebar.account.creditsUnlimited') : formatCredits(remaining)}
-        </span>
-      </div>
-      {unlimited ? null : (
-        <div className="sab-bar" role="presentation">
-          <span className="sab-bar-fill" style={{ width: `${pct}%` }} />
-        </div>
-      )}
-      {unlimited ? null : (
-        <div className="sab-caption">
-          {t('sidebar.account.creditsUsage', { used: formatCredits(used), limit: formatCredits(limit) })}
-          {extra > 0 ? ` · ${t('sidebar.account.creditsExtra', { extra: formatCredits(extra) })}` : ''}
-        </div>
-      )}
+      <span className="sab-line">
+        {limit <= 0
+          ? t('sidebar.account.creditsUnlimited')
+          : t('sidebar.account.creditsMonthly', { remaining: formatCredits(remaining), used: formatCredits(used) })}
+      </span>
+      {extra > 0 ? (
+        <span className="sab-line">{t('sidebar.account.creditsExtra', { extra: formatCredits(extra) })}</span>
+      ) : null}
     </div>
   )
 }

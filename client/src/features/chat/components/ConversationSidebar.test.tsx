@@ -105,7 +105,7 @@ describe('ConversationSidebar', () => {
     expect(handlers.onDeleteConversation).toHaveBeenCalledWith('target-chat')
   })
 
-  it('shows remaining credits with a usage bar in the account menu', async () => {
+  it('shows the monthly and extra credit lines in the account menu', async () => {
     render(
       <I18nProvider>
         <ConversationSidebar
@@ -137,9 +137,8 @@ describe('ConversationSidebar', () => {
     const trigger = screen.getByRole('button', { name: '账户菜单' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    expect(await screen.findByText('剩余额度')).toBeInTheDocument()
-    expect(screen.getByText('850')).toBeInTheDocument() // 800 monthly remaining + 50 extra
-    expect(screen.getByText(/本月已用 200 \/ 1,000/)).toBeInTheDocument()
+    expect(await screen.findByText('本月余额 800，已用 200')).toBeInTheDocument()
+    expect(screen.getByText('额外额度 50')).toBeInTheDocument()
   })
 })
 
