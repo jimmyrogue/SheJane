@@ -66,6 +66,8 @@ export interface UserQuestionChoice {
 export interface UserQuestionItem {
   question: string
   header: string
+  /** Optional multi-line context shown above the options (e.g. a plan). */
+  body?: string
   multiSelect?: boolean
   options: UserQuestionChoice[]
 }

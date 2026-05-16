@@ -10,6 +10,7 @@ export interface AgentQuestionChoice {
 export interface AgentQuestionItem {
   question: string
   header: string
+  body?: string
   multiSelect?: boolean
   options: AgentQuestionChoice[]
 }

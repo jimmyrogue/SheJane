@@ -144,6 +144,14 @@ async function planRun(
       {
         question: `已为这个目标生成执行计划（${plan.steps.length} 步）。是否按此计划执行？`,
         header: '计划确认',
+        body: [
+          ...plan.steps.map((step, index) => `${index + 1}. ${step.title}${step.detail ? `\n   ${step.detail}` : ''}`),
+          plan.successCriteria.length > 0
+            ? `\n成功标准：\n${plan.successCriteria.map((value, index) => `· ${value}`).join('\n')}`
+            : '',
+        ]
+          .filter((line) => line.length > 0)
+          .join('\n'),
         options: [
           { label: '按此计划执行', description: '采用上面生成的计划开始执行' },
           { label: '不规划直接执行', description: '跳过计划，按原有反应式方式执行' },

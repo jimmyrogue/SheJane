@@ -365,7 +365,8 @@ function parseQuestionPayload(value: unknown): AgentQuestionItem[] {
     if (!question || options.length === 0) {
       continue
     }
-    questions.push({ question, header, multiSelect: item.multiSelect === true, options })
+    const body = stringValue(item.body)
+    questions.push({ question, header, ...(body ? { body } : {}), multiSelect: item.multiSelect === true, options })
   }
   return questions
 }

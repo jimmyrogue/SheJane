@@ -526,6 +526,10 @@ function AppContent() {
 
     setNotice('')
     message.status = 'streaming'
+    // The resume stream replays the run's full event history from seq 1, so
+    // rebuild the answer from that replay instead of appending onto the text
+    // the user already saw (otherwise the prior stream is shown twice).
+    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
@@ -568,6 +572,9 @@ function AppContent() {
 
     setNotice('')
     message.status = 'streaming'
+    // Resume replays the full event history; rebuild from the replay rather
+    // than appending onto already-shown text.
+    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
@@ -1100,9 +1107,7 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
   if (event.event_type === 'llm.delta') {
     return
   }
-  if (event.id && seenEventIDs.has(event.id)) {
-    return
-  }
+  const alreadySeen = Boolean(event.id && seenEventIDs.has(event.id))
   if (event.id) {
     seenEventIDs.add(event.id)
   }
@@ -1116,11 +1121,15 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
   }
   const item = timelineItem(event, t)
   if (item) {
-    message.agentEvents = [...(message.agentEvents ?? []), item]
+    if (!alreadySeen) {
+      message.agentEvents = [...(message.agentEvents ?? []), item]
+    }
     // When the run pauses for a user.ask, any prose the model streamed before
     // calling the tool is just stalling chatter (incl. guardrail-rejected
     // clarification text). Drop it so the message bubble only shows the real
-    // answer that streams in after the user responds.
+    // answer that streams in after the user responds. This must run on the
+    // resume replay too (the event is "already seen"), otherwise the rebuilt
+    // content keeps the pre-question chatter.
     if (item.type === 'question.asked') {
       message.content = ''
     }
