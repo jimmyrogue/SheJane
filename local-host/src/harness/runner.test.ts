@@ -19,6 +19,9 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_TOOL_RETRY
   delete process.env.JIANDANLY_LOCAL_TOOL_RETRY_BASE_MS
   delete process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT
+  delete process.env.JIANDANLY_LOCAL_PLANNING
+  delete process.env.JIANDANLY_LOCAL_PLANNING_MODEL
+  delete process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM
 })
 
 const webSearchCapability = {
@@ -2884,6 +2887,151 @@ describe('exception handling & recovery (Phase 2)', () => {
     expect(circuit[0].payload.tool).toBe('web.search')
     expect(circuit[0].payload.failures).toBeGreaterThanOrEqual(2)
     expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+})
+
+describe('explicit planning (Phase 3)', () => {
+  const planJSON =
+    '{"steps":[{"title":"Gather info","detail":"collect data"},{"title":"Summarize","detail":"write answer"}],"success_criteria":["answer is concise and correct"],"complexity":"complex"}'
+  const complexGoal = 'Research the topic step by step, then compare options and write a report.'
+
+  it('is inert when planning is off (default): no plan events, no extra call', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: complexGoal })
+    const gateway = new ScriptedGateway([{ requestId: 'final', content: 'Direct answer.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes.some((type) => type.startsWith('plan.'))).toBe(false)
+    expect(gateway.requests).toHaveLength(1)
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('always mode generates a plan and threads it into the run loop', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a quick tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'plan', content: planJSON },
+      { requestId: 'final', content: 'Done.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const events = store.listEvents(run.id)
+    const eventTypes = events.map((event) => event.eventType)
+    expect(eventTypes).toContain('plan.started')
+    expect(eventTypes).toContain('plan.created')
+    expect(
+      events.filter((event) => event.eventType === 'checkpoint.created').map((event) => event.payload.reason),
+    ).toContain('plan')
+    expect(gateway.requests).toHaveLength(2)
+    const loopMessages = gateway.requests[1].messages.map((message) => message.content).join('\n')
+    expect(loopMessages).toContain('Execution plan for this run')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('fails open to the reactive loop when the plan is unparseable', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a quick tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'plan', content: 'the planner rambled, no json' },
+      { requestId: 'final', content: 'Answer anyway.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('plan.skipped')
+    expect(eventTypes).not.toContain('plan.created')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('auto mode skips planning for a simple goal', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Hi.' })
+    const gateway = new ScriptedGateway([{ requestId: 'final', content: 'Hello.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes.some((type) => type.startsWith('plan.'))).toBe(false)
+    expect(gateway.requests).toHaveLength(1)
+  })
+
+  it('auto mode plans for a complex goal', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: complexGoal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'plan', content: planJSON },
+      { requestId: 'final', content: 'Report done.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id).map((event) => event.eventType)).toContain('plan.created')
+  })
+
+  it('confirm mode pauses for plan approval then resumes with the plan', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
+    process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM = '1'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a quick tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'plan', content: planJSON },
+      { requestId: 'final', content: 'Done with plan.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    expect(store.getRun(run.id)?.status).toBe('waiting_input')
+    const asked = store.listEvents(run.id).find((event) => event.eventType === 'question.asked')
+    expect(asked?.payload.reason).toBe('plan_confirm')
+    const requestID = String(asked?.payload.request_id)
+    const question = store.userQuestionByID(requestID)!
+    store.answerUserQuestion(requestID, { [question.questions[0].question]: ['按此计划执行'] })
+
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumeQuestionID: requestID,
+    })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('plan.confirmed')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('confirm mode cancels the run when the user declines with cancel', async () => {
+    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
+    process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM = '1'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a quick tip.' })
+    const gateway = new ScriptedGateway([{ requestId: 'plan', content: planJSON }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    const requestID = String(
+      store.listEvents(run.id).find((event) => event.eventType === 'question.asked')?.payload.request_id,
+    )
+    const question = store.userQuestionByID(requestID)!
+    store.answerUserQuestion(requestID, { [question.questions[0].question]: ['取消'] })
+
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumeQuestionID: requestID,
+    })
+
+    const failed = store.listEvents(run.id).find((event) => event.eventType === 'run.failed')
+    expect(failed?.payload.error_code).toBe('plan_canceled')
+    expect(store.getRun(run.id)?.status).toBe('failed')
   })
 })
 

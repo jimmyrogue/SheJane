@@ -27,6 +27,7 @@ const terminalRunStatuses = new Set<LocalRun['status']>(['completed', 'failed', 
 type InputGuardMode = 'off' | 'observe' | 'block' | 'confirm'
 type InputGuardVerdict = 'allow' | 'flag' | 'block'
 const inputGuardConfirmPrefix = 'input-guard:'
+const planConfirmPrefix = 'plan-confirm:'
 
 interface FinalAnswerGuardrailResult {
   reason: string
@@ -88,7 +89,232 @@ export async function runHarness(options: HarnessRunOptions): Promise<void> {
     // created) — screenInput already emitted the terminal/pause state.
     return
   }
-  await runLoop(options, gateway, run, buildInitialMessages(options.store, run, options), 0)
+  const planned = await planRun(options, gateway, run)
+  if (planned === 'awaiting_confirm') {
+    // waiting_input + plan-confirm question created — resume via /local/v1/questions.
+    return
+  }
+  await runLoop(options, gateway, run, planned ?? buildInitialMessages(options.store, run, options), 0)
+}
+
+/**
+ * Phase 3 — Planning (Agentic Design Patterns Ch.6 + Ch.11 goal monitoring).
+ * Brand-new runs only. Optionally generates a structured plan + success
+ * criteria, injects it as a persistent system message (system messages survive
+ * compaction, so the plan threads through every step at zero extra storage),
+ * and optionally pauses for human plan confirmation. Default mode `off` =>
+ * zero gateway calls, zero events, behaviour unchanged. Fail-open: any
+ * planning/parse error falls back to the plain reactive loop.
+ */
+async function planRun(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+): Promise<StoredHarnessMessage[] | 'awaiting_confirm' | undefined> {
+  const mode = resolvedPlanningMode(options)
+  if (mode === 'off') {
+    return undefined
+  }
+  if (mode === 'auto' && !isComplexGoal(run.goal)) {
+    // Ch.6: when the "how" is already simple/known, a fixed reactive flow is
+    // more reliable than forcing a plan.
+    return undefined
+  }
+  append(options, 'plan.started', { mode, model: resolvedPlanningModel(options) })
+  const plan = await generatePlan(options, gateway, run)
+  if (!plan) {
+    append(options, 'plan.skipped', { reason: 'planner_unavailable' })
+    return undefined
+  }
+  append(options, 'plan.created', {
+    steps_count: plan.steps.length,
+    success_criteria: plan.successCriteria,
+    complexity: plan.complexity,
+  })
+  const baseMessages = buildInitialMessages(options.store, run, options)
+  const planMessages: StoredHarnessMessage[] = [...baseMessages, buildPlanMessage(plan)]
+  createCheckpointEvent(options, 0, 'plan', planMessages)
+  if (!resolvedPlanningConfirm(options)) {
+    return planMessages
+  }
+  const question = options.store.createUserQuestion({
+    runId: run.id,
+    toolCallId: `${planConfirmPrefix}${run.id}`,
+    questions: [
+      {
+        question: `已为这个目标生成执行计划（${plan.steps.length} 步）。是否按此计划执行？`,
+        header: '计划确认',
+        options: [
+          { label: '按此计划执行', description: '采用上面生成的计划开始执行' },
+          { label: '不规划直接执行', description: '跳过计划，按原有反应式方式执行' },
+          { label: '取消', description: '终止本次运行' },
+        ],
+      },
+    ],
+  })
+  options.store.updateRunStatus(run.id, 'waiting_input')
+  append(options, 'question.asked', {
+    request_id: question.id,
+    tool_call_id: question.toolCallId,
+    questions: question.questions,
+    reason: 'plan_confirm',
+  })
+  return 'awaiting_confirm'
+}
+
+interface RunPlan {
+  steps: Array<{ title: string; detail: string }>
+  successCriteria: string[]
+  complexity: 'simple' | 'complex'
+}
+
+async function generatePlan(options: HarnessRunOptions, gateway: LLMGateway, run: LocalRun): Promise<RunPlan | undefined> {
+  const messages: HarnessMessage[] = [
+    {
+      role: 'system',
+      content: [
+        'You are a planning module for an autonomous tool-using agent.',
+        'Produce a concise, executable plan for the USER GOAL: ordered steps and measurable success criteria.',
+        'Respond with ONLY a compact JSON object, no prose, no code fence:',
+        '{"steps":[{"title":"...","detail":"..."}],"success_criteria":["..."],"complexity":"simple|complex"}',
+        'Keep it short (2-6 steps). Do not execute anything; only plan.',
+      ].join(' '),
+    },
+    { role: 'user', content: run.goal },
+  ]
+  try {
+    const response = await gateway.call({ runId: run.id, mode: resolvedPlanningModel(options), messages, tools: [] })
+    if (response.usage) {
+      append(options, 'llm.usage', {
+        input_tokens: response.usage.inputTokens,
+        output_tokens: response.usage.outputTokens,
+        credits_cost: response.usage.creditsCost,
+      })
+    }
+    return parsePlan(response.content)
+  } catch {
+    return undefined
+  }
+}
+
+function parsePlan(content: string | undefined): RunPlan | undefined {
+  if (!content) {
+    return undefined
+  }
+  const start = content.indexOf('{')
+  const end = content.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    return undefined
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content.slice(start, end + 1))
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return undefined
+  }
+  const record = parsed as Record<string, unknown>
+  const rawSteps = Array.isArray(record.steps) ? record.steps : []
+  const steps = rawSteps
+    .map((step) => {
+      const item = (step && typeof step === 'object' ? step : {}) as Record<string, unknown>
+      const title = typeof item.title === 'string' ? item.title.trim() : ''
+      const detail = typeof item.detail === 'string' ? item.detail.trim() : ''
+      return { title, detail }
+    })
+    .filter((step) => step.title.length > 0)
+    .slice(0, 8)
+  if (steps.length === 0) {
+    return undefined
+  }
+  const successCriteria = (Array.isArray(record.success_criteria) ? record.success_criteria : [])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim())
+    .slice(0, 8)
+  const complexity = record.complexity === 'simple' ? 'simple' : 'complex'
+  return { steps, successCriteria, complexity }
+}
+
+function buildPlanMessage(plan: RunPlan): StoredHarnessMessage {
+  return {
+    role: 'system',
+    content: [
+      'Execution plan for this run (Ch.6/Ch.11). Follow it, but adapt:',
+      ...plan.steps.map((step, index) => `${index + 1}. ${step.title}${step.detail ? ` — ${step.detail}` : ''}`),
+      plan.successCriteria.length > 0
+        ? `Success criteria (all must hold before you give the final answer): ${plan.successCriteria.map((value, index) => `(${index + 1}) ${value}`).join('; ')}.`
+        : 'Define success implicitly from the user goal.',
+      'On each step, self-check progress against this plan. If you hit an obstacle or find a better path, explicitly state a revised plan and continue. Do not finalize until the success criteria are met or you clearly explain why they cannot be.',
+    ].join('\n'),
+  }
+}
+
+function isComplexGoal(goal: string): boolean {
+  const trimmed = goal.trim()
+  if (trimmed.length >= 180) {
+    return true
+  }
+  const multiStep =
+    /(然后|接着|步骤|分步|逐步|依次|多步|对比|比较|报告|方案|规划|计划|调研|研究|整理|汇总|and then|step[-\s]?by[-\s]?step|compare|report|plan|research|analyze|multiple|first.*then)/i
+  if (multiStep.test(trimmed)) {
+    return true
+  }
+  // several sentences / clauses usually means a multi-part task
+  return (trimmed.match(/[。.;；?？!！]/g)?.length ?? 0) >= 3
+}
+
+function resolvedPlanningMode(_options: HarnessRunOptions): 'off' | 'auto' | 'always' {
+  const raw = process.env.JIANDANLY_LOCAL_PLANNING?.trim().toLowerCase()
+  if (raw === 'auto' || raw === 'always') {
+    return raw
+  }
+  return 'off'
+}
+
+function resolvedPlanningModel(_options: HarnessRunOptions): string {
+  return process.env.JIANDANLY_LOCAL_PLANNING_MODEL?.trim().toLowerCase() === 'deep' ? 'deep' : 'fast'
+}
+
+function resolvedPlanningConfirm(_options: HarnessRunOptions): boolean {
+  const raw = process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM?.trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'on'
+}
+
+/**
+ * Phase 3 M3 — resume after a human responded to the plan-confirm prompt.
+ * "Use the plan" => run with the plan checkpoint; "skip planning" => run the
+ * plain reactive loop; anything else => cancel (fail-safe).
+ */
+async function resumePlanConfirm(
+  options: HarnessRunOptions,
+  run: LocalRun,
+  answers: Record<string, string[]>,
+): Promise<void> {
+  const selected = Object.values(answers).flat().map((value) => value.trim().toLowerCase())
+  const cancel = selected.some((value) => /取消|cancel|abort|stop/.test(value))
+  if (cancel) {
+    options.store.updateRunStatus(run.id, 'failed')
+    append(options, 'plan.canceled', { decision: 'user_cancel' })
+    append(options, 'run.failed', {
+      error_code: 'plan_canceled',
+      message: 'Run canceled by user at plan confirmation.',
+    })
+    return
+  }
+  const skipPlan = selected.some((value) => /不规划|无需规划|跳过|without plan|skip|no plan|reactive/.test(value))
+  options.store.updateRunStatus(run.id, 'running')
+  const gateway = options.llmGateway ?? new StaticLLMGateway()
+  if (skipPlan) {
+    append(options, 'plan.skipped', { reason: 'user_declined' })
+    await runLoop(options, gateway, run, buildInitialMessages(options.store, run, options), 0)
+    return
+  }
+  append(options, 'plan.confirmed', { decision: 'user_continue' })
+  const checkpoint = options.store.latestCheckpoint(run.id)
+  const messages = checkpoint?.messages ?? buildInitialMessages(options.store, run, options)
+  await runLoop(options, gateway, run, messages, 0)
 }
 
 /**
@@ -265,7 +491,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
       })
       messages.push({
         role: 'system',
-        content: `This run has used ${step} tool-use turns. Continue only if more tools are necessary; otherwise provide the best answer from the observations already gathered.`,
+        content: `This run has used ${step} tool-use turns. Continue only if more tools are necessary; otherwise provide the best answer from the observations already gathered. If you are following a plan, re-evaluate it now: revise the plan if you are blocked, or finalize if the success criteria are already met.`,
       })
     }
     messages = maybeCompactMessages(options, messages, step)
@@ -756,6 +982,10 @@ async function resumeQuestion(options: HarnessRunOptions): Promise<void> {
   }
   if (question.toolCallId.startsWith(inputGuardConfirmPrefix)) {
     await resumeInputGuardConfirm(options, run, answers)
+    return
+  }
+  if (question.toolCallId.startsWith(planConfirmPrefix)) {
+    await resumePlanConfirm(options, run, answers)
     return
   }
   options.store.updateRunStatus(run.id, 'running')
