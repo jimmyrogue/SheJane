@@ -230,10 +230,16 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [page, setPage] = useState(0)
   const [hasMoreUsers, setHasMoreUsers] = useState(false)
   const [toolCalls, setToolCalls] = useState<AdminToolCall[]>([])
+  const [toolPage, setToolPage] = useState(0)
+  const [hasMoreTool, setHasMoreTool] = useState(false)
   const [orders, setOrders] = useState<AdminOrder[]>([])
+  const [orderPage, setOrderPage] = useState(0)
+  const [hasMoreOrders, setHasMoreOrders] = useState(false)
   const [providers, setProviders] = useState<AdminProviderStatus[]>([])
   const [agentRuns, setAgentRuns] = useState<AdminAgentRun[]>([])
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
+  const [auditPage, setAuditPage] = useState(0)
+  const [hasMoreAudit, setHasMoreAudit] = useState(false)
   const [selectedUser, setSelectedUser] = useState<AdminUserDetail | null>(null)
   const [query, setQuery] = useState('')
   const [delta, setDelta] = useState('')
@@ -255,24 +261,44 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     setHasMoreUsers(userData.length === PAGE_SIZE)
   }
 
+  async function loadToolCallsPage(nextPage: number) {
+    const data = await api.adminToolCalls(PAGE_SIZE, nextPage * PAGE_SIZE)
+    setToolCalls(data)
+    setToolPage(nextPage)
+    setHasMoreTool(data.length === PAGE_SIZE)
+  }
+
+  async function loadOrdersPage(nextPage: number) {
+    const data = await api.adminOrders(PAGE_SIZE, nextPage * PAGE_SIZE)
+    setOrders(data)
+    setOrderPage(nextPage)
+    setHasMoreOrders(data.length === PAGE_SIZE)
+  }
+
+  async function loadAuditPage(nextPage: number) {
+    const data = await api.adminAuditLogs(PAGE_SIZE, nextPage * PAGE_SIZE)
+    setAuditLogs(data)
+    setAuditPage(nextPage)
+    setHasMoreAudit(data.length === PAGE_SIZE)
+  }
+
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, toolCallData, orderData, providerData, agentRunData, auditData] = await Promise.all([
+      const [overviewData, providerData, agentRunData] = await Promise.all([
         api.adminOverview(),
-        api.adminToolCalls(),
-        api.adminOrders(),
         api.adminProviders(),
         api.adminAgentRuns(),
-        api.adminAuditLogs(),
       ])
       setOverview(overviewData)
-      setToolCalls(toolCallData)
-      setOrders(orderData)
       setProviders(providerData)
       setAgentRuns(agentRunData)
-      setAuditLogs(auditData)
-      await loadUsersPage(nextQuery, 0)
+      await Promise.all([
+        loadUsersPage(nextQuery, 0),
+        loadToolCallsPage(0),
+        loadOrdersPage(0),
+        loadAuditPage(0),
+      ])
       if (announce) {
         setNotice('数据已刷新')
       }
@@ -280,6 +306,42 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
       setNotice(caught instanceof Error ? caught.message : '加载后台数据失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function changeToolCallsPage(nextPage: number) {
+    if (nextPage < 0) {
+      return
+    }
+    setNotice('')
+    try {
+      await loadToolCallsPage(nextPage)
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载工具调用失败')
+    }
+  }
+
+  async function changeOrdersPage(nextPage: number) {
+    if (nextPage < 0) {
+      return
+    }
+    setNotice('')
+    try {
+      await loadOrdersPage(nextPage)
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载订单失败')
+    }
+  }
+
+  async function changeAuditPage(nextPage: number) {
+    if (nextPage < 0) {
+      return
+    }
+    setNotice('')
+    try {
+      await loadAuditPage(nextPage)
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载审计日志失败')
     }
   }
 
@@ -470,11 +532,11 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
             </TabsContent>
 
             <TabsContent value="tool-calls" className="mt-0">
-              <ToolCallsCard calls={toolCalls} />
+              <ToolCallsCard calls={toolCalls} page={toolPage} hasMore={hasMoreTool} onChangePage={changeToolCallsPage} />
             </TabsContent>
 
             <TabsContent value="orders" className="mt-0">
-              <OrdersCard orders={orders} />
+              <OrdersCard orders={orders} page={orderPage} hasMore={hasMoreOrders} onChangePage={changeOrdersPage} />
             </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
@@ -486,7 +548,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
             </TabsContent>
 
             <TabsContent value="audit" className="mt-0">
-              <AuditCard logs={auditLogs} />
+              <AuditCard logs={auditLogs} page={auditPage} hasMore={hasMoreAudit} onChangePage={changeAuditPage} />
             </TabsContent>
           </Tabs>
         </main>
@@ -628,15 +690,7 @@ function UsersPanel({
           </Table>
         </div>
 
-        <div className="flex items-center justify-between">
-          <Button variant="outline" size="sm" disabled={page <= 0} onClick={() => void onChangePage(page - 1)}>
-            上一页
-          </Button>
-          <span className="text-xs text-muted-foreground">第 {page + 1} 页 · 每页 {PAGE_SIZE} 条</span>
-          <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => void onChangePage(page + 1)}>
-            下一页
-          </Button>
-        </div>
+        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
       </CardContent>
 
       <Dialog open={Boolean(selectedUser)} onOpenChange={(open) => { if (!open) onCloseUser() }}>
@@ -752,14 +806,46 @@ function UserDetailBody({
 }
 
 
-function ToolCallsCard({ calls }: { calls: AdminToolCall[] }) {
+function Pagination({
+  page,
+  hasMore,
+  onChangePage,
+}: {
+  page: number
+  hasMore: boolean
+  onChangePage: (nextPage: number) => Promise<void> | void
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <Button variant="outline" size="sm" disabled={page <= 0} onClick={() => void onChangePage(page - 1)}>
+        上一页
+      </Button>
+      <span className="text-xs text-muted-foreground">第 {page + 1} 页 · 每页 {PAGE_SIZE} 条</span>
+      <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => void onChangePage(page + 1)}>
+        下一页
+      </Button>
+    </div>
+  )
+}
+
+function ToolCallsCard({
+  calls,
+  page,
+  hasMore,
+  onChangePage,
+}: {
+  calls: AdminToolCall[]
+  page: number
+  hasMore: boolean
+  onChangePage: (nextPage: number) => Promise<void>
+}) {
   return (
     <Card id="tool-calls" className="min-w-0">
       <CardHeader>
         <CardTitle>工具调用</CardTitle>
         <CardDescription>非 LLM 第三方服务调用记录，只读展示扣费、provider 和失败原因。</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="grid gap-4">
         <Table>
           <TableHeader>
             <TableRow>
@@ -772,7 +858,7 @@ function ToolCallsCard({ calls }: { calls: AdminToolCall[] }) {
           </TableHeader>
           <TableBody>
             {calls.length ? (
-              calls.slice(0, 10).map((call) => (
+              calls.map((call) => (
                 <TableRow key={call.request_id}>
                   <TableCell>
                     <div className="font-medium">{call.tool}</div>
@@ -795,19 +881,30 @@ function ToolCallsCard({ calls }: { calls: AdminToolCall[] }) {
             )}
           </TableBody>
         </Table>
+        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
       </CardContent>
     </Card>
   )
 }
 
-function OrdersCard({ orders }: { orders: AdminOrder[] }) {
+function OrdersCard({
+  orders,
+  page,
+  hasMore,
+  onChangePage,
+}: {
+  orders: AdminOrder[]
+  page: number
+  hasMore: boolean
+  onChangePage: (nextPage: number) => Promise<void>
+}) {
   return (
     <Card id="orders" className="min-w-0">
       <CardHeader>
         <CardTitle>订单</CardTitle>
         <CardDescription>订单只读展示，不提供手工改状态入口。</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="grid gap-4">
         <Table>
           <TableHeader>
             <TableRow>
@@ -820,7 +917,7 @@ function OrdersCard({ orders }: { orders: AdminOrder[] }) {
           </TableHeader>
           <TableBody>
             {orders.length ? (
-              orders.slice(0, 8).map((order) => (
+              orders.map((order) => (
                 <TableRow key={order.id}>
                   <TableCell className="max-w-32 truncate">{order.id}</TableCell>
                   <TableCell className="max-w-36 truncate">{order.user_email ?? order.user_id ?? 'unknown'}</TableCell>
@@ -834,20 +931,31 @@ function OrdersCard({ orders }: { orders: AdminOrder[] }) {
             )}
           </TableBody>
         </Table>
-        {orders[0] ? <p className="mt-3 truncate text-xs text-muted-foreground">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · 钱包 {orders[0].wallet_status || '-'} · {formatDateTime(orders[0].created_at)}</p> : null}
+        {orders[0] ? <p className="truncate text-xs text-muted-foreground">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · 钱包 {orders[0].wallet_status || '-'} · {formatDateTime(orders[0].created_at)}</p> : null}
+        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
       </CardContent>
     </Card>
   )
 }
 
-function AuditCard({ logs }: { logs: AdminAuditLog[] }) {
+function AuditCard({
+  logs,
+  page,
+  hasMore,
+  onChangePage,
+}: {
+  logs: AdminAuditLog[]
+  page: number
+  hasMore: boolean
+  onChangePage: (nextPage: number) => Promise<void>
+}) {
   return (
     <Card id="audit" className="min-w-0">
       <CardHeader>
         <CardTitle>审计</CardTitle>
         <CardDescription>只读展示后台操作和关键账务事件。</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="grid gap-4">
         <Table>
           <TableHeader>
             <TableRow>
@@ -859,7 +967,7 @@ function AuditCard({ logs }: { logs: AdminAuditLog[] }) {
           </TableHeader>
           <TableBody>
             {logs.length ? (
-              logs.slice(0, 10).map((log) => (
+              logs.map((log) => (
                 <TableRow key={log.id}>
                   <TableCell>
                     <div className="font-medium">{log.action}</div>
@@ -875,6 +983,7 @@ function AuditCard({ logs }: { logs: AdminAuditLog[] }) {
             )}
           </TableBody>
         </Table>
+        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
       </CardContent>
     </Card>
   )

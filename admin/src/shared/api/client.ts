@@ -153,6 +153,18 @@ interface APIResponse<T> {
   data: T
 }
 
+function pageQuery(limit?: number, offset?: number): string {
+  const params = new URLSearchParams()
+  if (typeof limit === 'number') {
+    params.set('limit', String(limit))
+  }
+  if (typeof offset === 'number' && offset > 0) {
+    params.set('offset', String(offset))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
+
 export class AdminAPI {
   private accessToken = ''
 
@@ -214,12 +226,12 @@ export class AdminAPI {
     return this.get<AdminLLMCall[]>('/api/v1/admin/llm-calls')
   }
 
-  async adminToolCalls(): Promise<AdminToolCall[]> {
-    return this.get<AdminToolCall[]>('/api/v1/admin/tool-calls')
+  async adminToolCalls(limit?: number, offset?: number): Promise<AdminToolCall[]> {
+    return this.get<AdminToolCall[]>(`/api/v1/admin/tool-calls${pageQuery(limit, offset)}`)
   }
 
-  async adminOrders(): Promise<AdminOrder[]> {
-    return this.get<AdminOrder[]>('/api/v1/admin/orders')
+  async adminOrders(limit?: number, offset?: number): Promise<AdminOrder[]> {
+    return this.get<AdminOrder[]>(`/api/v1/admin/orders${pageQuery(limit, offset)}`)
   }
 
   async adminProviders(): Promise<AdminProviderStatus[]> {
@@ -230,8 +242,8 @@ export class AdminAPI {
     return this.get<AdminAgentRun[]>('/api/v1/admin/agent-runs')
   }
 
-  async adminAuditLogs(): Promise<AdminAuditLog[]> {
-    return this.get<AdminAuditLog[]>('/api/v1/admin/audit-logs')
+  async adminAuditLogs(limit?: number, offset?: number): Promise<AdminAuditLog[]> {
+    return this.get<AdminAuditLog[]>(`/api/v1/admin/audit-logs${pageQuery(limit, offset)}`)
   }
 
   private async get<T>(path: string): Promise<T> {

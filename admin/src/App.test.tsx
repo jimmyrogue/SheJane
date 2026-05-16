@@ -235,7 +235,7 @@ function mockFetch(role: 'admin' | 'user') {
     if (url.endsWith('/api/v1/admin/llm-calls')) {
       return jsonResponse({ code: 0, message: 'ok', data: [] })
     }
-    if (url.endsWith('/api/v1/admin/tool-calls')) {
+    if (url.split('?')[0].endsWith('/api/v1/admin/tool-calls')) {
       return jsonResponse({
         code: 0,
         message: 'ok',
@@ -259,7 +259,7 @@ function mockFetch(role: 'admin' | 'user') {
         ],
       })
     }
-    if (url.endsWith('/api/v1/admin/orders')) {
+    if (url.split('?')[0].endsWith('/api/v1/admin/orders')) {
       return jsonResponse({
         code: 0,
         message: 'ok',
@@ -306,7 +306,7 @@ function mockFetch(role: 'admin' | 'user') {
         ],
       })
     }
-    if (url.endsWith('/api/v1/admin/audit-logs')) {
+    if (url.split('?')[0].endsWith('/api/v1/admin/audit-logs')) {
       return jsonResponse({
         code: 0,
         message: 'ok',
