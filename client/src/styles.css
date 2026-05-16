@@ -2753,6 +2753,188 @@ button:active {
   overflow: auto;
 }
 
+/* Fenced code blocks: the inner <code> must not inherit the inline-code
+   chip styling (border/bg/tiny font) — the <pre> already provides the box. */
+.message .message-content pre code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* The base rule applies white-space: pre-wrap to p/ul/ol; hast keeps the
+   newline text nodes between block children (e.g. between <li>s), and
+   pre-wrap renders them as stray blank lines. remark-breaks already turns
+   intended in-paragraph newlines into <br>, so pre-wrap is only needed for
+   fenced code (<pre>) — neutralize it everywhere else. */
+.message .message-content p,
+.message .message-content ul,
+.message .message-content ol,
+.message .message-content li,
+.message .message-content blockquote,
+.message .message-content h1,
+.message .message-content h2,
+.message .message-content h3,
+.message .message-content h4,
+.message .message-content h5,
+.message .message-content h6 {
+  white-space: normal;
+}
+
+/* --- LLM Markdown typography: consistent look regardless of model output --- */
+.message .message-content h1,
+.message .message-content h2,
+.message .message-content h3,
+.message .message-content h4,
+.message .message-content h5,
+.message .message-content h6 {
+  margin: 1.1em 0 0.5em;
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.message .message-content > h1:first-child,
+.message .message-content > h2:first-child,
+.message .message-content > h3:first-child,
+.message .message-content > h4:first-child,
+.message .message-content > h5:first-child,
+.message .message-content > h6:first-child {
+  margin-top: 0;
+}
+
+.message .message-content h1 {
+  font-size: 1.5em;
+}
+
+.message .message-content h2 {
+  font-size: 1.3em;
+}
+
+.message .message-content h3 {
+  font-size: 1.15em;
+}
+
+.message .message-content h4,
+.message .message-content h5,
+.message .message-content h6 {
+  font-size: 1em;
+  color: var(--text-secondary);
+}
+
+.message .message-content ul,
+.message .message-content ol {
+  margin: 0.2em 0;
+  padding-left: 1.25em;
+}
+
+.message .message-content ul {
+  list-style: disc;
+}
+
+.message .message-content ol {
+  list-style: decimal;
+}
+
+.message .message-content li {
+  margin: 0;
+  line-height: 1.45;
+  /* The base rule sets white-space: pre-wrap on markdown blocks; with
+     remark-breaks now handling intended breaks as <br>, pre-wrap only
+     serves to render stray source newlines as blank lines. Collapse it. */
+  white-space: normal;
+}
+
+/* Loose lists (blank lines between items) wrap each item in <p>; fully
+   collapse that wrapper so items are as tight as a plain text line. */
+.message .message-content li > p {
+  margin: 0;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.message .message-content li + li {
+  margin-top: 0.05em;
+}
+
+.message .message-content li > ul,
+.message .message-content li > ol {
+  margin: 0;
+}
+
+/* remark-breaks turns the newline at the end of a line into a <br>; a
+   trailing <br> (e.g. at the end of a list item / paragraph) renders as a
+   stray empty line. Drop it — it's never wanted. */
+.message .message-content li br:last-child,
+.message .message-content p br:last-child {
+  display: none;
+}
+
+.message .message-content li::marker {
+  color: var(--text-tertiary);
+}
+
+.message .message-content li > input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+
+.message .message-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.message .message-content th,
+.message .message-content td {
+  border: 0.5px solid var(--border-hairline);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.message .message-content thead th {
+  background: var(--bg-sidebar);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.message .message-content blockquote {
+  margin: 0.6em 0;
+  border-left: 2px solid var(--border-strong);
+  padding: 0.1em 0 0.1em 0.9em;
+  color: var(--text-secondary);
+}
+
+.message .message-content hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 0.5px solid var(--border-hairline);
+}
+
+.message .message-content strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.message .message-content em {
+  font-style: italic;
+}
+
+.message .message-content a {
+  color: var(--accent-info);
+  text-decoration: none;
+}
+
+.message .message-content a:hover {
+  text-decoration: underline;
+}
+
 .tool-card {
   margin-top: 0;
   border: 0;

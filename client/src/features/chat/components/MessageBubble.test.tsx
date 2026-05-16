@@ -39,6 +39,29 @@ describe('MessageBubble meta', () => {
     expect(container.querySelector('.message-content.is-streaming')).toBeInTheDocument()
   })
 
+  it('treats a single newline as a line break (remark-breaks)', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', status: 'done', content: '第一行\n第二行' })} />
+      </I18nProvider>,
+    )
+    expect(container.querySelector('br')).toBeInTheDocument()
+    const paragraphText = container.querySelector('p')?.textContent ?? ''
+    expect(paragraphText).toContain('第一行')
+    expect(paragraphText).toContain('第二行')
+  })
+
+  it('normalizes ad-hoc heading levels on the finished message', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', status: 'done', content: '### 标题\n正文' })} />
+      </I18nProvider>,
+    )
+    // remark-normalize-headings (finished path) rebalances a lone `###` to h1.
+    expect(container.querySelector('h1')?.textContent).toBe('标题')
+    expect(container.querySelector('h3')).not.toBeInTheDocument()
+  })
+
   it('drops the streaming caret once the message is done', () => {
     const { container } = render(
       <I18nProvider>

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
+import remarkNormalizeHeadings from 'remark-normalize-headings'
 import { IconCheck, IconCopy } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
@@ -107,7 +109,7 @@ export function MessageBubble({
               <p className="whitespace-pre-wrap break-words">{waitingText}</p>
             ) : null
           ) : (
-            <MarkdownContent content={content} />
+            <MarkdownContent content={content} normalizeHeadings />
           )}
         </div>
         {children}
@@ -130,13 +132,20 @@ export function MessageBubble({
   )
 }
 
-function MarkdownContent({ content }: { content: string }) {
+function MarkdownContent({ content, normalizeHeadings = false }: { content: string; normalizeHeadings?: boolean }) {
   if (!content) {
     return null
   }
+  // remark-breaks: a single newline becomes a line break (LLMs emit single
+  // newlines as paragraph separators; CommonMark would otherwise merge them).
+  // remark-normalize-headings: rebalance ad-hoc heading levels — finished
+  // content only, so streaming headings don't jump as more arrive.
+  const remarkPlugins = normalizeHeadings
+    ? [remarkGfm, remarkBreaks, remarkNormalizeHeadings]
+    : [remarkGfm, remarkBreaks]
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={remarkPlugins}
       components={{
         a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
       }}
