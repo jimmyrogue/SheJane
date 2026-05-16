@@ -40,6 +40,7 @@ import {
   resolveLocalPermission,
   setLocalCloudSession,
   streamLocalRun,
+  type AgentSettings,
   type LocalArtifact,
   type LocalCloudSession,
   type LocalHostConfig,
@@ -55,6 +56,8 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
+const agentSettingsStorageKey = 'jiandanly.agentSettings.v1'
+const defaultAgentSettings: Required<AgentSettings> = { memory: 'off' }
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
 const maxSidebarWidth = 340
@@ -116,6 +119,30 @@ function writeSidebarWidth(width: number) {
   }
 }
 
+function readAgentSettings(): Required<AgentSettings> {
+  if (typeof window === 'undefined') {
+    return { ...defaultAgentSettings }
+  }
+  try {
+    const raw = window.localStorage.getItem(agentSettingsStorageKey)
+    if (!raw) {
+      return { ...defaultAgentSettings }
+    }
+    const parsed = JSON.parse(raw) as Partial<AgentSettings>
+    return { memory: parsed.memory === 'on' ? 'on' : 'off' }
+  } catch {
+    return { ...defaultAgentSettings }
+  }
+}
+
+function writeAgentSettings(settings: Required<AgentSettings>) {
+  try {
+    window.localStorage.setItem(agentSettingsStorageKey, JSON.stringify(settings))
+  } catch {
+    // Local storage can be unavailable in restricted browser contexts.
+  }
+}
+
 export function App() {
   return (
     <I18nProvider>
@@ -151,6 +178,7 @@ function AppContent() {
   const [isUploading, setIsUploading] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
+  const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
@@ -482,6 +510,7 @@ function AppContent() {
           workspacePath: conversation.workspace?.path.trim() || undefined,
           history: deriveAgentHistory(priorMessages),
           parentRunId,
+          settings: agentSettings,
         },
         localHostConfig,
       )
@@ -997,6 +1026,11 @@ function AppContent() {
             onCollapseSidebar={collapseSidebar}
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
+            }}
+            agentSettings={agentSettings}
+            onAgentSettingsChange={(next) => {
+              setAgentSettings(next)
+              writeAgentSettings(next)
             }}
           />
 

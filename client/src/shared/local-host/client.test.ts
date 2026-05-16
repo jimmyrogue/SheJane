@@ -88,6 +88,34 @@ describe('desktop local host client', () => {
     )
   })
 
+  it('carries per-run agent settings in the run-create payload', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-settings',
+          goal: 'Remember things',
+          status: 'queued',
+          created_at: '2026-05-16T00:00:00Z',
+          updated_at: '2026-05-16T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await createLocalRun(
+      { goal: 'Remember things', settings: { memory: 'on' } },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs',
+      expect.objectContaining({
+        body: JSON.stringify({ goal: 'Remember things', history: [], settings: { memory: 'on' } }),
+      }),
+    )
+  })
+
   it('sets and clears the Local Host cloud session through protected APIs', async () => {
     const fetcher = vi
       .fn()

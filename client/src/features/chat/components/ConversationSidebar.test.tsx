@@ -140,6 +140,38 @@ describe('ConversationSidebar', () => {
     expect(await screen.findByText('本月余额 800/1,000')).toBeInTheDocument()
     expect(screen.getByText('额外额度 50')).toBeInTheDocument()
   })
+
+  it('toggles the memory agent setting from the account menu dialog', async () => {
+    const onAgentSettingsChange = vi.fn()
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onAddConversationToProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          agentSettings={{ memory: 'off' }}
+          onAgentSettingsChange={onAgentSettingsChange}
+        />
+      </I18nProvider>,
+    )
+
+    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByText('Agent 设置'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '开启' }))
+    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on' })
+  })
 })
 
 function openConversationActions(title: string) {

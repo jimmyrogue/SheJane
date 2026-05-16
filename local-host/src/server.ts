@@ -16,6 +16,7 @@ import {
   type LocalRunDiagnostics,
   type PermissionRequest,
   type LocalRun,
+  type LocalRunSettings,
   type UserQuestionItem,
   type StoredHarnessMessage,
   type SerializedArtifact,
@@ -177,7 +178,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
   }
 
   if (request.method === 'POST' && url.pathname === '/local/v1/runs') {
-    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown; history?: unknown; parent_run_id?: unknown; parentRunId?: unknown }>(request)
+    const body = await readJSONBody<{ goal?: unknown; workspace_path?: unknown; workspacePath?: unknown; history?: unknown; parent_run_id?: unknown; parentRunId?: unknown; settings?: unknown }>(request)
     const goal = typeof body.goal === 'string' ? body.goal.trim() : ''
     if (!goal) {
       writeJSON(response, 400, { error: 'goal_required' })
@@ -203,12 +204,14 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       })
       return
     }
-    const run = options.store.createRun({ goal, workspacePath, history, parentRunId })
+    const settings = sanitizeRunSettings(body.settings)
+    const run = options.store.createRun({ goal, workspacePath, history, parentRunId, settings })
     options.store.appendEvent(run.id, 'run.created', {
       goal,
       workspace_path: workspacePath,
       history_messages: history?.length ?? 0,
       parent_run_id: parentRunId ?? null,
+      settings: settings ?? null,
     })
     writeJSON(response, 201, serializeRun(run, options.store.countEvents(run.id)))
     return
@@ -524,6 +527,18 @@ async function readJSONBody<T>(request: IncomingMessage): Promise<T> {
 const MAX_HISTORY_MESSAGES = 40
 const MAX_HISTORY_MESSAGE_CHARS = 8000
 const MAX_HISTORY_TOTAL_CHARS = 24000
+
+function sanitizeRunSettings(raw: unknown): LocalRunSettings | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined
+  }
+  const memory = (raw as Record<string, unknown>).memory
+  const settings: LocalRunSettings = {}
+  if (memory === 'on' || memory === 'off') {
+    settings.memory = memory
+  }
+  return Object.keys(settings).length > 0 ? settings : undefined
+}
 
 function sanitizeRunHistory(raw: unknown): StoredHarnessMessage[] | undefined {
   if (!Array.isArray(raw)) {

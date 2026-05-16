@@ -153,16 +153,28 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
   }
 }
 
+/**
+ * User-configurable per-run agent settings. Sent with every run-create request
+ * and applied by local-host (overriding its env defaults). Open-ended shape so
+ * more knobs can be surfaced later; only `memory` is exposed today.
+ */
+export interface AgentSettings {
+  memory?: 'off' | 'on'
+}
+
 export async function createLocalRun(
   input: {
     goal: string
     workspacePath?: string
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
     parentRunId?: string
+    settings?: AgentSettings
   },
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
 ): Promise<LocalRun> {
+  const settings =
+    input.settings && Object.keys(input.settings).length > 0 ? input.settings : undefined
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
     method: 'POST',
     headers: localHeaders(config, true),
@@ -171,6 +183,7 @@ export async function createLocalRun(
       workspace_path: input.workspacePath || undefined,
       history: input.history ?? [],
       parent_run_id: input.parentRunId || undefined,
+      settings,
     }),
   })
   return decodeLocalResponse<LocalRun>(response)

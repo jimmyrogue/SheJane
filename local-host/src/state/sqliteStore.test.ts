@@ -82,6 +82,20 @@ describe('SQLiteLocalHostStore phase 2.5 persistence', () => {
     expect(reopened.searchMemoryTopics('live fresh', 5)[0]?.expiresAt).toBe(slid)
     reopened.close()
   })
+
+  it('persists per-run agent settings across restarts and tolerates legacy rows', async () => {
+    const dir = await tempDir()
+    const dbPath = join(dir, 'run-settings.db')
+    const store = new SQLiteLocalHostStore(dbPath)
+    const withSettings = store.createRun({ goal: 'Configured run', settings: { memory: 'on' } })
+    const noSettings = store.createRun({ goal: 'Legacy run' })
+    store.close()
+
+    const reopened = new SQLiteLocalHostStore(dbPath)
+    expect(reopened.getRun(withSettings.id)?.settings).toEqual({ memory: 'on' })
+    expect(reopened.getRun(noSettings.id)?.settings).toBeUndefined()
+    reopened.close()
+  })
 })
 
 async function tempDir(): Promise<string> {

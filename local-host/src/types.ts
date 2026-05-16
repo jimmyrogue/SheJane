@@ -21,11 +21,22 @@ export interface ToolDefinition {
   permissionPolicy: PermissionPolicy
 }
 
+/**
+ * Per-run agent settings carried from the client (overrides process.env, which
+ * itself overrides built-in defaults). Persisted on the run so it survives
+ * pause/resume/restart. Only `memory` is wired today; the shape is open so
+ * more knobs can be surfaced later without a schema change.
+ */
+export interface LocalRunSettings {
+  memory?: 'off' | 'on'
+}
+
 export interface LocalRun {
   id: string
   goal: string
   workspacePath?: string
   status: RunStatus
+  settings?: LocalRunSettings
   createdAt: string
   updatedAt: string
   completedAt?: string
@@ -243,7 +254,7 @@ export interface LocalHostStore {
   listAuthorizedWorkspaces(): WorkspaceAuthorization[]
   findAuthorizedWorkspace(path: string): WorkspaceAuthorization | undefined
   revokeWorkspace(id: string): WorkspaceAuthorization | undefined
-  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string }): LocalRun
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string; settings?: LocalRunSettings }): LocalRun
   listRuns(limit?: number): LocalRun[]
   getRun(id: string): LocalRun | undefined
   updateRunWorkspace(id: string, workspacePath: string): LocalRun | undefined

@@ -8,6 +8,7 @@ import type {
   LocalHostStore,
   LocalMemoryEntry,
   LocalRun,
+  LocalRunSettings,
   LocalUserQuestion,
   MemoryKind,
   PermissionDecision,
@@ -62,7 +63,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
     return workspace
   }
 
-  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string }): LocalRun {
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string; settings?: LocalRunSettings }): LocalRun {
     const now = new Date().toISOString()
     const run: LocalRun = {
       id: randomUUID(),
@@ -73,6 +74,7 @@ export class InMemoryLocalHostStore implements LocalHostStore {
       updatedAt: now,
       history: input.history && input.history.length > 0 ? input.history : undefined,
       parentRunId: input.parentRunId || undefined,
+      settings: input.settings,
     }
     this.runs.set(run.id, run)
     this.events.set(run.id, [])

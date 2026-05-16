@@ -10,6 +10,7 @@ import type {
   LocalHostStore,
   LocalMemoryEntry,
   LocalRun,
+  LocalRunSettings,
   LocalUserQuestion,
   MemoryKind,
   PermissionDecision,
@@ -36,6 +37,7 @@ interface RunRow {
   canceled_at: string | null
   history: string | null
   parent_run_id: string | null
+  settings_json: string | null
 }
 
 interface EventRow {
@@ -213,6 +215,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     ensureColumn(this.db, 'local_permissions', 'scope', "TEXT NOT NULL DEFAULT 'once'")
     ensureColumn(this.db, 'local_runs', 'history', 'TEXT')
     ensureColumn(this.db, 'local_runs', 'parent_run_id', 'TEXT')
+    ensureColumn(this.db, 'local_runs', 'settings_json', 'TEXT')
     ensureColumn(this.db, 'local_memory', 'expires_at', 'TEXT')
   }
 
@@ -258,10 +261,11 @@ export class SQLiteLocalHostStore implements LocalHostStore {
     return deserializeWorkspace(row)
   }
 
-  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string }): LocalRun {
+  createRun(input: { goal: string; workspacePath?: string; history?: StoredHarnessMessage[]; parentRunId?: string; settings?: LocalRunSettings }): LocalRun {
     const now = new Date().toISOString()
     const history = input.history && input.history.length > 0 ? input.history : undefined
     const parentRunId = input.parentRunId || undefined
+    const settings = input.settings && Object.keys(input.settings).length > 0 ? input.settings : undefined
     const run: LocalRun = {
       id: randomUUID(),
       goal: input.goal,
@@ -271,11 +275,12 @@ export class SQLiteLocalHostStore implements LocalHostStore {
       updatedAt: now,
       history,
       parentRunId,
+      settings,
     }
     this.db
       .prepare(
-        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at, history, parent_run_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO local_runs (id, goal, workspace_path, status, created_at, updated_at, history, parent_run_id, settings_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         run.id,
@@ -286,6 +291,7 @@ export class SQLiteLocalHostStore implements LocalHostStore {
         run.updatedAt,
         history ? JSON.stringify(history) : null,
         parentRunId ?? null,
+        settings ? JSON.stringify(settings) : null,
       )
     return run
   }
@@ -599,6 +605,23 @@ function deserializeRun(row: RunRow): LocalRun {
     canceledAt: row.canceled_at ?? undefined,
     history: parseRunHistory(row.history),
     parentRunId: row.parent_run_id ?? undefined,
+    settings: parseRunSettings(row.settings_json),
+  }
+}
+
+function parseRunSettings(raw: string | null | undefined): LocalRunSettings | undefined {
+  if (!raw) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') {
+      return undefined
+    }
+    const memory = (parsed as Record<string, unknown>).memory
+    return memory === 'on' || memory === 'off' ? { memory } : undefined
+  } catch {
+    return undefined
   }
 }
 

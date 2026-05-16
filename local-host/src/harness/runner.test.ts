@@ -3513,6 +3513,42 @@ describe('on-demand memory + TTL (Phase 6)', () => {
     const refreshed = new Date(store.searchMemoryTopics('bazel build tool', 5)[0].expiresAt!).getTime()
     expect(refreshed).toBeGreaterThan(new Date(soon).getTime())
   })
+
+  it('per-run settings memory:on enables write-back + advertises memory.search even with env unset', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Remember my stack.', settings: { memory: 'on' } })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'main', content: 'Noted.' },
+      {
+        requestId: 'extract',
+        content:
+          '{"memories":[{"title":"Stack","summary":"Go + React","content":"User stack is Go + React","permanent":false}]}',
+      },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'memory.search')).toBe(true)
+    expect(store.listEvents(run.id).find((e) => e.eventType === 'memory.write.saved')).toBeDefined()
+    expect(store.searchMemoryTopics('stack go react', 5)).toHaveLength(1)
+  })
+
+  it('per-run settings memory:off overrides JIANDANLY_LOCAL_MEMORY_WRITE=auto from env', async () => {
+    process.env.JIANDANLY_LOCAL_MEMORY_WRITE = 'auto'
+    process.env.JIANDANLY_LOCAL_MEMORY_RECALL = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Do not remember this.', settings: { memory: 'off' } })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'main', content: 'Done.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(1) // no extraction call
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'memory.search')).toBe(false)
+    expect(store.listEvents(run.id).some((e) => e.eventType.startsWith('memory.'))).toBe(false)
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
 })
 
 class ScriptedGateway implements LLMGateway {

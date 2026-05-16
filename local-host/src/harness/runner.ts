@@ -369,12 +369,34 @@ function resolvedPlanningModel(_options: HarnessRunOptions): string {
 
 type MemoryMode = 'off' | 'auto'
 
-function resolvedMemoryRecallMode(_options: HarnessRunOptions): MemoryMode {
-  return process.env.JIANDANLY_LOCAL_MEMORY_RECALL?.trim().toLowerCase() === 'auto' ? 'auto' : 'off'
+/**
+ * Per-run client setting (persisted on the run, so it survives
+ * pause/resume/restart) takes precedence over process.env, which itself falls
+ * back to the built-in default. `undefined` => not set by the user => env path.
+ */
+function memorySettingMode(options: HarnessRunOptions): MemoryMode | undefined {
+  const memory = options.run.settings?.memory
+  if (memory === 'on') {
+    return 'auto'
+  }
+  if (memory === 'off') {
+    return 'off'
+  }
+  return undefined
 }
 
-function resolvedMemoryWriteMode(_options: HarnessRunOptions): MemoryMode {
-  return process.env.JIANDANLY_LOCAL_MEMORY_WRITE?.trim().toLowerCase() === 'auto' ? 'auto' : 'off'
+function resolvedMemoryRecallMode(options: HarnessRunOptions): MemoryMode {
+  return (
+    memorySettingMode(options) ??
+    (process.env.JIANDANLY_LOCAL_MEMORY_RECALL?.trim().toLowerCase() === 'auto' ? 'auto' : 'off')
+  )
+}
+
+function resolvedMemoryWriteMode(options: HarnessRunOptions): MemoryMode {
+  return (
+    memorySettingMode(options) ??
+    (process.env.JIANDANLY_LOCAL_MEMORY_WRITE?.trim().toLowerCase() === 'auto' ? 'auto' : 'off')
+  )
 }
 
 function resolvedMemoryTtlDays(_options: HarnessRunOptions): number {

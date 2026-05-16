@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  IconAdjustmentsHorizontal,
   IconChevronDown,
   IconDots,
   IconDownload,
@@ -51,6 +52,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { useI18n, formatRelativeTime, type Translator } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
+import type { AgentSettings } from '@/shared/local-host/client'
 import type { Conversation } from '@/shared/local-data/types'
 
 type ConversationSidebarStatus = 'needs_attention' | 'running'
@@ -72,6 +74,8 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
+  agentSettings,
+  onAgentSettingsChange,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -87,6 +91,8 @@ export function ConversationSidebar({
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
   onLogout?: () => void
+  agentSettings?: Required<AgentSettings>
+  onAgentSettingsChange?: (next: Required<AgentSettings>) => void
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -98,6 +104,8 @@ export function ConversationSidebar({
   const [seenConversationVersions, setSeenConversationVersions] = useState<Record<string, string>>(readSeenConversationVersions)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const memoryEnabled = (agentSettings?.memory ?? 'off') === 'on'
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const projectConversation = conversations.find((conversation) => conversation.id === projectConversationID)
@@ -347,6 +355,16 @@ export function ConversationSidebar({
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              setSettingsOpen(true)
+            }}
+          >
+            <IconAdjustmentsHorizontal />
+            <span>{t('sidebar.account.agentSettings')}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
               setLocale(locale === 'zh' ? 'en' : 'zh')
             }}
           >
@@ -376,6 +394,45 @@ export function ConversationSidebar({
           event.currentTarget.value = ''
         }}
       />
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{t('sidebar.agentSettings.title')}</DialogTitle>
+            <DialogDescription>{t('sidebar.agentSettings.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="agent-settings-row">
+            <div className="agent-settings-copy">
+              <div className="agent-settings-label">{t('sidebar.agentSettings.memory.label')}</div>
+              <div className="agent-settings-hint">{t('sidebar.agentSettings.memory.hint')}</div>
+            </div>
+            <div className="agent-settings-segment" role="group" aria-label={t('sidebar.agentSettings.memory.label')}>
+              <Button
+                type="button"
+                variant={memoryEnabled ? 'ghost' : 'default'}
+                className="agent-settings-segment-btn"
+                aria-pressed={!memoryEnabled}
+                onClick={() => onAgentSettingsChange?.({ ...(agentSettings ?? { memory: 'off' }), memory: 'off' })}
+              >
+                {t('sidebar.agentSettings.off')}
+              </Button>
+              <Button
+                type="button"
+                variant={memoryEnabled ? 'default' : 'ghost'}
+                className="agent-settings-segment-btn"
+                aria-pressed={memoryEnabled}
+                onClick={() => onAgentSettingsChange?.({ ...(agentSettings ?? { memory: 'off' }), memory: 'on' })}
+              >
+                {t('sidebar.agentSettings.on')}
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setSettingsOpen(false)}>
+              {t('sidebar.agentSettings.done')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(renameConversation)} onOpenChange={(open) => !open && setRenameConversationID(undefined)}>
         <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
           <DialogHeader>

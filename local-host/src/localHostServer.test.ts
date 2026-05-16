@@ -109,6 +109,30 @@ describe('local host daemon foundation', () => {
     })
   })
 
+  it('persists whitelisted per-run settings and drops invalid values', async () => {
+    const baseURL = await startServer()
+
+    const ok = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Remember stuff.', settings: { memory: 'on' } }),
+    })
+    const okRun = await ok.json()
+    const okStream = await fetch(`${baseURL}/local/v1/runs/${okRun.id}/stream`, { headers: authHeaders() })
+    const okCreated = parseSSE(await okStream.text()).find((event) => event.event_type === 'run.created')
+    expect(okCreated?.payload).toMatchObject({ settings: { memory: 'on' } })
+
+    const bad = await fetch(`${baseURL}/local/v1/runs`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: 'Bogus settings.', settings: { memory: 'sometimes', evil: true } }),
+    })
+    const badRun = await bad.json()
+    const badStream = await fetch(`${baseURL}/local/v1/runs/${badRun.id}/stream`, { headers: authHeaders() })
+    const badCreated = parseSSE(await badStream.text()).find((event) => event.event_type === 'run.created')
+    expect(badCreated?.payload).toMatchObject({ settings: null })
+  })
+
   it('keeps cancellation recoverable and replays cancel events', async () => {
     const baseURL = await startServer()
     const created = await fetch(`${baseURL}/local/v1/runs`, {
