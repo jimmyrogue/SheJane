@@ -26,7 +26,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import {
   Sidebar,
   SidebarContent,
@@ -45,7 +44,7 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AdminAPI,
@@ -351,7 +350,10 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     <SidebarProvider>
       <Sidebar variant="inset" collapsible="icon">
         <SidebarHeader>
-          <BrandBlock compact subtitle={auth.user.email} />
+          <div className="flex items-center justify-between gap-2">
+            <BrandBlock compact subtitle={auth.user.email} />
+            <SidebarTrigger className="size-7 shrink-0 text-muted-foreground" />
+          </div>
         </SidebarHeader>
         <SidebarSeparator />
         <SidebarContent>
@@ -383,8 +385,6 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
       <SidebarInset>
         <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <SidebarTrigger />
-            <Separator orientation="vertical" className="h-5" />
             <div className="min-w-0">
               <h1 className="truncate text-lg font-semibold tracking-normal">管理后台</h1>
               <p className="truncate text-sm text-muted-foreground">用户、额度、订单和模型状态的独立管理面板</p>
@@ -398,17 +398,6 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
         <main className="flex flex-1 flex-col p-4 md:p-6">
           <Tabs value={activeSection} onValueChange={switchSection} className="flex flex-1 flex-col gap-4 md:gap-6">
-            <div className="overflow-x-auto">
-              <TabsList variant="line" className="min-w-max justify-start">
-                {navItems.map((item) => (
-                  <TabsTrigger key={item.id} value={item.id}>
-                    <item.icon />
-                    {item.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </div>
-
             {notice ? (
               <Alert>
                 <ShieldCheck className="size-4" />

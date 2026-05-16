@@ -135,10 +135,12 @@ describe('admin web app', () => {
 })
 
 function selectAdminTab(name: string) {
-  const tab = screen.getByRole('tab', { name })
-  fireEvent.pointerDown(tab)
-  fireEvent.mouseDown(tab)
-  fireEvent.click(tab)
+  // Navigation lives only in the sidebar now (the duplicated in-content tab
+  // bar was removed); click the sidebar menu button.
+  const item = screen.getByRole('button', { name })
+  fireEvent.pointerDown(item)
+  fireEvent.mouseDown(item)
+  fireEvent.click(item)
 }
 
 function mockFetch(role: 'admin' | 'user') {
