@@ -43,6 +43,8 @@ server.listen(port, host, () => {
         local_max_steps: process.env.JIANDANLY_LOCAL_MAX_STEPS ?? 'unlimited',
         local_step_warning_interval: process.env.JIANDANLY_LOCAL_STEP_WARNING_INTERVAL ?? '20',
         local_input_guard: process.env.JIANDANLY_LOCAL_INPUT_GUARD ?? 'off',
+        local_tool_retry: process.env.JIANDANLY_LOCAL_TOOL_RETRY ?? '0',
+        local_tool_failure_limit: process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT ?? '0',
         cloud_tool_gateway: cloudSession.state().connected ? 'session' : 'requires_login',
         cloud_base_url: cloudBaseURL ?? 'http://localhost:8080',
       }),

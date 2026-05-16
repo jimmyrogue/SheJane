@@ -2,9 +2,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runHarness } from './runner.js'
+import { runHarness, classifyToolError } from './runner.js'
 import { InMemoryLocalHostStore } from '../state/memoryStore.js'
 import type { LLMGateway, LLMGatewayRequest, LLMGatewayResponse } from '../llm/gateway.js'
+import type { ToolExecutionResult } from '../tools/executor.js'
 
 const tempDirs: string[] = []
 
@@ -15,6 +16,9 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_HOST_DEBUG
   delete process.env.TAVILY_API_KEY
   delete process.env.JIANDANLY_LOCAL_INPUT_GUARD
+  delete process.env.JIANDANLY_LOCAL_TOOL_RETRY
+  delete process.env.JIANDANLY_LOCAL_TOOL_RETRY_BASE_MS
+  delete process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT
 })
 
 const webSearchCapability = {
@@ -2752,6 +2756,134 @@ describe('input safety guard (Phase 1)', () => {
     const failed = store.listEvents(run.id).find((event) => event.eventType === 'run.failed')
     expect(failed?.payload.error_code).toBe('input_guard_blocked')
     expect(store.getRun(run.id)?.status).toBe('failed')
+  })
+})
+
+describe('exception handling & recovery (Phase 2)', () => {
+  const search = (id: string) => ({
+    requestId: id,
+    toolCalls: [{ id: `${id}-call`, name: 'web.search', arguments: { query: 'today news' } }],
+  })
+
+  function scriptedCloud(results: ToolExecutionResult[]) {
+    let index = 0
+    return {
+      capabilities: async () => webSearchCapability,
+      execute: async (): Promise<ToolExecutionResult> => {
+        const result = results[Math.min(index, results.length - 1)]
+        index += 1
+        return result
+      },
+    }
+  }
+
+  const timeoutFail: ToolExecutionResult = {
+    ok: false,
+    content: 'request timed out',
+    errorCode: 'timeout',
+    recoverable: true,
+  }
+  const okResult: ToolExecutionResult = {
+    ok: true,
+    content: 'fresh results',
+    data: { source: 'web.search' },
+  }
+  const persistentFail: ToolExecutionResult = {
+    ok: false,
+    content: 'bad request',
+    errorCode: 'provider_error',
+    recoverable: true,
+  }
+
+  it('classifyToolError: side-effecting tools are never auto-retried even on transient errors', () => {
+    expect(classifyToolError(timeoutFail, 'file.write')).toBe('side_effect_sensitive')
+    expect(classifyToolError(timeoutFail, 'web.search')).toBe('transient')
+    expect(classifyToolError(persistentFail, 'web.search')).toBe('persistent')
+  })
+
+  it('does NOT retry by default (env unset): zero behaviour change', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me the latest tech headline.' })
+    const gateway = new ScriptedGateway([search('s1'), { requestId: 'final', content: 'Answer.' }])
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: { cloudToolGateway: scriptedCloud([timeoutFail]) } as any,
+    })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).not.toContain('tool.retry')
+    expect(eventTypes).toContain('tool.failed')
+  })
+
+  it('retries a transient failure with backoff and succeeds', async () => {
+    process.env.JIANDANLY_LOCAL_TOOL_RETRY = '2'
+    process.env.JIANDANLY_LOCAL_TOOL_RETRY_BASE_MS = '0'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me the latest tech headline.' })
+    const gateway = new ScriptedGateway([search('s1'), { requestId: 'final', content: 'Answer.' }])
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: { cloudToolGateway: scriptedCloud([timeoutFail, okResult]) } as any,
+    })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('tool.retry')
+    expect(eventTypes).toContain('tool.completed')
+    expect(eventTypes).not.toContain('tool.failed')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('annotates the failure with retried/error_class when retries are exhausted', async () => {
+    process.env.JIANDANLY_LOCAL_TOOL_RETRY = '1'
+    process.env.JIANDANLY_LOCAL_TOOL_RETRY_BASE_MS = '0'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me the latest tech headline.' })
+    const gateway = new ScriptedGateway([search('s1'), { requestId: 'final', content: 'Best effort answer.' }])
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: { cloudToolGateway: scriptedCloud([timeoutFail]) } as any,
+    })
+
+    const failed = store.listEvents(run.id).find((event) => event.eventType === 'tool.failed')
+    expect(failed?.payload.retried).toBe(1)
+    expect(failed?.payload.error_class).toBe('transient')
+  })
+
+  it('M4 circuit breaker emits one nudge after repeated identical failures', async () => {
+    process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT = '2'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me the latest tech headline.' })
+    const gateway = new ScriptedGateway([
+      search('s1'),
+      search('s2'),
+      { requestId: 'final', content: 'Giving up and answering from context.' },
+    ])
+
+    await runHarness({
+      run,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      toolOptions: { cloudToolGateway: scriptedCloud([persistentFail]) } as any,
+    })
+
+    const circuit = store.listEvents(run.id).filter((event) => event.eventType === 'run.tool_failure_circuit')
+    expect(circuit).toHaveLength(1)
+    expect(circuit[0].payload.tool).toBe('web.search')
+    expect(circuit[0].payload.failures).toBeGreaterThanOrEqual(2)
+    expect(store.getRun(run.id)?.status).toBe('completed')
   })
 })
 

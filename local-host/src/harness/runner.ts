@@ -247,6 +247,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
   const stepWarningInterval = resolvedStepWarningInterval(options)
   let researchPolicyBlocks = 0
   let clarificationNudges = 0
+  const circuitNudged = new Set<string>()
 
   for (let step = startStep; maxSteps === undefined || step < maxSteps; step += 1) {
     if (isRunCanceled(options, run.id)) {
@@ -410,6 +411,7 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
       }
       index += batch.length
     }
+    maybeCircuitBreak(options, messages, run.id, circuitNudged)
     if (shouldFinalizeResearch) {
       await finalizeAfterResearchPolicyBlocks(options, gateway, run, messages, researchPolicyBlocks, step + 1)
       return
@@ -876,8 +878,134 @@ function shouldNudgeToUserAsk(options: HarnessRunOptions, content: string): bool
 async function executeAndAppend(options: HarnessRunOptions, call: LLMToolCall, run: LocalRun): Promise<HarnessMessage> {
   append(options, 'tool.started', { tool: call.name, tool_call_id: call.id })
   const toolOptions = options.toolOptions ?? (options.toolOptions = {})
-  const result = call.name === 'workspace.open' ? await openWorkspace(options, call, run) : await executeTool(call, run, toolOptions)
-  return appendToolResult(options, call, run, result)
+  const runOnce = (): Promise<ToolExecutionResult> =>
+    call.name === 'workspace.open' ? openWorkspace(options, call, run) : executeTool(call, run, toolOptions)
+
+  // Phase 2 — bounded retry with exponential backoff for transient errors only.
+  // Side-effecting / non-idempotent tools are never auto-retried (Ch.12: do not
+  // blindly repeat an action that may have already had an effect). Default
+  // JIANDANLY_LOCAL_TOOL_RETRY=0 => no retries, behaviour unchanged.
+  const maxRetries = resolvedToolRetry(options)
+  let result = await runOnce()
+  let retried = 0
+  while (!result.ok && retried < maxRetries && classifyToolError(result, call.name) === 'transient') {
+    retried += 1
+    const delayMs = retryDelayMs(retried)
+    append(options, 'tool.retry', {
+      tool: call.name,
+      tool_call_id: call.id,
+      attempt: retried,
+      max_retries: maxRetries,
+      delay_ms: delayMs,
+      error_code: result.errorCode ?? 'tool_failed',
+    })
+    if (delayMs > 0) {
+      await delay(delayMs)
+    }
+    result = await runOnce()
+  }
+  const errorClass = result.ok ? undefined : classifyToolError(result, call.name)
+  return appendToolResult(options, call, run, result, { retried, errorClass })
+}
+
+/**
+ * Phase 2 — classify a failed tool result for recovery routing.
+ * Exported for unit testing.
+ */
+export function classifyToolError(
+  result: ToolExecutionResult,
+  toolName: string,
+): 'transient' | 'persistent' | 'side_effect_sensitive' {
+  const definition = localHostTools.find((tool) => tool.name === toolName)
+  if (definition && (definition.isDestructive || !definition.isReadOnly)) {
+    return 'side_effect_sensitive'
+  }
+  const code = (result.errorCode ?? '').toLowerCase()
+  const message = (result.content ?? '').toLowerCase()
+  const haystack = `${code} ${message}`
+  const transient =
+    /(timeout|timed out|etimedout|econnreset|econnrefused|enetunreach|eai_again|socket hang up|network error|fetch failed|temporarily unavailable|rate.?limit|too many requests|\b429\b|\b50[0-9]\b|service unavailable|bad gateway|gateway timeout)/
+  if (transient.test(haystack)) {
+    return 'transient'
+  }
+  const browserStatus = typeof result.data?.observation_status === 'string' ? result.data.observation_status : undefined
+  if (browserStatus === 'http_error' && /\b5\d\d\b/.test(message)) {
+    return 'transient'
+  }
+  return 'persistent'
+}
+
+function resolvedToolRetry(_options: HarnessRunOptions): number {
+  const raw = process.env.JIANDANLY_LOCAL_TOOL_RETRY?.trim()
+  if (!raw) {
+    return 0
+  }
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 10) : 0
+}
+
+function retryDelayMs(attempt: number): number {
+  const raw = process.env.JIANDANLY_LOCAL_TOOL_RETRY_BASE_MS?.trim()
+  const base = raw !== undefined && raw !== '' ? Number(raw) : 250
+  if (!Number.isFinite(base) || base <= 0) {
+    return 0
+  }
+  const exponential = Math.min(base * 2 ** (attempt - 1), 2000)
+  return Math.round(exponential + Math.random() * Math.min(base, 250))
+}
+
+function resolvedToolFailureLimit(_options: HarnessRunOptions): number {
+  const raw = process.env.JIANDANLY_LOCAL_TOOL_FAILURE_LIMIT?.trim()
+  if (!raw) {
+    return 0
+  }
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 50) : 0
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Phase 2 M4 — repeated-failure circuit breaker. When the same tool keeps
+ * failing with the same error code, inject ONE system nudge (per tool:code,
+ * per loop entry) telling the model to change approach or finalize, so a
+ * naive retry loop cannot run forever (Ch.12). Counts from persisted
+ * tool.failed events, so it survives pause/resume. Default limit 0 => off.
+ */
+function maybeCircuitBreak(
+  options: HarnessRunOptions,
+  messages: HarnessMessage[],
+  runID: string,
+  nudged: Set<string>,
+): void {
+  const limit = resolvedToolFailureLimit(options)
+  if (limit <= 0) {
+    return
+  }
+  const counts = new Map<string, number>()
+  for (const event of options.store.listEvents(runID)) {
+    if (event.eventType !== 'tool.failed') {
+      continue
+    }
+    const tool = typeof event.payload.tool === 'string' ? event.payload.tool : 'unknown'
+    const errorCode = typeof event.payload.error_code === 'string' ? event.payload.error_code : 'tool_failed'
+    const key = `${tool} :: ${errorCode}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  for (const [key, count] of counts) {
+    if (count < limit || nudged.has(key)) {
+      continue
+    }
+    nudged.add(key)
+    const [tool, errorCode] = key.split(' :: ')
+    append(options, 'run.tool_failure_circuit', { tool, error_code: errorCode, failures: count })
+    messages.push({
+      role: 'system',
+      content: `The tool "${tool}" has failed ${count} times with error "${errorCode}". Stop calling this tool. Either switch to a different tool or approach, or produce the best final answer from the observations already gathered.`,
+    })
+  }
 }
 
 function appendSyntheticToolResult(options: HarnessRunOptions, call: LLMToolCall, run: LocalRun, result: ToolExecutionResult): HarnessMessage {
@@ -885,7 +1013,13 @@ function appendSyntheticToolResult(options: HarnessRunOptions, call: LLMToolCall
   return appendToolResult(options, call, run, result)
 }
 
-function appendToolResult(options: HarnessRunOptions, call: LLMToolCall, run: LocalRun, result: ToolExecutionResult): HarnessMessage {
+function appendToolResult(
+  options: HarnessRunOptions,
+  call: LLMToolCall,
+  run: LocalRun,
+  result: ToolExecutionResult,
+  recovery: { retried?: number; errorClass?: string } = {},
+): HarnessMessage {
   if (result.ok) {
     if (result.artifact) {
       const artifact = options.store.createArtifact({
@@ -980,6 +1114,8 @@ function appendToolResult(options: HarnessRunOptions, call: LLMToolCall, run: Lo
       error_code: result.errorCode ?? 'tool_failed',
       recoverable: result.recoverable ?? true,
       message: result.content,
+      ...(recovery.retried ? { retried: recovery.retried } : {}),
+      ...(recovery.errorClass ? { error_class: recovery.errorClass } : {}),
     })
   }
   appendVerification(options, call, result)
@@ -993,6 +1129,8 @@ function appendToolResult(options: HarnessRunOptions, call: LLMToolCall, run: Lo
           error_code: result.errorCode ?? 'tool_failed',
           message: result.content,
           recoverable: result.recoverable ?? true,
+          ...(recovery.retried ? { retried: recovery.retried } : {}),
+          ...(recovery.errorClass ? { error_class: recovery.errorClass } : {}),
         }),
   }
 }
