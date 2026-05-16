@@ -318,6 +318,200 @@ async function resumePlanConfirm(
 }
 
 /**
+ * Phase 4 — Reflection / generator-critic (Agentic Design Patterns Ch.4).
+ * Runs only on the primary success path, just before persistRunFinal. An
+ * independent critic persona evaluates the draft against the plan's success
+ * criteria (Phase 3) or a generic rubric; if it finds actionable problems the
+ * producer revises (bounded iterations). Default mode `off` => returns the
+ * draft unchanged with zero calls/events. Fail-open: any error returns the
+ * original draft so reflection can never break a normal completion.
+ */
+async function reflectOnFinal(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  messages: HarnessMessage[],
+  draft: string,
+): Promise<string> {
+  const mode = resolvedReflectionMode(options)
+  if (mode === 'off' || !draft.trim()) {
+    return draft
+  }
+  if (mode === 'auto' && draft.length < resolvedReflectionMinChars(options) && !/(免责|风险|warning|disclaimer|caution)/i.test(draft)) {
+    return draft
+  }
+  const model = resolvedReflectionModel(options)
+  const maxIters = resolvedReflectionMaxIters(options)
+  const rubric = extractSuccessCriteria(messages) ?? [
+    'directly answers the user goal',
+    'accurate and internally consistent (no contradictions)',
+    'complete — no essential part of the request is missing',
+    'no fabricated facts or unsupported claims',
+  ]
+  append(options, 'reflection.started', { mode, model, max_iters: maxIters })
+  let current = draft
+  let revised = false
+  try {
+    for (let iteration = 1; iteration <= maxIters; iteration += 1) {
+      const verdict = await runCritic(options, gateway, run, model, run.goal, current, rubric)
+      if (!verdict) {
+        append(options, 'reflection.error', { reason: 'critic_unparseable', iteration })
+        return revised ? current : draft
+      }
+      append(options, 'reflection.critique', { iteration, ok: verdict.ok })
+      if (verdict.ok || !verdict.critique.trim()) {
+        break
+      }
+      const next = await runReviser(options, gateway, run, run.goal, current, verdict.critique)
+      if (!next || !next.trim()) {
+        append(options, 'reflection.error', { reason: 'reviser_unavailable', iteration })
+        return revised ? current : draft
+      }
+      current = next
+      revised = true
+    }
+  } catch {
+    append(options, 'reflection.error', { reason: 'exception' })
+    return draft
+  }
+  if (revised) {
+    append(options, 'reflection.applied', {})
+  } else {
+    append(options, 'reflection.skipped', { reason: 'already_good' })
+  }
+  return current
+}
+
+async function runCritic(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  model: string,
+  goal: string,
+  draft: string,
+  rubric: string[],
+): Promise<{ ok: boolean; critique: string } | undefined> {
+  const response = await gateway.call({
+    runId: run.id,
+    mode: model,
+    tools: [],
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are an independent, strict reviewer (not the author).',
+          'Judge whether the DRAFT ANSWER adequately satisfies the USER GOAL against these criteria:',
+          rubric.map((item, index) => `(${index + 1}) ${item}`).join('; ') + '.',
+          'Respond with ONLY a compact JSON object, no prose, no code fence:',
+          '{"ok":true|false,"critique":"<if not ok, the specific, actionable problems to fix; else empty>"}',
+          'Be conservative: only set ok=false when there is a concrete, fixable defect.',
+        ].join(' '),
+      },
+      { role: 'user', content: `USER GOAL:\n${goal}\n\nDRAFT ANSWER:\n${draft}` },
+    ],
+  })
+  if (response.usage) {
+    append(options, 'llm.usage', {
+      input_tokens: response.usage.inputTokens,
+      output_tokens: response.usage.outputTokens,
+      credits_cost: response.usage.creditsCost,
+    })
+  }
+  const content = response.content
+  if (!content) {
+    return undefined
+  }
+  const start = content.indexOf('{')
+  const end = content.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(content.slice(start, end + 1)) as Record<string, unknown>
+    return {
+      ok: parsed.ok === true,
+      critique: typeof parsed.critique === 'string' ? parsed.critique.trim() : '',
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function runReviser(
+  options: HarnessRunOptions,
+  gateway: LLMGateway,
+  run: LocalRun,
+  goal: string,
+  draft: string,
+  critique: string,
+): Promise<string | undefined> {
+  const response = await gateway.call({
+    runId: run.id,
+    mode: 'fast',
+    tools: [],
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Revise the draft answer to fix the reviewer feedback. Keep everything that was already correct. Output ONLY the improved final answer, no preamble, no commentary about the changes.',
+      },
+      { role: 'user', content: `USER GOAL:\n${goal}\n\nCURRENT DRAFT:\n${draft}\n\nREVIEWER FEEDBACK:\n${critique}` },
+    ],
+  })
+  if (response.usage) {
+    append(options, 'llm.usage', {
+      input_tokens: response.usage.inputTokens,
+      output_tokens: response.usage.outputTokens,
+      credits_cost: response.usage.creditsCost,
+    })
+  }
+  return response.content
+}
+
+function extractSuccessCriteria(messages: HarnessMessage[]): string[] | undefined {
+  for (const message of messages) {
+    if (message.role !== 'system') {
+      continue
+    }
+    const match = message.content.match(/Success criteria \(all must hold[^)]*\):\s*([^\n]+)/)
+    if (match) {
+      const items = match[1]
+        .split(/\(\d+\)/)
+        .map((value) => value.replace(/[;.\s]+$/, '').trim())
+        .filter((value) => value.length > 0)
+      if (items.length > 0) {
+        return items
+      }
+    }
+  }
+  return undefined
+}
+
+function resolvedReflectionMode(_options: HarnessRunOptions): 'off' | 'auto' | 'always' {
+  const raw = process.env.JIANDANLY_LOCAL_REFLECTION?.trim().toLowerCase()
+  if (raw === 'auto' || raw === 'always') {
+    return raw
+  }
+  return 'off'
+}
+
+function resolvedReflectionModel(_options: HarnessRunOptions): string {
+  return process.env.JIANDANLY_LOCAL_REFLECTION_MODEL?.trim().toLowerCase() === 'deep' ? 'deep' : 'fast'
+}
+
+function resolvedReflectionMinChars(_options: HarnessRunOptions): number {
+  const raw = process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS?.trim()
+  const value = raw ? Number(raw) : 600
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 600
+}
+
+function resolvedReflectionMaxIters(_options: HarnessRunOptions): number {
+  const raw = process.env.JIANDANLY_LOCAL_REFLECTION_MAX_ITERS?.trim()
+  const value = raw ? Number(raw) : 1
+  return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 3) : 1
+}
+
+/**
  * Phase 1 — Guardrails input pre-screen (Agentic Design Patterns Ch.18).
  * Runs once per BRAND-NEW run only (never on resume/checkpoint paths). Uses the
  * cheap fast model with no tools to classify the user goal for prompt-injection /
@@ -537,9 +731,10 @@ async function runLoop(options: HarnessRunOptions, gateway: LLMGateway, run: Loc
         })
         continue
       }
-      persistRunFinal(options, step + 1, messages, response.content ?? '')
+      const finalText = await reflectOnFinal(options, gateway, run, messages, response.content ?? '')
+      persistRunFinal(options, step + 1, messages, finalText)
       options.store.updateRunStatus(run.id, 'completed', { completedAt: new Date().toISOString() })
-      appendRunCompleted(options, { final: response.content ?? '' })
+      appendRunCompleted(options, { final: finalText })
       return
     }
 

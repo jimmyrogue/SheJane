@@ -22,6 +22,10 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_PLANNING
   delete process.env.JIANDANLY_LOCAL_PLANNING_MODEL
   delete process.env.JIANDANLY_LOCAL_PLANNING_CONFIRM
+  delete process.env.JIANDANLY_LOCAL_REFLECTION
+  delete process.env.JIANDANLY_LOCAL_REFLECTION_MODEL
+  delete process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS
+  delete process.env.JIANDANLY_LOCAL_REFLECTION_MAX_ITERS
 })
 
 const webSearchCapability = {
@@ -3032,6 +3036,129 @@ describe('explicit planning (Phase 3)', () => {
     const failed = store.listEvents(run.id).find((event) => event.eventType === 'run.failed')
     expect(failed?.payload.error_code).toBe('plan_canceled')
     expect(store.getRun(run.id)?.status).toBe('failed')
+  })
+})
+
+describe('reflection / generator-critic (Phase 4)', () => {
+  it('is inert when reflection is off (default): draft persisted as-is, no extra call', async () => {
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([{ requestId: 'final', content: 'Just answer.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes.some((type) => type.startsWith('reflection.'))).toBe(false)
+    expect(gateway.requests).toHaveLength(1)
+    const completed = store.listEvents(run.id).find((event) => event.eventType === 'run.completed')
+    expect(completed?.payload.final).toBe('Just answer.')
+  })
+
+  it('always mode: critic rejects, producer revises, revised text is persisted', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'final', content: 'Short draft.' },
+      { requestId: 'critic', content: '{"ok":false,"critique":"add a concrete example"}' },
+      { requestId: 'revise', content: 'Improved answer with a concrete example.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('reflection.started')
+    expect(eventTypes).toContain('reflection.critique')
+    expect(eventTypes).toContain('reflection.applied')
+    const completed = store.listEvents(run.id).find((event) => event.eventType === 'run.completed')
+    expect(completed?.payload.final).toBe('Improved answer with a concrete example.')
+    expect(gateway.requests).toHaveLength(3)
+  })
+
+  it('always mode: critic approves, draft is kept unchanged', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'final', content: 'Good answer.' },
+      { requestId: 'critic', content: '{"ok":true,"critique":""}' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('reflection.skipped')
+    expect(eventTypes).not.toContain('reflection.applied')
+    const completed = store.listEvents(run.id).find((event) => event.eventType === 'run.completed')
+    expect(completed?.payload.final).toBe('Good answer.')
+  })
+
+  it('auto mode skips reflection for a short answer', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([{ requestId: 'final', content: 'Hi.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes.some((type) => type.startsWith('reflection.'))).toBe(false)
+    expect(gateway.requests).toHaveLength(1)
+  })
+
+  it('auto mode reflects on a long answer (min-chars threshold)', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'auto'
+    process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS = '5'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'final', content: 'This draft is long enough.' },
+      { requestId: 'critic', content: '{"ok":true,"critique":""}' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(store.listEvents(run.id).map((event) => event.eventType)).toContain('reflection.started')
+  })
+
+  it('fails open and keeps the draft when the critic output is unparseable', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'final', content: 'Draft answer.' },
+      { requestId: 'critic', content: 'the critic did not return json' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('reflection.error')
+    const completed = store.listEvents(run.id).find((event) => event.eventType === 'run.completed')
+    expect(completed?.payload.final).toBe('Draft answer.')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('M4: critic rubric reuses the Phase 3 plan success criteria', async () => {
+    process.env.JIANDANLY_LOCAL_REFLECTION = 'always'
+    process.env.JIANDANLY_LOCAL_PLANNING = 'always'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Give me a tip.' })
+    const gateway = new ScriptedGateway([
+      {
+        requestId: 'plan',
+        content:
+          '{"steps":[{"title":"Answer","detail":"respond"}],"success_criteria":["answer cites the exact figure"],"complexity":"complex"}',
+      },
+      { requestId: 'final', content: 'Draft.' },
+      { requestId: 'critic', content: '{"ok":true,"critique":""}' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(gateway.requests).toHaveLength(3)
+    const criticMessages = gateway.requests[2].messages.map((message) => message.content).join('\n')
+    expect(criticMessages).toContain('answer cites the exact figure')
   })
 })
 
