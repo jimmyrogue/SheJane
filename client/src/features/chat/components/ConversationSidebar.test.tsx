@@ -137,7 +137,7 @@ describe('ConversationSidebar', () => {
     const trigger = screen.getByRole('button', { name: '账户菜单' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    expect(await screen.findByText('本月余额 800，已用 200')).toBeInTheDocument()
+    expect(await screen.findByText('本月余额 800/1,000')).toBeInTheDocument()
     expect(screen.getByText('额外额度 50')).toBeInTheDocument()
   })
 })

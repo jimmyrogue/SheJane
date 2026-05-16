@@ -576,7 +576,6 @@ function formatCredits(value: number): string {
 
 function AccountBalance({ balance, t }: { balance: WalletBalance; t: Translator }) {
   const limit = Math.max(0, balance.monthly_credit_limit ?? 0)
-  const used = Math.max(0, balance.monthly_credits_used ?? 0)
   const extra = Math.max(0, balance.extra_credits_balance ?? 0)
   const remaining = Math.max(0, balance.monthly_remaining ?? 0)
   return (
@@ -584,7 +583,7 @@ function AccountBalance({ balance, t }: { balance: WalletBalance; t: Translator 
       <span className="sab-line">
         {limit <= 0
           ? t('sidebar.account.creditsUnlimited')
-          : t('sidebar.account.creditsMonthly', { remaining: formatCredits(remaining), used: formatCredits(used) })}
+          : t('sidebar.account.creditsMonthly', { remaining: formatCredits(remaining), limit: formatCredits(limit) })}
       </span>
       {extra > 0 ? (
         <span className="sab-line">{t('sidebar.account.creditsExtra', { extra: formatCredits(extra) })}</span>
