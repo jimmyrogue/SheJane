@@ -22,6 +22,28 @@ const loggedEvents = new Set([
   'environment.observed',
   'ui.action.requested',
   'ui.action.completed',
+  // Phase 1–5 observability (Agentic Design Patterns upgrades): without these
+  // the dev/debug console silently hides routing/guard/plan/reflection/retry
+  // events even though they are persisted and streamed.
+  'input.guard.started',
+  'input.guard.completed',
+  'input.flagged',
+  'input.guard.blocked',
+  'input.guard.error',
+  'input.guard.override',
+  'tool.retry',
+  'run.tool_failure_circuit',
+  'plan.started',
+  'plan.created',
+  'plan.skipped',
+  'route.started',
+  'route.selected',
+  'route.error',
+  'reflection.started',
+  'reflection.critique',
+  'reflection.applied',
+  'reflection.skipped',
+  'reflection.error',
 ])
 
 export function localHostDebugEnabled(): boolean {
