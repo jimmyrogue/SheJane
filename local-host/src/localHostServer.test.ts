@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createLocalHostServer } from './server.js'
 import { InMemoryLocalHostStore } from './state/memoryStore.js'
 import type { LLMGateway, LLMGatewayRequest, LLMGatewayResponse } from './llm/gateway.js'
@@ -11,7 +11,14 @@ const token = 'test-pairing-token'
 const servers: Server[] = []
 const tempDirs: string[] = []
 
+// These integration tests don't exercise Phase 5 dynamic routing; pin it off
+// so the production default (auto) doesn't add a classifier round-trip.
+beforeEach(() => {
+  process.env.JIANDANLY_LOCAL_ROUTING = 'off'
+})
+
 afterEach(async () => {
+  delete process.env.JIANDANLY_LOCAL_ROUTING
   await Promise.all(
     servers.map(
       (server) =>

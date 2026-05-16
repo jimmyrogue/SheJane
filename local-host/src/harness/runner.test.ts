@@ -1,13 +1,20 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runHarness, classifyToolError } from './runner.js'
 import { InMemoryLocalHostStore } from '../state/memoryStore.js'
 import type { LLMGateway, LLMGatewayRequest, LLMGatewayResponse } from '../llm/gateway.js'
 import type { ToolExecutionResult } from '../tools/executor.js'
 
 const tempDirs: string[] = []
+
+// Dynamic routing (Phase 5) defaults to `auto` in production, which would add
+// a leading classifier call to every ScriptedGateway script. Existing tests
+// don't exercise routing, so pin it off; routing tests opt in explicitly.
+beforeEach(() => {
+  process.env.JIANDANLY_LOCAL_ROUTING = 'off'
+})
 
 afterEach(async () => {
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
@@ -25,6 +32,7 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MODEL
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MIN_CHARS
   delete process.env.JIANDANLY_LOCAL_REFLECTION_MAX_ITERS
+  delete process.env.JIANDANLY_LOCAL_ROUTING
 })
 
 const webSearchCapability = {
@@ -3117,6 +3125,138 @@ describe('reflection / generator-critic (Phase 4)', () => {
     expect(gateway.requests).toHaveLength(3)
     const criticMessages = gateway.requests[2].messages.map((message) => message.content).join('\n')
     expect(criticMessages).toContain('answer cites the exact figure')
+  })
+})
+
+describe('dynamic model routing (Phase 5)', () => {
+  it('off: no classifier call, main loop stays fast (regression guard)', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'off'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Say hi.' })
+    const gateway = new ScriptedGateway([{ requestId: 'main', content: 'Hi.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes.some((type) => type.startsWith('route.'))).toBe(false)
+    expect(gateway.requests).toHaveLength(1)
+    expect(gateway.requests[0].mode).toBe('fast')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('auto + complex => deep main loop', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Research and compare options, then report.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'route', content: '{"complexity":"complex"}' },
+      { requestId: 'main', content: 'Done.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const selected = store.listEvents(run.id).find((event) => event.eventType === 'route.selected')
+    expect(selected?.payload.mode).toBe('deep')
+    expect(gateway.requests).toHaveLength(2)
+    expect(gateway.requests[0].mode).toBe('fast') // the classifier itself is cheap
+    expect(gateway.requests[1].mode).toBe('deep')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('auto + simple => fast main loop', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'What is 2 + 2?' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'route', content: '{"complexity":"simple"}' },
+      { requestId: 'main', content: '4.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    expect(
+      store.listEvents(run.id).find((event) => event.eventType === 'route.selected')?.payload.mode,
+    ).toBe('fast')
+    expect(gateway.requests[1].mode).toBe('fast')
+  })
+
+  it('always-deep: no classifier call, main loop deep', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'always-deep'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Anything.' })
+    const gateway = new ScriptedGateway([{ requestId: 'main', content: 'Done.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const selected = store.listEvents(run.id).find((event) => event.eventType === 'route.selected')
+    expect(selected?.payload).toMatchObject({ mode: 'deep', reason: 'forced' })
+    expect(gateway.requests).toHaveLength(1)
+    expect(gateway.requests[0].mode).toBe('deep')
+  })
+
+  it('fails open to fast when the classifier output is unparseable', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'auto'
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Hmm.' })
+    const gateway = new ScriptedGateway([
+      { requestId: 'route', content: 'the classifier rambled, no json' },
+      { requestId: 'main', content: 'Answer.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const eventTypes = store.listEvents(run.id).map((event) => event.eventType)
+    expect(eventTypes).toContain('route.error')
+    expect(eventTypes).not.toContain('route.selected')
+    expect(gateway.requests[1].mode).toBe('fast')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('keeps the routed mode across pause/resume without re-classifying', async () => {
+    process.env.JIANDANLY_LOCAL_ROUTING = 'auto'
+    const workspace = await tempWorkspace()
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Decide the approach for a complex multi-step task.', workspacePath: workspace })
+    const gateway = new ScriptedGateway([
+      { requestId: 'route', content: '{"complexity":"complex"}' },
+      {
+        requestId: 'main-1',
+        toolCalls: [
+          {
+            id: 'call-ask',
+            name: 'user.ask',
+            arguments: {
+              questions: [{ question: 'Which path?', header: 'Path', options: [{ label: 'A' }, { label: 'B' }] }],
+            },
+          },
+        ],
+      },
+      { requestId: 'main-2', content: 'Proceeding with A.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+    expect(store.getRun(run.id)?.status).toBe('waiting_input')
+    const questionId = String(
+      store.listEvents(run.id).find((event) => event.eventType === 'question.asked')!.payload.request_id,
+    )
+    store.answerUserQuestion(questionId, { 'Which path?': ['A'] })
+
+    await runHarness({
+      run: store.getRun(run.id)!,
+      store,
+      llmGateway: gateway,
+      emit: () => undefined,
+      resumeQuestionID: questionId,
+    })
+
+    expect(store.getRun(run.id)?.status).toBe('completed')
+    // 0 = classifier, 1 = main before pause, 2 = main after resume.
+    expect(gateway.requests).toHaveLength(3)
+    expect(gateway.requests[1].mode).toBe('deep')
+    expect(gateway.requests[2].mode).toBe('deep') // recovered from route.selected, no re-classify
+    expect(
+      store.listEvents(run.id).filter((event) => event.eventType === 'route.started'),
+    ).toHaveLength(1)
   })
 })
 

@@ -88,6 +88,7 @@ export async function runHarness(options: HarnessRunOptions): Promise<void> {
     // created) — screenInput already emitted the terminal/pause state.
     return
   }
+  await routeRun(options, gateway, run)
   const planned = await planRun(options, gateway, run)
   await runLoop(options, gateway, run, planned ?? buildInitialMessages(options.store, run, options), 0)
 }
@@ -242,6 +243,113 @@ function resolvedPlanningMode(_options: HarnessRunOptions): 'off' | 'auto' | 'al
     return raw
   }
   return 'off'
+}
+
+type RoutingMode = 'off' | 'auto' | 'always-deep'
+
+function resolvedRoutingMode(_options: HarnessRunOptions): RoutingMode {
+  const raw = process.env.JIANDANLY_LOCAL_ROUTING?.trim().toLowerCase()
+  if (raw === 'off' || raw === 'always-deep') {
+    return raw
+  }
+  return 'auto'
+}
+
+/**
+ * Phase 5 — dynamic model routing (Agentic Design Patterns Ch.2 Routing /
+ * Ch.16 Resource-aware). Brand-new runs only (resume/checkpoint paths return
+ * before this). A cheap fast-model classifier decides simple⇒fast /
+ * complex⇒deep for the MAIN loop. The decision is persisted as a
+ * `route.selected` event, so `resolvedRunMode` recovers it across
+ * pause/resume/restart without re-classifying. Fail-open: any classifier or
+ * parse error keeps fast. Default mode `auto`.
+ */
+async function routeRun(options: HarnessRunOptions, gateway: LLMGateway, run: LocalRun): Promise<void> {
+  const mode = resolvedRoutingMode(options)
+  if (mode === 'off') {
+    // Truly inert: no events, no calls, behaviour unchanged from pre-Phase-5.
+    return
+  }
+  if (mode === 'always-deep') {
+    append(options, 'route.selected', { mode: 'deep', reason: 'forced' })
+    return
+  }
+  append(options, 'route.started', { mode })
+  let complexity: 'simple' | 'complex' | undefined
+  try {
+    const response = await gateway.call({
+      runId: run.id,
+      mode: 'fast',
+      tools: [],
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a routing classifier for an autonomous tool-using agent.',
+            'Decide if the USER GOAL is "simple" (a direct question or a single trivial step) or "complex" (multi-step, research, comparison, planning, ambiguous, or long).',
+            'Respond with ONLY a compact JSON object, no prose, no code fence: {"complexity":"simple|complex"}',
+          ].join(' '),
+        },
+        { role: 'user', content: run.goal },
+      ],
+    })
+    if (response.usage) {
+      append(options, 'llm.usage', {
+        input_tokens: response.usage.inputTokens,
+        output_tokens: response.usage.outputTokens,
+        credits_cost: response.usage.creditsCost,
+      })
+    }
+    complexity = parseComplexity(response.content)
+  } catch {
+    complexity = undefined
+  }
+  if (!complexity) {
+    append(options, 'route.error', { reason: 'classifier_unavailable' })
+    return
+  }
+  append(options, 'route.selected', { mode: complexity === 'complex' ? 'deep' : 'fast', complexity })
+}
+
+function parseComplexity(content: string | undefined): 'simple' | 'complex' | undefined {
+  if (!content) {
+    return undefined
+  }
+  const start = content.indexOf('{')
+  const end = content.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(content.slice(start, end + 1)) as Record<string, unknown>
+    const value = typeof parsed.complexity === 'string' ? parsed.complexity.trim().toLowerCase() : ''
+    return value === 'complex' ? 'complex' : value === 'simple' ? 'simple' : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The MAIN-loop model for this run. env `off` => always fast (today's
+ * behaviour); `always-deep` => deep unless a more specific decision exists;
+ * `auto` => the latest persisted `route.selected` event (set by routeRun),
+ * falling back to fast when absent (old runs / classifier failed).
+ */
+function resolvedRunMode(options: HarnessRunOptions, run: LocalRun): string {
+  const mode = resolvedRoutingMode(options)
+  if (mode === 'off') {
+    return 'fast'
+  }
+  let selected: string | undefined
+  for (const event of options.store.listEvents(run.id)) {
+    if (event.eventType === 'route.selected' && typeof event.payload.mode === 'string') {
+      selected = event.payload.mode
+    }
+  }
+  if (selected === 'deep' || selected === 'fast') {
+    return selected
+  }
+  return mode === 'always-deep' ? 'deep' : 'fast'
 }
 
 function resolvedPlanningModel(_options: HarnessRunOptions): string {
@@ -1005,7 +1113,7 @@ async function callModelOrFail(options: HarnessRunOptions, gateway: LLMGateway, 
     const advertisedTools = filterAdvertisedTools(tools, options)
     const response = await gateway.call({
       runId: run.id,
-      mode: 'fast',
+      mode: resolvedRunMode(options, run),
       messages: providerSafeMessages,
       tools: advertisedTools,
     })
