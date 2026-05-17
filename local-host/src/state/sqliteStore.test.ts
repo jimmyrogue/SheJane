@@ -88,11 +88,13 @@ describe('SQLiteLocalHostStore phase 2.5 persistence', () => {
     const dbPath = join(dir, 'run-settings.db')
     const store = new SQLiteLocalHostStore(dbPath)
     const withSettings = store.createRun({ goal: 'Configured run', settings: { memory: 'on' } })
+    const withSkills = store.createRun({ goal: 'Skilled run', settings: { memory: 'off', skills: 'on' } })
     const noSettings = store.createRun({ goal: 'Legacy run' })
     store.close()
 
     const reopened = new SQLiteLocalHostStore(dbPath)
     expect(reopened.getRun(withSettings.id)?.settings).toEqual({ memory: 'on' })
+    expect(reopened.getRun(withSkills.id)?.settings).toEqual({ memory: 'off', skills: 'on' })
     expect(reopened.getRun(noSettings.id)?.settings).toBeUndefined()
     reopened.close()
   })

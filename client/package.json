@@ -13,11 +13,13 @@
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
+    "@lexical/react": "^0.44.0",
     "@tabler/icons-react": "^3.44.0",
     "@tailwindcss/vite": "^4.3.0",
     "@vitejs/plugin-react": "^4.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lexical": "^0.44.0",
     "radix-ui": "^1.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

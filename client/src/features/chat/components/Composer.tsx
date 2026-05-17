@@ -19,10 +19,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { SkillEditor } from './SkillEditor'
 import { useI18n, type Translator, type Locale } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
-import type { LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
+import type { InstalledSkill, LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
 
 export function Composer({
   draft,
@@ -45,6 +45,7 @@ export function Composer({
   onAuthorizeWorkspace,
   onClearLocalProject,
   onSend,
+  listSkills,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -70,8 +71,10 @@ export function Composer({
   onAuthorizeWorkspace: (path: string) => Promise<LocalWorkspaceAuthorization>
   onClearLocalProject: () => void
   onSend: () => void
+  listSkills: () => Promise<InstalledSkill[]>
 }) {
   const { locale, t } = useI18n()
+
   const hasChips = Boolean(attachedDocument || localProject)
   const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false)
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
@@ -163,15 +166,12 @@ export function Composer({
         </div>
       )}
       <div className="composer-input">
-        <Textarea
-          value={draft}
+        <SkillEditor
+          draft={draft}
+          onDraftChange={onDraftChange}
+          onSend={onSend}
+          listSkills={listSkills}
           placeholder={t('composer.placeholder')}
-          onChange={(event) => onDraftChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              onSend()
-            }
-          }}
         />
       </div>
       <div className="composer-toolbar">

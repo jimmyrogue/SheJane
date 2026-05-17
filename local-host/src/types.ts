@@ -29,6 +29,7 @@ export interface ToolDefinition {
  */
 export interface LocalRunSettings {
   memory?: 'off' | 'on'
+  skills?: 'off' | 'on'
 }
 
 export interface LocalRun {

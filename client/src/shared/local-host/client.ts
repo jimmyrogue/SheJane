@@ -160,6 +160,7 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
  */
 export interface AgentSettings {
   memory?: 'off' | 'on'
+  skills?: 'off' | 'on'
 }
 
 export async function createLocalRun(
@@ -187,6 +188,72 @@ export async function createLocalRun(
     }),
   })
   return decodeLocalResponse<LocalRun>(response)
+}
+
+export interface InstalledSkill {
+  name: string
+  description: string
+  path: string
+}
+
+export interface RegistrySkill {
+  id: string
+  skillId: string
+  name: string
+  installs: number
+  source: string
+}
+
+export interface SkillInstallOutcome {
+  ok: boolean
+  code?: number | null
+  stdout?: string
+  stderr?: string
+  error?: string
+}
+
+export async function listInstalledSkills(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<InstalledSkill[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ skills?: InstalledSkill[] }>(response)
+  return body.skills ?? []
+}
+
+export async function searchSkillRegistry(
+  query: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<{ skills: RegistrySkill[]; error?: string }> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/skills/registry?q=${encodeURIComponent(query)}`,
+    { method: 'GET', headers: localHeaders(config, false) },
+  )
+  const body = await decodeLocalResponse<{ skills?: RegistrySkill[]; error?: string }>(response)
+  return { skills: body.skills ?? [], error: body.error }
+}
+
+export async function installSkill(
+  input: { source: string; skillId: string },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SkillInstallOutcome> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills/install`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ source: input.source, skillId: input.skillId }),
+  })
+  let body: SkillInstallOutcome
+  try {
+    body = (await response.json()) as SkillInstallOutcome
+  } catch {
+    body = { ok: false, error: `Local Host HTTP ${response.status}` }
+  }
+  return { ...body, ok: response.ok && body.ok !== false }
 }
 
 export async function setLocalCloudSession(

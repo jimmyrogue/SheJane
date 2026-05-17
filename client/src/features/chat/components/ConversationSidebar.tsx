@@ -74,6 +74,9 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
+  onOpenSkills,
+  onOpenChats,
+  activeView = 'chat',
   agentSettings,
   onAgentSettingsChange,
 }: {
@@ -91,6 +94,9 @@ export function ConversationSidebar({
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
   onLogout?: () => void
+  onOpenSkills?: () => void
+  onOpenChats?: () => void
+  activeView?: 'chat' | 'skills'
   agentSettings?: Required<AgentSettings>
   onAgentSettingsChange?: (next: Required<AgentSettings>) => void
 }) {
@@ -106,6 +112,8 @@ export function ConversationSidebar({
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const memoryEnabled = (agentSettings?.memory ?? 'off') === 'on'
+  const skillsEnabled = (agentSettings?.skills ?? 'off') === 'on'
+  const currentAgentSettings: Required<AgentSettings> = agentSettings ?? { memory: 'off', skills: 'off' }
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const projectConversation = conversations.find((conversation) => conversation.id === projectConversationID)
@@ -289,14 +297,21 @@ export function ConversationSidebar({
 
       <div className="sidebar-section">
         <div className="sidebar-section-label">{t('sidebar.workspace')}</div>
-        <button className="sidebar-item active" type="button">
+        <button
+          className={`sidebar-item${activeView === 'skills' ? '' : ' active'}`}
+          type="button"
+          onClick={() => onOpenChats?.()}
+        >
           <IconMessageCircle size={14} />
           <span>{t('sidebar.chats')}</span>
         </button>
-        <button className="sidebar-item" type="button">
+        <button
+          className={`sidebar-item${activeView === 'skills' ? ' active' : ''}`}
+          type="button"
+          onClick={() => onOpenSkills?.()}
+        >
           <IconTool size={14} />
-          <span>{t('sidebar.tools')}</span>
-          <span className="badge">{conversations.length || 1}</span>
+          <span>{t('sidebar.skills')}</span>
         </button>
         <button className="sidebar-item" type="button">
           <IconFolders size={14} />
@@ -411,7 +426,7 @@ export function ConversationSidebar({
                 variant={memoryEnabled ? 'ghost' : 'default'}
                 className="agent-settings-segment-btn"
                 aria-pressed={!memoryEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...(agentSettings ?? { memory: 'off' }), memory: 'off' })}
+                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, memory: 'off' })}
               >
                 {t('sidebar.agentSettings.off')}
               </Button>
@@ -420,7 +435,33 @@ export function ConversationSidebar({
                 variant={memoryEnabled ? 'default' : 'ghost'}
                 className="agent-settings-segment-btn"
                 aria-pressed={memoryEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...(agentSettings ?? { memory: 'off' }), memory: 'on' })}
+                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, memory: 'on' })}
+              >
+                {t('sidebar.agentSettings.on')}
+              </Button>
+            </div>
+          </div>
+          <div className="agent-settings-row">
+            <div className="agent-settings-copy">
+              <div className="agent-settings-label">{t('sidebar.agentSettings.skills.label')}</div>
+              <div className="agent-settings-hint">{t('sidebar.agentSettings.skills.hint')}</div>
+            </div>
+            <div className="agent-settings-segment" role="group" aria-label={t('sidebar.agentSettings.skills.label')}>
+              <Button
+                type="button"
+                variant={skillsEnabled ? 'ghost' : 'default'}
+                className="agent-settings-segment-btn"
+                aria-pressed={!skillsEnabled}
+                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, skills: 'off' })}
+              >
+                {t('sidebar.agentSettings.off')}
+              </Button>
+              <Button
+                type="button"
+                variant={skillsEnabled ? 'default' : 'ghost'}
+                className="agent-settings-segment-btn"
+                aria-pressed={skillsEnabled}
+                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, skills: 'on' })}
               >
                 {t('sidebar.agentSettings.on')}
               </Button>

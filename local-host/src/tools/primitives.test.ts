@@ -217,6 +217,59 @@ describe('memory.search tool (Phase 6)', () => {
   })
 })
 
+describe('skill.use tool (Phase 7)', () => {
+  const run = localRun('')
+  const adapter = {
+    catalog: () => [{ name: 'deploy', description: 'Deploy the app', path: '/skills/deploy/SKILL.md' }],
+    load: (name: string) =>
+      name === 'deploy'
+        ? { name: 'deploy', description: 'Deploy the app', path: '/skills/deploy/SKILL.md', body: 'Step 1. Step 2.' }
+        : null,
+  }
+
+  it('returns the full skill body when the named skill exists', async () => {
+    const result = await executeTool(
+      { id: 'sk', name: 'skill.use', arguments: { name: 'deploy' } },
+      run,
+      { skills: adapter },
+    )
+    expect(result).toMatchObject({
+      ok: true,
+      data: { source: 'skill.use', name: 'deploy', found: true },
+    })
+    expect(result.content).toBe('Step 1. Step 2.')
+  })
+
+  it('reports skill_not_found with the available names when the skill is unknown', async () => {
+    const result = await executeTool(
+      { id: 'sk', name: 'skill.use', arguments: { name: 'missing' } },
+      run,
+      { skills: adapter },
+    )
+    expect(result).toMatchObject({ ok: false, errorCode: 'skill_not_found', recoverable: true })
+    expect(result.content).toContain('deploy')
+  })
+
+  it('rejects a blank skill name', async () => {
+    const result = await executeTool(
+      { id: 'sk', name: 'skill.use', arguments: { name: '  ' } },
+      run,
+      { skills: adapter },
+    )
+    expect(result).toMatchObject({ ok: false, errorCode: 'name_required' })
+  })
+
+  it('is a safe no-op when no skills adapter is wired (skills off / defensive)', async () => {
+    const result = await executeTool(
+      { id: 'sk', name: 'skill.use', arguments: { name: 'deploy' } },
+      run,
+      {},
+    )
+    expect(result).toMatchObject({ ok: true, data: { source: 'skill.use', found: false } })
+    expect(result.content).toContain('Skills are not enabled.')
+  })
+})
+
 async function tempWorkspace(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'jiandanly-primitives-'))
   tempDirs.push(dir)

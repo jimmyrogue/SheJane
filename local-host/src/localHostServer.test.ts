@@ -629,6 +629,129 @@ describe('local host daemon foundation', () => {
   })
 })
 
+describe('skill marketplace endpoints (Phase 8)', () => {
+  it('lists installed skills from the discovery roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jiandanly-srv-skills-'))
+    tempDirs.push(root)
+    await writeFile(
+      join(await ensureDir(root, 'demo'), 'SKILL.md'),
+      '---\nname: demo\ndescription: A demo skill\n---\nDo demo things.\n',
+      'utf8',
+    )
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    process.env.JIANDANLY_LOCAL_SKILLS_ISOLATE = '1'
+    try {
+      const base = await startConfiguredServer({})
+      const response = await fetch(`${base}/local/v1/skills`, { headers: authHeaders() })
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { skills: Array<{ name: string; description: string }> }
+      expect(body.skills).toEqual([{ name: 'demo', description: 'A demo skill', path: expect.any(String) }])
+    } finally {
+      delete process.env.JIANDANLY_LOCAL_SKILLS_PATH
+      delete process.env.JIANDANLY_LOCAL_SKILLS_ISOLATE
+    }
+  })
+
+  it('proxies the skills.sh registry search and passes through whitelisted fields', async () => {
+    const fetcher = (async () =>
+      new Response(
+        JSON.stringify({
+          query: 'ts',
+          skills: [
+            { id: 'vercel-labs/skills/typescript', skillId: 'typescript', name: 'TypeScript', installs: 42, source: 'vercel-labs/skills' },
+            { id: 'bad', name: 'no skillId' },
+          ],
+          count: 2,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as unknown as typeof fetch
+    const base = await startConfiguredServer({ fetcher })
+    const response = await fetch(`${base}/local/v1/skills/registry?q=ts`, { headers: authHeaders() })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { skills: unknown[]; count: number }
+    expect(body.skills).toEqual([
+      { id: 'vercel-labs/skills/typescript', skillId: 'typescript', name: 'TypeScript', installs: 42, source: 'vercel-labs/skills' },
+    ])
+  })
+
+  it('fails soft when the registry is unavailable', async () => {
+    const fetcher = (async () => {
+      throw new Error('network down')
+    }) as unknown as typeof fetch
+    const base = await startConfiguredServer({ fetcher })
+    const response = await fetch(`${base}/local/v1/skills/registry?q=ts`, { headers: authHeaders() })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ skills: [], count: 0, error: 'registry_unavailable' })
+  })
+
+  it('installs a skill via the injected installer with a sanitized ref', async () => {
+    const calls: Array<{ source: string; skillId: string }> = []
+    const skillInstaller = async (ref: { source: string; skillId: string }) => {
+      calls.push(ref)
+      return { ok: true, code: 0, stdout: 'installed', stderr: '' }
+    }
+    const base = await startConfiguredServer({ skillInstaller })
+    const response = await fetch(`${base}/local/v1/skills/install`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: 'anthropics/skills', skillId: 'skill-creator' }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, code: 0 })
+    expect(calls).toEqual([{ source: 'anthropics/skills', skillId: 'skill-creator' }])
+  })
+
+  it('rejects an injected/invalid skill ref without spawning the installer', async () => {
+    let invoked = false
+    const skillInstaller = async () => {
+      invoked = true
+      return { ok: true, code: 0, stdout: '', stderr: '' }
+    }
+    const base = await startConfiguredServer({ skillInstaller })
+    for (const bad of [
+      { source: 'anthropics/skills; rm -rf ~', skillId: 'x' },
+      { source: '../../etc', skillId: 'x' },
+      { source: 'anthropics/skills', skillId: 'bad id' },
+      { source: 'anthropics/skills' },
+    ]) {
+      const response = await fetch(`${base}/local/v1/skills/install`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(bad),
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'invalid_skill_ref' })
+    }
+    expect(invoked).toBe(false)
+  })
+})
+
+async function ensureDir(root: string, name: string): Promise<string> {
+  const { mkdir } = await import('node:fs/promises')
+  const dir = join(root, name)
+  await mkdir(dir, { recursive: true })
+  return dir
+}
+
+async function startConfiguredServer(
+  extra: Partial<Parameters<typeof createLocalHostServer>[0]>,
+): Promise<string> {
+  const server = createLocalHostServer({
+    pairingToken: token,
+    store: new InMemoryLocalHostStore(),
+    ...extra,
+  })
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  servers.push(server)
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Expected TCP server address')
+  }
+  return `http://127.0.0.1:${address.port}`
+}
+
 async function startServer(llmGateway?: LLMGateway): Promise<string> {
   const server = createLocalHostServer({
     pairingToken: token,

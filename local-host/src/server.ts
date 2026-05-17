@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { spawn } from 'node:child_process'
 import { stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, resolve } from 'node:path'
 import { runHarness } from './harness/runner.js'
+import { discoverSkills, skillRoots } from './skills/skillLoader.js'
 import type { LLMGateway } from './llm/gateway.js'
 import { LocalCloudSessionManager } from './llm/cloudSession.js'
 import { logLocalHostError } from './debugLogger.js'
@@ -32,17 +35,35 @@ const maxBodyBytes = 64 * 1024
 const terminalStatuses = new Set(['completed', 'failed', 'canceled'])
 const pausedForUserStatuses = new Set(['waiting_permission', 'waiting_input'])
 
+export interface SkillInstallRef {
+  source: string
+  skillId: string
+}
+
+export interface SkillInstallResult {
+  ok: boolean
+  code: number | null
+  stdout: string
+  stderr: string
+}
+
 export interface LocalHostServerOptions {
   pairingToken: string
   store: LocalHostStore
   llmGateway?: LLMGateway
   cloudSession?: LocalCloudSessionManager
+  /** Injectable for tests; defaults to global fetch (skills.sh registry proxy). */
+  fetcher?: typeof fetch
+  /** Injectable for tests; defaults to the real `npx skills add` spawn. */
+  skillInstaller?: (ref: SkillInstallRef) => Promise<SkillInstallResult>
 }
 
 export function createLocalHostServer(options: LocalHostServerOptions): Server {
   const resolvedOptions = {
     ...options,
     cloudSession: options.cloudSession ?? new LocalCloudSessionManager(),
+    fetcher: options.fetcher ?? fetch,
+    skillInstaller: options.skillInstaller ?? defaultSkillInstaller,
     toolOptionsByRun: new Map<string, ToolExecutionOptions>(),
     activeRuns: new Map<string, Promise<void>>(),
   }
@@ -60,6 +81,8 @@ export function createLocalHostServer(options: LocalHostServerOptions): Server {
 
 type ResolvedLocalHostServerOptions = LocalHostServerOptions & {
   cloudSession: LocalCloudSessionManager
+  fetcher: typeof fetch
+  skillInstaller: (ref: SkillInstallRef) => Promise<SkillInstallResult>
   toolOptionsByRun: Map<string, ToolExecutionOptions>
   activeRuns: Map<string, Promise<void>>
 }
@@ -214,6 +237,51 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse,
       settings: settings ?? null,
     })
     writeJSON(response, 201, serializeRun(run, options.store.countEvents(run.id)))
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/local/v1/skills') {
+    const skills = discoverSkills(skillRoots()).map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.path,
+    }))
+    writeJSON(response, 200, { skills })
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/local/v1/skills/registry') {
+    const query = (url.searchParams.get('q') ?? '').trim()
+    if (!query) {
+      writeJSON(response, 200, { skills: [], count: 0 })
+      return
+    }
+    const registry = await searchSkillRegistry(query, options.fetcher)
+    writeJSON(response, 200, registry)
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/local/v1/skills/install') {
+    const body = await readJSONBody<{ source?: unknown; skillId?: unknown; skill_id?: unknown }>(request)
+    const ref = sanitizeSkillInstallRef(body)
+    if (!ref) {
+      writeJSON(response, 400, { error: 'invalid_skill_ref' })
+      return
+    }
+    try {
+      const result = await options.skillInstaller(ref)
+      writeJSON(response, result.ok ? 200 : 502, {
+        ok: result.ok,
+        code: result.code,
+        stdout: result.stdout.slice(0, maxBodyBytes),
+        stderr: result.stderr.slice(0, maxBodyBytes),
+      })
+    } catch (error) {
+      writeJSON(response, 502, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'skill_install_failed',
+      })
+    }
     return
   }
 
@@ -533,11 +601,118 @@ function sanitizeRunSettings(raw: unknown): LocalRunSettings | undefined {
     return undefined
   }
   const memory = (raw as Record<string, unknown>).memory
+  const skills = (raw as Record<string, unknown>).skills
   const settings: LocalRunSettings = {}
   if (memory === 'on' || memory === 'off') {
     settings.memory = memory
   }
+  if (skills === 'on' || skills === 'off') {
+    settings.skills = skills
+  }
   return Object.keys(settings).length > 0 ? settings : undefined
+}
+
+const skillSourceShorthand = /^[\w.-]+\/[\w.-]+$/
+const skillSourceGithubURL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(\.git)?$/
+const skillIdPattern = /^[\w.-]{1,64}$/
+
+function sanitizeSkillInstallRef(raw: unknown): SkillInstallRef | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined
+  }
+  const record = raw as Record<string, unknown>
+  const source = typeof record.source === 'string' ? record.source.trim() : ''
+  const rawSkillId = record.skillId ?? record.skill_id
+  const skillId = typeof rawSkillId === 'string' ? rawSkillId.trim() : ''
+  if (!skillId || !skillIdPattern.test(skillId)) {
+    return undefined
+  }
+  if (!source || !(skillSourceShorthand.test(source) || skillSourceGithubURL.test(source))) {
+    return undefined
+  }
+  return { source, skillId }
+}
+
+interface RegistrySkill {
+  id: string
+  skillId: string
+  name: string
+  installs: number
+  source: string
+}
+
+async function searchSkillRegistry(
+  query: string,
+  fetcher: typeof fetch,
+): Promise<{ skills: RegistrySkill[]; count: number; error?: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+  try {
+    const response = await fetcher(`https://skills.sh/api/search?q=${encodeURIComponent(query)}`, {
+      headers: { Accept: 'application/json', 'User-Agent': 'JiandanlyLocalHarness/0.1' },
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      return { skills: [], count: 0, error: 'registry_unavailable' }
+    }
+    const body = (await response.json()) as { skills?: unknown }
+    const rawSkills = Array.isArray(body.skills) ? body.skills : []
+    const skills: RegistrySkill[] = []
+    for (const item of rawSkills) {
+      if (!item || typeof item !== 'object') {
+        continue
+      }
+      const record = item as Record<string, unknown>
+      const skillId = typeof record.skillId === 'string' ? record.skillId : ''
+      const name = typeof record.name === 'string' ? record.name : skillId
+      const source = typeof record.source === 'string' ? record.source : ''
+      if (!skillId || !source) {
+        continue
+      }
+      skills.push({
+        id: typeof record.id === 'string' ? record.id : `${source}/${skillId}`,
+        skillId,
+        name,
+        installs: typeof record.installs === 'number' ? record.installs : 0,
+        source,
+      })
+    }
+    return { skills, count: skills.length }
+  } catch {
+    return { skills: [], count: 0, error: 'registry_unavailable' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function defaultSkillInstaller(ref: SkillInstallRef): Promise<SkillInstallResult> {
+  return new Promise<SkillInstallResult>((resolveResult) => {
+    const child = spawn(
+      'npx',
+      ['skills', 'add', ref.source, '-s', ref.skillId, '-g', '-a', 'claude-code', '-y', '--copy'],
+      { cwd: homedir(), env: process.env, shell: false },
+    )
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM')
+      resolveResult({ ok: false, code: null, stdout, stderr: `${stderr}\nInstall timed out.`.trim() })
+    }, 180000)
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk)
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+    })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      resolveResult({ ok: false, code: null, stdout, stderr: error.message })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolveResult({ ok: code === 0, code, stdout, stderr })
+    })
+  })
 }
 
 function sanitizeRunHistory(raw: unknown): StoredHarnessMessage[] | undefined {

@@ -3,6 +3,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { $createParagraphNode, $createTextNode, $getRoot } from 'lexical'
 
 const balance = {
   id: 'wallet-1',
@@ -256,9 +257,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('roadmap.pdf'))
     expect(screen.getByText('已附加 roadmap.pdf')).toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '这份文档的结论是什么？' },
-    })
+    typeComposer('这份文档的结论是什么？')
     fireEvent.click(screen.getByText('发送'))
 
     expect(await screen.findByText('文档回答')).toBeInTheDocument()
@@ -278,9 +277,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '旧任务' },
-    })
+    typeComposer('旧任务')
     fireEvent.click(screen.getByText('发送'))
 
     expect((await screen.findAllByText('旧任务')).length).toBeGreaterThan(0)
@@ -319,9 +316,7 @@ describe('user client shell', () => {
 
     await awaitSignedIn()
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '运行本地检查' },
-    })
+    typeComposer('运行本地检查')
     fireEvent.click(screen.getByText('发送'))
 
     expect((await screen.findAllByText('运行本地检查')).length).toBeGreaterThan(0)
@@ -378,9 +373,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('Local Harness')).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '运行本地检查' },
-    })
+    typeComposer('运行本地检查')
     fireEvent.click(screen.getByText('发送'))
 
     expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
@@ -476,9 +469,7 @@ describe('user client shell', () => {
 
     await awaitSignedIn()
     await bindWorkspace('/tmp/jiandanly-workspace')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '读取大文件' },
-    })
+    typeComposer('读取大文件')
     fireEvent.click(screen.getByText('发送'))
 
     const artifactButtons = await screen.findAllByText('查看 artifact')
@@ -511,9 +502,7 @@ describe('user client shell', () => {
     expect(await screen.findByLabelText('当前对话工作区路径')).toHaveValue('/tmp/picked-workspace')
     fireEvent.click(screen.getByText('授权并绑定'))
     expect(await screen.findByText('本地项目：picked-workspace')).toBeInTheDocument()
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '检查这个项目' },
-    })
+    typeComposer('检查这个项目')
     fireEvent.click(screen.getByText('发送'))
 
     expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
@@ -608,7 +597,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('导出此对话')).not.toBeInTheDocument()
     expect(screen.queryByText('导入聊天数据')).not.toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), { target: { value: '你好' } })
+    typeComposer('你好')
     fireEvent.click(screen.getByText('发送'))
 
     await screen.findByTitle('更多 你好')
@@ -652,18 +641,14 @@ describe('user client shell', () => {
 
     await awaitSignedIn()
     await bindWorkspace('/tmp/one')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '第一个任务' },
-    })
+    typeComposer('第一个任务')
     fireEvent.click(screen.getByText('发送'))
     expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
     await waitFor(() => expect(screen.queryByText('本地项目：one')).not.toBeInTheDocument())
     await bindWorkspace('/tmp/two')
-    fireEvent.change(screen.getByPlaceholderText('描述你的问题、任务，或让简单 AI 阅读附件'), {
-      target: { value: '第二个任务' },
-    })
+    typeComposer('第二个任务')
     fireEvent.click(screen.getByText('发送'))
 
     await waitFor(() => {
@@ -682,6 +667,30 @@ async function readyWorkspaceButton(): Promise<HTMLElement> {
     expect(screen.getByRole('button', { name: '工作区' })).not.toBeDisabled()
   })
   return screen.getByRole('button', { name: '工作区' })
+}
+
+function typeComposer(value: string) {
+  const element = document.querySelector('[data-lexical-editor="true"]') as unknown as {
+    __lexicalEditor?: {
+      update: (fn: () => void, options?: { discrete?: boolean }) => void
+    }
+  } | null
+  const editor = element?.__lexicalEditor
+  if (!editor) {
+    throw new Error('composer editor not mounted')
+  }
+  act(() => {
+    editor.update(
+      () => {
+        const root = $getRoot()
+        root.clear()
+        const paragraph = $createParagraphNode()
+        paragraph.append($createTextNode(value))
+        root.append(paragraph)
+      },
+      { discrete: true },
+    )
+  })
 }
 
 async function bindWorkspace(path: string) {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,9 @@ afterEach(async () => {
   delete process.env.JIANDANLY_LOCAL_MEMORY_WRITE
   delete process.env.JIANDANLY_LOCAL_MEMORY_RECALL
   delete process.env.JIANDANLY_LOCAL_MEMORY_TTL_DAYS
+  delete process.env.JIANDANLY_LOCAL_SKILLS_ENABLED
+  delete process.env.JIANDANLY_LOCAL_SKILLS_PATH
+  delete process.env.JIANDANLY_LOCAL_SKILLS_ISOLATE
 })
 
 const webSearchCapability = {
@@ -3547,6 +3550,117 @@ describe('on-demand memory + TTL (Phase 6)', () => {
     expect(gateway.requests).toHaveLength(1) // no extraction call
     expect(gateway.requests[0].tools.some((tool) => tool.name === 'memory.search')).toBe(false)
     expect(store.listEvents(run.id).some((e) => e.eventType.startsWith('memory.'))).toBe(false)
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+})
+
+describe('on-demand skills (Phase 7)', () => {
+  async function seedSkill(name: string, description: string, body: string): Promise<string> {
+    // Hermetic discovery: ignore ~/.jiandanly, ~/.claude, bundled roots so the
+    // assertions don't depend on what skills exist on the running machine.
+    process.env.JIANDANLY_LOCAL_SKILLS_ISOLATE = '1'
+    const root = await mkdtemp(join(tmpdir(), 'jiandanly-skills-'))
+    tempDirs.push(root)
+    await mkdir(join(root, name), { recursive: true })
+    await writeFile(
+      join(root, name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`,
+      'utf8',
+    )
+    return root
+  }
+
+  it('does not advertise skill.use or inject a catalog when skills are off (default)', async () => {
+    const root = await seedSkill('deploy-helper', 'Helps deploy the app', 'Run the deploy steps carefully.')
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Deploy the service.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Done.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).not.toContain('task-specific Skills')
+    expect(systemPrompt).not.toContain('deploy-helper')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'skill.use')).toBe(false)
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('advertises the catalog and loads the full body on demand when skills are on', async () => {
+    const root = await seedSkill(
+      'deploy-helper',
+      'Helps deploy the app safely',
+      'STEP 1 freeze traffic. STEP 2 migrate. STEP 3 release.',
+    )
+    process.env.JIANDANLY_LOCAL_SKILLS_ENABLED = 'on'
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Deploy the service.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([
+      { requestId: 'req-1', toolCalls: [{ id: 'call-skill', name: 'skill.use', arguments: { name: 'deploy-helper' } }] },
+      { requestId: 'req-2', content: 'Followed the deploy skill.' },
+    ])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).toContain('task-specific Skills')
+    expect(systemPrompt).toContain('- deploy-helper: Helps deploy the app safely')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'skill.use')).toBe(true)
+    const afterToolMessages = gateway.requests[1].messages.map((message) => message.content).join('\n')
+    expect(afterToolMessages).toContain('STEP 1 freeze traffic. STEP 2 migrate. STEP 3 release.')
+    expect(store.getRun(run.id)?.status).toBe('completed')
+  })
+
+  it('per-run settings skills:on overrides env unset', async () => {
+    const root = await seedSkill('triage', 'Triage incoming bugs', 'Reproduce, classify, then file.')
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Triage this bug.', settings: { skills: 'on' } })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Triaged.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).toContain('- triage: Triage incoming bugs')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'skill.use')).toBe(true)
+  })
+
+  it('per-run settings skills:off overrides JIANDANLY_LOCAL_SKILLS_ENABLED=on', async () => {
+    const root = await seedSkill('triage', 'Triage incoming bugs', 'Reproduce, classify, then file.')
+    process.env.JIANDANLY_LOCAL_SKILLS_ENABLED = 'on'
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Triage this bug.', settings: { skills: 'off' } })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Triaged.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).not.toContain('task-specific Skills')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'skill.use')).toBe(false)
+  })
+
+  it('treats an empty skills directory as off (no catalog, tool hidden)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jiandanly-skills-empty-'))
+    tempDirs.push(root)
+    process.env.JIANDANLY_LOCAL_SKILLS_ISOLATE = '1'
+    process.env.JIANDANLY_LOCAL_SKILLS_ENABLED = 'on'
+    process.env.JIANDANLY_LOCAL_SKILLS_PATH = root
+    const store = new InMemoryLocalHostStore()
+    const run = store.createRun({ goal: 'Do work.' })
+    store.appendEvent(run.id, 'run.created', { goal: run.goal })
+    const gateway = new ScriptedGateway([{ requestId: 'req-1', content: 'Done.' }])
+
+    await runHarness({ run, store, llmGateway: gateway, emit: () => undefined })
+
+    const systemPrompt = gateway.requests[0].messages.map((message) => message.content).join('\n')
+    expect(systemPrompt).not.toContain('task-specific Skills')
+    expect(gateway.requests[0].tools.some((tool) => tool.name === 'skill.use')).toBe(false)
     expect(store.getRun(run.id)?.status).toBe('completed')
   })
 })

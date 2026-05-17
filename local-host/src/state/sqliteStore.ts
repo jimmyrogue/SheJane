@@ -619,7 +619,15 @@ function parseRunSettings(raw: string | null | undefined): LocalRunSettings | un
       return undefined
     }
     const memory = (parsed as Record<string, unknown>).memory
-    return memory === 'on' || memory === 'off' ? { memory } : undefined
+    const skills = (parsed as Record<string, unknown>).skills
+    const settings: LocalRunSettings = {}
+    if (memory === 'on' || memory === 'off') {
+      settings.memory = memory
+    }
+    if (skills === 'on' || skills === 'off') {
+      settings.skills = skills
+    }
+    return Object.keys(settings).length > 0 ? settings : undefined
   } catch {
     return undefined
   }

@@ -16,10 +16,12 @@ import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
 import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
+import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
+import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
 import type { AgentRunEvent } from './shared/api/sse'
@@ -34,10 +36,13 @@ import {
   getDesktopLocalHostConfig,
   answerLocalQuestion,
   getLocalArtifact,
+  installSkill,
   listAuthorizedWorkspaces,
+  listInstalledSkills,
   listLocalRuns,
   probeLocalHost,
   resolveLocalPermission,
+  searchSkillRegistry,
   setLocalCloudSession,
   streamLocalRun,
   type AgentSettings,
@@ -57,7 +62,7 @@ const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
 const agentSettingsStorageKey = 'jiandanly.agentSettings.v1'
-const defaultAgentSettings: Required<AgentSettings> = { memory: 'off' }
+const defaultAgentSettings: Required<AgentSettings> = { memory: 'off', skills: 'off' }
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
 const maxSidebarWidth = 340
@@ -129,7 +134,10 @@ function readAgentSettings(): Required<AgentSettings> {
       return { ...defaultAgentSettings }
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
-    return { memory: parsed.memory === 'on' ? 'on' : 'off' }
+    return {
+      memory: parsed.memory === 'on' ? 'on' : 'off',
+      skills: parsed.skills === 'on' ? 'on' : 'off',
+    }
   } catch {
     return { ...defaultAgentSettings }
   }
@@ -179,6 +187,7 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
+  const [mainView, setMainView] = useState<'chat' | 'skills'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
@@ -366,12 +375,14 @@ function AppContent() {
     setActiveConversationID(undefined)
     setPendingWorkspace(undefined)
     setDraft('')
+    setMainView('chat')
   }
 
   function selectConversation(id: string) {
     navigationVersionRef.current += 1
     setPendingWorkspace(undefined)
     setActiveConversationID(id)
+    setMainView('chat')
   }
 
   function setActiveConversationID(nextActiveID: string | undefined) {
@@ -437,7 +448,7 @@ function AppContent() {
         ? await sendLocalHarnessMessage(content, renderContext)
         : await chat.sendMessage({
             conversationId: activeID,
-            content,
+            content: parseSkillDraft(content).text,
             mode,
             scene: 'chat',
             document: attachedDocument
@@ -462,11 +473,16 @@ function AppContent() {
     }
   }
 
-  async function sendLocalHarnessMessage(content: string, context: ConversationRenderContext): Promise<Conversation> {
+  async function sendLocalHarnessMessage(
+    content: string,
+    context: ConversationRenderContext,
+    settingsOverride?: Required<AgentSettings>,
+  ): Promise<Conversation> {
     if (!localHostConfig) {
       throw new Error(t('app.notice.localHostDisconnected'))
     }
-    const text = content.trim()
+    const { text: parsedText, skills: draftSkills } = parseSkillDraft(content)
+    const text = parsedText.trim()
     if (!text) {
       throw new Error(t('app.notice.emptyMessage'))
     }
@@ -503,14 +519,22 @@ function AppContent() {
       .reverse()
       .find((message) => message.role === 'assistant' && message.runOrigin === 'local' && Boolean(message.runId))?.runId
 
+    const skillsForRun = !settingsOverride ? draftSkills : []
+    const goal =
+      skillsForRun.length > 0
+        ? `${t('skills.useDirective', { names: skillsForRun.join('、') })}\n\n${text}`
+        : text
+    const effectiveSettings =
+      skillsForRun.length > 0 ? { ...agentSettings, skills: 'on' as const } : settingsOverride ?? agentSettings
+
     try {
       const run = await createLocalRun(
         {
-          goal: text,
+          goal,
           workspacePath: conversation.workspace?.path.trim() || undefined,
           history: deriveAgentHistory(priorMessages),
           parentRunId,
-          settings: agentSettings,
+          settings: effectiveSettings,
         },
         localHostConfig,
       )
@@ -541,6 +565,43 @@ function AppContent() {
     }
 
     return conversation
+  }
+
+  async function handleCreateSkill(description: string) {
+    if (!auth) {
+      setNotice(t('app.notice.loginBeforeSending'))
+      return
+    }
+    const canUseLocalHarness = Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
+    if (!canUseLocalHarness || !localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    setMainView('chat')
+    startNewConversation()
+    setIsSending(true)
+    setNotice('')
+    const renderContext = createConversationRenderContext()
+    try {
+      // Best-effort: make sure skill-creator is available; ignore failures so a
+      // missing network / npx still lets the guided conversation start.
+      try {
+        await installSkill({ source: 'anthropics/skills', skillId: 'skill-creator' }, localHostConfig)
+      } catch {
+        // ignored on purpose
+      }
+      const prompt = t('skills.create.prompt', { description })
+      const conversation = await sendLocalHarnessMessage(prompt, renderContext, {
+        ...agentSettings,
+        skills: 'on',
+      })
+      await refreshConversationsAfterStream(conversation.id, renderContext)
+      setBalance(await api.balance())
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
+    } finally {
+      setIsSending(false)
+    }
   }
 
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
@@ -1024,6 +1085,9 @@ function AppContent() {
             onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
+            onOpenSkills={() => setMainView('skills')}
+            onOpenChats={() => setMainView('chat')}
+            activeView={mainView}
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
             }}
@@ -1048,6 +1112,24 @@ function AppContent() {
             onPointerDown={beginSidebarResize}
           />
 
+          {mainView === 'skills' ? (
+            <SkillsView
+              searchRegistry={(searchQuery) =>
+                localHostConfig
+                  ? searchSkillRegistry(searchQuery, localHostConfig)
+                  : Promise.resolve({ skills: [], error: 'offline' })
+              }
+              listInstalled={() =>
+                localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([])
+              }
+              installSkill={(ref) =>
+                localHostConfig
+                  ? installSkill(ref, localHostConfig)
+                  : Promise.resolve({ ok: false, error: 'offline' })
+              }
+              onCreateSkill={(text) => void handleCreateSkill(text)}
+            />
+          ) : (
           <section className="workspace">
             <header className="topbar">
               {sidebarCollapsed ? (
@@ -1112,9 +1194,11 @@ function AppContent() {
               onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
               onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
               onSend={() => void sendMessage()}
+              listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
               />
             </div>
           </section>
+          )}
         </div>
       </main>
     </TooltipProvider>

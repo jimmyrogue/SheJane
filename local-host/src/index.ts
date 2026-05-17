@@ -54,6 +54,8 @@ server.listen(port, host, () => {
         local_memory_write: process.env.JIANDANLY_LOCAL_MEMORY_WRITE ?? 'off',
         local_memory_recall: process.env.JIANDANLY_LOCAL_MEMORY_RECALL ?? 'off',
         local_memory_ttl_days: process.env.JIANDANLY_LOCAL_MEMORY_TTL_DAYS ?? '30',
+        local_skills_enabled: process.env.JIANDANLY_LOCAL_SKILLS_ENABLED ?? 'off',
+        local_skills_path: process.env.JIANDANLY_LOCAL_SKILLS_PATH ?? '',
         cloud_tool_gateway: cloudSession.state().connected ? 'session' : 'requires_login',
         cloud_base_url: cloudBaseURL ?? 'http://localhost:8080',
       }),

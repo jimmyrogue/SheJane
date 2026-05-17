@@ -157,7 +157,7 @@ describe('ConversationSidebar', () => {
           onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'off' }}
+          agentSettings={{ memory: 'off', skills: 'off' }}
           onAgentSettingsChange={onAgentSettingsChange}
         />
       </I18nProvider>,
@@ -169,8 +169,79 @@ describe('ConversationSidebar', () => {
     fireEvent.click(await screen.findByText('Agent 设置'))
 
     const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    fireEvent.click(within(dialog).getByRole('button', { name: '开启' }))
-    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on' })
+    const memoryGroup = within(dialog).getByRole('group', { name: '记忆' })
+    fireEvent.click(within(memoryGroup).getByRole('button', { name: '开启' }))
+    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on', skills: 'off' })
+  })
+
+  it('toggles the skills agent setting from the account menu dialog', async () => {
+    const onAgentSettingsChange = vi.fn()
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onAddConversationToProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          agentSettings={{ memory: 'off', skills: 'off' }}
+          onAgentSettingsChange={onAgentSettingsChange}
+        />
+      </I18nProvider>,
+    )
+
+    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByText('Agent 设置'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
+    const skillsGroup = within(dialog).getByRole('group', { name: '技能' })
+    fireEvent.click(within(skillsGroup).getByRole('button', { name: '开启' }))
+    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'off', skills: 'on' })
+  })
+
+  it('opens the skills view when the skills nav item is clicked', () => {
+    const onOpenSkills = vi.fn()
+    renderSidebar([], undefined, { onOpenSkills })
+    fireEvent.click(screen.getByText('技能'))
+    expect(onOpenSkills).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the active workspace tab and switches back to chats from the chats tab', () => {
+    const onOpenChats = vi.fn()
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onAddConversationToProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          onOpenSkills={vi.fn()}
+          onOpenChats={onOpenChats}
+          activeView="skills"
+        />
+      </I18nProvider>,
+    )
+    const skillsItem = screen.getByText('技能').closest('button')
+    const chatsItem = screen.getByText('对话').closest('button')
+    expect(skillsItem?.className).toContain('active')
+    expect(chatsItem?.className).not.toContain('active')
+    fireEvent.click(screen.getByText('对话'))
+    expect(onOpenChats).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -208,6 +279,7 @@ function sidebarElement(
         onAddConversationToProject={handlers.onAddConversationToProject ?? vi.fn()}
         onDeleteConversation={handlers.onDeleteConversation ?? vi.fn()}
         onCollapseSidebar={vi.fn()}
+        onOpenSkills={handlers.onOpenSkills ?? vi.fn()}
       />
     </I18nProvider>
   )
@@ -218,6 +290,7 @@ interface ConversationSidebarHandlers {
   onRenameConversation: (conversationID: string, title: string) => void
   onAddConversationToProject: (conversationID: string, projectName: string) => void
   onDeleteConversation: (conversationID: string) => void
+  onOpenSkills: () => void
 }
 
 function emptyConversation(id: string, title: string, overrides: Partial<Conversation> = {}): Conversation {

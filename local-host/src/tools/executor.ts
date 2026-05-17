@@ -5,6 +5,7 @@ import { isIP } from 'node:net'
 import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { dirname, relative, resolve, sep } from 'node:path'
 import type { LLMToolCall } from '../llm/gateway.js'
+import type { SkillDetail, SkillSummary } from '../skills/skillLoader.js'
 import type { LocalMemoryEntry, LocalRun } from '../types.js'
 import { callStdioMCPTool, parseMCPServersConfig, type MCPServerConfig } from './mcpRuntime.js'
 
@@ -130,6 +131,16 @@ export interface ToolExecutionOptions {
   memory?: {
     search: (query: string, limit: number) => LocalMemoryEntry[]
   }
+  /**
+   * Read-only window onto the filesystem skill catalog (Phase 7). The runner
+   * injects an adapter that scans the skill roots once and lazily reads a
+   * skill's full SKILL.md body on demand. Absent => skill.use is a no-op
+   * returning an empty result (feature off / no skills found).
+   */
+  skills?: {
+    catalog: () => SkillSummary[]
+    load: (name: string) => SkillDetail | null
+  }
 }
 
 export async function executeTool(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions = {}): Promise<ToolExecutionResult> {
@@ -170,6 +181,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return verifyTask(call, run)
     case 'memory.search':
       return searchMemory(call, options)
+    case 'skill.use':
+      return useSkill(call, options)
     case 'browser.open':
       return openManagedBrowser(call, options)
     case 'browser.search':
@@ -531,6 +544,50 @@ async function searchMemory(call: LLMToolCall, options: ToolExecutionOptions): P
     ok: true,
     content,
     data: { source: 'memory.search', query, count: entries.length, matches },
+  }
+}
+
+async function useSkill(call: LLMToolCall, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const name = typeof call.arguments.name === 'string' ? call.arguments.name.trim() : ''
+  if (!name) {
+    return { ok: false, content: 'A skill name is required.', errorCode: 'name_required', recoverable: true }
+  }
+  if (!options.skills) {
+    return {
+      ok: true,
+      content: 'Skills are not enabled.',
+      data: { source: 'skill.use', name, found: false },
+    }
+  }
+  let detail: SkillDetail | null = null
+  try {
+    detail = options.skills.load(name)
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Skill load failed.',
+      errorCode: 'skill_load_failed',
+      recoverable: true,
+    }
+  }
+  if (!detail) {
+    const available = options.skills
+      .catalog()
+      .map((skill) => skill.name)
+      .join(', ')
+    return {
+      ok: false,
+      content: available
+        ? `Skill not found: ${name}. Available skills: ${available}.`
+        : `Skill not found: ${name}.`,
+      errorCode: 'skill_not_found',
+      recoverable: true,
+    }
+  }
+  return {
+    ok: true,
+    content: detail.body,
+    data: { source: 'skill.use', name: detail.name, description: detail.description, found: true },
   }
 }
 

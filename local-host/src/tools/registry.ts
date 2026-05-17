@@ -267,6 +267,24 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'skill.use',
+    description:
+      'Load the full instructions for one of the task-specific Skills listed in the system prompt, by its exact name. Call this BEFORE starting work whenever the task matches a listed skill, then follow the returned instructions. Do not guess skill names that were not listed.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['name'],
+      properties: {
+        name: { type: 'string' },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: true,
+    maxResultSize: 16384,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'browser.open',
     description: 'Open a public http(s) URL in the Playwright-managed browser after explicit user approval, then capture a structured page snapshot.',
     inputSchema: {
