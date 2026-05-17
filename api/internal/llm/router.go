@@ -1,10 +1,15 @@
 package llm
 
+// ResolveFunc resolves a routing mode to a live provider/model/credit
+// multiplier. ok is false when no dynamic config exists (use static fallback).
+type ResolveFunc func(mode Mode) (provider Provider, model string, multiplier float64, ok bool)
+
 type Router struct {
 	fast      Provider
 	deep      Provider
 	fastModel string
 	deepModel string
+	resolve   ResolveFunc
 }
 
 func NewRouter(fast Provider, deep Provider) *Router {
@@ -27,7 +32,18 @@ func NewRouterWithModels(fast Provider, fastModel string, deep Provider, deepMod
 	return router
 }
 
+// SetResolver installs a dynamic resolver (e.g. DB-backed model registry).
+// When set and it resolves a mode, it overrides the static providers.
+func (r *Router) SetResolver(fn ResolveFunc) {
+	r.resolve = fn
+}
+
 func (r *Router) Select(mode Mode) (Provider, string) {
+	if r.resolve != nil {
+		if provider, model, _, ok := r.resolve(mode); ok {
+			return provider, model
+		}
+	}
 	switch mode {
 	case ModeDeep:
 		return r.deep, r.deepModel
@@ -36,6 +52,23 @@ func (r *Router) Select(mode Mode) (Provider, string) {
 	default:
 		return r.fast, r.fastModel
 	}
+}
+
+// MultiplierFor returns the per-model credit multiplier for a mode. Without a
+// resolver it preserves the legacy behavior (deep = 2x, everything else 1x).
+func (r *Router) MultiplierFor(mode Mode) float64 {
+	if r.resolve != nil {
+		if _, _, multiplier, ok := r.resolve(mode); ok {
+			if multiplier > 0 {
+				return multiplier
+			}
+			return 1
+		}
+	}
+	if mode == ModeDeep {
+		return 2
+	}
+	return 1
 }
 
 func NormalizeMode(model string) Mode {

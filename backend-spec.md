@@ -974,6 +974,8 @@ POST   /api/v1/webhooks/:id/test       发送测试事件
 
 ### 4.12 图片生成接口（Phase 4）
 
+> **实现现状：** 已落地为同步 `POST /api/v1/images/generations` 与 Agent 工具 `image.generate`（经 `POST /api/v1/agent/tools/execute`），非下文的异步 job/历史/删除接口。详见 [`/ONBOARDING.md`](ONBOARDING.md)。
+
 ```
 POST   /api/v1/images/generate         提交生图任务（异步，返回 job_id）
 GET    /api/v1/images/:job_id          查询任务状态 + 获取下载 URL
@@ -1350,6 +1352,8 @@ var SceneSystemPrompts = map[string]string{
 ```
 
 ### 5.3 计费层
+
+> **实现现状（Phase 4，2026-05-17）：** 计费已统一为 `用量 × 模型成本倍率 × 全局加价系数`。模型 provider/模型名/key/成本倍率改为 **Postgres `model_configs` 动态配置 + 管理后台可改、即时生效**，`.env` provider 变量仅作首启种子；新增全局计费参数（加价系数 + 基准每 token 成本）存 `app_settings`。生图按「每次金额 ÷ 基准每 token 成本 × 加价系数」换算。下文为原始设计，**以 [`/ONBOARDING.md`](ONBOARDING.md) 为团队对齐口径**。
 
 #### 5.3.1 包月额度设计
 
@@ -2197,6 +2201,8 @@ CREATE TABLE file_jobs (
 ```
 
 ### 5.11 图片生成（Phase 4）
+
+> **实现现状（Phase 4，2026-05-17）：** 生图已落地为 **Agent 工具 `image.generate`**（经 Cloud Tool Gateway，复用 `external_tool_call_records` 计费）+ 纯 REST `POST /api/v1/images/generations`，同步返回；provider 为 OpenAI 兼容 `images/generations`，结果当前**透传 url/b64（暂不落 S3）**；按次金额经全局基准成本×加价系数换算成 credits。下文「档位 / 异步 job / S3 预签名」为原始设计，未按此实现，**以 [`/ONBOARDING.md`](ONBOARDING.md) 为准**。
 
 用户可以在对话中直接要求生成图片，也可以通过独立的图片生成界面选择档位后提交。后端根据所选档位路由到对应的供应商，生成结果上传 S3，返回预签名 URL。
 

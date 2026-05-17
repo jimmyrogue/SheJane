@@ -525,6 +525,26 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'image.generate',
+    description:
+      'Generate one or more images from a text prompt through the cloud metered tool gateway when the account has an enabled image model. Returns image URLs (or base64).',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['prompt'],
+      properties: {
+        prompt: { type: 'string' },
+        size: { type: 'string', description: 'Optional size hint, e.g. 1024x1024.' },
+        n: { type: 'number', minimum: 1, maximum: 4 },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: true,
+    maxResultSize: 1048576,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'mcp.call',
     description: 'Call an allowlisted local MCP tool through the configured local stdio MCP runtime adapter.',
     inputSchema: {

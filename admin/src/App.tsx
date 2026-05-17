@@ -8,10 +8,14 @@ import {
   Loader2,
   LogOut,
   MessageSquareText,
+  Pencil,
+  Plus,
+  Power,
   ReceiptText,
   RefreshCcw,
   Search,
   Settings,
+  Trash2,
   ShieldAlert,
   ShieldCheck,
   UserCheck,
@@ -50,13 +54,15 @@ import {
   AdminAPI,
   type AdminAgentRun,
   type AdminAuditLog,
+  type AdminCreditRate,
+  type AdminModelConfig,
   type AdminOrder,
   type AdminOverview,
-  type AdminProviderStatus,
   type AdminToolCall,
   type AdminUserDetail,
   type AdminUserSummary,
   type AuthPayload,
+  type ModelConfigInput,
 } from './shared/api/client'
 
 type AdminSection = 'overview' | 'users' | 'tool-calls' | 'orders' | 'providers' | 'agent-runs' | 'audit'
@@ -235,7 +241,8 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [orders, setOrders] = useState<AdminOrder[]>([])
   const [orderPage, setOrderPage] = useState(0)
   const [hasMoreOrders, setHasMoreOrders] = useState(false)
-  const [providers, setProviders] = useState<AdminProviderStatus[]>([])
+  const [modelConfigs, setModelConfigs] = useState<AdminModelConfig[]>([])
+  const [creditRate, setCreditRate] = useState<AdminCreditRate | null>(null)
   const [agentRuns, setAgentRuns] = useState<AdminAgentRun[]>([])
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
   const [auditPage, setAuditPage] = useState(0)
@@ -282,16 +289,24 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
     setHasMoreAudit(data.length === PAGE_SIZE)
   }
 
+  async function reloadModelConfigs() {
+    const [configs, rate] = await Promise.all([api.adminModelConfigs(), api.adminCreditRate()])
+    setModelConfigs(configs)
+    setCreditRate(rate)
+  }
+
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, providerData, agentRunData] = await Promise.all([
+      const [overviewData, modelConfigData, creditRateData, agentRunData] = await Promise.all([
         api.adminOverview(),
-        api.adminProviders(),
+        api.adminModelConfigs(),
+        api.adminCreditRate(),
         api.adminAgentRuns(),
       ])
       setOverview(overviewData)
-      setProviders(providerData)
+      setModelConfigs(modelConfigData)
+      setCreditRate(creditRateData)
       setAgentRuns(agentRunData)
       await Promise.all([
         loadUsersPage(nextQuery, 0),
@@ -489,10 +504,17 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
         <main className="flex flex-1 flex-col p-4 md:p-6">
           <Tabs value={activeSection} onValueChange={switchSection} className="flex flex-1 flex-col gap-4 md:gap-6">
             {notice ? (
-              <Alert>
-                <ShieldCheck className="size-4" />
-                <AlertDescription>{notice}</AlertDescription>
-              </Alert>
+              <div
+                className="fixed left-1/2 top-4 z-[100] w-[min(92vw,520px)] -translate-x-1/2 cursor-pointer"
+                role="status"
+                onClick={() => setNotice('')}
+                title="点击关闭"
+              >
+                <Alert className="border-border bg-background shadow-lg">
+                  <ShieldCheck className="size-4" />
+                  <AlertDescription>{notice}</AlertDescription>
+                </Alert>
+              </div>
             ) : null}
 
             <TabsContent value="overview" className="mt-0 flex flex-col gap-4">
@@ -540,7 +562,13 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
             </TabsContent>
 
             <TabsContent value="providers" className="mt-0">
-              <ProvidersCard providers={providers} />
+              <ModelConfigCard
+                configs={modelConfigs}
+                creditRate={creditRate}
+                api={api}
+                onReload={reloadModelConfigs}
+                onNotice={setNotice}
+              />
             </TabsContent>
 
             <TabsContent value="agent-runs" className="mt-0">
@@ -989,49 +1017,449 @@ function AuditCard({
   )
 }
 
-function ProvidersCard({ providers }: { providers: AdminProviderStatus[] }) {
+const PROVIDER_KINDS = ['openai-compatible', 'deepseek-v4', 'anthropic', 'mock'] as const
+
+const CAPABILITY_OPTIONS = [
+  { value: 'chat', label: '对话 (chat)' },
+  { value: 'image', label: '生图 (image)' },
+] as const
+
+// A slot is the logical role the backend routes to. Exactly one enabled model
+// per slot is live. Valid slots depend on the capability.
+const SLOT_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  chat: [
+    { value: 'chat.fast', label: 'chat.fast · 快速对话模型' },
+    { value: 'chat.deep', label: 'chat.deep · 深度对话模型' },
+  ],
+  image: [{ value: 'image.default', label: 'image.default · 默认生图模型' }],
+}
+
+function slotOptionsFor(capability: string) {
+  return SLOT_OPTIONS[capability] ?? SLOT_OPTIONS.chat
+}
+
+const SELECT_CLASS =
+  'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
+
+interface ModelConfigForm {
+  slot: string
+  capability: string
+  provider_kind: string
+  display_name: string
+  base_url: string
+  model_name: string
+  credit_multiplier: string
+  price_per_call_cny: string
+  enabled: boolean
+  api_key: string
+}
+
+function emptyModelForm(): ModelConfigForm {
+  return {
+    slot: '',
+    capability: 'chat',
+    provider_kind: 'openai-compatible',
+    display_name: '',
+    base_url: '',
+    model_name: '',
+    credit_multiplier: '1',
+    price_per_call_cny: '0',
+    enabled: true,
+    api_key: '',
+  }
+}
+
+function ModelConfigCard({
+  configs,
+  creditRate,
+  api,
+  onReload,
+  onNotice,
+}: {
+  configs: AdminModelConfig[]
+  creditRate: AdminCreditRate | null
+  api: AdminAPI
+  onReload: () => Promise<void>
+  onNotice: (message: string) => void
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<ModelConfigForm>(emptyModelForm())
+  const [editingHasKey, setEditingHasKey] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [markupInput, setMarkupInput] = useState('1.15')
+  const [rateInput, setRateInput] = useState('')
+  const [rateCurrency, setRateCurrency] = useState('cny')
+  const [rateSaving, setRateSaving] = useState(false)
+
+  useEffect(() => {
+    if (creditRate) {
+      setMarkupInput(creditRate.markup_factor ? String(creditRate.markup_factor) : '1.15')
+      setRateInput(creditRate.currency_per_credit ? String(creditRate.currency_per_credit) : '')
+      setRateCurrency(creditRate.currency || 'cny')
+    }
+  }, [creditRate])
+
+  function openCreate() {
+    setEditingId(null)
+    setEditingHasKey(false)
+    setForm(emptyModelForm())
+    setDialogOpen(true)
+  }
+
+  function openEdit(cfg: AdminModelConfig) {
+    setEditingId(cfg.id)
+    setEditingHasKey(cfg.api_key_configured)
+    setForm({
+      slot: cfg.slot,
+      capability: cfg.capability,
+      provider_kind: cfg.provider_kind,
+      display_name: cfg.display_name,
+      base_url: cfg.base_url,
+      model_name: cfg.model_name,
+      credit_multiplier: String(cfg.credit_multiplier),
+      price_per_call_cny: String(cfg.price_per_call_cny ?? 0),
+      enabled: cfg.enabled,
+      api_key: '',
+    })
+    setDialogOpen(true)
+  }
+
+  async function submitForm() {
+    const multiplier = Number(form.credit_multiplier)
+    if (!form.slot.trim() || !form.provider_kind.trim()) {
+      onNotice('slot 与 provider_kind 必填')
+      return
+    }
+    if (!Number.isFinite(multiplier) || multiplier <= 0) {
+      onNotice('倍率必须是大于 0 的数字')
+      return
+    }
+    const payload: ModelConfigInput = {
+      slot: form.slot.trim(),
+      capability: form.capability.trim() || 'chat',
+      provider_kind: form.provider_kind,
+      display_name: form.display_name.trim(),
+      base_url: form.base_url.trim(),
+      model_name: form.model_name.trim(),
+      credit_multiplier: multiplier,
+      price_per_call_cny: Number(form.price_per_call_cny) || 0,
+      enabled: form.enabled,
+    }
+    if (form.api_key.trim()) {
+      payload.api_key = form.api_key.trim()
+    }
+    setSaving(true)
+    try {
+      if (editingId) {
+        await api.adminUpdateModelConfig(editingId, payload)
+      } else {
+        await api.adminCreateModelConfig(payload)
+      }
+      await onReload()
+      setDialogOpen(false)
+      onNotice('模型配置已保存并即时生效')
+    } catch (caught) {
+      onNotice(caught instanceof Error ? caught.message : '保存模型配置失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function toggleEnabled(cfg: AdminModelConfig) {
+    try {
+      await api.adminToggleModelConfig(cfg.id, !cfg.enabled)
+      await onReload()
+      onNotice(cfg.enabled ? '已停用该模型' : '已启用该模型')
+    } catch (caught) {
+      onNotice(caught instanceof Error ? caught.message : '更新状态失败')
+    }
+  }
+
+  async function removeConfig(cfg: AdminModelConfig) {
+    if (!window.confirm(`确认删除模型配置「${cfg.display_name || cfg.slot}」？`)) {
+      return
+    }
+    try {
+      await api.adminDeleteModelConfig(cfg.id)
+      await onReload()
+      onNotice('模型配置已删除')
+    } catch (caught) {
+      onNotice(caught instanceof Error ? caught.message : '删除失败')
+    }
+  }
+
+  async function saveRate() {
+    const markup = Number(markupInput)
+    if (!Number.isFinite(markup) || markup < 1 || markup > 3) {
+      onNotice('加价系数必须在 1.0–3.0 之间（1.15 = 加价 15%）')
+      return
+    }
+    const value = Number(rateInput || 0)
+    if (!Number.isFinite(value) || value < 0) {
+      onNotice('基准每 token 成本不能为负')
+      return
+    }
+    setRateSaving(true)
+    try {
+      await api.adminSetCreditRate({ markup_factor: markup, currency_per_credit: value, currency: rateCurrency.trim() || 'cny' })
+      await onReload()
+      onNotice('计费参数已更新并即时生效')
+    } catch (caught) {
+      onNotice(caught instanceof Error ? caught.message : '保存计费参数失败')
+    } finally {
+      setRateSaving(false)
+    }
+  }
+
   return (
-    <Card id="providers" className="min-w-0">
-      <CardHeader>
-        <CardTitle>模型</CardTitle>
-        <CardDescription>只读展示 provider 状态，不暴露 API key 原文。</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>模式</TableHead>
-              <TableHead>Provider / Model</TableHead>
-              <TableHead>状态</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {providers.length ? (
-              providers.map((provider) => (
-                <TableRow key={`${provider.mode}-${provider.provider}`}>
-                  <TableCell>{provider.mode}</TableCell>
-                  <TableCell className="max-w-44">
-                    <div className="truncate font-medium">{provider.provider}</div>
-                    <div className="truncate text-xs text-muted-foreground">{provider.kind || 'unknown'} · {provider.model} · {provider.base_url || 'default'}</div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      <Badge variant={provider.mock ? 'secondary' : 'default'}>{provider.mock ? 'mock' : 'real'}</Badge>
-                      <Badge variant={provider.api_key_configured ? 'secondary' : 'outline'}>
-                        <KeyRound className="size-3" />
-                        {provider.api_key_configured ? 'key 已配置' : 'key 未配置'}
-                      </Badge>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <EmptyTableRow columns={3} label="暂无模型配置" />
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-4">
+      <Card id="providers" className="min-w-0">
+        <CardHeader className="flex flex-row items-start justify-between gap-2">
+          <div>
+            <CardTitle>模型配置</CardTitle>
+            <CardDescription>动态管理 provider / 模型 / 计费倍率，保存后即时生效，不再依赖 .env。API key 加密存储且不回显。</CardDescription>
+          </div>
+          <Button size="sm" onClick={openCreate}>
+            <Plus className="size-4" />
+            新增模型
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>槽位 / 能力</TableHead>
+                <TableHead>Provider / Model</TableHead>
+                <TableHead>成本倍率</TableHead>
+                <TableHead>每次金额</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {configs.length ? (
+                configs.map((cfg) => (
+                  <TableRow key={cfg.id}>
+                    <TableCell>
+                      <div className="font-medium">{cfg.slot}</div>
+                      <div className="text-xs text-muted-foreground">{cfg.capability}</div>
+                    </TableCell>
+                    <TableCell className="max-w-52">
+                      <div className="truncate font-medium">{cfg.display_name || cfg.provider_kind}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {cfg.provider_kind} · {cfg.model_name || '-'} · {cfg.base_url || 'default'}
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{cfg.credit_multiplier}x</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {cfg.price_per_call_cny ? `¥${cfg.price_per_call_cny}/次` : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={cfg.enabled ? 'default' : 'outline'}>{cfg.enabled ? '启用' : '停用'}</Badge>
+                        <Badge variant={cfg.api_key_configured ? 'secondary' : 'outline'}>
+                          <KeyRound className="size-3" />
+                          {cfg.api_key_configured ? 'key 已配置' : 'key 未配置'}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" title="编辑" onClick={() => openEdit(cfg)}>
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" title={cfg.enabled ? '停用' : '启用'} onClick={() => toggleEnabled(cfg)}>
+                          <Power className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" title="删除" onClick={() => removeConfig(cfg)}>
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <EmptyTableRow columns={6} label="暂无模型配置（首次启动会从 env 自动播种）" />
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>计费参数</CardTitle>
+          <CardDescription>
+            全局加价系数 = 产品固定利润（1.15 = 全线加价 15%，建议 1.10–1.20）。最终扣费 = tokens × 模型成本倍率 × 加价系数。
+            基准每 token 成本仅用于把生图等「按次金额」模型换算成 credits（每次金额 ÷ 基准成本 × 加价系数）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="markup-value">全局加价系数（利润）</Label>
+              <Input
+                id="markup-value"
+                value={markupInput}
+                onChange={(event) => setMarkupInput(event.target.value)}
+                placeholder="1.15 = 加价 15%"
+                className="w-40"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="rate-value">基准每 token 成本（{rateCurrency || 'cny'}）</Label>
+              <Input
+                id="rate-value"
+                value={rateInput}
+                onChange={(event) => setRateInput(event.target.value)}
+                placeholder="DeepSeek-Pro 每 token 成本，仅生图换算用；留空=不启用生图"
+                className="w-72"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="rate-currency">货币</Label>
+              <Input
+                id="rate-currency"
+                value={rateCurrency}
+                onChange={(event) => setRateCurrency(event.target.value)}
+                className="w-24"
+              />
+            </div>
+            <Button onClick={saveRate} disabled={rateSaving}>
+              {rateSaving ? <Loader2 className="size-4 animate-spin" /> : null}
+              保存
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>{editingId ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
+            <DialogDescription>保存后立即生效。留空 API key 表示保持原有密钥不变。</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="mc-cap">能力 capability</Label>
+                <select
+                  id="mc-cap"
+                  className={SELECT_CLASS}
+                  value={form.capability}
+                  onChange={(e) => {
+                    const capability = e.target.value
+                    const slots = slotOptionsFor(capability)
+                    const slot = slots.some((option) => option.value === form.slot) ? form.slot : slots[0].value
+                    setForm({ ...form, capability, slot })
+                  }}
+                >
+                  {CAPABILITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="mc-slot">槽位 slot</Label>
+                <select
+                  id="mc-slot"
+                  className={SELECT_CLASS}
+                  value={form.slot}
+                  onChange={(e) => setForm({ ...form, slot: e.target.value })}
+                >
+                  {!form.slot ? <option value="">请选择槽位</option> : null}
+                  {slotOptionsFor(form.capability).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <p className="-mt-1 text-xs text-muted-foreground">
+              槽位 = 该模型担任的角色，后端按角色路由请求；同一槽位只有一个「启用」的模型生效（如 chat.fast 收快速对话、chat.deep 收深度对话、image.default 收生图）。
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="mc-kind">Provider 类型</Label>
+                <select
+                  id="mc-kind"
+                  className={SELECT_CLASS}
+                  value={form.provider_kind}
+                  onChange={(e) => setForm({ ...form, provider_kind: e.target.value })}
+                >
+                  {PROVIDER_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="mc-mult">成本倍率（相对 DeepSeek-Pro）</Label>
+                <Input
+                  id="mc-mult"
+                  value={form.credit_multiplier}
+                  onChange={(e) => setForm({ ...form, credit_multiplier: e.target.value })}
+                  placeholder="纯成本比：Pro=1，轻量=0.x，Claude/高级=Nx（利润由全局加价系数统一加）"
+                />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-price">每次金额（¥，仅生图按次计费用）</Label>
+              <Input
+                id="mc-price"
+                value={form.price_per_call_cny}
+                onChange={(e) => setForm({ ...form, price_per_call_cny: e.target.value })}
+                placeholder="0 表示不按次计费；生图填每张图片金额"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-name">显示名 / Provider Name</Label>
+              <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="deepseek-fast" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-base">Base URL</Label>
+              <Input id="mc-base" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://api.deepseek.com" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-model">模型名</Label>
+              <Input id="mc-model" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} placeholder="deepseek-v4-pro" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-key">API Key</Label>
+              <Input
+                id="mc-key"
+                type="password"
+                value={form.api_key}
+                onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                placeholder={editingHasKey ? '已配置，留空保持不变' : '输入 API key'}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+              />
+              启用（同一槽位仅一个启用配置生效）
+            </label>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
+              取消
+            </Button>
+            <Button onClick={submitForm} disabled={saving}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+              保存
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 

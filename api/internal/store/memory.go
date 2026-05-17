@@ -30,6 +30,8 @@ type MemoryStore struct {
 	orders       map[string]PaymentOrder
 	stripeEvents map[string]bool
 	auditLogs    []AuditLog
+	modelConfigs map[string]ModelConfig
+	appSettings  map[string]AppSetting
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -46,6 +48,8 @@ func NewMemoryStore() *MemoryStore {
 		orders:       make(map[string]PaymentOrder),
 		stripeEvents: make(map[string]bool),
 		auditLogs:    make([]AuditLog, 0),
+		modelConfigs: make(map[string]ModelConfig),
+		appSettings:  make(map[string]AppSetting),
 	}
 }
 

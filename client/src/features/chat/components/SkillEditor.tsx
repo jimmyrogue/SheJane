@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { LexicalComposer } from '@lexical/react/LexicalComposer'
@@ -26,7 +27,14 @@ import {
   KEY_ENTER_COMMAND,
   type TextNode,
 } from 'lexical'
-import { $createSkillNode, $isSkillNode, SkillNode } from './SkillNode'
+import {
+  $createFunctionNode,
+  $createSkillNode,
+  $isFunctionNode,
+  $isSkillNode,
+  FunctionNode,
+  SkillNode,
+} from './SkillNode'
 import { tokenizeDraft } from '../skillDraft'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { InstalledSkill } from '@/shared/local-host/client'
@@ -39,13 +47,19 @@ export interface SkillEditorProps {
   placeholder: string
 }
 
-class SkillMenuOption extends MenuOption {
+type MenuKind = 'function' | 'skill'
+
+class ComposerMenuOption extends MenuOption {
+  kind: MenuKind
+  id: string
   name: string
   description: string
-  constructor(skill: InstalledSkill) {
-    super(`${skill.name}|${skill.path}`)
-    this.name = skill.name
-    this.description = skill.description
+  constructor(kind: MenuKind, id: string, name: string, description: string) {
+    super(`${kind}:${id}`)
+    this.kind = kind
+    this.id = id
+    this.name = name
+    this.description = description
   }
 }
 
@@ -56,6 +70,10 @@ function buildRootFromDraft(draft: string): void {
   for (const node of tokenizeDraft(draft)) {
     if (node.type === 'skill') {
       paragraph.append($createSkillNode(node.name))
+      continue
+    }
+    if (node.type === 'function') {
+      paragraph.append($createFunctionNode(node.name))
       continue
     }
     const parts = node.value.split('\n')
@@ -150,7 +168,7 @@ function SkillDeletePlugin(): null {
         const index = isBackward ? anchor.offset - 1 : anchor.offset
         target = 'getChildAtIndex' in node ? node.getChildAtIndex(index) : null
       }
-      if (target && $isSkillNode(target)) {
+      if (target && ($isSkillNode(target) || $isFunctionNode(target))) {
         target.remove()
         return true
       }
@@ -216,32 +234,41 @@ function SkillTypeaheadPlugin({
     }
   }, [])
 
+  const functionsCatalog = useMemo(
+    () => [{ id: 'image', name: t('composer.fn.image.name'), description: t('composer.fn.image.desc') }],
+    [t],
+  )
+
+  // Functions first, then skills — so the "功能" group renders above "技能".
   const options = useMemo(() => {
     const normalized = (query ?? '').toLowerCase()
-    return skills
-      .filter(
-        (skill) =>
-          normalized === '' ||
-          skill.name.toLowerCase().includes(normalized) ||
-          skill.description.toLowerCase().includes(normalized),
-      )
-      .map((skill) => new SkillMenuOption(skill))
-  }, [skills, query])
+    const match = (name: string, description: string) =>
+      normalized === '' ||
+      name.toLowerCase().includes(normalized) ||
+      description.toLowerCase().includes(normalized)
+    const funcOptions = functionsCatalog
+      .filter((fn) => match(fn.name, fn.description))
+      .map((fn) => new ComposerMenuOption('function', fn.id, fn.name, fn.description))
+    const skillOptions = skills
+      .filter((skill) => match(skill.name, skill.description))
+      .map((skill) => new ComposerMenuOption('skill', skill.name, skill.name, skill.description))
+    return [...funcOptions, ...skillOptions]
+  }, [functionsCatalog, skills, query])
 
   const onSelectOption = useCallback(
-    (option: SkillMenuOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
+    (option: ComposerMenuOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
       editor.update(() => {
-        const skillNode = $createSkillNode(option.name)
+        const node = option.kind === 'function' ? $createFunctionNode(option.id) : $createSkillNode(option.id)
         if (textNodeContainingQuery) {
-          textNodeContainingQuery.replace(skillNode)
+          textNodeContainingQuery.replace(node)
         } else {
           const selection = $getSelection()
           if ($isRangeSelection(selection)) {
-            selection.insertNodes([skillNode])
+            selection.insertNodes([node])
           }
         }
         const space = $createTextNode(' ')
-        skillNode.insertAfter(space)
+        node.insertAfter(space)
         space.selectEnd()
       })
       closeMenu()
@@ -250,7 +277,7 @@ function SkillTypeaheadPlugin({
   )
 
   return (
-    <LexicalTypeaheadMenuPlugin<SkillMenuOption>
+    <LexicalTypeaheadMenuPlugin<ComposerMenuOption>
       options={options}
       triggerFn={triggerFn}
       onQueryChange={setQuery}
@@ -261,39 +288,76 @@ function SkillTypeaheadPlugin({
       onClose={() => {
         menuOpenRef.current = false
       }}
-      menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) =>
-        anchorElementRef.current
-          ? createPortal(
-              <ul className="composer-skill-menu" role="listbox" aria-label={t('sidebar.skills')}>
-                {loading ? (
-                  <li className="composer-skill-menu-empty">{t('composer.skillMenu.loading')}</li>
-                ) : options.length === 0 ? (
-                  <li className="composer-skill-menu-empty">{t('composer.skillMenu.empty')}</li>
-                ) : (
-                  options.map((option, index) => (
-                    <li
-                      key={option.key}
-                      role="option"
-                      aria-selected={index === selectedIndex}
-                      ref={(element) => option.setRefElement(element)}
-                      className={`composer-skill-menu-item${index === selectedIndex ? ' active' : ''}`}
-                      onMouseEnter={() => setHighlightedIndex(index)}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setHighlightedIndex(index)
-                        selectOptionAndCleanUp(option)
-                      }}
-                    >
-                      <span className="composer-skill-menu-name">{option.name}</span>
-                      <span className="composer-skill-menu-desc">{option.description}</span>
-                    </li>
-                  ))
-                )}
-              </ul>,
-              anchorElementRef.current,
+      menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) => {
+        if (!anchorElementRef.current) {
+          return null
+        }
+        const funcOptions = options.filter((option) => option.kind === 'function')
+        const skillOptions = options.filter((option) => option.kind === 'skill')
+        const showSkillsGroup = skillOptions.length > 0 || loading
+        const renderItem = (option: ComposerMenuOption) => {
+          const index = options.indexOf(option)
+          return (
+            <li
+              key={option.key}
+              role="option"
+              aria-selected={index === selectedIndex}
+              ref={(element) => option.setRefElement(element)}
+              className={`composer-skill-menu-item${index === selectedIndex ? ' active' : ''}`}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setHighlightedIndex(index)
+                selectOptionAndCleanUp(option)
+              }}
+            >
+              <span className="composer-skill-menu-name">{option.name}</span>
+              <span className="composer-skill-menu-desc">{option.description}</span>
+            </li>
+          )
+        }
+        const rows: JSX.Element[] = []
+        if (funcOptions.length > 0) {
+          rows.push(
+            <li key="grp-fn" className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.functionsGroup')}
+            </li>,
+          )
+          funcOptions.forEach((option) => rows.push(renderItem(option)))
+        }
+        if (showSkillsGroup) {
+          if (funcOptions.length > 0) {
+            rows.push(<li key="divider" className="composer-menu-divider" aria-hidden="true" />)
+          }
+          rows.push(
+            <li key="grp-skill" className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.skillsGroup')}
+            </li>,
+          )
+          if (loading && skillOptions.length === 0) {
+            rows.push(
+              <li key="skill-loading" className="composer-skill-menu-empty">
+                {t('composer.skillMenu.loading')}
+              </li>,
             )
-          : null
-      }
+          } else {
+            skillOptions.forEach((option) => rows.push(renderItem(option)))
+          }
+        }
+        if (rows.length === 0) {
+          rows.push(
+            <li key="empty" className="composer-skill-menu-empty">
+              {t('composer.skillMenu.empty')}
+            </li>,
+          )
+        }
+        return createPortal(
+          <ul className="composer-skill-menu" role="listbox" aria-label={t('sidebar.skills')}>
+            {rows}
+          </ul>,
+          anchorElementRef.current,
+        )
+      }}
     />
   )
 }
@@ -306,7 +370,7 @@ export function SkillEditor({ draft, onDraftChange, onSend, listSkills, placehol
   const initialConfig = useMemo(
     () => ({
       namespace: 'composer-skill-editor',
-      nodes: [SkillNode],
+      nodes: [SkillNode, FunctionNode],
       onError: (error: Error) => {
         // Surface in dev; never crash the composer.
         console.error('[skill-editor]', error)

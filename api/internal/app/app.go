@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/coldflame/jiandanly/api/internal/config"
 	"github.com/coldflame/jiandanly/api/internal/documents"
 	"github.com/coldflame/jiandanly/api/internal/llm"
+	"github.com/coldflame/jiandanly/api/internal/modelreg"
 	"github.com/coldflame/jiandanly/api/internal/store"
 )
 
@@ -29,6 +32,7 @@ type App struct {
 	Config    config.Config
 	Store     store.Store
 	Router    *llm.Router
+	Registry  *modelreg.Registry
 	Documents *documents.Service
 }
 
@@ -77,10 +81,19 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 	documentConfig.MaxBytes = cfg.DocumentMaxBytes
 	documentConfig.TextLimit = cfg.DocumentTextLimit
 	documentConfig.TTL = time.Duration(cfg.DocumentTTLHours) * time.Hour
+
+	router := llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel)
+	registry := modelreg.New(st, cfg)
+	if err := registry.EnsureSeed(context.Background()); err != nil {
+		log.Printf("app: model config seed failed (falling back to env config): %v", err)
+	}
+	router.SetResolver(registry.Resolve)
+
 	return &App{
 		Config:    cfg,
 		Store:     st,
-		Router:    llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel),
+		Router:    router,
+		Registry:  registry,
 		Documents: documents.NewService(st, documentStorage, documentConfig),
 	}
 }
@@ -165,15 +178,40 @@ func (a *App) Authenticate(ctx context.Context, token string) (store.User, error
 	return user, nil
 }
 
+// markupFactor is the global gross markup applied on top of the per-model
+// cost ratio (the product's fixed core margin).
+func (a *App) markupFactor() float64 {
+	if a.Registry == nil {
+		return 1
+	}
+	return a.Registry.Markup()
+}
+
 func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
 	tokens := llm.EstimateTokens(request.Messages)
-	if request.Model == string(llm.ModeDeep) {
-		tokens *= 2
-	}
-	if tokens < 300 {
+	mode := llm.NormalizeMode(request.Model)
+	credits := applyMultiplier(int64(tokens), a.Router.MultiplierFor(mode)*a.markupFactor())
+	if credits < 300 {
 		return 300
 	}
-	return int64(tokens)
+	return credits
+}
+
+// UsageCredits converts settled token usage to credits using the per-model
+// cost ratio for the mode times the global markup, minimum 1 credit.
+func (a *App) UsageCredits(mode llm.Mode, totalTokens int) int64 {
+	credits := applyMultiplier(int64(totalTokens), a.Router.MultiplierFor(mode)*a.markupFactor())
+	if credits < 1 {
+		return 1
+	}
+	return credits
+}
+
+func applyMultiplier(tokens int64, multiplier float64) int64 {
+	if multiplier <= 0 {
+		multiplier = 1
+	}
+	return int64(math.Ceil(float64(tokens) * multiplier))
 }
 
 func (a *App) NewRequestID() string {

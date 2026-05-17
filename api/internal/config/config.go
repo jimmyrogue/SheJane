@@ -22,6 +22,10 @@ type Config struct {
 	MonthlyCredits int64
 	MockLLM        bool
 
+	// ConfigEncryptionKey encrypts model API keys at rest in the DB. When empty,
+	// keys are stored as plaintext and a warning is logged at startup.
+	ConfigEncryptionKey string
+
 	FastProviderKind    string
 	FastProviderBaseURL string
 	FastProviderAPIKey  string
@@ -106,6 +110,7 @@ func Load() Config {
 	cfg.AdminEmails = getEnvList("ADMIN_EMAILS", cfg.AdminEmails)
 	cfg.MonthlyCredits = getEnvInt64("MONTHLY_CREDITS", cfg.MonthlyCredits)
 	cfg.MockLLM = getEnvBool("MOCK_LLM", cfg.MockLLM)
+	cfg.ConfigEncryptionKey = getEnv("CONFIG_ENCRYPTION_KEY", cfg.ConfigEncryptionKey)
 	cfg.FastProviderKind = getEnv("FAST_PROVIDER_KIND", cfg.FastProviderKind)
 	cfg.FastProviderBaseURL = getEnv("FAST_PROVIDER_BASE_URL", cfg.FastProviderBaseURL)
 	cfg.FastProviderAPIKey = getEnv("FAST_PROVIDER_API_KEY", cfg.FastProviderAPIKey)

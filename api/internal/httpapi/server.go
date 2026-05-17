@@ -73,6 +73,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.agentLLMGateway))
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
 	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.agentToolExecute))
+	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.imagesGenerations))
 	s.mux.HandleFunc("POST /api/v1/agent/tool-events", s.requireAuth(s.agentToolEvents))
 	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
@@ -91,6 +92,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/agent-runs", s.requireAdmin(s.adminAgentRuns))
 	s.mux.HandleFunc("GET /api/v1/admin/tool-calls", s.requireAdmin(s.adminToolCalls))
 	s.mux.HandleFunc("GET /api/v1/admin/audit-logs", s.requireAdmin(s.adminAuditLogs))
+	s.mux.HandleFunc("GET /api/v1/admin/model-configs", s.requireAdmin(s.adminListModelConfigs))
+	s.mux.HandleFunc("POST /api/v1/admin/model-configs", s.requireAdmin(s.adminCreateModelConfig))
+	s.mux.HandleFunc("PATCH /api/v1/admin/model-configs/{id}", s.requireAdmin(s.adminUpdateModelConfig))
+	s.mux.HandleFunc("POST /api/v1/admin/model-configs/{id}/enabled", s.requireAdmin(s.adminToggleModelConfig))
+	s.mux.HandleFunc("DELETE /api/v1/admin/model-configs/{id}", s.requireAdmin(s.adminDeleteModelConfig))
+	s.mux.HandleFunc("GET /api/v1/admin/settings/credit-rate", s.requireAdmin(s.adminGetCreditRate))
+	s.mux.HandleFunc("PUT /api/v1/admin/settings/credit-rate", s.requireAdmin(s.adminSetCreditRate))
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
@@ -104,7 +112,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", corsOrigin(r.Header.Get("Origin"), s.app.Config.ClientBaseURL, s.app.Config.AdminBaseURL))
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -609,10 +617,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		inputTokens = llm.EstimateTokens(request.Messages)
 	}
 	outputTokens := completion.OutputTokens
-	actualCredits := int64(inputTokens + outputTokens)
-	if actualCredits < 1 {
-		actualCredits = 1
-	}
+	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		if billing.IsInsufficientCredits(err) {
@@ -846,10 +851,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	actualCredits := int64(inputTokens + outputTokens)
-	if actualCredits < 1 {
-		actualCredits = 1
-	}
+	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(ctx, requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		errorCode := "settlement_failed"
@@ -1028,10 +1030,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	actualCredits := int64(inputTokens + outputTokens)
-	if actualCredits < 1 {
-		actualCredits = 1
-	}
+	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		if billing.IsInsufficientCredits(err) {

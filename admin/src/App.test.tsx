@@ -323,21 +323,34 @@ function mockFetch(role: 'admin' | 'user') {
         ],
       })
     }
-    if (url.endsWith('/api/v1/admin/providers')) {
+    if (url.split('?')[0].endsWith('/api/v1/admin/model-configs')) {
       return jsonResponse({
         code: 0,
         message: 'ok',
         data: [
           {
-            mode: 'fast',
-            provider: 'deepseek-fast',
-            kind: 'deepseek-v4',
+            id: 'mc_1',
+            slot: 'chat.fast',
+            capability: 'chat',
+            provider_kind: 'deepseek-v4',
+            display_name: 'deepseek-fast',
             base_url: 'https://api.deepseek.com',
-            model: 'deepseek-v4-flash',
-            mock: false,
+            model_name: 'deepseek-v4-flash',
+            credit_multiplier: 1,
+            price_per_call_cny: 0,
+            enabled: true,
+            params: {},
             api_key_configured: true,
+            updated_at: '2026-05-10T00:00:00Z',
           },
         ],
+      })
+    }
+    if (url.endsWith('/api/v1/admin/settings/credit-rate')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: { markup_factor: 1.15, currency_per_credit: 0.0001, currency: 'cny', configured: true },
       })
     }
     throw new Error(`Unexpected fetch ${url}`)

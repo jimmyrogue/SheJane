@@ -129,6 +129,43 @@ export interface AdminProviderStatus {
   api_key_configured: boolean
 }
 
+export interface AdminModelConfig {
+  id: string
+  slot: string
+  capability: string
+  provider_kind: string
+  display_name: string
+  base_url: string
+  model_name: string
+  credit_multiplier: number
+  price_per_call_cny: number
+  enabled: boolean
+  params: Record<string, unknown>
+  api_key_configured: boolean
+  updated_at: string
+}
+
+export interface ModelConfigInput {
+  slot: string
+  capability: string
+  provider_kind: string
+  display_name: string
+  base_url: string
+  model_name: string
+  credit_multiplier: number
+  price_per_call_cny: number
+  enabled: boolean
+  params?: Record<string, unknown>
+  api_key?: string
+}
+
+export interface AdminCreditRate {
+  markup_factor: number
+  currency_per_credit: number
+  currency: string
+  configured: boolean
+}
+
 export interface AdminAgentRun {
   id: string
   user_id: string
@@ -242,6 +279,35 @@ export class AdminAPI {
     return this.get<AdminAgentRun[]>('/api/v1/admin/agent-runs')
   }
 
+  async adminModelConfigs(capability = ''): Promise<AdminModelConfig[]> {
+    const qs = capability ? `?capability=${encodeURIComponent(capability)}` : ''
+    return this.get<AdminModelConfig[]>(`/api/v1/admin/model-configs${qs}`)
+  }
+
+  async adminCreateModelConfig(input: ModelConfigInput): Promise<AdminModelConfig> {
+    return this.post<AdminModelConfig>('/api/v1/admin/model-configs', input, true)
+  }
+
+  async adminUpdateModelConfig(id: string, input: ModelConfigInput): Promise<AdminModelConfig> {
+    return this.patch<AdminModelConfig>(`/api/v1/admin/model-configs/${encodeURIComponent(id)}`, input)
+  }
+
+  async adminToggleModelConfig(id: string, enabled: boolean): Promise<AdminModelConfig> {
+    return this.post<AdminModelConfig>(`/api/v1/admin/model-configs/${encodeURIComponent(id)}/enabled`, { enabled }, true)
+  }
+
+  async adminDeleteModelConfig(id: string): Promise<void> {
+    await this.del(`/api/v1/admin/model-configs/${encodeURIComponent(id)}`)
+  }
+
+  async adminCreditRate(): Promise<AdminCreditRate> {
+    return this.get<AdminCreditRate>('/api/v1/admin/settings/credit-rate')
+  }
+
+  async adminSetCreditRate(input: { markup_factor: number; currency_per_credit: number; currency: string }): Promise<AdminCreditRate> {
+    return this.put<AdminCreditRate>('/api/v1/admin/settings/credit-rate', input)
+  }
+
   async adminAuditLogs(limit?: number, offset?: number): Promise<AdminAuditLog[]> {
     return this.get<AdminAuditLog[]>(`/api/v1/admin/audit-logs${pageQuery(limit, offset)}`)
   }
@@ -270,6 +336,25 @@ export class AdminAPI {
       credentials: 'include',
       headers: this.headers(true),
       body: JSON.stringify(body),
+    })
+    return decodeResponse<T>(response)
+  }
+
+  private async put<T>(path: string, body: unknown): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: this.headers(true),
+      body: JSON.stringify(body),
+    })
+    return decodeResponse<T>(response)
+  }
+
+  private async del<T>(path: string): Promise<T> {
+    const response = await fetch(`${this.baseURL}${path}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.headers(true),
     })
     return decodeResponse<T>(response)
   }

@@ -193,6 +193,34 @@ type AuditLog struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// ModelConfig is an admin-editable, hot-reloadable model/provider definition.
+// APIKeyEncrypted holds ciphertext (or plaintext when no CONFIG_ENCRYPTION_KEY
+// is set); it is never serialized to API clients.
+type ModelConfig struct {
+	ID               string         `json:"id"`
+	Slot             string         `json:"slot"`
+	Capability       string         `json:"capability"`
+	ProviderKind     string         `json:"provider_kind"`
+	DisplayName      string         `json:"display_name"`
+	BaseURL          string         `json:"base_url"`
+	ModelName        string         `json:"model_name"`
+	APIKeyEncrypted  string         `json:"-"`
+	CreditMultiplier float64        `json:"credit_multiplier"`
+	PricePerCallCNY  float64        `json:"price_per_call_cny"`
+	Enabled          bool           `json:"enabled"`
+	Params           map[string]any `json:"params"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	UpdatedBy        string         `json:"updated_by,omitempty"`
+}
+
+// AppSetting is a generic global key/value knob (value is raw JSON text).
+type AppSetting struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Store interface {
 	CreateUser(ctx context.Context, email string, passwordHash string, name string) (User, error)
 	UserByEmail(ctx context.Context, email string) (User, error)
@@ -249,4 +277,13 @@ type Store interface {
 	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
 	AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error)
 	AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error)
+
+	CountModelConfigs(ctx context.Context) (int64, error)
+	ListModelConfigs(ctx context.Context, capability string) ([]ModelConfig, error)
+	GetModelConfig(ctx context.Context, id string) (ModelConfig, error)
+	UpsertModelConfig(ctx context.Context, actorUserID string, cfg ModelConfig) (ModelConfig, error)
+	SetModelConfigEnabled(ctx context.Context, actorUserID string, id string, enabled bool) (ModelConfig, error)
+	DeleteModelConfig(ctx context.Context, actorUserID string, id string) error
+	GetAppSetting(ctx context.Context, key string) (AppSetting, error)
+	SetAppSetting(ctx context.Context, actorUserID string, key string, valueJSON string) (AppSetting, error)
 }

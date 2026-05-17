@@ -8,14 +8,25 @@ export const SKILL_OPEN = ''
 export const SKILL_CLOSE = ''
 
 // Token = OPEN, then a name with no sentinel chars, then CLOSE.
-const skillTokenPattern = (): RegExp =>
-  new RegExp(`${SKILL_OPEN}([^${SKILL_OPEN}${SKILL_CLOSE}]+)${SKILL_CLOSE}`, 'g')
+// Function (capability) inline tokens use a separate PUA sentinel pair so the
+// menu can offer two distinct kinds ("功能" above "技能") and the send path can
+// inject a per-function directive. Extensible: more function ids later.
+export const FUNC_OPEN = ''
+export const FUNC_CLOSE = ''
 
-export type DraftNode = { type: 'text'; value: string } | { type: 'skill'; name: string }
+export type DraftNode =
+  | { type: 'text'; value: string }
+  | { type: 'skill'; name: string }
+  | { type: 'function'; name: string }
 
 /** Wrap a skill name into its sentinel token form. */
 export function skillToken(name: string): string {
   return `${SKILL_OPEN}${name}${SKILL_CLOSE}`
+}
+
+/** Wrap a function id into its sentinel token form. */
+export function functionToken(name: string): string {
+  return `${FUNC_OPEN}${name}${FUNC_CLOSE}`
 }
 
 /**
@@ -23,15 +34,26 @@ export function skillToken(name: string): string {
  * (an open without a matching close, or an empty name) are treated as plain
  * text so nothing is ever lost.
  */
+const tokenPattern = (): RegExp =>
+  new RegExp(
+    `${SKILL_OPEN}([^${SKILL_OPEN}${SKILL_CLOSE}]+)${SKILL_CLOSE}` +
+      `|${FUNC_OPEN}([^${FUNC_OPEN}${FUNC_CLOSE}]+)${FUNC_CLOSE}`,
+    'g',
+  )
+
 export function tokenizeDraft(draft: string): DraftNode[] {
   const nodes: DraftNode[] = []
-  const pattern = skillTokenPattern()
+  const pattern = tokenPattern()
   let lastIndex = 0
   for (let match = pattern.exec(draft); match; match = pattern.exec(draft)) {
     if (match.index > lastIndex) {
       nodes.push({ type: 'text', value: draft.slice(lastIndex, match.index) })
     }
-    nodes.push({ type: 'skill', name: match[1] })
+    if (match[1] !== undefined) {
+      nodes.push({ type: 'skill', name: match[1] })
+    } else {
+      nodes.push({ type: 'function', name: match[2] })
+    }
     lastIndex = match.index + match[0].length
   }
   if (lastIndex < draft.length) {
@@ -47,18 +69,25 @@ export function tokenizeDraft(draft: string): DraftNode[] {
  * - `skills`: skill names in first-seen order, de-duplicated (used to force
  *   per-run skills + the skill.use directive prefix).
  */
-export function parseSkillDraft(draft: string): { text: string; skills: string[] } {
+export function parseSkillDraft(draft: string): { text: string; skills: string[]; functions: string[] } {
   const skills: string[] = []
+  const functions: string[] = []
   let text = ''
   for (const node of tokenizeDraft(draft)) {
     if (node.type === 'text') {
       text += node.value
-    } else {
+    } else if (node.type === 'skill') {
       text += `@${node.name}`
       if (!skills.includes(node.name)) {
         skills.push(node.name)
       }
+    } else {
+      // Function tokens are mode markers, not literal text: they add no text
+      // (the per-function directive is injected by the send path).
+      if (!functions.includes(node.name)) {
+        functions.push(node.name)
+      }
     }
   }
-  return { text, skills }
+  return { text, skills, functions }
 }

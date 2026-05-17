@@ -211,6 +211,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return fetchPublicURL(call, options)
     case 'web.search':
       return searchWeb(call, run, options)
+    case 'image.generate':
+      return generateImage(call, run, options)
     case 'mcp.call':
       return callMCPTool(call, options)
     default:
@@ -993,6 +995,48 @@ async function searchWeb(call: LLMToolCall, run: LocalRun, options: ToolExecutio
       data: {
         source: 'web.search',
       },
+    }
+  }
+}
+
+async function generateImage(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const prompt = typeof call.arguments.prompt === 'string' ? call.arguments.prompt.trim() : ''
+  if (!prompt) {
+    return { ok: false, content: 'An image prompt is required.', errorCode: 'prompt_required', recoverable: true }
+  }
+  if (!options.cloudToolGateway) {
+    return {
+      ok: false,
+      content: 'image.generate requires an active cloud session because image models are executed by the Cloud Tool Gateway.',
+      errorCode: 'cloud_session_required',
+      recoverable: true,
+      data: { source: 'image.generate' },
+    }
+  }
+  const size = typeof call.arguments.size === 'string' ? call.arguments.size.trim() : ''
+  const n = typeof call.arguments.n === 'number' ? Math.max(1, Math.min(call.arguments.n, 4)) : 1
+  try {
+    const result = await options.cloudToolGateway.execute({
+      runId: run.id,
+      toolCallId: call.id,
+      tool: 'image.generate',
+      arguments: { prompt, ...(size ? { size } : {}), n },
+      idempotencyKey: `${run.id}:${call.id}:image.generate`,
+    })
+    return {
+      ...result,
+      data: {
+        source: 'image.generate',
+        ...(result.data ?? {}),
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Image generation failed.',
+      errorCode: 'cloud_tool_gateway_failed',
+      recoverable: true,
+      data: { source: 'image.generate' },
     }
   }
 }
