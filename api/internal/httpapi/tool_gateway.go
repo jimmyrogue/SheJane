@@ -54,7 +54,8 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 				CreditsCost:  positiveCredits(s.app.Config.TavilySearchCredits),
 				RequiresAuth: true,
 			},
-			imageToolName: s.imageToolCapability(r.Context()),
+			imageToolName:     s.imageToolCapability(r.Context()),
+			imageEditToolName: s.imageToolCapability(r.Context()),
 		}},
 	})
 }
@@ -71,6 +72,26 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 			ToolCallID:     body.ToolCallID,
 			IdempotencyKey: body.IdempotencyKey,
 			Prompt:         argString(body.Arguments, "prompt"),
+			Size:           argString(body.Arguments, "size"),
+			N:              argInt(body.Arguments, "n"),
+		})
+		code := 0
+		if !result.OK {
+			code = 1
+		}
+		writeJSON(w, status, apiResponse[agentToolExecuteResult]{Code: code, Message: result.Content, Data: result})
+		return
+	}
+	if body.Tool == imageEditToolName {
+		result, status := s.runImageEdit(r.Context(), user, imageEditInput{
+			RunID:          body.RunID,
+			ToolCallID:     body.ToolCallID,
+			IdempotencyKey: body.IdempotencyKey,
+			Prompt:         argString(body.Arguments, "prompt"),
+			ImageURL:       argString(body.Arguments, "image_url"),
+			MaskURL:        argString(body.Arguments, "mask_url"),
+			DocumentID:     argString(body.Arguments, "document_id"),
+			MaskDocumentID: argString(body.Arguments, "mask_document_id"),
 			Size:           argString(body.Arguments, "size"),
 			N:              argInt(body.Arguments, "n"),
 		})

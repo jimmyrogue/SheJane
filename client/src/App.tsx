@@ -443,7 +443,11 @@ function AppContent() {
     setDraft('')
     const renderContext = createConversationRenderContext()
     try {
-      const canUseLocalHarness = !attachedDocument && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
+      // Image attachments go through the tool-capable local harness (so the
+      // agent can image.edit them); other documents keep the cloud text path.
+      const attachedIsImage = Boolean(attachedDocument && attachedDocument.content_type.startsWith('image/'))
+      const canUseLocalHarness =
+        (!attachedDocument || attachedIsImage) && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
         ? await sendLocalHarnessMessage(content, renderContext)
         : await chat.sendMessage({
@@ -527,6 +531,11 @@ function AppContent() {
     }
     if (skillsForRun.length > 0) {
       directives.push(t('skills.useDirective', { names: skillsForRun.join('、') }))
+    }
+    if (!settingsOverride && attachedDocument && attachedDocument.content_type.startsWith('image/')) {
+      directives.push(
+        t('functions.imageEditDirective', { documentId: attachedDocument.id, name: attachedDocument.original_name }),
+      )
     }
     const goal = directives.length > 0 ? `${directives.join('\n\n')}\n\n${text}` : text
     const effectiveSettings =
@@ -1404,6 +1413,9 @@ function normalizeDocumentContentType(file: File): string {
   if (byType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
     return byType
   }
+  if (byType === 'image/png' || byType === 'image/jpeg' || byType === 'image/webp') {
+    return byType
+  }
   const name = file.name.toLowerCase()
   if (name.endsWith('.pdf')) {
     return 'application/pdf'
@@ -1413,6 +1425,15 @@ function normalizeDocumentContentType(file: File): string {
   }
   if (name.endsWith('.xlsx')) {
     return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }
+  if (name.endsWith('.png')) {
+    return 'image/png'
+  }
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) {
+    return 'image/jpeg'
+  }
+  if (name.endsWith('.webp')) {
+    return 'image/webp'
   }
   return ''
 }

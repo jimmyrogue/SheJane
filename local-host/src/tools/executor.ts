@@ -213,6 +213,8 @@ export async function executeTool(call: LLMToolCall, run: LocalRun, options: Too
       return searchWeb(call, run, options)
     case 'image.generate':
       return generateImage(call, run, options)
+    case 'image.edit':
+      return editImage(call, run, options)
     case 'mcp.call':
       return callMCPTool(call, options)
     default:
@@ -1037,6 +1039,63 @@ async function generateImage(call: LLMToolCall, run: LocalRun, options: ToolExec
       errorCode: 'cloud_tool_gateway_failed',
       recoverable: true,
       data: { source: 'image.generate' },
+    }
+  }
+}
+
+async function editImage(call: LLMToolCall, run: LocalRun, options: ToolExecutionOptions): Promise<ToolExecutionResult> {
+  const prompt = typeof call.arguments.prompt === 'string' ? call.arguments.prompt.trim() : ''
+  const imageUrl = typeof call.arguments.image_url === 'string' ? call.arguments.image_url.trim() : ''
+  const documentId = typeof call.arguments.document_id === 'string' ? call.arguments.document_id.trim() : ''
+  if (!prompt) {
+    return { ok: false, content: 'An edit prompt is required.', errorCode: 'prompt_required', recoverable: true }
+  }
+  if (!imageUrl && !documentId) {
+    return { ok: false, content: 'Provide document_id (an uploaded image) or image_url to edit.', errorCode: 'image_source_required', recoverable: true }
+  }
+  if (!options.cloudToolGateway) {
+    return {
+      ok: false,
+      content: 'image.edit requires an active cloud session because image models are executed by the Cloud Tool Gateway.',
+      errorCode: 'cloud_session_required',
+      recoverable: true,
+      data: { source: 'image.edit' },
+    }
+  }
+  const maskUrl = typeof call.arguments.mask_url === 'string' ? call.arguments.mask_url.trim() : ''
+  const maskDocumentId = typeof call.arguments.mask_document_id === 'string' ? call.arguments.mask_document_id.trim() : ''
+  const size = typeof call.arguments.size === 'string' ? call.arguments.size.trim() : ''
+  const n = typeof call.arguments.n === 'number' ? Math.max(1, Math.min(call.arguments.n, 4)) : 1
+  try {
+    const result = await options.cloudToolGateway.execute({
+      runId: run.id,
+      toolCallId: call.id,
+      tool: 'image.edit',
+      arguments: {
+        prompt,
+        ...(documentId ? { document_id: documentId } : {}),
+        ...(imageUrl ? { image_url: imageUrl } : {}),
+        ...(maskDocumentId ? { mask_document_id: maskDocumentId } : {}),
+        ...(maskUrl ? { mask_url: maskUrl } : {}),
+        ...(size ? { size } : {}),
+        n,
+      },
+      idempotencyKey: `${run.id}:${call.id}:image.edit`,
+    })
+    return {
+      ...result,
+      data: {
+        source: 'image.edit',
+        ...(result.data ?? {}),
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      content: error instanceof Error ? error.message : 'Image edit failed.',
+      errorCode: 'cloud_tool_gateway_failed',
+      recoverable: true,
+      data: { source: 'image.edit' },
     }
   }
 }

@@ -109,8 +109,25 @@ func NormalizeContentType(filename string, contentType string) (string, string, 
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx", nil
 	case ext == ".xlsx" || normalized == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
 		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx", nil
+	case ext == ".png" || normalized == "image/png":
+		return "image/png", ".png", nil
+	case ext == ".jpg" || ext == ".jpeg" || normalized == "image/jpeg":
+		return "image/jpeg", ".jpg", nil
+	case ext == ".webp" || normalized == "image/webp":
+		return "image/webp", ".webp", nil
 	default:
 		return "", "", ErrUnsupportedType
+	}
+}
+
+// IsImageContentType reports whether a normalized content type is an image
+// (image attachments skip text extraction and are usable by image.edit).
+func IsImageContentType(contentType string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "image/png", "image/jpeg", "image/webp":
+		return true
+	default:
+		return false
 	}
 }
 

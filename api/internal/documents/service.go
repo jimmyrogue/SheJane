@@ -86,6 +86,11 @@ func (s *Service) CompleteUpload(ctx context.Context, userID string, documentID 
 	if info.SizeBytes <= 0 || info.SizeBytes > s.config.MaxBytes {
 		return s.fail(ctx, userID, documentID, ErrTooLarge)
 	}
+	if IsImageContentType(document.ContentType) {
+		// Images carry no extractable text; they are consumed directly by
+		// image.edit via ReadSource. Mark ready with no text object.
+		return s.store.MarkDocumentReady(ctx, userID, documentID, "")
+	}
 	data, err := s.objects.GetObject(ctx, document.SourceObjectKey)
 	if err != nil {
 		return s.fail(ctx, userID, documentID, err)
@@ -125,6 +130,27 @@ func (s *Service) TextForQuestion(ctx context.Context, userID string, documentID
 		return Document{}, "", err
 	}
 	return document, string(data), nil
+}
+
+// ReadSource returns the raw uploaded bytes of a ready (non-expired) document,
+// with its content type and original filename. Used by image.edit to feed a
+// client-uploaded image into the provider without a public URL.
+func (s *Service) ReadSource(ctx context.Context, userID string, documentID string) ([]byte, string, string, error) {
+	document, err := s.store.DocumentByID(ctx, userID, documentID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if document.IsExpired(s.config.Now().UTC()) {
+		return nil, "", "", ErrExpired
+	}
+	if document.Status != StatusReady {
+		return nil, "", "", ErrNotReady
+	}
+	data, err := s.objects.GetObject(ctx, document.SourceObjectKey)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return data, document.ContentType, document.OriginalName, nil
 }
 
 func (s *Service) DeleteDocument(ctx context.Context, userID string, documentID string) (Document, error) {

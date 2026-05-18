@@ -545,6 +545,30 @@ export const localHostTools: ToolDefinition[] = [
     permissionPolicy: 'allow',
   },
   {
+    name: 'image.edit',
+    description:
+      'Edit / transform an existing image (image-to-image) via the cloud metered tool gateway when the account has an enabled image model. Provide the source image as document_id (a user-uploaded image attachment) OR image_url (e.g. a previously generated image URL), plus a prompt describing the edit. Optional mask (mask_document_id or mask_url): fully transparent areas mark where to edit. Returns image URLs (or base64).',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['prompt'],
+      properties: {
+        prompt: { type: 'string' },
+        document_id: { type: 'string', description: 'ID of a user-uploaded image attachment to edit (preferred for client uploads).' },
+        image_url: { type: 'string', description: 'URL of the source image to edit (alternative to document_id).' },
+        mask_document_id: { type: 'string', description: 'Optional uploaded mask image attachment id.' },
+        mask_url: { type: 'string', description: 'Optional mask image URL; fully transparent areas mark where to edit.' },
+        size: { type: 'string', description: 'Optional size hint, e.g. 1024x1024.' },
+        n: { type: 'number', minimum: 1, maximum: 4 },
+      },
+    },
+    isReadOnly: true,
+    isDestructive: false,
+    isConcurrencySafe: true,
+    maxResultSize: 1048576,
+    permissionPolicy: 'allow',
+  },
+  {
     name: 'mcp.call',
     description: 'Call an allowlisted local MCP tool through the configured local stdio MCP runtime adapter.',
     inputSchema: {

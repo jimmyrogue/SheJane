@@ -74,6 +74,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
 	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.agentToolExecute))
 	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.imagesGenerations))
+	s.mux.HandleFunc("POST /api/v1/images/edits", s.requireAuth(s.imagesEdits))
 	s.mux.HandleFunc("POST /api/v1/agent/tool-events", s.requireAuth(s.agentToolEvents))
 	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
