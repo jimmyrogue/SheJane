@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
 import { IconCheck, IconCopy } from '@tabler/icons-react'
+import { ChatImage } from './ChatImage'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
@@ -148,6 +149,7 @@ function MarkdownContent({ content, normalizeHeadings = false }: { content: stri
       remarkPlugins={remarkPlugins}
       components={{
         a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        img: ({ node: _node, src, alt }) => <ChatImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
       }}
     >
       {content}

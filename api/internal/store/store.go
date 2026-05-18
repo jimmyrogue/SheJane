@@ -158,11 +158,12 @@ type AdminUserSummary struct {
 }
 
 type AdminUserDetail struct {
-	User         User                    `json:"user"`
-	Wallet       *billing.WalletSnapshot `json:"wallet,omitempty"`
-	Calls        []LLMCallRecord         `json:"calls"`
-	Orders       []PaymentOrder          `json:"orders"`
-	Transactions []billing.Transaction   `json:"transactions"`
+	User         User                     `json:"user"`
+	Wallet       *billing.WalletSnapshot  `json:"wallet,omitempty"`
+	Calls        []LLMCallRecord          `json:"calls"`
+	ToolCalls    []ExternalToolCallRecord `json:"tool_calls"`
+	Orders       []PaymentOrder           `json:"orders"`
+	Transactions []billing.Transaction    `json:"transactions"`
 }
 
 type AdminLLMCallRecord struct {

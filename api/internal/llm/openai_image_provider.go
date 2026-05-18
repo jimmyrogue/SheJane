@@ -49,7 +49,8 @@ func (p *OpenAIImageProvider) GenerateImage(ctx context.Context, request ImageRe
 	if err != nil {
 		return ImageResult{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/images/generations", bytes.NewReader(body))
+	endpoint := p.baseURL + "/images/generations"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return ImageResult{}, err
 	}
@@ -61,9 +62,9 @@ func (p *OpenAIImageProvider) GenerateImage(ctx context.Context, request ImageRe
 		return ImageResult{}, err
 	}
 	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, providerErrorBodyLimit))
-		return ImageResult{}, fmt.Errorf("%s image provider returned status %d: %s", p.name, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return ImageResult{}, fmt.Errorf("%s image provider returned status %d from %s: %s", p.name, resp.StatusCode, endpoint, snippet(raw))
 	}
 	var decoded struct {
 		Data []struct {
@@ -71,8 +72,13 @@ func (p *OpenAIImageProvider) GenerateImage(ctx context.Context, request ImageRe
 			B64JSON string `json:"b64_json"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&decoded); err != nil {
-		return ImageResult{}, err
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		// A non-JSON 2xx body almost always means a wrong base_url/path
+		// (e.g. an HTML landing/404 page instead of the OpenAI image API).
+		return ImageResult{}, fmt.Errorf(
+			"%s image provider: expected JSON from POST %s but got status %d non-JSON body (check the model's Base URL/path, e.g. it may need a /v1 prefix): %s",
+			p.name, endpoint, resp.StatusCode, snippet(raw),
+		)
 	}
 	images := make([]ImageItem, 0, len(decoded.Data))
 	for _, item := range decoded.Data {
@@ -82,4 +88,17 @@ func (p *OpenAIImageProvider) GenerateImage(ctx context.Context, request ImageRe
 		return ImageResult{}, fmt.Errorf("%s image provider returned no images", p.name)
 	}
 	return ImageResult{Model: model, Images: images}, nil
+}
+
+// snippet trims and caps a response body for safe inclusion in error messages.
+func snippet(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "(empty body)"
+	}
+	runes := []rune(s)
+	if len(runes) > 300 {
+		return string(runes[:300]) + "…"
+	}
+	return s
 }

@@ -51,6 +51,7 @@ export interface AdminUserDetail {
   user: AuthPayload['user'] & { created_at?: string }
   wallet?: WalletBalance
   calls: AdminLLMCall[]
+  tool_calls: AdminToolCall[]
   orders: AdminOrder[]
   transactions: AdminWalletTransaction[]
 }

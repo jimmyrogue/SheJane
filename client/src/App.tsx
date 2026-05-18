@@ -481,7 +481,7 @@ function AppContent() {
     if (!localHostConfig) {
       throw new Error(t('app.notice.localHostDisconnected'))
     }
-    const { text: parsedText, skills: draftSkills } = parseSkillDraft(content)
+    const { text: parsedText, skills: draftSkills, functions: draftFunctions } = parseSkillDraft(content)
     const text = parsedText.trim()
     if (!text) {
       throw new Error(t('app.notice.emptyMessage'))
@@ -520,10 +520,15 @@ function AppContent() {
       .find((message) => message.role === 'assistant' && message.runOrigin === 'local' && Boolean(message.runId))?.runId
 
     const skillsForRun = !settingsOverride ? draftSkills : []
-    const goal =
-      skillsForRun.length > 0
-        ? `${t('skills.useDirective', { names: skillsForRun.join('、') })}\n\n${text}`
-        : text
+    const functionsForRun = !settingsOverride ? draftFunctions : []
+    const directives: string[] = []
+    if (functionsForRun.includes('image')) {
+      directives.push(t('functions.imageDirective'))
+    }
+    if (skillsForRun.length > 0) {
+      directives.push(t('skills.useDirective', { names: skillsForRun.join('、') }))
+    }
+    const goal = directives.length > 0 ? `${directives.join('\n\n')}\n\n${text}` : text
     const effectiveSettings =
       skillsForRun.length > 0 ? { ...agentSettings, skills: 'on' as const } : settingsOverride ?? agentSettings
 

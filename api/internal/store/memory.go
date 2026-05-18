@@ -684,6 +684,7 @@ func (s *MemoryStore) AdminUserDetail(ctx context.Context, userID string) (Admin
 	detail := AdminUserDetail{
 		User:         user,
 		Calls:        s.llmCallsByUserLocked(userID, 20),
+		ToolCalls:    s.toolCallsByUserLocked(userID, 50),
 		Orders:       s.ordersByUserLocked(userID, 20),
 		Transactions: make([]billing.Transaction, 0),
 	}
@@ -908,6 +909,22 @@ func (s *MemoryStore) adminUserSummaryLocked(user User) AdminUserSummary {
 func (s *MemoryStore) llmCallsByUserLocked(userID string, limit int) []LLMCallRecord {
 	records := make([]LLMCallRecord, 0)
 	for _, record := range s.llmCalls {
+		if record.UserID == userID {
+			records = append(records, record)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].StartedAt.After(records[j].StartedAt)
+	})
+	if len(records) > limit {
+		return records[:limit]
+	}
+	return records
+}
+
+func (s *MemoryStore) toolCallsByUserLocked(userID string, limit int) []ExternalToolCallRecord {
+	records := make([]ExternalToolCallRecord, 0)
+	for _, record := range s.toolCalls {
 		if record.UserID == userID {
 			records = append(records, record)
 		}

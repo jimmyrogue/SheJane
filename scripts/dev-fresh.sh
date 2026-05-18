@@ -45,7 +45,11 @@ ensure_docker
 echo "[dev-fresh] stopping stale dev processes…"
 pkill -f 'tsx src/index.ts' 2>/dev/null || true
 pkill -f 'vite' 2>/dev/null || true
-pkill -f electron 2>/dev/null || true
+# Scope the Electron kill to THIS app's main script. A bare `pkill -f electron`
+# also matches Docker Desktop (an Electron app) and would take the Docker daemon
+# down right before `docker compose up` — forcing a second run. The dev app is
+# always launched as `… Electron electron/main.cjs`, so match that exact arg.
+pkill -f 'electron/main\.cjs' 2>/dev/null || true
 
 for port in 17371 55173 5174; do
   pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"

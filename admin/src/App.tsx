@@ -825,6 +825,35 @@ function UserDetailBody({
           </TableBody>
         </Table>
       </div>
+      <div className="grid gap-2">
+        <span className="text-sm font-medium">工具 / 生图调用（最近）</span>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>工具</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>时间</TableHead>
+              <TableHead className="text-right">次数</TableHead>
+              <TableHead className="text-right">额度</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {selectedUser.tool_calls?.length ? (
+              selectedUser.tool_calls.slice(0, 20).map((call) => (
+                <TableRow key={call.request_id}>
+                  <TableCell className="max-w-40 truncate">{call.tool}{call.provider ? ` · ${call.provider}` : ''}</TableCell>
+                  <TableCell><StatusBadge status={call.status} /></TableCell>
+                  <TableCell className="max-w-40 truncate text-muted-foreground">{call.started_at ?? '-'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatNumber(call.units)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <EmptyTableRow columns={5} label="暂无工具/生图调用" />
+            )}
+          </TableBody>
+        </Table>
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${tx.type} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
         <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${order.status}`)} />

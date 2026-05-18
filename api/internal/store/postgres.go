@@ -785,7 +785,7 @@ func (s *PostgresStore) AdminUserDetail(ctx context.Context, userID string) (Adm
 	if err != nil {
 		return AdminUserDetail{}, err
 	}
-	detail := AdminUserDetail{User: user, Calls: make([]LLMCallRecord, 0), Orders: make([]PaymentOrder, 0), Transactions: make([]billing.Transaction, 0)}
+	detail := AdminUserDetail{User: user, Calls: make([]LLMCallRecord, 0), ToolCalls: make([]ExternalToolCallRecord, 0), Orders: make([]PaymentOrder, 0), Transactions: make([]billing.Transaction, 0)}
 	wallet, err := s.WalletByUser(ctx, userID)
 	if err == nil {
 		snapshot := wallet.Snapshot()
@@ -804,6 +804,13 @@ func (s *PostgresStore) AdminUserDetail(ctx context.Context, userID string) (Adm
 	detail.Calls, err = s.LLMCallsByUser(ctx, userID)
 	if err != nil {
 		return AdminUserDetail{}, err
+	}
+	toolCalls, err := s.AdminExternalToolCalls(ctx, AdminListOptions{UserID: userID, Limit: 50})
+	if err != nil {
+		return AdminUserDetail{}, err
+	}
+	for _, record := range toolCalls {
+		detail.ToolCalls = append(detail.ToolCalls, record.ExternalToolCallRecord)
 	}
 	return detail, nil
 }

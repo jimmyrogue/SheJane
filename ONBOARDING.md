@@ -73,7 +73,26 @@ DeepSeek 最新价（每 1M tokens，CNY）→ 每 token = ÷1,000,000：
 
 ---
 
-## 5. 关键约束 / 易踩坑
+## 5. 前端生图（client：两种触发 + 展示）
+
+普通 client（Electron）支持两种方式触发生图，都走 Agent 编排（不绕过）：
+
+1. **语义触发**：用户在输入框正常描述（如「画一只在月球上的猫」），Agent 自行判断并调用 `image.generate` 工具。无需任何额外操作。
+2. **显式触发**：输入框输入 `/` 唤起菜单 → 顶部「**功能**」分组里选「**生图**」（分组顺序：功能在上、分割线、技能在下，可扩展）。选中后输入框内联出现一个**紫色「生图」标记**（区别于蓝色技能标记，退格/删除键可删）；继续输入图片描述后发送。发送时前端自动在消息前注入 `functions.imageDirective` 指令，明确要求 Agent 用 `image.generate`。
+
+**图片展示**：`image.generate` 工具结果里的 `images`（provider URL 或 base64）会被解析进该助手消息的进度卡片，以**缩略图网格**渲染，点击在新标签打开原图。base64 结果转成 `data:image/png;base64,…` 直接内联。
+
+**实现要点（改了哪些）**：`skillDraft.ts` 新增 function inline-token（PUA 哨兵 U+E002/E003，与技能 token、中文输入零冲突）+ `parseSkillDraft` 返回 `functions`；`SkillNode.tsx` 新增 `FunctionNode` 紫色 chip；`SkillEditor.tsx` 统一菜单选项 + 分组渲染；`App.tsx` 注入指令；`chatStore.ts`/`types.ts` 把 `tool.completed` 的 `result.images` 映射到 `AgentTimelineItem.images`；`AgentProgress.tsx` 渲染图片网格。扩展新「功能」：往 `SkillEditor.tsx` 的 `functionsCatalog` 加一条 + `SkillNode.tsx` 的 `FUNCTION_LABELS` 加标签 + `App.tsx` 加对应注入指令即可。
+
+**排错**：
+- 选了「生图」但没出图：确认后端 `image.default` 模型已启用、`CONFIG_ENCRYPTION_KEY` 与 API key 正确、计费参数「基准每 token 成本」> 0（否则后端 `image_billing_not_configured`）。
+- 出图但不显示缩略图：检查工具结果 `data.images[].url/b64_json` 是否存在；`sanitizeToolData` 是浅拷贝，正常会透传。
+- 语义触发不调工具：模型/Agent 没识别意图 → 改用「/ → 生图」显式触发。
+- Base URL 多半要带 `/v1`（OpenAI 兼容中转站），最终路径 `…/v1/images/generations`。
+
+---
+
+## 6. 关键约束 / 易踩坑
 
 - **改模型配置或计费参数是 Go 后端无关、纯 DB**，但首次部署/改 Go 代码后要**重启 API 进程**。配置本身改完保存即时生效，无需重启。
 - **种子只对空库生效**：`EnsureSeed` 仅当 `model_configs` 为空才写默认值。已有库（如现网）需在 admin **手动**把旧 `chat.deep` 倍率 2→1、`chat.fast` 1→0.1，并确认计费参数。
@@ -81,10 +100,12 @@ DeepSeek 最新价（每 1M tokens，CNY）→ 每 token = ÷1,000,000：
 - **CORS**：admin 走 PATCH/PUT/DELETE，已在允许方法内；新加后端方法记得同步 `Access-Control-Allow-Methods`。
 - **DTO 必须与前端 payload 对齐**：`decodeJSON` 开了 `DisallowUnknownFields()`，后端结构体漏字段会整体 400 `40201`。新增可配置项要同时改：迁移 / `store.ModelConfig` / 前端 `ModelConfigInput` / 后端 `modelConfigInput` DTO + `buildModelConfigFromInput`。
 - **槽位**=逻辑角色，后端按角色路由；每槽位仅一个「启用」生效（DB 部分唯一索引保证）。换模型=新建同槽位并启用，旧的自动停用。
+- **统一用 `http://localhost`，别用 `127.0.0.1`**：刷新令牌 cookie 是 `SameSite=Lax` host-only，`localhost` 与 `127.0.0.1` 属不同站点，跨站 `fetch` 不带 cookie → `/api/v1/auth/refresh` 永远 401、登录态丢失。client/admin/api 全程同一主机名（与 `ADMIN_BASE_URL` 一致）。
+- **`make dev-fresh` 一次即可**：旧脚本用 `pkill -f electron` 会误杀 Docker Desktop（也是 Electron 应用），导致首次执行 `docker compose up` 失败、必须跑两次。已收窄为 `pkill -f 'electron/main\.cjs'`，只杀本应用 Electron，不动 Docker。
 
 ---
 
-## 6. 验收清单（真机）
+## 7. 验收清单（真机）
 
 1. 重启 API → admin「计费参数」：加价系数 1.15、基准 0.00002、cny，保存。
 2. 模型配置：chat.deep 倍率→1.0、chat.fast→0.1；按需新增 image.default + 每次金额 + key。
