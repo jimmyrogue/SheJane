@@ -164,7 +164,13 @@ function AppContent() {
   const { t } = useI18n()
   const api = useMemo(() => new JiandanAPI(), [])
   const authClient = useMemo(() => createAuthClient(api), [api])
-  const localData = useMemo(() => new LocalConversationStore(), [])
+  const [auth, setAuth] = useState<AuthPayload | null>(null)
+  // Per-user IndexedDB so switching accounts in the same Electron window does
+  // not leak the previous user's conversations.
+  const localData = useMemo(
+    () => new LocalConversationStore(`jiandanly-local:${auth?.user?.id ?? 'anonymous'}`),
+    [auth?.user?.id],
+  )
   const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
   const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
   const liveRenderTimerRef = useRef<number>()
@@ -172,7 +178,6 @@ function AppContent() {
   const navigationVersionRef = useRef(0)
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
 
-  const [auth, setAuth] = useState<AuthPayload | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
@@ -270,6 +275,16 @@ function AppContent() {
       setActiveConversationID(items[0]?.id)
     })
   }, [localData])
+
+  // Reset transient session state when the signed-in user changes, so leftovers
+  // from the previous account (draft, attached doc, etc.) don't bleed across.
+  useEffect(() => {
+    setDraft('')
+    setAttachedDocumentID(undefined)
+    setAttachedPreview(undefined)
+    setPendingWorkspace(undefined)
+    setDocuments([])
+  }, [auth?.user?.id])
 
   useEffect(() => {
     authClient
