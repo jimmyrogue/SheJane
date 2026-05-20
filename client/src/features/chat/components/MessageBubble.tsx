@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconPaperclip } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
@@ -113,6 +113,20 @@ export function MessageBubble({
             <MarkdownContent content={content} normalizeHeadings />
           )}
         </div>
+        {message.attachments && message.attachments.length > 0 ? (
+          <div className="message-attachments">
+            {message.attachments.map((attachment) =>
+              attachment.previewDataUrl ? (
+                <ChatImage key={attachment.documentId} src={attachment.previewDataUrl} alt={attachment.name} />
+              ) : (
+                <span key={attachment.documentId} className="message-attachment-chip" title={attachment.name}>
+                  <IconPaperclip size={13} aria-hidden="true" />
+                  {attachment.name}
+                </span>
+              ),
+            )}
+          </div>
+        ) : null}
         {children}
         <div className="message-meta">
           {message.content.trim() ? (

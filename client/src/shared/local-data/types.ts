@@ -36,6 +36,14 @@ export interface AgentTimelineItem {
   verificationStatus?: 'passed' | 'failed'
 }
 
+export interface MessageAttachment {
+  documentId: string
+  name: string
+  contentType: string
+  /** Small inline data: URL for image previews (durable across reload). */
+  previewDataUrl?: string
+}
+
 export interface ChatMessage {
   id: string
   role: MessageRole
@@ -48,6 +56,7 @@ export interface ChatMessage {
   creditsCost?: number
   tokens?: number
   agentEvents?: AgentTimelineItem[]
+  attachments?: MessageAttachment[]
 }
 
 export interface ConversationWorkspace {

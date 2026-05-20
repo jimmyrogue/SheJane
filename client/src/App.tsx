@@ -181,6 +181,7 @@ function AppContent() {
   const mode: ChatMode = 'fast'
   const [documents, setDocuments] = useState<UserDocument[]>([])
   const [attachedDocumentID, setAttachedDocumentID] = useState<string>()
+  const [attachedPreview, setAttachedPreview] = useState<string>()
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -465,6 +466,8 @@ function AppContent() {
           })
       await refreshConversationsAfterStream(conversation.id, renderContext)
       setBalance(await api.balance())
+      setAttachedDocumentID(undefined)
+      setAttachedPreview(undefined)
     } catch (error) {
       setDraft((current) => current || content)
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
@@ -502,6 +505,17 @@ function AppContent() {
       content: text,
       createdAt: timestamp,
       status: 'done',
+      attachments:
+        !settingsOverride && attachedDocument
+          ? [
+              {
+                documentId: attachedDocument.id,
+                name: attachedDocument.original_name,
+                contentType: attachedDocument.content_type,
+                previewDataUrl: attachedPreview,
+              },
+            ]
+          : undefined,
     }
     const assistantMessage: ChatMessage = {
       id: createLocalID('msg'),
@@ -1013,6 +1027,7 @@ function AppContent() {
       const completed = await api.completeDocument(upload.document.id)
       setDocuments((items) => upsertDocument(items, completed))
       setAttachedDocumentID(completed.id)
+      setAttachedPreview(await makeImageThumbnail(file))
       setNotice(t('app.notice.documentReady'))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.documentUploadFailed'))
@@ -1024,7 +1039,13 @@ function AppContent() {
   async function deleteDocument(document: UserDocument) {
     const deleted = await api.deleteDocument(document.id)
     setDocuments((items) => items.filter((item) => item.id !== deleted.id))
-    setAttachedDocumentID((current) => (current === deleted.id ? undefined : current))
+    setAttachedDocumentID((current) => {
+      if (current === deleted.id) {
+        setAttachedPreview(undefined)
+        return undefined
+      }
+      return current
+    })
     setNotice(t('app.notice.documentDeleted'))
   }
 
@@ -1202,7 +1223,10 @@ function AppContent() {
               onUploadDocument={(file) => void uploadDocument(file)}
               onAttachDocument={setAttachedDocumentID}
               onDeleteDocument={(document) => void deleteDocument(document)}
-              onDetachDocument={() => setAttachedDocumentID(undefined)}
+              onDetachDocument={() => {
+                setAttachedDocumentID(undefined)
+                setAttachedPreview(undefined)
+              }}
               onPickWorkspace={() => chooseWorkspaceDirectory()}
               onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
               onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
@@ -1399,6 +1423,30 @@ function createConversation(firstMessage: string, timestamp: string, fallbackTit
     createdAt: timestamp,
     updatedAt: timestamp,
     messages: [],
+  }
+}
+
+async function makeImageThumbnail(file: File): Promise<string | undefined> {
+  if (!file.type.startsWith('image/')) {
+    return undefined
+  }
+  try {
+    const bitmap = await createImageBitmap(file)
+    const maxDim = 768
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
+    const width = Math.max(1, Math.round(bitmap.width * scale))
+    const height = Math.max(1, Math.round(bitmap.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return undefined
+    }
+    ctx.drawImage(bitmap, 0, 0, width, height)
+    return canvas.toDataURL('image/webp', 0.82)
+  } catch {
+    return undefined
   }
 }
 
