@@ -351,8 +351,6 @@ export function ConversationSidebar({
             <span className="sidebar-account-avatar">{avatarInitials(userEmail)}</span>
             <span className="sidebar-account-meta">
               <span className="sidebar-account-name">{accountName(userEmail) || t('app.productName')}</span>
-              <span className="sidebar-account-dot" aria-hidden="true">·</span>
-              <span className="sidebar-account-plan">{planLabel(balance, t)}</span>
             </span>
             <IconChevronDown size={14} className="sidebar-account-caret" aria-hidden="true" />
           </button>
@@ -362,7 +360,6 @@ export function ConversationSidebar({
             <span className="sidebar-account-avatar lg">{avatarInitials(userEmail)}</span>
             <div className="sidebar-account-head-copy">
               <div className="sidebar-account-head-email">{userEmail}</div>
-              <div className="sidebar-account-head-plan">{planLabel(balance, t)}</div>
             </div>
           </div>
           {balance ? <AccountBalance balance={balance} t={t} /> : null}
@@ -658,14 +655,6 @@ function avatarInitials(email: string): string {
 
 function accountName(email: string): string {
   return email.trim().split('@')[0] ?? ''
-}
-
-function planLabel(balance: WalletBalance | null | undefined, t: Translator): string {
-  if (!balance) {
-    return t('sidebar.localFirst')
-  }
-  const code = (balance.plan_code ?? 'free').trim()
-  return code.charAt(0).toUpperCase() + code.slice(1)
 }
 
 function formatCredits(value: number): string {
