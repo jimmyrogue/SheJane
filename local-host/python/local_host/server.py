@@ -9,15 +9,19 @@ Phase 2' deliverables:
 
 from __future__ import annotations
 
+import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
+from .agent.builder import open_checkpointer
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
+from .runs import RunCoordinator
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.server")
@@ -28,8 +32,12 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_data_dir()
     store = await LocalStore.open(settings.local_db_path)
+    checkpointer, ck_stack = await open_checkpointer(settings)
+    coordinator = RunCoordinator(store=store, checkpointer=checkpointer)
     app.state.store = store
     app.state.settings = settings
+    app.state.checkpointer = checkpointer
+    app.state.coordinator = coordinator
     log.info(
         "local-host started host=%s port=%s data=%s",
         settings.host,
@@ -39,6 +47,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await ck_stack.aclose()
         await store.close()
         log.info("local-host shutdown clean")
 
@@ -93,6 +102,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store: LocalStore = app.state.store
         deleted = await store.delete_workspace(workspace_id)
         return {"deleted": deleted}
+
+    @app.post("/v1/runs")
+    async def create_run(body: dict[str, Any]) -> dict[str, Any]:
+        goal = str(body.get("goal", "")).strip()
+        if not goal:
+            raise HTTPException(status_code=400, detail="goal required")
+        coordinator: RunCoordinator = app.state.coordinator
+        run = await coordinator.start_run(
+            goal=goal,
+            workspace_path=body.get("workspace_path"),
+            mode=str(body.get("mode", "fast")),
+        )
+        return {"run": run}
+
+    @app.get("/v1/runs/{run_id}")
+    async def get_run(run_id: str) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        run = await store.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="run not found")
+        return {"run": run}
+
+    @app.get("/v1/runs/{run_id}/stream")
+    async def stream_run(run_id: str) -> EventSourceResponse:
+        coordinator: RunCoordinator = app.state.coordinator
+
+        async def gen():
+            async for item in coordinator.stream(run_id):
+                yield {
+                    "event": item["event"],
+                    "data": json.dumps(item["data"], default=str, ensure_ascii=False),
+                }
+            yield {"event": "stream.end", "data": "{}"}
+
+        return EventSourceResponse(gen())
+
+    @app.post("/v1/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str) -> dict[str, Any]:
+        coordinator: RunCoordinator = app.state.coordinator
+        ok = await coordinator.cancel_run(run_id)
+        return {"canceled": ok}
+
+    @app.post("/v1/runs/{run_id}/resume")
+    async def resume_run(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        coordinator: RunCoordinator = app.state.coordinator
+        decision = body or {"action": "approve"}
+        ok = await coordinator.resume_run(run_id=run_id, decision=decision)
+        if not ok:
+            raise HTTPException(status_code=409, detail="run not paused")
+        return {"resumed": True}
 
     return app
 
