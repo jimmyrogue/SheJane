@@ -53,6 +53,7 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.errors import GraphBubbleUp
 
 from ..config import Settings, get_settings
 from ..llm.backend import BackendChatModel
@@ -101,7 +102,24 @@ ALWAYS_INCLUDE_TOOLS: list[str] = [
     "write_todos",
     "task",
     "memory.search",
+    "user.ask",        # clarifying-question gateway must always be reachable
     "time.now",
+]
+
+
+# Tools that benefit from auto-retry on transient failure (network /
+# filesystem / browser flakes). Crucially NOT including tools that use
+# LangGraph control-flow exceptions (`interrupt()` → GraphInterrupt),
+# because `ToolRetryMiddleware._handle_failure` would swallow that
+# exception and convert it to a ToolMessage, defeating the pause.
+RETRY_ELIGIBLE_TOOLS: list[str] = [
+    "web.fetch",
+    "tavily_search",
+    "browser.task",
+    "execute",         # deepagents shell — FS races etc.
+    "read_file",
+    "write_file",
+    "edit_file",
 ]
 
 
@@ -193,7 +211,23 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
                 tool_name="tavily_search",
                 run_limit=settings.research_search_limit,
             ),
-            ToolRetryMiddleware(max_retries=settings.max_tool_retries),
+            # Retry only network/IO-flaky tools, with a tight retryable
+            # exception set. We deliberately exclude tools that use
+            # `interrupt()` (user.ask, task, etc.) because
+            # ToolRetryMiddleware's `_handle_failure` catches *any*
+            # Exception (including GraphInterrupt) and converts it to a
+            # ToolMessage — that would swallow our pause signals. Only
+            # listing the tools we DO want retried (RETRY_ELIGIBLE_TOOLS)
+            # keeps GraphInterrupt-flow tools out of its catch path.
+            ToolRetryMiddleware(
+                max_retries=settings.max_tool_retries,
+                tools=list(RETRY_ELIGIBLE_TOOLS),
+                retry_on=(
+                    ConnectionError,
+                    TimeoutError,
+                    OSError,
+                ),
+            ),
             ModelRetryMiddleware(max_retries=settings.max_tool_retries),
         ]
     )

@@ -89,7 +89,7 @@ def test_selector_appears_in_middleware_when_enabled(monkeypatch, tmp_path) -> N
 def test_always_include_covers_core_capabilities() -> None:
     """The always-include list must keep the agent's core capabilities
     available even when the selector narrows the surface."""
-    expected = {"write_todos", "task", "memory.search", "time.now"}
+    expected = {"write_todos", "task", "memory.search", "user.ask", "time.now"}
     assert expected.issubset(set(ALWAYS_INCLUDE_TOOLS))
 
 
