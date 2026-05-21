@@ -117,6 +117,9 @@ func (a *App) Register(ctx context.Context, email string, password string, name 
 	if _, err := a.Store.EnsureWallet(ctx, user.ID, a.Config.MonthlyCredits); err != nil {
 		return AuthResult{}, err
 	}
+	if err := a.Store.GrantSignupCredits(ctx, user.ID, a.Config.SignupCredits); err != nil {
+		return AuthResult{}, err
+	}
 	return a.issueAuth(ctx, user)
 }
 

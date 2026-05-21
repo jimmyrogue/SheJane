@@ -20,7 +20,11 @@ type Config struct {
 	AdminEmails     []string
 
 	MonthlyCredits int64
-	MockLLM        bool
+	// SignupCredits is the one-time gift (in credits) granted to a brand-new
+	// user's wallet on first registration, written to extra_credits_balance
+	// (semantically a one-shot bag, not a monthly quota). 0 disables it.
+	SignupCredits int64
+	MockLLM       bool
 
 	// ConfigEncryptionKey encrypts model API keys at rest in the DB. When empty,
 	// keys are stored as plaintext and a warning is logged at startup.
@@ -68,7 +72,8 @@ func Default() Config {
 		RefreshTokenTTL:     30 * 24 * time.Hour,
 		DatabaseURL:         "",
 		AdminEmails:         nil,
-		MonthlyCredits:      20_000,
+		MonthlyCredits:      0,
+		SignupCredits:       0,
 		MockLLM:             true,
 		FastProviderKind:    "",
 		FastProviderBaseURL: "https://api.deepseek.com",
@@ -109,6 +114,7 @@ func Load() Config {
 	cfg.DatabaseURL = getEnv("DATABASE_URL", cfg.DatabaseURL)
 	cfg.AdminEmails = getEnvList("ADMIN_EMAILS", cfg.AdminEmails)
 	cfg.MonthlyCredits = getEnvInt64("MONTHLY_CREDITS", cfg.MonthlyCredits)
+	cfg.SignupCredits = getEnvInt64("SIGNUP_CREDITS", cfg.SignupCredits)
 	cfg.MockLLM = getEnvBool("MOCK_LLM", cfg.MockLLM)
 	cfg.ConfigEncryptionKey = getEnv("CONFIG_ENCRYPTION_KEY", cfg.ConfigEncryptionKey)
 	cfg.FastProviderKind = getEnv("FAST_PROVIDER_KIND", cfg.FastProviderKind)

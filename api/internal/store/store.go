@@ -233,6 +233,9 @@ type Store interface {
 	RevokeRefreshToken(ctx context.Context, token string) error
 
 	EnsureWallet(ctx context.Context, userID string, monthlyCredits int64) (*billing.Wallet, error)
+	// GrantSignupCredits adds a one-time gift to the user's extra_credits_balance.
+	// Idempotent (no-op if already granted for this user).
+	GrantSignupCredits(ctx context.Context, userID string, amount int64) error
 	WalletByUser(ctx context.Context, userID string) (*billing.Wallet, error)
 	ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error)
 	SettleUsage(ctx context.Context, userID string, reservationID string, actualCredits int64) error

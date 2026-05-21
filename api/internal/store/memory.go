@@ -152,6 +152,31 @@ func (s *MemoryStore) RevokeRefreshToken(ctx context.Context, token string) erro
 	return nil
 }
 
+func (s *MemoryStore) GrantSignupCredits(ctx context.Context, userID string, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wallet, ok := s.wallets[userID]
+	if !ok {
+		wallet = billing.NewWallet(newID("wallet"), 0, 0)
+		wallet.UserID = userID
+		s.wallets[userID] = wallet
+	}
+	idempotencyKey := "signup:" + userID
+	for _, tx := range wallet.Transactions() {
+		if tx.IdempotencyKey == idempotencyKey {
+			return nil
+		}
+	}
+	if err := wallet.AdjustExtraCredits(amount, "signup gift credits granted", idempotencyKey); err != nil {
+		return err
+	}
+	s.appendAuditLocked("", "billing.signup_grant", "wallet", wallet.ID, "signup gift credits granted", map[string]any{"amount": amount})
+	return nil
+}
+
 func (s *MemoryStore) EnsureWallet(ctx context.Context, userID string, monthlyCredits int64) (*billing.Wallet, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

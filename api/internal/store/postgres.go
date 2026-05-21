@@ -121,6 +121,43 @@ func (s *PostgresStore) EnsureWallet(ctx context.Context, userID string, monthly
 	return wallet, tx.Commit()
 }
 
+func (s *PostgresStore) GrantSignupCredits(ctx context.Context, userID string, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if err := ensureWalletTx(ctx, tx, userID, 0); err != nil {
+		return err
+	}
+	idempotencyKey := "signup:" + userID
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wallet_transactions WHERE idempotency_key=$1)`, idempotencyKey).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	wallet, err := selectWalletTx(ctx, tx, userID, true)
+	if err != nil {
+		return err
+	}
+	wallet.ExtraCreditsBalance += amount
+	if _, err := tx.ExecContext(ctx, `UPDATE wallets SET extra_credits_balance=$1, updated_at=NOW() WHERE id=$2`, wallet.ExtraCreditsBalance, wallet.ID); err != nil {
+		return err
+	}
+	if err := insertWalletTransaction(ctx, tx, wallet.ID, "", "signup_grant", amount, wallet.MonthlyCreditsUsed, wallet.ExtraCreditsBalance, "signup gift credits granted", idempotencyKey); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.signup_grant", "wallet", wallet.ID, map[string]any{"amount": amount}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) WalletByUser(ctx context.Context, userID string) (*billing.Wallet, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
