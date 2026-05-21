@@ -69,6 +69,23 @@ class Settings(BaseSettings):
         alias="JIANDANLY_LOCAL_PII_REDACT",
     )
 
+    # Comma-separated AGENTS.md paths (or directories containing them) that
+    # deepagents' MemoryMiddleware should load into the system prompt at
+    # run start. Empty ⇒ no memory pre-load. Example:
+    #   "~/.jiandanly/AGENTS.md,/path/to/project/AGENTS.md"
+    memory_sources: str = Field(
+        default="",
+        alias="JIANDANLY_LOCAL_MEMORY_PATHS",
+    )
+
+    # Reflection: when enabled, ReflectMiddleware after_agent runs a real
+    # critic-reviser LLM call against the final answer (extra cost).
+    # Default off — keeps current statistics-only behavior.
+    enable_critic_reflection: bool = Field(
+        default=False,
+        alias="JIANDANLY_LOCAL_CRITIC",
+    )
+
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir

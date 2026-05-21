@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
-from .agent.builder import open_checkpointer
+from .agent.builder import open_checkpointer, open_store
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
 from .runs import RunCoordinator
@@ -86,10 +86,16 @@ async def lifespan(app: FastAPI):
     settings.ensure_data_dir()
     store = await LocalStore.open(settings.local_db_path)
     checkpointer, ck_stack = await open_checkpointer(settings)
-    coordinator = RunCoordinator(store=store, checkpointer=checkpointer)
+    agent_store, store_stack = await open_store(settings)
+    coordinator = RunCoordinator(
+        store=store,
+        checkpointer=checkpointer,
+        agent_store=agent_store,
+    )
     app.state.store = store
     app.state.settings = settings
     app.state.checkpointer = checkpointer
+    app.state.agent_store = agent_store
     app.state.coordinator = coordinator
     log.info(
         "local-host started host=%s port=%s data=%s",
@@ -100,6 +106,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await store_stack.aclose()
         await ck_stack.aclose()
         await store.close()
         log.info("local-host shutdown clean")

@@ -39,6 +39,8 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
+from langgraph.store.base import BaseStore
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
@@ -112,6 +114,27 @@ async def open_checkpointer(settings: Settings | None = None) -> tuple[AsyncSqli
     await saver.setup()
     log.info("checkpointer ready at %s", settings.checkpoint_db_path)
     return saver, stack
+
+
+async def open_store(settings: Settings | None = None) -> tuple[BaseStore, AsyncExitStack]:
+    """Open a long-lived `BaseStore` for cross-run durable memory.
+
+    This is what `MemoryWritebackMiddleware` writes into (post-run summary
+    of goal + final answer) and what `langgraph.store.base.BaseStore`-aware
+    middleware/tools read from via `runtime.store`.
+
+    Backed by `AsyncSqliteStore` on the daemon data dir — same WAL +
+    eager-setup pattern as the checkpointer.
+    """
+    settings = settings or get_settings()
+    settings.ensure_data_dir()
+    stack = AsyncExitStack()
+    store = await stack.enter_async_context(
+        AsyncSqliteStore.from_conn_string(str(settings.store_db_path))
+    )
+    await store.setup()
+    log.info("store ready at %s", settings.store_db_path)
+    return store, stack
 
 
 def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
@@ -204,6 +227,7 @@ async def build_agent(
     *,
     store: LocalStore,
     checkpointer: AsyncSqliteSaver,
+    agent_store: BaseStore | None = None,
     workspace_root: str | None,
     run_id: str,
     mode: str = "fast",
@@ -262,13 +286,35 @@ async def build_agent(
         else None
     )
 
+    memory_arg = _resolve_memory_sources(settings)
+
     return create_deep_agent(
         model=model,
         tools=tools,
         middleware=middleware,
         subagents=subagents_arg,
         skills=skills_arg,
+        memory=memory_arg,
         backend=backend,
         interrupt_on=DESTRUCTIVE_TOOLS,
         checkpointer=checkpointer,
+        store=agent_store,
     )
+
+
+def _resolve_memory_sources(settings: Settings) -> list[str] | None:
+    """Parse JIANDANLY_LOCAL_MEMORY_PATHS (comma-separated paths) into the
+    `memory=` argument of `create_deep_agent`. Each path is typically an
+    `AGENTS.md` file or a directory of such files — `MemoryMiddleware`
+    loads them into the system prompt at run start.
+
+    None ⇒ memory loader skipped (MemoryMiddleware no-ops).
+    """
+    spec = (settings.memory_sources or "").strip()
+    if not spec:
+        return None
+    items = [p.strip() for p in spec.split(",") if p.strip()]
+    # Expand `~` for user convenience but don't validate existence — the
+    # middleware itself logs nicely if a path is missing.
+    expanded = [str(Path(p).expanduser()) for p in items]
+    return expanded or None

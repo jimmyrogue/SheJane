@@ -29,6 +29,7 @@ from typing import Any, AsyncIterator
 
 from langchain_core.load.dump import dumps as lc_dumps
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
 from .agent.builder import build_agent
@@ -44,9 +45,11 @@ class RunCoordinator:
         self,
         store: LocalStore,
         checkpointer: AsyncSqliteSaver,
+        agent_store: BaseStore | None = None,
     ) -> None:
         self.store = store
         self.checkpointer = checkpointer
+        self.agent_store = agent_store
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._queues: dict[str, asyncio.Queue[Any]] = {}
         self._goals: dict[str, str] = {}
@@ -145,6 +148,7 @@ class RunCoordinator:
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
+                agent_store=self.agent_store,
                 workspace_root=workspace_path,
                 run_id=run_id,
                 mode=mode,
