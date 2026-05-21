@@ -69,17 +69,33 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
             out.append({"event": "llm.reasoning", "data": {"content": reasoning}})
 
         for tc in chunk.tool_call_chunks or []:
-            out.append(
-                {
-                    "event": "llm.tool_call_chunk",
-                    "data": {
-                        "id": tc.get("id"),
-                        "name": tc.get("name"),
-                        "args_delta": tc.get("args"),
-                        "index": tc.get("index"),
-                    },
-                }
-            )
+            tool_name = tc.get("name")
+            # Surface task() spawns (deepagents SubAgentMiddleware) as a
+            # narrower client-facing event so the UI can render a subagent
+            # tree without having to inspect tool_call schemas.
+            if tool_name == "task":
+                out.append(
+                    {
+                        "event": "subagent.spawned",
+                        "data": {
+                            "id": tc.get("id"),
+                            "args_delta": tc.get("args"),
+                            "index": tc.get("index"),
+                        },
+                    }
+                )
+            else:
+                out.append(
+                    {
+                        "event": "llm.tool_call_chunk",
+                        "data": {
+                            "id": tc.get("id"),
+                            "name": tool_name,
+                            "args_delta": tc.get("args"),
+                            "index": tc.get("index"),
+                        },
+                    }
+                )
 
         backend_error = chunk.additional_kwargs.get("backend_error")
         if backend_error:
@@ -90,9 +106,10 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
         return out
 
     if isinstance(chunk, ToolMessage):
+        event_name = "subagent.completed" if chunk.name == "task" else "tool.end"
         return [
             {
-                "event": "tool.end",
+                "event": event_name,
                 "data": {
                     "tool_call_id": chunk.tool_call_id,
                     "name": chunk.name,

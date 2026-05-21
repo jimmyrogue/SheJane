@@ -32,6 +32,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
+from deepagents.middleware import SubAgentMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -58,6 +59,7 @@ from ..middleware import (
 )
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
+from .subagents import build_subagent_backend, build_subagents
 
 log = logging.getLogger("local_host.agent.builder")
 
@@ -178,6 +180,14 @@ async def build_agent(
     )
 
     middleware.extend(_built_in_middleware(settings, workspace_root))
+
+    # Subagents (Phase 6'+) — adds a `task` tool the main agent can call
+    # to delegate to specialist subagents (researcher / writer / …). Each
+    # subagent runs in an isolated context window with a narrower toolset.
+    if settings.enable_subagents:
+        backend = build_subagent_backend(workspace_root)
+        subagents = build_subagents(main_tools=tools, main_model=model)
+        middleware.append(SubAgentMiddleware(backend=backend, subagents=subagents))
 
     # Post-model and post-agent custom middleware go last so they observe
     # the full message tail after built-ins have already run.

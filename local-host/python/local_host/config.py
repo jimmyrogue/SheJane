@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     browser_headless: bool = True
     browser_timeout_ms: int = 15_000
 
+    # Subagents (Phase 6'+ — deepagents SubAgentMiddleware)
+    enable_subagents: bool = True
+
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir

@@ -93,11 +93,25 @@ class BackendChatModel(BaseChatModel):
         serialized: list[dict[str, Any]] = []
         for t in tools or []:
             if isinstance(t, BaseTool):
-                schema = (
-                    t.args_schema.model_json_schema()
-                    if t.args_schema
-                    else {"type": "object", "properties": {}}
-                )
+                schema: dict[str, Any]
+                if t.args_schema:
+                    try:
+                        schema = t.args_schema.model_json_schema()
+                    except Exception as exc:  # noqa: BLE001
+                        # Some tools — notably deepagents' `task` —
+                        # have Callable in their args schema which
+                        # pydantic can't serialize to JSON Schema.
+                        # The backend gets concrete args at call time,
+                        # so a permissive placeholder is fine here.
+                        log.debug(
+                            "tool %s args_schema not JSON-serializable (%s); "
+                            "using permissive object schema",
+                            t.name,
+                            exc,
+                        )
+                        schema = {"type": "object", "additionalProperties": True}
+                else:
+                    schema = {"type": "object", "properties": {}}
                 serialized.append(
                     {
                         "name": t.name,
