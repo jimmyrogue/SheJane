@@ -179,3 +179,118 @@ def test_fs_toolkit_disabled_without_workspace() -> None:
 
     assert make_fs_toolkit(None) == []
     assert make_fs_toolkit("") == []
+
+
+# --- web tools ---
+
+
+def test_web_fetch_rejects_non_http_scheme() -> None:
+    import asyncio
+
+    from local_host.tools.web import web_fetch
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "file:///etc/passwd"}))
+    assert out["ok"] == "false"
+    assert "scheme" in out["error"]
+
+
+def test_web_fetch_rejects_loopback_ssrf() -> None:
+    """SSRF guard: localhost should be refused even via DNS-resolved hostname."""
+    import asyncio
+
+    from local_host.tools.web import web_fetch
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "http://localhost:8080/admin"}))
+    assert out["ok"] == "false"
+    assert "private" in out["error"] or "loopback" in out["error"]
+
+
+def test_web_fetch_rejects_invalid_method() -> None:
+    import asyncio
+
+    from local_host.tools.web import web_fetch
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "https://example.com", "method": "DELETE"}))
+    assert out["ok"] == "false"
+    assert "method" in out["error"]
+
+
+def test_tavily_disabled_when_key_absent(monkeypatch: Any) -> None:
+    from local_host.tools.web import make_tavily_search
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    assert make_tavily_search() is None
+
+
+# --- task.verify ---
+
+
+def test_task_verify_file_exists(tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.verify import task_verify
+
+    target = tmp_path / "a.txt"
+    target.write_text("hello", encoding="utf-8")
+    out = asyncio.run(task_verify.ainvoke(
+        {"checks": [{"kind": "file_exists", "path": str(target)}]}
+    ))
+    assert out["ok"] == "true"
+    assert out["results"][0]["ok"] is True
+
+
+def test_task_verify_mixed_pass_fail(tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.verify import task_verify
+
+    out = asyncio.run(task_verify.ainvoke({
+        "checks": [
+            {"kind": "file_exists", "path": str(tmp_path / "missing")},
+            {"kind": "shell_exit_code", "command": "true", "expected": 0},
+            {"kind": "unknown_kind"},
+        ]
+    }))
+    assert out["ok"] == "false"
+    assert out["pass_count"] == "1"
+    assert out["fail_count"] == "2"
+
+
+def test_task_verify_empty_checks_rejected() -> None:
+    import asyncio
+
+    from local_host.tools.verify import task_verify
+
+    out = asyncio.run(task_verify.ainvoke({"checks": []}))
+    assert out["ok"] == "false"
+
+
+# --- skill.use ---
+
+
+def test_skill_use_missing_returns_available(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
+    (tmp_path / "alpha.md").write_text("---\ntitle: Alpha\n---\nhello", encoding="utf-8")
+    (tmp_path / "beta.md").write_text("# Beta", encoding="utf-8")
+
+    from local_host.tools.skills import skill_use
+
+    out = skill_use.invoke({"name": "missing"})
+    assert out["ok"] == "false"
+    assert "alpha" in out["available"]
+    assert "beta" in out["available"]
+
+
+def test_skill_use_loads_with_frontmatter(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
+    (tmp_path / "demo.md").write_text(
+        "---\ntitle: Demo Skill\ndescription: short demo\n---\nbody content here",
+        encoding="utf-8",
+    )
+    from local_host.tools.skills import skill_use
+
+    out = skill_use.invoke({"name": "demo"})
+    assert out["ok"] == "true"
+    assert out["title"] == "Demo Skill"
+    assert out["description"] == "short demo"
+    assert "body content here" in out["content"]

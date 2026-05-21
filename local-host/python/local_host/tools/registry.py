@@ -13,7 +13,10 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from ..store.sqlite import LocalStore
+from .skills import SKILL_TOOLS
 from .trivial import TRIVIAL_TOOLS
+from .verify import VERIFY_TOOLS
+from .web import WEB_TOOLS, make_tavily_search
 from .workspace import make_fs_toolkit, make_workspace_open_tool
 
 log = logging.getLogger("local_host.tools.registry")
@@ -21,7 +24,7 @@ log = logging.getLogger("local_host.tools.registry")
 
 def core_tools() -> list[BaseTool]:
     """Tools that should always be available — no external deps required."""
-    return list(TRIVIAL_TOOLS)
+    return [*TRIVIAL_TOOLS, *WEB_TOOLS, *VERIFY_TOOLS, *SKILL_TOOLS]
 
 
 def build_tools(
@@ -31,14 +34,21 @@ def build_tools(
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
 
-    Phase 2' returns: trivial + workspace.open + fs toolkit (read/write/list).
-    Phase 2' part 3+ will extend this with Tavily, custom web/image/task/skill
-    tools, MCP, and browser-use.
+    Phase 2' returns trivial + workspace.open + fs toolkit + web (fetch +
+    optional Tavily search) + task.verify + skill.use. MCP and browser-use
+    come in part 4 and 5.
     """
-    tools: list[BaseTool] = list(TRIVIAL_TOOLS)
+    tools: list[BaseTool] = []
+    tools.extend(TRIVIAL_TOOLS)
+    tools.extend(WEB_TOOLS)
+    tools.extend(VERIFY_TOOLS)
+    tools.extend(SKILL_TOOLS)
     if store is not None:
         tools.append(make_workspace_open_tool(store))
     tools.extend(make_fs_toolkit(workspace_root))
+    tavily = make_tavily_search()
+    if tavily is not None:
+        tools.append(tavily)
     return tools
 
 
