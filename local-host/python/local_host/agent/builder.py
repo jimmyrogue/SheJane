@@ -44,6 +44,7 @@ from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
+    LLMToolSelectorMiddleware,
     ModelCallLimitMiddleware,
     ModelFallbackMiddleware,
     ModelRetryMiddleware,
@@ -85,6 +86,23 @@ DESTRUCTIVE_TOOLS: dict[str, bool] = {
     "image.generate": True, # paid + side-effecting
     "image.edit": True,
 }
+
+
+# Tools the selector must never filter out — these are the agent's
+# "always-available" capabilities even when LLMToolSelectorMiddleware
+# narrows the toolset for a given turn:
+#   - write_todos   : planning is fundamental
+#   - task          : subagent dispatch — letting the LLM still hand off
+#                     even when its main toolset has been narrowed
+#   - memory.search : long-term memory recall — must be accessible
+#                     regardless of how many other tools survive
+#   - time.now      : tiny but the model often needs it for orientation
+ALWAYS_INCLUDE_TOOLS: list[str] = [
+    "write_todos",
+    "task",
+    "memory.search",
+    "time.now",
+]
 
 
 def _resolve_skills_dir() -> Path | None:
@@ -278,6 +296,28 @@ async def build_agent(
         backend = FilesystemBackend(virtual_mode=True, max_file_size_mb=10)
 
     middleware = _custom_middleware(settings)
+
+    # LLM-driven tool preselection — sits in the custom middleware band
+    # so the narrowed toolset is what the main LLM sees. Always-include
+    # keeps the agent's core capabilities (planning, memory, subagent
+    # dispatch) accessible regardless of selection. Selector reuses
+    # BackendChatModel in "fast" mode so its cost flows through our
+    # cloud accounting.
+    if settings.tool_selector_max_tools > 0:
+        selector_model = BackendChatModel(
+            cloud_base_url=settings.cloud_base_url,
+            cloud_token=settings.cloud_token,
+            run_id=run_id,
+            mode="fast",
+        )
+        middleware.append(
+            LLMToolSelectorMiddleware(
+                model=selector_model,
+                max_tools=settings.tool_selector_max_tools,
+                always_include=ALWAYS_INCLUDE_TOOLS,
+            )
+        )
+
     if extra_middleware:
         middleware.extend(extra_middleware)
 

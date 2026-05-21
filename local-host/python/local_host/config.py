@@ -78,6 +78,15 @@ class Settings(BaseSettings):
         alias="JIANDANLY_LOCAL_MEMORY_PATHS",
     )
 
+    # LLM-driven tool preselection. When the agent has many tools (we ship
+    # 20+), a cheap LLM first picks `max_tools` relevant ones before the
+    # main model call. 0 ⇒ disabled (default — keep current behavior).
+    # Set to e.g. 8 to enable filtering down to 8 most-relevant tools.
+    tool_selector_max_tools: int = Field(
+        default=0,
+        alias="JIANDANLY_LOCAL_TOOL_SELECTOR_MAX",
+    )
+
     # Reflection: when enabled, ReflectMiddleware after_agent runs a real
     # critic-reviser LLM call against the final answer (extra cost).
     # Default off — keeps current statistics-only behavior.
