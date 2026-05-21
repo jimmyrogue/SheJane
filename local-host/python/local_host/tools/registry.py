@@ -14,6 +14,7 @@ from langchain_core.tools import BaseTool
 
 from ..config import get_settings
 from ..store.sqlite import LocalStore
+from .browser import make_browser_tool
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
 from .skills import SKILL_TOOLS
@@ -41,12 +42,14 @@ async def build_tools(
     store: LocalStore | None = None,
     workspace_root: str | None = None,
     include_mcp: bool = True,
+    browser_llm: Any = None,
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
 
-    Phase 2' returns trivial + workspace.open + fs toolkit + web (fetch +
-    optional Tavily) + task.verify + skill.use + image.* + MCP.
-    browser-use comes in part 5.
+    All Phase 2' categories: trivial + workspace.open + fs toolkit + web
+    (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP +
+    browser.task. The browser tool is always present but reports
+    "configure-me" if `browser_llm` is None.
     """
     tools: list[BaseTool] = []
     tools.extend(TRIVIAL_TOOLS)
@@ -62,6 +65,8 @@ async def build_tools(
     if tavily is not None:
         tools.append(tavily)
 
+    tools.append(make_browser_tool(llm=browser_llm))
+
     if include_mcp:
         data_dir = get_settings().data_dir
         tools.extend(await build_mcp_tools(data_dir))
@@ -75,12 +80,13 @@ def describe_tools_sync(
     workspace_root: str | None = None,
 ) -> list[dict[str, Any]]:
     """Sync subset for `GET /v1/tools` — omits MCP (which requires a
-    running event loop) and Tavily details. Just core + workspace + fs."""
+    running event loop) and Tavily details. Includes browser.task stub."""
     out: list[dict[str, Any]] = []
     tools: list[BaseTool] = list(core_tools())
     if store is not None:
         tools.append(make_workspace_open_tool(store))
     tools.extend(make_fs_toolkit(workspace_root))
+    tools.append(make_browser_tool(llm=None))
     for t in tools:
         out.append(
             {

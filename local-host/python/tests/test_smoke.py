@@ -361,3 +361,75 @@ def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
     config = _load_mcp_config(tmp_path)
     assert "demo" in config
     assert config["demo"]["transport"] == "stdio"
+
+
+# --- browser-use integration ---
+
+
+def test_browser_tool_stub_without_llm() -> None:
+    """make_browser_tool(llm=None) returns a tool that reports unavailable."""
+    import asyncio
+
+    from local_host.tools.browser import make_browser_tool
+
+    tool = make_browser_tool(llm=None)
+    assert tool.name == "browser.task"
+    out = asyncio.run(tool.ainvoke({"task": "open https://example.com"}))
+    assert out["ok"] == "false"
+    assert "Phase 3" in out["error"] or "not installed" in out["error"]
+
+
+def test_browser_tool_present_in_registry(client: TestClient) -> None:
+    r = client.get(
+        "/v1/tools",
+        headers={"Authorization": "Bearer test-pairing-token"},
+    )
+    names = {t["name"] for t in r.json()["tools"]}
+    assert "browser.task" in names
+
+
+# --- full registry async assembly ---
+
+
+def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
+    """build_tools (async) should assemble every Phase 2' category."""
+    import asyncio
+
+    from local_host.config import reset_settings_for_tests
+    from local_host.store.sqlite import LocalStore
+    from local_host.tools.registry import build_tools
+
+    async def run() -> list[str]:
+        reset_settings_for_tests(data_dir=tmp_path)
+        store = await LocalStore.open(tmp_path / "store.db")
+        try:
+            tools = await build_tools(
+                store=store,
+                workspace_root=str(tmp_path),
+                include_mcp=False,  # no MCP servers configured
+            )
+            return [t.name for t in tools]
+        finally:
+            await store.close()
+
+    names = asyncio.run(run())
+    expected = {
+        "time.now",
+        "environment.observe",
+        "open.url",
+        "open.file",
+        "clipboard.read",
+        "clipboard.write",
+        "web.fetch",
+        "task.verify",
+        "skill.use",
+        "image.generate",
+        "image.edit",
+        "workspace.open",
+        "read_file",
+        "write_file",
+        "list_directory",
+        "browser.task",
+    }
+    missing = expected - set(names)
+    assert not missing, f"missing tools: {missing}"
