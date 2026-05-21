@@ -265,16 +265,16 @@ func (a *App) issueAuth(ctx context.Context, user store.User) (AuthResult, error
 
 func providersFromConfig(cfg config.Config) (llm.Provider, llm.Provider) {
 	if cfg.MockLLM {
-		return llm.NewMockProvider("deepseek-fast", "Mock Jiandan response from fast mode"), llm.NewMockProvider("claude-deep", "Mock Jiandan response from deep mode")
+		return llm.NewMockProvider("deepseek-fast", "Mock SheJane response from fast mode"), llm.NewMockProvider("claude-deep", "Mock SheJane response from deep mode")
 	}
 
-	fast := llm.Provider(llm.NewMockProvider("deepseek-fast", "Mock Jiandan response from fast fallback"))
+	fast := llm.Provider(llm.NewMockProvider("deepseek-fast", "Mock SheJane response from fast fallback"))
 	if cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "" {
 		fastKind := llm.InferOpenAIProviderKind(cfg.FastProviderKind, cfg.FastProviderBaseURL)
 		fast = llm.NewOpenAICompatibleProviderWithProfile("deepseek-fast", cfg.FastProviderBaseURL, cfg.FastProviderAPIKey, llm.ProfileForProviderKind(fastKind))
 	}
 
-	deep := llm.Provider(llm.NewMockProvider("claude-deep", "Mock Jiandan response from deep fallback"))
+	deep := llm.Provider(llm.NewMockProvider("claude-deep", "Mock SheJane response from deep fallback"))
 	deepKind := llm.NormalizeProviderKind(cfg.DeepProviderKind)
 	if cfg.AnthropicAPIKey != "" && (deepKind == "" || deepKind == llm.ProviderKindAnthropic) {
 		deep = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, cfg.AnthropicVersion)

@@ -1,6 +1,6 @@
-# 简单 Jiandanly
+# 石间 SheJane
 
-简单是一款面向小团队和职业人群的 Agentic Chat 生产力工具。Phase 1 已完成可收费聊天 MVP；Phase 2 的方向已经从“场景模板 / 独立文档阅读”升级为 **Local Agent Harness**：用户只在一个输入入口里提问、上传附件、贴 URL 或描述任务，系统自动决定是否解析文档、调用工具、加载 skill、请求权限、验证结果或进入多步 agent loop。
+石间（SheJane）是一款面向小团队和职业人群的 Agentic Chat 生产力工具。Phase 1 已完成可收费聊天 MVP；Phase 2 的方向已经从“场景模板 / 独立文档阅读”升级为 **Local Agent Harness**：用户只在一个输入入口里提问、上传附件、贴 URL 或描述任务，系统自动决定是否解析文档、调用工具、加载 skill、请求权限、验证结果或进入多步 agent loop。
 
 Local Agent Harness 总规格见 [`spec.md`](spec.md)。
 

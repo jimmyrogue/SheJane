@@ -24,7 +24,7 @@ func main() {
 	application := app.New(cfg, st)
 	server := httpapi.NewServer(application)
 
-	log.Printf("Jiandanly API listening on %s", cfg.HTTPAddr)
+	log.Printf("SheJane API listening on %s", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, server); err != nil {
 		log.Fatal(err)
 	}

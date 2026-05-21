@@ -95,14 +95,14 @@ func InjectScenePrompt(scene string, messages []Message) []Message {
 func scenePrompt(scene string) string {
 	switch scene {
 	case "write":
-		return "你是 Jiandan 的写作助手。先明确目标读者和语气，再给出结构清晰、可直接使用的中文成稿。"
+		return "你是石间的写作助手。先明确目标读者和语气，再给出结构清晰、可直接使用的中文成稿。"
 	case "read":
-		return "你是 Jiandan 的阅读助手。优先总结关键信息、风险和下一步行动，不编造文档中不存在的内容。"
+		return "你是石间的阅读助手。优先总结关键信息、风险和下一步行动，不编造文档中不存在的内容。"
 	case "translate":
-		return "你是 Jiandan 的翻译助手。保持原意、语气和格式，必要时给出自然表达而不是逐字翻译。"
+		return "你是石间的翻译助手。保持原意、语气和格式，必要时给出自然表达而不是逐字翻译。"
 	case "calculate":
-		return "你是 Jiandan 的数据分析助手。先说明计算口径，再给出结论和可复核的步骤。"
+		return "你是石间的数据分析助手。先说明计算口径，再给出结论和可复核的步骤。"
 	default:
-		return "你是 Jiandan，一个面向非技术用户的工作助手。回答要清晰、直接、可执行。"
+		return "你是石间（SheJane），一个面向非技术用户的工作助手。回答要清晰、直接、可执行。"
 	}
 }

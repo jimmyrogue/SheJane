@@ -12,7 +12,7 @@ type MockProvider struct {
 
 func NewMockProvider(name string, reply string) *MockProvider {
 	if reply == "" {
-		reply = "Mock Jiandan response"
+		reply = "Mock SheJane response"
 	}
 	return &MockProvider{name: name, reply: reply}
 }
@@ -34,8 +34,8 @@ func (p *MockProvider) Stream(ctx context.Context, request ChatRequest, model st
 		defer close(errs)
 
 		text := p.reply
-		if !strings.Contains(text, "Mock Jiandan response") {
-			text = text + " | Mock Jiandan response"
+		if !strings.Contains(text, "Mock SheJane response") {
+			text = text + " | Mock SheJane response"
 		}
 		select {
 		case <-ctx.Done():

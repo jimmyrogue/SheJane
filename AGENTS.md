@@ -1,4 +1,4 @@
-# Jiandanly Agent Guide
+# SheJane Agent Guide
 
 This file is the first stop for coding agents working in this repository. Keep it practical: follow the existing project shape, protect secrets, and verify changes before calling them done.
 

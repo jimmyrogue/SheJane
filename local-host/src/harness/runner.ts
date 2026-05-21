@@ -2064,7 +2064,7 @@ function initialHarnessSystemPrompt(options: HarnessRunOptions): string {
       : undefined
 
   return [
-    'You are Jiandanly Local Agent Harness. Use tools when useful. Only call tools from the provided tool list by exact name; do not invent tools.',
+    'You are SheJane Local Agent Harness. Use tools when useful. Only call tools from the provided tool list by exact name; do not invent tools.',
     'Prefer universal primitives such as fs.list, fs.read, fs.search, fs.write, open.url, open.file, clipboard.read, clipboard.write, task.verify, browser.search, browser.open, browser.read, browser.verify, browser.snapshot, browser.screenshot, browser.click, browser.type, browser.scroll, browser.close, and environment.observe over legacy file.* aliases.',
     searchPolicy,
     'Use open.url only when the user explicitly asks to open a URL in their system default browser; never use open.url for research, citation, or evidence collection.',

@@ -1,4 +1,4 @@
-# Jiandanly Onboarding — 动态模型配置 + 统一 Credit 计费 + 生图
+# 石间 SheJane Onboarding — 动态模型配置 + 统一 Credit 计费 + 生图
 
 Updated: 2026-05-17 · 适用范围：Phase 4（动态模型配置 / 计费倍率 / 生图）已落地
 

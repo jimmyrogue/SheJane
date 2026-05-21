@@ -79,7 +79,7 @@ func TestChatStreamsAndSettlesUsage(t *testing.T) {
 	var sawDone bool
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, "Mock Jiandan response") {
+		if strings.Contains(line, "Mock SheJane response") {
 			sawDelta = true
 		}
 		if line == "data: [DONE]" {
@@ -211,7 +211,7 @@ func TestDocumentAskStreamsAndSettlesUsage(t *testing.T) {
 	if askRecorder.Code != http.StatusOK {
 		t.Fatalf("ask status = %d, body = %s", askRecorder.Code, askRecorder.Body.String())
 	}
-	if !strings.Contains(askRecorder.Body.String(), "Mock Jiandan response") || !strings.Contains(askRecorder.Body.String(), "data: [DONE]") {
+	if !strings.Contains(askRecorder.Body.String(), "Mock SheJane response") || !strings.Contains(askRecorder.Body.String(), "data: [DONE]") {
 		t.Fatalf("ask stream body = %s", askRecorder.Body.String())
 	}
 	after := billingBalance(t, server, token)
@@ -284,7 +284,7 @@ func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 		t.Fatalf("agent stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
 	}
 	body := streamRecorder.Body.String()
-	for _, want := range []string{"run.created", "run.started", "skill.selected", "llm.started", "llm.delta", "run.completed", "Mock Jiandan response", "data: [DONE]"} {
+	for _, want := range []string{"run.created", "run.started", "skill.selected", "llm.started", "llm.delta", "run.completed", "Mock SheJane response", "data: [DONE]"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agent stream missing %q: %s", want, body)
 		}
@@ -339,7 +339,7 @@ func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode agent llm response: %v", err)
 	}
-	if response.Data.RequestID == "" || !strings.Contains(response.Data.Content, "Mock Jiandan response") {
+	if response.Data.RequestID == "" || !strings.Contains(response.Data.Content, "Mock SheJane response") {
 		t.Fatalf("unexpected agent llm response: %#v", response.Data)
 	}
 	if len(response.Data.ToolCalls) != 0 {

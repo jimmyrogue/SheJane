@@ -110,7 +110,7 @@ if (!raw.includes('[DONE]')) {
   console.error('Missing chat SSE [DONE] sentinel');
   process.exit(1);
 }
-if (!raw.includes('Mock Jiandan response')) {
+if (!raw.includes('Mock SheJane response')) {
   console.error('Expected mock provider response in deterministic Docker smoke');
   process.exit(1);
 }

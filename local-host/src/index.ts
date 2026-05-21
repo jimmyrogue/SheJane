@@ -28,7 +28,7 @@ const server = createLocalHostServer({ pairingToken, store, cloudSession })
 
 server.listen(port, host, () => {
   // eslint-disable-next-line no-console
-  console.log(`Jiandanly Local Agent Harness listening on http://${host}:${port}`)
+  console.log(`SheJane Local Agent Harness listening on http://${host}:${port}`)
   if (localHostDebugEnabled()) {
     // eslint-disable-next-line no-console
     console.log(

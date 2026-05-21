@@ -224,16 +224,16 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 	}
 	switch kind {
 	case llm.ProviderKindMock:
-		return llm.NewMockProvider(name, stringParam(cfg.Params, "mock_reply", "Mock Jiandan response"))
+		return llm.NewMockProvider(name, stringParam(cfg.Params, "mock_reply", "Mock SheJane response"))
 	case llm.ProviderKindAnthropic:
 		if apiKey == "" {
-			return llm.NewMockProvider(name, "Mock Jiandan response (anthropic key missing)")
+			return llm.NewMockProvider(name, "Mock SheJane response (anthropic key missing)")
 		}
 		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
 		return llm.NewAnthropicProvider(apiKey, version)
 	default:
 		if apiKey == "" || cfg.BaseURL == "" {
-			return llm.NewMockProvider(name, "Mock Jiandan response (provider not configured)")
+			return llm.NewMockProvider(name, "Mock SheJane response (provider not configured)")
 		}
 		profileKind := llm.InferOpenAIProviderKind(cfg.ProviderKind, cfg.BaseURL)
 		return llm.NewOpenAICompatibleProviderWithProfile(name, cfg.BaseURL, apiKey, llm.ProfileForProviderKind(profileKind))

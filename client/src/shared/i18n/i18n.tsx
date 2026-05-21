@@ -9,7 +9,7 @@ export const localeStorageKey = 'jiandanly.locale'
 const zh = {
   'language.switchTitle': '切换语言',
 
-  'app.productName': '简单 AI',
+  'app.productName': '石间',
   'app.title': '简单 AI',
   'app.windowActions': '窗口操作',
   'app.newChat': '新对话',
@@ -471,7 +471,7 @@ export type Translator = (key: TranslationKey, values?: TranslationValues) => st
 const en: Record<TranslationKey, string> = {
   'language.switchTitle': 'Switch language',
 
-  'app.productName': 'EasyAI',
+  'app.productName': 'SheJane',
   'app.title': 'EasyAI',
   'app.windowActions': 'Window controls',
   'app.newChat': 'New chat',

@@ -69,7 +69,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 	case cfg.MockLLM:
 		fast.ProviderKind = string(llm.ProviderKindMock)
 		fast.ModelName = cfg.FastModel
-		fast.Params["mock_reply"] = "Mock Jiandan response from fast mode"
+		fast.Params["mock_reply"] = "Mock SheJane response from fast mode"
 	case cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "":
 		fast.ProviderKind = string(llm.InferOpenAIProviderKind(cfg.FastProviderKind, cfg.FastProviderBaseURL))
 		fast.BaseURL = cfg.FastProviderBaseURL
@@ -78,7 +78,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 	default:
 		fast.ProviderKind = string(llm.ProviderKindMock)
 		fast.ModelName = cfg.FastModel
-		fast.Params["mock_reply"] = "Mock Jiandan response from fast fallback"
+		fast.Params["mock_reply"] = "Mock SheJane response from fast fallback"
 	}
 
 	deep := store.ModelConfig{
@@ -97,7 +97,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 	case cfg.MockLLM:
 		deep.ProviderKind = string(llm.ProviderKindMock)
 		deep.ModelName = cfg.DeepModel
-		deep.Params["mock_reply"] = "Mock Jiandan response from deep mode"
+		deep.Params["mock_reply"] = "Mock SheJane response from deep mode"
 	case cfg.AnthropicAPIKey != "" && (deepKind == "" || deepKind == llm.ProviderKindAnthropic):
 		deep.ProviderKind = string(llm.ProviderKindAnthropic)
 		deep.ModelName = cfg.DeepModel
@@ -112,7 +112,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 	default:
 		deep.ProviderKind = string(llm.ProviderKindMock)
 		deep.ModelName = cfg.DeepModel
-		deep.Params["mock_reply"] = "Mock Jiandan response from deep fallback"
+		deep.Params["mock_reply"] = "Mock SheJane response from deep fallback"
 	}
 
 	return fast, deep

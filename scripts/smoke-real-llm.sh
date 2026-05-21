@@ -81,7 +81,7 @@ if (!text.trim()) {
   console.error('No assistant text found in SSE response.');
   process.exit(1);
 }
-if (text.includes('Mock Jiandan response')) {
+if (text.includes('Mock SheJane response')) {
   console.error('The response is still using the mock provider. Set MOCK_LLM=false and configure FAST_PROVIDER_API_KEY.');
   process.exit(2);
 }

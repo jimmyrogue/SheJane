@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT_DIR="${ROOT_DIR}/client"
-APP_NAME="简单 AI"
+APP_NAME="石间"
 APP_ID="com.coldflame.easyai.dev"
 WRAPPER_APP="${JIANDANLY_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/EasyAI.app}"
 SOURCE_APP="${CLIENT_DIR}/node_modules/electron/dist/Electron.app"

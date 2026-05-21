@@ -1,4 +1,4 @@
-# Jiandanly Local Agent Harness Spec
+# SheJane Local Agent Harness Spec
 
 **Version:** v0.2
 **Updated:** 2026-05-12

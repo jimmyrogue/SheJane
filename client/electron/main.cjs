@@ -3,7 +3,7 @@ const path = require('node:path')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
-const appName = '简单 AI'
+const appName = '石间'
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
 
 function createWindow() {

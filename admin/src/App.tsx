@@ -596,7 +596,7 @@ function BrandBlock({ subtitle, compact = false }: { subtitle: string; compact?:
         <AvatarFallback className="rounded-lg bg-primary text-primary-foreground">简</AvatarFallback>
       </Avatar>
       <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-        <div className="truncate text-sm font-semibold">Jiandanly Admin</div>
+        <div className="truncate text-sm font-semibold">SheJane Admin</div>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
       </div>
     </div>
