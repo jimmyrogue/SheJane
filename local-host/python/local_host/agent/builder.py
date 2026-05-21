@@ -32,7 +32,8 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
-from deepagents.middleware import SubAgentMiddleware
+from deepagents.backends import FilesystemBackend
+from deepagents.middleware import SkillsMiddleware, SubAgentMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -58,13 +59,30 @@ from ..middleware import (
     MemoryWritebackMiddleware,
     OutputGuardMiddleware,
     ReflectMiddleware,
-    SkillInjectionMiddleware,
 )
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
 from .subagents import build_subagent_backend, build_subagents
 
 log = logging.getLogger("local_host.agent.builder")
+
+
+def _resolve_skills_dir() -> Path | None:
+    """Return the skills directory if configured + exists, else None.
+
+    Read order:
+      1. `JIANDANLY_LOCAL_SKILLS_PATH` env var
+      2. `~/.jiandanly/skills/` default
+
+    Returns None (skipping SkillsMiddleware) when the dir doesn't exist,
+    so a fresh user with zero skills doesn't get a noisy boot warning.
+    """
+    import os
+
+    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
+    candidate = Path(custom) if custom else Path.home() / ".jiandanly" / "skills"
+    candidate = candidate.expanduser()
+    return candidate if candidate.is_dir() else None
 
 # Tools the user MUST approve before they run. Mirrors HumanInTheLoop's
 # `interrupt_on` shape: True = always interrupt; the dict form allows
@@ -181,16 +199,27 @@ async def build_agent(
 
     middleware: list[AgentMiddleware] = []
 
-    # Custom middleware first — input guard + skill injection should land
-    # before any model call so the system prompt + guard state are visible
-    # to the built-ins.
+    # Custom middleware first — input guard + router should land before
+    # any model call so guard state is visible to the built-ins.
     middleware.extend(
         [
             InputGuardMiddleware(),            # P1
-            SkillInjectionMiddleware(),        # P7
             FastDeepRouterMiddleware(),        # P2
         ]
     )
+
+    # P7 skills via deepagents.SkillsMiddleware — auto-loads md files
+    # from JIANDANLY_LOCAL_SKILLS_PATH (or default ~/.jiandanly/skills/)
+    # with progressive disclosure (metadata in system prompt, full
+    # content fetched on demand via the middleware's built-in tools).
+    skills_dir = _resolve_skills_dir()
+    if skills_dir is not None:
+        middleware.append(
+            SkillsMiddleware(
+                backend=FilesystemBackend(root_dir=str(skills_dir)),
+                sources=[str(skills_dir)],
+            )
+        )
 
     middleware.extend(_built_in_middleware(settings, workspace_root))
 

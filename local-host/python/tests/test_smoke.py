@@ -265,35 +265,37 @@ def test_task_verify_empty_checks_rejected() -> None:
     assert out["ok"] == "false"
 
 
-# --- skill.use ---
+# --- skills catalog (HTTP layer only — agent-facing loading is now ---
+# --- handled by deepagents.SkillsMiddleware) ---
 
 
-def test_skill_use_missing_returns_available(monkeypatch: Any, tmp_path: Path) -> None:
+def test_skill_catalog_lists_md_files(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
-    (tmp_path / "alpha.md").write_text("---\ntitle: Alpha\n---\nhello", encoding="utf-8")
-    (tmp_path / "beta.md").write_text("# Beta", encoding="utf-8")
-
-    from local_host.tools.skills import skill_use
-
-    out = skill_use.invoke({"name": "missing"})
-    assert out["ok"] == "false"
-    assert "alpha" in out["available"]
-    assert "beta" in out["available"]
-
-
-def test_skill_use_loads_with_frontmatter(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
-    (tmp_path / "demo.md").write_text(
-        "---\ntitle: Demo Skill\ndescription: short demo\n---\nbody content here",
+    (tmp_path / "alpha.md").write_text(
+        "---\ntitle: Alpha\ndescription: A short demo\n---\nbody",
         encoding="utf-8",
     )
-    from local_host.tools.skills import skill_use
+    (tmp_path / "beta.md").write_text("# Beta", encoding="utf-8")
 
-    out = skill_use.invoke({"name": "demo"})
-    assert out["ok"] == "true"
-    assert out["title"] == "Demo Skill"
-    assert out["description"] == "short demo"
-    assert "body content here" in out["content"]
+    from local_host.server import _list_skill_files
+
+    skills = _list_skill_files()
+    names = {s["name"] for s in skills}
+    assert names == {"alpha", "beta"}
+    alpha = next(s for s in skills if s["name"] == "alpha")
+    assert alpha["title"] == "Alpha"
+    assert alpha["description"] == "A short demo"
+
+
+def test_skill_catalog_returns_empty_when_dir_missing(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(
+        "JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path / "nope")
+    )
+    from local_host.server import _list_skill_files
+
+    assert _list_skill_files() == []
 
 
 # --- image tools (missing-key path only; live API not exercised) ---
@@ -422,7 +424,6 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "clipboard.write",
         "web.fetch",
         "task.verify",
-        "skill.use",
         "image.generate",
         "image.edit",
         "workspace.open",

@@ -17,7 +17,6 @@ from ..store.sqlite import LocalStore
 from .browser import make_browser_tool
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
-from .skills import SKILL_TOOLS
 from .trivial import TRIVIAL_TOOLS
 from .verify import VERIFY_TOOLS
 from .web import WEB_TOOLS, make_tavily_search
@@ -32,7 +31,6 @@ def core_tools() -> list[BaseTool]:
         *TRIVIAL_TOOLS,
         *WEB_TOOLS,
         *VERIFY_TOOLS,
-        *SKILL_TOOLS,
         *IMAGE_TOOLS,
     ]
 
@@ -55,7 +53,6 @@ async def build_tools(
     tools.extend(TRIVIAL_TOOLS)
     tools.extend(WEB_TOOLS)
     tools.extend(VERIFY_TOOLS)
-    tools.extend(SKILL_TOOLS)
     tools.extend(IMAGE_TOOLS)
     if store is not None:
         tools.append(make_workspace_open_tool(store))

@@ -103,40 +103,8 @@ def test_router_does_not_re_decide() -> None:
     assert mw.before_model(state, runtime=None) is None
 
 
-# --- skill injection ---
-
-
-def test_skill_injection_no_request_returns_none() -> None:
-    from local_host.middleware.skills import SkillInjectionMiddleware
-
-    mw = SkillInjectionMiddleware()
-    state = {"messages": [HumanMessage(content="hi")]}
-    assert mw.before_agent(state, runtime=None) is None
-
-
-def test_skill_injection_loads_and_prepends(
-    monkeypatch: Any, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
-    (tmp_path / "demo.md").write_text(
-        "---\ntitle: Demo\n---\nUse step-by-step reasoning.",
-        encoding="utf-8",
-    )
-
-    from local_host.middleware.skills import SkillInjectionMiddleware
-
-    mw = SkillInjectionMiddleware()
-    state = {
-        "messages": [HumanMessage(content="hi")],
-        "skills": ["demo"],
-    }
-    result = mw.before_agent(state, runtime=None)
-    assert result is not None
-    messages = result["messages"]
-    # First message should be a SystemMessage with the skill content
-    assert messages[0].type == "system"
-    assert "Demo" in messages[0].content
-    assert "step-by-step" in messages[0].content
+# --- skill injection: handled by deepagents.SkillsMiddleware now, ---
+# --- no custom middleware to unit-test here ---
 
 
 # --- output guard ---

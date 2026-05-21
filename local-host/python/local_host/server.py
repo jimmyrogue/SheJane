@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from contextlib import AsyncExitStack, asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +27,57 @@ from .runs import RunCoordinator
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.server")
+
+
+def _list_skill_files() -> list[dict[str, str]]:
+    """Lightweight skill catalog for the HTTP layer — independent of any
+    running agent. Reads md files from JIANDANLY_LOCAL_SKILLS_PATH and
+    returns {name, title, description, path}. Skill *invocation* (loading
+    full content into prompts) happens via deepagents SkillsMiddleware
+    inside a run; this endpoint just answers "what's available?"
+    """
+    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
+    skills_dir = Path(custom) if custom else Path.home() / ".jiandanly" / "skills"
+    skills_dir = skills_dir.expanduser()
+    if not skills_dir.is_dir():
+        return []
+    out: list[dict[str, str]] = []
+    for md in sorted(skills_dir.glob("*.md")):
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        title, description = _parse_frontmatter_minimal(text)
+        out.append(
+            {
+                "name": md.stem,
+                "title": title or md.stem,
+                "description": description,
+                "path": str(md),
+            }
+        )
+    return out
+
+
+def _parse_frontmatter_minimal(text: str) -> tuple[str, str]:
+    """Extract title + description from a `--- key: value ---` YAML-lite
+    prefix without pulling in a full yaml parser."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return "", ""
+    title = description = ""
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if ":" in line:
+            key, _, value = line.partition(":")
+            k = key.strip().lower()
+            v = value.strip()
+            if k == "title":
+                title = v
+            elif k == "description":
+                description = v
+    return title, description
 
 
 @asynccontextmanager
@@ -259,9 +312,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:
-        from .tools.skills import list_skills
-
-        return {"skills": list_skills()}
+        return {"skills": _list_skill_files()}
 
     @app.get("/local/v1/skills/registry")
     async def search_skill_registry(q: str = "") -> dict[str, Any]:
