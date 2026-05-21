@@ -64,11 +64,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/tools")
     async def list_tools() -> dict[str, Any]:
-        # Phase 2': real tool list will be populated when registry is built.
-        # We return the registry's view (currently empty).
         from .tools.registry import describe_tools
 
-        return {"tools": describe_tools()}
+        # Phase 2': describe with the current store. workspace_root is
+        # None at this layer because fs tools are bound per-run by the
+        # agent builder (Phase 3'). Callers wanting the per-run view will
+        # use a different endpoint then.
+        store = getattr(app.state, "store", None)
+        return {"tools": describe_tools(store=store, workspace_root=None)}
 
     @app.get("/v1/workspaces")
     async def list_workspaces() -> dict[str, Any]:

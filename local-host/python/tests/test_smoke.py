@@ -116,3 +116,66 @@ def test_trivial_tool_callable_directly() -> None:
     # clipboard.read should at minimum return ok or error structure
     out = clipboard_read.invoke({})
     assert "ok" in out
+
+
+def test_tools_listing_includes_workspace_open(client: TestClient) -> None:
+    r = client.get(
+        "/v1/tools",
+        headers={"Authorization": "Bearer test-pairing-token"},
+    )
+    names = {t["name"] for t in r.json()["tools"]}
+    assert "workspace.open" in names
+
+
+def test_workspace_open_tool_authorizes_directory(tmp_path: Path) -> None:
+    """workspace.open should write a record to the store and return its id."""
+    import asyncio
+    from local_host.store.sqlite import LocalStore
+    from local_host.tools.workspace import make_workspace_open_tool
+
+    async def run() -> dict[str, str]:
+        store = await LocalStore.open(tmp_path / "store.db")
+        tool = make_workspace_open_tool(store)
+        try:
+            return await tool.ainvoke({"path": str(tmp_path), "label": "test"})
+        finally:
+            await store.close()
+
+    result = asyncio.run(run())
+    assert result["ok"] == "true"
+    assert result["path"] == str(tmp_path)
+    assert result["workspace_id"].startswith("ws_")
+
+
+def test_workspace_open_rejects_missing_directory(tmp_path: Path) -> None:
+    import asyncio
+    from local_host.store.sqlite import LocalStore
+    from local_host.tools.workspace import make_workspace_open_tool
+
+    async def run() -> dict[str, str]:
+        store = await LocalStore.open(tmp_path / "store.db")
+        tool = make_workspace_open_tool(store)
+        try:
+            return await tool.ainvoke({"path": str(tmp_path / "does-not-exist")})
+        finally:
+            await store.close()
+
+    result = asyncio.run(run())
+    assert result["ok"] == "false"
+    assert "not an accessible directory" in result["error"]
+
+
+def test_fs_toolkit_returns_official_tools(tmp_path: Path) -> None:
+    """make_fs_toolkit should return LangChain FileManagementToolkit tools."""
+    from local_host.tools.workspace import make_fs_toolkit
+
+    tools = make_fs_toolkit(str(tmp_path))
+    names = {t.name for t in tools}
+    assert names == {"read_file", "write_file", "list_directory"}
+
+
+def test_fs_toolkit_disabled_without_workspace() -> None:
+    from local_host.tools.workspace import make_fs_toolkit
+
+    assert make_fs_toolkit(None) == []
+    assert make_fs_toolkit("") == []
