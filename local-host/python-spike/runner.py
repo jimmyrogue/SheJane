@@ -135,6 +135,11 @@ async def main_async(socket_path: str, checkpoint_path: str) -> None:
     rpc = RpcEndpoint(reader, writer)
 
     async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as checkpointer:
+        # Eagerly materialize the schema before any run lands. Lazy-setup on
+        # the first run.start raced with aiosqlite worker startup on macOS
+        # APFS and surfaced as `sqlite3.OperationalError: disk I/O error`
+        # (Phase 0 spike, ~90% reproducible).
+        await checkpointer.setup()
         app = build_graph(checkpointer)
         state = RunnerState(rpc, app)
         state._resume_value = None  # type: ignore[attr-defined]

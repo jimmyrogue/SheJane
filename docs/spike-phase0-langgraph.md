@@ -89,26 +89,17 @@ Hard #4: interrupt() on destructive tool -> Command(resume=) completes the run
 
 ---
 
-## 5. 已知待办（Phase 1 之前修掉）
+## 5. 已知待办
 
-### 5.1 AsyncSqliteSaver 偶现 disk I/O 错误（Hard #3）
+### 5.1 ~~AsyncSqliteSaver 偶现 disk I/O 错误~~ ✅ 已修
 
-**现象**：在 scenario 3 启动新 sidecar 后第一次 `run.start` 时，约 30–50% 概率触发 `sqlite3.OperationalError: disk I/O error`，发生在 `AsyncSqliteSaver.setup()` 的 `executescript`。
+**根因**：`AsyncSqliteSaver` 默认在第一次 `aget_tuple` 调用时 lazy-init schema（`executescript`）。这一刻往往是 `app.astream` 的第一个节点 tick，与 aiosqlite worker thread 启动 + macOS APFS 文件首写争用，**~90% 复现率**报 `sqlite3.OperationalError: disk I/O error`。
 
-```python
-File "langgraph/checkpoint/sqlite/aio.py", line 316, in setup
-    async with self.conn.executescript(...)
-sqlite3.OperationalError: disk I/O error
-```
+**修复**（[runner.py](../local-host/python-spike/runner.py)）：进入 `async with AsyncSqliteSaver.from_conn_string(...)` 后**立刻** `await checkpointer.setup()`，把 schema 创建移到 daemon 静默 init 阶段。
 
-**影响**：scenario 3 的硬指标（"SIGKILL → 2s 内感知"）不受影响——这次 spike 里 Python 反而因为 SQLite 死得更快，Node 还是在 ~1.3 ms 内观察到 exit。但**这个错误本身是 Phase 1 必须根因定位的**，否则真实路径上长跑 daemon 的 checkpoint 会随机失败。
+**验证**：10 次连续 smoke 全部 `sqlite=ok py=ok`，问题消除。
 
-**假设**：
-- 上一个 scenario 的 `uv run` venv 解析或 sqlite 文件锁未完全释放，新 sidecar 创建 db 时撞到
-- macOS APFS + 临时目录 + aiosqlite 的某种 race
-- LangGraph 1.2 + aiosqlite 0.20 的具体兼容问题
-
-**优先级**：P1。Phase 1 启动后 1–2 天内复现 + 修复。
+**对 Phase 1 的影响**：正式 sidecar 入口（Phase 2 的 `langgraph_runner/server.py`）必须复用此模式——`checkpointer.setup()` 是 daemon 启动序列的必经一步。
 
 ### 5.2 `graph.update` notification 不能直接 JSON 化
 
@@ -122,9 +113,9 @@ LangGraph `astream(stream_mode="updates")` 返回的 dict 可能含 `Interrupt` 
 
 ## 6. 对原 Plan 的修正建议（Phase 1 启动前更新）
 
-- **Plan §3 Checkpointer** —— 加一句"启动 daemon 时立即对 langgraph.db 调 `setup()`，避免 lazy 首次写时的 race"，规避 5.1 的 disk I/O 错误。
+- **Plan §3 Checkpointer** —— ✅ 已落地：daemon 启动序列必须显式 `await checkpointer.setup()`，参见 5.1 修复。Phase 2 写正式 sidecar.py 时需要带上同一行。
 - **Plan §4.1 Streaming pipeline** —— 把 `astream_events("v2")` 的 Interrupt-safe 序列化作为 Phase 3 工作项显式列出。
-- **Plan Phase 0 工期** —— 实际单会话搞定（~970 行）。原估 3–5 天是含跨平台 CI 与 Windows 验证；mac 单平台仅算逻辑可行性的话，**0.5 天足够**。
+- **Plan Phase 0 工期** —— 实际单会话搞定（~970 行 + 1 处稳定性补丁）。原估 3–5 天是含跨平台 CI 与 Windows 验证；mac 单平台仅算逻辑可行性的话，**0.5 天足够**。
 
 ---
 
