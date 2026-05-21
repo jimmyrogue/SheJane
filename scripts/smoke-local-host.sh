@@ -43,16 +43,16 @@ NODE
 
 require_command curl
 require_command node
-require_command npm
+require_command uv
 
-echo "Starting Local Agent Harness smoke host on ${BASE_URL}"
+echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL}"
 (
-  cd local-host
+  cd local-host/python
   JIANDANLY_LOCAL_HOST_ADDR="$HOST" \
     JIANDANLY_LOCAL_HOST_PORT="$PORT" \
     JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
-    JIANDANLY_LOCAL_HOST_DB="${TMP_DIR}/local-host.sqlite3" \
-    npm run dev >"${TMP_DIR}/local-host.log" 2>&1
+    PYTHONUNBUFFERED=1 \
+    uv run python -m local_host >"${TMP_DIR}/local-host.log" 2>&1
 ) &
 PID="$!"
 
@@ -69,8 +69,8 @@ for _ in $(seq 1 60); do
 done
 
 curl -fsS "${BASE_URL}/local/v1/health" >"${TMP_DIR}/health.json"
-assert_json_field "${TMP_DIR}/health.json" "status" "ok"
-assert_json_field "${TMP_DIR}/health.json" "loopback_only" "true"
+assert_json_field "${TMP_DIR}/health.json" "ok" "true"
+assert_json_field "${TMP_DIR}/health.json" "pairing_configured" "true"
 
 unauthorized_status="$(
   curl -sS -o "${TMP_DIR}/unauthorized.json" -w "%{http_code}" "${BASE_URL}/local/v1/tools"

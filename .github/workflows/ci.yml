@@ -30,8 +30,18 @@ jobs:
           cache-dependency-path: |
             client/package-lock.json
             admin/package-lock.json
-            local-host/package-lock.json
             e2e/package-lock.json
+
+      - name: Setup Python (local-host daemon)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: local-host/python/uv.lock
 
       - name: Install client dependencies
         run: npm ci
@@ -41,9 +51,9 @@ jobs:
         run: npm ci
         working-directory: admin
 
-      - name: Install local-host dependencies
-        run: npm ci
-        working-directory: local-host
+      - name: Install local-host (Python) dependencies
+        run: uv sync
+        working-directory: local-host/python
 
       - name: Install E2E dependencies
         run: npm ci

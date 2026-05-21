@@ -67,6 +67,16 @@ api/jiandanly-api
 *.prof
 coverage.out
 
+# Python / uv
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+
 # Local databases and generated data
 *.db
 *.sqlite

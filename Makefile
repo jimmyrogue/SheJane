@@ -11,7 +11,7 @@ build:
 	cd api && go build ./cmd/api
 	cd client && npm run build
 	cd admin && npm run build
-	cd local-host && npm run build
+	cd local-host/python && uv sync
 
 api-test:
 	cd api && go test ./...
@@ -23,7 +23,7 @@ admin-test:
 	cd admin && npm test -- --run
 
 local-host-test:
-	cd local-host && npm test -- --run
+	cd local-host/python && uv run pytest
 
 client-build:
 	cd client && npm run build
@@ -32,7 +32,7 @@ admin-build:
 	cd admin && npm run build
 
 local-host-build:
-	cd local-host && npm run build
+	cd local-host/python && uv sync
 
 dev:
 	@echo "Run API, client, and admin in three terminals:"
@@ -74,7 +74,7 @@ smoke-local-host:
 	./scripts/smoke-local-host.sh
 
 smoke-agent-research:
-	cd local-host && npm run smoke:research
+	@echo "Phase 5'+ TODO: port smoke:research from old Node daemon to Python (Phase 6' research subagent)"
 
 smoke-docker-local:
 	./scripts/smoke-docker-local.sh
