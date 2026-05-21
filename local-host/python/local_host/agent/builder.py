@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from deepagents.middleware import SubAgentMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -40,6 +41,7 @@ from langchain.agents.middleware import (
     FilesystemFileSearchMiddleware,
     HumanInTheLoopMiddleware,
     ModelCallLimitMiddleware,
+    ModelRetryMiddleware,
     ShellToolMiddleware,
     TodoListMiddleware,
     ToolCallLimitMiddleware,
@@ -111,13 +113,18 @@ def _built_in_middleware(
             run_limit=settings.research_search_limit,
         ),
         HumanInTheLoopMiddleware(interrupt_on=DESTRUCTIVE_TOOLS),
+        # Two-layer retry: tool errors (transient — file lock, dns, etc.)
+        # and model errors (rate limit, 5xx). Both with exponential backoff.
         ToolRetryMiddleware(max_retries=settings.max_tool_retries),
+        ModelRetryMiddleware(max_retries=settings.max_tool_retries),
         ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
         ContextEditingMiddleware(),
-        # Anthropic-only optimization: marks long messages with
-        # `cache_control` so Claude reuses the prompt prefix across turns.
-        # `warn` (not `raise`) on non-Anthropic models so DeepSeek/OpenAI
-        # fallback paths still work — the middleware just logs and skips.
+        # Self-heal partial tool-call states (e.g. cancelled mid-tool-call
+        # leaves an orphan ToolMessage). PatchToolCallsMiddleware drops
+        # dangling entries before the next LLM call so the model isn't
+        # confused by an inconsistent transcript.
+        PatchToolCallsMiddleware(),
+        # Anthropic-only: prompt caching for long system + history reuse.
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
     ]
     if workspace_root:
