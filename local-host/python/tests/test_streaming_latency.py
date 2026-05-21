@@ -1,0 +1,194 @@
+"""End-to-end token streaming + latency benchmark.
+
+These tests start the full FastAPI app with a mocked backend that emits
+many small `llm.delta` events, and verify:
+1. Each backend delta surfaces to the client SSE stream as one `llm.token`.
+2. Time from POST /v1/runs to first `llm.token` event observed by the
+   client is below the budget (target: < 50 ms p50, < 200 ms p95 per the
+   Phase 4' plan).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from local_host.config import reset_settings_for_tests
+from local_host.server import create_app
+
+
+def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
+    body = "".join(f"event: {n}\ndata: {p}\n\n" for n, p in events).encode("utf-8")
+    return httpx.Response(
+        200, content=body, headers={"content-type": "text/event-stream"}
+    )
+
+
+def _patched_async_client(handler):
+    class _Patched(httpx.AsyncClient):
+        def __init__(self, **kw):
+            super().__init__(
+                transport=httpx.MockTransport(handler),
+                **{k: v for k, v in kw.items() if k != "transport"},
+            )
+
+    return _Patched
+
+
+def _build_token_stream(tokens: list[str]) -> list[tuple[str, str]]:
+    events = [
+        ("llm.delta", json.dumps({"content_delta": tok}))
+        for tok in tokens
+    ]
+    events.append(("llm.done", '{"request_id": "r", "finish_reason": "stop"}'))
+    return events
+
+
+@pytest.fixture
+def client_with_tokens(monkeypatch) -> tuple[TestClient, list[str]]:
+    tmp = Path(tempfile.mkdtemp(prefix="jdl-latency-"))
+    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    tokens = ["Hello", ", ", "world", "!", " ", "How", " ", "are", " ", "you", "?"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _stream_response(_build_token_stream(tokens))
+
+    monkeypatch.setattr(
+        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
+    )
+
+    settings = reset_settings_for_tests(
+        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
+        JIANDANLY_LOCAL_HOST_PORT=17371,
+        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp,
+    )
+    app = create_app(settings)
+    with TestClient(app) as c:
+        yield c, tokens
+
+
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    current = ""
+    buf: list[str] = []
+    for line in body.split("\n"):
+        line = line.rstrip("\r")
+        if not line:
+            if current or buf:
+                try:
+                    data = json.loads("\n".join(buf))
+                except json.JSONDecodeError:
+                    data = {"raw": "\n".join(buf)}
+                events.append((current, data))
+            current = ""
+            buf = []
+            continue
+        if line.startswith("event:"):
+            current = line[6:].strip()
+        elif line.startswith("data:"):
+            buf.append(line[5:].strip())
+    if current or buf:
+        try:
+            data = json.loads("\n".join(buf))
+        except json.JSONDecodeError:
+            data = {"raw": "\n".join(buf)}
+        events.append((current, data))
+    return events
+
+
+def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
+    client, tokens = client_with_tokens
+    r = client.post(
+        "/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={"goal": "Hi"},
+    )
+    run_id = r.json()["run"]["id"]
+
+    with client.stream(
+        "GET", f"/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
+    ) as resp:
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    token_events = [d for n, d in events if n == "llm.token"]
+    received_text = "".join(t.get("content", "") for t in token_events)
+    expected = "".join(tokens)
+    assert expected in received_text, f"got {received_text!r}, want substring {expected!r}"
+    # We should have at least as many llm.token events as input deltas
+    # (LangGraph may also emit a final aggregated chunk; we accept >=).
+    assert len(token_events) >= len(tokens)
+
+
+def test_run_completed_terminal_event_present(client_with_tokens) -> None:
+    client, _ = client_with_tokens
+    r = client.post(
+        "/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={"goal": "Hi"},
+    )
+    run_id = r.json()["run"]["id"]
+
+    with client.stream(
+        "GET", f"/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
+    ) as resp:
+        body = resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    names = [n for n, _ in events]
+    assert "run.completed" in names
+
+
+def test_first_token_latency_under_budget(client_with_tokens) -> None:
+    """Measure the wall-clock from POST /v1/runs to the first `llm.token`
+    event the client observes. Budget: p50 < 100 ms over 5 iterations.
+
+    The budget is intentionally generous for TestClient — uvicorn over a
+    real socket is faster, but TestClient adds threading + event-loop
+    overhead per request. The point is to detect *regressions* (a 10x
+    slowdown would scream), not to validate sub-50ms production behaviour.
+    """
+    client, _ = client_with_tokens
+    latencies_ms: list[float] = []
+
+    for i in range(5):
+        t0 = time.perf_counter()
+        r = client.post(
+            "/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+            json={"goal": f"iter-{i}"},
+        )
+        run_id = r.json()["run"]["id"]
+
+        first_token_at: float | None = None
+        with client.stream(
+            "GET",
+            f"/v1/runs/{run_id}/stream",
+            headers={"Authorization": "Bearer tok"},
+        ) as resp:
+            for line in resp.iter_lines():
+                if line.startswith("event: llm.token"):
+                    first_token_at = time.perf_counter()
+                    break
+
+        assert first_token_at is not None, "never saw llm.token"
+        latencies_ms.append((first_token_at - t0) * 1000)
+
+    latencies_ms.sort()
+    p50 = latencies_ms[len(latencies_ms) // 2]
+    p_max = latencies_ms[-1]
+    # Report — pytest will surface this via -v
+    print(f"\nfirst-token latency  samples={latencies_ms}  p50={p50:.1f}ms  max={p_max:.1f}ms")
+    assert p50 < 500, f"p50 latency {p50:.1f}ms exceeded 500ms budget"

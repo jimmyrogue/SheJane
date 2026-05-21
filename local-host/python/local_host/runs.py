@@ -32,6 +32,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 from .agent.builder import build_agent
+from .event_translator import translate
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.runs")
@@ -161,9 +162,17 @@ class RunCoordinator:
                 config=config,
                 stream_mode=["updates", "messages", "custom"],
             ):
-                await self._enqueue(
-                    queue, run_id, f"graph.{kind}", _serialize_payload(payload)
-                )
+                # Translate raw LangGraph events into our client-facing
+                # SSE schema (see local_host.event_translator).
+                for translated in translate(kind, payload):
+                    await self._enqueue(
+                        queue,
+                        run_id,
+                        translated["event"],
+                        translated["data"]
+                        if isinstance(translated["data"], dict)
+                        else {"value": translated["data"]},
+                    )
 
             # Check for interrupts via the saver's current state.
             snapshot = await agent.aget_state(config)
