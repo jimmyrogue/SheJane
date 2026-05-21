@@ -1014,10 +1014,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore storage failures; the in-memory locale still changes.
     }
+    void window.jiandanDesktop?.setLocale?.(nextLocale)
   }, [])
 
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+    void window.jiandanDesktop?.setLocale?.(locale)
   }, [locale])
 
   const t = useMemo(() => createTranslator(locale), [locale])

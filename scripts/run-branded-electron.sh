@@ -3,12 +3,25 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT_DIR="${ROOT_DIR}/client"
-APP_NAME="石间"
+DOCK_LANG_FILE="${ROOT_DIR}/.tmp/dev/dock-lang"
+APP_LANG="zh"
+if [[ -f "$DOCK_LANG_FILE" ]]; then
+  case "$(tr -d '[:space:]' < "$DOCK_LANG_FILE")" in
+    en) APP_LANG="en" ;;
+    zh) APP_LANG="zh" ;;
+  esac
+fi
+if [[ "$APP_LANG" == "en" ]]; then
+  APP_NAME="SheJane"
+else
+  APP_NAME="石间"
+fi
 APP_ID="com.coldflame.shejane.dev"
 WRAPPER_APP="${JIANDANLY_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/SheJane.app}"
 SOURCE_APP="${CLIENT_DIR}/node_modules/electron/dist/Electron.app"
 SOURCE_VERSION_FILE="${CLIENT_DIR}/node_modules/electron/dist/version"
 WRAPPER_VERSION_FILE="${WRAPPER_APP}/Contents/Resources/.shejane-electron-version"
+export SHEJANE_DOCK_LANG_FILE="$DOCK_LANG_FILE"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   exec "${CLIENT_DIR}/node_modules/.bin/electron" "$@"

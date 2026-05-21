@@ -1,9 +1,20 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron')
+const fs = require('node:fs')
 const path = require('node:path')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
-const appName = '石间'
+const dockLangFile =
+  process.env.SHEJANE_DOCK_LANG_FILE || path.resolve(__dirname, '..', '..', '.tmp', 'dev', 'dock-lang')
+function readDockLocale() {
+  try {
+    const value = fs.readFileSync(dockLangFile, 'utf8').trim()
+    return value === 'en' ? 'en' : 'zh'
+  } catch {
+    return 'zh'
+  }
+}
+const appName = readDockLocale() === 'en' ? 'SheJane' : '石间'
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
 
 function createWindow() {
@@ -69,6 +80,17 @@ app.whenReady().then(() => {
   }
   registerAuthHandlers()
   createWindow()
+})
+
+ipcMain.handle('jiandanly:set-locale', async (_event, locale) => {
+  const normalized = locale === 'en' ? 'en' : 'zh'
+  try {
+    fs.mkdirSync(path.dirname(dockLangFile), { recursive: true })
+    fs.writeFileSync(dockLangFile, normalized, 'utf8')
+  } catch {
+    // Best-effort: if disk write fails, dock label simply won't update next launch.
+  }
+  return normalized
 })
 
 ipcMain.handle('jiandanly:select-workspace-directory', async () => {

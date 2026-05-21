@@ -18,4 +18,5 @@ contextBridge.exposeInMainWorld('jiandanDesktop', {
     logout: () => invokeAuth('jiandanly:auth-logout'),
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('jiandanly:select-workspace-directory'),
+  setLocale: (locale) => ipcRenderer.invoke('jiandanly:set-locale', locale),
 })

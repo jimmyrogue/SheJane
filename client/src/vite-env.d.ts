@@ -14,5 +14,6 @@ interface Window {
       logout(): Promise<void>
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
+    setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
   }
 }
