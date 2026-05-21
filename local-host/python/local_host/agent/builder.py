@@ -45,6 +45,7 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ModelFallbackMiddleware,
     ModelRetryMiddleware,
+    PIIMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
 )
@@ -128,13 +129,29 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
     middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(),                             # P1
         FastDeepRouterMiddleware(),                         # P2
-        ToolCallLimitMiddleware(                            # P8
-            tool_name="tavily_search",
-            run_limit=settings.research_search_limit,
-        ),
-        ToolRetryMiddleware(max_retries=settings.max_tool_retries),
-        ModelRetryMiddleware(max_retries=settings.max_tool_retries),
     ]
+    # PII redaction (opt-in via JIANDANLY_LOCAL_PII_REDACT). One
+    # PIIMiddleware instance per PII type — they compose cleanly.
+    for pii_type in _parse_pii_types(settings.pii_redact_types):
+        middleware.append(
+            PIIMiddleware(
+                pii_type=pii_type,
+                strategy="redact",
+                apply_to_input=True,
+                apply_to_output=False,        # don't break legitimate model output
+                apply_to_tool_results=True,   # leak surface: tool returns
+            )
+        )
+    middleware.extend(
+        [
+            ToolCallLimitMiddleware(                        # P8
+                tool_name="tavily_search",
+                run_limit=settings.research_search_limit,
+            ),
+            ToolRetryMiddleware(max_retries=settings.max_tool_retries),
+            ModelRetryMiddleware(max_retries=settings.max_tool_retries),
+        ]
+    )
     fallbacks = _parse_fallback_models(settings.fallback_models)
     if fallbacks:
         # Activated when primary BackendChatModel errors out and
@@ -159,6 +176,28 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
 def _parse_fallback_models(spec: str) -> list[str]:
     """Split the comma-separated settings.fallback_models string."""
     return [s.strip() for s in spec.split(",") if s.strip()]
+
+
+_VALID_PII_TYPES = {"email", "credit_card", "ip", "mac_address", "url"}
+
+
+def _parse_pii_types(spec: str) -> list[str]:
+    """Split + validate the PII types env. Unknown entries are dropped
+    with a warning (so a typo doesn't crash boot)."""
+    out: list[str] = []
+    for token in spec.split(","):
+        t = token.strip()
+        if not t:
+            continue
+        if t not in _VALID_PII_TYPES:
+            log.warning(
+                "unknown PII type %r ignored (valid: %s)",
+                t,
+                sorted(_VALID_PII_TYPES),
+            )
+            continue
+        out.append(t)
+    return out
 
 
 async def build_agent(

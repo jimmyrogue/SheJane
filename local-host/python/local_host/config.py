@@ -61,6 +61,14 @@ class Settings(BaseSettings):
         alias="JIANDANLY_LOCAL_FALLBACK_MODELS",
     )
 
+    # Comma-separated list of PII types to detect + redact. Empty ⇒
+    # PIIMiddleware not added. Supported types: email, credit_card, ip,
+    # mac_address, url. Example: "credit_card,email"
+    pii_redact_types: str = Field(
+        default="",
+        alias="JIANDANLY_LOCAL_PII_REDACT",
+    )
+
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir
