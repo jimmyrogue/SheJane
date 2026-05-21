@@ -1,0 +1,62 @@
+[project]
+name = "jiandanly-local-host"
+version = "0.1.0"
+description = "Local Agent Harness daemon (Python + LangGraph + create_agent)"
+requires-python = ">=3.12"
+dependencies = [
+    # LangChain / LangGraph stack
+    "langchain>=1.1.0",
+    "langchain-core>=1.0.0",
+    "langgraph>=1.2.0",
+    "langgraph-checkpoint-sqlite>=3.1.0",
+    # Tool ecosystem
+    "langchain-community>=0.4.0",
+    "langchain-tavily>=0.2.0",
+    "langchain-mcp-adapters>=0.2.0",
+    # Browser agent (replaces 10 granular browser.* tools)
+    "browser-use>=0.7.0",
+    "playwright>=1.50.0",
+    # Provider clients
+    "langchain-anthropic>=0.4.0",
+    "langchain-openai>=0.4.0",
+    "openai>=1.50.0",
+    # HTTP layer
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sse-starlette>=2.1.0",
+    "httpx>=0.28.0",
+    # Misc utilities
+    "pyperclip>=1.9.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "structlog>=24.4.0",
+    "aiofiles>=24.1.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.scripts]
+jiandanly-local-host = "local_host.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.7.0",
+    "mypy>=1.13.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "ASYNC", "RUF"]
+ignore = ["E501"]  # line length handled separately

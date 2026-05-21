@@ -1,0 +1,82 @@
+"""Daemon configuration loaded from environment.
+
+All env vars use the `JIANDANLY_LOCAL_` prefix to match the existing Node
+daemon's convention so Electron can keep using the same env names during
+the cutover.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="JIANDANLY_LOCAL_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # HTTP server
+    host: str = Field(default="127.0.0.1", alias="JIANDANLY_LOCAL_HOST_ADDR")
+    port: int = Field(default=17371, alias="JIANDANLY_LOCAL_HOST_PORT")
+    pairing_token: str = Field(default="", alias="JIANDANLY_LOCAL_HOST_TOKEN")
+
+    # Storage
+    data_dir: Path = Field(default=Path.home() / ".jiandanly" / "local-host")
+    checkpoint_db_filename: str = "agent.db"
+    store_db_filename: str = "store.db"
+    local_db_filename: str = "local-host.db"
+
+    # Cloud backend (Phase 1 SSE LLM endpoint)
+    cloud_base_url: str = Field(
+        default="http://127.0.0.1:8080",
+        alias="JIANDANLY_CLOUD_BASE_URL",
+    )
+    cloud_token: str = Field(default="", alias="JIANDANLY_CLOUD_TOKEN")
+
+    # Agent runtime knobs
+    max_model_calls: int = 20
+    max_tool_retries: int = 2
+    research_search_limit: int = 3
+
+    # Browser
+    browser_headless: bool = True
+    browser_timeout_ms: int = 15_000
+
+    def ensure_data_dir(self) -> Path:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        return self.data_dir
+
+    @property
+    def checkpoint_db_path(self) -> Path:
+        return self.data_dir / self.checkpoint_db_filename
+
+    @property
+    def store_db_path(self) -> Path:
+        return self.data_dir / self.store_db_filename
+
+    @property
+    def local_db_path(self) -> Path:
+        return self.data_dir / self.local_db_filename
+
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+
+def reset_settings_for_tests(**overrides: object) -> Settings:
+    """Replace the cached settings with a fresh instance — tests only."""
+    global _settings
+    _settings = Settings(**overrides)  # type: ignore[arg-type]
+    return _settings
