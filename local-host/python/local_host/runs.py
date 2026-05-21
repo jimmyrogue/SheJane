@@ -33,6 +33,7 @@ from langgraph.types import Command
 
 from .agent.builder import build_agent
 from .event_translator import translate
+from .observability import build_callbacks
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.runs")
@@ -148,7 +149,10 @@ class RunCoordinator:
                 run_id=run_id,
                 mode=mode,
             )
-            config = {"configurable": {"thread_id": run_id}}
+            config = {
+                "configurable": {"thread_id": run_id},
+                "callbacks": build_callbacks(),
+            }
             if resume_payload is not None:
                 input_payload: Any = Command(resume=resume_payload)
                 await self._enqueue(queue, run_id, "run.resumed", {"payload": resume_payload})

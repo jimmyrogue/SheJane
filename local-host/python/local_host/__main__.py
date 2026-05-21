@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import logging
-import sys
-
 import uvicorn
 
 from .config import get_settings
+from .observability import configure_logging
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    configure_logging()
     settings = get_settings()
     uvicorn.run(
         "local_host.server:app",

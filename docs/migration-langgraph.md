@@ -1,4 +1,12 @@
-# Pure-Python LangGraph 迁移方案（最终版）
+# Pure-Python LangGraph 迁移方案（已完成）
+
+> **状态（截至 2026-05-21）**：Phase 0–7' 全部落地，纯 Python daemon
+> 取代原 Node `local-host/src/`（删除 18,910 行 TS）。Agent 跑在
+> `langchain.agents.create_agent` + 15 个 middleware 上，含 subagent
+> （deepagents）+ structlog 可观测性。详见尾部"完成度汇总"。
+
+---
+
 
 **分支**: `refactor/infrastructure`
 **关联**: [架构起点](architecture-local-host.md) · [Phase 0 spike 报告](spike-phase0-langgraph.md) · [`~/.claude/plans/langgraph-local-memoized-abelson.md`](原方案，已被本文取代)
@@ -295,3 +303,38 @@ curl -N -X POST http://127.0.0.1:17371/v1/runs \
 9. pytest 基础测试
 
 Phase 2' 完成后单独 commit。
+
+---
+
+## 完成度汇总（2026-05-21 — 所有 phase 已落地）
+
+| Phase | 状态 | 关键 commit | 落点 |
+|---|---|---|---|
+| 0 spike | ✅ | `d46d48a` `4428389` | 验证 LangGraph + SQLite + create_agent 可行 |
+| 1 后端 SSE | ✅ | `d944b25` | `POST /api/v1/agent/llm/stream`（Go） |
+| 2' 工具适配 | ✅ | `e7be82f` … `c060f8b` | 19 个工具 + browser-use + MCP |
+| 3' agent + middleware | ✅ | `c45cf9a` … `ee5c98f` | create_agent + 14 middleware + SSE 流 |
+| 4' 事件类型 + 延迟 | ✅ | `b0a9ab4` | 24.8ms p50 首 token |
+| 5' Electron 切换 + 老 Node 删 | ✅ | `9c21ef8` `1692861` | 18,910 行 TS 删除 |
+| 6' Subagent | ✅ | `1e0dd63` | SubAgentMiddleware + task 工具 |
+| 7' 可观测性 + spike 清理 | ✅ | （本提交） | structlog + DaemonObserver + python-spike 删 |
+
+**最终对比**：
+
+| | 原 Node 版 | Python 版 |
+|---|---|---|
+| 总行数 | ~12,700（含测试） | ~2,800（含 95 测试） |
+| 主循环 | 3,016 行 runner.ts | 0（create_agent） |
+| 工具数 | 19（细颗粒 browser.*） | 19（其中 browser 折成 1 个 agentic） |
+| middleware | 自写 | 9 官方 + 6 自写 + 1 SubAgent |
+| 测试 | ~6,200 行 | ~1,200 行 (95 case) |
+| 进程数 | 1 (Node) | 1 (Python) |
+| 客户端协议 | `/local/v1/*` | `/local/v1/*` **不变** |
+
+**首 token 延迟（TestClient + mocked SSE）**：p50 24.8ms / max 26.6ms。
+
+**Phase 7' 可观测性**：
+- structlog JSON / console 双输出（自动检测 TTY）
+- `DaemonObserver(AsyncCallbackHandler)` 接 LangChain 全生命周期事件
+- Langfuse 可选（`LANGFUSE_PUBLIC_KEY`+`LANGFUSE_SECRET_KEY` 设了就启用）
+- `JIANDANLY_DISABLE_OBSERVABILITY=1` 一键关闭整层（基准测试用）
