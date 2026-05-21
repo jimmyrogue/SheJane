@@ -294,3 +294,70 @@ def test_skill_use_loads_with_frontmatter(monkeypatch: Any, tmp_path: Path) -> N
     assert out["title"] == "Demo Skill"
     assert out["description"] == "short demo"
     assert "body content here" in out["content"]
+
+
+# --- image tools (missing-key path only; live API not exercised) ---
+
+
+def test_image_generate_without_key(monkeypatch: Any) -> None:
+    import asyncio
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from local_host.tools.image import image_generate
+
+    out = asyncio.run(image_generate.ainvoke({"prompt": "a cat"}))
+    assert out["ok"] == "false"
+    assert "OPENAI_API_KEY" in out["error"]
+
+
+def test_image_edit_rejects_missing_source(tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.image import image_edit
+
+    out = asyncio.run(
+        image_edit.ainvoke(
+            {"image_path": str(tmp_path / "nope.png"), "prompt": "modify"}
+        )
+    )
+    assert out["ok"] == "false"
+    assert "not found" in out["error"]
+
+
+# --- MCP wiring ---
+
+
+def test_mcp_empty_config_returns_empty_list(monkeypatch: Any, tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.mcp import build_mcp_tools
+
+    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    tools = asyncio.run(build_mcp_tools(tmp_path))
+    assert tools == []
+
+
+def test_mcp_malformed_json_ignored(monkeypatch: Any, tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.mcp import build_mcp_tools
+
+    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_SERVERS", "{ not valid json")
+    tools = asyncio.run(build_mcp_tools(tmp_path))
+    assert tools == []
+
+
+def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
+    """When the env var is empty but mcp-servers.json exists, it's read."""
+    import asyncio
+
+    from local_host.tools.mcp import _load_mcp_config
+
+    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    (tmp_path / "mcp-servers.json").write_text(
+        '{"demo": {"command": "python", "args": ["x.py"], "transport": "stdio"}}',
+        encoding="utf-8",
+    )
+    config = _load_mcp_config(tmp_path)
+    assert "demo" in config
+    assert config["demo"]["transport"] == "stdio"
