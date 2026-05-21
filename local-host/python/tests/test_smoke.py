@@ -165,20 +165,9 @@ def test_workspace_open_rejects_missing_directory(tmp_path: Path) -> None:
     assert "not an accessible directory" in result["error"]
 
 
-def test_fs_toolkit_returns_official_tools(tmp_path: Path) -> None:
-    """make_fs_toolkit should return LangChain FileManagementToolkit tools."""
-    from local_host.tools.workspace import make_fs_toolkit
-
-    tools = make_fs_toolkit(str(tmp_path))
-    names = {t.name for t in tools}
-    assert names == {"read_file", "write_file", "list_directory"}
-
-
-def test_fs_toolkit_disabled_without_workspace() -> None:
-    from local_host.tools.workspace import make_fs_toolkit
-
-    assert make_fs_toolkit(None) == []
-    assert make_fs_toolkit("") == []
+# (FileManagementToolkit removed in step 4/6 — deepagents FilesystemMiddleware
+#  provides ls / read_file / write_file / edit_file / glob / grep when
+#  create_deep_agent is given a backend.)
 
 
 # --- web tools ---
@@ -427,10 +416,10 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "image.generate",
         "image.edit",
         "workspace.open",
-        "read_file",
-        "write_file",
-        "list_directory",
         "browser.task",
     }
+    # ls / read_file / write_file / edit_file / glob / grep / execute are
+    # added by deepagents FilesystemMiddleware INSIDE create_deep_agent —
+    # they're not in the registry's own list.
     missing = expected - set(names)
     assert not missing, f"missing tools: {missing}"

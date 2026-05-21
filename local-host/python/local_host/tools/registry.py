@@ -20,7 +20,7 @@ from .mcp import build_mcp_tools
 from .trivial import TRIVIAL_TOOLS
 from .verify import VERIFY_TOOLS
 from .web import WEB_TOOLS, make_tavily_search
-from .workspace import make_fs_toolkit, make_workspace_open_tool
+from .workspace import make_workspace_open_tool
 
 log = logging.getLogger("local_host.tools.registry")
 
@@ -56,7 +56,9 @@ async def build_tools(
     tools.extend(IMAGE_TOOLS)
     if store is not None:
         tools.append(make_workspace_open_tool(store))
-    tools.extend(make_fs_toolkit(workspace_root))
+    # fs.list/read/write are provided by deepagents FilesystemMiddleware
+    # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
+    # tools here — that would collide on `read_file` / `write_file` names.
 
     tavily = make_tavily_search()
     if tavily is not None:
@@ -77,12 +79,13 @@ def describe_tools_sync(
     workspace_root: str | None = None,
 ) -> list[dict[str, Any]]:
     """Sync subset for `GET /v1/tools` — omits MCP (which requires a
-    running event loop) and Tavily details. Includes browser.task stub."""
+    running event loop) + the deepagents auto-tools (ls, read_file,
+    write_file, edit_file, glob, grep, execute, task, write_todos) which
+    only materialize inside the compiled agent."""
     out: list[dict[str, Any]] = []
     tools: list[BaseTool] = list(core_tools())
     if store is not None:
         tools.append(make_workspace_open_tool(store))
-    tools.extend(make_fs_toolkit(workspace_root))
     tools.append(make_browser_tool(llm=None))
     for t in tools:
         out.append(

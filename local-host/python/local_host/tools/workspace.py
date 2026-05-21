@@ -55,33 +55,10 @@ def make_workspace_open_tool(store: LocalStore):
     return workspace_open
 
 
-def make_fs_toolkit(workspace_root: str | None):
-    """Build the LangChain FileManagementToolkit slice we expose to agents.
-
-    We pick a deliberately narrow set (read / write / list) — the toolkit
-    also ships copy/move/delete/file_search but those are either redundant
-    (delete is destructive enough to belong behind explicit permission, not
-    a "trivial" tool) or duplicate functionality we get from middleware
-    (file_search is filename-glob; content grep lives in
-    FilesystemFileSearchMiddleware).
-    """
-    if not workspace_root:
-        return []
-
-    from langchain_community.agent_toolkits import FileManagementToolkit
-
-    tk = FileManagementToolkit(
-        root_dir=workspace_root,
-        selected_tools=["read_file", "write_file", "list_directory"],
-    )
-    return list(tk.get_tools())
-
-
 # `InjectedToolArg` is exported for callers that want to inject store/run
 # context into a custom tool without exposing it to the LLM schema. Re-exported
 # here so other tools in this package can pick the canonical type.
 __all__ = [
     "InjectedToolArg",
-    "make_fs_toolkit",
     "make_workspace_open_tool",
 ]

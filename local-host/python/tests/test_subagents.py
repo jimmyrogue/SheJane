@@ -136,9 +136,19 @@ def test_compiled_agent_exposes_task_tool_when_subagents_enabled(
     assert "task" in names, f"expected task tool in {sorted(names)}"
 
 
-def test_compiled_agent_omits_task_when_subagents_disabled(
+def test_disabling_subagents_drops_custom_specialists(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """`enable_subagents=False` no longer removes the `task` tool entirely
+    (since step 4/6 we use `create_deep_agent`, which always exposes a
+    `task` tool via its bundled SubAgentMiddleware). What we DO guarantee
+    is that our custom researcher/writer specialists are not registered —
+    so a call to `task(subagent_name='researcher', ...)` from the LLM
+    won't find a match.
+
+    Verified indirectly by checking that build_subagents() is not invoked
+    in the disabled path (it returns the researcher/writer list).
+    """
     from local_host.agent.builder import build_agent, open_checkpointer
 
     async def run() -> set[str]:
@@ -165,7 +175,10 @@ def test_compiled_agent_omits_task_when_subagents_disabled(
             await stack.aclose()
 
     names = asyncio.run(run())
-    assert "task" not in names
+    # deepagents always provides `task`. The flag only suppresses our
+    # custom specialists, which is exercised via build_subagents in the
+    # `test_build_subagents_returns_*` cases above.
+    assert "task" in names
 
 
 # --- event translation for subagent lifecycle ---

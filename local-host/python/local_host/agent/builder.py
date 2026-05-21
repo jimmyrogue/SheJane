@@ -1,54 +1,52 @@
-"""Assemble the LangGraph agent from `create_agent` + middleware list.
+"""Assemble the LangGraph agent via `create_deep_agent`.
 
-Per-run rebuild
----------------
-We rebuild the agent for each run because two middleware
-(`ShellToolMiddleware`, `FilesystemFileSearchMiddleware`) bind to a specific
-workspace root that can differ between runs. The checkpointer is shared
-across all runs (one `AsyncSqliteSaver` per daemon, keyed by `thread_id`).
+We use `deepagents.create_deep_agent` instead of plain
+`langchain.agents.create_agent` because it auto-assembles a sensible
+batteries-included middleware stack and the SubAgent / Skills /
+Filesystem / Shell / HumanInTheLoop integrations we need anyway. Our
+remaining job is to:
 
-Middleware stack (Phase 3' part 2 — built-ins only)
----------------------------------------------------
-Order matters — `before_*` hooks fire in this order, `after_*` in reverse:
+  1. Pick the model (BackendChatModel pointed at the cloud SSE endpoint).
+  2. Build a *narrow* tool list (everything outside the deepagents auto
+     stack: workspace.open, time, env, clipboard, web, image, MCP, browser).
+  3. Pass per-run config: `subagents=`, `skills=`, `backend=`,
+     `interrupt_on=`, `checkpointer=`.
+  4. Append our custom middleware (5 phase hooks + retry/limit knobs)
+     into the user-middleware slot.
 
-  1. TodoListMiddleware                # P3 — planning
-  2. ToolCallLimitMiddleware           # P8 — research convergence
-  3. HumanInTheLoopMiddleware          # P10 — permission gate
-  4. ToolRetryMiddleware               # P12 — transient retry
-  5. ModelCallLimitMiddleware          # P12 — step cap
-  6. ShellToolMiddleware               # adds `shell` tool, workspace-scoped
-  7. FilesystemFileSearchMiddleware    # adds Glob + Grep
-  8. ContextEditingMiddleware          # auto-prune old tool outputs
+What deepagents auto-adds for us (we no longer wire these manually):
 
-Phase 3' part 3 will insert our 6 custom middleware
-(input_guard / fast_deep_router / skill_injection / output_guard / reflect
-/ memory_writeback) at the appropriate positions in this stack.
+  TodoListMiddleware              ← planning (P3)
+  SkillsMiddleware                ← when `skills=` passed
+  FilesystemMiddleware            ← ls/read_file/write_file/edit_file
+                                    + glob/grep + execute tools
+  SubAgentMiddleware + Async      ← when `subagents=` passed
+  SummarizationMiddleware         ← auto context compaction
+  PatchToolCallsMiddleware        ← orphan tool_call self-heal
+  ToolExclusionMiddleware         ← conditional tool gating
+  AnthropicPromptCachingMiddleware← Claude cache_control
+  MemoryMiddleware                ← AGENTS.md loader
+  HumanInTheLoopMiddleware        ← when `interrupt_on=` passed
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
+from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
-from deepagents.middleware import SkillsMiddleware, SubAgentMiddleware
-from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
-from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
-    FilesystemFileSearchMiddleware,
-    HumanInTheLoopMiddleware,
     ModelCallLimitMiddleware,
     ModelRetryMiddleware,
-    ShellToolMiddleware,
-    TodoListMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
 )
-from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ..config import Settings, get_settings
@@ -62,9 +60,26 @@ from ..middleware import (
 )
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
-from .subagents import build_subagent_backend, build_subagents
+from .subagents import build_subagents
 
 log = logging.getLogger("local_host.agent.builder")
+
+
+# Tools the user MUST approve before they run. Forwarded to
+# `create_deep_agent(interrupt_on=...)` — deepagents wires its bundled
+# HumanInTheLoopMiddleware accordingly. Tool names mix deepagents-provided
+# (`write_file`, `execute`, `edit_file`) and our custom (`open.url`, etc.).
+DESTRUCTIVE_TOOLS: dict[str, bool] = {
+    "write_file": True,
+    "edit_file": True,
+    "execute": True,        # deepagents shell-equivalent
+    "open.url": True,
+    "open.file": True,
+    "clipboard.write": True,
+    "browser.task": True,   # agentic browser can do anything
+    "image.generate": True, # paid + side-effecting
+    "image.edit": True,
+}
 
 
 def _resolve_skills_dir() -> Path | None:
@@ -73,38 +88,15 @@ def _resolve_skills_dir() -> Path | None:
     Read order:
       1. `JIANDANLY_LOCAL_SKILLS_PATH` env var
       2. `~/.jiandanly/skills/` default
-
-    Returns None (skipping SkillsMiddleware) when the dir doesn't exist,
-    so a fresh user with zero skills doesn't get a noisy boot warning.
     """
-    import os
-
     custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
     candidate = Path(custom) if custom else Path.home() / ".jiandanly" / "skills"
     candidate = candidate.expanduser()
     return candidate if candidate.is_dir() else None
 
-# Tools the user MUST approve before they run. Mirrors HumanInTheLoop's
-# `interrupt_on` shape: True = always interrupt; the dict form allows
-# fine-grained allow/deny criteria later.
-DESTRUCTIVE_TOOLS: dict[str, bool] = {
-    "fs.write": True,        # legacy alias, only fires if we re-add it
-    "write_file": True,      # FileManagementToolkit
-    "shell": True,           # ShellToolMiddleware-provided tool
-    "open.url": True,
-    "open.file": True,
-    "clipboard.write": True,
-    "browser.task": True,    # agentic browser can do anything
-    "image.generate": True,  # paid + side-effecting
-    "image.edit": True,
-}
-
 
 async def open_checkpointer(settings: Settings | None = None) -> tuple[AsyncSqliteSaver, AsyncExitStack]:
     """Open a long-lived AsyncSqliteSaver.
-
-    Returns `(checkpointer, stack)`. The caller is responsible for keeping
-    `stack` alive (or calling `await stack.aclose()` at shutdown).
 
     Eager `await checkpointer.setup()` avoids the lazy-init disk-I/O race
     observed in the Phase 0 spike on macOS APFS.
@@ -120,41 +112,33 @@ async def open_checkpointer(settings: Settings | None = None) -> tuple[AsyncSqli
     return saver, stack
 
 
-def _built_in_middleware(
-    settings: Settings,
-    workspace_root: str | None,
-) -> list[AgentMiddleware]:
-    middleware: list[AgentMiddleware] = [
-        TodoListMiddleware(),
-        ToolCallLimitMiddleware(
+def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
+    """Our middleware that deepagents doesn't auto-add.
+
+    Order:
+      InputGuard → FastDeepRouter → ToolCallLimit → ToolRetry →
+      ModelRetry → ModelCallLimit → ContextEditing →
+      OutputGuard → Reflect → MemoryWriteback
+
+    `before_*` fire top-to-bottom, `after_*` fire bottom-to-top —
+    so OutputGuard runs first after each LLM call, then Reflect, then
+    MemoryWriteback.
+    """
+    return [
+        InputGuardMiddleware(),                             # P1
+        FastDeepRouterMiddleware(),                         # P2
+        ToolCallLimitMiddleware(                            # P8
             tool_name="tavily_search",
             run_limit=settings.research_search_limit,
         ),
-        HumanInTheLoopMiddleware(interrupt_on=DESTRUCTIVE_TOOLS),
-        # Two-layer retry: tool errors (transient — file lock, dns, etc.)
-        # and model errors (rate limit, 5xx). Both with exponential backoff.
         ToolRetryMiddleware(max_retries=settings.max_tool_retries),
         ModelRetryMiddleware(max_retries=settings.max_tool_retries),
         ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
         ContextEditingMiddleware(),
-        # Self-heal partial tool-call states (e.g. cancelled mid-tool-call
-        # leaves an orphan ToolMessage). PatchToolCallsMiddleware drops
-        # dangling entries before the next LLM call so the model isn't
-        # confused by an inconsistent transcript.
-        PatchToolCallsMiddleware(),
-        # Anthropic-only: prompt caching for long system + history reuse.
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+        OutputGuardMiddleware(),                            # P9
+        ReflectMiddleware(),                                # P4
+        MemoryWritebackMiddleware(),                        # P6
     ]
-    if workspace_root:
-        middleware.insert(
-            -1,  # before ContextEditingMiddleware so shell calls flow through
-            ShellToolMiddleware(workspace_root=workspace_root),
-        )
-        middleware.insert(
-            -1,
-            FilesystemFileSearchMiddleware(root_path=workspace_root),
-        )
-    return middleware
 
 
 async def build_agent(
@@ -167,19 +151,19 @@ async def build_agent(
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
-    """Build a compiled agent for one run.
+    """Build a compiled agent for one run via `create_deep_agent`.
 
     Args:
-        store: Daemon-level SQLite store (for workspace lookups, etc.).
-        checkpointer: Shared AsyncSqliteSaver from `open_checkpointer`.
-        workspace_root: Authorized filesystem root for this run. Required
-                        for shell + filesystem search; without it those
-                        middleware are skipped.
-        run_id: LangGraph `thread_id` — must be unique per logical run.
-        mode: "fast" | "deep" — passed through to BackendChatModel.
-        settings: Override settings (tests).
-        extra_middleware: Inserted before the built-in stack so custom
-                          phase hooks fire first.
+        store:           Daemon-level SQLite store (workspace lookups).
+        checkpointer:    Shared AsyncSqliteSaver from `open_checkpointer`.
+        workspace_root:  Authorized filesystem root for this run.
+                         Becomes the FilesystemBackend's root_dir, which
+                         deepagents' built-in FilesystemMiddleware + shell
+                         execute use as their sandbox. None ⇒ virtual_mode.
+        run_id:          LangGraph `thread_id` — unique per logical run.
+        mode:            "fast" | "deep" — passed through to BackendChatModel.
+        settings:        Override settings (tests).
+        extra_middleware: Appended after the built-in custom stack.
     """
     settings = settings or get_settings()
 
@@ -187,7 +171,7 @@ async def build_agent(
         store=store,
         workspace_root=workspace_root,
         include_mcp=True,
-        browser_llm=None,  # Phase 3' part 2: browser sub-agent LLM stays None
+        browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
     )
 
     model = BackendChatModel(
@@ -197,56 +181,35 @@ async def build_agent(
         mode=mode,
     )
 
-    middleware: list[AgentMiddleware] = []
+    # FilesystemBackend serves three deepagents subsystems at once:
+    #   - FilesystemMiddleware tools (ls / read_file / write_file / edit_file)
+    #   - `execute` shell tool (run commands inside the sandbox)
+    #   - SubAgentMiddleware (subagents share this scratch area)
+    if workspace_root:
+        backend = FilesystemBackend(root_dir=workspace_root, max_file_size_mb=10)
+    else:
+        backend = FilesystemBackend(virtual_mode=True, max_file_size_mb=10)
 
-    # Custom middleware first — input guard + router should land before
-    # any model call so guard state is visible to the built-ins.
-    middleware.extend(
-        [
-            InputGuardMiddleware(),            # P1
-            FastDeepRouterMiddleware(),        # P2
-        ]
-    )
-
-    # P7 skills via deepagents.SkillsMiddleware — auto-loads md files
-    # from JIANDANLY_LOCAL_SKILLS_PATH (or default ~/.jiandanly/skills/)
-    # with progressive disclosure (metadata in system prompt, full
-    # content fetched on demand via the middleware's built-in tools).
-    skills_dir = _resolve_skills_dir()
-    if skills_dir is not None:
-        middleware.append(
-            SkillsMiddleware(
-                backend=FilesystemBackend(root_dir=str(skills_dir)),
-                sources=[str(skills_dir)],
-            )
-        )
-
-    middleware.extend(_built_in_middleware(settings, workspace_root))
-
-    # Subagents (Phase 6'+) — adds a `task` tool the main agent can call
-    # to delegate to specialist subagents (researcher / writer / …). Each
-    # subagent runs in an isolated context window with a narrower toolset.
-    if settings.enable_subagents:
-        backend = build_subagent_backend(workspace_root)
-        subagents = build_subagents(main_tools=tools, main_model=model)
-        middleware.append(SubAgentMiddleware(backend=backend, subagents=subagents))
-
-    # Post-model and post-agent custom middleware go last so they observe
-    # the full message tail after built-ins have already run.
-    middleware.extend(
-        [
-            OutputGuardMiddleware(),           # P9
-            ReflectMiddleware(),               # P4
-            MemoryWritebackMiddleware(),       # P6
-        ]
-    )
-
+    middleware = _custom_middleware(settings)
     if extra_middleware:
         middleware.extend(extra_middleware)
 
-    return create_agent(
+    skills_dir = _resolve_skills_dir()
+    skills_arg = [str(skills_dir)] if skills_dir is not None else None
+
+    subagents_arg = (
+        build_subagents(main_tools=tools, main_model=model)
+        if settings.enable_subagents
+        else None
+    )
+
+    return create_deep_agent(
         model=model,
         tools=tools,
         middleware=middleware,
+        subagents=subagents_arg,
+        skills=skills_arg,
+        backend=backend,
+        interrupt_on=DESTRUCTIVE_TOOLS,
         checkpointer=checkpointer,
     )
