@@ -45,6 +45,7 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
 )
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ..config import Settings, get_settings
@@ -113,6 +114,11 @@ def _built_in_middleware(
         ToolRetryMiddleware(max_retries=settings.max_tool_retries),
         ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
         ContextEditingMiddleware(),
+        # Anthropic-only optimization: marks long messages with
+        # `cache_control` so Claude reuses the prompt prefix across turns.
+        # `warn` (not `raise`) on non-Anthropic models so DeepSeek/OpenAI
+        # fallback paths still work — the middleware just logs and skips.
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
     ]
     if workspace_root:
         middleware.insert(
