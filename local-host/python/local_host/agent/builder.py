@@ -43,6 +43,7 @@ from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
     ModelCallLimitMiddleware,
+    ModelFallbackMiddleware,
     ModelRetryMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
@@ -117,14 +118,14 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
 
     Order:
       InputGuard → FastDeepRouter → ToolCallLimit → ToolRetry →
-      ModelRetry → ModelCallLimit → ContextEditing →
-      OutputGuard → Reflect → MemoryWriteback
+      ModelRetry → ModelFallback (optional) → ModelCallLimit →
+      ContextEditing → OutputGuard → Reflect → MemoryWriteback
 
     `before_*` fire top-to-bottom, `after_*` fire bottom-to-top —
     so OutputGuard runs first after each LLM call, then Reflect, then
     MemoryWriteback.
     """
-    return [
+    middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(),                             # P1
         FastDeepRouterMiddleware(),                         # P2
         ToolCallLimitMiddleware(                            # P8
@@ -133,12 +134,31 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
         ),
         ToolRetryMiddleware(max_retries=settings.max_tool_retries),
         ModelRetryMiddleware(max_retries=settings.max_tool_retries),
-        ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
-        ContextEditingMiddleware(),
-        OutputGuardMiddleware(),                            # P9
-        ReflectMiddleware(),                                # P4
-        MemoryWritebackMiddleware(),                        # P6
     ]
+    fallbacks = _parse_fallback_models(settings.fallback_models)
+    if fallbacks:
+        # Activated when primary BackendChatModel errors out and
+        # ModelRetryMiddleware has exhausted its retries. Each entry is
+        # a vendor identifier (`anthropic:claude-haiku-4`) — these talk
+        # *directly* to the provider, bypassing our cloud accounting.
+        # Use carefully: meant for "service degraded" continuity, not
+        # routine traffic.
+        middleware.append(ModelFallbackMiddleware(*fallbacks))
+    middleware.extend(
+        [
+            ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
+            ContextEditingMiddleware(),
+            OutputGuardMiddleware(),                        # P9
+            ReflectMiddleware(),                            # P4
+            MemoryWritebackMiddleware(),                    # P6
+        ]
+    )
+    return middleware
+
+
+def _parse_fallback_models(spec: str) -> list[str]:
+    """Split the comma-separated settings.fallback_models string."""
+    return [s.strip() for s in spec.split(",") if s.strip()]
 
 
 async def build_agent(

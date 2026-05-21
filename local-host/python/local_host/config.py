@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # Subagents (Phase 6'+ — deepagents SubAgentMiddleware)
     enable_subagents: bool = True
 
+    # Comma-separated list of fallback model identifiers that
+    # ModelFallbackMiddleware should try when the primary model errors out.
+    # Format: each entry is "provider:model" (e.g. "anthropic:claude-haiku-4")
+    # or any string acceptable to LangChain's init_chat_model. Empty list ⇒
+    # ModelFallbackMiddleware not added.
+    fallback_models: str = Field(
+        default="",
+        alias="JIANDANLY_LOCAL_FALLBACK_MODELS",
+    )
+
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return self.data_dir
