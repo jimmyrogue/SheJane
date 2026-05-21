@@ -417,6 +417,7 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "image.edit",
         "workspace.open",
         "browser.task",
+        "memory.search",
     }
     # ls / read_file / write_file / edit_file / glob / grep / execute are
     # added by deepagents FilesystemMiddleware INSIDE create_deep_agent —

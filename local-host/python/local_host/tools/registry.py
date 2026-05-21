@@ -17,6 +17,7 @@ from ..store.sqlite import LocalStore
 from .browser import make_browser_tool
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
+from .memory import MEMORY_TOOLS
 from .trivial import TRIVIAL_TOOLS
 from .verify import VERIFY_TOOLS
 from .web import WEB_TOOLS, make_tavily_search
@@ -32,6 +33,7 @@ def core_tools() -> list[BaseTool]:
         *WEB_TOOLS,
         *VERIFY_TOOLS,
         *IMAGE_TOOLS,
+        *MEMORY_TOOLS,
     ]
 
 
@@ -54,6 +56,7 @@ async def build_tools(
     tools.extend(WEB_TOOLS)
     tools.extend(VERIFY_TOOLS)
     tools.extend(IMAGE_TOOLS)
+    tools.extend(MEMORY_TOOLS)
     if store is not None:
         tools.append(make_workspace_open_tool(store))
     # fs.list/read/write are provided by deepagents FilesystemMiddleware
@@ -94,12 +97,28 @@ def describe_tools_sync(
                 "description": (t.description or "").strip().splitlines()[0]
                 if t.description
                 else "",
-                "args_schema": t.args_schema.model_json_schema()
-                if t.args_schema
-                else None,
+                "args_schema": _serialize_args_schema(t),
             }
         )
     return out
+
+
+def _serialize_args_schema(tool: BaseTool) -> dict[str, Any] | None:
+    """Render the LLM-visible part of the tool's args schema as JSON Schema.
+
+    Prefer `tool_call_schema` (excludes `InjectedStore`/`InjectedToolArg`).
+    Fall back to `args_schema` for tools that don't override
+    `tool_call_schema`. If even that fails (e.g. Callable types in the
+    schema — happens with deepagents `task`), return a permissive object
+    schema so /v1/tools doesn't 500.
+    """
+    schema_attr = getattr(tool, "tool_call_schema", None) or tool.args_schema
+    if schema_attr is None:
+        return None
+    try:
+        return schema_attr.model_json_schema()
+    except Exception:  # noqa: BLE001
+        return {"type": "object", "additionalProperties": True}
 
 
 # Backwards-compatible alias used by the HTTP layer.

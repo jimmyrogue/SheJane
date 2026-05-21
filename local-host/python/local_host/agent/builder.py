@@ -60,6 +60,7 @@ from ..middleware import (
     InputGuardMiddleware,
     MemoryWritebackMiddleware,
     OutputGuardMiddleware,
+    PlanFirstMiddleware,
     ReflectMiddleware,
 )
 from ..store.sqlite import LocalStore
@@ -152,6 +153,9 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
     middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(),                             # P1
         FastDeepRouterMiddleware(),                         # P2
+        # Plan & Execute mode (env JIANDANLY_PLAN_FIRST: off | always | auto).
+        # auto-skips trivial tasks; default off.
+        PlanFirstMiddleware(),
     ]
     # PII redaction (opt-in via JIANDANLY_LOCAL_PII_REDACT). One
     # PIIMiddleware instance per PII type — they compose cleanly.

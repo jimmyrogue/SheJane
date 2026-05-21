@@ -404,6 +404,125 @@ def test_capability_7_todolist_middleware_exposes_write_todos_tool(
 # ---- bonus: a "happy path" capability sanity (capability 8) ----
 
 
+def test_capability_2b_subagent_parallel_dispatch(monkeypatch) -> None:
+    """Verify the LLM can dispatch **multiple** task() subagents in one
+    turn. Mock LLM emits two `task` tool_calls in the same response —
+    we should see two `subagent.spawned` events. ToolNode runs
+    concurrency-safe tools in parallel via asyncio.gather, so we don't
+    care about ordering; we only care both showed up."""
+    handler = RecordingHandler(
+        scripts=[
+            [
+                ("llm.delta", {"content_delta": "Dispatching two researchers. "}),
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_p1",
+                        "name": "task",
+                        "arguments": {
+                            "subagent_name": "researcher",
+                            "description": "subquery A: LangGraph 1.x changes",
+                        },
+                    },
+                ),
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_p2",
+                        "name": "task",
+                        "arguments": {
+                            "subagent_name": "researcher",
+                            "description": "subquery B: deepagents adoption",
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "rp", "finish_reason": "tool_calls"}),
+            ],
+            # Both researcher subagents share these scripted responses
+            # (RecordingHandler pops them in order — either order works
+            # because we just assert both spawn events are present).
+            [
+                ("llm.delta", {"content_delta": "found A"}),
+                ("llm.done", {"request_id": "ra", "finish_reason": "stop"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "found B"}),
+                ("llm.done", {"request_id": "rb", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(client, "compare two angles of LangGraph adoption")
+
+    spawn_events = [e for e in events if e[0] == "subagent.spawned"]
+    assert len(spawn_events) >= 2, (
+        f"expected at least 2 subagent.spawned events. got {len(spawn_events)}: "
+        f"{[e[1].get('id') for e in spawn_events]}"
+    )
+    spawn_ids = {e[1].get("id") for e in spawn_events}
+    assert "call_p1" in spawn_ids
+    assert "call_p2" in spawn_ids
+
+
+def test_capability_9_memory_search_tool_in_agent(monkeypatch, tmp_path) -> None:
+    """`memory.search` tool must appear in the compiled agent's toolset —
+    that's the read-side of the long-term memory loop."""
+    from local_host.agent.builder import build_agent, open_checkpointer, open_store
+    from local_host.store.sqlite import LocalStore
+
+    async def run() -> set[str]:
+        reset_settings_for_tests(data_dir=tmp_path)
+        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        store = await LocalStore.open(tmp_path / "store.db")
+        saver, ck_stack = await open_checkpointer()
+        agent_store, st_stack = await open_store()
+        try:
+            agent = await build_agent(
+                store=store,
+                checkpointer=saver,
+                agent_store=agent_store,
+                workspace_root=str(tmp_path),
+                run_id="t-mem-1",
+            )
+            tools_node = agent.nodes.get("tools")
+            if tools_node is None:
+                return set()
+            bound = getattr(tools_node, "bound", None)
+            return set(getattr(bound, "tools_by_name", {}).keys())
+        finally:
+            await store.close()
+            await ck_stack.aclose()
+            await st_stack.aclose()
+
+    names = asyncio.run(run())
+    assert "memory.search" in names
+
+
+def test_capability_10_plan_first_injects_when_enabled(monkeypatch) -> None:
+    """With JIANDANLY_PLAN_FIRST=always, the outgoing system prompt must
+    include the plan-first protocol instruction."""
+    monkeypatch.setenv("JIANDANLY_PLAN_FIRST", "always")
+    handler = RecordingHandler(
+        scripts=[
+            [
+                ("llm.delta", {"content_delta": "ok"}),
+                ("llm.done", {"request_id": "r1", "finish_reason": "stop"}),
+            ]
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        _post_run_and_stream(client, "do the thing")
+
+    assert handler.requests, "no LLM request was made"
+    outgoing = handler.requests[0]
+    messages = outgoing.get("messages", [])
+    system_text = " ".join(
+        m.get("content", "") for m in messages if m.get("role") == "system"
+    )
+    assert "Plan-First protocol" in system_text or "write_todos" in system_text
+
+
 def test_capability_8_happy_path_run_completes(monkeypatch) -> None:
     """End-to-end: a clean run goes from POST → SSE → run.completed."""
     handler = RecordingHandler(

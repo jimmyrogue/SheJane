@@ -152,6 +152,71 @@ def test_reflect_runs_critic_when_env_enabled(monkeypatch) -> None:
     assert FakeCriticModel.last_messages is not None
 
 
+# --- memory.search tool ---
+
+
+def test_memory_search_returns_error_without_store() -> None:
+    import asyncio as _a
+
+    from local_host.tools.memory import memory_search
+
+    # ainvoke without store binding ⇒ permissive default returns error.
+    result = _a.run(memory_search.ainvoke({"query": "x"}))
+    assert result["ok"] == "false"
+    assert "not configured" in result["error"]
+
+
+def test_memory_search_finds_writeback_entries() -> None:
+    """End-to-end: MemoryWritebackMiddleware writes a note, memory.search
+    finds it via the same BaseStore."""
+    import asyncio as _a
+
+    from local_host.tools.memory import NAMESPACE, memory_search
+
+    store = InMemoryStore()
+
+    async def run() -> dict:
+        # Simulate a writeback from a past run.
+        await store.aput(
+            NAMESPACE,
+            "past-run-1",
+            {"goal": "find react docs", "answer": "see https://react.dev"},
+        )
+        await store.aput(
+            NAMESPACE,
+            "past-run-2",
+            {"goal": "tally Q4 expenses", "answer": "USD 12,340"},
+        )
+        # Now the agent calls memory.search at runtime.
+        return await memory_search.ainvoke(
+            {"query": "react", "limit": 5, "store": store}
+        )
+
+    result = _a.run(run())
+    assert result["ok"] == "true"
+    # Either both notes come back (no embedding → list-all) or react one
+    # ranks first. Either way: react note is present.
+    serialized = str(result["results"])
+    assert "react" in serialized.lower()
+
+
+def test_memory_search_respects_limit() -> None:
+    import asyncio as _a
+
+    from local_host.tools.memory import NAMESPACE, memory_search
+
+    store = InMemoryStore()
+
+    async def run() -> dict:
+        for i in range(10):
+            await store.aput(NAMESPACE, f"k{i}", {"text": f"note {i}"})
+        return await memory_search.ainvoke({"query": "note", "limit": 3, "store": store})
+
+    result = _a.run(run())
+    assert result["ok"] == "true"
+    assert len(result["results"]) <= 3
+
+
 def test_reflect_critic_swallows_errors(monkeypatch) -> None:
     import asyncio as _a
 

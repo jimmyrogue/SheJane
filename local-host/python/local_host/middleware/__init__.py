@@ -13,6 +13,7 @@ not by a custom class here.
 from .input_guard import InputGuardMiddleware
 from .memory_writeback import MemoryWritebackMiddleware
 from .output_guard import OutputGuardMiddleware
+from .plan_first import PlanFirstMiddleware
 from .reflect import ReflectMiddleware
 from .router import FastDeepRouterMiddleware
 
@@ -21,5 +22,6 @@ __all__ = [
     "InputGuardMiddleware",
     "MemoryWritebackMiddleware",
     "OutputGuardMiddleware",
+    "PlanFirstMiddleware",
     "ReflectMiddleware",
 ]
