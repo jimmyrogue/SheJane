@@ -30,7 +30,7 @@ def client() -> TestClient:
 
 
 def test_health_no_auth(client: TestClient) -> None:
-    r = client.get("/v1/health")
+    r = client.get("/local/v1/health")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
@@ -38,12 +38,12 @@ def test_health_no_auth(client: TestClient) -> None:
 
 
 def test_tools_requires_auth(client: TestClient) -> None:
-    r = client.get("/v1/tools")
+    r = client.get("/local/v1/tools")
     assert r.status_code == 401
 
 
 def test_tools_lists_trivial_tools(client: TestClient) -> None:
-    r = client.get("/v1/tools", headers={"Authorization": "Bearer test-pairing-token"})
+    r = client.get("/local/v1/tools", headers={"Authorization": "Bearer test-pairing-token"})
     assert r.status_code == 200
     names = {t["name"] for t in r.json()["tools"]}
     expected = {
@@ -61,13 +61,13 @@ def test_workspaces_crud(client: TestClient) -> None:
     headers = {"Authorization": "Bearer test-pairing-token"}
 
     # initially empty
-    r = client.get("/v1/workspaces", headers=headers)
+    r = client.get("/local/v1/workspaces", headers=headers)
     assert r.status_code == 200
     assert r.json()["workspaces"] == []
 
     # create
     r = client.post(
-        "/v1/workspaces",
+        "/local/v1/workspaces",
         headers=headers,
         json={"path": "/tmp/some-workspace", "label": "Test WS"},
     )
@@ -77,21 +77,21 @@ def test_workspaces_crud(client: TestClient) -> None:
     assert ws["label"] == "Test WS"
 
     # list now has one
-    r = client.get("/v1/workspaces", headers=headers)
+    r = client.get("/local/v1/workspaces", headers=headers)
     assert len(r.json()["workspaces"]) == 1
 
     # delete
-    r = client.delete(f"/v1/workspaces/{ws['id']}", headers=headers)
+    r = client.delete(f"/local/v1/workspaces/{ws['id']}", headers=headers)
     assert r.status_code == 200
     assert r.json()["deleted"] is True
 
-    r = client.get("/v1/workspaces", headers=headers)
+    r = client.get("/local/v1/workspaces", headers=headers)
     assert r.json()["workspaces"] == []
 
 
 def test_alternate_token_header(client: TestClient) -> None:
     r = client.get(
-        "/v1/tools",
+        "/local/v1/tools",
         headers={"X-Jiandanly-Local-Token": "test-pairing-token"},
     )
     assert r.status_code == 200
@@ -99,7 +99,7 @@ def test_alternate_token_header(client: TestClient) -> None:
 
 def test_wrong_token_rejected(client: TestClient) -> None:
     r = client.get(
-        "/v1/tools",
+        "/local/v1/tools",
         headers={"Authorization": "Bearer wrong-token"},
     )
     assert r.status_code == 401
@@ -120,7 +120,7 @@ def test_trivial_tool_callable_directly() -> None:
 
 def test_tools_listing_includes_workspace_open(client: TestClient) -> None:
     r = client.get(
-        "/v1/tools",
+        "/local/v1/tools",
         headers={"Authorization": "Bearer test-pairing-token"},
     )
     names = {t["name"] for t in r.json()["tools"]}
@@ -381,7 +381,7 @@ def test_browser_tool_stub_without_llm() -> None:
 
 def test_browser_tool_present_in_registry(client: TestClient) -> None:
     r = client.get(
-        "/v1/tools",
+        "/local/v1/tools",
         headers={"Authorization": "Bearer test-pairing-token"},
     )
     names = {t["name"] for t in r.json()["tools"]}

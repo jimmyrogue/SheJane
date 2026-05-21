@@ -99,7 +99,7 @@ def _parse_sse_lines(body: str) -> list[tuple[str, dict | str]]:
 
 def test_create_run_returns_run_record(client: TestClient) -> None:
     r = client.post(
-        "/v1/runs",
+        "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
         json={"goal": "say hi"},
     )
@@ -112,7 +112,7 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
 
 def test_create_run_rejects_empty_goal(client: TestClient) -> None:
     r = client.post(
-        "/v1/runs",
+        "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
         json={"goal": ""},
     )
@@ -121,7 +121,7 @@ def test_create_run_rejects_empty_goal(client: TestClient) -> None:
 
 def test_get_run_404_for_unknown(client: TestClient) -> None:
     r = client.get(
-        "/v1/runs/run_does_not_exist",
+        "/local/v1/runs/run_does_not_exist",
         headers={"Authorization": "Bearer tok"},
     )
     assert r.status_code == 404
@@ -131,7 +131,7 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
     """Start a run, stream until terminal event, verify run.completed."""
     # Start
     r = client.post(
-        "/v1/runs",
+        "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
         json={"goal": "say hi"},
     )
@@ -141,7 +141,7 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
     # Stream until run.completed or run.failed
     with client.stream(
         "GET",
-        f"/v1/runs/{run_id}/stream",
+        f"/local/v1/runs/{run_id}/stream",
         headers={"Authorization": "Bearer tok"},
     ) as resp:
         assert resp.status_code == 200
@@ -161,7 +161,7 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
 
 def test_cancel_unknown_run_returns_false(client: TestClient) -> None:
     r = client.post(
-        "/v1/runs/run_nope/cancel",
+        "/local/v1/runs/run_nope/cancel",
         headers={"Authorization": "Bearer tok"},
     )
     assert r.status_code == 200
@@ -170,7 +170,7 @@ def test_cancel_unknown_run_returns_false(client: TestClient) -> None:
 
 def test_resume_unknown_run_returns_409(client: TestClient) -> None:
     r = client.post(
-        "/v1/runs/run_nope/resume",
+        "/local/v1/runs/run_nope/resume",
         headers={"Authorization": "Bearer tok"},
         json={"action": "approve"},
     )

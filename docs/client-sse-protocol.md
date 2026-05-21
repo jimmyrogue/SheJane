@@ -1,6 +1,6 @@
 # Client ⇄ local-host SSE 协议（Phase 4'）
 
-适用于 `GET /v1/runs/{run_id}/stream` 返回的 `text/event-stream`。
+适用于 `GET /local/v1/runs/{run_id}/stream` 返回的 `text/event-stream`。
 所有事件**格式统一**：
 
 ```
@@ -41,7 +41,7 @@ data: <JSON object>
 ### Streaming 聊天气泡
 
 ```js
-const es = new EventSource(`/v1/runs/${runId}/stream`, { withCredentials: false });
+const es = new EventSource(`/local/v1/runs/${runId}/stream`, { withCredentials: false });
 let assistantText = "";
 
 es.addEventListener("llm.token", (e) => {
@@ -85,7 +85,7 @@ es.addEventListener("stream.end", () => es.close());
 当收到 `run.waiting`，客户端展示用户决策 UI（approve / deny / once-vs-run-scope），然后：
 
 ```
-POST /v1/runs/{run_id}/resume
+POST /local/v1/runs/{run_id}/resume
 {
   "action": "approve"   // 或 "deny"，自定义 schema
 }
@@ -96,7 +96,7 @@ POST /v1/runs/{run_id}/resume
 ### 取消
 
 ```
-POST /v1/runs/{run_id}/cancel
+POST /local/v1/runs/{run_id}/cancel
 ```
 
 → 服务器 `task.cancel()` 触发 `asyncio.CancelledError`，graph 中断后 SSE 流推 `run.canceled` 收尾。客户端关 EventSource 即可。

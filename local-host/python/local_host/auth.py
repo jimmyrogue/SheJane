@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse, Response
 
 from .config import get_settings
 
-EXEMPT_PATHS = frozenset({"/v1/health", "/health"})
+EXEMPT_PATHS = frozenset({"/local/v1/health", "/v1/health", "/health"})
 
 
 class PairingTokenAuthMiddleware(BaseHTTPMiddleware):

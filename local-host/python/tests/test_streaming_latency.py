@@ -111,14 +111,14 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
 def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
     client, tokens = client_with_tokens
     r = client.post(
-        "/v1/runs",
+        "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
         json={"goal": "Hi"},
     )
     run_id = r.json()["run"]["id"]
 
     with client.stream(
-        "GET", f"/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
+        "GET", f"/local/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
     ) as resp:
         body = resp.read().decode("utf-8")
 
@@ -135,14 +135,14 @@ def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
 def test_run_completed_terminal_event_present(client_with_tokens) -> None:
     client, _ = client_with_tokens
     r = client.post(
-        "/v1/runs",
+        "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
         json={"goal": "Hi"},
     )
     run_id = r.json()["run"]["id"]
 
     with client.stream(
-        "GET", f"/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
+        "GET", f"/local/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
     ) as resp:
         body = resp.read().decode("utf-8")
 
@@ -166,7 +166,7 @@ def test_first_token_latency_under_budget(client_with_tokens) -> None:
     for i in range(5):
         t0 = time.perf_counter()
         r = client.post(
-            "/v1/runs",
+            "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
             json={"goal": f"iter-{i}"},
         )
@@ -175,7 +175,7 @@ def test_first_token_latency_under_budget(client_with_tokens) -> None:
         first_token_at: float | None = None
         with client.stream(
             "GET",
-            f"/v1/runs/{run_id}/stream",
+            f"/local/v1/runs/{run_id}/stream",
             headers={"Authorization": "Bearer tok"},
         ) as resp:
             for line in resp.iter_lines():
