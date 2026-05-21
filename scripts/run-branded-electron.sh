@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT_DIR="${ROOT_DIR}/client"
 APP_NAME="石间"
-APP_ID="com.coldflame.easyai.dev"
-WRAPPER_APP="${JIANDANLY_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/EasyAI.app}"
+APP_ID="com.coldflame.shejane.dev"
+WRAPPER_APP="${JIANDANLY_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/SheJane.app}"
 SOURCE_APP="${CLIENT_DIR}/node_modules/electron/dist/Electron.app"
 SOURCE_VERSION_FILE="${CLIENT_DIR}/node_modules/electron/dist/version"
-WRAPPER_VERSION_FILE="${WRAPPER_APP}/Contents/Resources/.easyai-electron-version"
+WRAPPER_VERSION_FILE="${WRAPPER_APP}/Contents/Resources/.shejane-electron-version"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   exec "${CLIENT_DIR}/node_modules/.bin/electron" "$@"
