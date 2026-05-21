@@ -48,6 +48,14 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ..config import Settings, get_settings
 from ..llm.backend import BackendChatModel
+from ..middleware import (
+    FastDeepRouterMiddleware,
+    InputGuardMiddleware,
+    MemoryWritebackMiddleware,
+    OutputGuardMiddleware,
+    ReflectMiddleware,
+    SkillInjectionMiddleware,
+)
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
 
@@ -157,9 +165,32 @@ async def build_agent(
     )
 
     middleware: list[AgentMiddleware] = []
+
+    # Custom middleware first — input guard + skill injection should land
+    # before any model call so the system prompt + guard state are visible
+    # to the built-ins.
+    middleware.extend(
+        [
+            InputGuardMiddleware(),            # P1
+            SkillInjectionMiddleware(),        # P7
+            FastDeepRouterMiddleware(),        # P2
+        ]
+    )
+
+    middleware.extend(_built_in_middleware(settings, workspace_root))
+
+    # Post-model and post-agent custom middleware go last so they observe
+    # the full message tail after built-ins have already run.
+    middleware.extend(
+        [
+            OutputGuardMiddleware(),           # P9
+            ReflectMiddleware(),               # P4
+            MemoryWritebackMiddleware(),       # P6
+        ]
+    )
+
     if extra_middleware:
         middleware.extend(extra_middleware)
-    middleware.extend(_built_in_middleware(settings, workspace_root))
 
     return create_agent(
         model=model,
