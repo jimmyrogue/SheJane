@@ -318,6 +318,26 @@ async def build_agent(
             )
         )
 
+    # Mid-loop tool-result critic. Watches "lossy" tools (web.fetch,
+    # tavily_search, task, browser.task, execute, read_file, edit_file)
+    # and asks a cheap LLM whether each result is usable for the task.
+    # Annotates or replaces ToolMessages based on mode.
+    if settings.tool_critic_mode.lower() in {"watch", "nudge", "block"}:
+        from ..middleware.tool_critic import ToolResultCriticMiddleware
+
+        critic_model = BackendChatModel(
+            cloud_base_url=settings.cloud_base_url,
+            cloud_token=settings.cloud_token,
+            run_id=run_id,
+            mode="fast",
+        )
+        middleware.append(
+            ToolResultCriticMiddleware(
+                critic_model=critic_model,
+                mode=settings.tool_critic_mode,
+            )
+        )
+
     if extra_middleware:
         middleware.extend(extra_middleware)
 

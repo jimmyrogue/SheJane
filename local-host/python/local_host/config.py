@@ -87,6 +87,17 @@ class Settings(BaseSettings):
         alias="JIANDANLY_LOCAL_TOOL_SELECTOR_MAX",
     )
 
+    # Mid-loop tool-result critic mode. After each watched tool returns,
+    # a cheap LLM judges whether the result is usable for the task.
+    #   off    — middleware not added (default)
+    #   watch  — run critic + log only, never mutate ToolMessage
+    #   nudge  — prepend ⚠️ warning to ToolMessage when unusable
+    #   block  — replace ToolMessage with "retry" signal when unusable
+    tool_critic_mode: str = Field(
+        default="off",
+        alias="JIANDANLY_LOCAL_TOOL_CRITIC",
+    )
+
     # Reflection: when enabled, ReflectMiddleware after_agent runs a real
     # critic-reviser LLM call against the final answer (extra cost).
     # Default off — keeps current statistics-only behavior.
