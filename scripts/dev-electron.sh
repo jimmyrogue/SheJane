@@ -217,14 +217,14 @@ start_local_host() {
     [[ -n "${JIANDANLY_LOCAL_PII_REDACT:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_PII_REDACT=$JIANDANLY_LOCAL_PII_REDACT")
     [[ -n "${JIANDANLY_LOCAL_MEMORY_PATHS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MEMORY_PATHS=$JIANDANLY_LOCAL_MEMORY_PATHS")
 
-    # `TAVILY_API_KEY` is still forwarded — `web.search` (langchain-tavily)
-    # currently bypasses the cloud gateway. The proper fix is to route
-    # web.search through `/api/v1/agent/tools/execute` like image.* now
-    # does, but that's a separate cleanup. `OPENAI_API_KEY` is NOT
-    # forwarded — image.* routes through the cloud gateway and the key
-    # lives in the API's model registry (configured in Admin), not in
-    # the daemon environment.
-    [[ -n "${TAVILY_API_KEY:-}" ]] && env_cmd+=("TAVILY_API_KEY=$TAVILY_API_KEY")
+    # NO platform-paid provider keys are forwarded to the daemon:
+    #   • image.* routes through `/api/v1/agent/tools/execute`; the
+    #     OpenAI key lives in the API's model registry (Admin-configured).
+    #   • web.search routes through the same gateway; the Tavily key
+    #     lives in the API's env (section E of root .env).
+    # If you need to add a new platform-paid tool, add a proxy in
+    # `local_host/tools/<tool>.py` via `_gateway.call_tool_gateway`,
+    # NOT a key forward here.
 
     # Observability — LangSmith (LangChain-native), Langfuse (alternative),
     # and the hard kill-switch flag.

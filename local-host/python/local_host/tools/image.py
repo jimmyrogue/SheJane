@@ -27,108 +27,16 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-import httpx
+import httpx  # re-exported so tests can monkeypatch via image_module.httpx
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolCallId, tool
 
+from ._gateway import call_tool_gateway, run_id_from_config
+
 log = logging.getLogger("local_host.tools.image")
 
-_REQUEST_TIMEOUT_S = 120.0  # image generation can take up to ~60s; budget 2x.
-
-
-async def _call_tool_gateway(
-    tool_name: str,
-    arguments: dict[str, Any],
-    *,
-    tool_call_id: str,
-    config: RunnableConfig | None,
-) -> dict[str, Any]:
-    """POST to `${cloud_base_url}/api/v1/agent/tools/execute`.
-
-    Returns the unwrapped `agentToolExecuteResult` shape (matching the
-    Go handler at `tool_gateway.go:37`) so the LLM gets the same
-    `{ok, content, data?}` envelope regardless of which gateway tool
-    was invoked.
-    """
-    from ..config import get_settings
-
-    settings = get_settings()
-    cloud_base_url = settings.cloud_base_url.rstrip("/")
-    cloud_token = settings.cloud_token
-    if not cloud_token:
-        return {
-            "ok": False,
-            "content": (
-                f"{tool_name} requires a paired cloud session. Please log "
-                "in to the Electron app first, then retry."
-            ),
-            "errorCode": "cloud_session_missing",
-            "recoverable": True,
-        }
-
-    # The cloud API needs `run_id` for billing attribution (so the
-    # credit ledger entry can be reconciled with the agent run on
-    # error). LangGraph injects `thread_id` via the configurable dict;
-    # we set thread_id = run_id in RunCoordinator.start_run.
-    run_id = ""
-    if config is not None:
-        configurable = config.get("configurable") or {}
-        run_id = str(configurable.get("thread_id") or "")
-
-    body = {
-        "run_id": run_id,
-        "tool_call_id": tool_call_id,
-        "tool": tool_name,
-        "arguments": arguments,
-        # Idempotency key — reuse the tool_call_id so retries from the
-        # agent loop don't double-bill. The API stores results keyed by
-        # this and returns the cached completion on duplicate calls.
-        "idempotency_key": tool_call_id or run_id,
-    }
-
-    url = f"{cloud_base_url}/api/v1/agent/tools/execute"
-    try:
-        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_S) as client:
-            resp = await client.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {cloud_token}",
-                    "Content-Type": "application/json",
-                },
-                json=body,
-            )
-    except httpx.HTTPError as exc:
-        log.warning("%s: gateway transport error: %s", tool_name, exc)
-        return {
-            "ok": False,
-            "content": f"{tool_name} unreachable: {exc}",
-            "errorCode": "gateway_unreachable",
-            "recoverable": True,
-        }
-
-    try:
-        envelope = resp.json()
-    except ValueError:
-        return {
-            "ok": False,
-            "content": f"{tool_name}: gateway returned non-JSON ({resp.status_code})",
-            "errorCode": "gateway_bad_response",
-            "recoverable": False,
-        }
-
-    # The Go handler wraps results in `apiResponse<T>` = {code, message, data}.
-    # Most error paths still include `data: agentToolExecuteResult`, so
-    # we prefer unwrapping `data` and fall back to the outer message.
-    data = envelope.get("data") if isinstance(envelope, dict) else None
-    if not isinstance(data, dict):
-        return {
-            "ok": False,
-            "content": str(envelope.get("message") if isinstance(envelope, dict) else envelope)
-                       or f"{tool_name}: gateway HTTP {resp.status_code}",
-            "errorCode": "gateway_envelope_missing",
-            "recoverable": False,
-        }
-    return data
+# Re-export for tests that already monkeypatch `image_module.httpx.AsyncClient`.
+_ = httpx
 
 
 async def _invoke_image_tool(
@@ -138,19 +46,17 @@ async def _invoke_image_tool(
     run_id: str,
     tool_call_id: str,
 ) -> dict[str, Any]:
-    """Pure-function gateway call with explicit run_id / tool_call_id.
+    """Test-friendly wrapper around the shared gateway helper.
 
-    Split out from the `@tool`-decorated entry points so unit tests can
-    exercise the gateway logic without LangChain's ToolMessage-wrapping
-    + RunnableConfig auto-injection getting in the way. The decorated
-    versions below are thin shells that pull run_id from RunnableConfig
-    and forward here.
+    Kept distinct from `call_tool_gateway` only so tests can target a
+    stable signature (`run_id` + `tool_call_id` as plain args) without
+    having to construct a RunnableConfig.
     """
-    return await _call_tool_gateway(
+    return await call_tool_gateway(
         tool_name,
         arguments,
+        run_id=run_id,
         tool_call_id=tool_call_id,
-        config={"configurable": {"thread_id": run_id}},
     )
 
 
@@ -180,11 +86,10 @@ async def image_generate(
     summary the agent quotes; `data.images` (when present) carries
     structured image references.
     """
-    run_id = _run_id_from_config(config)
     return await _invoke_image_tool(
         "image.generate",
         {"prompt": prompt, "size": size, "n": max(1, min(int(n), 4))},
-        run_id=run_id,
+        run_id=run_id_from_config(config),
         tool_call_id=tool_call_id,
     )
 
@@ -217,7 +122,6 @@ async def image_edit(
         size: Output size.
         n: Number of variants. Cloud API clamps to [1, 4].
     """
-    run_id = _run_id_from_config(config)
     return await _invoke_image_tool(
         "image.edit",
         {
@@ -229,19 +133,9 @@ async def image_edit(
             "size": size,
             "n": max(1, min(int(n), 4)),
         },
-        run_id=run_id,
+        run_id=run_id_from_config(config),
         tool_call_id=tool_call_id,
     )
-
-
-def _run_id_from_config(config: RunnableConfig | None) -> str:
-    """LangGraph sets `configurable.thread_id` = run_id. Default to ""
-    if absent so tools degrade gracefully when called outside an agent
-    (e.g. ad-hoc curl)."""
-    if config is None:
-        return ""
-    configurable = config.get("configurable") or {}
-    return str(configurable.get("thread_id") or "")
 
 
 IMAGE_TOOLS = [image_generate, image_edit]

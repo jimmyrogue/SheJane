@@ -204,11 +204,16 @@ def test_web_fetch_rejects_invalid_method() -> None:
     assert "method" in out["error"]
 
 
-def test_tavily_disabled_when_key_absent(monkeypatch: Any) -> None:
-    from local_host.tools.web import make_tavily_search
+def test_web_search_always_registered(monkeypatch: Any) -> None:
+    """web.search no longer depends on TAVILY_API_KEY in the daemon env
+    — it proxies through the cloud Tool Gateway. The tool must be
+    present in the registry unconditionally; the *cloud* decides
+    whether to honor the call based on its own Tavily key.
+    """
+    from local_host.tools.web import web_search
 
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    assert make_tavily_search() is None
+    assert web_search.name == "web.search"
 
 
 # --- task.verify ---

@@ -94,7 +94,7 @@ const names = new Set((payload.tools ?? []).map((tool) => tool.name));
 // longer exist (filesystem access goes through deepagents
 // FilesystemMiddleware, shell is intentionally absent, MCP is auto-
 // surfaced from JIANDANLY_LOCAL_MCP_SERVERS).
-for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch']) {
+for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch', 'web.search', 'image.generate']) {
   if (!names.has(name)) {
     console.error(`Missing expected tool: ${name}`);
     process.exit(1);
