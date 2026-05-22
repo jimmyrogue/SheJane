@@ -338,3 +338,37 @@ Phase 2' 完成后单独 commit。
 - `DaemonObserver(AsyncCallbackHandler)` 接 LangChain 全生命周期事件
 - Langfuse 可选（`LANGFUSE_PUBLIC_KEY`+`LANGFUSE_SECRET_KEY` 设了就启用）
 - `JIANDANLY_DISABLE_OBSERVABILITY=1` 一键关闭整层（基准测试用）
+
+---
+
+## Post-launch contract repair（2026-05-22）
+
+> Phase 5'+ 完成 deferred Node→Python 切换后，UI 在 Electron 里发现"对话能进
+> 但工具 / streaming / 审批全是死的"。深审发现：Python rewrite 漏掉了和
+> **TypeScript 客户端 + Go API** 的契约对齐 —— 是 phase 完成度问题，不是设计问题。
+> 当天集中清账。8 个 block + 后续两轮：
+
+| Block | 内容 | 测试 |
+|---|---|---|
+| 0 | SSE wire 改为 `data: <AgentRunEvent envelope>` + `[DONE]` sentinel（sse-starlette `sep="\n"`） | `test_sse_envelope.py` 5 case |
+| 1 + 2 | 新增 `GET /local/v1/runs`（列表）、`POST /runs` 返回 flat shape（不再 wrap `{run: ...}`）、history / parent_run_id / settings 直通 | `test_runs_http.py` 更新 |
+| 3 | 事件词汇表对齐：`llm.token`→`llm.delta`、`tool.end`→`tool.completed`、新增 `tool.failed` | `test_event_translator.py` 更新 |
+| 4 | HITL bridge：`POST /permissions/:id` 翻译为 `{"decisions": [{"type": "approve"\|"reject"}]}`；`user.ask` 接 `{answers}` 解构；存储层 `local_permissions` / `local_questions` 真实 CRUD | `test_user_ask.py` + `cap_1b/1c` ✅ |
+| 5 | `/runs/:id/diagnostics` 返回完整 `LocalRunDiagnostics` shape（schema_version + exported_at + events 解析 + permissions + artifacts） | 端到端 |
+| 6 | Workspaces POST/DELETE 返 flat `LocalWorkspaceAuthorization`；`/workspaces/diagnose` 返 `LocalWorkspaceDiagnosis` shape；artifacts CRUD 真实化 | `test_smoke.py` 更新 |
+| 7 | 客户端 `localErrorMessage` 兼容 FastAPI 的 `{detail}`；i18n + 思考过程 collapsible 区块；config 容忍空字符串 bool env var | `test_backend_llm.py` + 客户端 vitest |
+| reasoning round-trip | DeepSeek thinking-mode `reasoning_content` 双向 plumb（出站 + UI 渲染） | `test_aimessage_reasoning_round_trips_for_deepseek_thinking_mode` |
+| scope=run 持久化 | `RunCoordinator._try_auto_approve` + while-loop；`permission.auto_approved` 事件 | `cap_1d_scope_run_skips_subsequent_approvals` ✅ |
+| `permission.resolved` emit | `coordinator.emit_for_run` 推入流让客户端清掉审批卡 | `cap_1c_permission_resolved_event_clears_card` ✅ |
+| image.* → cloud gateway | 删 daemon 端 OpenAI 直连，`POST /api/v1/agent/tools/execute` 代理 | `test_image_tool.py` 6 case |
+| web.search → cloud gateway | 删 `langchain-tavily` 依赖，同样走 cloud gateway；共享 `_gateway.call_tool_gateway` | `test_web_search_tool.py` 6 case |
+| dev-electron.sh 重启 | 自动 SIGKILL stragglers + 自动开 Terminal 窗口 tail log | — |
+
+**累计测试**：Python 189 / 客户端 139 / bash smoke pass。
+
+**架构改进**：
+- 任何 platform-paid 工具（OpenAI / Tavily / 未来 Anthropic native search 等）通过 `_gateway.call_tool_gateway` 入云端 `/api/v1/agent/tools/execute`，daemon env 永远不持有 provider key
+- HITL `scope=run` 真的"始终允许"了，不会重复弹卡
+- DeepSeek 思考过程在 UI 里有可折叠区块展示
+
+**关键 commit**：`a6746fe`（web.search routing），`ef74951`（contract repair 主批次）
