@@ -1,0 +1,70 @@
+# Dependabot config — weekly grouped PRs across every ecosystem we ship.
+#
+# Why grouped: a typical week brings 10+ minor bumps; reviewing them as
+# one PR per ecosystem keeps the review queue manageable AND lets
+# `make test-ci` validate the whole batch at once.
+#
+# Why weekly (not daily): security advisories still page out
+# immediately via Dependabot's separate alert channel; the weekly
+# cadence here is for routine version bumps.
+
+version: 2
+updates:
+  # --- Go (API backend) ---
+  - package-ecosystem: gomod
+    directory: /api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, go]
+
+  # --- npm (3 workspaces share no root package.json) ---
+  - package-ecosystem: npm
+    directory: /client
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      client-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, client]
+
+  - package-ecosystem: npm
+    directory: /admin
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      admin-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, admin]
+
+  - package-ecosystem: npm
+    directory: /e2e
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+    groups:
+      e2e-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, e2e]
+
+  # --- Python (local-host daemon, managed by uv but pip-compatible) ---
+  - package-ecosystem: pip
+    directory: /local-host/python
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, local-host]
+
+  # --- GitHub Actions ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 2
+    labels: [dependencies, ci]
