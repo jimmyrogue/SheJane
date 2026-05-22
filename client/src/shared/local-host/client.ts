@@ -131,7 +131,10 @@ export function getDesktopLocalHostBaseURL(bridge: DesktopBridge | undefined = w
 
 export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch): Promise<LocalHostProbe> {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 1200)
+  // `globalThis.setTimeout` so this works in both browser (Electron
+  // renderer) and Node (contract tests against a live daemon, which
+  // run under vitest's node env).
+  const timeout = globalThis.setTimeout(() => controller.abort(), 1200)
   try {
     const response = await fetcher(`${baseURL.replace(/\/$/, '')}/local/v1/health`, {
       signal: controller.signal,
@@ -149,7 +152,7 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
   } catch {
     return { online: false }
   } finally {
-    window.clearTimeout(timeout)
+    globalThis.clearTimeout(timeout)
   }
 }
 

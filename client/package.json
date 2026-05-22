@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
     "electron": "../scripts/run-branded-electron.sh electron/main.cjs"
   },
   "dependencies": {

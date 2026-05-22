@@ -118,3 +118,86 @@ jobs:
 
       - name: Run deterministic suite
         run: make test-ci
+
+  # Contract round-trip — the ONE thing that would have caught the
+  # 9+ silent shape drifts in the Phase 5'+ migration. Boots a real
+  # daemon, runs the TypeScript client against it over HTTP, asserts
+  # the response shapes match what the renderer reads. No
+  # MockTransport involved on either side.
+  #
+  # Why it's a separate job (not part of deterministic-tests):
+  #   • Needs a running daemon as a background service — pollutes the
+  #     hermetic test env.
+  #   • Failure mode is "client and daemon disagree on a contract" —
+  #     surfacing it as its own check name makes triage instant.
+  contract:
+    name: Contract round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: local-host/python/uv.lock
+
+      - name: Install client deps
+        run: npm ci
+        working-directory: client
+
+      - name: Install daemon deps
+        run: uv sync
+        working-directory: local-host/python
+
+      - name: Start daemon
+        run: |
+          mkdir -p /tmp/contract
+          JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+          JIANDANLY_LOCAL_HOST_PORT=17371 \
+          JIANDANLY_LOCAL_HOST_URL=http://127.0.0.1:17371 \
+          JIANDANLY_CLOUD_BASE_URL=http://localhost:8080 \
+          PYTHONUNBUFFERED=1 \
+          nohup uv run python -m local_host \
+            > /tmp/contract/daemon.log 2>&1 &
+          echo $! > /tmp/contract/daemon.pid
+        working-directory: local-host/python
+
+      - name: Wait for daemon /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:17371/local/v1/health >/dev/null 2>&1; then
+              echo "daemon ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::daemon failed to start"
+          cat /tmp/contract/daemon.log
+          exit 1
+
+      - name: Run contract suite
+        env:
+          VITE_TEST_LOCAL_HOST_URL: http://127.0.0.1:17371
+          VITE_TEST_LOCAL_HOST_TOKEN: dev-local-token
+        run: npm run test:contract
+        working-directory: client
+
+      - name: Daemon log on failure
+        if: failure()
+        run: cat /tmp/contract/daemon.log || true
+
+      - name: Stop daemon
+        if: always()
+        run: |
+          PID=$(cat /tmp/contract/daemon.pid 2>/dev/null || true)
+          [ -n "$PID" ] && kill -9 "$PID" 2>/dev/null || true
