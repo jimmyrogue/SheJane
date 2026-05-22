@@ -1,0 +1,171 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this project is
+
+石间 / SheJane (`jiandanly` is the legacy code name) — an Agentic Chat product. A Go API backend handles auth/billing/LLM routing/document storage, a Python LangGraph daemon (the "local agent harness") runs the agent loop with tools and middleware, and an Electron/React renderer is what users see. Each layer has a distinct technology, distinct boundary, and the failure mode "things look fine but the next layer disagrees about the contract" is the single most common bug class this codebase has produced.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Electron renderer (client/) — React 18 + Vite + Tailwind 4    │
+│  Talks to local-host over loopback HTTP for agent flow,         │
+│  talks to Go API directly for auth / billing / documents.       │
+└──────────┬──────────────────────────────────────────────┬───────┘
+           │ /local/v1/* (loopback only, bearer token)    │ HTTPS
+           ▼                                              ▼
+┌─────────────────────────────────┐         ┌──────────────────────┐
+│ Local-host daemon               │ ──────▶ │ Go API (api/)        │
+│ local-host/python/local_host/   │         │ Postgres + Redis +   │
+│ FastAPI + uvicorn               │         │ S3 (documents) +     │
+│ LangGraph 1.2 + deepagents      │         │ Stripe (billing)     │
+│ AsyncSqliteSaver (checkpoints)  │         │                      │
+│                                 │         │ The cloud API holds  │
+│ Tools either run locally        │         │ ALL platform-paid    │
+│ (filesystem, browser-use,       │         │ provider keys —      │
+│  workspace, memory) OR proxy    │         │ never the daemon.    │
+│ through cloud Tool Gateway      │         │                      │
+│ (image.*, web.search)           │         │                      │
+└─────────────────────────────────┘         └──────────────────────┘
+```
+
+There's also an admin panel (`admin/`) — separate Vite/React app for model registry, credit-rate tuning, audit logs.
+
+The most important architectural file to read first: **[docs/run-loop.md](docs/run-loop.md)** has the complete flow of one agent run from `POST /local/v1/runs` to terminal state, including the LangGraph middleware stack, the auto-approve loop for `scope=run` permission grants, and how SSE events flow back to the client.
+
+## Critical invariants
+
+These are not arbitrary style rules — each one corresponds to a class of bug that has actually shipped and burned hours in this repo.
+
+1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS) MUST live in the Go API only.** The daemon proxies through `POST /api/v1/agent/tools/execute` for anything that bills credits. Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (lefthook + CI). See `local-host/python/local_host/tools/_gateway.py` for the proxy pattern; new platform-paid tools should call `call_tool_gateway()`, not `os.environ.get(...)`.
+
+2. **The daemon's pydantic models in `local-host/python/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `client/src/shared/local-host/generated.d.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.d.ts`. CI's lint job fails the PR if they drift.
+
+3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "seq": ..., "created_at": ...}`, separator is **LF** double-newline (not CRLF), terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
+
+4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `JIANDANLY_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
+
+5. **`.env` audit is honest.** Every key in `.env` corresponds to a real `os.getenv` / `getEnvInt` / pydantic alias somewhere in the code. Don't add dead keys; don't read undocumented keys. See `.env.example` for the schema with section comments.
+
+## Common commands
+
+```bash
+# Full dev stack — Docker compose + daemon + Vite + Electron + auto-tail log
+make dev-electron
+
+# After daemon code edits where stragglers might be running, OR after
+# Docker images need rebuild (api/admin/postgres)
+make dev-fresh
+
+# One-shot diagnostic — answers "why isn't dev working?"
+make doctor
+
+# Tests (all 4 stacks)
+make test               # python + client vitest + admin vitest + go
+make local-host-test    # just python (uv run pytest)
+make client-test        # just client (vitest --run)
+make api-test           # just go (go test ./...)
+
+# A single Python test
+cd local-host/python && uv run pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
+
+# A single client test
+cd client && npm test -- --run -t "permission.resolved clears card"
+
+# Lint — same checks CI runs
+make lint
+
+# Regenerate schemas after pydantic edits (REQUIRED if you touched api_schemas.py)
+make schemas
+
+# Smoke tests
+make smoke-local-host        # standalone daemon HTTP smoke
+make smoke-docker-local      # full Docker stack
+make smoke-real-llm          # real LLM provider
+make smoke-stripe-webhook    # Stripe webhook simulation
+
+# Logs
+make logs-local-host         # tail .tmp/dev/local-host.log
+make logs-api                # tail docker compose api
+make logs-llm-errors         # query llm_call_records table
+make logs-dev                # snapshot of all of the above
+```
+
+## Where things live
+
+| If you're asking about... | Read |
+|---|---|
+| One run from POST to terminal — middleware order, HITL, scope=run, SSE events | `docs/run-loop.md` |
+| Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
+| Why we moved Node → Python and what was deferred to which phase | `docs/migration-langgraph.md` |
+| Pre-Phase-5'+ Node daemon architecture (historical) | `docs/architecture-local-host.md` |
+| Production deployment / migrations | `docs/operations.md` |
+| Daemon code | `local-host/python/local_host/` (server.py is the router, runs.py owns the run loop, agent/builder.py wires middleware, tools/ has the @tool functions) |
+| API code | `api/internal/` (httpapi/ routes, billing/ ledger, llm/ provider gateway, modelreg/ model registry, documents/ S3 service, secrets/ encryption) |
+| Client code | `client/src/` — `App.tsx` is the chat shell, `features/chat/` has the timeline + composer, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
+| Admin panel | `admin/` — separate Vite app; model configs, credit rate, audit logs |
+| Contract tests (real HTTP, not MockTransport) | `client/src/shared/local-host/client.contract.test.ts` |
+
+## Conventions
+
+### Python (local-host/python/)
+
+- `uv` manages deps. Never edit `uv.lock` by hand — run `uv add <pkg>` or `uv remove <pkg>`.
+- Lint: ruff (configured in `pyproject.toml`). Format: ruff format. `make lint` enforces.
+- `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
+- Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
+- New tool: add `@tool("name.action")` in `local-host/python/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
+- New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
+
+### Go (api/)
+
+- `go vet ./...` + `gofmt -l` enforced via lefthook + CI.
+- The credit ledger (`api/internal/billing/`) reserves credits BEFORE the external call and settles or releases AFTER. The pattern is `Reserve → external operation → Settle | Release`. Every code path that calls `Reserve` must have a guaranteed Settle/Release on every exit, including error paths. The `billing-flow-reviewer` subagent audits this on every billing-related change.
+
+### TypeScript (client/, admin/)
+
+- Vite + React 18 + TypeScript strict mode. Tailwind 4 + shadcn/ui.
+- Daemon types come from `client/src/shared/local-host/generated.d.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
+- Hand-written types in `client.ts` are documented at the top of the file (DesktopBridge, LocalHostConfig, LocalHostProbe, LocalStreamHandlers) — these have no daemon equivalent.
+- SSE: see `shared/api/sse.ts` for parsing and the `AgentRunEvent` union. New event types added on the daemon need a `case` in `features/chat/chatStore.ts:timelineItem` AND/OR `App.tsx:appendLocalRunEvent` to surface in the UI.
+
+### Commits
+
+- Conventional-ish messages (`feat:`, `fix:`, `ci:`, `docs:`) — no strict enforcement, but the existing history follows this. Lefthook only enforces non-empty + ≥5 chars.
+- Pre-commit runs ruff/gofmt/go vet/no-platform-keys/no-env-files in parallel (~sub-second). To bypass for a WIP commit: `LEFTHOOK=0 git commit`.
+
+## Automations already wired
+
+| Type | Where | What |
+|---|---|---|
+| Pre-commit | `lefthook.yml` | ruff/gofmt/go vet/no-platform-keys/no-env-files |
+| CI | `.github/workflows/ci.yml` | lint job + deterministic-tests job + contract round-trip job |
+| Nightly | `.github/workflows/external-smoke.yml` | external service smoke (Stripe / Tavily / S3 / API at 18:00 UTC) |
+| Deps | `.github/dependabot.yml` | weekly grouped PRs for gomod/npm×3/pip/github-actions |
+| Skills (Claude Code) | `.claude/skills/` | `sync-schemas`, `daemon-restart` |
+| Subagents (Claude Code) | `.claude/agents/` | `contract-shape-reviewer`, `billing-flow-reviewer` |
+| Hooks (Claude Code) | `.claude/settings.json` + `.claude/hooks/` | auto-ruff after Python edits; auto `make schemas` after api_schemas.py edits |
+| MCP servers (project scope) | `.mcp.json` | `context7` (live library docs), `postgres` (read-only against local dev DB) |
+
+## Newcomer setup
+
+```bash
+# Once
+make setup-hooks          # installs lefthook (brew) and wires git hooks
+cp .env.example .env      # fill in dev credentials (DeepSeek key works for most things)
+
+# Start everything
+make dev-electron         # opens Electron + Vite + daemon + auto-tail log
+```
+
+If anything's wrong, `make doctor` is the first stop. The output tells you whether Docker is up, the daemon is on the new code, the LangSmith key is valid, and whether platform keys have leaked into the daemon env.
+
+## Things to never do
+
+- Don't add `os.environ.get("OPENAI_API_KEY")` or any other platform-paid key to daemon code. Use `tools/_gateway.py:call_tool_gateway`. Lefthook will block the commit.
+- Don't hand-edit `client/src/shared/local-host/generated.d.ts` or `client/src/shared/local-host/openapi.json`. They're build artifacts of `make schemas`.
+- Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `lsof -ti :17371 | xargs kill -9`. The `daemon-restart` skill encapsulates this.
+- Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
+- Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.
