@@ -9,6 +9,59 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Lint is split out so style/format failures show up as their own
+  # check on the PR — easier to scan than mixed inside the test job
+  # output, and faster to fail (no docker / playwright bootstrap). The
+  # checks here mirror what `make lint` runs locally.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: local-host/python/uv.lock
+
+      - name: Install Python deps
+        run: uv sync
+        working-directory: local-host/python
+
+      - name: ruff check
+        run: uv run ruff check .
+        working-directory: local-host/python
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+        working-directory: local-host/python
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt -w needed on:"
+            echo "$unformatted"
+            exit 1
+          fi
+        working-directory: api
+
+      - name: go vet
+        run: go vet ./...
+        working-directory: api
+
+      - name: No platform-paid keys in daemon
+        run: ./scripts/check-no-platform-keys-in-daemon.sh
+
   deterministic-tests:
     name: Deterministic tests
     runs-on: ubuntu-latest
