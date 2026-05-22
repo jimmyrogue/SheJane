@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "//": "Auto-run ruff format + ruff check on Python files Claude just edited inside local-host/python. Gives Claude immediate lint feedback so it doesn't propose a follow-up change against unformatted code, then watch lefthook reject the commit later. Skip path filtering itself lives in the script.",
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-edit-ruff.sh"
+          }
+        ]
+      },
+      {
+        "//": "Auto-regenerate the daemon→client schema pipeline whenever api_schemas.py is touched. Keeps openapi.json + generated.d.ts continuously in sync so Claude's next edit sees up-to-date TS types. Pre-empts the CI drift guard.",
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/post-edit-schemas.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

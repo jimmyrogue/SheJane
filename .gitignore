@@ -10,7 +10,18 @@ Thumbs.db
 !.vscode/settings.json
 
 # Local agent/tooling scratch
-.claude/
+# `.claude/` itself is mostly local — but the SUBSET that's team-shared
+# automation (skills, agents, hooks config, MCP config) needs to be
+# tracked. Pattern: ignore everything, then explicitly un-ignore the
+# pieces the team owns. settings.local.json + auth tokens / scratch
+# dirs continue to be ignored.
+.claude/*
+!.claude/skills/
+!.claude/agents/
+!.claude/hooks/
+!.claude/settings.json
+# `.mcp.json` lives at repo root, NOT under .claude/, so it's tracked
+# by default — no re-include needed here.
 .codex/
 .playwright-cli/
 output/
