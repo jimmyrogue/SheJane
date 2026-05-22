@@ -17,9 +17,6 @@ Why this layout
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 from deepagents.backends import FilesystemBackend
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel

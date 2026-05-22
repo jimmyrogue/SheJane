@@ -11,7 +11,6 @@ from local_host.middleware.plan_first import (
     _looks_complex,
 )
 
-
 # --- mode parsing ---
 
 
@@ -90,9 +89,7 @@ def test_auto_mode_skips_trivial_task() -> None:
 def test_auto_mode_triggers_on_complex_task() -> None:
     mw = PlanFirstMiddleware(mode="auto")
     state = {
-        "messages": [
-            HumanMessage(content="please research the latest LangGraph release notes")
-        ]
+        "messages": [HumanMessage(content="please research the latest LangGraph release notes")]
     }
     result = mw.before_agent(state, runtime=None)
     assert result is not None
@@ -103,7 +100,5 @@ def test_injection_content_matches_protocol_template() -> None:
     """Guard against accidental rewording — the prompt content is the
     contract with the LLM."""
     mw = PlanFirstMiddleware(mode="always")
-    result = mw.before_agent(
-        {"messages": [HumanMessage(content="x")]}, runtime=None
-    )
+    result = mw.before_agent({"messages": [HumanMessage(content="x")]}, runtime=None)
     assert result["messages"][0].content == PLAN_FIRST_SYSTEM_PROMPT

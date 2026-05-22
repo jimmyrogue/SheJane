@@ -10,23 +10,17 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
 
-
 # --- mock backend helpers (shared with capability tests) ---
 
 
 def _sse(events: list[tuple[str, dict]]) -> httpx.Response:
-    body = "".join(
-        f"event: {n}\ndata: {json.dumps(p)}\n\n" for n, p in events
-    ).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    body = "".join(f"event: {n}\ndata: {json.dumps(p)}\n\n" for n, p in events).encode("utf-8")
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 class RecordingHandler:
@@ -61,9 +55,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
     os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
         JIANDANLY_LOCAL_HOST_PORT=17371,
@@ -92,11 +84,7 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
                 except json.JSONDecodeError:
                     data = {"raw": "\n".join(buf)}
                 # Unwrap envelope when present.
-                if (
-                    isinstance(data, dict)
-                    and "event_type" in data
-                    and "payload" in data
-                ):
+                if isinstance(data, dict) and "event_type" in data and "payload" in data:
                     events.append((str(data["event_type"]), data["payload"]))
                 else:
                     events.append((name, data))
@@ -193,9 +181,7 @@ def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None
 
     events = _parse_sse(body)
     names = [e[0] for e in events]
-    assert "run.waiting" in names, (
-        f"user.ask should pause the run with run.waiting. got: {names}"
-    )
+    assert "run.waiting" in names, f"user.ask should pause the run with run.waiting. got: {names}"
 
     waiting = next(e[1] for e in events if e[0] == "run.waiting")
     interrupts = waiting.get("interrupts", [])
@@ -245,18 +231,14 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
         run_id = r.json()["id"]
 
         # Drain the first stream until waiting
-        with client.stream(
-            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body1 = resp.read().decode("utf-8")
         assert "run.waiting" in body1
 
         # Find the question_id emitted via `question.asked` (Block 4
         # bridge) and resume with the contract-shape `{answers: {...}}`.
         events1 = _parse_sse(body1)
-        question_event = next(
-            (e for e in events1 if e[0] == "question.asked"), None
-        )
+        question_event = next((e for e in events1 if e[0] == "question.asked"), None)
         assert question_event is not None, (
             f"expected question.asked SSE event after user.ask interrupt. got: "
             f"{[e[0] for e in events1]}"
@@ -270,9 +252,7 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
         assert resume.status_code == 200, resume.text
 
         # Drain the post-resume stream
-        with client.stream(
-            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body2 = resp.read().decode("utf-8")
 
     # Stream after resume should contain at least run.resumed signal

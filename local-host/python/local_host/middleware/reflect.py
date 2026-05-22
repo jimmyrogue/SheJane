@@ -109,13 +109,11 @@ class ReflectMiddleware(AgentMiddleware):
 
         prompt_msgs = [
             SystemMessage(content=CRITIC_SYSTEM_PROMPT),
-            HumanMessage(
-                content=f"USER QUESTION:\n{user_q}\n\nFINAL ANSWER:\n{final_a}"
-            ),
+            HumanMessage(content=f"USER QUESTION:\n{user_q}\n\nFINAL ANSWER:\n{final_a}"),
         ]
         try:
             response = await model.ainvoke(prompt_msgs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("critic call failed: %s", exc)
             return None
         text = getattr(response, "content", "") or ""

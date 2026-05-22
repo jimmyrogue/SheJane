@@ -50,7 +50,7 @@ def _resolve_safe(hostname: str) -> tuple[bool, str]:
         addresses = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
         return False, f"dns resolution failed: {exc}"
-    for family, _type, _proto, _canon, sockaddr in addresses:
+    for _family, _type, _proto, _canon, sockaddr in addresses:
         ip = sockaddr[0]
         if _is_private_ip(ip):
             return False, f"refusing private/loopback address {ip} for {hostname}"

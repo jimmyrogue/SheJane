@@ -25,7 +25,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from langchain_core.load.dump import dumps as lc_dumps
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -270,14 +271,10 @@ class RunCoordinator:
                 if not snapshot.next:
                     await self.store.update_run_status(run_id, "completed")
                     final_text = _extract_final_text(snapshot.values)
-                    await self._enqueue(
-                        queue, run_id, "run.completed", {"final_text": final_text}
-                    )
+                    await self._enqueue(queue, run_id, "run.completed", {"final_text": final_text})
                     break
 
-                interrupts = (
-                    snapshot.tasks[0].interrupts if snapshot.tasks else []
-                )
+                interrupts = snapshot.tasks[0].interrupts if snapshot.tasks else []
                 auto_resume = self._try_auto_approve(run_id, interrupts)
                 if auto_resume is not None:
                     # All paused tool calls are pre-approved with
@@ -321,7 +318,7 @@ class RunCoordinator:
             await self.store.update_run_status(run_id, "canceled")
             await self._enqueue(queue, run_id, "run.canceled", {})
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("run %s failed", run_id)
             await self.store.update_run_status(run_id, "failed")
             await self._enqueue(
@@ -408,11 +405,7 @@ class RunCoordinator:
         if isinstance(value, dict) and value.get("kind") == "question":
             question_text = str(value.get("question", ""))
             options_raw = value.get("options") or []
-            options = (
-                [str(opt) for opt in options_raw]
-                if isinstance(options_raw, list)
-                else []
-            )
+            options = [str(opt) for opt in options_raw] if isinstance(options_raw, list) else []
             questions = [
                 {
                     "question": question_text,
@@ -458,17 +451,13 @@ class RunCoordinator:
         for action in action_requests:
             tool_name = str(action.get("name", ""))
             args_raw = action.get("args") or {}
-            arguments = (
-                args_raw
-                if isinstance(args_raw, dict)
-                else {"value": args_raw}
-            )
+            arguments = args_raw if isinstance(args_raw, dict) else {"value": args_raw}
             description = action.get("description") or ""
             record = await self.store.create_permission(
                 run_id=run_id,
                 tool_call_id="",  # HITL request doesn't carry the original
-                                   # tool_call_id; the middleware re-attaches
-                                   # it on resume from `last_ai_msg.tool_calls`.
+                # tool_call_id; the middleware re-attaches
+                # it on resume from `last_ai_msg.tool_calls`.
                 tool_name=tool_name,
                 arguments=arguments,
             )
@@ -512,7 +501,7 @@ class RunCoordinator:
                 "payload": payload,
                 "created_at": event["created_at"],
             }
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("event persist failed (%s): %s", event_type, exc)
             # Synthesize a transient envelope so the stream still
             # progresses even when persistence is broken.

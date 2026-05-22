@@ -72,10 +72,8 @@ async def build_mcp_tools(data_dir: Path | None) -> list[BaseTool]:
     client = MultiServerMCPClient(config, tool_name_prefix=True)
     try:
         tools = await client.get_tools()
-    except Exception as exc:  # noqa: BLE001 — connect surface is broad
+    except Exception as exc:
         log.warning("MCP get_tools() failed (%s): %s", type(exc).__name__, exc)
         return []
-    log.info(
-        "loaded %d MCP tools across %d servers", len(tools), len(config)
-    )
+    log.info("loaded %d MCP tools across %d servers", len(tools), len(config))
     return list(tools)

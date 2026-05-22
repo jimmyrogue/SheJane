@@ -118,7 +118,7 @@ def _serialize_args_schema(tool: BaseTool) -> dict[str, Any] | None:
         return None
     try:
         return schema_attr.model_json_schema()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {"type": "object", "additionalProperties": True}
 
 

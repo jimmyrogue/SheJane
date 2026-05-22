@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-import os
 from typing import Any
 from uuid import uuid4
 
 import pytest
 import structlog
-
 from structlog.testing import capture_logs
 
 from local_host.observability import (

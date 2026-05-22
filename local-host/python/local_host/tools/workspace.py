@@ -13,7 +13,6 @@ import os
 from pathlib import Path
 
 from langchain_core.tools import InjectedToolArg, tool
-from typing_extensions import Annotated
 
 from ..store.sqlite import LocalStore
 

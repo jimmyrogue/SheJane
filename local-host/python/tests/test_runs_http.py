@@ -22,9 +22,7 @@ from local_host.server import create_app
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
     body = "".join(f"event: {n}\ndata: {p}\n\n" for n, p in events).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 def _patched_async_client(handler):
@@ -54,9 +52,7 @@ def client(monkeypatch) -> TestClient:
             ]
         )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
         JIANDANLY_LOCAL_HOST_PORT=17371,
@@ -153,9 +149,7 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
     # Each event's `data:` body is now the AgentRunEvent envelope:
     # {event_type, payload, id, run_id, seq, created_at} — see Block 0 fix.
     event_names = [
-        e[1].get("event_type")
-        for e in events
-        if isinstance(e[1], dict) and "event_type" in e[1]
+        e[1].get("event_type") for e in events if isinstance(e[1], dict) and "event_type" in e[1]
     ]
     assert "run.started" in event_names
     assert any(name in {"run.completed", "run.failed"} for name in event_names)

@@ -11,7 +11,6 @@ from langgraph.store.memory import InMemoryStore
 
 from local_host.config import reset_settings_for_tests
 
-
 # --- open_store / open_checkpointer integration ---
 
 
@@ -188,9 +187,7 @@ def test_memory_search_finds_writeback_entries() -> None:
             {"goal": "tally Q4 expenses", "answer": "USD 12,340"},
         )
         # Now the agent calls memory.search at runtime.
-        return await memory_search.ainvoke(
-            {"query": "react", "limit": 5, "store": store}
-        )
+        return await memory_search.ainvoke({"query": "react", "limit": 5, "store": store})
 
     result = _a.run(run())
     assert result["ok"] == "true"

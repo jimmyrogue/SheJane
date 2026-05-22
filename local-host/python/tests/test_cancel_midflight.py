@@ -105,9 +105,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
 
     def cancel_after_delay() -> None:
         time.sleep(0.5)  # run has started, LLM call is mid-stream
-        resp = slow_client.post(
-            f"/local/v1/runs/{run_id}/cancel", headers=headers
-        )
+        resp = slow_client.post(f"/local/v1/runs/{run_id}/cancel", headers=headers)
         cancel_response["status_code"] = resp.status_code
         cancel_response["body"] = resp.json()
 
@@ -115,9 +113,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
     t.start()
 
     # Block on the SSE stream — should terminate when cancel propagates.
-    with slow_client.stream(
-        "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
-    ) as resp:
+    with slow_client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
         body = resp.read().decode("utf-8")
 
     t.join(timeout=5)

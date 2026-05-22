@@ -94,7 +94,7 @@ async def _check_shell_exit(check: dict[str, Any]) -> tuple[bool, str]:
             stderr=asyncio.subprocess.DEVNULL,
         )
         rc = await asyncio.wait_for(proc.wait(), timeout=10.0)
-    except (FileNotFoundError, ValueError, asyncio.TimeoutError) as exc:
+    except (TimeoutError, FileNotFoundError, ValueError) as exc:
         return False, f"{type(exc).__name__}: {exc}"
     ok = rc == expected
     return ok, f"`{command}` exited {rc} (expected {expected})"
@@ -130,9 +130,7 @@ async def task_verify(checks: list[dict[str, Any]]) -> dict[str, Any]:
     for check in checks:
         kind = check.get("kind")
         if kind not in _DISPATCH:
-            results.append(
-                {"kind": kind, "ok": False, "detail": f"unsupported kind: {kind}"}
-            )
+            results.append({"kind": kind, "ok": False, "detail": f"unsupported kind: {kind}"})
             fail_count += 1
             continue
         ok, detail = await _DISPATCH[kind](check)

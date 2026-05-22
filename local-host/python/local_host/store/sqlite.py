@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS local_artifacts (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _new_id(prefix: str) -> str:
@@ -148,9 +148,9 @@ class LocalStore:
             await self._conn.commit()
         except aiosqlite.IntegrityError:
             # path already registered — return the existing record
-            row = await (await self._conn.execute(
-                "SELECT * FROM local_workspaces WHERE path = ?", (path,)
-            )).fetchone()
+            row = await (
+                await self._conn.execute("SELECT * FROM local_workspaces WHERE path = ?", (path,))
+            ).fetchone()
             assert row is not None
             return dict(row)
         return ws
@@ -162,9 +162,7 @@ class LocalStore:
         return [dict(row) for row in await cursor.fetchall()]
 
     async def workspace_by_path(self, path: str) -> dict[str, Any] | None:
-        cursor = await self._conn.execute(
-            "SELECT * FROM local_workspaces WHERE path = ?", (path,)
-        )
+        cursor = await self._conn.execute("SELECT * FROM local_workspaces WHERE path = ?", (path,))
         row = await cursor.fetchone()
         return dict(row) if row else None
 
@@ -217,9 +215,7 @@ class LocalStore:
         return run
 
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
-        cursor = await self._conn.execute(
-            "SELECT * FROM local_runs WHERE id = ?", (run_id,)
-        )
+        cursor = await self._conn.execute("SELECT * FROM local_runs WHERE id = ?", (run_id,))
         row = await cursor.fetchone()
         return dict(row) if row else None
 
@@ -251,8 +247,7 @@ class LocalStore:
         self, run_id: str, status: str, *, completed_at: str | None = None
     ) -> None:
         await self._conn.execute(
-            "UPDATE local_runs SET status = ?, updated_at = ?, completed_at = ? "
-            "WHERE id = ?",
+            "UPDATE local_runs SET status = ?, updated_at = ?, completed_at = ? WHERE id = ?",
             (status, _now(), completed_at, run_id),
         )
         await self._conn.commit()
@@ -349,8 +344,7 @@ class LocalStore:
     ) -> dict[str, Any] | None:
         if scope:
             await self._conn.execute(
-                "UPDATE local_permissions SET status = ?, scope = ?, resolved_at = ? "
-                "WHERE id = ?",
+                "UPDATE local_permissions SET status = ?, scope = ?, resolved_at = ? WHERE id = ?",
                 (status, scope, _now(), permission_id),
             )
         else:
@@ -421,8 +415,7 @@ class LocalStore:
         answers: dict[str, Any],
     ) -> dict[str, Any] | None:
         await self._conn.execute(
-            "UPDATE local_questions SET status = ?, answers_json = ?, answered_at = ? "
-            "WHERE id = ?",
+            "UPDATE local_questions SET status = ?, answers_json = ?, answered_at = ? WHERE id = ?",
             (
                 "answered",
                 json.dumps(answers, ensure_ascii=False, default=str),

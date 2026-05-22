@@ -65,4 +65,18 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "ASYNC", "RUF"]
-ignore = ["E501"]  # line length handled separately
+ignore = [
+    "E501",     # line length — handled separately
+    "ASYNC230", # async open via aiofiles — out of scope, sync open is fine
+    "ASYNC240", # sync os.path / pathlib in async — same rationale; we use
+                # asyncio not anyio/trio so the rule's prescribed fix
+                # (`anyio.path`) isn't applicable.
+    "B007",     # unused loop variable — too noisy for ad-hoc DNS
+                # resolution loops where the tuple shape comes from the
+                # stdlib API we can't change.
+    "RUF001",   # ambiguous-unicode chars in strings — we ship CJK
+                # prompts, regex patterns matching fullwidth punctuation,
+                # and en-dashes in prose. All intentional.
+    "RUF002",   # same family but for docstrings
+    "RUF003",   # same family but for comments
+]

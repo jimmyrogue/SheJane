@@ -41,11 +41,11 @@ DEFAULT_WATCH_TOOLS = frozenset(
     {
         "web.fetch",
         "tavily_search",
-        "task",         # subagent dispatch
-        "browser.task", # browser-use agent
-        "execute",      # deepagents shell-equivalent
-        "read_file",    # binary / huge files
-        "edit_file",    # may silently noop on mismatched anchor
+        "task",  # subagent dispatch
+        "browser.task",  # browser-use agent
+        "execute",  # deepagents shell-equivalent
+        "read_file",  # binary / huge files
+        "edit_file",  # may silently noop on mismatched anchor
     }
 )
 
@@ -173,7 +173,7 @@ class ToolResultCriticMiddleware(AgentMiddleware):
             response = await self.critic_model.ainvoke(
                 [SystemMessage(content=CRITIC_SYSTEM_PROMPT), prompt]
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("tool.critic call failed: %s", exc)
             return {"usable": True, "reason": "critic call failed (fail-open)"}
 

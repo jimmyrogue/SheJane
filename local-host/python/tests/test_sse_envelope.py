@@ -41,9 +41,7 @@ from local_host.server import create_app
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
     body = "".join(f"event: {n}\ndata: {p}\n\n" for n, p in events).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 def _patched_async_client(handler):
@@ -74,9 +72,7 @@ def client(monkeypatch) -> TestClient:
             ]
         )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
         JIANDANLY_LOCAL_HOST_PORT=17371,
@@ -101,9 +97,7 @@ def _parse_sse(raw: str) -> tuple[list[dict], bool]:
     has_done = False
     for chunk in raw.split("\n\n"):
         data_lines = [
-            line[len("data:") :].strip()
-            for line in chunk.split("\n")
-            if line.startswith("data:")
+            line[len("data:") :].strip() for line in chunk.split("\n") if line.startswith("data:")
         ]
         if not data_lines:
             continue
@@ -129,9 +123,7 @@ def test_stream_emits_done_sentinel(client: TestClient) -> None:
     run_id = body.get("id") or body.get("run", {}).get("id")
     assert run_id, body
 
-    raw = client.get(
-        f"/local/v1/runs/{run_id}/stream", headers=HEADERS
-    ).text
+    raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     _events, has_done = _parse_sse(raw)
     assert has_done, "missing data: [DONE] sentinel — client stream loop will hang"
 
@@ -145,18 +137,14 @@ def test_each_event_has_envelope_shape(client: TestClient) -> None:
         json={"goal": "say hi"},
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
-    raw = client.get(
-        f"/local/v1/runs/{run_id}/stream", headers=HEADERS
-    ).text
+    raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     events, _ = _parse_sse(raw)
     assert events, "stream emitted zero events"
 
     required = {"event_type", "payload", "id", "run_id", "seq", "created_at"}
     for event in events:
         missing = required - set(event.keys())
-        assert not missing, (
-            f"event missing envelope keys {missing}: {event}"
-        )
+        assert not missing, f"event missing envelope keys {missing}: {event}"
         assert isinstance(event["event_type"], str) and event["event_type"]
         # payload must be a dict (not None, not bare scalar) — the client
         # reads `event.payload?.content` etc.
@@ -172,9 +160,7 @@ def test_run_started_payload_carries_goal(client: TestClient) -> None:
         json={"goal": "spot-check goal text"},
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
-    raw = client.get(
-        f"/local/v1/runs/{run_id}/stream", headers=HEADERS
-    ).text
+    raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     events, _ = _parse_sse(raw)
     started = [e for e in events if e["event_type"] == "run.started"]
     assert started, "no run.started event"
@@ -190,9 +176,7 @@ def test_seq_monotonic_per_run(client: TestClient) -> None:
         json={"goal": "ordered"},
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
-    raw = client.get(
-        f"/local/v1/runs/{run_id}/stream", headers=HEADERS
-    ).text
+    raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     events, _ = _parse_sse(raw)
     seqs = [e["seq"] for e in events if e.get("seq") is not None]
     assert seqs == sorted(seqs)
@@ -212,9 +196,7 @@ def test_replay_after_run_completion_has_same_envelope(client: TestClient) -> No
     # First stream — live.
     client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS)
     # Second stream — replay from store.
-    raw = client.get(
-        f"/local/v1/runs/{run_id}/stream", headers=HEADERS
-    ).text
+    raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     events, has_done = _parse_sse(raw)
     assert has_done
     assert events

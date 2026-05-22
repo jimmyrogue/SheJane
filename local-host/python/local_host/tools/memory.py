@@ -25,7 +25,6 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore
 
-
 NAMESPACE = ("notes", "global")
 
 
@@ -50,7 +49,7 @@ async def memory_search(
 
     try:
         items = await store.asearch(NAMESPACE, query=query, limit=limit)
-    except Exception as exc:  # noqa: BLE001 — store implementations vary widely
+    except Exception as exc:
         return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
 
     results: list[dict[str, Any]] = []

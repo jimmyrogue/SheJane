@@ -18,7 +18,6 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
@@ -115,10 +114,7 @@ def test_cors_env_override(monkeypatch) -> None:
             "/local/v1/health",
             headers={"Origin": "https://my-proxy.example.com"},
         )
-        assert (
-            resp.headers.get("access-control-allow-origin")
-            == "https://my-proxy.example.com"
-        )
+        assert resp.headers.get("access-control-allow-origin") == "https://my-proxy.example.com"
 
         # Loopback is no longer allowed once the operator pins the list.
         resp = client.get(

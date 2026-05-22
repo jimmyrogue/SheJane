@@ -1,4 +1,4 @@
-.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor
+.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor setup-hooks lint
 
 test: api-test client-test admin-test local-host-test
 
@@ -97,3 +97,32 @@ smoke-external:
 # actually checks.
 doctor:
 	@./scripts/doctor.sh
+
+# Install lefthook + wire pre-commit hooks. Run once per clone.
+# Bypass a single commit with LEFTHOOK=0 git commit (e.g. WIP on a
+# personal branch). lefthook.yml has the actual check list.
+setup-hooks:
+	@if ! command -v lefthook >/dev/null 2>&1; then \
+		echo "lefthook not found. Installing via brew (macOS)…"; \
+		if command -v brew >/dev/null 2>&1; then \
+			brew install lefthook; \
+		else \
+			echo "❌ brew not available. Install lefthook manually:" >&2; \
+			echo "    https://github.com/evilmartians/lefthook#install" >&2; \
+			exit 1; \
+		fi; \
+	fi
+	@lefthook install
+	@echo "✅ Pre-commit hooks wired. Bypass once with: LEFTHOOK=0 git commit"
+
+# Run the same lint checks CI runs — useful before pushing a PR.
+# Goes beyond `make setup-hooks` (which only runs on staged files);
+# this lints the whole repo.
+lint:
+	@echo "→ ruff (Python)"
+	@cd local-host/python && uv run ruff check . && uv run ruff format --check .
+	@echo "→ gofmt + go vet (Go)"
+	@cd api && test -z "$$(gofmt -l .)" && go vet ./...
+	@echo "→ no-platform-keys guard"
+	@./scripts/check-no-platform-keys-in-daemon.sh
+	@echo "✅ all lints pass"

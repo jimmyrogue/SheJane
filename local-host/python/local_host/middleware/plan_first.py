@@ -79,7 +79,7 @@ class PlanFirstMiddleware(AgentMiddleware):
         else:
             self.mode = "off"
 
-    def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
+    def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         if self.mode == "off":
             return None
         messages = list(state.get("messages") or [])

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -14,12 +13,8 @@ from local_host.config import reset_settings_for_tests
 
 
 def _sse(events: list[tuple[str, dict]]) -> httpx.Response:
-    body = "".join(
-        f"event: {n}\ndata: {json.dumps(p)}\n\n" for n, p in events
-    ).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    body = "".join(f"event: {n}\ndata: {json.dumps(p)}\n\n" for n, p in events).encode("utf-8")
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 def _patched_async_client(handler):
@@ -128,9 +123,7 @@ def test_e2e_happy_path_with_selector_enabled(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
         JIANDANLY_LOCAL_HOST_PORT=17371,

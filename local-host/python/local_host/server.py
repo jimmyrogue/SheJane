@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -264,9 +264,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not goal:
             raise HTTPException(status_code=400, detail="goal required")
         history_raw = body.get("history") or []
-        history: list[dict[str, str]] = (
-            history_raw if isinstance(history_raw, list) else []
-        )
+        history: list[dict[str, str]] = history_raw if isinstance(history_raw, list) else []
         settings_raw = body.get("settings")
         settings = settings_raw if isinstance(settings_raw, dict) else None
         coordinator: RunCoordinator = app.state.coordinator
@@ -341,9 +339,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # crashing on missing routes. Implementations land in Phase 6'+.
 
     @app.post("/local/v1/permissions/{permission_id}")
-    async def resolve_permission(
-        permission_id: str, body: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def resolve_permission(permission_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Approve / deny a pending tool-permission request.
 
         Client body (per `client.ts:resolveLocalPermission`):
@@ -395,13 +391,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # same tool. Without this the agent runs into HITL again every
         # turn and the user has to click approve repeatedly.
         if decision_text == "approve" and scope == "run":
-            coordinator.grant_tool_scope(
-                record["run_id"], record["tool_name"]
-            )
+            coordinator.grant_tool_scope(record["run_id"], record["tool_name"])
         resume_payload = {"decisions": [hitl_decision]}
-        ok = await coordinator.resume_run(
-            run_id=record["run_id"], decision=resume_payload
-        )
+        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         # Emit `permission.resolved` onto the run's SSE queue so the
         # client's `hasPendingPermission` check (App.tsx:1339) clears
         # the in-flight approval card. Without this the card stays
@@ -427,9 +419,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/local/v1/questions/{question_id}")
-    async def answer_question(
-        question_id: str, body: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def answer_question(question_id: str, body: dict[str, Any]) -> dict[str, Any]:
         """Submit answers to a paused user.ask interrupt.
 
         Body shape (per `client.ts:answerLocalQuestion`):
@@ -438,9 +428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         answers = body.get("answers")
         if not isinstance(answers, dict):
-            raise HTTPException(
-                status_code=400, detail="answers (object) required"
-            )
+            raise HTTPException(status_code=400, detail="answers (object) required")
         store: LocalStore = app.state.store
         record = await store.get_question(question_id)
         if record is None:
@@ -450,9 +438,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # user.ask reads `answers` directly (see tools/user.py) — pass
         # both shapes for maximum compatibility.
         resume_payload = {"answers": answers, "question_id": question_id}
-        ok = await coordinator.resume_run(
-            run_id=record["run_id"], decision=resume_payload
-        )
+        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         # Mirror the permission flow: emit `question.answered` onto the
         # run's stream so the client's `hasPendingQuestion` check
         # (App.tsx:1352) clears the answer prompt UI.
@@ -521,7 +507,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         artifacts = await store.list_artifacts_for_run(run_id)
         return {
             "schema_version": 1,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "local_host_version": __version__,
             "run": run,
             "events": events,
@@ -552,7 +538,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         incoming_base = str(body.get("cloud_base_url") or "").strip()
         if incoming_base:
             settings.cloud_base_url = incoming_base  # type: ignore[misc]
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
         app.state.cloud_session_updated_at = updated_at
         return {
             "connected": True,

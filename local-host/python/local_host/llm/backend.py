@@ -97,7 +97,7 @@ class BackendChatModel(BaseChatModel):
                 if t.args_schema:
                     try:
                         schema = t.args_schema.model_json_schema()
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         # Some tools — notably deepagents' `task` —
                         # have Callable in their args schema which
                         # pydantic can't serialize to JSON Schema.
@@ -140,9 +140,7 @@ class BackendChatModel(BaseChatModel):
         payload = self._build_request(messages, **kwargs)
         async for chunk in self._stream_from_backend(payload):
             if run_manager is not None and chunk.message.content:
-                await run_manager.on_llm_new_token(
-                    str(chunk.message.content), chunk=chunk
-                )
+                await run_manager.on_llm_new_token(str(chunk.message.content), chunk=chunk)
             yield chunk
 
     async def _agenerate(
@@ -165,7 +163,11 @@ class BackendChatModel(BaseChatModel):
                 accumulated_content.append(content)
                 if run_manager is not None:
                     await run_manager.on_llm_new_token(content, chunk=chunk)
-            reasoning = chunk.message.additional_kwargs.get("reasoning_content") if isinstance(chunk.message, AIMessageChunk) else None
+            reasoning = (
+                chunk.message.additional_kwargs.get("reasoning_content")
+                if isinstance(chunk.message, AIMessageChunk)
+                else None
+            )
             if reasoning:
                 accumulated_reasoning.append(reasoning)
             # tool_call_chunks accumulate full args at done
@@ -180,7 +182,11 @@ class BackendChatModel(BaseChatModel):
         final = AIMessage(
             content="".join(accumulated_content),
             additional_kwargs={
-                **({"reasoning_content": "".join(accumulated_reasoning)} if accumulated_reasoning else {}),
+                **(
+                    {"reasoning_content": "".join(accumulated_reasoning)}
+                    if accumulated_reasoning
+                    else {}
+                ),
                 **({"usage": usage} if usage else {}),
             },
             tool_calls=accumulated_tool_calls,
@@ -217,8 +223,7 @@ class BackendChatModel(BaseChatModel):
         async def _collect() -> list[ChatGenerationChunk]:
             return [c async for c in self._astream(messages, stop, None, **kwargs)]
 
-        for chunk in asyncio.run(_collect()):
-            yield chunk
+        yield from asyncio.run(_collect())
 
     # --- internals ---
 
@@ -247,9 +252,7 @@ class BackendChatModel(BaseChatModel):
             headers["Authorization"] = f"Bearer {self.cloud_token}"
 
         async with httpx.AsyncClient(timeout=self.request_timeout_s) as client:
-            async with client.stream(
-                "POST", url, json=payload, headers=headers
-            ) as resp:
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
                     raise httpx.HTTPStatusError(

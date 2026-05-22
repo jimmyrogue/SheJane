@@ -28,12 +28,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
-
 
 # --- shared mock backend helpers ---
 
@@ -42,9 +40,7 @@ def _sse(events: list[tuple[str, dict[str, Any]]]) -> httpx.Response:
     body = "".join(
         f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in events
     ).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 class RecordingHandler:
@@ -86,9 +82,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
     os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
         JIANDANLY_LOCAL_HOST_PORT=17371,
@@ -116,11 +110,7 @@ def _parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
             data = json.loads("\n".join(buf))
         except json.JSONDecodeError:
             data = {"raw": "\n".join(buf)}
-        if (
-            isinstance(data, dict)
-            and "event_type" in data
-            and "payload" in data
-        ):
+        if isinstance(data, dict) and "event_type" in data and "payload" in data:
             events.append((str(data["event_type"]), data["payload"]))
         else:
             events.append((name, data))
@@ -199,8 +189,7 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
     # can post back to /local/v1/permissions/{id}. Without this the UI
     # has no way to render an approval card.
     assert "permission.required" in event_names, (
-        f"expected permission.required SSE event alongside run.waiting. got: "
-        f"{sorted(event_names)}"
+        f"expected permission.required SSE event alongside run.waiting. got: {sorted(event_names)}"
     )
     perm_event = next(e for e in events if e[0] == "permission.required")
     perm_payload = perm_event[1]
@@ -239,25 +228,18 @@ def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> Non
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        run = client.post(
-            "/local/v1/runs", headers=headers, json={"goal": "write"}
-        ).json()
-        with client.stream(
-            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
-        ) as resp:
+        run = client.post("/local/v1/runs", headers=headers, json={"goal": "write"}).json()
+        with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
         perm_id = next(
-            e for e in _parse_sse_persisted(client, run["id"])
-            if e[0] == "permission.required"
+            e for e in _parse_sse_persisted(client, run["id"]) if e[0] == "permission.required"
         )[1]["request_id"]
         client.post(
             f"/local/v1/permissions/{perm_id}",
             headers=headers,
             json={"decision": "approve", "scope": "once"},
         )
-        with client.stream(
-            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             body = resp.read().decode("utf-8")
     events = _parse_sse(body)
     resolved = [e for e in events if e[0] == "permission.resolved"]
@@ -266,9 +248,7 @@ def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> Non
     assert resolved[0][1]["decision"] == "approve"
 
 
-def _parse_sse_persisted(
-    client: TestClient, run_id: str
-) -> list[tuple[str, dict[str, Any]]]:
+def _parse_sse_persisted(client: TestClient, run_id: str) -> list[tuple[str, dict[str, Any]]]:
     """Fetch all persisted events for a run via /diagnostics — used by
     tests that need the pre-pause event list without re-streaming."""
     diag = client.get(
@@ -323,38 +303,29 @@ def test_capability_1d_scope_run_skips_subsequent_approvals(monkeypatch) -> None
         run = client.post(
             "/local/v1/runs", headers=headers, json={"goal": "write two files"}
         ).json()
-        with client.stream(
-            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
         # Approve once with scope="run" — caches the tool grant.
         perm_id = next(
-            e for e in _parse_sse_persisted(client, run["id"])
-            if e[0] == "permission.required"
+            e for e in _parse_sse_persisted(client, run["id"]) if e[0] == "permission.required"
         )[1]["request_id"]
         client.post(
             f"/local/v1/permissions/{perm_id}",
             headers=headers,
             json={"decision": "approve", "scope": "run"},
         )
-        with client.stream(
-            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             body = resp.read().decode("utf-8")
 
     events = _parse_sse(body)
     names = [e[0] for e in events]
     # Run must NOT have paused again — no second permission.required.
     second_required = [e for e in events if e[0] == "permission.required"]
-    assert not second_required, (
-        f"scope=run should suppress subsequent HITL prompts; got: {names}"
-    )
+    assert not second_required, f"scope=run should suppress subsequent HITL prompts; got: {names}"
     # The auto-approve must surface as `permission.auto_approved` so the
     # timeline reflects the decision (chatStore.ts:184).
     auto = [e for e in events if e[0] == "permission.auto_approved"]
-    assert auto, (
-        f"expected permission.auto_approved on auto-resumed tool. got: {names}"
-    )
+    assert auto, f"expected permission.auto_approved on auto-resumed tool. got: {names}"
     assert auto[0][1]["tool"] == "write_file"
     assert "run.completed" in names
 
@@ -392,13 +363,9 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        r = client.post(
-            "/local/v1/runs", headers=headers, json={"goal": "write a file"}
-        )
+        r = client.post("/local/v1/runs", headers=headers, json={"goal": "write a file"})
         run_id = r.json()["id"]
-        with client.stream(
-            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body1 = resp.read().decode("utf-8")
         events1 = _parse_sse(body1)
         perm = next(e for e in events1 if e[0] == "permission.required")
@@ -416,19 +383,13 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
 
         # Drain post-resume stream — should reach run.completed (not
         # run.failed with KeyError: 'decisions').
-        with client.stream(
-            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
-        ) as resp:
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body2 = resp.read().decode("utf-8")
 
     events2 = _parse_sse(body2)
     names2 = {e[0] for e in events2}
-    assert "run.completed" in names2, (
-        f"expected run.completed after approve. got: {sorted(names2)}"
-    )
-    assert "run.failed" not in names2, (
-        "approve resume should not crash the graph"
-    )
+    assert "run.completed" in names2, f"expected run.completed after approve. got: {sorted(names2)}"
+    assert "run.failed" not in names2, "approve resume should not crash the graph"
 
 
 # ---- capability 2: SubAgent dispatch ----
@@ -555,14 +516,8 @@ def test_capability_5_pii_redacts_email_before_llm_sees_it(monkeypatch) -> None:
     assert handler.requests, "no LLM request was made"
     outgoing = handler.requests[0]
     messages = outgoing.get("messages", [])
-    user_texts = " ".join(
-        m.get("content", "")
-        for m in messages
-        if m.get("role") == "user"
-    )
-    assert "alice@example.com" not in user_texts, (
-        f"PII leaked! outgoing user text: {user_texts!r}"
-    )
+    user_texts = " ".join(m.get("content", "") for m in messages if m.get("role") == "user")
+    assert "alice@example.com" not in user_texts, f"PII leaked! outgoing user text: {user_texts!r}"
     # The middleware uses [REDACTED_EMAIL] markers
     assert "[REDACTED_EMAIL]" in user_texts or "[redacted" in user_texts.lower(), (
         f"expected redaction marker, got: {user_texts!r}"
@@ -601,11 +556,7 @@ def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path)
     assert handler.requests, "no LLM request was made"
     outgoing = handler.requests[0]
     messages = outgoing.get("messages", [])
-    system_text = " ".join(
-        m.get("content", "")
-        for m in messages
-        if m.get("role") == "system"
-    )
+    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
     assert secret_marker in system_text, (
         f"AGENTS.md content not found in outgoing system prompt. "
         f"System text was: {system_text[:500]!r}"
@@ -615,9 +566,7 @@ def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path)
 # ---- capability 7: TodoList middleware exposes write_todos ----
 
 
-def test_capability_7_todolist_middleware_exposes_write_todos_tool(
-    monkeypatch, tmp_path
-) -> None:
+def test_capability_7_todolist_middleware_exposes_write_todos_tool(monkeypatch, tmp_path) -> None:
     """write_todos should appear in the compiled agent's tool registry."""
     from local_host.agent.builder import build_agent, open_checkpointer
     from local_host.store.sqlite import LocalStore
@@ -764,9 +713,7 @@ def test_capability_10_plan_first_injects_when_enabled(monkeypatch) -> None:
     assert handler.requests, "no LLM request was made"
     outgoing = handler.requests[0]
     messages = outgoing.get("messages", [])
-    system_text = " ".join(
-        m.get("content", "") for m in messages if m.get("role") == "system"
-    )
+    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
     assert "Plan-First protocol" in system_text or "write_todos" in system_text
 
 

@@ -116,7 +116,7 @@ async def call_tool_gateway(
         return {
             "ok": False,
             "content": str(envelope.get("message") if isinstance(envelope, dict) else envelope)
-                       or f"{tool_name}: gateway HTTP {resp.status_code}",
+            or f"{tool_name}: gateway HTTP {resp.status_code}",
             "errorCode": "gateway_envelope_missing",
             "recoverable": False,
         }

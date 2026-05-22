@@ -46,7 +46,7 @@ class InputGuardMiddleware(AgentMiddleware):
         super().__init__()
         self.mode = (mode or os.environ.get("JIANDANLY_LOCAL_INPUT_GUARD", "observe")).lower()
 
-    def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
+    def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         if self.mode == "off":
             return None
         messages = state.get("messages") or []

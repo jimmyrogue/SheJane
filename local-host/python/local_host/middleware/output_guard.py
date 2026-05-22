@@ -39,7 +39,7 @@ class OutputGuardMiddleware(AgentMiddleware):
         super().__init__()
         self.max_nudges = max_nudges
 
-    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages") or []
         if not messages:
             return None

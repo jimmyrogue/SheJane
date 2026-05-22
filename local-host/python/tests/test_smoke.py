@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,7 +108,7 @@ def test_wrong_token_rejected(client: TestClient) -> None:
 
 def test_trivial_tool_callable_directly() -> None:
     """Sanity: tools are real BaseTool instances with usable schema."""
-    from local_host.tools.trivial import time_now, clipboard_read
+    from local_host.tools.trivial import clipboard_read, time_now
 
     out = time_now.invoke({"timezone": "UTC"})
     assert "iso" in out
@@ -130,6 +131,7 @@ def test_tools_listing_includes_workspace_open(client: TestClient) -> None:
 def test_workspace_open_tool_authorizes_directory(tmp_path: Path) -> None:
     """workspace.open should write a record to the store and return its id."""
     import asyncio
+
     from local_host.store.sqlite import LocalStore
     from local_host.tools.workspace import make_workspace_open_tool
 
@@ -149,6 +151,7 @@ def test_workspace_open_tool_authorizes_directory(tmp_path: Path) -> None:
 
 def test_workspace_open_rejects_missing_directory(tmp_path: Path) -> None:
     import asyncio
+
     from local_host.store.sqlite import LocalStore
     from local_host.tools.workspace import make_workspace_open_tool
 
@@ -226,9 +229,9 @@ def test_task_verify_file_exists(tmp_path: Path) -> None:
 
     target = tmp_path / "a.txt"
     target.write_text("hello", encoding="utf-8")
-    out = asyncio.run(task_verify.ainvoke(
-        {"checks": [{"kind": "file_exists", "path": str(target)}]}
-    ))
+    out = asyncio.run(
+        task_verify.ainvoke({"checks": [{"kind": "file_exists", "path": str(target)}]})
+    )
     assert out["ok"] == "true"
     assert out["results"][0]["ok"] is True
 
@@ -238,13 +241,17 @@ def test_task_verify_mixed_pass_fail(tmp_path: Path) -> None:
 
     from local_host.tools.verify import task_verify
 
-    out = asyncio.run(task_verify.ainvoke({
-        "checks": [
-            {"kind": "file_exists", "path": str(tmp_path / "missing")},
-            {"kind": "shell_exit_code", "command": "true", "expected": 0},
-            {"kind": "unknown_kind"},
-        ]
-    }))
+    out = asyncio.run(
+        task_verify.ainvoke(
+            {
+                "checks": [
+                    {"kind": "file_exists", "path": str(tmp_path / "missing")},
+                    {"kind": "shell_exit_code", "command": "true", "expected": 0},
+                    {"kind": "unknown_kind"},
+                ]
+            }
+        )
+    )
     assert out["ok"] == "false"
     assert out["pass_count"] == "1"
     assert out["fail_count"] == "2"
@@ -281,12 +288,8 @@ def test_skill_catalog_lists_md_files(monkeypatch: Any, tmp_path: Path) -> None:
     assert alpha["description"] == "A short demo"
 
 
-def test_skill_catalog_returns_empty_when_dir_missing(
-    monkeypatch: Any, tmp_path: Path
-) -> None:
-    monkeypatch.setenv(
-        "JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path / "nope")
-    )
+def test_skill_catalog_returns_empty_when_dir_missing(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path / "nope"))
     from local_host.server import _list_skill_files
 
     assert _list_skill_files() == []
@@ -350,7 +353,6 @@ def test_mcp_malformed_json_ignored(monkeypatch: Any, tmp_path: Path) -> None:
 
 def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
     """When the env var is empty but mcp-servers.json exists, it's read."""
-    import asyncio
 
     from local_host.tools.mcp import _load_mcp_config
 

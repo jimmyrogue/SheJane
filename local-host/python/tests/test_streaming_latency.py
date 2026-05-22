@@ -10,7 +10,6 @@ many small `llm.delta` events, and verify:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import tempfile
@@ -27,9 +26,7 @@ from local_host.server import create_app
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
     body = "".join(f"event: {n}\ndata: {p}\n\n" for n, p in events).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 def _patched_async_client(handler):
@@ -44,10 +41,7 @@ def _patched_async_client(handler):
 
 
 def _build_token_stream(tokens: list[str]) -> list[tuple[str, str]]:
-    events = [
-        ("llm.delta", json.dumps({"content_delta": tok}))
-        for tok in tokens
-    ]
+    events = [("llm.delta", json.dumps({"content_delta": tok})) for tok in tokens]
     events.append(("llm.done", '{"request_id": "r", "finish_reason": "stop"}'))
     return events
 
@@ -64,9 +58,7 @@ def client_with_tokens(monkeypatch) -> tuple[TestClient, list[str]]:
     def handler(request: httpx.Request) -> httpx.Response:
         return _stream_response(_build_token_stream(tokens))
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
@@ -152,11 +144,7 @@ def test_run_completed_terminal_event_present(client_with_tokens) -> None:
         body = resp.read().decode("utf-8")
 
     events = _parse_sse(body)
-    names = [
-        d.get("event_type")
-        for _, d in events
-        if isinstance(d, dict) and "event_type" in d
-    ]
+    names = [d.get("event_type") for _, d in events if isinstance(d, dict) and "event_type" in d]
     assert "run.completed" in names
 
 

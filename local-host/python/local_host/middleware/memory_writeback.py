@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -45,11 +45,11 @@ class MemoryWritebackMiddleware(AgentMiddleware):
         note = {
             "goal": _shorten(getattr(first_user, "content", ""), 280),
             "answer": _shorten(getattr(last_ai, "content", ""), 540),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         try:
             await store.aput(NAMESPACE, uuid.uuid4().hex, note)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("memory writeback failed: %s", exc)
             return None
         return None
@@ -62,9 +62,7 @@ class MemoryWritebackMiddleware(AgentMiddleware):
             return None
         # Mirror the async version's shape.
         messages = state.get("messages") or []
-        first_user = next(
-            (m for m in messages if getattr(m, "type", None) == "human"), None
-        )
+        first_user = next((m for m in messages if getattr(m, "type", None) == "human"), None)
         last_ai = None
         for m in reversed(messages):
             if getattr(m, "type", None) == "ai":
@@ -77,11 +75,11 @@ class MemoryWritebackMiddleware(AgentMiddleware):
         note = {
             "goal": _shorten(getattr(first_user, "content", ""), 280),
             "answer": _shorten(getattr(last_ai, "content", ""), 540),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         try:
             store.put(NAMESPACE, uuid.uuid4().hex, note)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("memory writeback (sync) failed: %s", exc)
         return None
 

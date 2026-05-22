@@ -73,9 +73,7 @@ def settings_unpaired(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_image_generate_proxies_to_cloud_gateway(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_image_generate_proxies_to_cloud_gateway(monkeypatch, settings_with_session) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -198,9 +196,7 @@ async def test_image_generate_gateway_network_error_returns_recoverable(
 
 
 @pytest.mark.asyncio
-async def test_image_edit_forwards_document_id_path(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_image_edit_forwards_document_id_path(monkeypatch, settings_with_session) -> None:
     """image.edit must pass through `document_id` (for user-uploaded
     files) AND `image_url` so the cloud API can pick whichever exists."""
 

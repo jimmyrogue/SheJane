@@ -29,7 +29,7 @@ class FastDeepRouterMiddleware(AgentMiddleware):
         self.deep_user_length_threshold = deep_user_length_threshold
         self.deep_tool_count_threshold = deep_tool_count_threshold
 
-    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:  # noqa: ARG002
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         # Only run once: if we already chose, leave it be.
         if state.get("mode_route") in ("fast", "deep"):
             return None

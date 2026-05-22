@@ -7,14 +7,12 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from local_host.middleware.tool_critic import (
     DEFAULT_WATCH_TOOLS,
     ToolResultCriticMiddleware,
 )
-
 
 # --- helpers ---
 
@@ -34,7 +32,9 @@ class FakeCriticModel:
         return SimpleNamespace(content=self.response_text)
 
 
-def _make_request(tool_name: str, args: dict[str, Any] | None = None, user_text: str = "do the task") -> Any:
+def _make_request(
+    tool_name: str, args: dict[str, Any] | None = None, user_text: str = "do the task"
+) -> Any:
     """Construct a minimal ToolCallRequest-shaped object."""
     return SimpleNamespace(
         tool_call={"name": tool_name, "args": args or {}, "id": "c1"},
@@ -47,6 +47,7 @@ def _make_request(tool_name: str, args: dict[str, Any] | None = None, user_text:
 async def _handler_returns(result: Any):
     async def _h(_request):
         return result
+
     return _h
 
 
@@ -148,9 +149,7 @@ def test_nudge_prepends_warning_when_usable_false() -> None:
         response_text='{"usable": false, "reason": "page returned a 404 error"}'
     )
     mw = ToolResultCriticMiddleware(critic_model=critic, mode="nudge")
-    original = ToolMessage(
-        content="<html>Not Found</html>", tool_call_id="c1", name="web.fetch"
-    )
+    original = ToolMessage(content="<html>Not Found</html>", tool_call_id="c1", name="web.fetch")
 
     async def run() -> ToolMessage:
         handler = await _handler_returns(original)

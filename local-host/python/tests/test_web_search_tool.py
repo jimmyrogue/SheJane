@@ -25,8 +25,8 @@ import httpx
 import pytest
 
 from local_host.config import reset_settings_for_tests
-from local_host.tools import web as web_module
 from local_host.tools import _gateway as gateway_module
+from local_host.tools import web as web_module
 
 
 def _patch_httpx(monkeypatch, handler) -> list[httpx.Request]:
@@ -68,9 +68,7 @@ def settings_unpaired(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_web_search_proxies_to_cloud_gateway(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_web_search_proxies_to_cloud_gateway(monkeypatch, settings_with_session) -> None:
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -125,9 +123,7 @@ async def test_web_search_proxies_to_cloud_gateway(
 
 
 @pytest.mark.asyncio
-async def test_web_search_clamps_max_results(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_web_search_clamps_max_results(monkeypatch, settings_with_session) -> None:
     """The cloud also clamps to [1, 10]. We mirror the bound here so a
     malformed call doesn't waste the round-trip."""
 
@@ -138,13 +134,9 @@ async def test_web_search_clamps_max_results(
         )
 
     recorded = _patch_httpx(monkeypatch, handler)
-    await web_module._invoke_web_search(
-        query="x", max_results=99, run_id="r", tool_call_id="c1"
-    )
+    await web_module._invoke_web_search(query="x", max_results=99, run_id="r", tool_call_id="c1")
     assert json.loads(recorded[0].content)["arguments"]["maxResults"] == 10
-    await web_module._invoke_web_search(
-        query="x", max_results=0, run_id="r", tool_call_id="c2"
-    )
+    await web_module._invoke_web_search(query="x", max_results=0, run_id="r", tool_call_id="c2")
     assert json.loads(recorded[1].content)["arguments"]["maxResults"] == 1
 
 
@@ -163,9 +155,7 @@ async def test_web_search_no_pairing_returns_recoverable_error(
 
 
 @pytest.mark.asyncio
-async def test_web_search_gateway_error_surfaces(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_web_search_gateway_error_surfaces(monkeypatch, settings_with_session) -> None:
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(
             400,
@@ -190,9 +180,7 @@ async def test_web_search_gateway_error_surfaces(
 
 
 @pytest.mark.asyncio
-async def test_web_search_no_tavily_key_env_used(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_web_search_no_tavily_key_env_used(monkeypatch, settings_with_session) -> None:
     """Regression: even if TAVILY_API_KEY is present in the daemon's
     env (it shouldn't be, but defense in depth), no direct call to
     tavily.com is made — all traffic must go through the cloud gateway."""
@@ -205,9 +193,7 @@ async def test_web_search_no_tavily_key_env_used(
         )
 
     recorded = _patch_httpx(monkeypatch, handler)
-    await web_module._invoke_web_search(
-        query="x", max_results=5, run_id="r", tool_call_id="c"
-    )
+    await web_module._invoke_web_search(query="x", max_results=5, run_id="r", tool_call_id="c")
     assert len(recorded) == 1
     assert "api.tavily.com" not in str(recorded[0].url)
     assert "tavily.com" not in str(recorded[0].url)
@@ -216,9 +202,7 @@ async def test_web_search_no_tavily_key_env_used(
 
 
 @pytest.mark.asyncio
-async def test_web_search_registered_in_core_tools(
-    monkeypatch, settings_with_session
-) -> None:
+async def test_web_search_registered_in_core_tools(monkeypatch, settings_with_session) -> None:
     """The tool must be in `core_tools()` unconditionally — pre-this-fix
     the registry only added web.search if TAVILY_API_KEY was present in
     the daemon env, which is exactly the leak we're closing."""

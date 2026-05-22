@@ -9,7 +9,6 @@ import asyncio
 from pathlib import Path
 
 import httpx
-import pytest
 
 from local_host.config import reset_settings_for_tests
 from local_host.store.sqlite import LocalStore
@@ -28,9 +27,7 @@ def _patched_async_client(handler):
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
     body = "".join(f"event: {n}\ndata: {p}\n\n" for n, p in events).encode("utf-8")
-    return httpx.Response(
-        200, content=body, headers={"content-type": "text/event-stream"}
-    )
+    return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
 
 
 def test_open_checkpointer_eager_setup(tmp_path: Path) -> None:
@@ -79,9 +76,7 @@ def test_build_agent_assembles_without_workspace(tmp_path: Path, monkeypatch) ->
     asyncio.run(run())
 
 
-def test_build_agent_with_workspace_includes_shell_middleware(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_build_agent_with_workspace_includes_shell_middleware(tmp_path: Path, monkeypatch) -> None:
     """When workspace_root is set, ShellToolMiddleware injects a shell tool."""
     from local_host.agent.builder import build_agent, open_checkpointer
 
@@ -102,7 +97,6 @@ def test_build_agent_with_workspace_includes_shell_middleware(
             tools = getattr(agent, "tools", None) or []
             if not tools:
                 # fallback: inspect compiled graph
-                from langgraph.graph import StateGraph
                 tools = []
             return [getattr(t, "name", "") for t in tools]
         finally:
@@ -115,9 +109,7 @@ def test_build_agent_with_workspace_includes_shell_middleware(
     assert isinstance(names, list)
 
 
-def test_build_agent_runs_end_to_end_with_mocked_backend(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeypatch) -> None:
     """The compiled agent should drive a complete invoke against a mocked
     SSE backend, returning a final assistant message.
 
@@ -135,9 +127,7 @@ def test_build_agent_runs_end_to_end_with_mocked_backend(
             ]
         )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
 
     async def run() -> str:
         reset_settings_for_tests(data_dir=tmp_path)
@@ -158,7 +148,11 @@ def test_build_agent_runs_end_to_end_with_mocked_backend(
                 config=config,
             )
             final = result["messages"][-1]
-            return getattr(final, "content", "") if not isinstance(final, dict) else final.get("content", "")
+            return (
+                getattr(final, "content", "")
+                if not isinstance(final, dict)
+                else final.get("content", "")
+            )
         finally:
             await store.close()
             await stack.aclose()

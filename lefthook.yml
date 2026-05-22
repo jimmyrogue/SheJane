@@ -1,0 +1,89 @@
+# Lefthook — multi-language pre-commit checks for this repo.
+#
+# Setup once:
+#   make setup-hooks       # installs lefthook (brew) + wires the git hooks
+#
+# Bypass (rare, e.g. WIP commits on a personal branch):
+#   LEFTHOOK=0 git commit
+#
+# Each command runs only against staged files matching `glob`, in
+# parallel. Slow / blocking checks live in CI, not here — pre-commit
+# is the sub-second gate so devs don't push obvious issues, not the
+# exhaustive verifier.
+
+# Fail fast — if any check returns non-zero, the commit is rejected.
+# (Default behavior; spelled out for clarity.)
+pre-commit:
+  parallel: true
+  commands:
+
+    # --- Python (local-host daemon) ---
+    # `ruff check` catches lint errors (F841 unused var, B-series bugs,
+    # E501 long lines except where ignored, …). `ruff format --check`
+    # rejects unformatted code without writing — write happens in the
+    # editor. Run only against staged .py files inside local-host/.
+    ruff-check:
+      glob: "local-host/python/**/*.py"
+      run: cd local-host/python && uv run ruff check {staged_files}
+    ruff-format:
+      glob: "local-host/python/**/*.py"
+      run: cd local-host/python && uv run ruff format --check {staged_files}
+
+    # --- Go (api/) ---
+    # gofmt -l prints unformatted files; assert the list is empty.
+    # `go vet` catches a handful of correctness issues without needing
+    # full type-checking (unreachable code, printf format mismatches).
+    gofmt:
+      glob: "api/**/*.go"
+      run: |
+        cd api
+        unformatted=$(gofmt -l {staged_files})
+        if [ -n "$unformatted" ]; then
+          echo "gofmt -w needed on:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+    go-vet:
+      glob: "api/**/*.go"
+      # vet on whole packages, not individual files — that's how go's
+      # type-checking is scoped.
+      run: cd api && go vet ./...
+
+    # --- Custom project guard ---
+    # Defense in depth: no platform-paid keys read from daemon env.
+    # The architecture is gateway-only; this script catches the
+    # pattern slipping back via copy-paste or careless refactor.
+    no-platform-keys:
+      # Run unconditionally on every commit touching daemon code —
+      # cheap (sub-50ms grep) and the failure mode is catastrophic
+      # (the entire image.* / web.search architecture broken).
+      glob: "local-host/python/**/*.py"
+      run: ./scripts/check-no-platform-keys-in-daemon.sh
+
+    # --- Forbidden files ---
+    # Block accidental commits of secret-y files. .env is gitignored
+    # but the example file path is easy to typo.
+    no-env-files:
+      run: |
+        if echo "{staged_files}" | tr ' ' '\n' | grep -E '^\.env$|/\.env$|\.env\.local$'; then
+          echo "❌ refusing to commit .env (only .env.example is tracked)" >&2
+          exit 1
+        fi
+
+# commit-msg: keep commit messages roughly conventional. Lenient —
+# don't fight people on style, just catch the obvious accidents.
+commit-msg:
+  commands:
+    not-empty:
+      run: |
+        first_line=$(head -1 "{1}")
+        # Skip merge commits (auto-generated, immutable signature).
+        if echo "$first_line" | grep -q "^Merge "; then exit 0; fi
+        if [ -z "$first_line" ]; then
+          echo "❌ commit message first line is empty" >&2
+          exit 1
+        fi
+        if [ ${#first_line} -lt 5 ]; then
+          echo "❌ commit message too short: '$first_line'" >&2
+          exit 1
+        fi

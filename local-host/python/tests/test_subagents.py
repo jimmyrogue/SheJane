@@ -136,9 +136,7 @@ def test_compiled_agent_exposes_task_tool_when_subagents_enabled(
     assert "task" in names, f"expected task tool in {sorted(names)}"
 
 
-def test_disabling_subagents_drops_custom_specialists(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_disabling_subagents_drops_custom_specialists(tmp_path: Path, monkeypatch) -> None:
     """`enable_subagents=False` no longer removes the `task` tool entirely
     (since step 4/6 we use `create_deep_agent`, which always exposes a
     `task` tool via its bundled SubAgentMiddleware). What we DO guarantee

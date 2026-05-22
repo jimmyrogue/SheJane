@@ -35,7 +35,8 @@ client/src/features/chat/chatStore.ts):
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from langchain_core.load.dump import dumps as lc_dumps
 from langchain_core.messages import AIMessageChunk, ToolMessage
@@ -120,9 +121,7 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
 
         backend_error = chunk.additional_kwargs.get("backend_error")
         if backend_error:
-            out.append(
-                {"event": "llm.error", "data": {"message": str(backend_error)}}
-            )
+            out.append({"event": "llm.error", "data": {"message": str(backend_error)}})
 
         return out
 
@@ -180,9 +179,7 @@ def _translate_updates(payload: Any) -> list[dict[str, Any]]:
                     m_status = getattr(m, "status", None)
                     out.append(
                         {
-                            "event": "tool.failed"
-                            if m_status == "error"
-                            else "tool.completed",
+                            "event": "tool.failed" if m_status == "error" else "tool.completed",
                             "data": {
                                 "tool_call_id": m.tool_call_id,
                                 "name": m.name,

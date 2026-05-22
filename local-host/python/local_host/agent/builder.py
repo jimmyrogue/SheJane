@@ -39,8 +39,6 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
-from langgraph.store.base import BaseStore
-from langgraph.store.sqlite.aio import AsyncSqliteStore
 from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
@@ -53,7 +51,8 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
 )
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.errors import GraphBubbleUp
+from langgraph.store.base import BaseStore
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from ..config import Settings, get_settings
 from ..llm.backend import BackendChatModel
@@ -79,12 +78,12 @@ log = logging.getLogger("local_host.agent.builder")
 DESTRUCTIVE_TOOLS: dict[str, bool] = {
     "write_file": True,
     "edit_file": True,
-    "execute": True,        # deepagents shell-equivalent
+    "execute": True,  # deepagents shell-equivalent
     "open.url": True,
     "open.file": True,
     "clipboard.write": True,
-    "browser.task": True,   # agentic browser can do anything
-    "image.generate": True, # paid + side-effecting
+    "browser.task": True,  # agentic browser can do anything
+    "image.generate": True,  # paid + side-effecting
     "image.edit": True,
 }
 
@@ -102,7 +101,7 @@ ALWAYS_INCLUDE_TOOLS: list[str] = [
     "write_todos",
     "task",
     "memory.search",
-    "user.ask",        # clarifying-question gateway must always be reachable
+    "user.ask",  # clarifying-question gateway must always be reachable
     "time.now",
 ]
 
@@ -116,7 +115,7 @@ RETRY_ELIGIBLE_TOOLS: list[str] = [
     "web.fetch",
     "tavily_search",
     "browser.task",
-    "execute",         # deepagents shell — FS races etc.
+    "execute",  # deepagents shell — FS races etc.
     "read_file",
     "write_file",
     "edit_file",
@@ -136,7 +135,9 @@ def _resolve_skills_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-async def open_checkpointer(settings: Settings | None = None) -> tuple[AsyncSqliteSaver, AsyncExitStack]:
+async def open_checkpointer(
+    settings: Settings | None = None,
+) -> tuple[AsyncSqliteSaver, AsyncExitStack]:
     """Open a long-lived AsyncSqliteSaver.
 
     Eager `await checkpointer.setup()` avoids the lazy-init disk-I/O race
@@ -187,8 +188,8 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
     MemoryWriteback.
     """
     middleware: list[AgentMiddleware] = [
-        InputGuardMiddleware(),                             # P1
-        FastDeepRouterMiddleware(),                         # P2
+        InputGuardMiddleware(),  # P1
+        FastDeepRouterMiddleware(),  # P2
         # Plan & Execute mode (env JIANDANLY_PLAN_FIRST: off | always | auto).
         # auto-skips trivial tasks; default off.
         PlanFirstMiddleware(),
@@ -201,13 +202,13 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
                 pii_type=pii_type,
                 strategy="redact",
                 apply_to_input=True,
-                apply_to_output=False,        # don't break legitimate model output
-                apply_to_tool_results=True,   # leak surface: tool returns
+                apply_to_output=False,  # don't break legitimate model output
+                apply_to_tool_results=True,  # leak surface: tool returns
             )
         )
     middleware.extend(
         [
-            ToolCallLimitMiddleware(                        # P8
+            ToolCallLimitMiddleware(  # P8
                 tool_name="tavily_search",
                 run_limit=settings.research_search_limit,
             ),
@@ -244,9 +245,9 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
         [
             ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
             ContextEditingMiddleware(),
-            OutputGuardMiddleware(),                        # P9
-            ReflectMiddleware(),                            # P4
-            MemoryWritebackMiddleware(),                    # P6
+            OutputGuardMiddleware(),  # P9
+            ReflectMiddleware(),  # P4
+            MemoryWritebackMiddleware(),  # P6
         ]
     )
     return middleware
@@ -379,9 +380,7 @@ async def build_agent(
     skills_arg = [str(skills_dir)] if skills_dir is not None else None
 
     subagents_arg = (
-        build_subagents(main_tools=tools, main_model=model)
-        if settings.enable_subagents
-        else None
+        build_subagents(main_tools=tools, main_model=model) if settings.enable_subagents else None
     )
 
     memory_arg = _resolve_memory_sources(settings)

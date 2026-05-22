@@ -51,6 +51,7 @@ def make_browser_tool(llm: Any = None, *, headless: bool = True) -> BaseTool:
     """
 
     if not _browser_use_available():
+
         @tool("browser.task")
         async def _stub(task: str) -> dict[str, str]:
             """Drive a headless browser to complete a high-level task."""
@@ -62,6 +63,7 @@ def make_browser_tool(llm: Any = None, *, headless: bool = True) -> BaseTool:
         return _stub
 
     if llm is None:
+
         @tool("browser.task")
         async def _no_llm(task: str) -> dict[str, str]:
             """Drive a headless browser to complete a high-level task."""
@@ -94,7 +96,7 @@ def make_browser_tool(llm: Any = None, *, headless: bool = True) -> BaseTool:
         )
         try:
             history = await agent.run(max_steps=max_steps)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
 
         # Surface a compact summary; full history stays in browser-use's

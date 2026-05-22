@@ -5,7 +5,7 @@ a live Go backend to exercise the SSE parsing + LangChain message glue.
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
+from collections.abc import Iterable
 
 import httpx
 import pytest
@@ -68,17 +68,17 @@ def test_agenerate_text_only(monkeypatch) -> None:
         assert request.headers["authorization"] == "Bearer t"
         body = request.read()
         assert b"run-test" in body
-        return _stream_response([
-            ("llm.delta", '{"content_delta": "Hello"}'),
-            ("llm.delta", '{"content_delta": ", "}'),
-            ("llm.delta", '{"content_delta": "world."}'),
-            ("llm.usage", '{"input_tokens": 5, "output_tokens": 3, "credits_cost": 1}'),
-            ("llm.done", '{"request_id": "req-1", "finish_reason": "stop"}'),
-        ])
+        return _stream_response(
+            [
+                ("llm.delta", '{"content_delta": "Hello"}'),
+                ("llm.delta", '{"content_delta": ", "}'),
+                ("llm.delta", '{"content_delta": "world."}'),
+                ("llm.usage", '{"input_tokens": 5, "output_tokens": 3, "credits_cost": 1}'),
+                ("llm.done", '{"request_id": "req-1", "finish_reason": "stop"}'),
+            ]
+        )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     model = _make_model_with_mock(handler)
 
     result = asyncio.run(model._agenerate([HumanMessage(content="Hi")]))
@@ -92,15 +92,18 @@ def test_agenerate_with_tool_calls(monkeypatch) -> None:
     """Backend emits llm.tool_call → AIMessage with structured tool_calls."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return _stream_response([
-            ("llm.delta", '{"content_delta": "Let me check..."}'),
-            ("llm.tool_call", '{"id": "call_1", "name": "time.now", "arguments": {"timezone": "UTC"}}'),
-            ("llm.done", '{"request_id": "req-2", "finish_reason": "tool_calls"}'),
-        ])
+        return _stream_response(
+            [
+                ("llm.delta", '{"content_delta": "Let me check..."}'),
+                (
+                    "llm.tool_call",
+                    '{"id": "call_1", "name": "time.now", "arguments": {"timezone": "UTC"}}',
+                ),
+                ("llm.done", '{"request_id": "req-2", "finish_reason": "tool_calls"}'),
+            ]
+        )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     model = _make_model_with_mock(handler)
 
     result = asyncio.run(model._agenerate([HumanMessage(content="What time is it?")]))
@@ -115,16 +118,16 @@ def test_astream_yields_per_token(monkeypatch) -> None:
     """astream should yield one ChatGenerationChunk per llm.delta event."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return _stream_response([
-            ("llm.delta", '{"content_delta": "a"}'),
-            ("llm.delta", '{"content_delta": "b"}'),
-            ("llm.delta", '{"content_delta": "c"}'),
-            ("llm.done", '{"request_id": "req-3", "finish_reason": "stop"}'),
-        ])
+        return _stream_response(
+            [
+                ("llm.delta", '{"content_delta": "a"}'),
+                ("llm.delta", '{"content_delta": "b"}'),
+                ("llm.delta", '{"content_delta": "c"}'),
+                ("llm.done", '{"request_id": "req-3", "finish_reason": "stop"}'),
+            ]
+        )
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     model = _make_model_with_mock(handler)
 
     async def collect() -> list[str]:
@@ -139,9 +142,7 @@ def test_backend_4xx_raises(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(402, json={"error": "insufficient credits"})
 
-    monkeypatch.setattr(
-        "local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler)
-    )
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     model = _make_model_with_mock(handler)
 
     with pytest.raises(httpx.HTTPStatusError):
@@ -171,9 +172,7 @@ def test_message_conversion_round_trip() -> None:
     from local_host.llm.backend import _message_to_dict
 
     assert _message_to_dict(HumanMessage(content="hi"))["role"] == "user"
-    assert _message_to_dict(
-        ToolMessage(content="result", tool_call_id="x", name="t")
-    ) == {
+    assert _message_to_dict(ToolMessage(content="result", tool_call_id="x", name="t")) == {
         "role": "tool",
         "content": "result",
         "toolCallId": "x",
