@@ -1,5 +1,22 @@
 # Local Agent Harness 详细架构
 
+> ⚠️ **历史文档（Node 版本）**
+>
+> 本文档描述的是 **Node.js + TypeScript** 实现的 local-host —— `refactor/infrastructure`
+> 分支起点（commit `28e0b8a`）的状态。Phase 5'+ 完成后，local-host **已经全部
+> 重写为 Python + LangGraph**：
+>
+> - 技术栈：`Python 3.12 + LangGraph 1.2 + langchain.agents.create_agent` /
+>   `deepagents.create_deep_agent`
+> - 入口：`local-host/python/local_host/server.py`（FastAPI + uvicorn）
+> - 当前架构 & run lifecycle：见 **[run-loop.md](run-loop.md)** —— 那份文档跟代码同步
+> - SSE 协议：**[client-sse-protocol.md](client-sse-protocol.md)** —— `data:` 体改为
+>   AgentRunEvent envelope，事件名 `llm.delta` / `tool.completed`（不再是 `llm.token` / `tool.end`）
+> - 迁移进度：**[migration-langgraph.md](migration-langgraph.md)**
+>
+> 保留这份文档是为了：(a) 给翻 git history 看老 commit 的人提供上下文；
+> (b) 记录 Node→Python 迁移前的对照基线。除此之外的所有目的——**请看 run-loop.md**。
+
 > 范围：`local-host/` 目录
 > 技术栈：Node.js + TypeScript
 > 入口：HTTP 服务 `127.0.0.1:17371`（默认）

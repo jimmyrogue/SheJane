@@ -57,6 +57,10 @@ export interface ChatMessage {
   tokens?: number
   agentEvents?: AgentTimelineItem[]
   attachments?: MessageAttachment[]
+  /** Thinking-mode trace from the model (e.g. DeepSeek `reasoning_content`).
+   *  Accumulated from `llm.reasoning` SSE events. Rendered as a
+   *  collapsible "Thinking…" section above the assistant reply. */
+  reasoning?: string
 }
 
 export interface ConversationWorkspace {

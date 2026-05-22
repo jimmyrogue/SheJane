@@ -1,9 +1,12 @@
 """HTTP-shaped tools.
 
-- `web.search` — TavilySearch (langchain-tavily) thin wrapper that respects
-  the daemon's research budget (TAVILY_API_KEY env required).
+- `web.search` — proxies through the cloud `/api/v1/agent/tools/execute`
+  gateway. The Tavily key lives in the API's env, never in the
+  daemon's; per-search credit cost is debited from the user's wallet.
 - `web.fetch` — custom HTTP GET/POST with SSRF guards (no private IPs, no
-  link-local, scheme allow-list, response size cap, timeout).
+  link-local, scheme allow-list, response size cap, timeout). Stays
+  local — semantically this is "agent reads a URL the user mentioned",
+  no platform-paid resource involved.
 """
 
 from __future__ import annotations
@@ -11,11 +14,14 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import httpx
-from langchain_core.tools import BaseTool, tool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import InjectedToolCallId, tool
+
+from ._gateway import call_tool_gateway, run_id_from_config
 
 log = logging.getLogger("local_host.tools.web")
 
@@ -109,26 +115,57 @@ async def web_fetch(
         return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
 
 
-def make_tavily_search() -> BaseTool | None:
-    """Build TavilySearch from langchain-tavily if TAVILY_API_KEY is set.
+async def _invoke_web_search(
+    *,
+    query: str,
+    max_results: int,
+    run_id: str,
+    tool_call_id: str,
+) -> dict[str, Any]:
+    """Test-friendly wrapper around the shared gateway helper. Tests
+    target this directly so they don't have to construct a LangChain
+    ToolCall envelope just to exercise the proxy."""
+    return await call_tool_gateway(
+        "web.search",
+        # The Go handler reads `arguments.query` and `arguments.maxResults`
+        # (camelCase — see `executeTavilySearch` in tool_gateway.go:208).
+        # Clamp here to [1, 10] so a malformed call doesn't waste the
+        # round-trip; the gateway also clamps.
+        {"query": query, "maxResults": max(1, min(int(max_results), 10))},
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+    )
 
-    Returns None if no key is configured — caller can decide whether to
-    surface the absence to the agent (e.g. via tool description) or omit
-    the tool entirely.
+
+@tool("web.search")
+async def web_search(
+    query: str,
+    max_results: int = 5,
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """Search the web via Tavily through the cloud Tool Gateway.
+
+    The user's credits cover the per-search fee (debited only on
+    success via the same reserve/settle ledger as image.*). The cloud
+    API holds the Tavily key — the daemon never sees it.
+
+    Args:
+        query: Free-text search query.
+        max_results: Up to 10 results. Defaults to 5.
+
+    Returns: `{ok, content, data?, errorCode?, recoverable?}` matching
+    `agentToolExecuteResult`. On success, `content` is a Markdown-ish
+    block listing each result with title/URL/snippet plus Tavily's
+    one-paragraph synthesized "Answer" at the top; `data.results` (when
+    present) carries the structured rows for UI rendering.
     """
-    import os
-
-    if not os.environ.get("TAVILY_API_KEY"):
-        return None
-
-    try:
-        from langchain_tavily import TavilySearch
-    except ImportError:
-        log.warning("langchain_tavily not installed; web.search disabled")
-        return None
-
-    # langchain-tavily picks up TAVILY_API_KEY from env automatically.
-    return TavilySearch(max_results=5, topic="general")
+    return await _invoke_web_search(
+        query=query,
+        max_results=max_results,
+        run_id=run_id_from_config(config),
+        tool_call_id=tool_call_id,
+    )
 
 
-WEB_TOOLS = [web_fetch]
+WEB_TOOLS = [web_fetch, web_search]

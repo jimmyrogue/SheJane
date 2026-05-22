@@ -223,6 +223,30 @@ class LocalStore:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def list_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent runs newest-first with a per-row events_count.
+
+        The client's `listLocalRuns()` (`client/src/shared/local-host/
+        client.ts:283`) reads `{runs: LocalRun[]}` on every boot to
+        repopulate the conversation history sidebar. Each row must
+        include the `LocalRun` fields the renderer reads:
+        id, goal, status, workspace_path, created_at, updated_at,
+        completed_at, canceled_at, events_count.
+        """
+        cursor = await self._conn.execute(
+            """
+            SELECT r.id, r.goal, r.status, r.workspace_path,
+                   r.created_at, r.updated_at, r.completed_at,
+                   (SELECT COUNT(*) FROM local_events e
+                      WHERE e.run_id = r.id) AS events_count
+              FROM local_runs r
+             ORDER BY datetime(r.updated_at) DESC, r.id DESC
+             LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
     async def update_run_status(
         self, run_id: str, status: str, *, completed_at: str | None = None
     ) -> None:
@@ -268,3 +292,197 @@ class LocalStore:
             (run_id, after_seq),
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+    # --- permissions (HumanInTheLoop pause record) ---
+
+    async def create_permission(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        scope: str = "once",
+    ) -> dict[str, Any]:
+        """Record a tool-approval request raised by `HumanInTheLoopMiddleware`.
+
+        The returned `id` is what gets surfaced to the renderer as the
+        `request_id` in the `permission.required` SSE event, and what
+        the client posts back to `POST /local/v1/permissions/{id}` to
+        approve or deny. Without this row, the client cannot look up
+        which paused run to resume.
+        """
+        record = {
+            "id": _new_id("perm"),
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "arguments_json": json.dumps(arguments or {}, ensure_ascii=False, default=str),
+            "status": "pending",
+            "scope": scope,
+            "created_at": _now(),
+            "resolved_at": None,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_permissions (id, run_id, tool_call_id, tool_name, "
+            " arguments_json, status, scope, created_at, resolved_at) "
+            "VALUES (:id, :run_id, :tool_call_id, :tool_name, :arguments_json, "
+            "        :status, :scope, :created_at, :resolved_at)",
+            record,
+        )
+        await self._conn.commit()
+        return record
+
+    async def get_permission(self, permission_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_permissions WHERE id = ?", (permission_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def resolve_permission(
+        self,
+        permission_id: str,
+        *,
+        status: str,
+        scope: str | None = None,
+    ) -> dict[str, Any] | None:
+        if scope:
+            await self._conn.execute(
+                "UPDATE local_permissions SET status = ?, scope = ?, resolved_at = ? "
+                "WHERE id = ?",
+                (status, scope, _now(), permission_id),
+            )
+        else:
+            await self._conn.execute(
+                "UPDATE local_permissions SET status = ?, resolved_at = ? WHERE id = ?",
+                (status, _now(), permission_id),
+            )
+        await self._conn.commit()
+        return await self.get_permission(permission_id)
+
+    async def list_permissions_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_permissions WHERE run_id = ? ORDER BY created_at",
+            (run_id,),
+        )
+        return [
+            {**dict(row), "arguments": json.loads(row["arguments_json"] or "{}")}
+            for row in await cursor.fetchall()
+        ]
+
+    # --- questions (user.ask interrupt record) ---
+
+    async def create_question(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str | None,
+        questions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Record a `user.ask` interrupt.
+
+        `questions` is a list to allow future multi-question interrupts;
+        today user.ask emits one. The returned `id` is the `request_id`
+        the client posts back via `POST /local/v1/questions/{id}` with
+        `{answers}`.
+        """
+        record = {
+            "id": _new_id("q"),
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "questions_json": json.dumps(questions, ensure_ascii=False, default=str),
+            "status": "pending",
+            "answers_json": None,
+            "created_at": _now(),
+            "answered_at": None,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_questions (id, run_id, tool_call_id, questions_json, "
+            " status, answers_json, created_at, answered_at) "
+            "VALUES (:id, :run_id, :tool_call_id, :questions_json, :status, "
+            "        :answers_json, :created_at, :answered_at)",
+            record,
+        )
+        await self._conn.commit()
+        return record
+
+    async def get_question(self, question_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_questions WHERE id = ?", (question_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def answer_question(
+        self,
+        question_id: str,
+        *,
+        answers: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        await self._conn.execute(
+            "UPDATE local_questions SET status = ?, answers_json = ?, answered_at = ? "
+            "WHERE id = ?",
+            (
+                "answered",
+                json.dumps(answers, ensure_ascii=False, default=str),
+                _now(),
+                question_id,
+            ),
+        )
+        await self._conn.commit()
+        return await self.get_question(question_id)
+
+    # --- artifacts ---
+
+    async def create_artifact(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        title: str,
+        content: str,
+        content_type: str = "text/plain",
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        record = {
+            "id": _new_id("art"),
+            "run_id": run_id,
+            "kind": kind,
+            "title": title,
+            "content": content,
+            "content_type": content_type,
+            "bytes": len(content.encode("utf-8")),
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "metadata_json": json.dumps(metadata or {}, ensure_ascii=False, default=str),
+            "created_at": _now(),
+        }
+        await self._conn.execute(
+            "INSERT INTO local_artifacts (id, run_id, kind, title, content, "
+            " content_type, bytes, tool_call_id, tool_name, metadata_json, created_at) "
+            "VALUES (:id, :run_id, :kind, :title, :content, :content_type, :bytes, "
+            "        :tool_call_id, :tool_name, :metadata_json, :created_at)",
+            record,
+        )
+        await self._conn.commit()
+        return record
+
+    async def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_artifacts WHERE id = ?", (artifact_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_artifacts_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_artifacts WHERE run_id = ? ORDER BY created_at",
+            (run_id,),
+        )
+        return [
+            {**dict(row), "metadata": json.loads(row["metadata_json"] or "{}")}
+            for row in await cursor.fetchall()
+        ]

@@ -1,37 +1,63 @@
 """Image generation / editing tools.
 
-Calls OpenAI's `images.generate` / `images.edit` endpoints directly (the
-LangChain `OpenAIDALLEImageGenerationTool` is locked to DALL-E; we want
-`gpt-image-1` which is the current production model).
+**Architecture**: image generation is a **platform-paid** capability — the
+OpenAI key lives only on the cloud API and the daemon proxies through
+`POST /api/v1/agent/tools/execute`. The same idempotency-keyed billing
+ledger that backs `web.search` covers image bills. NO `OPENAI_API_KEY`
+should ever exist in the daemon's environment; if you see one there, the
+.env is misconfigured (it must live in the Go API's section E).
 
-Both tools return base64-encoded PNG by default; the agent receives a small
-ack envelope with the artifact reference rather than the binary itself so
-context tokens stay bounded.
+Why proxy:
+  • the user has already paid for credits — the API debits them per
+    image AFTER it succeeds, with reserve/settle for crash safety;
+  • the OpenAI key would otherwise have to be in every user's local-host
+    env, which leaks platform billing across users;
+  • the API's `runImageGeneration` handles model selection, size
+    validation, and S3 persistence — we'd be duplicating all of that
+    here.
+
+The tool's return shape mirrors `agentToolExecuteResult` from the API
+(`tool_gateway.go:37`): `{ok, content, data?, errorCode?, recoverable?}`.
+The LLM consumes `content` (a human-readable summary including URLs to
+the saved images) and optionally inspects `data` for structured fields.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
-import os
-from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from langchain_core.tools import tool
+import httpx  # re-exported so tests can monkeypatch via image_module.httpx
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import InjectedToolCallId, tool
+
+from ._gateway import call_tool_gateway, run_id_from_config
 
 log = logging.getLogger("local_host.tools.image")
 
+# Re-export for tests that already monkeypatch `image_module.httpx.AsyncClient`.
+_ = httpx
 
-def _openai_client():
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from openai import AsyncOpenAI
-    except ImportError:
-        log.warning("openai sdk not installed; image tools disabled")
-        return None
-    return AsyncOpenAI(api_key=api_key)
+
+async def _invoke_image_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    run_id: str,
+    tool_call_id: str,
+) -> dict[str, Any]:
+    """Test-friendly wrapper around the shared gateway helper.
+
+    Kept distinct from `call_tool_gateway` only so tests can target a
+    stable signature (`run_id` + `tool_call_id` as plain args) without
+    having to construct a RunnableConfig.
+    """
+    return await call_tool_gateway(
+        tool_name,
+        arguments,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+    )
 
 
 @tool("image.generate")
@@ -39,104 +65,77 @@ async def image_generate(
     prompt: str,
     size: str = "1024x1024",
     n: int = 1,
-    model: str = "gpt-image-1",
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Generate an image from a text prompt.
 
+    Routes through the cloud Tool Gateway (`/api/v1/agent/tools/execute`).
+    The user's credits cover the per-image fee; the API streams the
+    base64 image to S3 and returns a URL the model can quote back to
+    the user.
+
     Args:
         prompt: Text describing the image to create.
-        size: One of "1024x1024", "1792x1024", "1024x1792" (model dependent).
-        n: Number of images. Most providers cap this at 4.
-        model: Image model name. Default `gpt-image-1`.
+        size: One of "1024x1024", "1792x1024", "1024x1792"
+              (model-dependent — the cloud API validates).
+        n: Number of images. Cloud API clamps to [1, 4].
 
-    Returns: dict with base64-encoded PNG bytes (truncated info for context
-    safety; full bytes saved to the daemon's data dir).
+    Returns: `{ok, content, data?, errorCode?, recoverable?}` matching
+    `agentToolExecuteResult`. On success `content` is a human-readable
+    summary the agent quotes; `data.images` (when present) carries
+    structured image references.
     """
-    client = _openai_client()
-    if client is None:
-        return {"ok": "false", "error": "OPENAI_API_KEY not set"}
-
-    try:
-        resp = await client.images.generate(
-            model=model,
-            prompt=prompt,
-            size=size,
-            n=max(1, min(n, 4)),
-        )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
-
-    images = []
-    for i, datum in enumerate(resp.data or []):
-        if not datum.b64_json:
-            continue
-        path = _persist_image(datum.b64_json, prefix=f"gen-{i}")
-        images.append({"index": i, "path": str(path), "bytes": len(datum.b64_json)})
-
-    return {"ok": "true", "images": images, "model": model}
+    return await _invoke_image_tool(
+        "image.generate",
+        {"prompt": prompt, "size": size, "n": max(1, min(int(n), 4))},
+        run_id=run_id_from_config(config),
+        tool_call_id=tool_call_id,
+    )
 
 
 @tool("image.edit")
 async def image_edit(
-    image_path: str,
     prompt: str,
-    mask_path: str = "",
+    image_url: str = "",
+    mask_url: str = "",
+    document_id: str = "",
+    mask_document_id: str = "",
     size: str = "1024x1024",
-    model: str = "gpt-image-1",
+    n: int = 1,
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    config: RunnableConfig | None = None,
 ) -> dict[str, Any]:
     """Edit an existing image according to a prompt.
 
+    The cloud API accepts either a publicly-fetchable `image_url` OR a
+    `document_id` referencing an artifact the user uploaded to the
+    documents service. At least one is required. Same for the mask.
+
     Args:
-        image_path: Path to the source image (must exist on disk).
         prompt: Description of the desired edit.
-        mask_path: Optional path to a transparency mask (PNG with alpha).
+        image_url: HTTPS URL of the source image (cloud fetches it).
+        mask_url: Optional HTTPS URL of a transparency mask PNG.
+        document_id: Alternative to image_url — references an uploaded
+                     document by id (preferred for user-uploaded files).
+        mask_document_id: Same, for the mask.
         size: Output size.
-        model: Edit-capable model. Default `gpt-image-1`.
+        n: Number of variants. Cloud API clamps to [1, 4].
     """
-    if not Path(image_path).exists():
-        return {"ok": "false", "error": f"image not found: {image_path}"}
-    if mask_path and not Path(mask_path).exists():
-        return {"ok": "false", "error": f"mask not found: {mask_path}"}
-
-    client = _openai_client()
-    if client is None:
-        return {"ok": "false", "error": "OPENAI_API_KEY not set"}
-
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "image": open(image_path, "rb"),  # noqa: SIM115 — closed by SDK
-    }
-    if mask_path:
-        kwargs["mask"] = open(mask_path, "rb")  # noqa: SIM115
-
-    try:
-        resp = await client.images.edit(**kwargs)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
-
-    images = []
-    for i, datum in enumerate(resp.data or []):
-        if not datum.b64_json:
-            continue
-        path = _persist_image(datum.b64_json, prefix=f"edit-{i}")
-        images.append({"index": i, "path": str(path), "bytes": len(datum.b64_json)})
-
-    return {"ok": "true", "images": images, "model": model}
-
-
-def _persist_image(b64: str, *, prefix: str) -> Path:
-    """Decode base64 PNG to a temp-ish path inside the daemon data dir."""
-    from ..config import get_settings
-
-    data_dir = get_settings().ensure_data_dir() / "images"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    import uuid
-
-    path = data_dir / f"{prefix}-{uuid.uuid4().hex[:8]}.png"
-    path.write_bytes(base64.b64decode(b64))
-    return path
+    return await _invoke_image_tool(
+        "image.edit",
+        {
+            "prompt": prompt,
+            "image_url": image_url,
+            "mask_url": mask_url,
+            "document_id": document_id,
+            "mask_document_id": mask_document_id,
+            "size": size,
+            "n": max(1, min(int(n), 4)),
+        },
+        run_id=run_id_from_config(config),
+        tool_call_id=tool_call_id,
+    )
 
 
 IMAGE_TOOLS = [image_generate, image_edit]

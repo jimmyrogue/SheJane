@@ -11,17 +11,21 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.1.0",
     # Tool ecosystem
     "langchain-community>=0.4.0",
-    "langchain-tavily>=0.2.0",
     "langchain-mcp-adapters>=0.2.0",
     # Browser agent (replaces 10 granular browser.* tools)
     "browser-use>=0.7.0",
     "playwright>=1.50.0",
     # Subagents via deepagents (SubAgentMiddleware)
     "deepagents>=0.2.0",
-    # Provider clients
+    # LangChain wrappers for fallback model chains (init_chat_model).
+    # NB: the bare `openai` SDK and `langchain-tavily` are intentionally
+    # ABSENT — image.* and web.search both proxy through the cloud
+    # Tool Gateway (Go API holds the OpenAI/Tavily keys). browser-use
+    # is the only remaining direct LLM consumer in the daemon and it
+    # gets its langchain client via the `browser_llm` arg in
+    # `agent/builder.py`.
     "langchain-anthropic>=0.4.0",
     "langchain-openai>=0.4.0",
-    "openai>=1.50.0",
     # HTTP layer
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",

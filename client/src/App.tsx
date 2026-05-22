@@ -1280,6 +1280,23 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
   if (event.event_type === 'llm.delta') {
     return
   }
+  // Accumulate DeepSeek-style thinking-mode `reasoning_content` into a
+  // dedicated `message.reasoning` field so MessageBubble can render it
+  // in a collapsible section above the answer. We dedupe on event.id
+  // so a re-streamed replay doesn't double-append.
+  if (event.event_type === 'llm.reasoning') {
+    if (event.id && seenEventIDs.has(event.id)) {
+      return
+    }
+    if (event.id) {
+      seenEventIDs.add(event.id)
+    }
+    const chunk = String((event.payload ?? {}).content ?? '')
+    if (chunk) {
+      message.reasoning = (message.reasoning ?? '') + chunk
+    }
+    return
+  }
   const alreadySeen = Boolean(event.id && seenEventIDs.has(event.id))
   if (event.id) {
     seenEventIDs.add(event.id)

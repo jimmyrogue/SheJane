@@ -280,7 +280,7 @@ def _message_to_dict(message: BaseMessage) -> dict[str, Any]:
             "name": message.name or "",
         }
     if isinstance(message, AIMessage):
-        return {
+        out: dict[str, Any] = {
             "role": "assistant",
             "content": _stringify(message.content),
             "toolCalls": [
@@ -288,6 +288,18 @@ def _message_to_dict(message: BaseMessage) -> dict[str, Any]:
                 for tc in message.tool_calls
             ],
         }
+        # DeepSeek (and other thinking-mode providers) require that
+        # `reasoning_content` from a previous assistant turn be passed
+        # back on subsequent calls — otherwise:
+        #   400: "The `reasoning_content` in the thinking mode must
+        #         be passed back to the API."
+        # We accumulate reasoning into additional_kwargs during streaming
+        # (see `_event_to_chunk`), so just plumb it through here. The Go
+        # API at /api/v1/agent/llm/stream accepts the camelCase key.
+        reasoning = message.additional_kwargs.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            out["reasoningContent"] = reasoning
+        return out
     # fallback — best-effort role mapping
     return {"role": "user", "content": _stringify(message.content)}
 

@@ -21,7 +21,7 @@ from .memory import MEMORY_TOOLS
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
-from .web import WEB_TOOLS, make_tavily_search
+from .web import WEB_TOOLS
 from .workspace import make_workspace_open_tool
 
 log = logging.getLogger("local_host.tools.registry")
@@ -65,10 +65,8 @@ async def build_tools(
     # fs.list/read/write are provided by deepagents FilesystemMiddleware
     # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
     # tools here — that would collide on `read_file` / `write_file` names.
-
-    tavily = make_tavily_search()
-    if tavily is not None:
-        tools.append(tavily)
+    # `web.search` is now part of WEB_TOOLS (proxied through the cloud
+    # gateway), so no conditional wiring is needed here.
 
     tools.append(make_browser_tool(llm=browser_llm))
 

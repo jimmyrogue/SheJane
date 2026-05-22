@@ -104,7 +104,9 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
         json={"goal": "say hi"},
     )
     assert r.status_code == 200
-    run = r.json()["run"]
+    # POST /runs returns the flat LocalRun shape (no `{run: ...}` wrapper) —
+    # client.test.ts:63 + createLocalRun() pin this contract.
+    run = r.json()
     assert run["id"].startswith("run_")
     assert run["goal"] == "say hi"
     assert run["status"] == "queued"
@@ -136,7 +138,7 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
         json={"goal": "say hi"},
     )
     assert r.status_code == 200
-    run_id = r.json()["run"]["id"]
+    run_id = r.json()["id"]  # flat LocalRun shape (no wrapper)
 
     # Stream until run.completed or run.failed
     with client.stream(
@@ -148,14 +150,21 @@ def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
         body = resp.read().decode("utf-8")
 
     events = _parse_sse_lines(body)
-    event_names = [e[0] for e in events]
+    # Each event's `data:` body is now the AgentRunEvent envelope:
+    # {event_type, payload, id, run_id, seq, created_at} — see Block 0 fix.
+    event_names = [
+        e[1].get("event_type")
+        for e in events
+        if isinstance(e[1], dict) and "event_type" in e[1]
+    ]
     assert "run.started" in event_names
-    # The mocked LLM produces a non-tool answer, so we expect run.completed.
     assert any(name in {"run.completed", "run.failed"} for name in event_names)
-    # If completed, the final text should be present.
-    for name, data in events:
-        if name == "run.completed":
-            assert "Hi from agent" in (data.get("final_text") if isinstance(data, dict) else "")
+    # If completed, final text now lives at envelope.payload.final_text.
+    for _name, envelope in events:
+        if not isinstance(envelope, dict):
+            continue
+        if envelope.get("event_type") == "run.completed":
+            assert "Hi from agent" in (envelope.get("payload", {}).get("final_text") or "")
             break
 
 

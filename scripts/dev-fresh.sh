@@ -43,13 +43,19 @@ ensure_docker() {
 ensure_docker
 
 echo "[dev-fresh] stopping stale dev processes…"
-pkill -f 'tsx src/index.ts' 2>/dev/null || true
-pkill -f 'vite' 2>/dev/null || true
+# SIGKILL (-9) — uvicorn's default SIGTERM handler runs in-flight task
+# cleanup and can hang for seconds, OR (when the asyncio loop is stuck
+# on an interrupt resume) ignore the signal entirely. The result: a
+# zombie daemon stays bound to 17371 with stale code, and the next
+# launch's `start_local_host` "already running" short-circuit silently
+# attaches to it. Don't be polite.
+pkill -9 -f 'python -m local_host' 2>/dev/null || true
+pkill -9 -f 'vite' 2>/dev/null || true
 # Scope the Electron kill to THIS app's main script. A bare `pkill -f electron`
 # also matches Docker Desktop (an Electron app) and would take the Docker daemon
 # down right before `docker compose up` — forcing a second run. The dev app is
 # always launched as `… Electron electron/main.cjs`, so match that exact arg.
-pkill -f 'electron/main\.cjs' 2>/dev/null || true
+pkill -9 -f 'electron/main\.cjs' 2>/dev/null || true
 
 for port in 17371 55173 5174; do
   pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"

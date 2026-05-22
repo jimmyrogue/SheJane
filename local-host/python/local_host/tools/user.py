@@ -53,7 +53,22 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
     # to `Command(resume=...)`. By convention we pass `{"answer": "..."}`.
     raw = interrupt(payload)
     if isinstance(raw, dict):
-        return str(raw.get("answer", ""))
+        # Two accepted resume shapes:
+        #   1. The client's contract — `{"answers": {question_id: [text]}}`
+        #      where the question_id matches what the daemon assigned in
+        #      `local_questions`. Multi-question support, ergonomic for
+        #      future expansion.
+        #   2. Legacy / curl-friendly — `{"answer": "text"}`.
+        # Pick the first string we can find from either shape.
+        answers = raw.get("answers")
+        if isinstance(answers, dict):
+            for value in answers.values():
+                if isinstance(value, list) and value:
+                    return str(value[0])
+                if isinstance(value, str) and value:
+                    return value
+        if "answer" in raw:
+            return str(raw.get("answer", ""))
     if isinstance(raw, str):
         return raw
     return str(raw) if raw is not None else ""

@@ -88,7 +88,13 @@ node - "${TMP_DIR}/tools.json" <<'NODE'
 const fs = require('fs');
 const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const names = new Set((payload.tools ?? []).map((tool) => tool.name));
-for (const name of ['time.now', 'file.read', 'shell.run', 'mcp.call']) {
+// Tool registry was renamed during the Python rewrite — these are the
+// names the deepagents/langchain agent registers via @tool("...").
+// `file.read`/`shell.run`/`mcp.call` were Node-daemon names; they no
+// longer exist (filesystem access goes through deepagents
+// FilesystemMiddleware, shell is intentionally absent, MCP is auto-
+// surfaced from JIANDANLY_LOCAL_MCP_SERVERS).
+for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch', 'web.search', 'image.generate']) {
   if (!names.has(name)) {
     console.error(`Missing expected tool: ${name}`);
     process.exit(1);

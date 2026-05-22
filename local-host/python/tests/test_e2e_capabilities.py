@@ -100,18 +100,35 @@ def _make_client(monkeypatch, handler) -> TestClient:
 
 
 def _parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
+    """Return list of (event_type, payload) — payload is auto-unwrapped
+    from the AgentRunEvent envelope (Block 0). The `event:` framing
+    line is dropped in favor of the envelope's `event_type`, so tests
+    can keep asserting on payload contents (e.g. `data["goal"]`)."""
     events: list[tuple[str, dict[str, Any]]] = []
     name = ""
     buf: list[str] = []
+
+    def flush() -> None:
+        nonlocal name, buf
+        if not (name or buf):
+            return
+        try:
+            data = json.loads("\n".join(buf))
+        except json.JSONDecodeError:
+            data = {"raw": "\n".join(buf)}
+        if (
+            isinstance(data, dict)
+            and "event_type" in data
+            and "payload" in data
+        ):
+            events.append((str(data["event_type"]), data["payload"]))
+        else:
+            events.append((name, data))
+
     for raw in body.split("\n"):
         line = raw.rstrip("\r")
         if not line:
-            if name or buf:
-                try:
-                    data = json.loads("\n".join(buf))
-                except json.JSONDecodeError:
-                    data = {"raw": "\n".join(buf)}
-                events.append((name, data))
+            flush()
             name = ""
             buf = []
             continue
@@ -119,12 +136,7 @@ def _parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
             name = line[6:].strip()
         elif line.startswith("data:"):
             buf.append(line[5:].strip())
-    if name or buf:
-        try:
-            data = json.loads("\n".join(buf))
-        except json.JSONDecodeError:
-            data = {"raw": "\n".join(buf)}
-        events.append((name, data))
+    flush()
     return events
 
 
@@ -143,7 +155,7 @@ def _post_run_and_stream(
         json=body,
     )
     assert r.status_code == 200, r.text
-    run_id = r.json()["run"]["id"]
+    run_id = r.json()["id"]
     with client.stream(
         "GET",
         f"/local/v1/runs/{run_id}/stream",
@@ -181,6 +193,241 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
     # HumanInTheLoop fires before write_file executes → graph pauses.
     assert "run.waiting" in event_names, (
         f"expected run.waiting (HumanInTheLoop interrupt). got: {sorted(event_names)}"
+    )
+    # Block 4 contract: each pause must also surface a narrow
+    # `permission.required` event carrying a `request_id` the client
+    # can post back to /local/v1/permissions/{id}. Without this the UI
+    # has no way to render an approval card.
+    assert "permission.required" in event_names, (
+        f"expected permission.required SSE event alongside run.waiting. got: "
+        f"{sorted(event_names)}"
+    )
+    perm_event = next(e for e in events if e[0] == "permission.required")
+    perm_payload = perm_event[1]
+    assert perm_payload["request_id"]
+    assert perm_payload["tool"] == "write_file"
+    # `args` must round-trip — without them the approval card has no
+    # context to show the user.
+    assert perm_payload["arguments"]["file_path"] == "spike.txt"
+
+
+def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> None:
+    """POST /permissions/:id must emit `permission.resolved` onto the
+    SSE stream so the client's `hasPendingPermission` set (App.tsx:1339)
+    drops the request_id and the approval card disappears. Without this
+    the card stays visible after the user clicks approve even though
+    the run has already moved on.
+    """
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_w1",
+                        "name": "write_file",
+                        "arguments": {"file_path": "x.txt", "text": "hi"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "ok"}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        run = client.post(
+            "/local/v1/runs", headers=headers, json={"goal": "write"}
+        ).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as resp:
+            resp.read()
+        perm_id = next(
+            e for e in _parse_sse_persisted(client, run["id"])
+            if e[0] == "permission.required"
+        )[1]["request_id"]
+        client.post(
+            f"/local/v1/permissions/{perm_id}",
+            headers=headers,
+            json={"decision": "approve", "scope": "once"},
+        )
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as resp:
+            body = resp.read().decode("utf-8")
+    events = _parse_sse(body)
+    resolved = [e for e in events if e[0] == "permission.resolved"]
+    assert resolved, "expected permission.resolved on the post-resume stream"
+    assert resolved[0][1]["request_id"] == perm_id
+    assert resolved[0][1]["decision"] == "approve"
+
+
+def _parse_sse_persisted(
+    client: TestClient, run_id: str
+) -> list[tuple[str, dict[str, Any]]]:
+    """Fetch all persisted events for a run via /diagnostics — used by
+    tests that need the pre-pause event list without re-streaming."""
+    diag = client.get(
+        f"/local/v1/runs/{run_id}/diagnostics",
+        headers={"Authorization": "Bearer tok"},
+    ).json()
+    return [(e["event_type"], e["payload"]) for e in diag["events"]]
+
+
+def test_capability_1d_scope_run_skips_subsequent_approvals(monkeypatch) -> None:
+    """If the user picked 'Always allow for this run', subsequent HITL
+    interrupts for the SAME tool in the SAME run must auto-resume
+    without paging the user again. Daemon's auto-approve loop emits
+    `permission.auto_approved` so the timeline still records what
+    happened — the user just doesn't have to click."""
+    handler = RecordingHandler(
+        scripts=[
+            # Turn 1: ask to write file A (paused by HITL)
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_a",
+                        "name": "write_file",
+                        "arguments": {"file_path": "a.txt", "text": "A"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            # Turn 2 (after first approve + tool exec): ask for file B
+            # — would normally pause again, but scope=run should skip.
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_b",
+                        "name": "write_file",
+                        "arguments": {"file_path": "b.txt", "text": "B"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r2", "finish_reason": "tool_calls"}),
+            ],
+            # Turn 3 (after auto-approve + tool exec): final answer
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "r3", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        run = client.post(
+            "/local/v1/runs", headers=headers, json={"goal": "write two files"}
+        ).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as resp:
+            resp.read()
+        # Approve once with scope="run" — caches the tool grant.
+        perm_id = next(
+            e for e in _parse_sse_persisted(client, run["id"])
+            if e[0] == "permission.required"
+        )[1]["request_id"]
+        client.post(
+            f"/local/v1/permissions/{perm_id}",
+            headers=headers,
+            json={"decision": "approve", "scope": "run"},
+        )
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as resp:
+            body = resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    names = [e[0] for e in events]
+    # Run must NOT have paused again — no second permission.required.
+    second_required = [e for e in events if e[0] == "permission.required"]
+    assert not second_required, (
+        f"scope=run should suppress subsequent HITL prompts; got: {names}"
+    )
+    # The auto-approve must surface as `permission.auto_approved` so the
+    # timeline reflects the decision (chatStore.ts:184).
+    auto = [e for e in events if e[0] == "permission.auto_approved"]
+    assert auto, (
+        f"expected permission.auto_approved on auto-resumed tool. got: {names}"
+    )
+    assert auto[0][1]["tool"] == "write_file"
+    assert "run.completed" in names
+
+
+def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
+    """Full pause → POST /permissions/:id → resume cycle.
+
+    Regression for the `decisions = interrupt(hitl_request)["decisions"]`
+    KeyError: HumanInTheLoopMiddleware (langchain.agents.middleware) only
+    accepts `Command(resume={"decisions": [{"type": "approve"|"reject"|...}]})`.
+    Our `POST /local/v1/permissions/{id}` must translate the client's
+    `{decision: 'approve'|'deny'}` body into that shape — if it passes
+    the raw client payload through, the middleware crashes mid-resume
+    and the run dies with no AI response."""
+    handler = RecordingHandler(
+        scripts=[
+            # Turn 1: model asks to write a file (paused by HITL)
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_w1",
+                        "name": "write_file",
+                        "arguments": {"file_path": "ok.txt", "text": "x"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            # Turn 2 (after approve + tool exec): final answer
+            [
+                ("llm.delta", {"content_delta": "Wrote it."}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        r = client.post(
+            "/local/v1/runs", headers=headers, json={"goal": "write a file"}
+        )
+        run_id = r.json()["id"]
+        with client.stream(
+            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
+        ) as resp:
+            body1 = resp.read().decode("utf-8")
+        events1 = _parse_sse(body1)
+        perm = next(e for e in events1 if e[0] == "permission.required")
+        permission_id = perm[1]["request_id"]
+
+        # Client-shape POST — must NOT include `run_id`, must use the
+        # `decision/scope` keys per client.ts:resolveLocalPermission.
+        approve = client.post(
+            f"/local/v1/permissions/{permission_id}",
+            headers=headers,
+            json={"decision": "approve", "scope": "once"},
+        )
+        assert approve.status_code == 200, approve.text
+        assert approve.json()["resolved"] is True
+
+        # Drain post-resume stream — should reach run.completed (not
+        # run.failed with KeyError: 'decisions').
+        with client.stream(
+            "GET", f"/local/v1/runs/{run_id}/stream", headers=headers
+        ) as resp:
+            body2 = resp.read().decode("utf-8")
+
+    events2 = _parse_sse(body2)
+    names2 = {e[0] for e in events2}
+    assert "run.completed" in names2, (
+        f"expected run.completed after approve. got: {sorted(names2)}"
+    )
+    assert "run.failed" not in names2, (
+        "approve resume should not crash the graph"
     )
 
 

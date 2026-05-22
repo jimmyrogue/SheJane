@@ -186,3 +186,30 @@ def test_message_conversion_round_trip() -> None:
     out = _message_to_dict(ai)
     assert out["role"] == "assistant"
     assert out["toolCalls"] == [{"id": "c1", "name": "t", "arguments": {"k": "v"}}]
+    # No reasoning_content on a vanilla AIMessage → no reasoningContent in dict.
+    assert "reasoningContent" not in out
+
+
+def test_aimessage_reasoning_round_trips_for_deepseek_thinking_mode() -> None:
+    """DeepSeek thinking-mode round-trip regression.
+
+    DeepSeek rejects multi-turn requests with 400:
+        "The `reasoning_content` in the thinking mode must be passed
+         back to the API."
+    when the previous assistant message had reasoning_content but the
+    next request omits it. We accumulate `reasoning_content` into
+    AIMessage.additional_kwargs during streaming (see backend.py's
+    `_event_to_chunk` accumulator); the converter MUST surface it as
+    `reasoningContent` on the outbound message dict so the Go gateway
+    can forward it.
+    """
+    from langchain_core.messages import AIMessage
+
+    from local_host.llm.backend import _message_to_dict
+
+    ai = AIMessage(
+        content="2+2=4",
+        additional_kwargs={"reasoning_content": "I should add 2 and 2."},
+    )
+    out = _message_to_dict(ai)
+    assert out["reasoningContent"] == "I should add 2 and 2."

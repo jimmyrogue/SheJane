@@ -146,7 +146,7 @@ def test_e2e_happy_path_with_selector_enabled(monkeypatch) -> None:
             json={"goal": "say hi"},
         )
         assert r.status_code == 200, r.text
-        run_id = r.json()["run"]["id"]
+        run_id = r.json()["id"]
         with client.stream(
             "GET",
             f"/local/v1/runs/{run_id}/stream",

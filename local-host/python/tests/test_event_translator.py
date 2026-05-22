@@ -10,7 +10,7 @@ from local_host.event_translator import translate
 def test_messages_mode_emits_llm_token() -> None:
     chunk = AIMessageChunk(content="Hello")
     events = translate("messages", (chunk, {}))
-    assert events == [{"event": "llm.token", "data": {"content": "Hello"}}]
+    assert events == [{"event": "llm.delta", "data": {"content": "Hello"}}]
 
 
 def test_messages_mode_emits_reasoning_separately() -> None:
@@ -20,7 +20,7 @@ def test_messages_mode_emits_reasoning_separately() -> None:
     )
     events = translate("messages", (chunk, {}))
     names = [e["event"] for e in events]
-    assert "llm.token" in names
+    assert "llm.delta" in names
     assert "llm.reasoning" in names
 
 
@@ -54,15 +54,16 @@ def test_messages_mode_surfaces_backend_error() -> None:
     assert {"event": "llm.error", "data": {"message": "rate limit exceeded"}} in events
 
 
-def test_messages_mode_emits_tool_end_for_tool_message() -> None:
+def test_messages_mode_emits_tool_completed_for_tool_message() -> None:
     tm = ToolMessage(content="42", tool_call_id="c1", name="time.now")
     events = translate("messages", (tm, {}))
-    assert events == [
-        {
-            "event": "tool.end",
-            "data": {"tool_call_id": "c1", "name": "time.now", "content": "42"},
-        }
-    ]
+    # `tool.completed` is the canonical name the client looks for; the
+    # event also carries a `tool` alias of `name` so the renderer can
+    # show a "completed time.now" headline without re-keying.
+    assert events[0]["event"] == "tool.completed"
+    assert events[0]["data"]["tool_call_id"] == "c1"
+    assert events[0]["data"]["name"] == "time.now"
+    assert events[0]["data"]["content"] == "42"
 
 
 def test_updates_mode_emits_per_node_graph_node_event() -> None:
@@ -73,12 +74,12 @@ def test_updates_mode_emits_per_node_graph_node_event() -> None:
     assert events[0]["data"]["node"] == "router"
 
 
-def test_updates_mode_detects_tool_end_inside_tools_node() -> None:
+def test_updates_mode_detects_tool_completed_inside_tools_node() -> None:
     tm = ToolMessage(content="ok", tool_call_id="c1", name="time.now")
     payload = {"tools": {"messages": [tm]}}
     events = translate("updates", payload)
     names = [e["event"] for e in events]
-    assert "tool.end" in names
+    assert "tool.completed" in names
     assert "graph.node" in names
 
 

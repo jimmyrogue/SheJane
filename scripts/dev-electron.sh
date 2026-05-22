@@ -75,6 +75,68 @@ ensure_node_modules() {
   fi
 }
 
+force_kill_stragglers() {
+  # Hard-restart prelude. Each `make dev-electron` does a full clean
+  # restart by default — we kill any lingering daemon/vite/electron
+  # processes AND free their ports before launching new ones. Without
+  # this, a previous session's daemon that survived SIGTERM (the
+  # default kill signal trap'd by uvicorn / Electron) stays bound to
+  # 17371 with stale code, and `start_local_host`'s "already running"
+  # short-circuit silently masks the fact that your latest code edits
+  # never loaded. Spent hours on 2026-05-22 chasing that ghost.
+  #
+  # Opt out with `JIANDANLY_DEV_REUSE=1 make dev-electron` if you
+  # genuinely want to attach to an existing daemon (e.g. you started
+  # it manually with custom env).
+  if [[ "${JIANDANLY_DEV_REUSE:-0}" == "1" ]]; then
+    echo "[dev-electron] JIANDANLY_DEV_REUSE=1 — keeping existing processes"
+    return
+  fi
+
+  echo "[dev-electron] hard-restart: killing stragglers"
+  # SIGKILL (-9) is non-negotiable — SIGTERM lets daemons trap and
+  # finish in-flight work, which is exactly what kept happening.
+  pkill -9 -f 'python -m local_host' >/dev/null 2>&1 || true
+  pkill -9 -f 'electron/main\.cjs' >/dev/null 2>&1 || true
+  pkill -9 -f "vite.*--port (${CLIENT_DEV_PORT}|${ADMIN_PORT:-5174})" \
+    >/dev/null 2>&1 || true
+  # Free the daemon + Vite ports specifically. API_PORT/POSTGRES_PORT
+  # are docker-managed; don't touch them.
+  for port in "$LOCAL_HOST_PORT" "$CLIENT_DEV_PORT"; do
+    local pids
+    pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      echo "[dev-electron] freeing port ${port} (pids: ${pids})"
+      # shellcheck disable=SC2086
+      kill -9 $pids >/dev/null 2>&1 || true
+    fi
+  done
+  # Give the kernel a beat to release the sockets.
+  sleep 1
+}
+
+open_log_tail_terminal() {
+  # Spawn a separate Terminal.app window/tab tailing the daemon log so
+  # the user can watch agent progress while interacting with Electron.
+  # macOS-only; on other OSes this is a no-op and the user can run
+  # `make logs-local-host` manually.
+  #
+  # Opt out with `JIANDANLY_DEV_LOG_TAIL=0`.
+  [[ "${JIANDANLY_DEV_LOG_TAIL:-1}" == "1" ]] || return 0
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local log="${LOG_DIR}/local-host.log"
+  # Touch the file so `tail -F` doesn't complain on a never-written
+  # log path (it always exists once daemon starts, but the AppleScript
+  # racing daemon startup is real).
+  : > "$log" 2>/dev/null || true
+  osascript >/dev/null 2>&1 <<APPLESCRIPT || true
+tell application "Terminal"
+  activate
+  do script "tail -F '${log}' | grep --line-buffered -iE 'POST /local|HTTP/1\\.1 [45]|run\\.(waiting|completed|failed|started)|permission\\.|question\\.|llm\\.error|KeyError|Traceback' || tail -F '${log}'"
+end tell
+APPLESCRIPT
+}
+
 wait_for_url() {
   local url="$1"
   local label="$2"
@@ -137,13 +199,42 @@ start_local_host() {
       "JIANDANLY_CLOUD_BASE_URL=$API_BASE_URL"
       "PYTHONUNBUFFERED=1"
     )
+    # Pairing / cloud (host addr override, cloud token, MCP servers).
     [[ -n "${JIANDANLY_LOCAL_HOST_ADDR:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_HOST_ADDR=$JIANDANLY_LOCAL_HOST_ADDR")
-    [[ -n "${JIANDANLY_LOCAL_INPUT_GUARD:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_INPUT_GUARD=$JIANDANLY_LOCAL_INPUT_GUARD")
-    [[ -n "${JIANDANLY_LOCAL_SKILLS_PATH:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_SKILLS_PATH=$JIANDANLY_LOCAL_SKILLS_PATH")
-    [[ -n "${JIANDANLY_LOCAL_MCP_SERVERS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MCP_SERVERS=$JIANDANLY_LOCAL_MCP_SERVERS")
     [[ -n "${JIANDANLY_CLOUD_TOKEN:-}" ]] && env_cmd+=("JIANDANLY_CLOUD_TOKEN=$JIANDANLY_CLOUD_TOKEN")
-    [[ -n "${TAVILY_API_KEY:-}" ]] && env_cmd+=("TAVILY_API_KEY=$TAVILY_API_KEY")
-    [[ -n "${OPENAI_API_KEY:-}" ]] && env_cmd+=("OPENAI_API_KEY=$OPENAI_API_KEY")
+    [[ -n "${JIANDANLY_LOCAL_MCP_SERVERS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MCP_SERVERS=$JIANDANLY_LOCAL_MCP_SERVERS")
+    [[ -n "${JIANDANLY_LOCAL_SKILLS_PATH:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_SKILLS_PATH=$JIANDANLY_LOCAL_SKILLS_PATH")
+
+    # Middleware tuning — every JIANDANLY_LOCAL_* / JIANDANLY_PLAN_FIRST that
+    # the Python config layer reads. Stays in lockstep with .env so editing
+    # values actually takes effect in the subprocess.
+    [[ -n "${JIANDANLY_LOCAL_INPUT_GUARD:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_INPUT_GUARD=$JIANDANLY_LOCAL_INPUT_GUARD")
+    [[ -n "${JIANDANLY_PLAN_FIRST:-}" ]] && env_cmd+=("JIANDANLY_PLAN_FIRST=$JIANDANLY_PLAN_FIRST")
+    [[ -n "${JIANDANLY_LOCAL_TOOL_CRITIC:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_TOOL_CRITIC=$JIANDANLY_LOCAL_TOOL_CRITIC")
+    [[ -n "${JIANDANLY_LOCAL_CRITIC:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_CRITIC=$JIANDANLY_LOCAL_CRITIC")
+    [[ -n "${JIANDANLY_LOCAL_TOOL_SELECTOR_MAX:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX=$JIANDANLY_LOCAL_TOOL_SELECTOR_MAX")
+    [[ -n "${JIANDANLY_LOCAL_FALLBACK_MODELS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_FALLBACK_MODELS=$JIANDANLY_LOCAL_FALLBACK_MODELS")
+    [[ -n "${JIANDANLY_LOCAL_PII_REDACT:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_PII_REDACT=$JIANDANLY_LOCAL_PII_REDACT")
+    [[ -n "${JIANDANLY_LOCAL_MEMORY_PATHS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MEMORY_PATHS=$JIANDANLY_LOCAL_MEMORY_PATHS")
+
+    # NO platform-paid provider keys are forwarded to the daemon:
+    #   • image.* routes through `/api/v1/agent/tools/execute`; the
+    #     OpenAI key lives in the API's model registry (Admin-configured).
+    #   • web.search routes through the same gateway; the Tavily key
+    #     lives in the API's env (section E of root .env).
+    # If you need to add a new platform-paid tool, add a proxy in
+    # `local_host/tools/<tool>.py` via `_gateway.call_tool_gateway`,
+    # NOT a key forward here.
+
+    # Observability — LangSmith (LangChain-native), Langfuse (alternative),
+    # and the hard kill-switch flag.
+    [[ -n "${LANGSMITH_TRACING:-}" ]] && env_cmd+=("LANGSMITH_TRACING=$LANGSMITH_TRACING")
+    [[ -n "${LANGSMITH_ENDPOINT:-}" ]] && env_cmd+=("LANGSMITH_ENDPOINT=$LANGSMITH_ENDPOINT")
+    [[ -n "${LANGSMITH_API_KEY:-}" ]] && env_cmd+=("LANGSMITH_API_KEY=$LANGSMITH_API_KEY")
+    [[ -n "${LANGSMITH_PROJECT:-}" ]] && env_cmd+=("LANGSMITH_PROJECT=$LANGSMITH_PROJECT")
+    [[ -n "${LANGFUSE_PUBLIC_KEY:-}" ]] && env_cmd+=("LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY")
+    [[ -n "${LANGFUSE_SECRET_KEY:-}" ]] && env_cmd+=("LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY")
+    [[ -n "${JIANDANLY_DISABLE_OBSERVABILITY:-}" ]] && env_cmd+=("JIANDANLY_DISABLE_OBSERVABILITY=$JIANDANLY_DISABLE_OBSERVABILITY")
     "${env_cmd[@]}" uv run python -m local_host >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
@@ -198,13 +289,23 @@ launch_electron() {
 main() {
   require_command curl
   require_command npm
+  require_command uv
   mkdir -p "$LOG_DIR"
   ensure_node_modules "${ROOT_DIR}/client"
-  ensure_node_modules "${ROOT_DIR}/local-host"
+
+  # Hard restart: kill any leftover daemon/vite/electron + free ports
+  # FIRST, so the rest of the script can assume a clean slate. Opt out
+  # with JIANDANLY_DEV_REUSE=1.
+  force_kill_stragglers
 
   start_cloud_stack
   start_local_host
   start_client_dev_server
+  # Spawn the log-tail Terminal AFTER daemon is up (so the file exists
+  # and tail -F has something real to follow) but BEFORE blocking on
+  # Electron — otherwise the tail window opens only after the user
+  # closes the app, which defeats the purpose.
+  open_log_tail_terminal
   launch_electron
 }
 

@@ -97,7 +97,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
     # Start the run
     r = slow_client.post("/local/v1/runs", headers=headers, json={"goal": "slow"})
     assert r.status_code == 200
-    run_id = r.json()["run"]["id"]
+    run_id = r.json()["id"]
 
     # Fire the cancel from a background thread after a short delay,
     # giving the driver loop time to enter the LLM call.
@@ -142,7 +142,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
     # Store should reflect the cancel
     r = slow_client.get(f"/local/v1/runs/{run_id}", headers=headers)
     assert r.status_code == 200
-    assert r.json()["run"]["status"] == "canceled"
+    assert r.json()["status"] == "canceled"
 
 
 def test_cancel_unknown_run_returns_false_canceled(slow_client: TestClient) -> None:
