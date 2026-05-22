@@ -1,6 +1,13 @@
 name: External Smoke
 
 on:
+  # Daily at 18:00 UTC = 02:00 Asia/Shanghai. Catches credentials
+  # drift (Stripe webhook secret rotated, Tavily key revoked, S3
+  # bucket policy changed, etc.) the morning after, before users
+  # notice. Off-hours slot so a failing nightly run doesn't drown
+  # out regular CI signal during work hours.
+  schedule:
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 jobs:
