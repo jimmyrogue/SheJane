@@ -8,8 +8,9 @@ the cutover.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -105,6 +106,19 @@ class Settings(BaseSettings):
         default=False,
         alias="JIANDANLY_LOCAL_CRITIC",
     )
+
+    @field_validator("enable_critic_reflection", mode="before")
+    @classmethod
+    def _coerce_bool_env(cls, value: Any) -> Any:
+        # `JIANDANLY_LOCAL_CRITIC=` (empty string) is a common shape in
+        # .env files where the key exists as documentation but the user
+        # hasn't opted in. Pydantic's default bool parser rejects empty
+        # strings — that crashes daemon startup AND the test suite. Map
+        # empty / whitespace to False here; let other truthy values
+        # ("1", "true", "yes") flow through to pydantic's parser.
+        if isinstance(value, str) and value.strip() == "":
+            return False
+        return value
 
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)

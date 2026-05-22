@@ -65,14 +65,14 @@ def test_workspaces_crud(client: TestClient) -> None:
     assert r.status_code == 200
     assert r.json()["workspaces"] == []
 
-    # create
+    # create — returns flat LocalWorkspaceAuthorization (no `workspace:` wrapper)
     r = client.post(
         "/local/v1/workspaces",
         headers=headers,
         json={"path": "/tmp/some-workspace", "label": "Test WS"},
     )
     assert r.status_code == 200
-    ws = r.json()["workspace"]
+    ws = r.json()
     assert ws["path"] == "/tmp/some-workspace"
     assert ws["label"] == "Test WS"
 
@@ -80,10 +80,10 @@ def test_workspaces_crud(client: TestClient) -> None:
     r = client.get("/local/v1/workspaces", headers=headers)
     assert len(r.json()["workspaces"]) == 1
 
-    # delete
+    # delete — returns the deleted record (flat), matches TS revokeLocalWorkspace
     r = client.delete(f"/local/v1/workspaces/{ws['id']}", headers=headers)
     assert r.status_code == 200
-    assert r.json()["deleted"] is True
+    assert r.json()["id"] == ws["id"]
 
     r = client.get("/local/v1/workspaces", headers=headers)
     assert r.json()["workspaces"] == []
@@ -290,29 +290,34 @@ def test_skill_catalog_returns_empty_when_dir_missing(
 # --- image tools (missing-key path only; live API not exercised) ---
 
 
-def test_image_generate_without_key(monkeypatch: Any) -> None:
+def test_image_generate_without_cloud_session(monkeypatch: Any) -> None:
+    """image.generate now proxies through the cloud Tool Gateway — when
+    no cloud session is paired (cloud_token empty), the tool must
+    surface a recoverable error instead of trying to call OpenAI
+    directly. See `tools/image.py` + `test_image_tool.py` for the full
+    gateway contract.
+    """
     import asyncio
+
+    from local_host.config import reset_settings_for_tests
+    from local_host.tools.image import _invoke_image_tool
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    from local_host.tools.image import image_generate
-
-    out = asyncio.run(image_generate.ainvoke({"prompt": "a cat"}))
-    assert out["ok"] == "false"
-    assert "OPENAI_API_KEY" in out["error"]
-
-
-def test_image_edit_rejects_missing_source(tmp_path: Path) -> None:
-    import asyncio
-
-    from local_host.tools.image import image_edit
-
+    reset_settings_for_tests(
+        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        JIANDANLY_CLOUD_BASE_URL="http://api.test",
+        JIANDANLY_CLOUD_TOKEN="",  # unpaired
+    )
     out = asyncio.run(
-        image_edit.ainvoke(
-            {"image_path": str(tmp_path / "nope.png"), "prompt": "modify"}
+        _invoke_image_tool(
+            "image.generate",
+            {"prompt": "a cat"},
+            run_id="r",
+            tool_call_id="c",
         )
     )
-    assert out["ok"] == "false"
-    assert "not found" in out["error"]
+    assert out["ok"] is False
+    assert out["errorCode"] == "cloud_session_missing"
 
 
 # --- MCP wiring ---

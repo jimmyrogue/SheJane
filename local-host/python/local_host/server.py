@@ -13,10 +13,12 @@ import json
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
@@ -97,6 +99,9 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
+    # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
+    # GET response so the client can show "paired Xs ago".
+    app.state.cloud_session_updated_at = None
     log.info(
         "local-host started host=%s port=%s data=%s",
         settings.host,
@@ -121,12 +126,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    # Order matters: middleware added LAST runs FIRST on the request path
+    # (Starlette wraps outward). PairingTokenAuthMiddleware must sit
+    # behind CORSMiddleware so that:
+    #   1. CORS preflight (OPTIONS) is answered by CORSMiddleware without
+    #      ever hitting auth — preflight by spec carries no credentials,
+    #      so rejecting it with 401 makes every browser fetch fail.
+    #   2. Even authenticated-but-401 responses still ship the
+    #      Access-Control-Allow-Origin header, otherwise the browser
+    #      hides the error body from the JS layer.
     app.add_middleware(PairingTokenAuthMiddleware)
+
+    # CORS — the daemon binds loopback only, but the Vite dev server (and
+    # the production Electron renderer when loaded over file://) live on a
+    # different origin than `:17371`. Without these headers, every
+    # browser-side fetch fails preflight and the pairing handshake
+    # (`POST /local/v1/session`) never reaches us. Bearer-token auth
+    # (PairingTokenAuthMiddleware above) is the real gate; CORS is just
+    # plumbing.
+    #
+    # Override via env if you front the daemon with a custom reverse proxy.
+    cors_origins_env = os.environ.get("JIANDANLY_LOCAL_CORS_ORIGINS", "").strip()
+    if cors_origins_env:
+        allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+        allow_origin_regex = None
+    else:
+        # Permit any localhost/loopback origin (dev Vite at 55173, prod
+        # Electron file:// shows up as `null`, plus any 5173/5174/etc.).
+        allow_origins = ["null"]
+        allow_origin_regex = r"^(?:https?://)?(?:127\.0\.0\.1|localhost)(?::\d+)?$"
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_origin_regex=allow_origin_regex,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/local/v1/health")
     async def health() -> dict[str, Any]:
+        # Two consumers, two contracts — both must be satisfied:
+        #   • scripts/smoke-local-host.sh checks `ok == true`
+        #   • client/src/shared/local-host/client.ts:probeLocalHost
+        #     checks `status === "ok"` and reads mode/worker
+        # Returning both keys keeps the smoke green AND lets the renderer
+        # mark the daemon as online (without which `canUseLocalHarness`
+        # stays false and chat silently falls back to the cloud path).
         return {
             "ok": True,
+            "status": "ok",
+            "mode": "ready",
+            "worker": "python-langgraph",
             "version": __version__,
             "pairing_configured": bool(settings.pairing_token),
         }
@@ -149,54 +201,123 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/local/v1/workspaces")
     async def add_workspace(body: dict[str, Any]) -> dict[str, Any]:
+        """Authorize a workspace path.
+
+        Returns the flat `LocalWorkspaceAuthorization` shape — the
+        client's `authorizeLocalWorkspace` reads `.id / .path / .label`
+        directly (no wrapper). See client.test.ts:342-352.
+        """
         store: LocalStore = app.state.store
         path = str(body.get("path", "")).strip()
         label = str(body.get("label", "")).strip()
         if not path:
-            return {"error": "path required", "code": 40201}
-        ws = await store.create_workspace(path=path, label=label or path)
-        return {"workspace": ws}
+            raise HTTPException(status_code=400, detail="path required")
+        return await store.create_workspace(path=path, label=label or path)
 
     @app.delete("/local/v1/workspaces/{workspace_id}")
     async def remove_workspace(workspace_id: str) -> dict[str, Any]:
+        """Revoke a workspace authorization.
+
+        Returns the flat record that was just deleted (matching the TS
+        `revokeLocalWorkspace` signature → `Promise<LocalWorkspaceAuthorization>`).
+        """
         store: LocalStore = app.state.store
-        deleted = await store.delete_workspace(workspace_id)
-        return {"deleted": deleted}
+        # Fetch before delete so we can return the record. If it didn't
+        # exist, surface a 404 — client `decodeLocalResponse` throws
+        # which the renderer catches and shows to the user.
+        # `list_workspaces` is the only async path that gives us full row
+        # — there's no get_workspace by id, so iterate.
+        existing = None
+        for ws in await store.list_workspaces():
+            if ws["id"] == workspace_id:
+                existing = ws
+                break
+        if existing is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        await store.delete_workspace(workspace_id)
+        return existing
+
+    @app.get("/local/v1/runs")
+    async def list_runs() -> dict[str, Any]:
+        """Recent runs newest-first.
+
+        Client `listLocalRuns()` (client/src/shared/local-host/client.ts:283)
+        reads `{runs: LocalRun[]}` on every boot. Previously this route
+        didn't exist — every Electron launch silently 404'd here and
+        the conversation history sidebar came up empty.
+        """
+        store: LocalStore = app.state.store
+        runs = await store.list_runs()
+        return {"runs": runs}
 
     @app.post("/local/v1/runs")
     async def create_run(body: dict[str, Any]) -> dict[str, Any]:
+        """Create a new run.
+
+        Returns the flat `LocalRun` shape (NOT `{run: {...}}`) — that's
+        the contract `client.test.ts:63-92` pins and what TypeScript's
+        `createLocalRun` reads via `decodeLocalResponse<LocalRun>`.
+        Wrapping the response made `.id` and `.status` undefined on the
+        client, breaking every downstream stream call.
+        """
         goal = str(body.get("goal", "")).strip()
         if not goal:
             raise HTTPException(status_code=400, detail="goal required")
+        history_raw = body.get("history") or []
+        history: list[dict[str, str]] = (
+            history_raw if isinstance(history_raw, list) else []
+        )
+        settings_raw = body.get("settings")
+        settings = settings_raw if isinstance(settings_raw, dict) else None
         coordinator: RunCoordinator = app.state.coordinator
         run = await coordinator.start_run(
             goal=goal,
             workspace_path=body.get("workspace_path"),
             mode=str(body.get("mode", "fast")),
+            history=history,
+            parent_run_id=body.get("parent_run_id"),
+            settings=settings,
         )
-        return {"run": run}
+        return run
 
     @app.get("/local/v1/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
+        """Return the flat run record (same shape as POST /runs)."""
         store: LocalStore = app.state.store
         run = await store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run not found")
-        return {"run": run}
+        return run
 
     @app.get("/local/v1/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> EventSourceResponse:
         coordinator: RunCoordinator = app.state.coordinator
 
         async def gen():
-            async for item in coordinator.stream(run_id):
-                yield {
-                    "event": item["event"],
-                    "data": json.dumps(item["data"], default=str, ensure_ascii=False),
-                }
-            yield {"event": "stream.end", "data": "{}"}
+            # The client's `parseAgentSSEChunk` (sse.ts) reads
+            #   data: {"event_type": "...", "payload": {...}, "id":...}
+            # and recognizes only `data: [DONE]` as the completion mark.
+            # So we must:
+            #   • dump the whole envelope into `data:` (not the bare
+            #     payload like the old shape — that made event_type
+            #     undefined on the client and the entire UI silently
+            #     no-op'd);
+            #   • end with `data: [DONE]` so the stream resolves.
+            try:
+                async for event in coordinator.stream(run_id):
+                    yield {
+                        "event": event["event_type"],
+                        "data": json.dumps(event, default=str, ensure_ascii=False),
+                    }
+            finally:
+                yield {"data": "[DONE]"}
 
-        return EventSourceResponse(gen())
+        # `sep="\n"` (LF) — matches the cloud Go SSE endpoint at
+        # /api/v1/agent/runs/:id/stream AND what the client's
+        # parseAgentSSEBuffer expects (it splits on `/\n\n/`, which does
+        # NOT match CRLF). sse-starlette's default `\r\n` is technically
+        # spec-correct but breaks this client.
+        return EventSourceResponse(gen(), sep="\n")
 
     @app.post("/local/v1/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> dict[str, Any]:
@@ -220,102 +341,291 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # crashing on missing routes. Implementations land in Phase 6'+.
 
     @app.post("/local/v1/permissions/{permission_id}")
-    async def resolve_permission(permission_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Alias for resume_run — clients address the permission, we look
-        up its run and resume that.
+    async def resolve_permission(
+        permission_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Approve / deny a pending tool-permission request.
 
-        Phase 5' stub: today we don't persist a permission→run index from
-        the HumanInTheLoopMiddleware path, so the body is expected to also
-        contain `run_id`. Phase 6'+ replaces this with the proper lookup.
+        Client body (per `client.ts:resolveLocalPermission`):
+            `{decision: 'approve'|'deny', scope?: 'once'|'run'}`
+
+        We translate to the shape `HumanInTheLoopMiddleware` expects on
+        resume — `{"decisions": [{"type": "approve"|"reject", ...}]}` —
+        because the middleware does `interrupt(...)["decisions"]` and
+        KeyError's on anything else.
+
+        Per-permission scope is recorded in `local_permissions` for
+        analytics; it's not (yet) honored as a "remember this approval
+        for the rest of the run" gate — that requires a separate
+        middleware layer on top.
         """
-        run_id = body.get("run_id")
-        if not run_id:
+        decision_text = str(body.get("decision", "")).lower()
+        if decision_text not in {"approve", "deny"}:
             raise HTTPException(
                 status_code=400,
-                detail="phase 5' stub: please include run_id in body",
+                detail="decision required (approve|deny)",
             )
+        scope = body.get("scope") if body.get("scope") in {"once", "run"} else "once"
+        store: LocalStore = app.state.store
+        record = await store.get_permission(permission_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="permission not found")
+        await store.resolve_permission(
+            permission_id,
+            status="approved" if decision_text == "approve" else "denied",
+            scope=str(scope),
+        )
+        # Build the HITL decision list. The middleware expects N
+        # decisions for N interrupted tool calls (one HITLRequest can
+        # bundle several). For now we assume one tool call per
+        # interrupt — the common case. Multi-tool batches would need
+        # the client to collect all approvals before posting.
+        hitl_decision: dict[str, Any]
+        if decision_text == "approve":
+            hitl_decision = {"type": "approve"}
+        else:
+            hitl_decision = {
+                "type": "reject",
+                "message": "Tool execution denied by user.",
+            }
         coordinator: RunCoordinator = app.state.coordinator
-        ok = await coordinator.resume_run(run_id=run_id, decision=body)
-        if not ok:
-            raise HTTPException(status_code=409, detail="run not paused")
-        return {"permission_id": permission_id, "resolved": True}
+        # If the user picked "Always allow for this run", cache the
+        # tool name in the coordinator so the auto-approve loop in
+        # `_drive_run` skips re-prompting on subsequent gates for the
+        # same tool. Without this the agent runs into HITL again every
+        # turn and the user has to click approve repeatedly.
+        if decision_text == "approve" and scope == "run":
+            coordinator.grant_tool_scope(
+                record["run_id"], record["tool_name"]
+            )
+        resume_payload = {"decisions": [hitl_decision]}
+        ok = await coordinator.resume_run(
+            run_id=record["run_id"], decision=resume_payload
+        )
+        # Emit `permission.resolved` onto the run's SSE queue so the
+        # client's `hasPendingPermission` check (App.tsx:1339) clears
+        # the in-flight approval card. Without this the card stays
+        # rendered after the user clicks approve, even though the run
+        # has already moved on.
+        await coordinator.emit_for_run(
+            record["run_id"],
+            "permission.resolved",
+            {
+                "request_id": permission_id,
+                "tool": record["tool_name"],
+                "tool_name": record["tool_name"],
+                "decision": decision_text,
+                "scope": str(scope),
+            },
+        )
+        return {
+            "permission_id": permission_id,
+            "resolved": True,
+            "decision": decision_text,
+            "scope": scope,
+            "resumed": ok,
+        }
 
     @app.post("/local/v1/questions/{question_id}")
-    async def answer_question(question_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Same shape as permissions — Phase 6'+ will route via a question
-        registry. For now, route to resume_run if the caller knows run_id."""
-        run_id = body.get("run_id")
-        if not run_id:
+    async def answer_question(
+        question_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Submit answers to a paused user.ask interrupt.
+
+        Body shape (per `client.ts:answerLocalQuestion`):
+        `{answers: Record<string, string[]>}`. We look up the question
+        by id to find its run_id, persist the answers, then resume.
+        """
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
             raise HTTPException(
-                status_code=400,
-                detail="phase 5' stub: please include run_id in body",
+                status_code=400, detail="answers (object) required"
             )
+        store: LocalStore = app.state.store
+        record = await store.get_question(question_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="question not found")
+        await store.answer_question(question_id, answers=answers)
         coordinator: RunCoordinator = app.state.coordinator
-        ok = await coordinator.resume_run(run_id=run_id, decision=body)
-        if not ok:
-            raise HTTPException(status_code=409, detail="run not paused")
-        return {"question_id": question_id, "answered": True}
+        # user.ask reads `answers` directly (see tools/user.py) — pass
+        # both shapes for maximum compatibility.
+        resume_payload = {"answers": answers, "question_id": question_id}
+        ok = await coordinator.resume_run(
+            run_id=record["run_id"], decision=resume_payload
+        )
+        # Mirror the permission flow: emit `question.answered` onto the
+        # run's stream so the client's `hasPendingQuestion` check
+        # (App.tsx:1352) clears the answer prompt UI.
+        await coordinator.emit_for_run(
+            record["run_id"],
+            "question.answered",
+            {
+                "request_id": question_id,
+                "answers": answers,
+            },
+        )
+        return {
+            "question_id": question_id,
+            "answered": True,
+            "resumed": ok,
+        }
 
     @app.get("/local/v1/artifacts/{artifact_id}")
     async def get_artifact(artifact_id: str) -> dict[str, Any]:
-        """Stub: artifact persistence not yet ported from Node daemon."""
-        raise HTTPException(
-            status_code=404,
-            detail=f"artifact {artifact_id} not found (phase 5' stub)",
-        )
+        """Return a single artifact record.
+
+        Shape matches the TS `LocalArtifact` interface
+        (`client.ts:38-44`): `{id, title, content, tool_name?, created_at?}`.
+        """
+        store: LocalStore = app.state.store
+        record = await store.get_artifact(artifact_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return {
+            "id": record["id"],
+            "title": record["title"],
+            "content": record["content"],
+            "tool_name": record.get("tool_name"),
+            "created_at": record["created_at"],
+        }
 
     @app.get("/local/v1/runs/{run_id}/diagnostics")
     async def run_diagnostics(run_id: str) -> dict[str, Any]:
-        """Bundle a run's metadata + event tail for client-side debugging."""
+        """Return the full `LocalRunDiagnostics` payload.
+
+        Shape (per TS interface `client/src/shared/local-host/client.ts:63-100`):
+            { schema_version: 1, exported_at, local_host_version?,
+              run, events, permissions, artifacts, latest_checkpoint }
+
+        Phase 5'+ used to return only `{run, events}`, so the
+        `DiagnosticsPanel` rendered NaN counts (permissions.length on
+        undefined) and the "latest checkpoint" tab was always missing.
+        """
         store: LocalStore = app.state.store
         run = await store.get_run(run_id)
         if not run:
             raise HTTPException(status_code=404, detail="run not found")
-        events = await store.events_since(run_id, after_seq=0)
-        return {"run": run, "events": events}
+        raw_events = await store.events_since(run_id, after_seq=0)
+        events = [
+            {
+                "id": e["id"],
+                "run_id": e["run_id"],
+                "seq": e["seq"],
+                "event_type": e["event_type"],
+                "payload": json.loads(e.get("payload_json") or "{}"),
+                "created_at": e["created_at"],
+            }
+            for e in raw_events
+        ]
+        permissions = await store.list_permissions_for_run(run_id)
+        artifacts = await store.list_artifacts_for_run(run_id)
+        return {
+            "schema_version": 1,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "local_host_version": __version__,
+            "run": run,
+            "events": events,
+            "permissions": permissions,
+            "artifacts": artifacts,
+            "latest_checkpoint": None,  # TODO Block 5: pull from AsyncSqliteSaver
+        }
 
     @app.post("/local/v1/session")
     async def set_cloud_session(body: dict[str, Any]) -> dict[str, Any]:
-        """Stash a cloud bearer token for outbound LLM calls.
+        """Stash a cloud bearer token (+ base URL) for outbound LLM calls.
 
-        Today the token comes from env (JIANDANLY_CLOUD_TOKEN). The client
-        endpoint exists so users can refresh tokens at runtime; Phase 6'+
-        wires this into Settings live.
+        Response shape MUST match the client's `LocalCloudSession` TypeScript
+        interface — `{connected, cloud_base_url, auth, updated_at}` — because
+        the client gates its "use local agent" feature flag on
+        `session.connected === true`. Returning anything else (e.g. `{ok:
+        true}`) leaves `session.connected = undefined`, the gate stays
+        closed, and chat silently falls back to the cloud-only path.
         """
         token = str(body.get("access_token") or body.get("token") or "")
         if not token:
             raise HTTPException(status_code=400, detail="token required")
         settings = app.state.settings
         settings.cloud_token = token  # type: ignore[misc]
-        return {"ok": True}
+        # Allow the client to override the daemon's default cloud base URL —
+        # the JWT was issued against THAT cloud, so we must talk to the
+        # same one.
+        incoming_base = str(body.get("cloud_base_url") or "").strip()
+        if incoming_base:
+            settings.cloud_base_url = incoming_base  # type: ignore[misc]
+        updated_at = datetime.now(timezone.utc).isoformat()
+        app.state.cloud_session_updated_at = updated_at
+        return {
+            "connected": True,
+            "cloud_base_url": settings.cloud_base_url,
+            "auth": "bearer",
+            "updated_at": updated_at,
+        }
 
     @app.delete("/local/v1/session")
     async def clear_cloud_session() -> dict[str, Any]:
         settings = app.state.settings
         settings.cloud_token = ""  # type: ignore[misc]
-        return {"ok": True}
+        app.state.cloud_session_updated_at = None
+        return {"connected": False}
 
     @app.get("/local/v1/session")
     async def get_cloud_session() -> dict[str, Any]:
         settings = app.state.settings
-        return {"configured": bool(getattr(settings, "cloud_token", ""))}
+        connected = bool(getattr(settings, "cloud_token", ""))
+        payload: dict[str, Any] = {"connected": connected}
+        if connected:
+            payload["cloud_base_url"] = settings.cloud_base_url
+            payload["auth"] = "bearer"
+            updated_at = getattr(app.state, "cloud_session_updated_at", None)
+            if updated_at:
+                payload["updated_at"] = updated_at
+        return payload
 
     @app.post("/local/v1/workspaces/diagnose")
     async def diagnose_workspace(body: dict[str, Any]) -> dict[str, Any]:
-        """Check whether a candidate path is acceptable for workspace.open."""
+        """Inspect a candidate path against the authorization registry.
+
+        Response matches the TS `LocalWorkspaceDiagnosis` shape:
+            { path, exists, is_directory, authorized,
+              reason: 'authorized'|'not_authorized'|'not_found'|'not_directory',
+              workspace?: LocalWorkspaceAuthorization }
+
+        client.test.ts:378-395 pins this exact shape — the previous
+        `{ok, resolved_path, reason}` response made every key the
+        renderer reads undefined, and the workspace-picker silently
+        showed "not authorized" forever.
+        """
         import os as _os
         from pathlib import Path as _Path
 
+        store: LocalStore = app.state.store
         path = str(body.get("path", "")).strip()
         if not path:
             raise HTTPException(status_code=400, detail="path required")
         resolved = _os.path.abspath(_os.path.expanduser(path))
-        ok = _Path(resolved).is_dir()
-        return {
-            "ok": ok,
-            "resolved_path": resolved,
-            "reason": "" if ok else "not a directory",
+        path_obj = _Path(resolved)
+        exists = path_obj.exists()
+        is_directory = path_obj.is_dir()
+        workspace = await store.workspace_by_path(resolved)
+        authorized = workspace is not None
+        if not exists:
+            reason = "not_found"
+        elif not is_directory:
+            reason = "not_directory"
+        elif authorized:
+            reason = "authorized"
+        else:
+            reason = "not_authorized"
+        payload: dict[str, Any] = {
+            "path": resolved,
+            "exists": exists,
+            "is_directory": is_directory,
+            "authorized": authorized,
+            "reason": reason,
         }
+        if workspace is not None:
+            payload["workspace"] = workspace
+        return payload
 
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:

@@ -11,15 +11,25 @@ For the SSE protocol the client consumes we want stable, narrow event
 names that don't leak LangGraph internals. This module is the single
 place that translation happens.
 
-Client SSE event types (see docs/client-sse-protocol.md):
+Client SSE event types — names MUST match what the TypeScript
+streamTransport.ts and chatStore.ts switch on (see
+client/src/shared/streaming/streamTransport.ts:61 and
+client/src/features/chat/chatStore.ts):
 
-  llm.token            — one streamed token of assistant content
+  llm.delta            — one streamed token of assistant content (was
+                         `llm.token` pre-Block-3 — client looks for
+                         `llm.delta`)
   llm.tool_call_chunk  — partial JSON args for a tool call being assembled
   llm.reasoning        — DeepSeek-style reasoning content chunk
-  tool.start           — tool execution beginning (best-effort detection)
-  tool.end             — tool execution result observed
+  tool.requested       — tool about to run (emitted when the model's
+                         tool_call_chunk finalizes with a name)
+  tool.completed       — tool result observed (was `tool.end` pre-Block-3
+                         — client looks for `tool.completed`)
+  tool.failed          — tool result observed with status="error"
   graph.node           — generic node transition (catch-all)
   agent.custom         — middleware-emitted custom payload
+  subagent.spawned     — deepagents task() tool spawning a subagent
+  subagent.completed   — subagent finished
 """
 
 from __future__ import annotations
@@ -55,14 +65,17 @@ def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
 
 def _translate_messages(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, tuple) or len(payload) != 2:
-        return [{"event": "llm.token", "data": {"raw": _safe_dump(payload)}}]
+        return [{"event": "llm.delta", "data": {"raw": _safe_dump(payload)}}]
     chunk, _metadata = payload
 
     if isinstance(chunk, AIMessageChunk):
         out: list[dict[str, Any]] = []
         content = chunk.content
         if isinstance(content, str) and content:
-            out.append({"event": "llm.token", "data": {"content": content}})
+            # `llm.delta` is the canonical content-stream event; the
+            # client's streamAgentSSE() reads `payload.content` to
+            # append to the in-flight assistant message bubble.
+            out.append({"event": "llm.delta", "data": {"content": content}})
 
         reasoning = chunk.additional_kwargs.get("reasoning_content")
         if reasoning:
@@ -97,6 +110,14 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
                     }
                 )
 
+        # `tool.requested` (pre-call signal) is best emitted from a
+        # `wrap_tool_call` middleware hook in `agent/builder.py` so we
+        # can distinguish the truly final tool_call from partial
+        # streaming chunks — AIMessageChunk surfaces `tool_calls` for
+        # any chunk where it can parse a name, which floods the wire
+        # with spam mid-args. Deferred to a follow-up block; the client
+        # falls back to `tool.completed` for the "tool ran" headline.
+
         backend_error = chunk.additional_kwargs.get("backend_error")
         if backend_error:
             out.append(
@@ -106,19 +127,31 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
         return out
 
     if isinstance(chunk, ToolMessage):
-        event_name = "subagent.completed" if chunk.name == "task" else "tool.end"
+        # `tool.completed` is the canonical name the client expects
+        # (chatStore.ts:155). Erroring tool messages get split to
+        # `tool.failed` so the UI can render them differently.
+        status = getattr(chunk, "status", None)
+        is_failed = status == "error"
+        if chunk.name == "task":
+            event_name = "subagent.completed"
+        elif is_failed:
+            event_name = "tool.failed"
+        else:
+            event_name = "tool.completed"
         return [
             {
                 "event": event_name,
                 "data": {
                     "tool_call_id": chunk.tool_call_id,
                     "name": chunk.name,
+                    "tool": chunk.name,  # client uses `tool` key for headline
                     "content": _stringify(chunk.content),
+                    "status": status or "ok",
                 },
             }
         ]
 
-    return [{"event": "llm.token", "data": {"raw": _safe_dump(chunk)}}]
+    return [{"event": "llm.delta", "data": {"raw": _safe_dump(chunk)}}]
 
 
 # ---- updates mode ----
@@ -144,13 +177,18 @@ def _translate_updates(payload: Any) -> list[dict[str, Any]]:
         if node in _NODE_NAME_TOOLS and "messages" in delta_dict:
             for m in delta_dict["messages"] or []:
                 if isinstance(m, ToolMessage):
+                    m_status = getattr(m, "status", None)
                     out.append(
                         {
-                            "event": "tool.end",
+                            "event": "tool.failed"
+                            if m_status == "error"
+                            else "tool.completed",
                             "data": {
                                 "tool_call_id": m.tool_call_id,
                                 "name": m.name,
+                                "tool": m.name,
                                 "content": _stringify(m.content),
+                                "status": m_status or "ok",
                             },
                         }
                     )

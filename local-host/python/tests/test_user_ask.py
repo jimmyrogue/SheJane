@@ -75,6 +75,11 @@ def _make_client(monkeypatch, handler) -> TestClient:
 
 
 def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    """Return list of (event_type, payload) — payload is auto-unwrapped
+    from the AgentRunEvent envelope (Block 0). This keeps the test
+    bodies readable: they can still write `data.get("interrupts")`
+    instead of `data["payload"]["interrupts"]`.
+    """
     events: list[tuple[str, dict]] = []
     name = ""
     buf: list[str] = []
@@ -86,7 +91,15 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
                     data = json.loads("\n".join(buf))
                 except json.JSONDecodeError:
                     data = {"raw": "\n".join(buf)}
-                events.append((name, data))
+                # Unwrap envelope when present.
+                if (
+                    isinstance(data, dict)
+                    and "event_type" in data
+                    and "payload" in data
+                ):
+                    events.append((str(data["event_type"]), data["payload"]))
+                else:
+                    events.append((name, data))
             name = ""
             buf = []
             continue
@@ -170,7 +183,7 @@ def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None
             json={"goal": "compare frontend frameworks"},
         )
         assert r.status_code == 200
-        run_id = r.json()["run"]["id"]
+        run_id = r.json()["id"]
         with client.stream(
             "GET",
             f"/local/v1/runs/{run_id}/stream",
@@ -229,7 +242,7 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
         r = client.post("/local/v1/runs", headers=headers, json={"goal": "x"})
-        run_id = r.json()["run"]["id"]
+        run_id = r.json()["id"]
 
         # Drain the first stream until waiting
         with client.stream(
@@ -238,11 +251,21 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
             body1 = resp.read().decode("utf-8")
         assert "run.waiting" in body1
 
-        # Resume the run via the questions endpoint
+        # Find the question_id emitted via `question.asked` (Block 4
+        # bridge) and resume with the contract-shape `{answers: {...}}`.
+        events1 = _parse_sse(body1)
+        question_event = next(
+            (e for e in events1 if e[0] == "question.asked"), None
+        )
+        assert question_event is not None, (
+            f"expected question.asked SSE event after user.ask interrupt. got: "
+            f"{[e[0] for e in events1]}"
+        )
+        question_id = question_event[1]["request_id"]
         resume = client.post(
-            f"/local/v1/questions/q-irrelevant",
+            f"/local/v1/questions/{question_id}",
             headers=headers,
-            json={"run_id": run_id, "answer": "mode X"},
+            json={"answers": {question_id: ["mode X"]}},
         )
         assert resume.status_code == 200, resume.text
 

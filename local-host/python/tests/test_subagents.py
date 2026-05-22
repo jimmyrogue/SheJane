@@ -220,25 +220,26 @@ def test_translator_recognizes_task_tool_result_as_subagent_completed() -> None:
         name="task",
     )
     events = translate("messages", (tm, {}))
-    assert events == [
-        {
-            "event": "subagent.completed",
-            "data": {
-                "tool_call_id": "call_task_1",
-                "name": "task",
-                "content": "Research finished: see notes",
-            },
-        }
-    ]
+    # Event payload now also carries `tool` (alias of `name`) and
+    # `status` per Block 3 — needed by chatStore.ts so the renderer can
+    # show "completed time.now" headlines without re-keying. Assert on
+    # the keys we care about rather than full equality.
+    assert events[0]["event"] == "subagent.completed"
+    assert events[0]["data"]["tool_call_id"] == "call_task_1"
+    assert events[0]["data"]["name"] == "task"
+    assert events[0]["data"]["content"] == "Research finished: see notes"
 
 
-def test_translator_keeps_regular_tools_as_tool_end() -> None:
-    """Sanity: non-task tools still surface as tool.end, not subagent.completed."""
+def test_translator_keeps_regular_tools_as_tool_completed() -> None:
+    """Sanity: non-task tools surface as `tool.completed` (the canonical
+    event name per Block 3 — client looks for this, not `tool.end`),
+    NOT `subagent.completed` which is reserved for the deepagents task()
+    spawn."""
     from langchain_core.messages import ToolMessage
 
     tm = ToolMessage(content="42", tool_call_id="c1", name="time.now")
     events = translate("messages", (tm, {}))
-    assert events[0]["event"] == "tool.end"
+    assert events[0]["event"] == "tool.completed"
 
 
 def test_translator_keeps_regular_tool_call_chunks_as_llm_tool_call_chunk() -> None:

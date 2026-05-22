@@ -433,8 +433,17 @@ async function decodeLocalResponse<T>(response: Response): Promise<T> {
 
 async function localErrorMessage(response: Response): Promise<string> {
   try {
-    const body = (await response.json()) as { error?: string; message?: string }
-    return body.message || body.error || `Local Host HTTP ${response.status}`
+    // FastAPI's `HTTPException(detail=...)` puts the message in `detail`;
+    // some daemon routes use `{error}` or `{message}`. Accept all three —
+    // otherwise the UI shows the generic `Local Host HTTP 4xx` for every
+    // failure and the actual reason ("goal required", "permission not
+    // found", etc.) gets lost.
+    const body = (await response.json()) as {
+      detail?: string
+      error?: string
+      message?: string
+    }
+    return body.message || body.error || body.detail || `Local Host HTTP ${response.status}`
   } catch {
     return `Local Host HTTP ${response.status}`
   }

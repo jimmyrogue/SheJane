@@ -102,6 +102,9 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className="message-bubble-inner">
+        {isAssistant && message.reasoning ? (
+          <ReasoningSection reasoning={message.reasoning} streaming={message.status === 'streaming'} />
+        ) : null}
         <div className={cn('message-content', showStream && stream.text && 'is-streaming')}>
           {showStream ? (
             stream.text ? (
@@ -144,6 +147,43 @@ export function MessageBubble({
         </div>
       </div>
     </article>
+  )
+}
+
+/** Renders the model's thinking trace (DeepSeek `reasoning_content`,
+ *  o1-style chain-of-thought) above the answer. Collapsed by default
+ *  while streaming, so the timeline still draws attention to the
+ *  arriving answer rather than the verbose intermediate reasoning;
+ *  expanded by default once the message is done so the user can audit
+ *  the model's logic. Click the header to toggle. */
+function ReasoningSection({ reasoning, streaming }: { reasoning: string; streaming: boolean }) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
+  // Auto-expand once the message stops streaming so users see the
+  // thinking trace at rest without an extra click. Skip if the user
+  // already toggled it during streaming.
+  const userToggledRef = useRef(false)
+  useEffect(() => {
+    if (!streaming && !userToggledRef.current) {
+      setExpanded(true)
+    }
+  }, [streaming])
+  return (
+    <details
+      className="message-reasoning"
+      open={expanded}
+      onToggle={(event) => {
+        userToggledRef.current = true
+        setExpanded((event.target as HTMLDetailsElement).open)
+      }}
+    >
+      <summary className="message-reasoning-summary">
+        {streaming ? t('message.reasoningStreaming') : t('message.reasoningTitle')}
+      </summary>
+      <div className="message-reasoning-body">
+        <MarkdownContent content={reasoning} />
+      </div>
+    </details>
   )
 }
 

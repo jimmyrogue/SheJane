@@ -2,8 +2,8 @@
 
 These tests start the full FastAPI app with a mocked backend that emits
 many small `llm.delta` events, and verify:
-1. Each backend delta surfaces to the client SSE stream as one `llm.token`.
-2. Time from POST /v1/runs to first `llm.token` event observed by the
+1. Each backend delta surfaces to the client SSE stream as one `llm.delta`.
+2. Time from POST /v1/runs to first `llm.delta` event observed by the
    client is below the budget (target: < 50 ms p50, < 200 ms p95 per the
    Phase 4' plan).
 """
@@ -115,7 +115,7 @@ def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
         headers={"Authorization": "Bearer tok"},
         json={"goal": "Hi"},
     )
-    run_id = r.json()["run"]["id"]
+    run_id = r.json()["id"]
 
     with client.stream(
         "GET", f"/local/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
@@ -123,12 +123,17 @@ def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
         body = resp.read().decode("utf-8")
 
     events = _parse_sse(body)
-    token_events = [d for n, d in events if n == "llm.token"]
+    # Each event's `data:` body is now the AgentRunEvent envelope —
+    # `event_type` and `payload` live INSIDE the data JSON. The
+    # `event:` line is decorative for browser tooling.
+    token_events = [
+        d.get("payload", {})
+        for n, d in events
+        if isinstance(d, dict) and d.get("event_type") == "llm.delta"
+    ]
     received_text = "".join(t.get("content", "") for t in token_events)
     expected = "".join(tokens)
     assert expected in received_text, f"got {received_text!r}, want substring {expected!r}"
-    # We should have at least as many llm.token events as input deltas
-    # (LangGraph may also emit a final aggregated chunk; we accept >=).
     assert len(token_events) >= len(tokens)
 
 
@@ -139,7 +144,7 @@ def test_run_completed_terminal_event_present(client_with_tokens) -> None:
         headers={"Authorization": "Bearer tok"},
         json={"goal": "Hi"},
     )
-    run_id = r.json()["run"]["id"]
+    run_id = r.json()["id"]  # flat LocalRun shape
 
     with client.stream(
         "GET", f"/local/v1/runs/{run_id}/stream", headers={"Authorization": "Bearer tok"}
@@ -147,7 +152,11 @@ def test_run_completed_terminal_event_present(client_with_tokens) -> None:
         body = resp.read().decode("utf-8")
 
     events = _parse_sse(body)
-    names = [n for n, _ in events]
+    names = [
+        d.get("event_type")
+        for _, d in events
+        if isinstance(d, dict) and "event_type" in d
+    ]
     assert "run.completed" in names
 
 
@@ -170,7 +179,7 @@ def test_first_token_latency_under_budget(client_with_tokens) -> None:
             headers={"Authorization": "Bearer tok"},
             json={"goal": f"iter-{i}"},
         )
-        run_id = r.json()["run"]["id"]
+        run_id = r.json()["id"]  # flat LocalRun
 
         first_token_at: float | None = None
         with client.stream(
@@ -179,11 +188,13 @@ def test_first_token_latency_under_budget(client_with_tokens) -> None:
             headers={"Authorization": "Bearer tok"},
         ) as resp:
             for line in resp.iter_lines():
-                if line.startswith("event: llm.token"):
+                # The `event:` line is decorative — but as long as it
+                # matches the envelope's `event_type` it's fine to grep.
+                if line.startswith("event: llm.delta"):
                     first_token_at = time.perf_counter()
                     break
 
-        assert first_token_at is not None, "never saw llm.token"
+        assert first_token_at is not None, "never saw llm.delta"
         latencies_ms.append((first_token_at - t0) * 1000)
 
     latencies_ms.sort()
