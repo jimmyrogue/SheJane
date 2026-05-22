@@ -62,6 +62,26 @@ jobs:
       - name: No platform-paid keys in daemon
         run: ./scripts/check-no-platform-keys-in-daemon.sh
 
+      # Schema-drift guard — `make schemas` regenerates openapi.json
+      # + generated.d.ts from the daemon's pydantic models. If the
+      # committed files don't match the regenerated output, the PR
+      # changed a response_model but didn't run `make schemas`.
+      # Catches the failure mode where a Python-side change silently
+      # diverges from what the TS client expects.
+      - name: Install Node deps for codegen
+        run: npm ci
+        working-directory: client
+
+      - name: Schema drift (make schemas + git diff)
+        run: |
+          ./scripts/export-daemon-openapi.sh
+          cd client && npx openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
+          cd ..
+          if ! git diff --exit-code -- client/src/shared/local-host/openapi.json client/src/shared/local-host/generated.d.ts; then
+            echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
+            exit 1
+          fi
+
   deterministic-tests:
     name: Deterministic tests
     runs-on: ubuntu-latest

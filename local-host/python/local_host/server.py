@@ -23,6 +23,27 @@ from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
 from .agent.builder import open_checkpointer, open_store
+from .api_schemas import (
+    AnswerQuestionRequest,
+    CancelRunResponse,
+    CreateRunRequest,
+    CreateWorkspaceRequest,
+    DiagnoseWorkspaceRequest,
+    HealthResponse,
+    ListRunsResponse,
+    ListWorkspacesResponse,
+    LocalArtifact,
+    LocalCloudSession,
+    LocalRun,
+    LocalRunDiagnostics,
+    LocalWorkspaceAuthorization,
+    LocalWorkspaceDiagnosis,
+    PermissionResolution,
+    QuestionAnswer,
+    ResolvePermissionRequest,
+    ResumeRunResponse,
+    SetCloudSessionRequest,
+)
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
 from .runs import RunCoordinator
@@ -165,23 +186,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/local/v1/health")
-    async def health() -> dict[str, Any]:
+    @app.get("/local/v1/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
         # Two consumers, two contracts — both must be satisfied:
         #   • scripts/smoke-local-host.sh checks `ok == true`
         #   • client/src/shared/local-host/client.ts:probeLocalHost
         #     checks `status === "ok"` and reads mode/worker
-        # Returning both keys keeps the smoke green AND lets the renderer
-        # mark the daemon as online (without which `canUseLocalHarness`
-        # stays false and chat silently falls back to the cloud path).
-        return {
-            "ok": True,
-            "status": "ok",
-            "mode": "ready",
-            "worker": "python-langgraph",
-            "version": __version__,
-            "pairing_configured": bool(settings.pairing_token),
-        }
+        # The HealthResponse defaults already encode `ok=True status="ok"`
+        # mode="ready" worker="python-langgraph" — only `version` and
+        # `pairing_configured` need to be filled per-request.
+        return HealthResponse(
+            version=__version__,
+            pairing_configured=bool(settings.pairing_token),
+        )
 
     @app.get("/local/v1/tools")
     async def list_tools() -> dict[str, Any]:
@@ -194,39 +211,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         store = getattr(app.state, "store", None)
         return {"tools": describe_tools(store=store, workspace_root=None)}
 
-    @app.get("/local/v1/workspaces")
+    @app.get("/local/v1/workspaces", response_model=ListWorkspacesResponse)
     async def list_workspaces() -> dict[str, Any]:
         store: LocalStore = app.state.store
         return {"workspaces": await store.list_workspaces()}
 
-    @app.post("/local/v1/workspaces")
-    async def add_workspace(body: dict[str, Any]) -> dict[str, Any]:
-        """Authorize a workspace path.
-
-        Returns the flat `LocalWorkspaceAuthorization` shape — the
-        client's `authorizeLocalWorkspace` reads `.id / .path / .label`
-        directly (no wrapper). See client.test.ts:342-352.
-        """
+    @app.post("/local/v1/workspaces", response_model=LocalWorkspaceAuthorization)
+    async def add_workspace(body: CreateWorkspaceRequest) -> dict[str, Any]:
+        """Authorize a workspace path. Returns the flat row — the TS
+        `authorizeLocalWorkspace` reads `.id / .path / .label` directly
+        (no wrapper)."""
         store: LocalStore = app.state.store
-        path = str(body.get("path", "")).strip()
-        label = str(body.get("label", "")).strip()
+        path = body.path.strip()
         if not path:
             raise HTTPException(status_code=400, detail="path required")
-        return await store.create_workspace(path=path, label=label or path)
+        return await store.create_workspace(path=path, label=body.label.strip() or path)
 
-    @app.delete("/local/v1/workspaces/{workspace_id}")
+    @app.delete(
+        "/local/v1/workspaces/{workspace_id}",
+        response_model=LocalWorkspaceAuthorization,
+    )
     async def remove_workspace(workspace_id: str) -> dict[str, Any]:
-        """Revoke a workspace authorization.
-
-        Returns the flat record that was just deleted (matching the TS
-        `revokeLocalWorkspace` signature → `Promise<LocalWorkspaceAuthorization>`).
-        """
+        """Revoke a workspace authorization. Returns the deleted row
+        matching the TS `revokeLocalWorkspace` →
+        `Promise<LocalWorkspaceAuthorization>` signature."""
         store: LocalStore = app.state.store
         # Fetch before delete so we can return the record. If it didn't
         # exist, surface a 404 — client `decodeLocalResponse` throws
         # which the renderer catches and shows to the user.
-        # `list_workspaces` is the only async path that gives us full row
-        # — there's no get_workspace by id, so iterate.
         existing = None
         for ws in await store.list_workspaces():
             if ws["id"] == workspace_id:
@@ -237,7 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await store.delete_workspace(workspace_id)
         return existing
 
-    @app.get("/local/v1/runs")
+    @app.get("/local/v1/runs", response_model=ListRunsResponse)
     async def list_runs() -> dict[str, Any]:
         """Recent runs newest-first.
 
@@ -250,35 +262,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runs = await store.list_runs()
         return {"runs": runs}
 
-    @app.post("/local/v1/runs")
-    async def create_run(body: dict[str, Any]) -> dict[str, Any]:
-        """Create a new run.
-
-        Returns the flat `LocalRun` shape (NOT `{run: {...}}`) — that's
-        the contract `client.test.ts:63-92` pins and what TypeScript's
-        `createLocalRun` reads via `decodeLocalResponse<LocalRun>`.
-        Wrapping the response made `.id` and `.status` undefined on the
-        client, breaking every downstream stream call.
-        """
-        goal = str(body.get("goal", "")).strip()
+    @app.post("/local/v1/runs", response_model=LocalRun)
+    async def create_run(body: CreateRunRequest) -> dict[str, Any]:
+        """Create a new run. Returns the flat `LocalRun` shape (NOT
+        `{run: {...}}`) — that's the contract `client.test.ts:63-92`
+        pins and what TypeScript's `createLocalRun` reads via
+        `decodeLocalResponse<LocalRun>`."""
+        goal = body.goal.strip()
         if not goal:
             raise HTTPException(status_code=400, detail="goal required")
-        history_raw = body.get("history") or []
-        history: list[dict[str, str]] = history_raw if isinstance(history_raw, list) else []
-        settings_raw = body.get("settings")
-        settings = settings_raw if isinstance(settings_raw, dict) else None
         coordinator: RunCoordinator = app.state.coordinator
-        run = await coordinator.start_run(
+        return await coordinator.start_run(
             goal=goal,
-            workspace_path=body.get("workspace_path"),
-            mode=str(body.get("mode", "fast")),
-            history=history,
-            parent_run_id=body.get("parent_run_id"),
-            settings=settings,
+            workspace_path=body.workspace_path,
+            mode=body.mode,
+            history=body.history or [],
+            parent_run_id=body.parent_run_id,
+            settings=body.settings,
         )
-        return run
 
-    @app.get("/local/v1/runs/{run_id}")
+    @app.get("/local/v1/runs/{run_id}", response_model=LocalRun)
     async def get_run(run_id: str) -> dict[str, Any]:
         """Return the flat run record (same shape as POST /runs)."""
         store: LocalStore = app.state.store
@@ -317,13 +320,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # spec-correct but breaks this client.
         return EventSourceResponse(gen(), sep="\n")
 
-    @app.post("/local/v1/runs/{run_id}/cancel")
+    @app.post("/local/v1/runs/{run_id}/cancel", response_model=CancelRunResponse)
     async def cancel_run(run_id: str) -> dict[str, Any]:
         coordinator: RunCoordinator = app.state.coordinator
         ok = await coordinator.cancel_run(run_id)
         return {"canceled": ok}
 
-    @app.post("/local/v1/runs/{run_id}/resume")
+    @app.post("/local/v1/runs/{run_id}/resume", response_model=ResumeRunResponse)
     async def resume_run(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         coordinator: RunCoordinator = app.state.coordinator
         decision = body or {"action": "approve"}
@@ -338,30 +341,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # yet. They return safe defaults / 501 so the client can boot without
     # crashing on missing routes. Implementations land in Phase 6'+.
 
-    @app.post("/local/v1/permissions/{permission_id}")
-    async def resolve_permission(permission_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    @app.post("/local/v1/permissions/{permission_id}", response_model=PermissionResolution)
+    async def resolve_permission(
+        permission_id: str, body: ResolvePermissionRequest
+    ) -> dict[str, Any]:
         """Approve / deny a pending tool-permission request.
 
-        Client body (per `client.ts:resolveLocalPermission`):
-            `{decision: 'approve'|'deny', scope?: 'once'|'run'}`
+        Translates the client's `{decision, scope}` body into the
+        `{"decisions": [{"type": "approve"|"reject", ...}]}` shape
+        that `HumanInTheLoopMiddleware` expects on resume (the
+        middleware does `interrupt(...)["decisions"]` and KeyError's
+        on anything else).
 
-        We translate to the shape `HumanInTheLoopMiddleware` expects on
-        resume — `{"decisions": [{"type": "approve"|"reject", ...}]}` —
-        because the middleware does `interrupt(...)["decisions"]` and
-        KeyError's on anything else.
-
-        Per-permission scope is recorded in `local_permissions` for
-        analytics; it's not (yet) honored as a "remember this approval
-        for the rest of the run" gate — that requires a separate
-        middleware layer on top.
+        When `scope=run`, the coordinator caches the tool name so the
+        auto-approve loop in `_drive_run` skips re-prompting on
+        subsequent gates for the same tool in the same run.
         """
-        decision_text = str(body.get("decision", "")).lower()
-        if decision_text not in {"approve", "deny"}:
-            raise HTTPException(
-                status_code=400,
-                detail="decision required (approve|deny)",
-            )
-        scope = body.get("scope") if body.get("scope") in {"once", "run"} else "once"
+        decision_text = body.decision
+        scope = body.scope
         store: LocalStore = app.state.store
         record = await store.get_permission(permission_id)
         if record is None:
@@ -418,17 +415,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "resumed": ok,
         }
 
-    @app.post("/local/v1/questions/{question_id}")
-    async def answer_question(question_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    @app.post("/local/v1/questions/{question_id}", response_model=QuestionAnswer)
+    async def answer_question(question_id: str, body: AnswerQuestionRequest) -> dict[str, Any]:
         """Submit answers to a paused user.ask interrupt.
 
         Body shape (per `client.ts:answerLocalQuestion`):
         `{answers: Record<string, string[]>}`. We look up the question
         by id to find its run_id, persist the answers, then resume.
         """
-        answers = body.get("answers")
-        if not isinstance(answers, dict):
-            raise HTTPException(status_code=400, detail="answers (object) required")
+        answers = body.answers
         store: LocalStore = app.state.store
         record = await store.get_question(question_id)
         if record is None:
@@ -456,7 +451,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "resumed": ok,
         }
 
-    @app.get("/local/v1/artifacts/{artifact_id}")
+    @app.get("/local/v1/artifacts/{artifact_id}", response_model=LocalArtifact)
     async def get_artifact(artifact_id: str) -> dict[str, Any]:
         """Return a single artifact record.
 
@@ -475,7 +470,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "created_at": record["created_at"],
         }
 
-    @app.get("/local/v1/runs/{run_id}/diagnostics")
+    @app.get("/local/v1/runs/{run_id}/diagnostics", response_model=LocalRunDiagnostics)
     async def run_diagnostics(run_id: str) -> dict[str, Any]:
         """Return the full `LocalRunDiagnostics` payload.
 
@@ -516,18 +511,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "latest_checkpoint": None,  # TODO Block 5: pull from AsyncSqliteSaver
         }
 
-    @app.post("/local/v1/session")
-    async def set_cloud_session(body: dict[str, Any]) -> dict[str, Any]:
+    @app.post(
+        "/local/v1/session",
+        response_model=LocalCloudSession,
+        response_model_exclude_none=True,
+    )
+    async def set_cloud_session(body: SetCloudSessionRequest) -> dict[str, Any]:
         """Stash a cloud bearer token (+ base URL) for outbound LLM calls.
 
         Response shape MUST match the client's `LocalCloudSession` TypeScript
-        interface — `{connected, cloud_base_url, auth, updated_at}` — because
-        the client gates its "use local agent" feature flag on
-        `session.connected === true`. Returning anything else (e.g. `{ok:
-        true}`) leaves `session.connected = undefined`, the gate stays
-        closed, and chat silently falls back to the cloud-only path.
+        interface — the client gates its "use local agent" feature flag on
+        `session.connected === true`. The pydantic model + response_model
+        now enforce that.
         """
-        token = str(body.get("access_token") or body.get("token") or "")
+        token = body.access_token.strip()
         if not token:
             raise HTTPException(status_code=400, detail="token required")
         settings = app.state.settings
@@ -535,7 +532,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Allow the client to override the daemon's default cloud base URL —
         # the JWT was issued against THAT cloud, so we must talk to the
         # same one.
-        incoming_base = str(body.get("cloud_base_url") or "").strip()
+        incoming_base = body.cloud_base_url.strip()
         if incoming_base:
             settings.cloud_base_url = incoming_base  # type: ignore[misc]
         updated_at = datetime.now(UTC).isoformat()
@@ -547,14 +544,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "updated_at": updated_at,
         }
 
-    @app.delete("/local/v1/session")
+    @app.delete(
+        "/local/v1/session",
+        response_model=LocalCloudSession,
+        response_model_exclude_none=True,
+    )
     async def clear_cloud_session() -> dict[str, Any]:
         settings = app.state.settings
         settings.cloud_token = ""  # type: ignore[misc]
         app.state.cloud_session_updated_at = None
         return {"connected": False}
 
-    @app.get("/local/v1/session")
+    @app.get(
+        "/local/v1/session",
+        response_model=LocalCloudSession,
+        response_model_exclude_none=True,
+    )
     async def get_cloud_session() -> dict[str, Any]:
         settings = app.state.settings
         connected = bool(getattr(settings, "cloud_token", ""))
@@ -567,25 +572,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 payload["updated_at"] = updated_at
         return payload
 
-    @app.post("/local/v1/workspaces/diagnose")
-    async def diagnose_workspace(body: dict[str, Any]) -> dict[str, Any]:
+    @app.post(
+        "/local/v1/workspaces/diagnose",
+        response_model=LocalWorkspaceDiagnosis,
+        response_model_exclude_none=True,
+    )
+    async def diagnose_workspace(body: DiagnoseWorkspaceRequest) -> dict[str, Any]:
         """Inspect a candidate path against the authorization registry.
 
-        Response matches the TS `LocalWorkspaceDiagnosis` shape:
-            { path, exists, is_directory, authorized,
-              reason: 'authorized'|'not_authorized'|'not_found'|'not_directory',
-              workspace?: LocalWorkspaceAuthorization }
-
-        client.test.ts:378-395 pins this exact shape — the previous
-        `{ok, resolved_path, reason}` response made every key the
-        renderer reads undefined, and the workspace-picker silently
-        showed "not authorized" forever.
+        Response matches the TS `LocalWorkspaceDiagnosis` shape — the
+        `reason` enum drives the workspace-picker's "why disabled?"
+        copy, keep it stable.
         """
         import os as _os
         from pathlib import Path as _Path
 
         store: LocalStore = app.state.store
-        path = str(body.get("path", "")).strip()
+        path = body.path.strip()
         if not path:
             raise HTTPException(status_code=400, detail="path required")
         resolved = _os.path.abspath(_os.path.expanduser(path))

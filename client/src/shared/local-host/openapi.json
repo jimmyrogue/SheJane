@@ -1,0 +1,1721 @@
+{
+  "components": {
+    "schemas": {
+      "AnswerQuestionRequest": {
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Answers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "title": "AnswerQuestionRequest",
+        "type": "object"
+      },
+      "CancelRunResponse": {
+        "properties": {
+          "canceled": {
+            "title": "Canceled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "canceled"
+        ],
+        "title": "CancelRunResponse",
+        "type": "object"
+      },
+      "CreateRunRequest": {
+        "properties": {
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History"
+          },
+          "mode": {
+            "default": "fast",
+            "title": "Mode",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "title": "CreateRunRequest",
+        "type": "object"
+      },
+      "CreateWorkspaceRequest": {
+        "properties": {
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "CreateWorkspaceRequest",
+        "type": "object"
+      },
+      "DiagnoseWorkspaceRequest": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "DiagnoseWorkspaceRequest",
+        "type": "object"
+      },
+      "DiagnosticsArtifact": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "title",
+          "content_type",
+          "bytes",
+          "created_at"
+        ],
+        "title": "DiagnosticsArtifact",
+        "type": "object"
+      },
+      "DiagnosticsEvent": {
+        "description": "One row from the `local_events` table after payload parsing.\n\nMatches the AgentRunEvent envelope the client's\n`parseAgentSSEChunk` produces (intentional, so the diagnostics\npanel can reuse the live-stream renderer).",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "seq",
+          "event_type",
+          "payload",
+          "created_at"
+        ],
+        "title": "DiagnosticsEvent",
+        "type": "object"
+      },
+      "DiagnosticsPermission": {
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "once",
+            "enum": [
+              "once",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "tool_name",
+          "arguments",
+          "status",
+          "created_at"
+        ],
+        "title": "DiagnosticsPermission",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "description": "GET /local/v1/health — no auth required.\n\nBoth `ok` (legacy smoke contract) and `status` (current TS client\nprobe) are returned. Drop `ok` once smoke scripts are updated.",
+        "properties": {
+          "mode": {
+            "default": "ready",
+            "title": "Mode",
+            "type": "string"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "pairing_configured": {
+            "title": "Pairing Configured",
+            "type": "boolean"
+          },
+          "status": {
+            "const": "ok",
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "worker": {
+            "default": "python-langgraph",
+            "title": "Worker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "pairing_configured"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "LatestCheckpoint": {
+        "description": "Slim summary of the agent run's last persisted superstep — used\nby the diagnostics panel to render the \"where the run is paused\"\nheadline. The full LangGraph checkpoint is much larger; we just\nexpose the fields the UI reads (`id`, `reason`, `messages_count`).",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "messages_count": {
+            "title": "Messages Count",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "step",
+          "reason",
+          "messages_count"
+        ],
+        "title": "LatestCheckpoint",
+        "type": "object"
+      },
+      "ListRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/LocalRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "ListRunsResponse",
+        "type": "object"
+      },
+      "ListWorkspacesResponse": {
+        "properties": {
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/LocalWorkspaceAuthorization"
+            },
+            "title": "Workspaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "workspaces"
+        ],
+        "title": "ListWorkspacesResponse",
+        "type": "object"
+      },
+      "LocalArtifact": {
+        "description": "Slim representation for `GET /artifacts/:id` (UI quoting).\n\nThe full row in `local_artifacts` (run_id, kind, content_type,\nbytes, metadata_json) is intentionally NOT returned here — that\npayload is for the diagnostics panel, not the chat surface.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Name"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "content",
+          "created_at"
+        ],
+        "title": "LocalArtifact",
+        "type": "object"
+      },
+      "LocalCloudSession": {
+        "description": "Pairing state between the daemon and the cloud API.\n\n`connected: false` is the only field on an unpaired response; the\nrest become present once the user logs in via the Electron app\nand the renderer POSTs the JWT to /local/v1/session.",
+        "properties": {
+          "auth": {
+            "anyOf": [
+              {
+                "const": "bearer",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth"
+          },
+          "cloud_base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Base Url"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "connected"
+        ],
+        "title": "LocalCloudSession",
+        "type": "object"
+      },
+      "LocalRun": {
+        "description": "One row of the `local_runs` table, surfaced over HTTP.\n\n`history_json` / `settings_json` are stringified JSON because\nSQLite stores them that way — the client parses on demand. Kept\nas strings here (not dict) to keep the wire format honest.",
+        "properties": {
+          "canceled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canceled At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "events_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events Count"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "history_json": {
+            "default": "[]",
+            "title": "History Json",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "settings_json": {
+            "default": "{}",
+            "title": "Settings Json",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_permission",
+              "waiting_input",
+              "completed",
+              "canceled",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "id",
+          "goal",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalRun",
+        "type": "object"
+      },
+      "LocalRunDiagnostics": {
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsArtifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "exported_at": {
+            "title": "Exported At",
+            "type": "string"
+          },
+          "latest_checkpoint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatestCheckpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local_host_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Host Version"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsPermission"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/LocalRun"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exported_at",
+          "run",
+          "events",
+          "permissions",
+          "artifacts"
+        ],
+        "title": "LocalRunDiagnostics",
+        "type": "object"
+      },
+      "LocalWorkspaceAuthorization": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_used_at": {
+            "title": "Last Used At",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "label",
+          "created_at",
+          "last_used_at"
+        ],
+        "title": "LocalWorkspaceAuthorization",
+        "type": "object"
+      },
+      "LocalWorkspaceDiagnosis": {
+        "description": "Result of POST /local/v1/workspaces/diagnose. The `reason` field\ndrives the workspace-picker UI's \"why is this disabled?\" copy —\nkeep the enum stable.",
+        "properties": {
+          "authorized": {
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "is_directory": {
+            "title": "Is Directory",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "authorized",
+              "not_authorized",
+              "not_found",
+              "not_directory"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocalWorkspaceAuthorization"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "exists",
+          "is_directory",
+          "authorized",
+          "reason"
+        ],
+        "title": "LocalWorkspaceDiagnosis",
+        "type": "object"
+      },
+      "PermissionResolution": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "permission_id": {
+            "title": "Permission Id",
+            "type": "string"
+          },
+          "resolved": {
+            "const": true,
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          },
+          "scope": {
+            "enum": [
+              "once",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "permission_id",
+          "decision",
+          "scope",
+          "resumed"
+        ],
+        "title": "PermissionResolution",
+        "type": "object"
+      },
+      "QuestionAnswer": {
+        "properties": {
+          "answered": {
+            "const": true,
+            "default": true,
+            "title": "Answered",
+            "type": "boolean"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "question_id",
+          "resumed"
+        ],
+        "title": "QuestionAnswer",
+        "type": "object"
+      },
+      "ResolvePermissionRequest": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "scope": {
+            "default": "once",
+            "enum": [
+              "once",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ResolvePermissionRequest",
+        "type": "object"
+      },
+      "ResumeRunResponse": {
+        "properties": {
+          "resumed": {
+            "const": true,
+            "default": true,
+            "title": "Resumed",
+            "type": "boolean"
+          }
+        },
+        "title": "ResumeRunResponse",
+        "type": "object"
+      },
+      "SetCloudSessionRequest": {
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "cloud_base_url": {
+            "title": "Cloud Base Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cloud_base_url",
+          "access_token"
+        ],
+        "title": "SetCloudSessionRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Jiandanly Local Host",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/local/v1/artifacts/{artifact_id}": {
+      "get": {
+        "description": "Return a single artifact record.\n\nShape matches the TS `LocalArtifact` interface\n(`client.ts:38-44`): `{id, title, content, tool_name?, created_at?}`.",
+        "operationId": "get_artifact_local_v1_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalArtifact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact"
+      }
+    },
+    "/local/v1/health": {
+      "get": {
+        "operationId": "health_local_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/local/v1/permissions/{permission_id}": {
+      "post": {
+        "description": "Approve / deny a pending tool-permission request.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"reject\", ...}]}` shape\nthat `HumanInTheLoopMiddleware` expects on resume (the\nmiddleware does `interrupt(...)[\"decisions\"]` and KeyError's\non anything else).\n\nWhen `scope=run`, the coordinator caches the tool name so the\nauto-approve loop in `_drive_run` skips re-prompting on\nsubsequent gates for the same tool in the same run.",
+        "operationId": "resolve_permission_local_v1_permissions__permission_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "permission_id",
+            "required": true,
+            "schema": {
+              "title": "Permission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolvePermissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionResolution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Permission"
+      }
+    },
+    "/local/v1/questions/{question_id}": {
+      "post": {
+        "description": "Submit answers to a paused user.ask interrupt.\n\nBody shape (per `client.ts:answerLocalQuestion`):\n`{answers: Record<string, string[]>}`. We look up the question\nby id to find its run_id, persist the answers, then resume.",
+        "operationId": "answer_question_local_v1_questions__question_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerQuestionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionAnswer"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Answer Question"
+      }
+    },
+    "/local/v1/runs": {
+      "get": {
+        "description": "Recent runs newest-first.\n\nClient `listLocalRuns()` (client/src/shared/local-host/client.ts:283)\nreads `{runs: LocalRun[]}` on every boot. Previously this route\ndidn't exist — every Electron launch silently 404'd here and\nthe conversation history sidebar came up empty.",
+        "operationId": "list_runs_local_v1_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Runs"
+      },
+      "post": {
+        "description": "Create a new run. Returns the flat `LocalRun` shape (NOT\n`{run: {...}}`) — that's the contract `client.test.ts:63-92`\npins and what TypeScript's `createLocalRun` reads via\n`decodeLocalResponse<LocalRun>`.",
+        "operationId": "create_run_local_v1_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Run"
+      }
+    },
+    "/local/v1/runs/{run_id}": {
+      "get": {
+        "description": "Return the flat run record (same shape as POST /runs).",
+        "operationId": "get_run_local_v1_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/local/v1/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_local_v1_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/local/v1/runs/{run_id}/diagnostics": {
+      "get": {
+        "description": "Return the full `LocalRunDiagnostics` payload.\n\nShape (per TS interface `client/src/shared/local-host/client.ts:63-100`):\n    { schema_version: 1, exported_at, local_host_version?,\n      run, events, permissions, artifacts, latest_checkpoint }\n\nPhase 5'+ used to return only `{run, events}`, so the\n`DiagnosticsPanel` rendered NaN counts (permissions.length on\nundefined) and the \"latest checkpoint\" tab was always missing.",
+        "operationId": "run_diagnostics_local_v1_runs__run_id__diagnostics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRunDiagnostics"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Diagnostics"
+      }
+    },
+    "/local/v1/runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_run_local_v1_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Run"
+      }
+    },
+    "/local/v1/runs/{run_id}/stream": {
+      "get": {
+        "operationId": "stream_run_local_v1_runs__run_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Run"
+      }
+    },
+    "/local/v1/session": {
+      "delete": {
+        "operationId": "clear_cloud_session_local_v1_session_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalCloudSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Cloud Session"
+      },
+      "get": {
+        "operationId": "get_cloud_session_local_v1_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalCloudSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Cloud Session"
+      },
+      "post": {
+        "description": "Stash a cloud bearer token (+ base URL) for outbound LLM calls.\n\nResponse shape MUST match the client's `LocalCloudSession` TypeScript\ninterface — the client gates its \"use local agent\" feature flag on\n`session.connected === true`. The pydantic model + response_model\nnow enforce that.",
+        "operationId": "set_cloud_session_local_v1_session_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCloudSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalCloudSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Cloud Session"
+      }
+    },
+    "/local/v1/skills": {
+      "get": {
+        "operationId": "list_local_skills_local_v1_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Local Skills Local V1 Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Local Skills"
+      }
+    },
+    "/local/v1/skills/install": {
+      "post": {
+        "operationId": "install_skill_local_v1_skills_install_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Install Skill Local V1 Skills Install Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Skill"
+      }
+    },
+    "/local/v1/skills/registry": {
+      "get": {
+        "description": "Phase 5' stub: no external skill registry wired yet.",
+        "operationId": "search_skill_registry_local_v1_skills_registry_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Search Skill Registry Local V1 Skills Registry Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Skill Registry"
+      }
+    },
+    "/local/v1/tools": {
+      "get": {
+        "operationId": "list_tools_local_v1_tools_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Tools Local V1 Tools Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tools"
+      }
+    },
+    "/local/v1/workspaces": {
+      "get": {
+        "operationId": "list_workspaces_local_v1_workspaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListWorkspacesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Workspaces"
+      },
+      "post": {
+        "description": "Authorize a workspace path. Returns the flat row — the TS\n`authorizeLocalWorkspace` reads `.id / .path / .label` directly\n(no wrapper).",
+        "operationId": "add_workspace_local_v1_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalWorkspaceAuthorization"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Workspace"
+      }
+    },
+    "/local/v1/workspaces/diagnose": {
+      "post": {
+        "description": "Inspect a candidate path against the authorization registry.\n\nResponse matches the TS `LocalWorkspaceDiagnosis` shape — the\n`reason` enum drives the workspace-picker's \"why disabled?\"\ncopy, keep it stable.",
+        "operationId": "diagnose_workspace_local_v1_workspaces_diagnose_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagnoseWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalWorkspaceDiagnosis"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diagnose Workspace"
+      }
+    },
+    "/local/v1/workspaces/{workspace_id}": {
+      "delete": {
+        "description": "Revoke a workspace authorization. Returns the deleted row\nmatching the TS `revokeLocalWorkspace` →\n`Promise<LocalWorkspaceAuthorization>` signature.",
+        "operationId": "remove_workspace_local_v1_workspaces__workspace_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalWorkspaceAuthorization"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Workspace"
+      }
+    }
+  }
+}

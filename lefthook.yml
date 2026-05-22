@@ -19,24 +19,30 @@ pre-commit:
 
     # --- Python (local-host daemon) ---
     # `ruff check` catches lint errors (F841 unused var, B-series bugs,
-    # E501 long lines except where ignored, …). `ruff format --check`
-    # rejects unformatted code without writing — write happens in the
-    # editor. Run only against staged .py files inside local-host/.
+    # …). `ruff format --check` rejects unformatted code without
+    # writing — write happens in the editor.
+    #
+    # `root:` makes lefthook (a) cd to that subdir before running and
+    # (b) strip the prefix from {staged_files} so ruff sees the local
+    # path. Without this, `{staged_files}` returns repo-root paths
+    # which become broken after `cd local-host/python`.
     ruff-check:
-      glob: "local-host/python/**/*.py"
-      run: cd local-host/python && uv run ruff check {staged_files}
+      root: local-host/python
+      glob: "*.py"
+      run: uv run ruff check {staged_files}
     ruff-format:
-      glob: "local-host/python/**/*.py"
-      run: cd local-host/python && uv run ruff format --check {staged_files}
+      root: local-host/python
+      glob: "*.py"
+      run: uv run ruff format --check {staged_files}
 
     # --- Go (api/) ---
     # gofmt -l prints unformatted files; assert the list is empty.
     # `go vet` catches a handful of correctness issues without needing
     # full type-checking (unreachable code, printf format mismatches).
     gofmt:
-      glob: "api/**/*.go"
+      root: api
+      glob: "*.go"
       run: |
-        cd api
         unformatted=$(gofmt -l {staged_files})
         if [ -n "$unformatted" ]; then
           echo "gofmt -w needed on:" >&2
@@ -44,10 +50,11 @@ pre-commit:
           exit 1
         fi
     go-vet:
-      glob: "api/**/*.go"
+      root: api
+      glob: "*.go"
       # vet on whole packages, not individual files — that's how go's
-      # type-checking is scoped.
-      run: cd api && go vet ./...
+      # type-checking is scoped. We don't pass {staged_files}.
+      run: go vet ./...
 
     # --- Custom project guard ---
     # Defense in depth: no platform-paid keys read from daemon env.

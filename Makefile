@@ -1,4 +1,4 @@
-.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor setup-hooks lint
+.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor setup-hooks lint schemas
 
 test: api-test client-test admin-test local-host-test
 
@@ -114,6 +114,18 @@ setup-hooks:
 	fi
 	@lefthook install
 	@echo "✅ Pre-commit hooks wired. Bypass once with: LEFTHOOK=0 git commit"
+
+# Regenerate the daemon → client schema pipeline. Two steps:
+#   1. Daemon exports openapi.json via app.openapi() (no server boot).
+#   2. openapi-typescript reads it and writes generated.d.ts.
+#
+# Run this after touching `local_host/api_schemas.py` or any
+# `response_model=` annotation; commit both files. CI rejects PRs
+# where they drift from what the daemon currently emits.
+schemas:
+	@./scripts/export-daemon-openapi.sh
+	@cd client && npx openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
+	@echo "✅ schemas regenerated. Commit openapi.json + generated.d.ts."
 
 # Run the same lint checks CI runs — useful before pushing a PR.
 # Goes beyond `make setup-hooks` (which only runs on staged files);

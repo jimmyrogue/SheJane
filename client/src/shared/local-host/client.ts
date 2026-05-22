@@ -1,5 +1,37 @@
 import type { AgentRunEvent } from '../api/sse'
 import { streamAgentSSE } from '../streaming/streamTransport'
+import type { components } from './generated'
+
+// -- Auto-generated types ----------------------------------------------------
+//
+// The daemon owns these shapes via pydantic models in
+// `local-host/python/local_host/api_schemas.py`. `make schemas`
+// regenerates `openapi.json` + `generated.d.ts`. Don't hand-edit the
+// re-exports — change the pydantic model, regenerate, commit both.
+//
+// `Schemas` is the union of every component schema FastAPI emitted.
+// We re-export individual names as aliases so call-sites stay
+// readable (`LocalRun` vs `components['schemas']['LocalRun']`).
+type Schemas = components['schemas']
+
+export type LocalRun = Schemas['LocalRun']
+export type LocalCloudSession = Schemas['LocalCloudSession']
+export type LocalArtifact = Schemas['LocalArtifact']
+export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
+export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
+export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
+export type LocalPermissionScope = 'once' | 'run'
+
+// -- Hand-written types (not in OpenAPI) -------------------------------------
+//
+// Things below this line aren't derivable from openapi.json:
+//   • DesktopBridge — Electron preload contract (no HTTP involvement).
+//   • LocalHostConfig — client-side fetch parameters.
+//   • LocalHostProbe — the client probe returns a DERIVED `online`
+//     bool, not the raw HealthResponse.
+//   • LocalStreamHandlers — SSE callback shape. Event payloads live
+//     in `AgentRunEvent` which is hand-written because discriminated
+//     unions over `event_type` don't roundtrip cleanly through openapi.
 
 export interface DesktopBridge {
   platform: string
@@ -14,96 +46,11 @@ export interface LocalHostConfig {
   token?: string
 }
 
-export type LocalPermissionScope = 'once' | 'run'
-
 export interface LocalHostProbe {
   online: boolean
   status?: string
   mode?: string
   worker?: string
-}
-
-export interface LocalRun {
-  id: string
-  goal: string
-  status: string
-  workspace_path?: string
-  created_at: string
-  updated_at: string
-  completed_at?: string
-  canceled_at?: string
-  events_count?: number
-}
-
-export interface LocalArtifact {
-  id: string
-  title: string
-  content: string
-  tool_name?: string
-  created_at?: string
-}
-
-export interface LocalWorkspaceAuthorization {
-  id: string
-  path: string
-  label: string
-  created_at?: string
-  last_used_at?: string
-}
-
-export interface LocalWorkspaceDiagnosis {
-  path: string
-  exists: boolean
-  is_directory: boolean
-  authorized: boolean
-  reason: 'authorized' | 'not_authorized' | 'not_found' | 'not_directory'
-  workspace?: LocalWorkspaceAuthorization
-}
-
-export interface LocalRunDiagnostics {
-  schema_version: 1
-  exported_at: string
-  local_host_version?: string
-  run: LocalRun
-  events: AgentRunEvent[]
-  permissions: Array<{
-    id: string
-    run_id: string
-    tool_call_id: string
-    tool_name: string
-    arguments: Record<string, unknown>
-    status: string
-    scope?: LocalPermissionScope
-    created_at: string
-    resolved_at?: string
-  }>
-  artifacts: Array<{
-    id: string
-    run_id: string
-    kind: string
-    title: string
-    content_type: string
-    bytes: number
-    tool_call_id?: string
-    tool_name?: string
-    metadata?: Record<string, unknown>
-    created_at: string
-  }>
-  latest_checkpoint: {
-    id: string
-    run_id?: string
-    step: number
-    reason: string
-    messages_count: number
-    created_at?: string
-  } | null
-}
-
-export interface LocalCloudSession {
-  connected: boolean
-  cloud_base_url?: string
-  auth?: 'bearer'
-  updated_at?: string
 }
 
 export interface LocalStreamHandlers {
