@@ -3603,6 +3603,22 @@ button.agent-progress-summary:focus-visible {
   font-weight: 400;
 }
 
+/* Icon-only buttons in the composer toolbar are square — they share
+ * the same footprint regardless of which `icon-*` size variant they
+ * use. This neutralizes the pill-style padding in the rule above so
+ * the button frame matches the icon (no horizontal stretch). Any
+ * future icon button added to .composer-controls picks this up
+ * automatically. */
+.composer-controls [data-slot="button"][data-size^="icon"] {
+  display: inline-grid !important;
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  place-items: center !important;
+  padding: 0 !important;
+}
+
 .composer-controls [data-variant="default"] {
   border-color: var(--border-strong);
   background: var(--text-primary);
