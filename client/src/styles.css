@@ -3142,6 +3142,16 @@ button:active {
   transition: opacity 120ms ease;
 }
 
+/* User messages right-align their bubble inside the 820px column,
+ * so the hover meta row (copy button + timestamp) should anchor to
+ * the right edge too. Right:0 inside the bubble's relative-positioned
+ * container lines the meta up under the bubble's right edge. */
+.message.user .message-meta {
+  left: auto;
+  right: 0;
+  flex-direction: row-reverse;
+}
+
 .message:hover .message-meta,
 .message:focus-within .message-meta {
   opacity: 1;
