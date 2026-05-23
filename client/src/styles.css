@@ -2944,11 +2944,29 @@ button:active {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-surface);
-  /* No bottom padding — the composer's ::before gradient sits flush
-   * against the last visible message so it can fade the content out.
-   * Earlier the 20px bottom padding created a hard solid band between
-   * the messages and the composer, defeating the fade effect. */
-  padding: 20px 22px 0;
+  /* No top or bottom padding — fades on either end (.chat-surface::before
+   * at the top, .composer::before at the bottom) overlay actual message
+   * content so it gracefully fades in and out. Horizontal padding kept
+   * for breathing room from the window edges. */
+  padding: 0 22px;
+  position: relative;
+}
+
+/* Top fade — symmetric counterpart to .composer::before. Messages
+ * scrolling up under the topbar fade out instead of meeting a hard
+ * padding edge. Sits above .messages content; pointer-events none so
+ * the user can still click links / select text underneath. */
+.chat-surface::before {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(to bottom, var(--bg-surface, #FFFFFF), transparent);
 }
 
 .messages {
