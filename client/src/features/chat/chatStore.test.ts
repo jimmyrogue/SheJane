@@ -168,4 +168,69 @@ describe('chat store', () => {
       permissionScope: 'run',
     })
   })
+
+  // Regression: bare-string options used to be silently filtered out
+  // because parseQuestionPayload required `option.label`. The daemon
+  // now normalizes to {label} at its boundary, but the parser stays
+  // tolerant so any future emitter / older daemon still works.
+  describe('question.asked option-shape tolerance', () => {
+    it('accepts options as plain strings (legacy daemon shape)', () => {
+      const item = timelineItem({
+        event_type: 'question.asked',
+        payload: {
+          request_id: 'q1',
+          questions: [
+            {
+              question: '你想在普吉岛待几天？',
+              options: ['3天', '5天', '7天'],
+            },
+          ],
+        },
+      })
+      expect(item).not.toBeNull()
+      expect(item?.questions?.[0].options).toEqual([
+        { label: '3天' },
+        { label: '5天' },
+        { label: '7天' },
+      ])
+    })
+
+    it('accepts options as {label, description?} objects (canonical shape)', () => {
+      const item = timelineItem({
+        event_type: 'question.asked',
+        payload: {
+          request_id: 'q2',
+          questions: [
+            {
+              question: '选择模式',
+              options: [
+                { label: 'Fast', description: '快速回答' },
+                { label: 'Pro' },
+              ],
+            },
+          ],
+        },
+      })
+      expect(item?.questions?.[0].options).toEqual([
+        { label: 'Fast', description: '快速回答' },
+        { label: 'Pro' },
+      ])
+    })
+
+    it('drops empty strings and option-objects with no label', () => {
+      const item = timelineItem({
+        event_type: 'question.asked',
+        payload: {
+          request_id: 'q3',
+          questions: [
+            {
+              question: '混杂输入',
+              options: ['  valid  ', '', { label: '', description: 'no label' }, { label: '保留' }],
+            },
+          ],
+        },
+      })
+      expect(item?.questions?.[0].options).toEqual([{ label: 'valid' }, { label: '保留' }])
+    })
+  })
 })

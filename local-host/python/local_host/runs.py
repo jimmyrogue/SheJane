@@ -501,7 +501,14 @@ class RunCoordinator:
         if isinstance(value, dict) and value.get("kind") == "question":
             question_text = str(value.get("question", ""))
             options_raw = value.get("options") or []
-            options = [str(opt) for opt in options_raw] if isinstance(options_raw, list) else []
+            # The `user.ask` tool signature is `options: list[str]`, but
+            # the TS `AgentQuestionChoice` contract is `{label, description?}`.
+            # Normalize at this boundary — every option becomes an object
+            # with `label`. If the agent ever upgrades to passing dicts
+            # (e.g. with descriptions), we pass those through unchanged.
+            # Without this conversion the renderer's parseQuestionPayload
+            # filters out every string option and silently shows nothing.
+            options = _normalize_question_options(options_raw)
             questions = [
                 {
                     "question": question_text,
@@ -638,3 +645,40 @@ def _extract_final_text(state_values: Any) -> str:
         if isinstance(content, str) and content.strip():
             return content
     return ""
+
+
+def _normalize_question_options(raw: Any) -> list[dict[str, str]]:
+    """Coerce `user.ask` options into the {label, description?} shape the
+    TS `AgentQuestionChoice` contract expects.
+
+    The tool signature is `options: list[str]`, so the agent typically
+    emits bare strings. Earlier behavior shipped these through unchanged,
+    which the client's parseQuestionPayload silently filtered out
+    (typeof option !== 'object' → undefined) leaving the question UI
+    with zero options to render — the run looked stuck even though
+    everything else was fine.
+
+    Accepts:
+        - a string         → {label: string}
+        - a {label, ...}   → passed through, coerced to strings
+        - anything else    → skipped
+    """
+    if not isinstance(raw, list):
+        return []
+    options: list[dict[str, str]] = []
+    for item in raw:
+        if isinstance(item, str):
+            label = item.strip()
+            if label:
+                options.append({"label": label})
+            continue
+        if isinstance(item, dict):
+            label = str(item.get("label", "")).strip()
+            if not label:
+                continue
+            entry: dict[str, str] = {"label": label}
+            description = item.get("description")
+            if isinstance(description, str) and description.strip():
+                entry["description"] = description.strip()
+            options.append(entry)
+    return options

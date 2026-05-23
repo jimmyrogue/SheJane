@@ -349,8 +349,21 @@ function parseQuestionPayload(value: unknown): AgentQuestionItem[] {
     const question = stringValue(item.question)
     const header = stringValue(item.header)
     const rawOptions = Array.isArray(item.options) ? item.options : []
+    // Accept BOTH shapes:
+    //   - { label, description? }  — the documented AgentQuestionChoice
+    //   - string                   — what the daemon used to emit (and
+    //                                still might if it comes from a
+    //                                third-party SSE producer)
+    // The daemon now normalizes to the object form at its boundary
+    // (see runs.py:_normalize_question_options), but client tolerance
+    // is cheap defense in depth so the UI never silently drops options
+    // again.
     const options = rawOptions
       .map((option) => {
+        if (typeof option === 'string') {
+          const label = option.trim()
+          return label ? { label } : undefined
+        }
         if (!option || typeof option !== 'object') {
           return undefined
         }

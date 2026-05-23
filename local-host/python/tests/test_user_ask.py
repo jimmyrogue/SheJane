@@ -239,6 +239,21 @@ def test_user_ask_in_parallel_tool_call_batch_still_pauses(monkeypatch) -> None:
     serialized = json.dumps(question_event, default=str)
     assert "How many days" in serialized
 
+    # And the option shape — second-half of the same UI failure: even
+    # when the interrupt was eventually surfaced, the client's
+    # parseQuestionPayload silently dropped bare-string options because
+    # the TS AgentQuestionChoice contract is {label, description?}.
+    # We now normalize at the daemon boundary so the wire matches.
+    questions = question_event.get("questions") or []
+    assert questions, "question.asked must carry at least one question"
+    options = questions[0].get("options") or []
+    assert options, "question.asked options must not be empty"
+    for option in options:
+        assert isinstance(option, dict), (
+            f"options must be dicts (e.g. {{'label': ...}}), not bare strings; got: {option!r}"
+        )
+        assert option.get("label"), f"every option needs a non-empty label; got: {option!r}"
+
 
 def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None:
     handler = RecordingHandler(
