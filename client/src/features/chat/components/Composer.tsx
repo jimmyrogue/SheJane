@@ -29,7 +29,6 @@ export function Composer({
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
-  /** The single document attached to the next outgoing message, if any. */
   attachedDocument?: UserDocument
   /** Inline data: URL for image previews. Non-image documents leave
    *  this undefined and we fall back to a file-icon tile. */
@@ -39,8 +38,7 @@ export function Composer({
   onDetachDocument: () => void
   onSend: () => void
   /** Cancel the in-flight run. Shown as a "stop" button in place of
-   *  "send" while `isSending` is true. Optional — if not supplied, the
-   *  send button just stays disabled during streaming. */
+   *  "send" while `isSending` is true. */
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
 }) {
@@ -98,65 +96,66 @@ export function Composer({
           listSkills={listSkills}
           placeholder={t('composer.placeholder')}
         />
-      </div>
-      <div className="composer-toolbar">
-        <div className="composer-controls">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            className="composer-attach-button"
-            aria-label={t('composer.attachmentTitle')}
-            title={t('composer.attachmentTitle')}
-            disabled={isUploading}
-            onClick={openFilePicker}
-          >
-            {isUploading ? (
-              <IconLoader2 size={16} aria-hidden="true" className="composer-attach-spinner" />
-            ) : (
-              <IconPaperclip size={16} aria-hidden="true" />
-            )}
-          </Button>
-          {/* Hidden native file picker — clicking the visible button
-              triggers it via openFilePicker(). Keeps the OS chooser as
-              the single, direct attach affordance (no dialog in between).
-              aria-label exposed so tests / a11y can find it. */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={documentAccept}
-            aria-label={t('composer.upload')}
-            disabled={isUploading}
-            style={{ display: 'none' }}
-            onChange={(event) => {
-              onUploadDocument(event.currentTarget.files?.[0])
-              event.currentTarget.value = ''
-            }}
-          />
-        </div>
-        <span className="composer-kbd" title={t('composer.kbdHint')}>↵</span>
+        {/* Send / Stop button: sits in the bottom-right corner of the
+         *  input frame so it follows the editor as the textarea grows.
+         *  The editor reserves matching padding-right so typed text
+         *  doesn't slide under the button. */}
         {canStop ? (
-          <Button
-            className="send-button send-button-stop"
+          <button
             type="button"
+            className="composer-send composer-send-stop"
             aria-label={t('composer.stop')}
             title={t('composer.stop')}
             onClick={onStop}
           >
             <IconPlayerStopFilled size={14} aria-hidden="true" />
             <span className="sr-only">{t('composer.stop')}</span>
-          </Button>
+          </button>
         ) : (
-          <Button
-            className="send-button"
+          <button
+            type="button"
+            className="composer-send"
             aria-label={t('composer.send')}
             disabled={isSending || !draft.trim()}
+            title={t('composer.kbdHint')}
             onClick={onSend}
           >
             <IconArrowUp size={16} aria-hidden="true" />
             <span className="sr-only">{t('composer.send')}</span>
-          </Button>
+          </button>
         )}
+      </div>
+      {/* Tools row below the input — borderless, hover-darken icons. */}
+      <div className="composer-toolbar">
+        <button
+          type="button"
+          className="composer-tool"
+          aria-label={t('composer.attachmentTitle')}
+          title={t('composer.attachmentTitle')}
+          disabled={isUploading}
+          onClick={openFilePicker}
+        >
+          {isUploading ? (
+            <IconLoader2 size={16} aria-hidden="true" className="attachment-thumb-spin" />
+          ) : (
+            <IconPaperclip size={16} aria-hidden="true" />
+          )}
+        </button>
+        {/* Hidden native file picker — clicking the attach tool above
+            triggers it via openFilePicker(). aria-label kept so tests
+            and screen readers can find it. */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={documentAccept}
+          aria-label={t('composer.upload')}
+          disabled={isUploading}
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            onUploadDocument(event.currentTarget.files?.[0])
+            event.currentTarget.value = ''
+          }}
+        />
       </div>
     </footer>
   )

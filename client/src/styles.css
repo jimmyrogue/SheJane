@@ -1514,10 +1514,10 @@ select {
 
 /* When an attachment chip occupies the top of the composer-input, the
  * placeholder needs to drop below it instead of overlapping. 56 (thumb
- * height) + 10 (chip top padding) + 14 (editor padding-top equivalent)
- * ≈ the editor's first text line position. */
+ * height) + 10 (chip top padding) + 9 (editor padding-top in the
+ * single-line composer) ≈ first text line position. */
 .composer-input:has(.composer-chips) .composer-editor-ph {
-  top: 80px;
+  top: 75px;
 }
 
 .skill-chip--inline {
@@ -3600,23 +3600,28 @@ button.agent-progress-summary:focus-visible {
   background: rgba(0, 0, 0, 0.78) !important;
 }
 
+/* Input frame — a self-contained pill: full rounded border, white
+ * background, padding-right reserves space for the absolutely-positioned
+ * send button so typed text never slides under it. */
 .composer-input {
+  position: relative;
   border: 0.5px solid var(--border-strong);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--radius-lg);
   background: #FFFFFF;
 }
 
 .composer textarea,
 .composer-editor {
-  min-height: 70px;
+  min-height: 28px;
+  max-height: 240px;
   border: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--radius-lg);
   background: transparent;
   color: var(--text-primary);
-  padding: 12px 12px 4px;
+  /* Right padding leaves room for the absolutely-positioned send button. */
+  padding: 9px 44px 9px 14px;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.5;
   resize: none;
 }
 
@@ -3625,23 +3630,88 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* Placeholder default position when the editor is empty + no chip. */
+.composer-editor-ph {
+  top: 9px;
+  left: 14px;
+}
+
+/* Send / stop button: absolute-positioned at the bottom-right of the
+ * input frame. 28×28, filled (primary action), follows the editor as it
+ * grows so it always sits next to the bottom line of text. */
+.composer-send {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--text-primary);
+  color: #FFFFFF;
+  cursor: pointer;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+.composer-send:hover:not(:disabled) {
+  background: var(--text-primary);
+  filter: brightness(1.1);
+}
+.composer-send:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.composer-send-stop {
+  background: var(--accent-danger-text);
+}
+.composer-send-stop:hover {
+  filter: brightness(1.08);
+}
+
+/* Toolbar row below the input — borderless, transparent. Lives outside
+ * the input frame so buttons feel like floating tools, not part of the
+ * input. */
 .composer-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  border: 0.5px solid var(--border-strong);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  background: #FFFFFF;
-  padding: 6px 10px 10px;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px 0;
 }
 
-.composer-controls {
-  gap: 8px;
+/* Ghost icon button — no border, no background; on hover the bg
+ * darkens to give feedback. Used for any tool below the composer
+ * input. Adding a new tool? Just give it this class. */
+.composer-tool {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.composer-tool:hover:not(:disabled) {
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+.composer-tool:focus-visible {
+  outline: 2px solid var(--ring, var(--accent-danger-border));
+  outline-offset: 2px;
+}
+.composer-tool:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-.btn-chip,
-.composer-controls [data-slot="button"] {
+.btn-chip {
   min-height: 28px;
   border: 0.5px solid var(--border-hairline);
   border-radius: var(--radius-sm);
@@ -3652,28 +3722,6 @@ button.agent-progress-summary:focus-visible {
   font-weight: 400;
 }
 
-/* Icon-only buttons in the composer toolbar are square — they share
- * the same footprint regardless of which `icon-*` size variant they
- * use. This neutralizes the pill-style padding in the rule above so
- * the button frame matches the icon (no horizontal stretch). Any
- * future icon button added to .composer-controls picks this up
- * automatically. */
-.composer-controls [data-slot="button"][data-size^="icon"] {
-  display: inline-grid !important;
-  width: 28px !important;
-  min-width: 28px !important;
-  height: 28px !important;
-  min-height: 28px !important;
-  place-items: center !important;
-  padding: 0 !important;
-}
-
-.composer-controls [data-variant="default"] {
-  border-color: var(--border-strong);
-  background: var(--text-primary);
-  color: #FFFFFF;
-}
-
 .segmented {
   display: inline-flex;
   width: fit-content;
@@ -3682,36 +3730,6 @@ button.agent-progress-summary:focus-visible {
   overflow: visible;
   border: 0;
   border-radius: 0;
-}
-
-.composer-kbd {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.send-button {
-  display: inline-grid !important;
-  width: 26px !important;
-  min-width: 26px !important;
-  height: 26px !important;
-  min-height: 26px !important;
-  place-items: center !important;
-  border-radius: var(--radius-sm) !important;
-  background: var(--text-primary) !important;
-  color: #FFFFFF !important;
-  padding: 0 !important;
-}
-
-/* Stop variant — same footprint and weight as the send button so the
- * swap is visually stable; uses the accent-danger token so it reads
- * clearly as "interrupt". Only ever appears while streaming. */
-.send-button-stop {
-  background: var(--accent-danger-text) !important;
-  color: #FFFFFF !important;
-}
-.send-button-stop:hover {
-  filter: brightness(1.08);
 }
 
 .attachment-chip,
