@@ -34,11 +34,8 @@ function Harness({
           setDraft(value)
         }}
         isSending={false}
-        documents={[]}
         isUploading={false}
         onUploadDocument={vi.fn()}
-        onAttachDocument={vi.fn()}
-        onDeleteDocument={vi.fn()}
         onDetachDocument={vi.fn()}
         onSend={onSend}
         listSkills={listSkills}

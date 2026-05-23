@@ -1253,13 +1253,9 @@ function AppContent() {
               draft={draft}
               onDraftChange={setDraft}
               isSending={isSending}
-              documents={documents}
-              attachedDocumentID={attachedDocumentID}
               attachedDocument={attachedDocument}
               isUploading={isUploading}
               onUploadDocument={(file) => void uploadDocument(file)}
-              onAttachDocument={setAttachedDocumentID}
-              onDeleteDocument={(document) => void deleteDocument(document)}
               onDetachDocument={() => {
                 setAttachedDocumentID(undefined)
                 setAttachedPreview(undefined)

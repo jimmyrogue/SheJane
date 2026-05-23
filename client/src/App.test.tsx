@@ -206,7 +206,12 @@ describe('user client shell', () => {
     expect(screen.getByText('RECENT')).toBeInTheDocument()
   })
 
-  it('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
+  // SKIPPED: the attachment Dialog (showing "当前对话附件" header and
+  // the list of uploaded documents) was removed in feat/client-ui in
+  // favour of an OS file picker that opens immediately on click. Only
+  // the upload affordance remains in the Composer — historical document
+  // re-attach is no longer surfaced here.
+  it.skip('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
     mockFetch('user')
 
     render(<App />)
@@ -236,7 +241,8 @@ describe('user client shell', () => {
     const file = new File(['hello'], 'brief.docx', {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     })
-    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
+    // The attach button now opens the OS file picker directly; in
+    // jsdom we drive the hidden <input type="file"> via its aria-label.
     fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
 
     expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
@@ -253,9 +259,15 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
-    fireEvent.click(screen.getByText('roadmap.pdf'))
-    expect(screen.getByText('已附加 roadmap.pdf')).toBeInTheDocument()
+    // Previously this test re-attached a pre-existing document from a
+    // dialog list; that UI is gone, so upload a fresh file. (The mock
+    // upload endpoint hardcodes `brief.docx` as original_name regardless
+    // of what we send — see the `/api/v1/documents/uploads` mock below.)
+    const file = new File(['hello'], 'brief.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
+    expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
 
     typeComposer('这份文档的结论是什么？')
     fireEvent.click(screen.getByText('发送'))

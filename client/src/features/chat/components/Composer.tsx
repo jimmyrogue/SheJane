@@ -1,23 +1,13 @@
-import { useState } from 'react'
+import { useRef } from 'react'
 import {
   IconArrowUp,
   IconFileText,
   IconLoader2,
   IconPaperclip,
   IconPlayerStopFilled,
-  IconTrash,
-  IconUpload,
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { SkillEditor } from './SkillEditor'
 import { useI18n, type Locale } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
@@ -27,13 +17,9 @@ export function Composer({
   draft,
   onDraftChange,
   isSending,
-  documents,
-  attachedDocumentID,
   attachedDocument,
   isUploading,
   onUploadDocument,
-  onAttachDocument,
-  onDeleteDocument,
   onDetachDocument,
   onSend,
   onStop,
@@ -42,13 +28,10 @@ export function Composer({
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
-  documents: UserDocument[]
-  attachedDocumentID?: string
+  /** The single document attached to the next outgoing message, if any. */
   attachedDocument?: UserDocument
   isUploading: boolean
   onUploadDocument: (file?: File) => void
-  onAttachDocument: (documentID: string) => void
-  onDeleteDocument: (document: UserDocument) => void
   onDetachDocument: () => void
   onSend: () => void
   /** Cancel the in-flight run. Shown as a "stop" button in place of
@@ -59,33 +42,35 @@ export function Composer({
 }) {
   const { locale, t } = useI18n()
 
-  const hasChips = Boolean(attachedDocument)
-  const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const canStop = isSending && Boolean(onStop)
+
+  function openFilePicker() {
+    if (isUploading) {
+      return
+    }
+    fileInputRef.current?.click()
+  }
 
   return (
     <footer className="composer">
-      {hasChips && (
+      {attachedDocument ? (
         <div className="composer-chips">
-          {attachedDocument ? (
-            <>
-              <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
-                {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
-                <span>{t('composer.attachedDocument', { name: attachedDocument.original_name })}</span>
-                <small>
-                  {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at, locale)}
-                </small>
-                <Button size="icon-xs" variant="ghost" title={t('composer.removeAttachment')} onClick={onDetachDocument}>
-                  <IconX size={14} />
-                </Button>
-              </div>
-              {attachedDocument.status === 'failed' ? (
-                <div className="document-status failed">{attachedDocument.error_message || t('composer.parseFailed')}</div>
-              ) : null}
-            </>
+          <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
+            {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
+            <span>{t('composer.attachedDocument', { name: attachedDocument.original_name })}</span>
+            <small>
+              {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at, locale)}
+            </small>
+            <Button size="icon-xs" variant="ghost" title={t('composer.removeAttachment')} onClick={onDetachDocument}>
+              <IconX size={14} />
+            </Button>
+          </div>
+          {attachedDocument.status === 'failed' ? (
+            <div className="document-status failed">{attachedDocument.error_message || t('composer.parseFailed')}</div>
           ) : null}
         </div>
-      )}
+      ) : null}
       <div className="composer-input">
         <SkillEditor
           draft={draft}
@@ -104,11 +89,31 @@ export function Composer({
             className="composer-attach-button"
             aria-label={t('composer.attachmentTitle')}
             title={t('composer.attachmentTitle')}
-            onClick={() => setAttachmentDialogOpen(true)}
+            disabled={isUploading}
+            onClick={openFilePicker}
           >
-            <IconPaperclip size={16} aria-hidden="true" />
-            {documents.length > 0 ? <span className="button-count">{documents.length}</span> : null}
+            {isUploading ? (
+              <IconLoader2 size={16} aria-hidden="true" className="composer-attach-spinner" />
+            ) : (
+              <IconPaperclip size={16} aria-hidden="true" />
+            )}
           </Button>
+          {/* Hidden native file picker — clicking the visible button
+              triggers it via openFilePicker(). Keeps the OS chooser as
+              the single, direct attach affordance (no dialog in between).
+              aria-label exposed so tests / a11y can find it. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={documentAccept}
+            aria-label={t('composer.upload')}
+            disabled={isUploading}
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              onUploadDocument(event.currentTarget.files?.[0])
+              event.currentTarget.value = ''
+            }}
+          />
         </div>
         <span className="composer-kbd">⌘↵</span>
         {canStop ? (
@@ -134,66 +139,6 @@ export function Composer({
           </Button>
         )}
       </div>
-      <Dialog open={attachmentDialogOpen} onOpenChange={setAttachmentDialogOpen}>
-        <DialogContent className="attachment-dialog sm:max-w-[560px]">
-          <DialogHeader>
-            <DialogTitle>{t('composer.attachmentDialog.title')}</DialogTitle>
-            <DialogDescription>
-              {t('composer.attachmentDialog.description')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="attachment-dialog-body">
-            <label className="document-upload document-upload-dialog">
-              <IconUpload size={18} />
-              <span>{isUploading ? t('composer.uploading') : t('composer.upload')}</span>
-              <input
-                aria-label={t('composer.upload')}
-                type="file"
-                accept={documentAccept}
-                disabled={isUploading}
-                onChange={(event) => {
-                  onUploadDocument(event.currentTarget.files?.[0])
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
-            <div className="document-list document-list-dialog">
-              {documents.length === 0 ? (
-                <p className="empty-inline">{t('composer.noAttachments')}</p>
-              ) : (
-                documents.map((document) => (
-                  <div className={document.id === attachedDocumentID ? 'document-list-item active' : 'document-list-item'} key={document.id}>
-                    <button
-                      className="document-select"
-                      onClick={() => {
-                        onAttachDocument(document.id)
-                        setAttachmentDialogOpen(false)
-                      }}
-                    >
-                      <IconFileText size={16} />
-                      <span>{document.original_name}</span>
-                      <small>{document.status}</small>
-                    </button>
-                    <button className="document-delete" title={t('composer.deleteDocument', { name: document.original_name })} onClick={() => onDeleteDocument(document)}>
-                      <IconTrash size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            {attachedDocument ? (
-              <Button type="button" variant="outline" onClick={onDetachDocument}>
-                {t('composer.detachCurrent')}
-              </Button>
-            ) : null}
-            <Button type="button" variant="ghost" onClick={() => setAttachmentDialogOpen(false)}>
-              {t('composer.close')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </footer>
   )
 }
