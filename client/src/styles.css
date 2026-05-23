@@ -2863,22 +2863,6 @@ button:active {
   background: var(--accent-danger);
   box-shadow: 0 0 0 2px var(--accent-danger-bg);
 }
-.topbar-balance {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 6px;
-  background: var(--surface-2, rgba(120, 120, 130, 0.10));
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.topbar-balance.is-low {
-  background: var(--accent-warning-bg);
-  color: var(--accent-warning-text);
-}
-
 /* Status banner — drops in between topbar and chat-surface when
  * something's wrong at the system level (daemon offline, credits
  * exhausted, etc). Single-line, soft warning palette, dismisses

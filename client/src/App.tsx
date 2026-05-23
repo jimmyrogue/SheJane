@@ -1285,19 +1285,6 @@ function AppContent() {
                   title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
                   aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
                 />
-                {balance ? (
-                  (() => {
-                    const credits = totalCredits(balance)
-                    return (
-                      <span
-                        className={`topbar-balance${credits < 100 ? ' is-low' : ''}`}
-                        title={t('topbar.balanceTitle')}
-                      >
-                        {t('topbar.creditsAmount', { count: formatBalanceCredits(credits) })}
-                      </span>
-                    )
-                  })()
-                ) : null}
               </div>
             </header>
             {!localHost?.online ? (
@@ -1439,16 +1426,6 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
 
 function totalCredits(balance: WalletBalance): number {
   return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
-}
-
-function formatBalanceCredits(value: number): string {
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(1)}M`
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}k`
-  }
-  return String(Math.round(value))
 }
 
 /** Fire a system notification when an assistant turn finishes. The
