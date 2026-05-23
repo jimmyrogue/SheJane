@@ -224,6 +224,30 @@ function AppContent() {
     writeSidebarCollapsed(sidebarCollapsed)
   }, [sidebarCollapsed])
 
+  /** Global Cmd/Ctrl+N → start a fresh conversation. Bypasses the
+   *  OS-level "new window" intent because in this app it's a chat
+   *  shell, not a browser. setState fns are stable across renders so
+   *  the closure here stays correct without deps. */
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey
+      if (!mod || event.shiftKey || event.altKey) {
+        return
+      }
+      if (event.key !== 'n' && event.key !== 'N') {
+        return
+      }
+      event.preventDefault()
+      navigationVersionRef.current += 1
+      setActiveConversationID(undefined)
+      setPendingWorkspace(undefined)
+      setDraft('')
+      setMainView('chat')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   useEffect(() => {
     if (!isResizingSidebar) {
       return undefined

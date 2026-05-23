@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   IconCornerDownLeft,
   IconFileText,
@@ -45,7 +45,10 @@ export function Composer({
   const { t } = useI18n()
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerRef = useRef<HTMLElement | null>(null)
   const canStop = isSending && Boolean(onStop)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragDepthRef = useRef(0)
 
   function openFilePicker() {
     if (isUploading) {
@@ -54,8 +57,93 @@ export function Composer({
     fileInputRef.current?.click()
   }
 
+  /** Paste an image straight into the composer — typical for screenshot
+   *  workflows where the clipboard already holds the image bitmap.
+   *  Capture-phase listener so we run before Lexical's own paste
+   *  handling and can claim the event for non-text content. */
+  useEffect(() => {
+    const node = composerRef.current
+    if (!node) {
+      return
+    }
+    const handler = (event: ClipboardEvent) => {
+      if (isUploading) {
+        return
+      }
+      const items = event.clipboardData?.items
+      if (!items) {
+        return
+      }
+      for (const item of Array.from(items)) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) {
+            event.preventDefault()
+            event.stopPropagation()
+            onUploadDocument(file)
+            return
+          }
+        }
+      }
+    }
+    node.addEventListener('paste', handler, { capture: true })
+    return () => node.removeEventListener('paste', handler, { capture: true })
+  }, [isUploading, onUploadDocument])
+
+  /** Drag-and-drop handlers — drop a file anywhere on the composer to
+   *  upload it. dragDepthRef counts nested dragenter/dragleave fires
+   *  so the highlight only clears when the cursor really leaves the
+   *  composer, not when it crosses an inner child boundary. */
+  function handleDragEnter(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
+      return
+    }
+    dragDepthRef.current += 1
+    setIsDragging(true)
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
+      return
+    }
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) {
+      setIsDragging(false)
+    }
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLElement>) {
+    if (event.dataTransfer.types.includes('Files')) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+    }
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
+      return
+    }
+    event.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragging(false)
+    if (isUploading) {
+      return
+    }
+    const file = event.dataTransfer.files?.[0]
+    if (file) {
+      onUploadDocument(file)
+    }
+  }
+
   return (
-    <footer className="composer">
+    <footer
+      className={`composer${isDragging ? ' composer-dragging' : ''}`}
+      ref={composerRef}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="composer-input">
         {attachedDocument ? (
           <div className="composer-chips">

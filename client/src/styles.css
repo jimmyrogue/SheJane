@@ -3702,6 +3702,16 @@ button.agent-progress-summary:focus-visible {
   border: 0.5px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: #FFFFFF;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* Drag-and-drop visual — when a file is being dragged over the
+ * composer, the input frame highlights so the user knows "drop here".
+ * The handlers in Composer.tsx track depth so the highlight doesn't
+ * flicker as the cursor crosses inner child boundaries. */
+.composer-dragging .composer-input {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--surface-2, rgba(120, 120, 130, 0.16));
 }
 
 .composer textarea,
