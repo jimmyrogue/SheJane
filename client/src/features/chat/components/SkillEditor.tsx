@@ -124,20 +124,24 @@ function SubmitPlugin({
           if (menuOpenRef.current) {
             return false
           }
-          if (event && (event.metaKey || event.ctrlKey)) {
+          // Shift+Enter → newline. Plain Enter (or Cmd/Ctrl+Enter for
+          // legacy muscle memory) → send. This is the convention users
+          // expect from chat apps; the old Cmd+Enter-only behaviour was
+          // documenter-oriented and surprising for newcomers.
+          if (event && event.shiftKey) {
             event.preventDefault()
-            onSend()
+            editor.update(() => {
+              const selection = $getSelection()
+              if ($isRangeSelection(selection)) {
+                selection.insertLineBreak()
+              }
+            })
             return true
           }
           if (event) {
             event.preventDefault()
           }
-          editor.update(() => {
-            const selection = $getSelection()
-            if ($isRangeSelection(selection)) {
-              selection.insertLineBreak()
-            }
-          })
+          onSend()
           return true
         },
         COMMAND_PRIORITY_LOW,

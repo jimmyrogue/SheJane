@@ -59,10 +59,24 @@ describe('Composer (Lexical skill editor)', () => {
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument()
   })
 
-  it('sends with Cmd/Ctrl+Enter', () => {
+  it('sends with plain Enter', () => {
+    const onSend = vi.fn()
+    render(<Harness onSend={onSend} />)
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('still sends with Cmd/Ctrl+Enter for muscle-memory compatibility', () => {
     const onSend = vi.fn()
     render(<Harness onSend={onSend} />)
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', metaKey: true })
     expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('inserts a newline on Shift+Enter instead of sending', () => {
+    const onSend = vi.fn()
+    render(<Harness onSend={onSend} />)
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', shiftKey: true })
+    expect(onSend).not.toHaveBeenCalled()
   })
 })

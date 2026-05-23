@@ -115,7 +115,7 @@ export function Composer({
             }}
           />
         </div>
-        <span className="composer-kbd">⌘↵</span>
+        <span className="composer-kbd" title={t('composer.kbdHint')}>↵</span>
         {canStop ? (
           <Button
             className="send-button send-button-stop"
