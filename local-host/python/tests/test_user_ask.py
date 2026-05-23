@@ -144,6 +144,102 @@ def test_user_ask_appears_in_compiled_agent(monkeypatch, tmp_path) -> None:
 # --- end-to-end: tool call triggers run.waiting with question payload ---
 
 
+def test_user_ask_in_parallel_tool_call_batch_still_pauses(monkeypatch) -> None:
+    """Regression for the "agent emits user.ask alongside other tools
+    and the run silently stalls" bug.
+
+    Reproduces what we saw in a real Phuket-travel-planning run: the
+    model returns 3+ tool calls in one response — some non-blocking
+    (write_todos, web.search), one blocking (user.ask). Each tool gets
+    its own LangGraph task. The user.ask interrupt landed in
+    snapshot.tasks[N>0], but earlier code only inspected
+    snapshot.tasks[0].interrupts → the interrupt was missed, run.waiting
+    was emitted with empty interrupts list, and the UI had nothing to
+    render so the user saw the run hang forever with no prompt.
+
+    Fix: gather interrupts from both snapshot.interrupts (top-level
+    aggregate) and every snapshot.tasks[*].interrupts, deduped.
+    """
+    handler = RecordingHandler(
+        scripts=[
+            [
+                ("llm.delta", {"content_delta": "Planning. "}),
+                # Tool call #1: write_todos (synchronous, completes).
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_p1_todos",
+                        "name": "write_todos",
+                        "arguments": {
+                            "todos": [
+                                {"content": "research", "status": "in_progress"},
+                                {"content": "ask user", "status": "in_progress"},
+                            ]
+                        },
+                    },
+                ),
+                # Tool call #2: time.now (synchronous, completes).
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_p2_time",
+                        "name": "time.now",
+                        "arguments": {},
+                    },
+                ),
+                # Tool call #3: user.ask — must pause the run. This is
+                # the one that landed in tasks[N>0] in the original bug.
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_p3_ask",
+                        "name": "user.ask",
+                        "arguments": {
+                            "question": "How many days?",
+                            "options": ["3", "5", "7"],
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "rq_par", "finish_reason": "tool_calls"}),
+            ]
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        r = client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+            json={"goal": "plan a trip"},
+        )
+        assert r.status_code == 200
+        run_id = r.json()["id"]
+        with client.stream(
+            "GET",
+            f"/local/v1/runs/{run_id}/stream",
+            headers={"Authorization": "Bearer tok"},
+        ) as resp:
+            body = resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    names = [e[0] for e in events]
+
+    # The smoking gun in the original bug: run.waiting fires but with
+    # empty interrupts. After the fix, interrupts must be populated.
+    assert "run.waiting" in names, f"expected run.waiting; got: {names}"
+    waiting = next(e[1] for e in events if e[0] == "run.waiting")
+    assert waiting.get("interrupts"), (
+        "run.waiting had empty interrupts despite user.ask in parallel batch — "
+        f"the parallel-tool-call regression has returned. payload: {waiting!r}"
+    )
+
+    # And the question itself must reach the client via question.asked.
+    assert "question.asked" in names, (
+        f"user.ask in parallel batch did not produce question.asked event. got: {names}"
+    )
+    question_event = next(e[1] for e in events if e[0] == "question.asked")
+    serialized = json.dumps(question_event, default=str)
+    assert "How many days" in serialized
+
+
 def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None:
     handler = RecordingHandler(
         scripts=[

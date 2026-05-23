@@ -340,7 +340,37 @@ class RunCoordinator:
                     await self._enqueue(queue, run_id, "run.completed", {"final_text": final_text})
                     break
 
-                interrupts = snapshot.tasks[0].interrupts if snapshot.tasks else []
+                # Gather interrupts from BOTH places LangGraph stores them:
+                #   • snapshot.interrupts — aggregated top-level list
+                #     (LangGraph 1.x). Reliable when present.
+                #   • snapshot.tasks[*].interrupts — per-task lists. With
+                #     parallel tool calls (e.g. ToolNode dispatches 3
+                #     web.search + 1 user.ask in one step), each tool
+                #     gets its own task; the user.ask interrupt lands in
+                #     whichever task index ran it, NOT necessarily
+                #     tasks[0]. Earlier code only checked tasks[0] and
+                #     missed the interrupt → run stalled with empty
+                #     interrupts and `next=["tools"]`.
+                # We prefer the top-level list and fall back to scanning
+                # every task. Dedupe by interrupt id so neither source
+                # double-counts.
+                interrupts_top = list(getattr(snapshot, "interrupts", ()) or ())
+                interrupts_per_task = [
+                    intr
+                    for task in (snapshot.tasks or ())
+                    for intr in (getattr(task, "interrupts", ()) or ())
+                ]
+                seen_ids: set[Any] = set()
+                interrupts: list[Any] = []
+                for intr in interrupts_top + interrupts_per_task:
+                    key = getattr(intr, "id", None)
+                    if key is None:
+                        interrupts.append(intr)
+                        continue
+                    if key in seen_ids:
+                        continue
+                    seen_ids.add(key)
+                    interrupts.append(intr)
                 auto_resume = self._try_auto_approve(run_id, interrupts)
                 if auto_resume is not None:
                     # All paused tool calls are pre-approved with
