@@ -391,6 +391,8 @@ const zh = {
   'agent.question.back': '上一步',
   'agent.question.progress': '第 {current} / {total} 题',
   'agent.thinking': '正在思考',
+  'notify.agentCompleted.title': '石间回复完成',
+  'notify.agentCompleted.empty': '助手已完成本轮回复',
   'agent.thinkingPaused': '暂停',
   'agent.tokens': '{count} tokens',
 
@@ -857,6 +859,8 @@ const en: Record<TranslationKey, string> = {
   'agent.question.back': 'Back',
   'agent.question.progress': 'Question {current} / {total}',
   'agent.thinking': 'Thinking',
+  'notify.agentCompleted.title': 'SheJane finished replying',
+  'notify.agentCompleted.empty': 'The assistant has finished this turn',
   'agent.thinkingPaused': 'Paused',
   'agent.tokens': '{count} tokens',
 

@@ -248,6 +248,19 @@ function AppContent() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  /** Listen for the tray's "New Chat" menu item — the main process
+   *  sends `jiandanly:new-chat` after bringing the window forward. */
+  useEffect(() => {
+    const unsubscribe = window.jiandanDesktop?.onNewChatRequest?.(() => {
+      navigationVersionRef.current += 1
+      setActiveConversationID(undefined)
+      setPendingWorkspace(undefined)
+      setDraft('')
+      setMainView('chat')
+    })
+    return unsubscribe
+  }, [])
+
   useEffect(() => {
     if (!isResizingSidebar) {
       return undefined
@@ -622,6 +635,12 @@ function AppContent() {
       })
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, context)
+      // OS-level notification when the user has switched away — the
+      // main process suppresses it if the window is still focused, so
+      // we can call unconditionally on every completion.
+      if (assistantMessage.status === 'done') {
+        notifyAgentCompleted(assistantMessage, t)
+      }
     } catch (error) {
       assistantMessage.status = 'error'
       assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
@@ -1377,6 +1396,23 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
     seenEventIDs.add(event.id)
   }
   message.content += delta
+}
+
+/** Fire a system notification when an assistant turn finishes. The
+ *  Electron main process internally drops the call when the window is
+ *  focused, so this is safe to call on every completion. We trim the
+ *  body so the OS doesn't have to deal with a multi-screen reply. */
+function notifyAgentCompleted(message: ChatMessage, t: Translator): void {
+  const bridge = window.jiandanDesktop
+  if (!bridge?.notify) {
+    return
+  }
+  const raw = (message.content || '').trim().replace(/\s+/g, ' ')
+  const body = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw
+  void bridge.notify({
+    title: t('notify.agentCompleted.title'),
+    body: body || t('notify.agentCompleted.empty'),
+  })
 }
 
 function finalizeLocalRunStatus(message: ChatMessage) {
