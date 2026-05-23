@@ -3393,6 +3393,10 @@ button:active {
   font-variant-numeric: tabular-nums;
   padding: 0 6px;
   line-height: 1;
+  /* Same fix as .message-meta-mode — inline text would otherwise show
+   * the I-beam cursor and read as editable. The timestamp is purely
+   * informational. */
+  cursor: default;
 }
 
 
