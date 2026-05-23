@@ -4069,6 +4069,13 @@ button.agent-progress-summary:focus-visible {
 .composer-mode-trigger {
   display: inline-flex;
   align-items: center;
+  /* Fixed width so the pill doesn't reflow as the user cycles
+   * Auto / Fast / Pro — each label is a different glyph count and the
+   * surrounding composer toolbar elements were shifting horizontally.
+   * 92px = icon + longest label ("Auto"/"Fast") + chevron + padding,
+   * with a few px of slack for font-rendering jitter. */
+  width: 92px;
+  justify-content: flex-start;
   gap: 4px;
   height: 28px;
   padding: 0 8px;
@@ -4080,6 +4087,13 @@ button.agent-progress-summary:focus-visible {
   font-weight: 500;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease;
+}
+.composer-mode-trigger-label {
+  flex: 1 1 auto;
+}
+.composer-mode-trigger-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .composer-mode-trigger:hover:not(:disabled),
 .composer-mode-trigger[data-state="open"] {
