@@ -1,4 +1,4 @@
-import { IconBolt, IconChevronDown, IconSparkles, IconStars } from '@tabler/icons-react'
+import { IconBolt, IconCheck, IconChevronDown, IconSparkles, IconStars } from '@tabler/icons-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,11 +60,16 @@ export function ModeSelector({
               className={`composer-mode-item${isActive ? ' is-active' : ''}`}
               onSelect={() => onChange(value)}
             >
-              <meta.Icon size={16} aria-hidden="true" className="composer-mode-item-icon" />
+              {/* No leading icon — keeps the menu narrow. Active state
+               *  is signalled by a trailing check on the right, matching
+               *  the macOS / Claude-style picker convention. */}
               <div className="composer-mode-item-text">
                 <span className="composer-mode-item-label">{t(meta.labelKey)}</span>
                 <span className="composer-mode-item-hint">{t(meta.hintKey)}</span>
               </div>
+              {isActive ? (
+                <IconCheck size={14} aria-hidden="true" className="composer-mode-item-check" />
+              ) : null}
             </DropdownMenuItem>
           )
         })}

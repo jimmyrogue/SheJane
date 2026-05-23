@@ -4102,33 +4102,35 @@ button.agent-progress-summary:focus-visible {
 }
 
 .composer-mode-menu {
-  min-width: 220px;
+  /* No leading icon column → tighter min-width. The labels (Auto /
+   * Fast / Pro) drive the actual width; the hint sub-text wraps if
+   * needed but is short enough in practice that the menu sits at ~180px. */
+  min-width: 180px;
   padding: 4px;
-  /* Drop the 1px Tailwind border the shadcn DropdownMenuContent ships
-   * with — at composer scale it reads as a hard outline. Use a
-   * stronger shadow + the existing rounded corners for separation
-   * instead. (Other dropdowns in the app keep the default border via
-   * the shared component class.) */
-  border: 0;
-  box-shadow: var(--shadow-lg, 0 16px 32px -12px rgba(15, 17, 26, 0.18), 0 4px 12px -4px rgba(15, 17, 26, 0.10));
+  /* Subtle hairline border + soft shadow, matching Claude-style
+   * picker popups. The shadcn default `border` class is replaced with
+   * our own var so it picks up the same hairline color used elsewhere
+   * (sidebar, composer outline) instead of Tailwind's 1px gray. */
+  border: 0.5px solid var(--border-hairline);
+  box-shadow:
+    0 12px 28px -10px rgba(15, 17, 26, 0.18),
+    0 4px 10px -4px rgba(15, 17, 26, 0.10);
 }
 .composer-mode-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 7px 9px;
   border-radius: 6px;
   cursor: pointer;
 }
 .composer-mode-item.is-active {
   background: var(--surface-2, rgba(120, 120, 130, 0.08));
 }
-.composer-mode-item-icon {
-  margin-top: 2px;
-  color: var(--text-secondary);
+.composer-mode-item-check {
   flex-shrink: 0;
-}
-.composer-mode-item.is-active .composer-mode-item-icon {
+  margin-left: auto;
+  margin-top: 3px;
   color: var(--text-primary);
 }
 .composer-mode-item-text {
@@ -4136,6 +4138,7 @@ button.agent-progress-summary:focus-visible {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .composer-mode-item-label {
   font-size: 13px;
