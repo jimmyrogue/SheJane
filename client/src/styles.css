@@ -185,18 +185,20 @@ button {
  * Buttons that genuinely want a press feedback can opt back in with
  * a scoped rule — none currently do.
  *
- * Native browser focus rings on buttons also reset here. The OS
- * default ring uses the system accent colour (so macOS users with an
- * orange/red accent saw a contrasting orange "selected" outline).
- * A baseline subtle :focus-visible shadow keeps keyboard a11y intact;
- * individual button classes can still override with a more specific
- * rule when they need a different focus treatment. */
+ * Native browser focus rings on buttons also reset here. macOS
+ * Chromium uses the system accent colour for default focus rings, so
+ * users configured with a warm accent (orange, red, purple) saw a
+ * contrasting "selected" outline on every button. We don't ship a
+ * universal :focus-visible replacement because Radix DropdownMenu
+ * returns focus to its trigger on close — Chromium classifies that
+ * focus-return as keyboard-equivalent, so a baseline ring lit up
+ * after every menu close. Buttons that genuinely need a keyboard
+ * focus indicator can opt in with their own scoped :focus-visible. */
 button:focus {
   outline: none;
 }
 button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 a {
