@@ -3472,6 +3472,85 @@ button.agent-progress-summary:focus-visible {
   padding: 0 0 6px;
 }
 
+/* Compact thumbnail tile shown above the composer for the attached
+ * document. Images use their data: URL as the tile background; other
+ * file types fall back to a generic file icon on a tinted background.
+ * Filename / size / status are intentionally hidden — file name lives
+ * on the `title` attribute (browser tooltip on long hover), the remove
+ * button only appears on hover/focus. */
+.attachment-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 0.5px solid var(--border-strong);
+  background: var(--bg-elevated, #FFFFFF);
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.attachment-thumb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.attachment-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: var(--surface-2, rgba(120, 120, 130, 0.06));
+}
+.attachment-thumb-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
+}
+.attachment-thumb-spin {
+  animation: reasoning-dot 1.2s linear infinite;
+}
+.attachment-thumb.status-failed {
+  border-color: var(--accent-danger-border);
+}
+.attachment-thumb.status-failed::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(184, 113, 108, 0.18);
+}
+/* Remove button — absolute, hidden by default, faded in on hover/focus
+ * of the tile. Keyboard-focusable so it's reachable without a mouse. */
+.attachment-thumb-remove {
+  position: absolute !important;
+  top: 2px !important;
+  right: 2px !important;
+  width: 16px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  background: rgba(0, 0, 0, 0.62) !important;
+  color: #FFFFFF !important;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.attachment-thumb:hover .attachment-thumb-remove,
+.attachment-thumb:focus-within .attachment-thumb-remove,
+.attachment-thumb-remove:focus-visible {
+  opacity: 1;
+}
+.attachment-thumb-remove:hover {
+  background: rgba(0, 0, 0, 0.78) !important;
+}
+
 .composer-input {
   border: 0.5px solid var(--border-strong);
   border-bottom: 0;

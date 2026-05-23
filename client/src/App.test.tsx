@@ -245,7 +245,9 @@ describe('user client shell', () => {
     // jsdom we drive the hidden <input type="file"> via its aria-label.
     fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
 
-    expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
+    // The chip is a thumbnail tile that exposes the filename only via
+    // its `title` attribute (browser tooltip on long hover).
+    expect(await screen.findByTitle('brief.docx')).toBeInTheDocument()
     expect(calls.some((call) => call.url === 'https://s3.example.com/upload' && call.init?.method === 'PUT')).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-upload/complete'))).toBe(true)
   })
@@ -267,7 +269,9 @@ describe('user client shell', () => {
       type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     })
     fireEvent.change(screen.getByLabelText('上传附件'), { target: { files: [file] } })
-    expect(await screen.findByText('已附加 brief.docx')).toBeInTheDocument()
+    // The chip is a thumbnail tile that exposes the filename only via
+    // its `title` attribute (browser tooltip on long hover).
+    expect(await screen.findByTitle('brief.docx')).toBeInTheDocument()
 
     typeComposer('这份文档的结论是什么？')
     fireEvent.click(screen.getByText('发送'))

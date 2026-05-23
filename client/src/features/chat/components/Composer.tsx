@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { SkillEditor } from './SkillEditor'
-import { useI18n, type Locale } from '@/shared/i18n/i18n'
+import { useI18n } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
 import type { InstalledSkill } from '@/shared/local-host/client'
 
@@ -18,6 +18,7 @@ export function Composer({
   onDraftChange,
   isSending,
   attachedDocument,
+  attachedPreview,
   isUploading,
   onUploadDocument,
   onDetachDocument,
@@ -30,6 +31,9 @@ export function Composer({
   isSending: boolean
   /** The single document attached to the next outgoing message, if any. */
   attachedDocument?: UserDocument
+  /** Inline data: URL for image previews. Non-image documents leave
+   *  this undefined and we fall back to a file-icon tile. */
+  attachedPreview?: string
   isUploading: boolean
   onUploadDocument: (file?: File) => void
   onDetachDocument: () => void
@@ -40,7 +44,7 @@ export function Composer({
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
 }) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const canStop = isSending && Boolean(onStop)
@@ -56,19 +60,34 @@ export function Composer({
     <footer className="composer">
       {attachedDocument ? (
         <div className="composer-chips">
-          <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
-            {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
-            <span>{t('composer.attachedDocument', { name: attachedDocument.original_name })}</span>
-            <small>
-              {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at, locale)}
-            </small>
-            <Button size="icon-xs" variant="ghost" title={t('composer.removeAttachment')} onClick={onDetachDocument}>
-              <IconX size={14} />
+          <div
+            className={`attachment-thumb status-${attachedDocument.status}`}
+            title={attachedDocument.original_name}
+          >
+            {attachedPreview ? (
+              <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
+            ) : (
+              <div className="attachment-thumb-placeholder" aria-hidden="true">
+                <IconFileText size={26} />
+              </div>
+            )}
+            {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
+              <div className="attachment-thumb-overlay" aria-hidden="true">
+                <IconLoader2 size={18} className="attachment-thumb-spin" />
+              </div>
+            ) : null}
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="attachment-thumb-remove"
+              aria-label={t('composer.removeAttachment')}
+              title={t('composer.removeAttachment')}
+              onClick={onDetachDocument}
+            >
+              <IconX size={12} aria-hidden="true" />
             </Button>
           </div>
-          {attachedDocument.status === 'failed' ? (
-            <div className="document-status failed">{attachedDocument.error_message || t('composer.parseFailed')}</div>
-          ) : null}
         </div>
       ) : null}
       <div className="composer-input">
@@ -145,22 +164,3 @@ export function Composer({
 
 const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg,image/webp,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp'
-
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatDate(value: string, locale: Locale): string {
-  try {
-    return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
-  } catch {
-    return value
-  }
-}

@@ -1254,6 +1254,7 @@ function AppContent() {
               onDraftChange={setDraft}
               isSending={isSending}
               attachedDocument={attachedDocument}
+              attachedPreview={attachedPreview}
               isUploading={isUploading}
               onUploadDocument={(file) => void uploadDocument(file)}
               onDetachDocument={() => {
