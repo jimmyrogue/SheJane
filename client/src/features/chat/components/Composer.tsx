@@ -58,39 +58,39 @@ export function Composer({
 
   return (
     <footer className="composer">
-      {attachedDocument ? (
-        <div className="composer-chips">
-          <div
-            className={`attachment-thumb status-${attachedDocument.status}`}
-            title={attachedDocument.original_name}
-          >
-            {attachedPreview ? (
-              <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
-            ) : (
-              <div className="attachment-thumb-placeholder" aria-hidden="true">
-                <IconFileText size={26} />
-              </div>
-            )}
-            {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
-              <div className="attachment-thumb-overlay" aria-hidden="true">
-                <IconLoader2 size={18} className="attachment-thumb-spin" />
-              </div>
-            ) : null}
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="attachment-thumb-remove"
-              aria-label={t('composer.removeAttachment')}
-              title={t('composer.removeAttachment')}
-              onClick={onDetachDocument}
-            >
-              <IconX size={12} aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
-      ) : null}
       <div className="composer-input">
+        {attachedDocument ? (
+          <div className="composer-chips">
+            <div
+              className={`attachment-thumb status-${attachedDocument.status}`}
+              title={attachedDocument.original_name}
+            >
+              {attachedPreview ? (
+                <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
+              ) : (
+                <div className="attachment-thumb-placeholder" aria-hidden="true">
+                  <IconFileText size={26} />
+                </div>
+              )}
+              {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
+                <div className="attachment-thumb-overlay" aria-hidden="true">
+                  <IconLoader2 size={18} className="attachment-thumb-spin" />
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="attachment-thumb-remove"
+                aria-label={t('composer.removeAttachment')}
+                title={t('composer.removeAttachment')}
+                onClick={onDetachDocument}
+              >
+                <IconX size={12} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <SkillEditor
           draft={draft}
           onDraftChange={onDraftChange}

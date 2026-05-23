@@ -3468,8 +3468,12 @@ button.agent-progress-summary:focus-visible {
   max-width: none;
 }
 
+/* Chips now live INSIDE the composer-input white container, sitting
+ * above the editor. Provide top + horizontal padding here; the editor
+ * below contributes its own padding-top so there's a natural gap
+ * between the thumbnail and the typed text. */
 .composer-chips {
-  padding: 0 0 6px;
+  padding: 10px 12px 0;
 }
 
 /* Compact thumbnail tile shown above the composer for the attached
