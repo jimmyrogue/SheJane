@@ -2978,22 +2978,21 @@ button:active {
 .messages {
   width: 100%;
   /* .messages spans the full chat-surface so its scrollbar pins to the
-   * right edge. Content is centered inside via .message-bubble-inner
-   * (max-width: 820px; margin: 0 auto) below. */
+   * right edge (the vertical scrollbar takes its ~14px from inside
+   * the padding-right, NOT from content area, so the centred column
+   * underneath stays truly centred in the chat-surface). */
   max-width: none;
   margin: 0;
-  /* Reduced from 18 because each .message now carries 28px of its own
-   * padding-bottom to host the meta hover row. Total visual gap
-   * between bubbles ≈ 28 + 4 = 32px. */
-  gap: 4px;
-  /* Top + bottom padding clear the 32px fade overlays on either end
-   * (.chat-surface::before at the top, .composer::before at the
-   * bottom). The bottom needs extra room because the .message-meta
-   * row (copy button + timestamp on hover) is absolute-positioned
-   * 17px BELOW each message bubble — without slack here the meta of
-   * the last message lands inside the fade. 60px = 32 fade + 17 meta
-   * + ~11 clean band. */
-  padding: 36px 0 60px 22px;
+  /* Each bubble gets ~32px to the next — the meta row (24px) sits
+   * inside this gap by floating below each bubble, so the visual
+   * "next bubble" doesn't appear until past the meta. */
+  gap: 32px;
+  /* Symmetric horizontal padding so the centred 760px column is
+   * genuinely centred (no left-bias). Vertical padding clears the
+   * 32px fade overlays on either end (.chat-surface::before at top,
+   * .composer::before at bottom). Bottom gets extra slack so the
+   * last bubble's meta row clears the composer fade. */
+  padding: 36px 22px 60px;
 }
 
 /* Block by default. .message.user reverts to flex (right-aligned
@@ -3018,15 +3017,18 @@ button:active {
 }
 
 /* Each row in the chat — message or ambient indicator — sits in a
- * 820px-wide column CENTERED inside the full-width .messages
- * container. The .messages container itself spans edge-to-edge so
- * its scrollbar pins to the chat-surface right edge; centring happens
- * per-row via auto horizontal margins. Inside this column the user
- * bubble right-aligns and the thinking pulse left-aligns. */
+ * 760px-wide column CENTERED inside the full-width .messages
+ * container. (760 chosen to match ChatGPT/Claude conventions and
+ * leave enough side-margin on a 1000–1200 viewport that the column
+ * reads as genuinely centred rather than edge-pinned.) The .messages
+ * container itself spans edge-to-edge so its scrollbar pins to the
+ * chat-surface right edge; centring happens per-row via auto
+ * horizontal margins. Inside the column the user bubble right-aligns
+ * and the thinking pulse left-aligns. */
 .message,
 .thinking-indicator {
   width: 100%;
-  max-width: 820px;
+  max-width: 760px;
   margin-left: auto;
   margin-right: auto;
 }
@@ -3085,16 +3087,12 @@ button:active {
   }
 }
 
-/* Per-message footer: copy + relative time. Lives inside the
- * .message's own padding-bottom — that way the meta sits visually
- * below the bubble but inside the .message hit-region, so hovering
- * the meta keeps the .message:hover state alive long enough to
- * actually click the copy button. (Previously the meta was floated
- * outside via `top: 100%` and disappeared the moment the cursor
- * left the bubble.) */
+/* Per-message footer: copy + relative time. Floated below the bubble
+ * via `top: 100%`; the meta itself stays `pointer-events: auto` even
+ * when invisible (see .message-meta), so hovering it directly keeps
+ * the row showing even after the cursor leaves the bubble. */
 .message {
   position: relative;
-  padding-bottom: 28px;
 }
 
 /* Ephemeral "Thinking…" pill (DeepSeek `reasoning_content`, o1-style
@@ -3136,10 +3134,7 @@ button:active {
 
 .message-meta {
   position: absolute;
-  /* Anchored to the bottom of .message's padding-bottom band (which
-   * is 28px tall), so the meta lives INSIDE the .message hit-region.
-   * Hover stays alive when the cursor moves down onto the meta itself. */
-  bottom: 0;
+  top: 100%;
   left: 0;
   display: flex;
   align-items: center;
@@ -3147,10 +3142,19 @@ button:active {
    * compact strip rather than two floating elements. */
   gap: 2px;
   height: 24px;
+  margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 11px;
   opacity: 0;
-  pointer-events: none;
+  /* IMPORTANT: keep pointer-events `auto` even when invisible. That
+   * way the meta itself catches the cursor as it moves down from the
+   * bubble to the copy button — if it were `none`, the bubble's
+   * :hover would drop the instant the cursor left the bubble border
+   * and the meta would flicker out before it could be clicked. The
+   * downside (meta hit-targetable when invisible) is a small price:
+   * a stray click registers on the copy button only, which is
+   * idempotent and unobtrusive. */
+  pointer-events: auto;
   transition: opacity 120ms ease;
 }
 
@@ -3163,10 +3167,14 @@ button:active {
   flex-direction: row-reverse;
 }
 
+/* Show the meta when hovering EITHER the bubble OR the meta itself.
+ * `.message-meta:hover` works because pointer-events stays `auto`
+ * above. This way moving from the bubble down to the copy button
+ * keeps the meta visible throughout. */
 .message:hover .message-meta,
-.message:focus-within .message-meta {
+.message:focus-within .message-meta,
+.message-meta:hover {
   opacity: 1;
-  pointer-events: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3559,7 +3567,7 @@ button.agent-progress-summary:focus-visible {
    * .workspace. No horizontal padding here so the ::before fade (and
    * the input frame itself) span the full composer width. */
   width: calc(100% - 36px);
-  max-width: 820px;
+  max-width: 760px;
   margin: 0 auto 16px;
   align-self: center;
   border: 0;
