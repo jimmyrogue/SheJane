@@ -182,3 +182,83 @@ def test_resume_unknown_run_returns_409(client: TestClient) -> None:
     # implementation currently lets you re-drive a run if no task exists.
     # For now any non-200 is acceptable in the unknown-run case.)
     assert r.status_code in (200, 409, 500)
+
+
+def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
+    monkeypatch,
+) -> None:
+    """End-to-end: posting a run with > _MAX_HISTORY_TURNS items should
+    cause the daemon to truncate the forwarded history AND surface the
+    dropped-count notice in the <state> block of the system prompt, so
+    the model knows context is incomplete. Without this notice, the
+    model would silently lose earlier turns and may answer based on
+    only the recent slice — a real "model is confused, what just
+    happened" failure mode.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-trunc-"))
+    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    captured_requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        try:
+            captured_requests.append(json.loads(body))
+        except json.JSONDecodeError:
+            pass
+        return _stream_response(
+            [
+                ("llm.delta", '{"content_delta": "ok"}'),
+                ("llm.done", '{"request_id": "r", "finish_reason": "stop"}'),
+            ]
+        )
+
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+
+    settings = reset_settings_for_tests(
+        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
+        JIANDANLY_LOCAL_HOST_PORT=17371,
+        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        # Build 60 prior history turns (> the 40-turn cap).
+        history = []
+        for i in range(60):
+            role = "user" if i % 2 == 0 else "assistant"
+            history.append({"role": role, "content": f"msg-{i:03d}"})
+
+        r = client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+            json={"goal": "what was message 5?", "history": history},
+        )
+        assert r.status_code == 200
+        run_id = r.json()["id"]
+
+        with client.stream(
+            "GET",
+            f"/local/v1/runs/{run_id}/stream",
+            headers={"Authorization": "Bearer tok"},
+        ) as resp:
+            assert resp.status_code == 200
+            resp.read()
+
+    # The backend was called at least once; inspect the system prompt
+    # for the dropped-count notice.
+    assert captured_requests, "expected at least one backend LLM call"
+    # The system message is the first message in the request body.
+    first = captured_requests[0]
+    messages = first.get("messages", [])
+    system_blocks = [m["content"] for m in messages if m.get("role") == "system"]
+    joined_system = "\n".join(system_blocks)
+    # 60 - 40 = 20 dropped
+    assert "已省略本对话早期的 20 条消息" in joined_system, (
+        f"expected dropped-count notice in system prompt; got: {joined_system!r}"
+    )
+    # And the actual forwarded message list is capped at 40 + 1 (current goal).
+    user_or_asst = [m for m in messages if m.get("role") in {"user", "assistant"}]
+    assert len(user_or_asst) <= 41, f"forwarded history not truncated: {len(user_or_asst)} messages"

@@ -289,6 +289,9 @@ async def build_agent(
     workspace_root: str | None,
     run_id: str,
     mode: str = "fast",
+    task_goal: str | None = None,
+    turn_count: int | None = None,
+    dropped_history_count: int = 0,
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -303,6 +306,17 @@ async def build_agent(
                          execute use as their sandbox. None ⇒ virtual_mode.
         run_id:          LangGraph `thread_id` — unique per logical run.
         mode:            "fast" | "deep" — passed through to BackendChatModel.
+        task_goal:       Current user goal for this run. Echoed into the
+                         <task> layer of the prompt so it survives long
+                         tool-call chains.
+        turn_count:      How many messages we're into the conversation
+                         (incl. current user message). Used for the
+                         <state> layer.
+        dropped_history_count:
+                         How many earlier messages were truncated before
+                         this run started. Surfaced to the model so it
+                         knows context is incomplete instead of silently
+                         losing it.
         settings:        Override settings (tests).
         extra_middleware: Appended after the built-in custom stack.
     """
@@ -386,15 +400,19 @@ async def build_agent(
 
     memory_arg = _resolve_memory_sources(settings)
 
-    # Layer 20-55 of the prompt stack — developer instructions, active
-    # skills hint, runtime context. See context_builder.py for the full
-    # stack layout. Cloud-injected Layer 0+10 (identity, safety) gets
-    # prepended in api/internal/httpapi/agent_stream.go via
+    # Layer 30-55 of the prompt stack — developer instructions, task,
+    # skills hint, run state, runtime context. See context_builder.py for
+    # the full stack layout. Cloud-injected Layer 0+10 (identity, safety)
+    # gets prepended in api/internal/httpapi/agent_stream.go via
     # InjectScenePrompt("agent_local", ...).
     instructions = build_default_context(
         RuntimeContext(
             workspace_root=workspace_root,
             enabled_skills=_active_skill_names(skills_arg),
+            task_goal=task_goal,
+            mode=mode,
+            turn_count=turn_count,
+            dropped_history_count=dropped_history_count,
         )
     )
 

@@ -42,6 +42,15 @@ from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.runs")
 
+# Max number of historical messages (user + assistant turns combined,
+# not counting the current user goal) we forward to the agent. Beyond
+# this we keep the last N and surface a "dropped X earlier messages"
+# notice via the ContextBuilder <state> layer so the model knows context
+# is incomplete instead of silently losing it. 40 ≈ 20 user/assistant
+# pairs, which covers most real conversations before we'd want LLM-based
+# summarization anyway.
+_MAX_HISTORY_TURNS = 40
+
 
 class RunCoordinator:
     def __init__(
@@ -250,6 +259,24 @@ class RunCoordinator:
                 # default to fast on resume (the agent already has state).
                 resolved_mode = "fast"
 
+            # Build the message list early so we can hand the truncation
+            # numbers (turn_count, dropped_history_count) to ContextBuilder
+            # via build_agent. Resume runs reuse the agent's persisted
+            # state and don't need the message-history bookkeeping —
+            # LangGraph's checkpointer already has it.
+            history = self._histories.get(run_id, [])
+            full_messages: list[dict[str, str]] = [
+                {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
+                for item in history
+                if item.get("content")
+            ]
+            dropped_history_count = max(0, len(full_messages) - _MAX_HISTORY_TURNS)
+            kept_messages = (
+                full_messages[-_MAX_HISTORY_TURNS:] if dropped_history_count else full_messages
+            )
+            # +1 for the current user goal that gets appended below.
+            turn_count = len(kept_messages) + 1
+
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -257,6 +284,9 @@ class RunCoordinator:
                 workspace_root=workspace_path,
                 run_id=run_id,
                 mode=resolved_mode,
+                task_goal=goal,
+                turn_count=turn_count,
+                dropped_history_count=dropped_history_count,
             )
             config = {
                 "configurable": {"thread_id": run_id},
@@ -266,19 +296,16 @@ class RunCoordinator:
                 input_payload: Any = Command(resume=resume_payload)
                 await self._enqueue(queue, run_id, "run.resumed", {"payload": resume_payload})
             else:
-                # Prepend conversation history (sent by the client on
-                # every run-create) before the current user goal so
-                # multi-turn context survives. Each history item is
-                # `{role: 'user'|'assistant', content: str}` — directly
-                # consumable by LangGraph's message reducer.
-                history = self._histories.get(run_id, [])
-                messages: list[dict[str, str]] = [
-                    {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
-                    for item in history
-                    if item.get("content")
-                ]
+                messages = list(kept_messages)
                 messages.append({"role": "user", "content": goal})
                 input_payload = {"messages": messages}
+                if dropped_history_count:
+                    log.info(
+                        "history truncated for run %s: kept=%d dropped=%d",
+                        run_id,
+                        len(kept_messages),
+                        dropped_history_count,
+                    )
                 await self.store.update_run_status(run_id, "running")
                 await self._enqueue(queue, run_id, "run.started", {"goal": goal})
 

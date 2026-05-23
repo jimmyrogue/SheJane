@@ -231,10 +231,123 @@ def test_render_snapshot_returns_per_layer_dict(tmp_path: Path) -> None:
         runtime=RuntimeContext(workspace_root="/ws", enabled_skills=["x"]),
     )
 
-    assert set(snap.keys()) == {"developer", "skills", "runtime_context"}
+    # All five layers always show up in the snapshot (some may be empty
+    # when their inputs are not provided — the snapshot exposes that
+    # too, which is useful for debugging "why is my <task> empty?").
+    assert set(snap.keys()) == {"developer", "task", "skills", "state", "runtime_context"}
     assert "dev" in snap["developer"]
     assert "- x" in snap["skills"]
     assert "/ws" in snap["runtime_context"]
+
+
+# ---- task layer ------------------------------------------------------
+
+
+def test_task_layer_renders_goal(tmp_path: Path) -> None:
+    """Layer 35 echoes the user's goal so the model has a stable anchor
+    in long tool-call chains where the original user message is far
+    above in the conversation."""
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(task_goal="重构这个登录模块"),
+    )
+
+    assert "<task>" in result
+    assert "重构这个登录模块" in result
+    assert "</task>" in result
+
+
+def test_task_layer_absent_when_goal_empty(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(runtime=RuntimeContext(task_goal=""))
+    assert "<task>" not in result
+
+
+def test_task_layer_caps_long_goal(tmp_path: Path) -> None:
+    """A pasted log dump in the goal would blow the prompt budget;
+    cap at 800 chars and mark the truncation visibly."""
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    long_goal = "X" * 2000
+    result = builder.build(runtime=RuntimeContext(task_goal=long_goal))
+
+    assert "[已截断]" in result
+    # Goal portion + a few chars for tags + marker, well under 2000.
+    assert result.count("X") <= 800
+
+
+# ---- state layer -----------------------------------------------------
+
+
+def test_state_layer_renders_mode_and_turn_count(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(mode="deep", turn_count=5),
+    )
+
+    assert "<state>" in result
+    assert "当前模式: deep" in result
+    assert "第 5 轮" in result
+
+
+def test_state_layer_mentions_dropped_history(tmp_path: Path) -> None:
+    """When earlier messages were truncated by the history cap, the
+    <state> block must say so — otherwise the model thinks the
+    conversation just started and may contradict earlier context."""
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(
+            mode="fast",
+            turn_count=41,
+            dropped_history_count=12,
+        ),
+    )
+
+    assert "已省略本对话早期的 12 条消息" in result
+
+
+def test_state_layer_absent_when_no_state_fields(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(runtime=RuntimeContext())
+    assert "<state>" not in result
+
+
+# ---- priority ordering with new layers -------------------------------
+
+
+def test_full_layer_order_developer_task_skills_state_runtime(tmp_path: Path) -> None:
+    """All five layers in priority order. If someone reshuffles
+    priorities without updating intent, this test catches it."""
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("DEVELOPER_MARKER", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(
+            workspace_root="/ws",
+            enabled_skills=["skill_a"],
+            task_goal="TASK_MARKER",
+            mode="fast",
+            turn_count=3,
+        ),
+    )
+
+    dev_pos = result.index("DEVELOPER_MARKER")
+    task_pos = result.index("TASK_MARKER")
+    skills_pos = result.index("用户启用的 Skill")
+    state_pos = result.index("<state>")
+    runtime_pos = result.index("运行时上下文")
+    assert dev_pos < task_pos < skills_pos < state_pos < runtime_pos
 
 
 # ---- module-level cache reset hook -----------------------------------

@@ -17,13 +17,21 @@ Priority   Layer                          Owner
 0          Identity                       Cloud (router.go)
 10         Safety baseline                Cloud (router.go)
 20         Tool definitions               LangChain (auto)
-30         Developer instructions         Daemon — this file (file-loaded)
+30         Developer instructions         Daemon — developer.md zones
+35         Current task                   Daemon — this file (per-run)
 40         Active skills hint             Daemon — this file
-50         Memory (AGENTS.md cascade)     Daemon — deepagents MemoryMiddleware
+45         Memory (AGENTS.md cascade)     Daemon — deepagents MemoryMiddleware
+50         Run state                      Daemon — this file (per-run)
 55         Runtime context                Daemon — this file (dynamic)
-60         Conversation history           Daemon (passed through)
+60         Conversation history           Daemon (passed through, last-N capped)
 70         Current user message           User
 ```
+
+Layers 35 and 50 are new in P0 of the Context Engineering rollout —
+they materialize the "Task" and "State" zones from the article's
+recommended skeleton ([Role & Policies] [Task] [State] [Evidence]
+[Context] [Output]). They depend on per-run inputs and so live on
+RuntimeContext, not in static markdown.
 
 The output of `ContextBuilder.build()` is a single string passed as
 `instructions=` to `create_deep_agent`. deepagents turns it into a
@@ -90,16 +98,32 @@ class ContextLayer:
 
 @dataclass
 class RuntimeContext:
-    """Inputs that go into Layer 55 (runtime context block).
+    """Per-run inputs that feed Layer 35 (task), Layer 50 (state) and
+    Layer 55 (runtime context).
 
-    All fields are optional; missing fields just don't appear in the
-    rendered block.
+    All fields are optional; missing fields just omit the corresponding
+    rendered line instead of guessing a default. The dataclass-as-bag
+    shape is intentional — callers from many layers should not need to
+    learn a long positional signature.
     """
 
+    # Layer 55 — runtime context
     workspace_root: str | None = None
     locale: str | None = None
     enabled_skills: list[str] = field(default_factory=list)
     now: _dt.datetime | None = None  # injected for tests; defaults to UTC now
+
+    # Layer 35 — current task. The goal the user sent for THIS run.
+    # Echoed in the system context so it survives long histories and
+    # tool-call chains even if the user's original message scrolls out
+    # of the model's attention window.
+    task_goal: str | None = None
+
+    # Layer 50 — run state. These are the things the model can't see
+    # but needs to know about the current run.
+    mode: str | None = None  # the resolved mode ("fast" / "deep")
+    turn_count: int | None = None  # message count incl. current turn
+    dropped_history_count: int = 0  # earlier turns removed by truncation
 
 
 class ContextBuilder:
@@ -127,11 +151,7 @@ class ContextBuilder:
         Layers are concatenated in priority order with `\\n\\n` between
         them. The result is what deepagents sees as `instructions=`.
         """
-        layers = [
-            self._layer_developer(),
-            self._layer_skills(runtime.enabled_skills),
-            self._layer_runtime_context(runtime),
-        ]
+        layers = self._all_layers(runtime)
         layers = [layer for layer in layers if layer.content.strip()]
         return self._assemble(layers)
 
@@ -139,12 +159,18 @@ class ContextBuilder:
         """Return a {layer_name: content} mapping for tests and debug
         dumps. Useful for assertion-by-layer rather than substring
         search on the assembled blob."""
-        layers = [
+        return {layer.name: layer.content for layer in self._all_layers(runtime)}
+
+    def _all_layers(self, runtime: RuntimeContext) -> list[ContextLayer]:
+        """Construct every layer for this run, in declaration order.
+        Sorting by priority happens in `_assemble`; this just lists them."""
+        return [
             self._layer_developer(),
+            self._layer_task(runtime.task_goal),
             self._layer_skills(runtime.enabled_skills),
+            self._layer_state(runtime),
             self._layer_runtime_context(runtime),
         ]
-        return {layer.name: layer.content for layer in layers}
 
     # ---- layer builders ------------------------------------------------
 
@@ -169,6 +195,58 @@ class ContextBuilder:
             content=self._developer_cache,
             max_chars=8 * 1024,
             truncatable=False,
+        )
+
+    def _layer_task(self, task_goal: str | None) -> ContextLayer:
+        """Layer 35 — the current user task, echoed into the system
+        context.
+
+        Why echo: in long, tool-heavy runs the user's original message
+        ends up far up the conversation. Restating it here gives the
+        model a stable anchor regardless of how much intermediate
+        tool-call chatter has piled up. We cap the goal at 800 chars
+        so a pasted log dump in the prompt doesn't blow the budget.
+        """
+        if not task_goal or not task_goal.strip():
+            return ContextLayer(name="task", priority=35, content="")
+        goal = task_goal.strip()
+        if len(goal) > 800:
+            goal = goal[:800] + "…[已截断]"
+        content = "<task>\n" + goal + "\n</task>"
+        return ContextLayer(
+            name="task",
+            priority=35,
+            content=content,
+            max_chars=1024,
+        )
+
+    def _layer_state(self, runtime: RuntimeContext) -> ContextLayer:
+        """Layer 50 — current run state. Things the model can't observe
+        but should know: which model tier the user picked, how many
+        turns we're into the conversation, whether older turns were
+        dropped by truncation.
+
+        Distinct from runtime_context (Layer 55): state describes the
+        RUN, runtime_context describes the ENVIRONMENT.
+        """
+        bullets: list[str] = []
+        if runtime.mode:
+            bullets.append(f"- 当前模式: {runtime.mode}")
+        if runtime.turn_count is not None:
+            bullets.append(f"- 对话轮次: 第 {runtime.turn_count} 轮")
+        if runtime.dropped_history_count > 0:
+            bullets.append(
+                f"- 已省略本对话早期的 {runtime.dropped_history_count} 条消息以节省上下文，"
+                f"如需要更早的细节请向用户确认。"
+            )
+        if not bullets:
+            return ContextLayer(name="state", priority=50, content="")
+        content = "<state>\n" + "\n".join(bullets) + "\n</state>"
+        return ContextLayer(
+            name="state",
+            priority=50,
+            content=content,
+            max_chars=1024,
         )
 
     def _layer_skills(self, enabled_skills: list[str]) -> ContextLayer:
@@ -266,27 +344,39 @@ class ContextBuilder:
         # Total enforcement — walk backwards through truncatable layers
         # and shave until we fit.
         joined = "\n\n".join(content for _, content in rendered)
-        if len(joined) <= self._total_budget_chars:
-            return joined
+        if len(joined) > self._total_budget_chars:
+            log.warning(
+                "assembled context %d chars exceeds total budget %d; trimming",
+                len(joined),
+                self._total_budget_chars,
+            )
+            # Greedy from-the-tail strategy: shorten the lowest-priority
+            # truncatable layer first, then the next, etc.
+            for i in range(len(rendered) - 1, -1, -1):
+                layer, content = rendered[i]
+                if not layer.truncatable:
+                    continue
+                overflow = len(joined) - self._total_budget_chars
+                if overflow <= 0:
+                    break
+                new_len = max(0, len(content) - overflow - len(_TRUNCATION_MARKER))
+                new_content = content[:new_len] + _TRUNCATION_MARKER if new_len > 0 else ""
+                rendered[i] = (layer, new_content)
+                joined = "\n\n".join(c for _, c in rendered if c)
 
-        log.warning(
-            "assembled context %d chars exceeds total budget %d; trimming",
-            len(joined),
-            self._total_budget_chars,
+        # Telemetry — per-layer + total char counts. Goes to the daemon
+        # log so `make logs-local-host` can answer "why is my prompt
+        # 12K chars?" without a debugger. Char counts (not tokens) are
+        # cheap to compute; rough conversion in Chinese is ~2 chars per
+        # token.
+        layer_summary = ", ".join(
+            f"{layer.name}={len(content)}" for layer, content in rendered if content
         )
-        # Greedy from-the-tail strategy: shorten the lowest-priority
-        # truncatable layer first, then the next, etc.
-        for i in range(len(rendered) - 1, -1, -1):
-            layer, content = rendered[i]
-            if not layer.truncatable:
-                continue
-            overflow = len(joined) - self._total_budget_chars
-            if overflow <= 0:
-                break
-            new_len = max(0, len(content) - overflow - len(_TRUNCATION_MARKER))
-            new_content = content[:new_len] + _TRUNCATION_MARKER if new_len > 0 else ""
-            rendered[i] = (layer, new_content)
-            joined = "\n\n".join(c for _, c in rendered if c)
+        log.info(
+            "context assembled: total=%d chars, layers=[%s]",
+            len(joined),
+            layer_summary,
+        )
         return joined
 
 
