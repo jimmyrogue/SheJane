@@ -2838,6 +2838,68 @@ button:active {
   font-weight: 400;
 }
 
+/* Right-aligned status group on the topbar: daemon-online dot +
+ * credits chip. Pushes itself to the trailing edge via margin-left:
+ * auto; the title takes whatever room is left. */
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.topbar-daemon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-warning);
+  flex: 0 0 auto;
+}
+.topbar-daemon-dot.is-online {
+  background: #4ea05a;
+  box-shadow: 0 0 0 2px rgba(78, 160, 90, 0.18);
+}
+.topbar-daemon-dot.is-offline {
+  background: var(--accent-danger);
+  box-shadow: 0 0 0 2px var(--accent-danger-bg);
+}
+.topbar-balance {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(120, 120, 130, 0.10));
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-balance.is-low {
+  background: var(--accent-warning-bg);
+  color: var(--accent-warning-text);
+}
+
+/* Status banner — drops in between topbar and chat-surface when
+ * something's wrong at the system level (daemon offline, credits
+ * exhausted, etc). Single-line, soft warning palette, dismisses
+ * itself when the underlying condition clears (no close button). */
+.status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 22px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 0.5px solid var(--border-hairline);
+}
+.status-banner-warning {
+  background: var(--accent-warning-bg);
+  color: var(--accent-warning-text);
+}
+.status-banner-text {
+  text-align: center;
+}
+
 .account {
   gap: 8px;
   color: var(--text-secondary);

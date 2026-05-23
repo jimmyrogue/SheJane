@@ -1279,7 +1279,36 @@ function AppContent() {
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
               </div>
+              <div className="topbar-status">
+                <span
+                  className={`topbar-daemon-dot${localHost?.online ? ' is-online' : ' is-offline'}`}
+                  title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                  aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                />
+                {balance ? (
+                  (() => {
+                    const credits = totalCredits(balance)
+                    return (
+                      <span
+                        className={`topbar-balance${credits < 100 ? ' is-low' : ''}`}
+                        title={t('topbar.balanceTitle')}
+                      >
+                        {t('topbar.creditsAmount', { count: formatBalanceCredits(credits) })}
+                      </span>
+                    )
+                  })()
+                ) : null}
+              </div>
             </header>
+            {!localHost?.online ? (
+              <div className="status-banner status-banner-warning" role="status">
+                <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>
+              </div>
+            ) : balance && totalCredits(balance) <= 0 ? (
+              <div className="status-banner status-banner-warning" role="status">
+                <span className="status-banner-text">{t('topbar.bannerCreditsEmpty')}</span>
+              </div>
+            ) : null}
 
             <ChatThread
               conversation={activeConversation}
@@ -1406,6 +1435,20 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
     seenEventIDs.add(event.id)
   }
   message.content += delta
+}
+
+function totalCredits(balance: WalletBalance): number {
+  return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
+}
+
+function formatBalanceCredits(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}k`
+  }
+  return String(Math.round(value))
 }
 
 /** Fire a system notification when an assistant turn finishes. The
