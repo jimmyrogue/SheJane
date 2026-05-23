@@ -2971,9 +2971,11 @@ button:active {
 
 .messages {
   width: 100%;
-  max-width: none;
+  /* Chat content width — also used by .composer below so the input
+   * frame aligns with the message column. */
+  max-width: 820px;
+  margin: 0 auto;
   gap: 18px;
-  margin: 0;
   padding: 0 4px 24px 0;
 }
 
@@ -3479,8 +3481,15 @@ button.agent-progress-summary:focus-visible {
 }
 
 .composer {
-  margin: 0 18px 16px;
-  align-self: stretch;
+  /* Match the message column's max-width so the composer sits directly
+   * under the conversation content instead of stretching edge-to-edge.
+   * `align-self: center` overrides any flex stretch from .composer-dock /
+   * .workspace. No horizontal padding here so the ::before fade (and
+   * the input frame itself) span the full composer width. */
+  width: calc(100% - 36px);
+  max-width: 820px;
+  margin: 0 auto 16px;
+  align-self: center;
   border: 0;
   border-radius: 0;
   background: transparent;
