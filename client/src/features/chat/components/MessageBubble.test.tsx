@@ -35,8 +35,6 @@ describe('MessageBubble meta', () => {
 
     expect(container.querySelector('strong')?.textContent).toBe('你好')
     expect(screen.queryByText('**你好**')).not.toBeInTheDocument()
-    // Typing caret is on while streaming.
-    expect(container.querySelector('.message-content.is-streaming')).toBeInTheDocument()
   })
 
   it('treats a single newline as a line break (remark-breaks)', () => {
@@ -60,15 +58,6 @@ describe('MessageBubble meta', () => {
     // remark-normalize-headings (finished path) rebalances a lone `###` to h1.
     expect(container.querySelector('h1')?.textContent).toBe('标题')
     expect(container.querySelector('h3')).not.toBeInTheDocument()
-  })
-
-  it('drops the streaming caret once the message is done', () => {
-    const { container } = render(
-      <I18nProvider>
-        <MessageBubble message={message({ role: 'assistant', status: 'done', content: '完成。' })} />
-      </I18nProvider>,
-    )
-    expect(container.querySelector('.message-content.is-streaming')).not.toBeInTheDocument()
   })
 
   it('shows the relative time and copies the message content', async () => {

@@ -3223,38 +3223,6 @@ button:active {
   padding: 0;
 }
 
-/* Typing caret while streaming — a CSS pseudo-element on the last rendered
-   block, so it never triggers a Markdown reparse/reflow. */
-.message-content.is-streaming > :last-child::after {
-  content: '';
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 3px;
-  vertical-align: -0.15em;
-  border-radius: 1px;
-  background: var(--text-tertiary);
-  animation: stream-caret 1.05s steps(1, end) infinite;
-}
-
-@keyframes stream-caret {
-  0%,
-  50% {
-    opacity: 1;
-  }
-
-  50.01%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .message-content.is-streaming > :last-child::after {
-    animation: none;
-  }
-}
-
 /* Per-message footer: copy + relative time. Floated below the bubble
  * via `top: 100%`; the meta itself stays `pointer-events: auto` even
  * when invisible (see .message-meta), so hovering it directly keeps

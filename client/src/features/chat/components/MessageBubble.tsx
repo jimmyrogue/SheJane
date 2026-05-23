@@ -106,7 +106,7 @@ export function MessageBubble({
         {isAssistant && message.reasoning && message.status === 'streaming' ? (
           <ReasoningPill />
         ) : null}
-        <div className={cn('message-content', showStream && stream.text && 'is-streaming')}>
+        <div className="message-content">
           {showStream ? (
             stream.text ? (
               <MarkdownContent content={completePartialMarkdown(stream.text)} />
