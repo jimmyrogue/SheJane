@@ -4104,6 +4104,13 @@ button.agent-progress-summary:focus-visible {
 .composer-mode-menu {
   min-width: 220px;
   padding: 4px;
+  /* Drop the 1px Tailwind border the shadcn DropdownMenuContent ships
+   * with — at composer scale it reads as a hard outline. Use a
+   * stronger shadow + the existing rounded corners for separation
+   * instead. (Other dropdowns in the app keep the default border via
+   * the shared component class.) */
+  border: 0;
+  box-shadow: var(--shadow-lg, 0 16px 32px -12px rgba(15, 17, 26, 0.18), 0 4px 12px -4px rgba(15, 17, 26, 0.10));
 }
 .composer-mode-item {
   display: flex;
