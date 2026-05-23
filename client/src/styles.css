@@ -4116,10 +4116,16 @@ button.agent-progress-summary:focus-visible {
 }
 
 .composer-mode-menu {
-  /* No leading icon column → tighter min-width. The labels (Auto /
-   * Fast / Pro) drive the actual width; the hint sub-text wraps if
-   * needed but is short enough in practice that the menu sits at ~180px. */
-  min-width: 180px;
+  /* Fixed width — NOT just min-width. Each row's hint sub-text has a
+   * different glyph count ("由 AI 自动选择最合适的模型" vs
+   * "快速回答，适合简单任务" vs "深度推理，适合复杂任务"), and the
+   * active row carries an extra ✓ in its trailing slot. Without a
+   * locked width, the popup re-fits to its widest item each time it
+   * opens — so switching modes nudged the menu's width on every open.
+   * `width` + matching `min-width` to beat Tailwind's `min-w-52`
+   * default (208px) that ships on the shadcn DropdownMenuContent. */
+  width: 200px;
+  min-width: 200px;
   padding: 4px;
   /* Subtle hairline border + soft shadow, matching Claude-style
    * picker popups. The shadcn default `border` class is replaced with
@@ -4129,6 +4135,11 @@ button.agent-progress-summary:focus-visible {
   box-shadow:
     0 12px 28px -10px rgba(15, 17, 26, 0.18),
     0 4px 10px -4px rgba(15, 17, 26, 0.10);
+}
+/* Hint can wrap to a second line — needed so a long hint inside a
+ * locked-width popup doesn't bulge the column. */
+.composer-mode-item-hint {
+  white-space: normal;
 }
 .composer-mode-item {
   display: flex;
