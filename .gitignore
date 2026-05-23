@@ -87,6 +87,11 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .ruff_cache/
+# Daemon spill cache — when a tool result exceeds the in-memory cap
+# (e.g. web.fetch returning a large HTML body), LangGraph writes it
+# to disk under this dir keyed by tool_call_id. Pure local cache,
+# safe to delete, regenerated on demand.
+local-host/python/large_tool_results/
 
 # Local databases and generated data
 *.db
