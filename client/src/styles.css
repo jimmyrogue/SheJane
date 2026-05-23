@@ -1512,6 +1512,14 @@ select {
   user-select: none;
 }
 
+/* When an attachment chip occupies the top of the composer-input, the
+ * placeholder needs to drop below it instead of overlapping. 56 (thumb
+ * height) + 10 (chip top padding) + 14 (editor padding-top equivalent)
+ * ≈ the editor's first text line position. */
+.composer-input:has(.composer-chips) .composer-editor-ph {
+  top: 80px;
+}
+
 .skill-chip--inline {
   display: inline-flex;
   align-items: center;
@@ -3455,10 +3463,23 @@ button.agent-progress-summary:focus-visible {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  position: relative;
 }
 
+/* Gradient fade above the composer: messages scrolling up no longer
+ * collide with a hard padding edge — they fade out into the composer
+ * background. Pure visual; pointer-events none so it doesn't intercept
+ * clicks on the toolbar. */
 .composer::before {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--bg-app, #FFFFFF), transparent);
 }
 
 .composer > .composer-input,
