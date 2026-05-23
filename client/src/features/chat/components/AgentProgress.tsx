@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { IconChevronDown, IconDownload } from '@tabler/icons-react'
+import { IconChevronDown, IconDownload, IconWorld } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
-import type { AgentTimelineItem, ChatMessage } from '@/shared/local-data/types'
+import type { AgentTimelineItem, AgentToolDetail, ChatMessage } from '@/shared/local-data/types'
 
 type ProgressTone = 'working' | 'permission' | 'done' | 'failed' | 'idle'
 
@@ -56,6 +56,14 @@ export function AgentProgress({
   // ("正在打开 weather.com"). Once finished: an aggregated tally of what was
   // done ("读取 3 个文件 · 运行 2 条命令"). Never success/failure or step count.
   const headline = summaryHeadline(events, message, t)
+  // Prefer the rich `toolDetail` shape when present (set by
+  // chatStore.timelineItem when the daemon's tool.requested event
+  // surfaces real args). Fall back to the legacy `target` string for
+  // older persisted events / replayed conversations from before the
+  // tool.requested flow shipped.
+  const detail: AgentToolDetail | undefined =
+    headline.source?.toolDetail ??
+    (headline.source?.target ? { kind: 'text', text: headline.source.target } : undefined)
   const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics)
 
   // The leading status dot we used to show next to the headline was
@@ -63,9 +71,26 @@ export function AgentProgress({
   // (e.g. "已完成 …" vs "搜索网页"). Dropped per UX feedback. The
   // `working` state instead surfaces "ongoingness" via the CSS-animated
   // trailing dots on `.agent-progress-summary` (see styles.css).
+  //
+  // When the source event has a `toolDetail`, we draw a "· {detail}"
+  // segment after the verb — host with a globe icon for web tools,
+  // basename for filesystem tools, query / prompt for search-style.
+  // The animated trailing dots stay attached to the verb only, so the
+  // target text doesn't visually shake.
   const summaryInner = (
     <>
-      <span className="name" key={headline}>{headline}</span>
+      <span className="name" key={headline.label}>{headline.label}</span>
+      {detail ? (
+        <>
+          <span className="agent-progress-sep" aria-hidden="true">·</span>
+          {detail.showWebIcon ? (
+            <IconWorld className="agent-progress-target-icon" size={12} aria-hidden="true" />
+          ) : null}
+          <span className="agent-progress-target" title={detail.tooltip ?? detail.text}>
+            {detail.text}
+          </span>
+        </>
+      ) : null}
       {canExpand ? <IconChevronDown className="tool-card-caret" aria-hidden="true" /> : null}
     </>
   )
@@ -194,7 +219,15 @@ function asInProgressToolLabel(event: AgentTimelineItem, t: Translator): string 
  *  Once the run actually finishes, the inactive branch uses natural
  *  framing so the final headline can read as completed.
  */
-function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
+/** Result of headline scoring — the verb-only label PLUS the event we
+ *  derived it from, so the renderer can pull `event.toolDetail` to
+ *  build a richer per-tool subtitle ("搜索 · 普吉岛雨季天气"). */
+interface CurrentActivity {
+  label: string
+  source?: AgentTimelineItem
+}
+
+function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage, t: Translator): CurrentActivity {
   const isActive = ACTIVE_RUN_STATUSES.has(message.status)
   if (isActive) {
     // Per-tool tally: positive ⇒ at least one call still in flight.
@@ -220,7 +253,7 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
       if (!event.tool || (pending.get(event.tool) ?? 0) <= 0) {
         continue
       }
-      return withTarget(asInProgressToolLabel(event, t), event.target)
+      return { label: asInProgressToolLabel(event, t), source: event }
     }
     // (b) latest tool event of any phase, reframed as "正在 X"
     for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -234,40 +267,47 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
         event.type === 'tool.completed' ||
         event.type === 'tool.failed'
       ) {
-        return withTarget(asInProgressToolLabel(event, t), event.target)
+        return { label: asInProgressToolLabel(event, t), source: event }
       }
     }
     // (c) non-tool activity events
     for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (ACTIVITY_TYPES.has(events[index].type)) {
-        return withTarget(operationLabel(events[index], t), events[index].target)
+      const event = events[index]
+      if (ACTIVITY_TYPES.has(event.type)) {
+        return { label: operationLabel(event, t), source: event }
       }
     }
     // (d) generic
-    return defaultWorkingLabel(message, t)
+    return { label: defaultWorkingLabel(message, t) }
   }
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (ACTIVITY_TYPES.has(events[index].type)) {
-      return withTarget(operationLabel(events[index], t), events[index].target)
+    const event = events[index]
+    if (ACTIVITY_TYPES.has(event.type)) {
+      return { label: operationLabel(event, t), source: event }
     }
   }
-  return defaultWorkingLabel(message, t)
-}
-
-function withTarget(label: string, target?: string): string {
-  return target ? `${label} ${target}` : label
+  return { label: defaultWorkingLabel(message, t) }
 }
 
 /**
  * Claude Code-style headline: while the run is active show the current action
  * and its concrete target; once finished show the aggregated tally of what was
  * done. Falls back to the latest activity when no completed tools were tallied.
+ * Returns `{label, source?}` so the renderer can read `source.toolDetail`
+ * to draw a richer subtitle ("搜索 · query") next to the verb.
  */
-function summaryHeadline(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
+function summaryHeadline(events: AgentTimelineItem[], message: ChatMessage, t: Translator): CurrentActivity {
   if (ACTIVE_RUN_STATUSES.has(message.status)) {
     return currentActivityLabel(events, message, t)
   }
-  return operationCountsLabel(events, t) || currentActivityLabel(events, message, t)
+  // Inactive: prefer the aggregated count label (no source — it's a
+  // tally across many tools, not a single event). Fall back to the
+  // latest activity when no tools matched the bucket list.
+  const aggregated = operationCountsLabel(events, t)
+  if (aggregated) {
+    return { label: aggregated }
+  }
+  return currentActivityLabel(events, message, t)
 }
 
 function operationLabel(event: AgentTimelineItem, t: Translator): string {

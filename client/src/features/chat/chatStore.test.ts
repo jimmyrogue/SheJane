@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createChatStore, timelineItem } from './chatStore'
+import { createChatStore, timelineItem, toolDetail } from './chatStore'
 import { LocalConversationStore } from '../../shared/local-data/localConversations'
 import type { ChatAPI } from '../../shared/api/client'
 
@@ -231,6 +231,127 @@ describe('chat store', () => {
         },
       })
       expect(item?.questions?.[0].options).toEqual([{ label: 'valid' }, { label: '保留' }])
+    })
+  })
+
+  // Rich per-tool primary-argument badge. The renderer reads
+  // `event.toolDetail` and draws "{label} · {detail.text}" — with an
+  // optional globe icon for web tools. These tests pin the mapping
+  // from raw daemon args to the displayed shape.
+  describe('toolDetail per tool', () => {
+    it('web.search → text + truncated query, no icon', () => {
+      const detail = toolDetail({ arguments: { query: '普吉岛雨季天气' } }, 'web.search')
+      expect(detail).toEqual({
+        kind: 'text',
+        text: '普吉岛雨季天气',
+        tooltip: '普吉岛雨季天气',
+      })
+    })
+
+    it('web.fetch → host with globe icon + url tooltip', () => {
+      const detail = toolDetail(
+        { arguments: { url: 'https://weather.com/today?city=phuket' } },
+        'web.fetch',
+      )
+      expect(detail).toEqual({
+        kind: 'host',
+        text: 'weather.com',
+        tooltip: 'https://weather.com/today?city=phuket',
+        showWebIcon: true,
+      })
+    })
+
+    it('web.fetch with www.X.com strips the www prefix', () => {
+      const detail = toolDetail({ arguments: { url: 'https://www.example.com/' } }, 'web.fetch')
+      expect(detail?.text).toBe('example.com')
+    })
+
+    it('web.fetch falls back to truncated raw URL when URL parsing fails', () => {
+      const detail = toolDetail({ arguments: { url: 'not a real url ::: !!!' } }, 'web.fetch')
+      expect(detail?.kind).toBe('text') // no host extraction, no globe icon
+      expect(detail?.showWebIcon).toBeUndefined()
+    })
+
+    it('read_file → basename + full path tooltip', () => {
+      const detail = toolDetail(
+        { arguments: { path: '/Users/me/project/src/App.tsx' } },
+        'read_file',
+      )
+      expect(detail).toEqual({
+        kind: 'text',
+        text: 'App.tsx',
+        tooltip: '/Users/me/project/src/App.tsx',
+      })
+    })
+
+    it('ls / fs.list / workspace.open get a trailing slash on the basename', () => {
+      const args = { arguments: { path: '/Users/me/project/src' } }
+      expect(toolDetail(args, 'ls')?.text).toBe('src/')
+      expect(toolDetail(args, 'fs.list')?.text).toBe('src/')
+      expect(toolDetail(args, 'workspace.open')?.text).toBe('src/')
+      // read_file etc do NOT get a slash
+      expect(toolDetail(args, 'read_file')?.text).toBe('src')
+    })
+
+    it('execute / shell.run → command, truncated to 40 chars', () => {
+      const command = 'ls -la /tmp/some/very/long/path/and/then/some/more'
+      const detail = toolDetail({ arguments: { command } }, 'execute')
+      expect(detail?.text.length).toBeLessThanOrEqual(40)
+      expect(detail?.text).toContain('ls -la')
+      expect(detail?.tooltip).toBe(command)
+    })
+
+    it('user.ask → question, tighter 30-char truncation', () => {
+      const longQ = 'A'.repeat(120)
+      const detail = toolDetail({ arguments: { question: longQ } }, 'user.ask')
+      expect(detail?.text.length).toBeLessThanOrEqual(30)
+      expect(detail?.text.endsWith('…')).toBe(true)
+    })
+
+    it('write_todos → count-kind with todos.length', () => {
+      const detail = toolDetail(
+        { arguments: { todos: [1, 2, 3, 4, 5] } },
+        'write_todos',
+      )
+      expect(detail).toEqual({ kind: 'count', text: '5' })
+    })
+
+    it('task.verify → count-kind with checks.length', () => {
+      const detail = toolDetail(
+        { arguments: { checks: [{ kind: 'file_exists' }, { kind: 'shell_exit_code' }] } },
+        'task.verify',
+      )
+      expect(detail).toEqual({ kind: 'count', text: '2' })
+    })
+
+    it('no args + no payload fallback → undefined (renderer shows just the verb)', () => {
+      expect(toolDetail({}, 'time.now')).toBeUndefined()
+      expect(toolDetail({})).toBeUndefined()
+    })
+
+    it('falls through to payload.title for source.collected / browser.observed', () => {
+      const detail = toolDetail({ title: '普吉岛旅行攻略 2025 - Klook' })
+      expect(detail?.kind).toBe('text')
+      expect(detail?.text).toContain('普吉岛')
+    })
+
+    it('image.generate → prompt text', () => {
+      const detail = toolDetail(
+        { arguments: { prompt: 'A sunset over Phuket beach', size: '1024x1024' } },
+        'image.generate',
+      )
+      expect(detail?.kind).toBe('text')
+      expect(detail?.text).toBe('A sunset over Phuket beach')
+    })
+
+    it('subagent task call → subagent_name', () => {
+      const detail = toolDetail(
+        { arguments: { subagent_name: 'researcher', task_description: 'Find current Phuket weather' } },
+        'task',
+      )
+      // task_description wins over subagent_name (it's the most
+      // informative field a user-facing badge can show).
+      expect(detail?.text).toContain('Phuket weather')
     })
   })
 })

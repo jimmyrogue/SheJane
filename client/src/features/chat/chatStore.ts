@@ -3,7 +3,14 @@ import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
-import type { AgentQuestionItem, AgentTimelineItem, ChatMode, ChatMessage, Conversation } from '../../shared/local-data/types'
+import type {
+  AgentQuestionItem,
+  AgentTimelineItem,
+  AgentToolDetail,
+  ChatMode,
+  ChatMessage,
+  Conversation,
+} from '../../shared/local-data/types'
 
 interface ChatStoreDeps {
   localData: LocalConversationStore
@@ -150,12 +157,39 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     }
     case 'skill.selected':
       return { type: event.event_type, label: t('chat.timeline.skillSelected', { skill: stringValue(payload.skill) || 'direct-answer' }), eventId }
-    case 'tool.requested':
-      return { type: event.event_type, label: t('chat.timeline.toolRequested', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
-    case 'tool.completed':
-      return { type: event.event_type, label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
-    case 'tool.failed':
-      return { type: event.event_type, label: t('chat.timeline.toolFailed', { tool: toolActionLabel(stringValue(payload.tool), t) }), eventId, tool: stringValue(payload.tool), target: toolTarget(payload) }
+    case 'tool.requested': {
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.toolRequested', { tool: toolActionLabel(tool, t) }),
+        eventId,
+        tool,
+        target: toolTarget(payload),
+        toolDetail: toolDetail(payload, tool),
+      }
+    }
+    case 'tool.completed': {
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(tool, t) }),
+        eventId,
+        tool,
+        target: toolTarget(payload),
+        toolDetail: toolDetail(payload, tool),
+      }
+    }
+    case 'tool.failed': {
+      const tool = stringValue(payload.tool)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.toolFailed', { tool: toolActionLabel(tool, t) }),
+        eventId,
+        tool,
+        target: toolTarget(payload),
+        toolDetail: toolDetail(payload, tool),
+      }
+    }
     case 'permission.required': {
       const tool = stringValue(payload.tool)
       return {
@@ -289,34 +323,93 @@ function truncate(value: string, max: number): string {
 }
 
 /** A short, human concrete target for the current operation — a file name,
- *  a URL host, the command, or the search query. */
+ *  a URL host, the command, or the search query. Back-compat single
+ *  string; new code should call `toolDetail()` and read `.text`. */
 function toolTarget(payload: Record<string, unknown>): string {
+  return toolDetail(payload)?.text ?? ''
+}
+
+const TOOL_TARGET_MAX = 40
+
+/** Rich primary-argument badge per tool. Reads `payload.arguments`
+ *  (assembled from the daemon's `tool.requested` event), picks the
+ *  most informative field for the tool, and returns a renderable
+ *  display shape. Returns `undefined` when there's nothing useful
+ *  to surface — the renderer should fall back to a plain verb. */
+export function toolDetail(
+  payload: Record<string, unknown>,
+  tool?: string,
+): AgentToolDetail | undefined {
   const args =
     payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
       ? (payload.arguments as Record<string, unknown>)
       : {}
-  const path = stringValue(args.path)
-  if (path) {
-    return path.split(/[\\/]/).filter(Boolean).pop() || path
-  }
+
+  // Web tools — host + globe icon. Tooltip carries the full URL.
   const url = stringValue(args.url) || stringValue(payload.url)
   if (url) {
     try {
-      return new URL(url).hostname
+      const host = new URL(url).hostname.replace(/^www\./, '')
+      return { kind: 'host', text: host, tooltip: url, showWebIcon: true }
     } catch {
-      return truncate(url, 40)
+      // Malformed URL — fall back to truncated raw string, no icon.
+      return { kind: 'text', text: truncate(url, TOOL_TARGET_MAX), tooltip: url }
     }
   }
+
+  // Filesystem tools — basename + full path tooltip.
+  const path = stringValue(args.path)
+  if (path) {
+    const segments = path.split(/[\\/]/).filter(Boolean)
+    const basename = segments[segments.length - 1] || path
+    const trailing = tool === 'ls' || tool === 'fs.list' || tool === 'workspace.open' ? '/' : ''
+    return { kind: 'text', text: basename + trailing, tooltip: path }
+  }
+
+  // Search / question / prompt-style tools — pick the most natural arg.
   const command = stringValue(args.command)
   if (command) {
-    return truncate(command, 40)
+    return { kind: 'text', text: truncate(command, TOOL_TARGET_MAX), tooltip: command }
   }
   const query = stringValue(args.query)
   if (query) {
-    return truncate(query, 40)
+    return { kind: 'text', text: truncate(query, TOOL_TARGET_MAX), tooltip: query }
   }
+  const task = stringValue(args.task) || stringValue(args.task_description)
+  if (task) {
+    return { kind: 'text', text: truncate(task, TOOL_TARGET_MAX), tooltip: task }
+  }
+  const prompt = stringValue(args.prompt)
+  if (prompt) {
+    return { kind: 'text', text: truncate(prompt, TOOL_TARGET_MAX), tooltip: prompt }
+  }
+  const question = stringValue(args.question)
+  if (question) {
+    return { kind: 'text', text: truncate(question, 30), tooltip: question }
+  }
+  const pattern = stringValue(args.pattern)
+  if (pattern) {
+    return { kind: 'text', text: truncate(pattern, TOOL_TARGET_MAX), tooltip: pattern }
+  }
+  const subagent = stringValue(args.subagent_name)
+  if (subagent) {
+    return { kind: 'text', text: subagent }
+  }
+
+  // Count-style tools.
+  if (Array.isArray(args.todos)) {
+    return { kind: 'count', text: String(args.todos.length) }
+  }
+  if (Array.isArray(args.checks)) {
+    return { kind: 'count', text: String(args.checks.length) }
+  }
+
+  // Last-ditch: an event-level title (browser.observed, source.collected).
   const title = stringValue(payload.title)
-  return title ? truncate(title, 40) : ''
+  if (title) {
+    return { kind: 'text', text: truncate(title, TOOL_TARGET_MAX), tooltip: title }
+  }
+  return undefined
 }
 
 function parseAnswerPayload(value: unknown): Record<string, string[]> | undefined {

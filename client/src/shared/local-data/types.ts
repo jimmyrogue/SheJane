@@ -19,12 +19,35 @@ export interface AgentQuestionItem {
   options: AgentQuestionChoice[]
 }
 
+export interface AgentToolDetail {
+  /** `host` means render with the globe icon; `text` is the default
+   *  inline string display; `count` is a numeric/short summary. */
+  kind: 'host' | 'text' | 'count'
+  /** The user-visible short text (host name, basename, query …).
+   *  Already truncated; the renderer may further ellipsis on overflow. */
+  text: string
+  /** Optional full string (full path, full URL) for the title=
+   *  tooltip when the user hovers the truncated text. */
+  tooltip?: string
+  /** Web tools (web.fetch, browser.open, open.url, browser.task) ask
+   *  the renderer to draw the default IconWorld glyph alongside the
+   *  host. We don't fetch real favicons — privacy + no external deps. */
+  showWebIcon?: boolean
+}
+
 export interface AgentTimelineItem {
   type: string
   label: string
   eventId?: string
   tool?: string
+  /** Back-compat single-string identifier (host, basename, etc.).
+   *  New code should set `toolDetail` instead; the renderer prefers
+   *  toolDetail when both are present. */
   target?: string
+  /** Rich per-tool primary-argument badge — populated by
+   *  `toolDetail()` in chatStore.ts when the agent calls a tool whose
+   *  args are surfaced via the `tool.requested` event. */
+  toolDetail?: AgentToolDetail
   tokens?: number
   permissionRequestId?: string
   permissionTool?: string

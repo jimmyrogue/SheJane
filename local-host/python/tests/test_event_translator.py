@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from local_host.event_translator import translate
 
@@ -128,3 +128,72 @@ def test_messages_mode_malformed_payload_becomes_graph_node() -> None:
     events = translate("messages", "not a tuple")
     assert events[0]["event"] == "graph.node"
     assert events[0]["data"]["kind"] == "messages"
+
+
+def test_updates_mode_emits_tool_requested_with_assembled_args() -> None:
+    """When the model node finishes a turn with tool_calls, the
+    updates-mode payload carries the AIMessage with FULL assembled
+    args. We emit one tool.requested per tool_call so the client can
+    render rich per-tool info (`搜索 · 普吉岛雨季天气`). This is the
+    single source of truth for tool args reaching the client —
+    AIMessageChunk in messages mode floods on every chunk."""
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_001",
+                "name": "web.search",
+                "args": {"query": "普吉岛雨季天气", "max_results": 5},
+                "type": "tool_call",
+            }
+        ],
+    )
+    payload = {"model": {"messages": [msg]}}
+    events = translate("updates", payload)
+    requested = [e for e in events if e["event"] == "tool.requested"]
+    assert len(requested) == 1
+    assert requested[0]["data"] == {
+        "tool_call_id": "call_001",
+        "name": "web.search",
+        "tool": "web.search",
+        "arguments": {"query": "普吉岛雨季天气", "max_results": 5},
+    }
+    # And the catch-all graph.node still fires so nothing in the
+    # existing event stream changes shape.
+    assert any(e["event"] == "graph.node" for e in events)
+
+
+def test_updates_mode_emits_one_tool_requested_per_parallel_call() -> None:
+    """Parallel tool calls in a single model turn must each get their
+    own tool.requested event. Regression target: the user.ask
+    parallel-batch bug we fixed earlier — same shape of bundle,
+    different downstream consumer."""
+    msg = AIMessage(
+        content="",
+        tool_calls=[
+            {"id": "c1", "name": "web.search", "args": {"query": "a"}, "type": "tool_call"},
+            {"id": "c2", "name": "read_file", "args": {"path": "/tmp/x.txt"}, "type": "tool_call"},
+            {"id": "c3", "name": "user.ask", "args": {"question": "?"}, "type": "tool_call"},
+        ],
+    )
+    events = translate("updates", {"model": {"messages": [msg]}})
+    requested = [e for e in events if e["event"] == "tool.requested"]
+    assert [e["data"]["tool_call_id"] for e in requested] == ["c1", "c2", "c3"]
+    assert [e["data"]["name"] for e in requested] == ["web.search", "read_file", "user.ask"]
+
+
+def test_updates_mode_no_tool_requested_when_no_tool_calls() -> None:
+    """An AIMessage with no tool_calls (just final text) must NOT
+    produce a tool.requested. Otherwise every model turn would emit
+    a spurious empty event."""
+    msg = AIMessage(content="plain answer, no tools")
+    events = translate("updates", {"model": {"messages": [msg]}})
+    assert all(e["event"] != "tool.requested" for e in events)
+
+
+def test_updates_mode_handles_non_ai_messages_in_delta_safely() -> None:
+    """Tool messages, human nudges, etc. flow through updates mode
+    without producing tool.requested events."""
+    tm = ToolMessage(content="ok", tool_call_id="c1", name="time.now")
+    events = translate("updates", {"tools": {"messages": [tm]}})
+    assert all(e["event"] != "tool.requested" for e in events)

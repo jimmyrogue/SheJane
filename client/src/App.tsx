@@ -653,9 +653,10 @@ function AppContent() {
       setLocalRuns((items) => upsertLocalRun(items, run))
       scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
+      const toolArgsByCallId: ToolArgsByCallId = new Map()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t)
           scheduleConversationRender(conversation, context)
         },
         onDelta: (delta, event) => {
@@ -770,6 +771,7 @@ function AppContent() {
     message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
       // Decision-acknowledgement toast so the user sees their click landed —
@@ -783,7 +785,7 @@ function AppContent() {
       )
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, t)
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -824,12 +826,13 @@ function AppContent() {
     message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       await answerLocalQuestion(requestID, answers, localHostConfig)
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, t)
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -895,9 +898,10 @@ function AppContent() {
     setNotice('')
     try {
       const seenEventIDs = new Set<string>()
+      const toolArgsByCallId: ToolArgsByCallId = new Map()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, t)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -1397,7 +1401,22 @@ function localHostStatusLabel(
   return t('app.localStatus.connected')
 }
 
-function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEventIDs: Set<string>, t: Translator) {
+/** Tracks the assembled `arguments` for each `tool_call_id` within a
+ *  single SSE stream session. Populated when the daemon emits a
+ *  `tool.requested` event (which carries the full assembled args);
+ *  read back when the matching `tool.completed` / `tool.failed`
+ *  arrives so the renderer can show the same rich detail for the
+ *  completed row. Lives on the call site as a plain Map alongside
+ *  `seenEventIDs` — same per-session-scope discipline. */
+export type ToolArgsByCallId = Map<string, Record<string, unknown>>
+
+function appendLocalRunEvent(
+  message: ChatMessage,
+  event: AgentRunEvent,
+  seenEventIDs: Set<string>,
+  toolArgsByCallId: ToolArgsByCallId,
+  t: Translator,
+) {
   if (event.event_type === 'llm.delta') {
     return
   }
@@ -1439,6 +1458,27 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
     message.runMode = {
       resolved,
       reason: String(payload.reason ?? ''),
+    }
+  }
+  // Tool args propagation. Daemon emits `tool.requested` events
+  // carrying the fully assembled tool args. Cache them by
+  // tool_call_id so the matching `tool.completed` / `tool.failed`
+  // (which only carry the result, not the original args) can borrow
+  // them and the renderer keeps showing the same rich detail through
+  // the lifecycle. See event_translator._tool_requested_events_from_update.
+  if (event.event_type === 'tool.requested') {
+    const payload = event.payload ?? {}
+    const id = String(payload.tool_call_id ?? '')
+    const args = payload.arguments
+    if (id && args && typeof args === 'object' && !Array.isArray(args)) {
+      toolArgsByCallId.set(id, args as Record<string, unknown>)
+    }
+  } else if (event.event_type === 'tool.completed' || event.event_type === 'tool.failed') {
+    const payload = event.payload ?? {}
+    const id = String(payload.tool_call_id ?? '')
+    const cached = id ? toolArgsByCallId.get(id) : undefined
+    if (cached && !payload.arguments) {
+      event = { ...event, payload: { ...payload, arguments: cached } }
     }
   }
   const item = timelineItem(event, t)

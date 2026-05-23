@@ -115,10 +115,13 @@ describe('AgentProgress', () => {
         onOpenDiagnostics={vi.fn()}
       />,
     )
-    // Headline carries just the action label — "正在" prefix removed,
-    // trailing dots are appended by CSS (::after) and aren't part of
-    // the rendered text content.
-    expect(screen.getByText('打开受控网页 weather.com')).toBeInTheDocument()
+    // Headline carries just the verb in the `.name` span — "正在" prefix
+    // removed, trailing dots are appended by CSS (::after). The concrete
+    // target ("weather.com") renders in a separate span so it can be
+    // styled (color, ellipsis) independently and optionally prefixed
+    // with the globe icon for web tools.
+    expect(screen.getByText('打开受控网页')).toBeInTheDocument()
+    expect(screen.getByText('weather.com')).toBeInTheDocument()
   })
 
   it('does not show "已完成 X" as the live headline while the run is still active', () => {
@@ -167,7 +170,9 @@ describe('AgentProgress', () => {
     )
 
     expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
-    expect(screen.getByText('读取文件 README.md')).toBeInTheDocument()
+    // verb and target render in separate spans now
+    expect(screen.getByText('读取文件')).toBeInTheDocument()
+    expect(screen.getByText('README.md')).toBeInTheDocument()
   })
 
   it('still shows "已完成 X" as the final headline once the run is actually done', () => {

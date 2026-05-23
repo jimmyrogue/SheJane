@@ -3639,6 +3639,29 @@ button.agent-progress-summary:focus-visible {
   white-space: nowrap;
 }
 
+/* "· {detail}" segment after the verb — the rich per-tool subtitle
+ * (host with globe icon, file basename, search query, …). Animated
+ * trailing dots stay glued to `.name`, so the detail segment doesn't
+ * shake. The detail shrinks first when the row gets narrow because
+ * the verb is the load-bearing label. */
+.agent-progress-sep {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+.agent-progress-target-icon {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+.agent-progress-target {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-progress .tool-card-header .meta {
   min-width: 0;
   overflow: hidden;

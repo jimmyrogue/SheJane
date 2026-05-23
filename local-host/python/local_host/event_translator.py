@@ -39,7 +39,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from langchain_core.load.dump import dumps as lc_dumps
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 
 def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
@@ -201,12 +201,66 @@ def _translate_updates(payload: Any) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for node, delta in payload.items():
+        # When the model node finishes a turn, its delta carries an
+        # AIMessage with the fully assembled `tool_calls` list. Emit one
+        # `tool.requested` event per tool_call so the client renderer can
+        # show rich per-tool info ("搜索 · 普吉岛雨季天气", "读取 · App.tsx").
+        #
+        # Why here and not in `_translate_messages`: AIMessageChunk
+        # surfaces tool_calls for any chunk where it can parse a name,
+        # which floods the wire with spam mid-args. The updates-mode
+        # delta fires once per model turn with the assembled tool_calls
+        # — a clean single-emit point. Same "single source of truth"
+        # discipline that fixed the duplicate-tool.completed bug.
+        out.extend(_tool_requested_events_from_update(delta))
         out.append(
             {
                 "event": "graph.node",
                 "data": {"node": node, "delta": _safe_dump(delta)},
             }
         )
+    return out
+
+
+def _tool_requested_events_from_update(delta: Any) -> list[dict[str, Any]]:
+    """Pull `tool.requested` events out of an update delta. Each event
+    carries `{tool_call_id, name, tool, args}` for one finalized tool
+    call. Returns [] when the delta has no AIMessage with tool_calls."""
+    if not isinstance(delta, dict):
+        return []
+    messages = delta.get("messages")
+    if not isinstance(messages, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            if not isinstance(tool_call, dict):
+                continue
+            name = str(tool_call.get("name") or "")
+            if not name:
+                continue
+            args = tool_call.get("args")
+            if not isinstance(args, dict):
+                args = {}
+            out.append(
+                {
+                    "event": "tool.requested",
+                    # Field name `arguments` (not `args`) matches the wire
+                    # convention used by the existing HITL permission flow
+                    # — the client renderer reads payload.arguments in
+                    # chatStore.ts:toolDetail. Keeping one field name
+                    # across paths saves the client from having to
+                    # normalize.
+                    "data": {
+                        "tool_call_id": str(tool_call.get("id") or ""),
+                        "name": name,
+                        "tool": name,  # alias the renderer uses for headlines
+                        "arguments": args,
+                    },
+                }
+            )
     return out
 
 
