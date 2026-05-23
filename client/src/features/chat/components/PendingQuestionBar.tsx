@@ -227,16 +227,21 @@ export function PendingQuestionBar({
               }}
             />
             {!multi ? (
-              <Button
-                size="sm"
-                variant="outline"
+              // Plain <button>, NOT the shadcn Button — the latter pins a
+              // fixed h-7 (28px) via its `sm` size variant, which is
+              // shorter than the input next to it. We want the confirm
+              // to match the input's exact height so the row visually
+              // reads as one control. `align-self: stretch` does that
+              // via the parent's `align-items: stretch`.
+              <button
+                type="button"
                 className="question-other-confirm"
                 disabled={!otherValue.trim()}
                 onClick={confirmOther}
                 aria-label={isLast ? t('agent.question.submit') : t('agent.question.next')}
               >
-                {isLast ? <IconCheck size={15} /> : <IconArrowRight size={15} />}
-              </Button>
+                {isLast ? <IconCheck size={15} aria-hidden="true" /> : <IconArrowRight size={15} aria-hidden="true" />}
+              </button>
             ) : null}
           </div>
         </div>

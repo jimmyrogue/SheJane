@@ -1239,27 +1239,38 @@ select {
   gap: 6px;
 }
 
-/* Free-text "Other" submit button. Stretches to the input's height
- * (which `align-items: stretch` on the parent gives us) and sits flush
- * to the input on its right. Previously was a tiny 0-min-height pill
- * — looked accidental and the click target was tough to hit. */
+/* Free-text "Other" submit button. Plain <button> (NOT shadcn) so it
+ * can stretch to match the input's height — `align-self: stretch`
+ * picks up the parent's `align-items: stretch` which the shadcn
+ * Button's fixed `h-7` blocks. */
 .question-other-confirm {
   flex: 0 0 auto;
+  align-self: stretch;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  min-height: auto;
+  min-width: 38px;
   padding: 0 12px;
+  border: 0.5px solid var(--border-hairline);
   border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
-.question-other-confirm:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  border-color: transparent;
+.question-other-confirm:not(:disabled):hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, var(--bg-surface));
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
-.question-other-confirm:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+.question-other-confirm:not(:disabled):focus-visible {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: var(--focus-ring);
+}
+.question-other-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .question-other-input {
