@@ -4080,6 +4080,11 @@ button.agent-progress-summary:focus-visible {
   font-weight: 500;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  /* `<span>` containing text defaults to the I-beam text-selection
+   * cursor, which makes the badge look like an editable field. It's
+   * informational (Radix Tooltip shows the reason on hover) and not
+   * clickable, so revert to the regular arrow. */
+  cursor: default;
 }
 
 .btn-chip {
