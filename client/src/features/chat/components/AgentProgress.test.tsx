@@ -118,6 +118,76 @@ describe('AgentProgress', () => {
     expect(screen.getByText('正在打开受控网页 weather.com')).toBeInTheDocument()
   })
 
+  it('does not show "已完成 X" as the live headline while the run is still active', () => {
+    // Regression for the user-reported "为什么显示的都是 已完成xxx" bug.
+    // Between two tool calls the latest activity event is
+    // tool.completed for the PREVIOUS tool — but the run keeps going.
+    // If we show that completed event as the headline, the user reads
+    // it as "everything's done" while the agent is still working.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：搜索网页', tool: 'web.search' },
+            { type: 'tool.completed', label: '工具完成：搜索网页', tool: 'web.search' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    // Between calls, no in-flight tool to point at → fall back to a
+    // calm "thinking" label, never the stale "已完成 X".
+    expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
+  })
+
+  it('prefers an in-flight tool over a completed sibling for the headline', () => {
+    // 3 parallel tools, 2 done, 1 still running. The live headline
+    // must point at the one still running, not the completed ones.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：搜索网页', tool: 'web.search', target: '普吉岛天气' },
+            { type: 'tool.requested', label: '调用工具：读取文件', tool: 'fs.read', target: 'README.md' },
+            { type: 'tool.completed', label: '工具完成：搜索网页', tool: 'web.search' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
+    expect(screen.getByText('正在读取文件 README.md')).toBeInTheDocument()
+  })
+
+  it('still shows "已完成 X" as the final headline once the run is actually done', () => {
+    // The fix above only applies during active runs — once the run is
+    // finished the latest activity is correctly framed as completed.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'done',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：搜索网页', tool: 'web.search' },
+            { type: 'tool.completed', label: '工具完成：搜索网页', tool: 'web.search', target: '普吉岛' },
+            { type: 'run.completed', label: '任务完成' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    // Aggregated count wins when present:
+    expect(screen.getByText('搜索 1 次')).toBeInTheDocument()
+  })
+
   it('marks the failed state with the failed tone class', () => {
     // The old version of this test asserted that expanding the row
     // revealed individual step labels. The step list is gone — there's

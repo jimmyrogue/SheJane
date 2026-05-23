@@ -150,7 +150,50 @@ const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
   'waiting_input',
 ])
 
+/** Build the live-action label.
+ *
+ *  Subtlety we previously got wrong: between two tool calls the latest
+ *  ACTIVITY_TYPE event is usually `tool.completed`, which made the
+ *  headline say "已完成 X" for the entire active run — users read that
+ *  as "everything's done already" even though more work was coming.
+ *
+ *  Fix during active runs: count requests vs completions per tool to
+ *  find genuinely in-flight tools, and pick the latest tool.requested
+ *  among them as the headline. When nothing's in flight, the model is
+ *  reasoning between tool calls — show "正在思考" instead of a stale
+ *  completed label. Once the run finishes, the old behavior resumes
+ *  and the latest activity is correctly framed as completed.
+ */
 function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
+  const isActive = ACTIVE_RUN_STATUSES.has(message.status)
+  if (isActive) {
+    // Per-tool tally: a positive value means more dispatches than
+    // completions for that tool — at least one call still in flight.
+    // We count by tool name (not eventId) so parallel dispatches of
+    // the same tool collapse correctly.
+    const pending = new Map<string, number>()
+    for (const event of events) {
+      if (!event.tool) {
+        continue
+      }
+      if (event.type === 'tool.requested' || event.type === 'tool.started') {
+        pending.set(event.tool, (pending.get(event.tool) ?? 0) + 1)
+      } else if (event.type === 'tool.completed' || event.type === 'tool.failed') {
+        pending.set(event.tool, (pending.get(event.tool) ?? 0) - 1)
+      }
+    }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]
+      if (event.type !== 'tool.requested' && event.type !== 'tool.started') {
+        continue
+      }
+      if (!event.tool || (pending.get(event.tool) ?? 0) <= 0) {
+        continue
+      }
+      return withTarget(operationLabel(event, t), event.target)
+    }
+    return t('agent.thinking')
+  }
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (ACTIVITY_TYPES.has(events[index].type)) {
       return withTarget(operationLabel(events[index], t), events[index].target)
