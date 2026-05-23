@@ -735,7 +735,10 @@ select {
   border-radius: 20px 20px 5px 20px;
   padding: 12px 16px 11px;
   box-shadow: var(--shadow-xs);
-  margin-left: auto;
+  /* Was `margin-left: auto` (right-aligning the bubble). Removed —
+   * user bubbles now sit at the left edge of the column too, matching
+   * the assistant content and thinking pulse. */
+  margin-left: 0;
 }
 
 /* Hide avatar/label header for user messages */
@@ -2985,6 +2988,11 @@ button:active {
   padding: 0 0 24px 22px;
 }
 
+/* All messages — user and assistant — are block-level and laid out
+ * left-aligned inside the 820px content column. User bubbles keep
+ * their colored fill (defined earlier) but no longer right-align;
+ * everything sits flush to the column's left edge for a calm,
+ * document-like feel. */
 .message,
 .message.user,
 .message.assistant {
@@ -2996,8 +3004,6 @@ button:active {
 .message-bubble-inner,
 .message.user .message-bubble-inner,
 .message.assistant .message-bubble-inner {
-  max-width: 820px;
-  margin: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -3005,14 +3011,17 @@ button:active {
   padding: 0;
 }
 
-/* .messages is a flex column — centring the items horizontally puts
- * each bubble in the centre of the chat-surface even though the scroll
- * viewport spans edge-to-edge. The asymmetric left/right padding (22
- * left, 0 right) leaves the scrollbar gutter on the right; the bubble
- * shifts ~11px right of the viewport centre, which visually balances
- * once the ~14px scrollbar is taken into account. */
-.messages {
-  align-items: center;
+/* Each row in the chat — message or ambient indicator — sits in a
+ * 820px-wide column LEFT-aligned inside the full-width .messages
+ * container. The column hugs the chat-surface left edge (with the
+ * .messages padding-left providing breathing room); the scrollbar
+ * stays flush to the chat-surface right edge. */
+.message,
+.thinking-indicator {
+  width: 100%;
+  max-width: 820px;
+  margin-left: 0;
+  margin-right: auto;
 }
 
 .message .message-content {
