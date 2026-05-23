@@ -26,20 +26,37 @@ from langgraph.types import interrupt
 def user_ask(question: str, options: list[str] | None = None) -> str:
     """Ask the human a clarifying question and wait for their answer.
 
-    Use this only when you genuinely cannot make progress without
-    user input — every call pauses the run and surfaces a UI prompt.
-    Prefer making a reasonable assumption when the cost of being wrong
-    is low.
+    Call this whenever you need information from the user to make
+    progress. The client renders the question as a clickable card
+    above the composer with the supplied options as buttons — much
+    better UX than writing the question as markdown in your reply.
+
+    HARD RULES (see "向用户澄清" in the developer system prompt for
+    full guidance):
+      * One question per call. If you have two questions, make two
+        calls; never stack questions inside the `question` text.
+      * `options` must be the clickable answers to THIS question.
+        Don't put long descriptions in `options`; put short labels.
+      * Keep using this tool across rounds — don't switch to prose
+        questions after a few calls.
+
+    Examples of GOOD usage:
+        user_ask(question="你想在普吉岛待几天？", options=["3天", "5天", "7天"])
+        user_ask(question="选择行程风格", options=["放松", "探索", "均衡"])
+
+    AVOID:
+        user_ask(question="A) 几天 B) 风格", options=["3天","5天","放松","探索"])
+        (multiple questions in one call; options answer only some of them)
 
     Args:
-        question: The question to show the user, plain text.
-        options: Optional list of suggested answers; the client may
-                 render them as buttons. The user may still answer
-                 freely — your tool gets back whatever string they
-                 supplied.
+        question: The question text shown to the user. Keep it short
+                  and focused on a single decision.
+        options: Suggested answers, each a short label (≤20 chars).
+                 Required when there are discrete choices; pass None
+                 only when free-form text is the natural input.
 
     Returns:
-        The user's answer as a string. May be one of the suggested
+        The user's answer as a string. May be one of the supplied
         options, free-form text, or — if the user closed the prompt
         without answering — the empty string.
     """

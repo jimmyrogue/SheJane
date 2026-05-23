@@ -107,6 +107,70 @@ def _parse_sse(body: str) -> list[tuple[str, dict]]:
 # --- tool registration ---
 
 
+def test_user_ask_docstring_encourages_consistent_tool_usage() -> None:
+    """The user.ask docstring is part of the prompt the LLM sees as the
+    tool's description. Past runs showed the model abandoning the tool
+    after 2-3 calls and falling back to markdown-bullet questions in
+    prose — partly because the docstring used to say
+    "only when you genuinely cannot make progress" / "prefer making
+    reasonable assumptions". We rewrote it to encourage consistent
+    usage. This test locks in the key clauses so a future cleanup
+    doesn't silently revert the change.
+    """
+    from local_host.tools.user import user_ask
+
+    desc = user_ask.description or ""
+
+    # Discouraging-language regressions we explicitly removed:
+    forbidden = [
+        "only when you genuinely cannot make progress",
+        "prefer making a reasonable assumption",
+    ]
+    for phrase in forbidden:
+        assert phrase not in desc, (
+            f"user.ask docstring re-introduced discouraging phrase {phrase!r} — "
+            f"previously caused the model to bail out of tool usage after a few rounds."
+        )
+
+    # Encouraging clauses we want to keep:
+    required = [
+        "One question per call",
+        "Keep using this tool across rounds",
+    ]
+    for phrase in required:
+        assert phrase in desc, (
+            f"user.ask docstring is missing the required clause {phrase!r}; "
+            f"model may revert to prose questions without it."
+        )
+
+
+def test_developer_prompt_enforces_user_ask_for_clarifications() -> None:
+    """Lock in the 'always use user.ask, never embed in prose' rules
+    in the developer system prompt. These clauses fix the bug where
+    after 2 successful user.ask calls the model gave up and wrote
+    the next clarifying question as markdown bullets in its reply —
+    leaving the user with no clickable card."""
+    from pathlib import Path
+
+    prompt_path = (
+        Path(__file__).resolve().parents[1] / "local_host" / "agent" / "prompts" / "developer.md"
+    )
+    text = prompt_path.read_text(encoding="utf-8")
+
+    required = [
+        "向用户澄清",  # the new section heading
+        "必须",  # 必须 use user.ask
+        "禁止",  # 禁止 embed in prose
+        "一次 `user.ask` 只问一个问题",  # one-question-per-call rule
+        "后续轮次也要遵守",  # consistency-across-rounds rule
+    ]
+    for phrase in required:
+        assert phrase in text, (
+            f"developer.md missing required clause {phrase!r}; "
+            f"the prose-question regression may return."
+        )
+
+
 def test_user_ask_in_tool_registry() -> None:
     from local_host.tools.registry import core_tools
 
