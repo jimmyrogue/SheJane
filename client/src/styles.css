@@ -168,8 +168,35 @@ button {
   cursor: pointer;
 }
 
-button:active {
-  transform: translateY(1px);
+/* Global button :active translate REMOVED.
+ *
+ * It used to be `transform: translateY(1px)` as a press-down micro-
+ * feedback. In practice it caused two repeatedly-reported regressions:
+ *
+ * 1. On the FIRST click of a freshly-focused button the focus-ring
+ *    fade-in animated at the same time as the translate — the two
+ *    motions read as a "small zoom" by users. Subsequent clicks were
+ *    just the translate (ring already on), which felt inconsistent
+ *    enough to register as a glitch.
+ *
+ * 2. Per-component `:active { transform: none }` overrides had to
+ *    fight this global rule constantly. Easier to remove the root.
+ *
+ * Buttons that genuinely want a press feedback can opt back in with
+ * a scoped rule — none currently do.
+ *
+ * Native browser focus rings on buttons also reset here. The OS
+ * default ring uses the system accent colour (so macOS users with an
+ * orange/red accent saw a contrasting orange "selected" outline).
+ * A baseline subtle :focus-visible shadow keeps keyboard a11y intact;
+ * individual button classes can still override with a more specific
+ * rule when they need a different focus treatment. */
+button:focus {
+  outline: none;
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 a {
