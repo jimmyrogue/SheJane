@@ -2978,11 +2978,16 @@ button:active {
 .messages {
   width: 100%;
   /* .messages spans the full chat-surface so its scrollbar pins to the
-   * right edge (the vertical scrollbar takes its ~14px from inside
-   * the padding-right, NOT from content area, so the centred column
-   * underneath stays truly centred in the chat-surface). */
+   * right edge. `scrollbar-gutter: stable both-edges` reserves
+   * scrollbar-width space on BOTH inline edges (the scrollbar still
+   * appears only on the right, but the centring point of children
+   * isn't shifted by the asymmetric gutter). Without this, the
+   * message column would sit ~7px left of the composer (which has no
+   * scrollbar) and small bits of the leftmost text could leak past
+   * the chat-surface fade overlays. */
   max-width: none;
   margin: 0;
+  scrollbar-gutter: stable both-edges;
   /* Each bubble gets ~32px to the next — the meta row (24px) sits
    * inside this gap by floating below each bubble, so the visual
    * "next bubble" doesn't appear until past the meta. */
