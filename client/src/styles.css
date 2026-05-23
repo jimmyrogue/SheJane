@@ -735,10 +735,11 @@ select {
   border-radius: 20px 20px 5px 20px;
   padding: 12px 16px 11px;
   box-shadow: var(--shadow-xs);
-  /* Was `margin-left: auto` (right-aligning the bubble). Removed —
-   * user bubbles now sit at the left edge of the column too, matching
-   * the assistant content and thinking pulse. */
-  margin-left: 0;
+  /* Pushes the bubble to the right of the 820px column (the parent
+   * .message.user is `display: flex; justify-content: flex-end`, so
+   * this auto-margin is what actually right-aligns the bubble inside
+   * the flex row). */
+  margin-left: auto;
 }
 
 /* Hide avatar/label header for user messages */
@@ -2988,13 +2989,11 @@ button:active {
   padding: 0 0 24px 22px;
 }
 
-/* All messages — user and assistant — are block-level and laid out
- * left-aligned inside the 820px content column. User bubbles keep
- * their colored fill (defined earlier) but no longer right-align;
- * everything sits flush to the column's left edge for a calm,
- * document-like feel. */
+/* Block by default. .message.user reverts to flex (right-aligned
+ * bubble within the column) via the earlier rule near line 726;
+ * do NOT include `.message.user` in this selector or that flex
+ * behaviour will be clobbered. */
 .message,
-.message.user,
 .message.assistant {
   display: block;
   gap: 0;
@@ -3012,15 +3011,16 @@ button:active {
 }
 
 /* Each row in the chat — message or ambient indicator — sits in a
- * 820px-wide column LEFT-aligned inside the full-width .messages
- * container. The column hugs the chat-surface left edge (with the
- * .messages padding-left providing breathing room); the scrollbar
- * stays flush to the chat-surface right edge. */
+ * 820px-wide column CENTERED inside the full-width .messages
+ * container. The .messages container itself spans edge-to-edge so
+ * its scrollbar pins to the chat-surface right edge; centring happens
+ * per-row via auto horizontal margins. Inside this column the user
+ * bubble right-aligns and the thinking pulse left-aligns. */
 .message,
 .thinking-indicator {
   width: 100%;
   max-width: 820px;
-  margin-left: 0;
+  margin-left: auto;
   margin-right: auto;
 }
 
