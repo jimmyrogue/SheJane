@@ -2774,7 +2774,13 @@ button:active {
   color: var(--text-secondary);
   padding: 7px 8px;
   text-align: left;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  /* `transform` deliberately NOT in the transition list — the
+   * `:active { transform: scale(0.985) }` rule we used to ship made
+   * the first click visibly shrink the button before the dropdown
+   * opened, which read as a glitchy "press". Now any active state is
+   * neutered (see :active rule below) and we don't need to transition
+   * a property that never changes. */
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 .sidebar-account::before {
@@ -2793,8 +2799,14 @@ button:active {
   background: color-mix(in srgb, #FFFFFF 78%, var(--bg-sidebar));
 }
 
+/* `:active` deliberately a no-op. The original `transform: scale(0.985)`
+ * was meant as press-down feedback but combined with the focus-ring
+ * fade-in on FIRST click it looked like a glitchy zoom — users
+ * reported it as a bug. Subsequent clicks didn't have the ring
+ * fade-in so the zoom wasn't visible, which made the inconsistency
+ * feel worse. Now: no transform at all on active. */
 .sidebar-account:active {
-  transform: scale(0.985);
+  transform: none;
 }
 
 .sidebar-account-avatar {
@@ -4110,6 +4122,13 @@ button.agent-progress-summary:focus-visible {
 .composer-mode-trigger:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* Belt-and-braces: no active-state transform. Without this, some
+ * parent (e.g. a Tailwind active:* utility on `composer-toolbar`)
+ * could try to scale the button on click and we'd be back to the
+ * "first-click zoom" glitch. */
+.composer-mode-trigger:active {
+  transform: none;
 }
 .composer-mode-trigger-label {
   line-height: 1;
