@@ -2983,10 +2983,13 @@ button:active {
   max-width: none;
   margin: 0;
   gap: 18px;
-  /* Horizontal padding holds content away from the chat-surface edges
-   * on narrow viewports; padding-right of 0 keeps the scrollbar flush
-   * to the right with the gutter living on the bubble side instead. */
-  padding: 0 0 24px 22px;
+  /* Top + bottom padding clear the 32px fade overlays on either end
+   * (.chat-surface::before at the top, .composer::before at the
+   * bottom) so the first/last messages aren't half-hidden by the
+   * gradient. Padding-right stays 0 so the scrollbar pins to the
+   * chat-surface right edge; left padding gives content breathing
+   * room from the left wall. */
+  padding: 36px 0 36px 22px;
 }
 
 /* Block by default. .message.user reverts to flex (right-aligned
