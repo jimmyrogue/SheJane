@@ -2944,11 +2944,11 @@ button:active {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-surface);
-  /* No top or bottom padding — fades on either end (.chat-surface::before
-   * at the top, .composer::before at the bottom) overlay actual message
-   * content so it gracefully fades in and out. Horizontal padding kept
-   * for breathing room from the window edges. */
-  padding: 0 22px;
+  /* No padding at all — .messages owns its own horizontal padding and
+   * the top/bottom fades (.chat-surface::before + .composer::before)
+   * overlay actual content. Letting .messages span edge-to-edge lets
+   * its scrollbar sit flush against the chat-surface right edge. */
+  padding: 0;
   position: relative;
 }
 
@@ -2971,12 +2971,16 @@ button:active {
 
 .messages {
   width: 100%;
-  /* Chat content width — also used by .composer below so the input
-   * frame aligns with the message column. */
-  max-width: 820px;
-  margin: 0 auto;
+  /* .messages spans the full chat-surface so its scrollbar pins to the
+   * right edge. Content is centered inside via .message-bubble-inner
+   * (max-width: 820px; margin: 0 auto) below. */
+  max-width: none;
+  margin: 0;
   gap: 18px;
-  padding: 0 4px 24px 0;
+  /* Horizontal padding holds content away from the chat-surface edges
+   * on narrow viewports; padding-right of 0 keeps the scrollbar flush
+   * to the right with the gutter living on the bubble side instead. */
+  padding: 0 0 24px 22px;
 }
 
 .message,
@@ -2990,13 +2994,23 @@ button:active {
 .message-bubble-inner,
 .message.user .message-bubble-inner,
 .message.assistant .message-bubble-inner {
-  max-width: min(820px, 100%);
+  max-width: 820px;
+  margin: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  margin: 0;
   padding: 0;
+}
+
+/* .messages is a flex column — centring the items horizontally puts
+ * each bubble in the centre of the chat-surface even though the scroll
+ * viewport spans edge-to-edge. The asymmetric left/right padding (22
+ * left, 0 right) leaves the scrollbar gutter on the right; the bubble
+ * shifts ~11px right of the viewport centre, which visually balances
+ * once the ~14px scrollbar is taken into account. */
+.messages {
+  align-items: center;
 }
 
 .message .message-content {
