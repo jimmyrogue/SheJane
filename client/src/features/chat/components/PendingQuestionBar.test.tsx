@@ -15,6 +15,23 @@ function renderBar(question: PendingQuestion | null, onAnswer = vi.fn()) {
   return onAnswer
 }
 
+function renderBarWithEscapeHatches(question: PendingQuestion | null) {
+  const onAnswer = vi.fn()
+  const onSkip = vi.fn()
+  const onCancel = vi.fn()
+  render(
+    <I18nProvider>
+      <PendingQuestionBar
+        question={question}
+        onAnswer={onAnswer}
+        onSkip={onSkip}
+        onCancel={onCancel}
+      />
+    </I18nProvider>,
+  )
+  return { onAnswer, onSkip, onCancel }
+}
+
 describe('PendingQuestionBar', () => {
   it('renders nothing when there is no pending question', () => {
     const { container } = render(
@@ -89,5 +106,50 @@ describe('PendingQuestionBar', () => {
 
     fireEvent.click(confirm)
     expect(onAnswer).toHaveBeenCalledWith('m2', 'q2', { Pick: ['Custom'] })
+  })
+
+  it('Skip button fires onSkip with messageID + requestID, not onAnswer', () => {
+    const { onAnswer, onSkip, onCancel } = renderBarWithEscapeHatches({
+      messageID: 'm-skip',
+      requestID: 'q-skip',
+      questions: [{ question: 'Color?', header: '', options: [{ label: 'Red' }] }],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '跳过' }))
+    expect(onSkip).toHaveBeenCalledWith('m-skip', 'q-skip')
+    expect(onAnswer).not.toHaveBeenCalled()
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it('Cancel button fires onCancel with messageID, not onAnswer or onSkip', () => {
+    const { onAnswer, onSkip, onCancel } = renderBarWithEscapeHatches({
+      messageID: 'm-cancel',
+      requestID: 'q-cancel',
+      questions: [{ question: 'Color?', header: '', options: [{ label: 'Red' }] }],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '取消对话' }))
+    expect(onCancel).toHaveBeenCalledWith('m-cancel')
+    expect(onAnswer).not.toHaveBeenCalled()
+    expect(onSkip).not.toHaveBeenCalled()
+  })
+
+  it('Skip + Cancel are NOT rendered when their callbacks are omitted', () => {
+    // Defensive: the legacy two-arg PendingQuestionBar (no onSkip/onCancel)
+    // must keep working without the new buttons.
+    render(
+      <I18nProvider>
+        <PendingQuestionBar
+          question={{
+            messageID: 'm',
+            requestID: 'q',
+            questions: [{ question: 'X', header: '', options: [{ label: 'A' }] }],
+          }}
+          onAnswer={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('button', { name: '跳过' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取消对话' })).not.toBeInTheDocument()
   })
 })

@@ -1239,10 +1239,27 @@ select {
   gap: 6px;
 }
 
+/* Free-text "Other" submit button. Stretches to the input's height
+ * (which `align-items: stretch` on the parent gives us) and sits flush
+ * to the input on its right. Previously was a tiny 0-min-height pill
+ * — looked accidental and the click target was tough to hit. */
 .question-other-confirm {
   flex: 0 0 auto;
-  min-height: 0;
-  padding-inline: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: auto;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+}
+.question-other-confirm:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+.question-other-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
 .question-other-input {
@@ -1263,9 +1280,28 @@ select {
   box-shadow: var(--focus-ring);
 }
 
+/* Action row sits below the options + Other input. Two sub-rows so
+ * "escape hatch" buttons (Cancel / Skip) and "multi-step nav" buttons
+ * (Back / Next / Submit) don't compete for the same end of the row.
+ * Left side: always-visible escape hatches. Right side: optional
+ * stepper. Wraps to two rows on narrow widths. */
 .question-bar-actions {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.question-bar-actions-left,
+.question-bar-actions-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.question-bar-actions-right:empty {
+  display: none;
 }
 
 .question-bar-actions button {
@@ -1274,9 +1310,23 @@ select {
   font-size: 12px;
 }
 
+/* Cancel = a more dangerous action than Skip; tint the icon (not the
+ * whole button — keeping a ghost background so it doesn't shout) so a
+ * mis-click on Cancel still feels distinct from Skip's calm. */
+.question-bar-cancel svg {
+  color: var(--accent-danger);
+}
+.question-bar-cancel:hover {
+  color: var(--accent-danger-text, var(--accent-danger));
+}
+
 @media (max-width: 560px) {
-  .question-bar-actions button {
+  .question-bar-actions-left,
+  .question-bar-actions-right {
     width: 100%;
+  }
+  .question-bar-actions button {
+    flex: 1 1 auto;
   }
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { IconArrowLeft, IconArrowRight, IconCheck } from '@tabler/icons-react'
+import { IconArrowLeft, IconArrowRight, IconCheck, IconPlayerStopFilled, IconPlayerTrackNext } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { PendingQuestion } from '../pendingQuestion'
@@ -9,9 +9,18 @@ const OTHER = '__other__'
 export function PendingQuestionBar({
   question,
   onAnswer,
+  onSkip,
+  onCancel,
 }: {
   question: PendingQuestion | null
   onAnswer: (messageID: string, requestID: string, answers: Record<string, string[]>) => void
+  /** Skip the question — replies to the daemon with empty answers so
+   *  the user.ask tool returns "" to the agent, letting the run
+   *  continue without an explicit choice. */
+  onSkip?: (messageID: string, requestID: string) => void
+  /** Cancel the run entirely. The card disappears and the assistant
+   *  message lands in `canceled` state. */
+  onCancel?: (messageID: string) => void
 }) {
   const { t } = useI18n()
   const [selected, setSelected] = useState<Record<number, string[]>>({})
@@ -232,18 +241,45 @@ export function PendingQuestionBar({
           </div>
         </div>
       </div>
-      {/* Single-select advances on click, so it shows no Next/Submit — only an
-          optional Back. Multi-select still needs an explicit confirm. */}
-      {(activeStep > 0 || multi) && (
-        <div className="question-bar-actions">
+      {/* Action row, always shown. Left side carries the escape
+          hatches — Skip (continue the run without picking) and Cancel
+          (kill the run). Right side carries the multi-step navigation
+          when applicable (Back / Next / Submit). Single-select runs
+          show only Skip + Cancel on the left and nothing on the right. */}
+      <div className="question-bar-actions">
+        <div className="question-bar-actions-left">
+          {onCancel ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="question-bar-cancel"
+              onClick={() => onCancel(question.messageID)}
+              aria-label={t('agent.question.cancel')}
+            >
+              <IconPlayerStopFilled size={14} aria-hidden="true" />
+              {t('agent.question.cancel')}
+            </Button>
+          ) : null}
+          {onSkip ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="question-bar-skip"
+              onClick={() => onSkip(question.messageID, question.requestID)}
+              aria-label={t('agent.question.skip')}
+            >
+              <IconPlayerTrackNext size={14} aria-hidden="true" />
+              {t('agent.question.skip')}
+            </Button>
+          ) : null}
+        </div>
+        <div className="question-bar-actions-right">
           {activeStep > 0 ? (
             <Button size="sm" variant="ghost" onClick={() => setStep(activeStep - 1)}>
               <IconArrowLeft size={14} />
               {t('agent.question.back')}
             </Button>
-          ) : (
-            <span />
-          )}
+          ) : null}
           {multi ? (
             isLast ? (
               <Button size="sm" disabled={!answers} onClick={() => finish(selected, otherText)}>
@@ -262,7 +298,7 @@ export function PendingQuestionBar({
             )
           ) : null}
         </div>
-      )}
+      </div>
     </div>
   )
 }

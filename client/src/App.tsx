@@ -1353,6 +1353,19 @@ function AppContent() {
                 key={pendingQuestion?.requestID ?? 'no-question'}
                 question={pendingQuestion}
                 onAnswer={(messageID, requestID, answers) => void handleQuestionAnswer(messageID, requestID, answers)}
+                onSkip={(messageID, requestID) => {
+                  // Skip = answer the daemon with empty answer lists for each
+                  // question. user.ask falls through its parse logic and
+                  // returns "" to the agent, which then has to decide
+                  // whether to make a reasonable assumption or re-ask.
+                  if (!pendingQuestion) return
+                  const skipAnswers: Record<string, string[]> = {}
+                  for (const item of pendingQuestion.questions) {
+                    skipAnswers[item.question] = []
+                  }
+                  void handleQuestionAnswer(messageID, requestID, skipAnswers)
+                }}
+                onCancel={() => void cancelActiveLocalRun()}
               />
 
               <Composer
