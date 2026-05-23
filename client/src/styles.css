@@ -1102,35 +1102,37 @@ select {
   color: var(--text-primary);
 }
 
-/* Per assistant turn: slowly spinning logo + elapsed time while thinking;
-   just the static logo once finished. */
+/* Ambient "thinking" indicator below the latest assistant message —
+ * left-aligned, single warm-tinted icon that scales/fades in a slow
+ * pulse. Replaces the older logo + elapsed-time chip. */
 .thinking-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-tertiary);
-  font-size: 12px;
+  justify-content: flex-start;
+  padding: 4px 0;
+  color: var(--accent-warning);
 }
 
-.thinking-logo {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  object-fit: contain;
-  opacity: 0.85;
+.thinking-pulse {
+  animation: thinking-pulse 1.6s ease-in-out infinite;
+  transform-origin: center;
 }
 
-.thinking-logo[data-active='true'] {
-  animation: progress-spin 3s linear infinite;
-}
-
-.thinking-time {
-  font-variant-numeric: tabular-nums;
+@keyframes thinking-pulse {
+  0%, 100% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thinking-logo[data-active='true'] {
+  .thinking-pulse {
     animation: none;
+    opacity: 0.8;
   }
 }
 

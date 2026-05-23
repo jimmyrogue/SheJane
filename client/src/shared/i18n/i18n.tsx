@@ -390,6 +390,7 @@ const zh = {
   'agent.question.next': '下一步',
   'agent.question.back': '上一步',
   'agent.question.progress': '第 {current} / {total} 题',
+  'agent.thinking': '正在思考',
   'agent.thinkingPaused': '暂停',
   'agent.tokens': '{count} tokens',
 
@@ -855,6 +856,7 @@ const en: Record<TranslationKey, string> = {
   'agent.question.next': 'Next',
   'agent.question.back': 'Back',
   'agent.question.progress': 'Question {current} / {total}',
+  'agent.thinking': 'Thinking',
   'agent.thinkingPaused': 'Paused',
   'agent.tokens': '{count} tokens',
 

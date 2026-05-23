@@ -33,61 +33,32 @@ describe('ThinkingIndicator', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows a spinning logo and elapsed time while thinking', () => {
+  it('renders the pulsing icon while the assistant message is streaming', () => {
     const { container } = renderIndicator(<ThinkingIndicator message={message({ status: 'streaming' })} />)
-    const logo = container.querySelector('.thinking-logo')
-    expect(logo).toHaveAttribute('data-active', 'true')
-    expect(container.querySelector('.thinking-time')?.textContent).toMatch(/1m\s\d+s/)
+    const indicator = container.querySelector('.thinking-indicator')
+    expect(indicator).toBeInTheDocument()
+    expect(container.querySelector('.thinking-pulse')).toBeInTheDocument()
   })
 
-  it('freezes and shows the paused label while waiting on the user', () => {
+  it('renders the pulsing icon for the pending status as well', () => {
+    const { container } = renderIndicator(<ThinkingIndicator message={message({ status: 'pending' })} />)
+    expect(container.querySelector('.thinking-pulse')).toBeInTheDocument()
+  })
+
+  it('renders nothing while waiting for permission or input (the bars take over)', () => {
     const { container } = renderIndicator(
       <ThinkingIndicator message={message({ status: 'waiting_input' })} />,
     )
-    const logo = container.querySelector('.thinking-logo')
-    expect(logo).toHaveAttribute('data-active', 'false')
-    expect(container.querySelector('.thinking-time')?.textContent).toBe('暂停')
+    expect(container).toBeEmptyDOMElement()
   })
 
-  it('sums llm.usage timeline items for a real-time running total', () => {
-    const { container } = renderIndicator(
-      <ThinkingIndicator
-        message={message({
-          status: 'streaming',
-          agentEvents: [
-            { type: 'llm.usage', label: '', tokens: 1200 },
-            { type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' },
-            { type: 'llm.usage', label: '', tokens: 2400 },
-          ],
-        })}
-      />,
-    )
-    expect(container.querySelector('.thinking-time')?.textContent).toMatch(/· 3\.6k tokens$/)
-  })
-
-  it('shows only a static logo once finished with no usage', () => {
+  it('renders nothing once the run has finished', () => {
     const { container } = renderIndicator(<ThinkingIndicator message={message({ status: 'done' })} />)
-    const logo = container.querySelector('.thinking-logo')
-    expect(logo).toBeInTheDocument()
-    expect(logo).toHaveAttribute('data-active', 'false')
-    expect(container.querySelector('.thinking-time')).toBeNull()
+    expect(container).toBeEmptyDOMElement()
   })
 
-  it('keeps this turn token total next to the static logo after completion', () => {
-    const { container } = renderIndicator(
-      <ThinkingIndicator
-        message={message({
-          status: 'done',
-          tokens: 999_999,
-          agentEvents: [
-            { type: 'llm.usage', label: '', tokens: 100_000 },
-            { type: 'llm.usage', label: '', tokens: 77_600 },
-          ],
-        })}
-      />,
-    )
-    expect(container.querySelector('.thinking-logo')).toHaveAttribute('data-active', 'false')
-    // Sums only this turn's llm.usage (ignores any conversation-wide field).
-    expect(container.querySelector('.thinking-time')?.textContent).toBe('177.6k tokens')
+  it('renders nothing on error status', () => {
+    const { container } = renderIndicator(<ThinkingIndicator message={message({ status: 'error' })} />)
+    expect(container).toBeEmptyDOMElement()
   })
 })
