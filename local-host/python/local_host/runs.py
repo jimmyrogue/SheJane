@@ -33,7 +33,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
+from .agent.auto_router import classify_mode
 from .agent.builder import build_agent
+from .config import get_settings
 from .event_translator import translate
 from .observability import build_callbacks
 from .store.sqlite import LocalStore
@@ -211,13 +213,50 @@ class RunCoordinator:
         goal = self._goals.get(run_id, "")
 
         try:
+            # Resolve the public-facing mode (auto/fast/pro) into the
+            # internal fast/deep value the rest of the stack expects.
+            #
+            # auto: ask a cheap fast-model classifier; emit mode.selected
+            #       so the UI can show "Auto → Pro · <reason>".
+            # pro:  wire alias for "deep"; the daemon always sends "deep"
+            #       to the cloud LLM router, which is what picks the
+            #       actual provider/model for each tier.
+            # fast / deep: pass through unchanged.
+            resolved_mode = mode
+            resolved_reason = ""
+            settings = get_settings()
+            if mode == "auto" and resume_payload is None:
+                resolved_mode, resolved_reason = await classify_mode(
+                    goal=goal,
+                    history=self._histories.get(run_id, []),
+                    cloud_base_url=settings.cloud_base_url,
+                    cloud_token=settings.cloud_token,
+                    run_id=run_id,
+                )
+                await self._enqueue(
+                    queue,
+                    run_id,
+                    "mode.selected",
+                    {
+                        "requested_mode": "auto",
+                        "resolved_mode": "pro" if resolved_mode == "deep" else "fast",
+                        "reason": resolved_reason,
+                    },
+                )
+            elif mode == "pro":
+                resolved_mode = "deep"
+            elif mode == "auto":
+                # resume path — auto already resolved on the original run;
+                # default to fast on resume (the agent already has state).
+                resolved_mode = "fast"
+
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
                 agent_store=self.agent_store,
                 workspace_root=workspace_path,
                 run_id=run_id,
-                mode=mode,
+                mode=resolved_mode,
             )
             config = {
                 "configurable": {"thread_id": run_id},

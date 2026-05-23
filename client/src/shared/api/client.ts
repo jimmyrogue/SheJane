@@ -111,6 +111,17 @@ interface APIResponse<T> {
   data: T
 }
 
+/** The cloud LLM router only knows `fast` and `deep`. The UI exposes
+ *  `auto` / `fast` / `pro`. The cloud chat endpoints have no auto
+ *  classifier of their own, so `auto` degrades to `fast` here (the
+ *  classifier lives in the local daemon — when the user is on the
+ *  cloud fallback path, we'd rather charge them less). `pro` maps to
+ *  the cheaper internal name `deep`. */
+function toCloudMode(mode: ChatMode): 'fast' | 'deep' {
+  if (mode === 'pro') return 'deep'
+  return 'fast'
+}
+
 export class JiandanAPI implements ChatAPI {
   private accessToken = ''
 
@@ -177,7 +188,7 @@ export class JiandanAPI implements ChatAPI {
       credentials: 'include',
       headers: this.headers(true),
       body: JSON.stringify({
-        model: request.mode,
+        model: toCloudMode(request.mode),
         stream: true,
         scene: request.scene,
         client_conversation_id: request.clientConversationId,
@@ -217,7 +228,7 @@ export class JiandanAPI implements ChatAPI {
   async createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun> {
     return this.post<AgentRun>('/api/v1/agent/runs', {
       goal: request.goal,
-      mode: request.mode,
+      mode: toCloudMode(request.mode),
       client_conversation_id: request.clientConversationId,
       client_message_id: request.clientMessageId,
       attachments: request.attachments,
@@ -258,7 +269,7 @@ export class JiandanAPI implements ChatAPI {
       credentials: 'include',
       headers: this.headers(true),
       body: JSON.stringify({
-        model: request.mode,
+        model: toCloudMode(request.mode),
         question: request.question,
       }),
     })

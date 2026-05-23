@@ -1,5 +1,10 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
-export type ChatMode = 'fast' | 'deep'
+/** User-visible model mode picked in the composer. The daemon resolves
+ *  'auto' via an LLM classifier (see local_host/agent/auto_router.py).
+ *  'pro' is the UI label for the cheaper internal "deep" wire value —
+ *  the Go LLM router still speaks fast/deep, so the daemon translates
+ *  pro→deep before calling the cloud. */
+export type ChatMode = 'auto' | 'fast' | 'pro'
 export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
 
 export interface AgentQuestionChoice {
@@ -64,6 +69,15 @@ export interface ChatMessage {
    *  `status === 'streaming'` triggers the ephemeral "Thinking…"
    *  indicator above the bubble. */
   reasoning?: string
+  /** Set only when the run was started with mode='auto' AND the daemon's
+   *  classifier picked a concrete model. UI uses this to show a small
+   *  "Auto → Pro" badge in the message meta row so the user can see what
+   *  the auto-router decided. Absent when the user picked fast/pro
+   *  manually (no need to repeat what's in the composer). */
+  runMode?: {
+    resolved: 'fast' | 'pro'
+    reason: string
+  }
 }
 
 export interface ConversationWorkspace {

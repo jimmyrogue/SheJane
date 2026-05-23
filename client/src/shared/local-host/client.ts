@@ -1,4 +1,5 @@
 import type { AgentRunEvent } from '../api/sse'
+import type { ChatMode } from '../local-data/types'
 import { streamAgentSSE } from '../streaming/streamTransport'
 import type { components } from './generated'
 
@@ -121,6 +122,10 @@ export async function createLocalRun(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
     parentRunId?: string
     settings?: AgentSettings
+    /** UI mode the user picked. Daemon resolves 'auto' via classifier,
+     *  treats 'pro' as alias for internal 'deep'. Omitted → daemon
+     *  default ('auto'). */
+    mode?: ChatMode
   },
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
@@ -136,6 +141,7 @@ export async function createLocalRun(
       history: input.history ?? [],
       parent_run_id: input.parentRunId || undefined,
       settings,
+      mode: input.mode,
     }),
   })
   return decodeLocalResponse<LocalRun>(response)

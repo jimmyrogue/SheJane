@@ -129,7 +129,21 @@ class ListRunsResponse(BaseModel):
 class CreateRunRequest(BaseModel):
     goal: str
     workspace_path: str | None = None
-    mode: str = "fast"
+    # Mode the user picked in the UI:
+    #   "auto" — daemon runs an LLM classifier first to pick fast/deep
+    #   "fast" — cheaper / lower-latency tier
+    #   "pro"  — higher-quality tier (better at multi-step reasoning).
+    #            Wire alias for the legacy "deep" name used internally by
+    #            the Go LLM router; the daemon maps pro→deep before
+    #            calling the cloud LLM gateway. The concrete model each
+    #            tier resolves to is owned by the Go model registry, not
+    #            this schema — don't hardcode provider/model names here.
+    # Default is "fast" (not "auto") so legacy callers — tests, manual
+    # curl, anything from before the auto-router shipped — get the cheap
+    # path without paying for an unexpected classifier call. The desktop
+    # UI always sends an explicit mode, so this default only ever fires
+    # for direct API consumers.
+    mode: Literal["auto", "fast", "pro", "deep"] = "fast"
     history: list[dict[str, str]] | None = None
     parent_run_id: str | None = None
     settings: dict[str, Any] | None = None

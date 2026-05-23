@@ -423,8 +423,9 @@ export interface components {
             /**
              * Mode
              * @default fast
+             * @enum {string}
              */
-            mode: string;
+            mode: "auto" | "fast" | "pro" | "deep";
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Settings */

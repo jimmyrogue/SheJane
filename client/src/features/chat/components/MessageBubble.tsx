@@ -143,6 +143,16 @@ export function MessageBubble({
               {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
             </button>
           ) : null}
+          {isAssistant && message.runMode ? (
+            <span
+              className="message-meta-mode"
+              title={message.runMode.reason || undefined}
+            >
+              {t('composer.mode.autoBadge', {
+                resolved: t(message.runMode.resolved === 'pro' ? 'composer.mode.pro' : 'composer.mode.fast'),
+              })}
+            </span>
+          ) : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
         </div>
       </div>

@@ -39,6 +39,8 @@ function Harness({
         onDetachDocument={vi.fn()}
         onSend={onSend}
         listSkills={listSkills}
+        mode="auto"
+        onModeChange={vi.fn()}
       />
     </I18nProvider>
   )

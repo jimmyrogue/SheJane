@@ -58,6 +58,12 @@
           },
           "mode": {
             "default": "fast",
+            "enum": [
+              "auto",
+              "fast",
+              "pro",
+              "deep"
+            ],
             "title": "Mode",
             "type": "string"
           },

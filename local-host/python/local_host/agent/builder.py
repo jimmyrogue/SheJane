@@ -66,6 +66,7 @@ from ..middleware import (
 )
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
+from .context_builder import RuntimeContext, build_default_context
 from .subagents import build_subagents
 
 log = logging.getLogger("local_host.agent.builder")
@@ -385,10 +386,23 @@ async def build_agent(
 
     memory_arg = _resolve_memory_sources(settings)
 
+    # Layer 20-55 of the prompt stack — developer instructions, active
+    # skills hint, runtime context. See context_builder.py for the full
+    # stack layout. Cloud-injected Layer 0+10 (identity, safety) gets
+    # prepended in api/internal/httpapi/agent_stream.go via
+    # InjectScenePrompt("agent_local", ...).
+    instructions = build_default_context(
+        RuntimeContext(
+            workspace_root=workspace_root,
+            enabled_skills=_active_skill_names(skills_arg),
+        )
+    )
+
     return create_deep_agent(
         model=model,
         tools=tools,
         middleware=middleware,
+        system_prompt=instructions,
         subagents=subagents_arg,
         skills=skills_arg,
         memory=memory_arg,
@@ -397,6 +411,23 @@ async def build_agent(
         checkpointer=checkpointer,
         store=agent_store,
     )
+
+
+def _active_skill_names(skills_arg: list[str] | None) -> list[str]:
+    """Best-effort: enumerate installed skill names from the skills
+    directory so the ContextBuilder can hint the model that they're
+    available. Empty list when skills are off / unresolved."""
+    if not skills_arg:
+        return []
+    names: list[str] = []
+    for path_str in skills_arg:
+        path = Path(path_str)
+        if not path.is_dir():
+            continue
+        for entry in sorted(path.iterdir()):
+            if entry.is_dir() and not entry.name.startswith("_"):
+                names.append(entry.name)
+    return names
 
 
 def _resolve_memory_sources(settings: Settings) -> list[str] | None:

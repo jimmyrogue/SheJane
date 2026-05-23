@@ -63,7 +63,9 @@ const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
 const agentSettingsStorageKey = 'jiandanly.agentSettings.v1'
+const chatModeStorageKey = 'jiandanly.chatMode.v1'
 const defaultAgentSettings: Required<AgentSettings> = { memory: 'off', skills: 'off' }
+const defaultChatMode: ChatMode = 'auto'
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
 const maxSidebarWidth = 340
@@ -152,6 +154,29 @@ function writeAgentSettings(settings: Required<AgentSettings>) {
   }
 }
 
+function readChatMode(): ChatMode {
+  if (typeof window === 'undefined') {
+    return defaultChatMode
+  }
+  try {
+    const raw = window.localStorage.getItem(chatModeStorageKey)
+    if (raw === 'fast' || raw === 'pro' || raw === 'auto') {
+      return raw
+    }
+  } catch {
+    // Local storage can be unavailable in restricted browser contexts.
+  }
+  return defaultChatMode
+}
+
+function writeChatMode(mode: ChatMode) {
+  try {
+    window.localStorage.setItem(chatModeStorageKey, mode)
+  } catch {
+    // Local storage can be unavailable in restricted browser contexts.
+  }
+}
+
 export function App() {
   return (
     <I18nProvider>
@@ -182,9 +207,13 @@ function AppContent() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
-  // Model selection is automatic: the local agent picks fast/deep via Phase 5
-  // dynamic routing. This fixed value is only the cloud fallback chat default.
-  const mode: ChatMode = 'fast'
+  // User-selected model mode (persisted in localStorage). 'auto' lets the
+  // daemon's classifier decide fast vs pro; 'fast' / 'pro' are explicit.
+  const [mode, setMode] = useState<ChatMode>(readChatMode)
+  function changeMode(next: ChatMode): void {
+    setMode(next)
+    writeChatMode(next)
+  }
   const [documents, setDocuments] = useState<UserDocument[]>([])
   const [attachedDocumentID, setAttachedDocumentID] = useState<string>()
   const [attachedPreview, setAttachedPreview] = useState<string>()
@@ -616,6 +645,7 @@ function AppContent() {
           history: deriveAgentHistory(priorMessages),
           parentRunId,
           settings: effectiveSettings,
+          mode,
         },
         localHostConfig,
       )
@@ -1336,6 +1366,8 @@ function AppContent() {
               onSend={() => void sendMessage()}
               onStop={() => void cancelActiveLocalRun()}
               listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
+              mode={mode}
+              onModeChange={changeMode}
               />
             </div>
           </section>
@@ -1399,6 +1431,14 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
     const output = Number(payload.output_tokens) || 0
     if (input > 0 || output > 0) {
       message.tokens = input + output
+    }
+  }
+  if (event.event_type === 'mode.selected') {
+    const payload = event.payload ?? {}
+    const resolved = payload.resolved_mode === 'pro' ? 'pro' : 'fast'
+    message.runMode = {
+      resolved,
+      reason: String(payload.reason ?? ''),
     }
   }
   const item = timelineItem(event, t)

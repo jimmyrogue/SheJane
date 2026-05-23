@@ -8,10 +8,12 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
+import { ModeSelector } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
 import type { InstalledSkill } from '@/shared/local-host/client'
+import type { ChatMode } from '@/shared/local-data/types'
 
 export function Composer({
   draft,
@@ -25,6 +27,8 @@ export function Composer({
   onSend,
   onStop,
   listSkills,
+  mode,
+  onModeChange,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -41,6 +45,8 @@ export function Composer({
    *  "send" while `isSending` is true. */
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
+  mode: ChatMode
+  onModeChange: (mode: ChatMode) => void
 }) {
   const { t } = useI18n()
 
@@ -229,6 +235,7 @@ export function Composer({
             <IconPaperclip size={16} aria-hidden="true" />
           )}
         </button>
+        <ModeSelector mode={mode} onChange={onModeChange} disabled={isSending} />
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests
             and screen readers can find it. */}
