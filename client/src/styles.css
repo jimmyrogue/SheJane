@@ -3132,9 +3132,11 @@ button:active {
   left: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 16px;
-  margin-top: 1px;
+  /* Tighter gap so the copy button and timestamp read as a single
+   * compact strip rather than two floating elements. */
+  gap: 2px;
+  height: 24px;
+  margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 11px;
   opacity: 0;
@@ -3164,26 +3166,48 @@ button:active {
   }
 }
 
+/* Meta icon buttons (copy, etc.) — ghost square with a subtle
+ * hover background. 24×24 hit area gives a comfortable click target
+ * even though the icon itself is small (13px). Consistent with the
+ * composer's `.composer-tool` button convention. */
 .message-meta-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  width: 24px;
+  height: 24px;
   padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .message-meta-action:hover {
-  color: var(--text-secondary);
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+
+.message-meta-action:active {
+  background: var(--surface-3, rgba(120, 120, 130, 0.18));
 }
 
 .message-meta-action:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--ring, var(--accent-danger-border));
+  outline-offset: 1px;
+}
+
+/* Timestamp text — pushed slightly inside the row with horizontal
+ * padding so it doesn't touch the adjacent icon. Tabular nums keeps
+ * the digits from jittering as the relative time updates. */
+.message-meta-time {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  line-height: 1;
 }
 
 

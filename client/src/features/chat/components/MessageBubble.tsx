@@ -140,7 +140,7 @@ export function MessageBubble({
               title={copied ? t('message.copied') : t('message.copy')}
               aria-label={copied ? t('message.copied') : t('message.copy')}
             >
-              {copied ? <IconCheck size={14} aria-hidden="true" /> : <IconCopy size={14} aria-hidden="true" />}
+              {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
             </button>
           ) : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
