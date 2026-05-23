@@ -2982,7 +2982,10 @@ button:active {
    * (max-width: 820px; margin: 0 auto) below. */
   max-width: none;
   margin: 0;
-  gap: 18px;
+  /* Reduced from 18 because each .message now carries 28px of its own
+   * padding-bottom to host the meta hover row. Total visual gap
+   * between bubbles ≈ 28 + 4 = 32px. */
+  gap: 4px;
   /* Top + bottom padding clear the 32px fade overlays on either end
    * (.chat-surface::before at the top, .composer::before at the
    * bottom). The bottom needs extra room because the .message-meta
@@ -3082,11 +3085,16 @@ button:active {
   }
 }
 
-/* Per-message footer: copy + relative time. Floated into the gap just below
-   the message (absolute → consumes no layout height, so no empty band when
-   idle and no reflow/jump on hover). Fades in on hover/focus. */
+/* Per-message footer: copy + relative time. Lives inside the
+ * .message's own padding-bottom — that way the meta sits visually
+ * below the bubble but inside the .message hit-region, so hovering
+ * the meta keeps the .message:hover state alive long enough to
+ * actually click the copy button. (Previously the meta was floated
+ * outside via `top: 100%` and disappeared the moment the cursor
+ * left the bubble.) */
 .message {
   position: relative;
+  padding-bottom: 28px;
 }
 
 /* Ephemeral "Thinking…" pill (DeepSeek `reasoning_content`, o1-style
@@ -3128,7 +3136,10 @@ button:active {
 
 .message-meta {
   position: absolute;
-  top: 100%;
+  /* Anchored to the bottom of .message's padding-bottom band (which
+   * is 28px tall), so the meta lives INSIDE the .message hit-region.
+   * Hover stays alive when the cursor moves down onto the meta itself. */
+  bottom: 0;
   left: 0;
   display: flex;
   align-items: center;
@@ -3136,7 +3147,6 @@ button:active {
    * compact strip rather than two floating elements. */
   gap: 2px;
   height: 24px;
-  margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 11px;
   opacity: 0;
@@ -3145,9 +3155,8 @@ button:active {
 }
 
 /* User messages right-align their bubble inside the 820px column,
- * so the hover meta row (copy button + timestamp) should anchor to
- * the right edge too. Right:0 inside the bubble's relative-positioned
- * container lines the meta up under the bubble's right edge. */
+ * so the hover meta row (copy button + timestamp) anchors to the
+ * right edge of the .message hit-region. */
 .message.user .message-meta {
   left: auto;
   right: 0;
