@@ -20,6 +20,7 @@ export type LocalArtifact = Schemas['LocalArtifact']
 export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
+export type CancelRunResponse = Schemas['CancelRunResponse']
 export type LocalPermissionScope = 'once' | 'run'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
@@ -249,6 +250,21 @@ export async function getLocalRunDiagnostics(
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<LocalRunDiagnostics>(response)
+}
+
+/** Stop a streaming run. Daemon will emit `run.canceled` on the SSE
+ *  channel, which the existing stream loop already handles. Idempotent:
+ *  re-calling on an already-completed run is a no-op (`canceled: false`). */
+export async function cancelLocalRun(
+  runID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<CancelRunResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/cancel`, {
+    method: 'POST',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<CancelRunResponse>(response)
 }
 
 export async function listAuthorizedWorkspaces(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalWorkspaceAuthorization[]> {

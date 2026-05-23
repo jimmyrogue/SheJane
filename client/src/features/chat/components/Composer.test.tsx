@@ -36,17 +36,10 @@ function Harness({
         isSending={false}
         documents={[]}
         isUploading={false}
-        localStatusLabel=""
-        canUseLocalWorkspace={false}
-        canPickWorkspace={false}
         onUploadDocument={vi.fn()}
         onAttachDocument={vi.fn()}
         onDeleteDocument={vi.fn()}
         onDetachDocument={vi.fn()}
-        onPickWorkspace={vi.fn().mockResolvedValue(undefined)}
-        onDiagnoseWorkspace={vi.fn()}
-        onAuthorizeWorkspace={vi.fn()}
-        onClearLocalProject={vi.fn()}
         onSend={onSend}
         listSkills={listSkills}
       />

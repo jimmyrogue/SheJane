@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   IconArrowUp,
   IconFileText,
-  IconFolderOpen,
   IconLoader2,
   IconPaperclip,
+  IconPlayerStopFilled,
   IconTrash,
   IconUpload,
   IconX,
@@ -18,11 +18,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { SkillEditor } from './SkillEditor'
-import { useI18n, type Translator, type Locale } from '@/shared/i18n/i18n'
+import { useI18n, type Locale } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
-import type { InstalledSkill, LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
+import type { InstalledSkill } from '@/shared/local-host/client'
 
 export function Composer({
   draft,
@@ -32,19 +31,12 @@ export function Composer({
   attachedDocumentID,
   attachedDocument,
   isUploading,
-  localStatusLabel,
-  canUseLocalWorkspace,
-  canPickWorkspace,
-  localProject,
   onUploadDocument,
   onAttachDocument,
   onDeleteDocument,
   onDetachDocument,
-  onPickWorkspace,
-  onDiagnoseWorkspace,
-  onAuthorizeWorkspace,
-  onClearLocalProject,
   onSend,
+  onStop,
   listSkills,
 }: {
   draft: string
@@ -54,83 +46,22 @@ export function Composer({
   attachedDocumentID?: string
   attachedDocument?: UserDocument
   isUploading: boolean
-  localStatusLabel: string
-  canUseLocalWorkspace: boolean
-  canPickWorkspace: boolean
-  localProject?: {
-    label: string
-    path: string
-    authorized: boolean
-  }
   onUploadDocument: (file?: File) => void
   onAttachDocument: (documentID: string) => void
   onDeleteDocument: (document: UserDocument) => void
   onDetachDocument: () => void
-  onPickWorkspace: () => Promise<string | undefined>
-  onDiagnoseWorkspace: (path: string) => Promise<LocalWorkspaceDiagnosis>
-  onAuthorizeWorkspace: (path: string) => Promise<LocalWorkspaceAuthorization>
-  onClearLocalProject: () => void
   onSend: () => void
+  /** Cancel the in-flight run. Shown as a "stop" button in place of
+   *  "send" while `isSending` is true. Optional — if not supplied, the
+   *  send button just stays disabled during streaming. */
+  onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
 }) {
   const { locale, t } = useI18n()
 
-  const hasChips = Boolean(attachedDocument || localProject)
+  const hasChips = Boolean(attachedDocument)
   const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false)
-  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
-  const [workspacePath, setWorkspacePath] = useState(localProject?.path ?? '')
-  const [workspaceStatus, setWorkspaceStatus] = useState('')
-  const [workspaceBusy, setWorkspaceBusy] = useState(false)
-
-  useEffect(() => {
-    if (workspaceDialogOpen) {
-      setWorkspacePath(localProject?.path ?? '')
-      setWorkspaceStatus('')
-    }
-  }, [localProject?.path, workspaceDialogOpen])
-
-  async function pickWorkspace() {
-    setWorkspaceStatus('')
-    const path = await onPickWorkspace()
-    if (path) {
-      setWorkspacePath(path)
-    }
-  }
-
-  async function diagnoseWorkspace() {
-    const path = workspacePath.trim()
-    if (!path) {
-      setWorkspaceStatus(t('composer.workspace.emptyPath'))
-      return
-    }
-    setWorkspaceBusy(true)
-    try {
-      const diagnosis = await onDiagnoseWorkspace(path)
-      setWorkspaceStatus(workspaceDiagnosisMessage(diagnosis, t))
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.diagnoseFailed'))
-    } finally {
-      setWorkspaceBusy(false)
-    }
-  }
-
-  async function authorizeWorkspace() {
-    const path = workspacePath.trim()
-    if (!path) {
-      setWorkspaceStatus(t('composer.workspace.emptyPath'))
-      return
-    }
-    setWorkspaceBusy(true)
-    try {
-      const workspace = await onAuthorizeWorkspace(path)
-      setWorkspaceStatus(t('composer.workspace.bound', { label: workspace.label }))
-      setWorkspaceDialogOpen(false)
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.authFailed'))
-    } finally {
-      setWorkspaceBusy(false)
-    }
-  }
+  const canStop = isSending && Boolean(onStop)
 
   return (
     <footer className="composer">
@@ -153,16 +84,6 @@ export function Composer({
               ) : null}
             </>
           ) : null}
-          {!attachedDocument && localProject ? (
-            <div className={`local-project-chip ${localProject.authorized ? '' : 'pending'}`}>
-              <IconFolderOpen size={15} />
-              <span>{t('composer.localProject', { label: localProject.label })}</span>
-              <small>{localProject.authorized ? t('composer.authorized') : t('composer.pendingAuth')} · {localProject.path}</small>
-              <Button size="icon-xs" variant="ghost" title={t('composer.removeWorkspace')} onClick={onClearLocalProject}>
-                <IconX size={14} />
-              </Button>
-            </div>
-          ) : null}
         </div>
       )}
       <div className="composer-input">
@@ -179,33 +100,39 @@ export function Composer({
           <Button
             type="button"
             variant="outline"
-            size="sm"
+            size="icon-sm"
+            className="composer-attach-button"
+            aria-label={t('composer.attachmentTitle')}
             title={t('composer.attachmentTitle')}
             onClick={() => setAttachmentDialogOpen(true)}
           >
-            <IconPaperclip data-icon="inline-start" />
-            {t('composer.attachmentButton')}
+            <IconPaperclip size={16} aria-hidden="true" />
             {documents.length > 0 ? <span className="button-count">{documents.length}</span> : null}
           </Button>
-          {!attachedDocument ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canUseLocalWorkspace}
-              title={canUseLocalWorkspace ? t('composer.workspaceTitle') : localStatusLabel}
-              onClick={() => setWorkspaceDialogOpen(true)}
-            >
-              <IconFolderOpen data-icon="inline-start" />
-              {t('composer.workspaceButton')}
-            </Button>
-          ) : null}
         </div>
         <span className="composer-kbd">⌘↵</span>
-        <Button className="send-button" aria-label={t('composer.send')} disabled={isSending || !draft.trim()} onClick={onSend}>
-          <IconArrowUp size={16} />
-          <span className="sr-only">{t('composer.send')}</span>
-        </Button>
+        {canStop ? (
+          <Button
+            className="send-button send-button-stop"
+            type="button"
+            aria-label={t('composer.stop')}
+            title={t('composer.stop')}
+            onClick={onStop}
+          >
+            <IconPlayerStopFilled size={14} aria-hidden="true" />
+            <span className="sr-only">{t('composer.stop')}</span>
+          </Button>
+        ) : (
+          <Button
+            className="send-button"
+            aria-label={t('composer.send')}
+            disabled={isSending || !draft.trim()}
+            onClick={onSend}
+          >
+            <IconArrowUp size={16} aria-hidden="true" />
+            <span className="sr-only">{t('composer.send')}</span>
+          </Button>
+        )}
       </div>
       <Dialog open={attachmentDialogOpen} onOpenChange={setAttachmentDialogOpen}>
         <DialogContent className="attachment-dialog sm:max-w-[560px]">
@@ -267,49 +194,6 @@ export function Composer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen}>
-        <DialogContent className="workspace-dialog sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>{t('composer.workspaceDialog.title')}</DialogTitle>
-            <DialogDescription>
-              {t('composer.workspaceDialog.description')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="workspace-dialog-body">
-            <label className="workspace-path-field">
-              <span>
-                <IconFolderOpen />
-                {t('composer.workspacePath')}
-              </span>
-              <div className="workspace-path-row">
-                <Input
-                  aria-label={t('composer.workspacePathLabel')}
-                  value={workspacePath}
-                  disabled={workspaceBusy}
-                  placeholder="/Users/you/project"
-                  onChange={(event) => setWorkspacePath(event.target.value)}
-                />
-                {canPickWorkspace ? (
-                  <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void pickWorkspace()}>
-                    {t('composer.pickFolder')}
-                  </Button>
-                ) : null}
-              </div>
-            </label>
-            <small className="workspace-dialog-note">
-              {workspaceStatus || (canUseLocalWorkspace ? t('composer.workspaceStatus', { status: localStatusLabel }) : t('composer.workspaceUnavailable', { status: localStatusLabel }))}
-            </small>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void diagnoseWorkspace()}>
-              {t('composer.diagnosePath')}
-            </Button>
-            <Button type="button" disabled={workspaceBusy || !canUseLocalWorkspace} onClick={() => void authorizeWorkspace()}>
-              {workspaceBusy ? t('composer.processing') : t('composer.authorizeBind')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </footer>
   )
 }
@@ -334,25 +218,4 @@ function formatDate(value: string, locale: Locale): string {
   } catch {
     return value
   }
-}
-
-function workspaceDiagnosisMessage(diagnosis: LocalWorkspaceDiagnosis, t: Translator): string {
-  if (diagnosis.authorized) {
-    return t('composer.workspace.pathAuthorized', { label: diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path) })
-  }
-  if (diagnosis.reason === 'not_found') {
-    return t('composer.workspace.notFound')
-  }
-  if (diagnosis.reason === 'not_directory') {
-    return t('composer.workspace.notDirectory')
-  }
-  return t('composer.workspace.notAuthorized')
-}
-
-function workspaceLabelFromPath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed) {
-    return ''
-  }
-  return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed
 }

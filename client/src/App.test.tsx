@@ -315,7 +315,9 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    await bindWorkspace('/tmp/jiandanly-workspace')
+    // (workspace binding removed — routing to the local harness no
+    // longer requires a bound workspace; UI entry was retired in
+    // feat/client-ui)
     typeComposer('运行本地检查')
     fireEvent.click(screen.getByText('发送'))
 
@@ -479,7 +481,11 @@ describe('user client shell', () => {
     expect(screen.getByText('artifact preview content')).toBeInTheDocument()
   })
 
-  it('authorizes a picked Electron workspace before creating local runs', async () => {
+  // SKIPPED: Composer workspace UI entry was removed in feat/client-ui.
+  // The daemon endpoints (POST /local/v1/workspaces, diagnose, picker)
+  // and conversation.workspace storage field are still wired — re-enable
+  // this test if/when the workspace picker UI returns.
+  it.skip('authorizes a picked Electron workspace before creating local runs', async () => {
     const calls = mockFetch('user')
     window.jiandanDesktop = {
       platform: 'darwin',
@@ -516,7 +522,9 @@ describe('user client shell', () => {
     })
   })
 
-  it('keeps workspace authorization in the composer dialog instead of the sidebar', async () => {
+  // SKIPPED: same reason as the picked-workspace test — Composer
+  // workspace dialog removed in feat/client-ui.
+  it.skip('keeps workspace authorization in the composer dialog instead of the sidebar', async () => {
     const calls = mockFetch('user', {
       workspaces: [{ id: 'workspace-1', path: '/tmp/project', label: 'project' }],
     })
@@ -622,7 +630,10 @@ describe('user client shell', () => {
     expect(await screen.findByText('已导出对话：你好')).toBeInTheDocument()
   })
 
-  it('stores workspace references per conversation', async () => {
+  // SKIPPED: drives the workspace via the Composer dialog, which was
+  // removed in feat/client-ui. The underlying per-conversation
+  // workspace persistence remains untouched.
+  it.skip('stores workspace references per conversation', async () => {
     const calls = mockFetch('user', {
       workspaces: [{ id: 'workspace-one', path: '/tmp/one', label: 'one' }],
     })

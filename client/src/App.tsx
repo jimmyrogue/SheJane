@@ -30,6 +30,7 @@ import { createLocalID, LocalConversationStore } from './shared/local-data/local
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
+  cancelLocalRun,
   createLocalRun,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -647,6 +648,35 @@ function AppContent() {
     }
   }
 
+  /** Stop whatever local run is currently streaming for the active
+   *  conversation. The daemon emits `run.canceled` on its SSE channel,
+   *  the existing stream loop finalizes the message, and the bubble
+   *  settles into its canceled state. No-op if nothing is in flight. */
+  async function cancelActiveLocalRun() {
+    if (!activeConversation || !localHostConfig) {
+      return
+    }
+    // Most-recent local assistant message that's still streaming or
+    // waiting for HITL — that's the in-flight run from the user's PoV.
+    const streamingMessage = [...activeConversation.messages]
+      .reverse()
+      .find(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.runOrigin === 'local' &&
+          Boolean(msg.runId) &&
+          (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
+      )
+    if (!streamingMessage?.runId) {
+      return
+    }
+    try {
+      await cancelLocalRun(streamingMessage.runId, localHostConfig)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
+    }
+  }
+
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
@@ -1227,14 +1257,6 @@ function AppContent() {
               attachedDocumentID={attachedDocumentID}
               attachedDocument={attachedDocument}
               isUploading={isUploading}
-              localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
-              canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
-              canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
-              localProject={
-                !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected
-                  ? localProject
-                  : undefined
-              }
               onUploadDocument={(file) => void uploadDocument(file)}
               onAttachDocument={setAttachedDocumentID}
               onDeleteDocument={(document) => void deleteDocument(document)}
@@ -1242,11 +1264,8 @@ function AppContent() {
                 setAttachedDocumentID(undefined)
                 setAttachedPreview(undefined)
               }}
-              onPickWorkspace={() => chooseWorkspaceDirectory()}
-              onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
-              onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
-              onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
               onSend={() => void sendMessage()}
+              onStop={() => void cancelActiveLocalRun()}
               listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
               />
             </div>

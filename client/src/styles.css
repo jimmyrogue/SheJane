@@ -3559,6 +3559,17 @@ button.agent-progress-summary:focus-visible {
   padding: 0 !important;
 }
 
+/* Stop variant — same footprint and weight as the send button so the
+ * swap is visually stable; uses the accent-danger token so it reads
+ * clearly as "interrupt". Only ever appears while streaming. */
+.send-button-stop {
+  background: var(--accent-danger-text) !important;
+  color: #FFFFFF !important;
+}
+.send-button-stop:hover {
+  filter: brightness(1.08);
+}
+
 .attachment-chip,
 .local-project-chip {
   border: 0.5px solid var(--border-hairline);
