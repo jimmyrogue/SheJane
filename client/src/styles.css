@@ -735,6 +735,10 @@ select {
   border-radius: 20px 20px 5px 20px;
   padding: 12px 16px 11px;
   box-shadow: var(--shadow-xs);
+  /* Pushes the bubble to the right of the 820px column (the parent
+   * .message.user is `display: flex; justify-content: flex-end`, so
+   * this auto-margin is what actually right-aligns the bubble inside
+   * the flex row). */
   margin-left: auto;
 }
 
@@ -1102,35 +1106,132 @@ select {
   color: var(--text-primary);
 }
 
-/* Per assistant turn: slowly spinning logo + elapsed time while thinking;
-   just the static logo once finished. */
-.thinking-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.thinking-logo {
-  width: 16px;
-  height: 16px;
+/* Number-key hint chip on each option — tells the user they can hit
+ * 1/2/3 to pick. Compact, dim, monospaced; mirrors the macOS keyboard-
+ * accelerator look. */
+.question-option-key {
   flex: 0 0 auto;
-  object-fit: contain;
-  opacity: 0.85;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  border-radius: 5px;
+  background: var(--surface-2, rgba(120, 120, 130, 0.10));
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.question-option[data-active='true'] .question-option-key {
+  background: var(--text-primary);
+  color: #FFFFFF;
 }
 
-.thinking-logo[data-active='true'] {
-  animation: progress-spin 3s linear infinite;
+/* ── Micro-motion ───────────────────────────────────────────────────
+ * Quiet, short-duration entry animations applied at mount time only.
+ * Avoid framer-motion-like libraries — these are CSS-only @keyframes so
+ * there's no JS overhead and exit animations are intentionally absent
+ * (unmounting elements just leave; chat surfaces don't need them).
+ * Every rule below sits behind `prefers-reduced-motion: reduce` so the
+ * OS preference disables motion globally. */
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.view-transition {
+  /* Block-level grid item: occupies the .app-shell's second column
+   * exactly the same way the bare `.workspace` / SkillsView used to.
+   * Explicit height: 100% + min-height: 0 lets nested grid children
+   * (notably .workspace's `grid-template-rows: auto minmax(0, 1fr)
+   * auto auto`) still resolve their middle row. */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: view-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.view-transition > .workspace {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
-.thinking-time {
-  font-variant-numeric: tabular-nums;
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.message {
+  animation: message-enter 180ms ease-out;
+}
+
+@keyframes bar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.approval-bar,
+.question-bar {
+  animation: bar-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thinking-logo[data-active='true'] {
+  .view-transition,
+  .message,
+  .approval-bar,
+  .question-bar {
     animation: none;
+  }
+}
+
+/* Ambient "thinking" indicator below the latest assistant message —
+ * left-aligned, single warm-tinted icon that scales/fades in a slow
+ * pulse. Replaces the older logo + elapsed-time chip. */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 4px 0;
+  color: var(--accent-warning);
+}
+
+.thinking-pulse {
+  animation: thinking-pulse 1.6s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% {
+    transform: scale(0.82);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-pulse {
+    animation: none;
+    opacity: 0.8;
   }
 }
 
@@ -1510,6 +1611,14 @@ select {
   line-height: 1.55;
   pointer-events: none;
   user-select: none;
+}
+
+/* When an attachment chip occupies the top of the composer-input, the
+ * placeholder needs to drop below it instead of overlapping. 56 (thumb
+ * height) + 10 (chip top padding) + 9 (editor padding-top in the
+ * single-line composer) ≈ first text line position. */
+.composer-input:has(.composer-chips) .composer-editor-ph {
+  top: 75px;
 }
 
 .skill-chip--inline {
@@ -2802,6 +2911,52 @@ button:active {
   font-weight: 400;
 }
 
+/* Right-aligned status group on the topbar: daemon-online dot +
+ * credits chip. Pushes itself to the trailing edge via margin-left:
+ * auto; the title takes whatever room is left. */
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.topbar-daemon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-warning);
+  flex: 0 0 auto;
+}
+.topbar-daemon-dot.is-online {
+  background: #4ea05a;
+  box-shadow: 0 0 0 2px rgba(78, 160, 90, 0.18);
+}
+.topbar-daemon-dot.is-offline {
+  background: var(--accent-danger);
+  box-shadow: 0 0 0 2px var(--accent-danger-bg);
+}
+/* Status banner — drops in between topbar and chat-surface when
+ * something's wrong at the system level (daemon offline, credits
+ * exhausted, etc). Single-line, soft warning palette, dismisses
+ * itself when the underlying condition clears (no close button). */
+.status-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 22px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-bottom: 0.5px solid var(--border-hairline);
+}
+.status-banner-warning {
+  background: var(--accent-warning-bg);
+  color: var(--accent-warning-text);
+}
+.status-banner-text {
+  text-align: center;
+}
+
 .account {
   gap: 8px;
   color: var(--text-secondary);
@@ -2936,19 +3091,61 @@ button:active {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-surface);
-  padding: 20px 22px;
+  /* No padding at all — .messages owns its own horizontal padding and
+   * the top/bottom fades (.chat-surface::before + .composer::before)
+   * overlay actual content. Letting .messages span edge-to-edge lets
+   * its scrollbar sit flush against the chat-surface right edge. */
+  padding: 0;
+  position: relative;
+}
+
+/* Top fade — symmetric counterpart to .composer::before. Messages
+ * scrolling up under the topbar fade out instead of meeting a hard
+ * padding edge. Sits above .messages content; pointer-events none so
+ * the user can still click links / select text underneath. */
+.chat-surface::before {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(to bottom, var(--bg-surface, #FFFFFF), transparent);
 }
 
 .messages {
   width: 100%;
+  /* .messages spans the full chat-surface so its scrollbar pins to the
+   * right edge. `scrollbar-gutter: stable both-edges` reserves
+   * scrollbar-width space on BOTH inline edges (the scrollbar still
+   * appears only on the right, but the centring point of children
+   * isn't shifted by the asymmetric gutter). Without this, the
+   * message column would sit ~7px left of the composer (which has no
+   * scrollbar) and small bits of the leftmost text could leak past
+   * the chat-surface fade overlays. */
   max-width: none;
-  gap: 18px;
   margin: 0;
-  padding: 0 4px 24px 0;
+  scrollbar-gutter: stable both-edges;
+  /* Each bubble gets ~32px to the next — the meta row (24px) sits
+   * inside this gap by floating below each bubble, so the visual
+   * "next bubble" doesn't appear until past the meta. */
+  gap: 32px;
+  /* Symmetric horizontal padding so the centred 760px column is
+   * genuinely centred (no left-bias). Vertical padding clears the
+   * 32px fade overlays on either end (.chat-surface::before at top,
+   * .composer::before at bottom). Bottom gets extra slack so the
+   * last bubble's meta row clears the composer fade. */
+  padding: 36px 22px 60px;
 }
 
+/* Block by default. .message.user reverts to flex (right-aligned
+ * bubble within the column) via the earlier rule near line 726;
+ * do NOT include `.message.user` in this selector or that flex
+ * behaviour will be clobbered. */
 .message,
-.message.user,
 .message.assistant {
   display: block;
   gap: 0;
@@ -2958,13 +3155,28 @@ button:active {
 .message-bubble-inner,
 .message.user .message-bubble-inner,
 .message.assistant .message-bubble-inner {
-  max-width: min(820px, 100%);
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  margin: 0;
   padding: 0;
+}
+
+/* Each row in the chat — message or ambient indicator — sits in a
+ * 760px-wide column CENTERED inside the full-width .messages
+ * container. (760 chosen to match ChatGPT/Claude conventions and
+ * leave enough side-margin on a 1000–1200 viewport that the column
+ * reads as genuinely centred rather than edge-pinned.) The .messages
+ * container itself spans edge-to-edge so its scrollbar pins to the
+ * chat-surface right edge; centring happens per-row via auto
+ * horizontal margins. Inside the column the user bubble right-aligns
+ * and the thinking pulse left-aligns. */
+.message,
+.thinking-indicator {
+  width: 100%;
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .message .message-content {
@@ -3021,53 +3233,49 @@ button:active {
   }
 }
 
-/* Per-message footer: copy + relative time. Floated into the gap just below
-   the message (absolute → consumes no layout height, so no empty band when
-   idle and no reflow/jump on hover). Fades in on hover/focus. */
+/* Per-message footer: copy + relative time. Floated below the bubble
+ * via `top: 100%`; the meta itself stays `pointer-events: auto` even
+ * when invisible (see .message-meta), so hovering it directly keeps
+ * the row showing even after the cursor leaves the bubble. */
 .message {
   position: relative;
 }
 
-/* Thinking-mode trace (DeepSeek `reasoning_content`, o1-style CoT).
- * Sits above the assistant message bubble as a quiet, monochrome,
- * collapsible block — visible but visually demoted so the actual
- * answer still leads. */
-.message-reasoning {
-  margin-bottom: 8px;
-  border-radius: 8px;
-  background: var(--surface-2, rgba(120, 120, 130, 0.06));
-  border: 1px solid var(--border-subtle, rgba(120, 120, 130, 0.12));
-  font-size: 12.5px;
-  color: var(--text-muted, #6b6b78);
-}
-.message-reasoning > .message-reasoning-summary {
-  cursor: pointer;
-  user-select: none;
-  padding: 6px 10px;
-  list-style: none;
-  display: flex;
+/* Ephemeral "Thinking…" pill (DeepSeek `reasoning_content`, o1-style
+ * CoT). Shown only while the assistant message is streaming and the
+ * model has emitted reasoning tokens. The reasoning content itself is
+ * NEVER rendered — only this lightweight pill is. Unmounts
+ * automatically when streaming ends.
+ *
+ * Distinct from `.thinking-indicator` (the per-conversation logo +
+ * elapsed-time + token-count indicator in ThinkingIndicator.tsx). */
+.message-reasoning-pill {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-weight: 500;
+  margin-bottom: 6px;
+  padding: 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
   letter-spacing: 0.01em;
 }
-.message-reasoning > .message-reasoning-summary::-webkit-details-marker {
-  display: none;
+.message-reasoning-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: reasoning-dot 1.2s ease-in-out infinite;
 }
-.message-reasoning > .message-reasoning-summary::before {
-  content: '▸';
-  font-size: 10px;
-  transition: transform 120ms ease;
+@keyframes reasoning-dot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
-.message-reasoning[open] > .message-reasoning-summary::before {
-  transform: rotate(90deg);
-}
-.message-reasoning > .message-reasoning-body {
-  padding: 4px 12px 10px;
-  border-top: 1px solid var(--border-subtle, rgba(120, 120, 130, 0.10));
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  line-height: 1.55;
+@media (prefers-reduced-motion: reduce) {
+  .message-reasoning-dot {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 .message-meta {
@@ -3076,20 +3284,43 @@ button:active {
   left: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 16px;
-  margin-top: 1px;
+  /* Tighter gap so the copy button and timestamp read as a single
+   * compact strip rather than two floating elements. */
+  gap: 2px;
+  height: 24px;
+  margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 11px;
   opacity: 0;
-  pointer-events: none;
+  /* IMPORTANT: keep pointer-events `auto` even when invisible. That
+   * way the meta itself catches the cursor as it moves down from the
+   * bubble to the copy button — if it were `none`, the bubble's
+   * :hover would drop the instant the cursor left the bubble border
+   * and the meta would flicker out before it could be clicked. The
+   * downside (meta hit-targetable when invisible) is a small price:
+   * a stray click registers on the copy button only, which is
+   * idempotent and unobtrusive. */
+  pointer-events: auto;
   transition: opacity 120ms ease;
 }
 
+/* User messages right-align their bubble inside the 820px column,
+ * so the hover meta row (copy button + timestamp) anchors to the
+ * right edge of the .message hit-region. */
+.message.user .message-meta {
+  left: auto;
+  right: 0;
+  flex-direction: row-reverse;
+}
+
+/* Show the meta when hovering EITHER the bubble OR the meta itself.
+ * `.message-meta:hover` works because pointer-events stays `auto`
+ * above. This way moving from the bubble down to the copy button
+ * keeps the meta visible throughout. */
 .message:hover .message-meta,
-.message:focus-within .message-meta {
+.message:focus-within .message-meta,
+.message-meta:hover {
   opacity: 1;
-  pointer-events: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3098,26 +3329,48 @@ button:active {
   }
 }
 
+/* Meta icon buttons (copy, etc.) — ghost square with a subtle
+ * hover background. 24×24 hit area gives a comfortable click target
+ * even though the icon itself is small (13px). Consistent with the
+ * composer's `.composer-tool` button convention. */
 .message-meta-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  width: 24px;
+  height: 24px;
   padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .message-meta-action:hover {
-  color: var(--text-secondary);
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+
+.message-meta-action:active {
+  background: var(--surface-3, rgba(120, 120, 130, 0.18));
 }
 
 .message-meta-action:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--ring, var(--accent-danger-border));
+  outline-offset: 1px;
+}
+
+/* Timestamp text — pushed slightly inside the row with horizontal
+ * padding so it doesn't touch the adjacent icon. Tabular nums keeps
+ * the digits from jittering as the relative time updates. */
+.message-meta-time {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  line-height: 1;
 }
 
 
@@ -3454,16 +3707,38 @@ button.agent-progress-summary:focus-visible {
 }
 
 .composer {
-  margin: 0 18px 16px;
-  align-self: stretch;
+  /* Match the message column's max-width so the composer sits directly
+   * under the conversation content instead of stretching edge-to-edge.
+   * `align-self: center` overrides any flex stretch from .composer-dock /
+   * .workspace. No horizontal padding here so the ::before fade (and
+   * the input frame itself) span the full composer width. */
+  width: calc(100% - 36px);
+  max-width: 760px;
+  margin: 0 auto 16px;
+  align-self: center;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  position: relative;
 }
 
+/* Gradient fade above the composer: the bottom 32px of the chat
+ * surface fade out so messages scrolling up don't collide with a hard
+ * padding edge. The fade colour matches .chat-surface's background
+ * (--bg-surface, white) — the fade sits inside the chat-surface
+ * region visually, so anything else would create a colour seam.
+ * Pure visual; pointer-events none. */
 .composer::before {
-  display: none;
+  content: '';
+  display: block;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  height: 32px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--bg-surface, #FFFFFF), transparent);
 }
 
 .composer > .composer-input,
@@ -3473,27 +3748,125 @@ button.agent-progress-summary:focus-visible {
   max-width: none;
 }
 
+/* Chips now live INSIDE the composer-input white container, sitting
+ * above the editor. Provide top + horizontal padding here; the editor
+ * below contributes its own padding-top so there's a natural gap
+ * between the thumbnail and the typed text. */
 .composer-chips {
-  padding: 0 0 6px;
+  padding: 10px 12px 0;
 }
 
-.composer-input {
+/* Compact thumbnail tile shown above the composer for the attached
+ * document. Images use their data: URL as the tile background; other
+ * file types fall back to a generic file icon on a tinted background.
+ * Filename / size / status are intentionally hidden — file name lives
+ * on the `title` attribute (browser tooltip on long hover), the remove
+ * button only appears on hover/focus. */
+.attachment-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
   border: 0.5px solid var(--border-strong);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--bg-elevated, #FFFFFF);
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.attachment-thumb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.attachment-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  background: var(--surface-2, rgba(120, 120, 130, 0.06));
+}
+.attachment-thumb-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
+}
+.attachment-thumb-spin {
+  animation: reasoning-dot 1.2s linear infinite;
+}
+.attachment-thumb.status-failed {
+  border-color: var(--accent-danger-border);
+}
+.attachment-thumb.status-failed::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(184, 113, 108, 0.18);
+}
+/* Remove button — absolute, hidden by default, faded in on hover/focus
+ * of the tile. Keyboard-focusable so it's reachable without a mouse. */
+.attachment-thumb-remove {
+  position: absolute !important;
+  top: 2px !important;
+  right: 2px !important;
+  width: 16px !important;
+  min-width: 16px !important;
+  height: 16px !important;
+  min-height: 16px !important;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  background: rgba(0, 0, 0, 0.62) !important;
+  color: #FFFFFF !important;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.attachment-thumb:hover .attachment-thumb-remove,
+.attachment-thumb:focus-within .attachment-thumb-remove,
+.attachment-thumb-remove:focus-visible {
+  opacity: 1;
+}
+.attachment-thumb-remove:hover {
+  background: rgba(0, 0, 0, 0.78) !important;
+}
+
+/* Input frame — a self-contained pill: full rounded border, white
+ * background, padding-right reserves space for the absolutely-positioned
+ * send button so typed text never slides under it. */
+.composer-input {
+  position: relative;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
   background: #FFFFFF;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* Drag-and-drop visual — when a file is being dragged over the
+ * composer, the input frame highlights so the user knows "drop here".
+ * The handlers in Composer.tsx track depth so the highlight doesn't
+ * flicker as the cursor crosses inner child boundaries. */
+.composer-dragging .composer-input {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 3px var(--surface-2, rgba(120, 120, 130, 0.16));
 }
 
 .composer textarea,
 .composer-editor {
-  min-height: 70px;
+  min-height: 28px;
+  max-height: 240px;
   border: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--radius-lg);
   background: transparent;
   color: var(--text-primary);
-  padding: 12px 12px 4px;
+  /* Right padding leaves room for the absolutely-positioned send button. */
+  padding: 9px 44px 9px 14px;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.5;
   resize: none;
 }
 
@@ -3502,23 +3875,95 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* Placeholder default position when the editor is empty + no chip. */
+.composer-editor-ph {
+  top: 9px;
+  left: 14px;
+}
+
+/* Send / stop button — sits at the bottom-right of the input frame.
+ * Ghost style (no fill, hover-darken background) per the project's
+ * UI convention: every composer button is borderless and gains a
+ * subtle bg on hover. Stop variant tints the icon red so the
+ * destructive intent reads even without a fill. */
+.composer-send {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.composer-send:hover:not(:disabled) {
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+.composer-send:focus-visible {
+  outline: 2px solid var(--ring, var(--accent-danger-border));
+  outline-offset: 2px;
+}
+.composer-send:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.composer-send-stop {
+  color: var(--accent-danger);
+}
+.composer-send-stop:hover {
+  background: var(--accent-danger-bg, rgba(184, 113, 108, 0.12));
+  color: var(--accent-danger-text);
+}
+
+/* Toolbar row below the input — borderless, transparent. Lives outside
+ * the input frame so buttons feel like floating tools, not part of the
+ * input. */
 .composer-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  border: 0.5px solid var(--border-strong);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  background: #FFFFFF;
-  padding: 6px 10px 10px;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 6px 4px 0;
 }
 
-.composer-controls {
-  gap: 8px;
+/* Ghost icon button — no border, no background; on hover the bg
+ * darkens to give feedback. Used for any tool below the composer
+ * input. Adding a new tool? Just give it this class. */
+.composer-tool {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.composer-tool:hover:not(:disabled) {
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+.composer-tool:focus-visible {
+  outline: 2px solid var(--ring, var(--accent-danger-border));
+  outline-offset: 2px;
+}
+.composer-tool:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-.btn-chip,
-.composer-controls [data-slot="button"] {
+.btn-chip {
   min-height: 28px;
   border: 0.5px solid var(--border-hairline);
   border-radius: var(--radius-sm);
@@ -3529,12 +3974,6 @@ button.agent-progress-summary:focus-visible {
   font-weight: 400;
 }
 
-.composer-controls [data-variant="default"] {
-  border-color: var(--border-strong);
-  background: var(--text-primary);
-  color: #FFFFFF;
-}
-
 .segmented {
   display: inline-flex;
   width: fit-content;
@@ -3543,25 +3982,6 @@ button.agent-progress-summary:focus-visible {
   overflow: visible;
   border: 0;
   border-radius: 0;
-}
-
-.composer-kbd {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-.send-button {
-  display: inline-grid !important;
-  width: 26px !important;
-  min-width: 26px !important;
-  height: 26px !important;
-  min-height: 26px !important;
-  place-items: center !important;
-  border-radius: var(--radius-sm) !important;
-  background: var(--text-primary) !important;
-  color: #FFFFFF !important;
-  padding: 0 !important;
 }
 
 .attachment-chip,

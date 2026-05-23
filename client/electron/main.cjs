@@ -1,4 +1,15 @@
-const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron')
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  session,
+  shell,
+  Tray,
+} = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
@@ -16,6 +27,11 @@ function readDockLocale() {
 }
 const appName = readDockLocale() === 'en' ? 'SheJane' : '石间'
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
+
+/** Module-scope references so tray/menu/notification handlers can find
+ *  the main window without searching every time. */
+let mainWindow = null
+let tray = null
 
 function createWindow() {
   const windowOptions = {
@@ -41,10 +57,28 @@ function createWindow() {
   }
 
   const window = new BrowserWindow(windowOptions)
+  mainWindow = window
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // Close-to-tray: clicking the red traffic light (or Cmd+W) hides
+  // the window instead of quitting, so the app keeps running in the
+  // tray. Real quit only happens when the user explicitly chooses Quit
+  // from the tray menu (which sets app.isQuitting).
+  window.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault()
+      window.hide()
+    }
+  })
+
+  window.on('closed', () => {
+    if (mainWindow === window) {
+      mainWindow = null
+    }
   })
 
   if (isDev) {
@@ -52,6 +86,54 @@ function createWindow() {
   } else {
     window.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+}
+
+function showOrCreateMainWindow() {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore()
+    }
+    mainWindow.show()
+    mainWindow.focus()
+    return
+  }
+  createWindow()
+}
+
+function createTray() {
+  const trayIcon = nativeImage.createFromPath(appIconPath).resize({ width: 18, height: 18 })
+  if (process.platform === 'darwin') {
+    trayIcon.setTemplateImage(true)
+  }
+  tray = new Tray(trayIcon)
+  tray.setToolTip(appName)
+  const locale = readDockLocale()
+  const labels =
+    locale === 'en'
+      ? { show: 'Show', newChat: 'New Chat', quit: 'Quit' }
+      : { show: '显示主窗口', newChat: '新建对话', quit: '退出' }
+  const menu = Menu.buildFromTemplate([
+    {
+      label: labels.show,
+      click: () => showOrCreateMainWindow(),
+    },
+    {
+      label: labels.newChat,
+      accelerator: process.platform === 'darwin' ? 'Cmd+N' : 'Ctrl+N',
+      click: () => {
+        showOrCreateMainWindow()
+        if (mainWindow) {
+          mainWindow.webContents.send('jiandanly:new-chat')
+        }
+      },
+    },
+    { type: 'separator' },
+    { label: labels.quit, role: 'quit' },
+  ])
+  tray.setContextMenu(menu)
+  // Single click on the tray icon: bring the window forward. Right-click
+  // shows the context menu on its own (platform-default).
+  tray.on('click', () => showOrCreateMainWindow())
 }
 
 app.setName(appName)
@@ -80,6 +162,14 @@ app.whenReady().then(() => {
   }
   registerAuthHandlers()
   createWindow()
+  createTray()
+})
+
+// Marker that "real quit" was requested (vs. window-close). The close
+// handler on the main window checks this flag to decide whether to hide
+// to tray or actually let the close go through.
+app.on('before-quit', () => {
+  app.isQuitting = true
 })
 
 ipcMain.handle('jiandanly:set-locale', async (_event, locale) => {
@@ -91,6 +181,27 @@ ipcMain.handle('jiandanly:set-locale', async (_event, locale) => {
     // Best-effort: if disk write fails, dock label simply won't update next launch.
   }
   return normalized
+})
+
+/** Surface a native OS notification. Returns `false` when the main
+ *  window is currently focused — in that case the user can already see
+ *  whatever just happened, so adding a notification on top is noise.
+ *  Clicking the notification brings the main window forward. */
+ipcMain.handle('jiandanly:notify', async (_event, payload) => {
+  if (!Notification.isSupported()) {
+    return false
+  }
+  const title = typeof payload?.title === 'string' ? payload.title : appName
+  const body = typeof payload?.body === 'string' ? payload.body : ''
+  if (mainWindow && mainWindow.isFocused() && mainWindow.isVisible()) {
+    return false
+  }
+  const notification = new Notification({ title, body, silent: false })
+  notification.on('click', () => {
+    showOrCreateMainWindow()
+  })
+  notification.show()
+  return true
 })
 
 ipcMain.handle('jiandanly:select-workspace-directory', async () => {
@@ -107,13 +218,12 @@ ipcMain.handle('jiandanly:select-workspace-directory', async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // Intentionally do NOT app.quit() here — the tray keeps the app
+  // alive across all OSes after the user "closes" the window. Real
+  // quit is via the tray menu's Quit item (role: 'quit'), which
+  // bypasses the close-to-tray guard via the before-quit flag.
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow()
-  }
+  showOrCreateMainWindow()
 })

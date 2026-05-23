@@ -19,4 +19,12 @@ contextBridge.exposeInMainWorld('jiandanDesktop', {
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('jiandanly:select-workspace-directory'),
   setLocale: (locale) => ipcRenderer.invoke('jiandanly:set-locale', locale),
+  notify: (payload) => ipcRenderer.invoke('jiandanly:notify', payload),
+  /** Subscribe to the tray's "New Chat" action. Returns an unsubscribe
+   *  fn so React effects can clean up properly. */
+  onNewChatRequest: (handler) => {
+    const wrapped = () => handler()
+    ipcRenderer.on('jiandanly:new-chat', wrapped)
+    return () => ipcRenderer.removeListener('jiandanly:new-chat', wrapped)
+  },
 })

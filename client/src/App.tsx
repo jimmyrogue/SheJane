@@ -30,6 +30,7 @@ import { createLocalID, LocalConversationStore } from './shared/local-data/local
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
+  cancelLocalRun,
   createLocalRun,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -222,6 +223,43 @@ function AppContent() {
   useEffect(() => {
     writeSidebarCollapsed(sidebarCollapsed)
   }, [sidebarCollapsed])
+
+  /** Global Cmd/Ctrl+N → start a fresh conversation. Bypasses the
+   *  OS-level "new window" intent because in this app it's a chat
+   *  shell, not a browser. setState fns are stable across renders so
+   *  the closure here stays correct without deps. */
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const mod = event.metaKey || event.ctrlKey
+      if (!mod || event.shiftKey || event.altKey) {
+        return
+      }
+      if (event.key !== 'n' && event.key !== 'N') {
+        return
+      }
+      event.preventDefault()
+      navigationVersionRef.current += 1
+      setActiveConversationID(undefined)
+      setPendingWorkspace(undefined)
+      setDraft('')
+      setMainView('chat')
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  /** Listen for the tray's "New Chat" menu item — the main process
+   *  sends `jiandanly:new-chat` after bringing the window forward. */
+  useEffect(() => {
+    const unsubscribe = window.jiandanDesktop?.onNewChatRequest?.(() => {
+      navigationVersionRef.current += 1
+      setActiveConversationID(undefined)
+      setPendingWorkspace(undefined)
+      setDraft('')
+      setMainView('chat')
+    })
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     if (!isResizingSidebar) {
@@ -597,6 +635,12 @@ function AppContent() {
       })
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, context)
+      // OS-level notification when the user has switched away — the
+      // main process suppresses it if the window is still focused, so
+      // we can call unconditionally on every completion.
+      if (assistantMessage.status === 'done') {
+        notifyAgentCompleted(assistantMessage, t)
+      }
     } catch (error) {
       assistantMessage.status = 'error'
       assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
@@ -647,6 +691,35 @@ function AppContent() {
     }
   }
 
+  /** Stop whatever local run is currently streaming for the active
+   *  conversation. The daemon emits `run.canceled` on its SSE channel,
+   *  the existing stream loop finalizes the message, and the bubble
+   *  settles into its canceled state. No-op if nothing is in flight. */
+  async function cancelActiveLocalRun() {
+    if (!activeConversation || !localHostConfig) {
+      return
+    }
+    // Most-recent local assistant message that's still streaming or
+    // waiting for HITL — that's the in-flight run from the user's PoV.
+    const streamingMessage = [...activeConversation.messages]
+      .reverse()
+      .find(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.runOrigin === 'local' &&
+          Boolean(msg.runId) &&
+          (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
+      )
+    if (!streamingMessage?.runId) {
+      return
+    }
+    try {
+      await cancelLocalRun(streamingMessage.runId, localHostConfig)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
+    }
+  }
+
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
@@ -669,6 +742,15 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
+      // Decision-acknowledgement toast so the user sees their click landed —
+      // the bar disappears the moment the resume stream starts, otherwise
+      // there's no feedback at all.
+      toast.success(
+        decision === 'approve'
+          ? t(scope === 'run' ? 'app.notice.permissionRunApproved' : 'app.notice.permissionApproved')
+          : t('app.notice.permissionDenied'),
+        { id: 'permission-decision', duration: 2000 },
+      )
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)
@@ -714,6 +796,7 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await answerLocalQuestion(requestID, answers, localHostConfig)
+      toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)
@@ -1162,6 +1245,9 @@ function AppContent() {
             onPointerDown={beginSidebarResize}
           />
 
+          {/* `key={mainView}` remounts this wrapper on view change so the
+              `.view-transition` enter animation fires on every switch. */}
+          <div className="view-transition" key={mainView}>
           {mainView === 'skills' ? (
             <SkillsView
               searchRegistry={(searchQuery) =>
@@ -1196,7 +1282,23 @@ function AppContent() {
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
               </div>
+              <div className="topbar-status">
+                <span
+                  className={`topbar-daemon-dot${localHost?.online ? ' is-online' : ' is-offline'}`}
+                  title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                  aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                />
+              </div>
             </header>
+            {!localHost?.online ? (
+              <div className="status-banner status-banner-warning" role="status">
+                <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>
+              </div>
+            ) : balance && totalCredits(balance) <= 0 ? (
+              <div className="status-banner status-banner-warning" role="status">
+                <span className="status-banner-text">{t('topbar.bannerCreditsEmpty')}</span>
+              </div>
+            ) : null}
 
             <ChatThread
               conversation={activeConversation}
@@ -1223,35 +1325,22 @@ function AppContent() {
               draft={draft}
               onDraftChange={setDraft}
               isSending={isSending}
-              documents={documents}
-              attachedDocumentID={attachedDocumentID}
               attachedDocument={attachedDocument}
+              attachedPreview={attachedPreview}
               isUploading={isUploading}
-              localStatusLabel={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
-              canUseLocalWorkspace={Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)}
-              canPickWorkspace={Boolean(window.jiandanDesktop?.selectWorkspaceDirectory)}
-              localProject={
-                !attachedDocument && localHost?.online && localHostConfig?.token && localCloudSession?.connected
-                  ? localProject
-                  : undefined
-              }
               onUploadDocument={(file) => void uploadDocument(file)}
-              onAttachDocument={setAttachedDocumentID}
-              onDeleteDocument={(document) => void deleteDocument(document)}
               onDetachDocument={() => {
                 setAttachedDocumentID(undefined)
                 setAttachedPreview(undefined)
               }}
-              onPickWorkspace={() => chooseWorkspaceDirectory()}
-              onDiagnoseWorkspace={(path) => diagnoseWorkspace(path)}
-              onAuthorizeWorkspace={(path) => authorizeWorkspace(path)}
-              onClearLocalProject={() => void saveActiveConversationWorkspace(undefined)}
               onSend={() => void sendMessage()}
+              onStop={() => void cancelActiveLocalRun()}
               listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
               />
             </div>
           </section>
           )}
+          </div>
         </div>
       </main>
     </TooltipProvider>
@@ -1281,9 +1370,12 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
     return
   }
   // Accumulate DeepSeek-style thinking-mode `reasoning_content` into a
-  // dedicated `message.reasoning` field so MessageBubble can render it
-  // in a collapsible section above the answer. We dedupe on event.id
-  // so a re-streamed replay doesn't double-append.
+  // dedicated `message.reasoning` field. This is kept ONLY for backend
+  // round-trip (DeepSeek API requires reasoning_content to be passed
+  // back on subsequent calls). The UI never renders the reasoning text
+  // itself — MessageBubble only uses (reasoning != null && streaming)
+  // to show an ephemeral "Thinking…" indicator above the bubble.
+  // Dedupe on event.id so a re-streamed replay doesn't double-append.
   if (event.event_type === 'llm.reasoning') {
     if (event.id && seenEventIDs.has(event.id)) {
       return
@@ -1334,6 +1426,27 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
     seenEventIDs.add(event.id)
   }
   message.content += delta
+}
+
+function totalCredits(balance: WalletBalance): number {
+  return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
+}
+
+/** Fire a system notification when an assistant turn finishes. The
+ *  Electron main process internally drops the call when the window is
+ *  focused, so this is safe to call on every completion. We trim the
+ *  body so the OS doesn't have to deal with a multi-screen reply. */
+function notifyAgentCompleted(message: ChatMessage, t: Translator): void {
+  const bridge = window.jiandanDesktop
+  if (!bridge?.notify) {
+    return
+  }
+  const raw = (message.content || '').trim().replace(/\s+/g, ' ')
+  const body = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw
+  void bridge.notify({
+    title: t('notify.agentCompleted.title'),
+    body: body || t('notify.agentCompleted.empty'),
+  })
 }
 
 function finalizeLocalRunStatus(message: ChatMessage) {

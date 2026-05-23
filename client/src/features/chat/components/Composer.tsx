@@ -1,171 +1,182 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  IconArrowUp,
+  IconCornerDownLeft,
   IconFileText,
-  IconFolderOpen,
   IconLoader2,
   IconPaperclip,
-  IconTrash,
-  IconUpload,
+  IconPlayerStopFilled,
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { SkillEditor } from './SkillEditor'
-import { useI18n, type Translator, type Locale } from '@/shared/i18n/i18n'
+import { useI18n } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
-import type { InstalledSkill, LocalWorkspaceAuthorization, LocalWorkspaceDiagnosis } from '@/shared/local-host/client'
+import type { InstalledSkill } from '@/shared/local-host/client'
 
 export function Composer({
   draft,
   onDraftChange,
   isSending,
-  documents,
-  attachedDocumentID,
   attachedDocument,
+  attachedPreview,
   isUploading,
-  localStatusLabel,
-  canUseLocalWorkspace,
-  canPickWorkspace,
-  localProject,
   onUploadDocument,
-  onAttachDocument,
-  onDeleteDocument,
   onDetachDocument,
-  onPickWorkspace,
-  onDiagnoseWorkspace,
-  onAuthorizeWorkspace,
-  onClearLocalProject,
   onSend,
+  onStop,
   listSkills,
 }: {
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
-  documents: UserDocument[]
-  attachedDocumentID?: string
   attachedDocument?: UserDocument
+  /** Inline data: URL for image previews. Non-image documents leave
+   *  this undefined and we fall back to a file-icon tile. */
+  attachedPreview?: string
   isUploading: boolean
-  localStatusLabel: string
-  canUseLocalWorkspace: boolean
-  canPickWorkspace: boolean
-  localProject?: {
-    label: string
-    path: string
-    authorized: boolean
-  }
   onUploadDocument: (file?: File) => void
-  onAttachDocument: (documentID: string) => void
-  onDeleteDocument: (document: UserDocument) => void
   onDetachDocument: () => void
-  onPickWorkspace: () => Promise<string | undefined>
-  onDiagnoseWorkspace: (path: string) => Promise<LocalWorkspaceDiagnosis>
-  onAuthorizeWorkspace: (path: string) => Promise<LocalWorkspaceAuthorization>
-  onClearLocalProject: () => void
   onSend: () => void
+  /** Cancel the in-flight run. Shown as a "stop" button in place of
+   *  "send" while `isSending` is true. */
+  onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
 }) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
 
-  const hasChips = Boolean(attachedDocument || localProject)
-  const [attachmentDialogOpen, setAttachmentDialogOpen] = useState(false)
-  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false)
-  const [workspacePath, setWorkspacePath] = useState(localProject?.path ?? '')
-  const [workspaceStatus, setWorkspaceStatus] = useState('')
-  const [workspaceBusy, setWorkspaceBusy] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerRef = useRef<HTMLElement | null>(null)
+  const canStop = isSending && Boolean(onStop)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragDepthRef = useRef(0)
 
+  function openFilePicker() {
+    if (isUploading) {
+      return
+    }
+    fileInputRef.current?.click()
+  }
+
+  /** Paste an image straight into the composer — typical for screenshot
+   *  workflows where the clipboard already holds the image bitmap.
+   *  Capture-phase listener so we run before Lexical's own paste
+   *  handling and can claim the event for non-text content. */
   useEffect(() => {
-    if (workspaceDialogOpen) {
-      setWorkspacePath(localProject?.path ?? '')
-      setWorkspaceStatus('')
+    const node = composerRef.current
+    if (!node) {
+      return
     }
-  }, [localProject?.path, workspaceDialogOpen])
+    const handler = (event: ClipboardEvent) => {
+      if (isUploading) {
+        return
+      }
+      const items = event.clipboardData?.items
+      if (!items) {
+        return
+      }
+      for (const item of Array.from(items)) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) {
+            event.preventDefault()
+            event.stopPropagation()
+            onUploadDocument(file)
+            return
+          }
+        }
+      }
+    }
+    node.addEventListener('paste', handler, { capture: true })
+    return () => node.removeEventListener('paste', handler, { capture: true })
+  }, [isUploading, onUploadDocument])
 
-  async function pickWorkspace() {
-    setWorkspaceStatus('')
-    const path = await onPickWorkspace()
-    if (path) {
-      setWorkspacePath(path)
+  /** Drag-and-drop handlers — drop a file anywhere on the composer to
+   *  upload it. dragDepthRef counts nested dragenter/dragleave fires
+   *  so the highlight only clears when the cursor really leaves the
+   *  composer, not when it crosses an inner child boundary. */
+  function handleDragEnter(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
+      return
+    }
+    dragDepthRef.current += 1
+    setIsDragging(true)
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
+      return
+    }
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) {
+      setIsDragging(false)
     }
   }
 
-  async function diagnoseWorkspace() {
-    const path = workspacePath.trim()
-    if (!path) {
-      setWorkspaceStatus(t('composer.workspace.emptyPath'))
-      return
-    }
-    setWorkspaceBusy(true)
-    try {
-      const diagnosis = await onDiagnoseWorkspace(path)
-      setWorkspaceStatus(workspaceDiagnosisMessage(diagnosis, t))
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.diagnoseFailed'))
-    } finally {
-      setWorkspaceBusy(false)
+  function handleDragOver(event: React.DragEvent<HTMLElement>) {
+    if (event.dataTransfer.types.includes('Files')) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
     }
   }
 
-  async function authorizeWorkspace() {
-    const path = workspacePath.trim()
-    if (!path) {
-      setWorkspaceStatus(t('composer.workspace.emptyPath'))
+  function handleDrop(event: React.DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) {
       return
     }
-    setWorkspaceBusy(true)
-    try {
-      const workspace = await onAuthorizeWorkspace(path)
-      setWorkspaceStatus(t('composer.workspace.bound', { label: workspace.label }))
-      setWorkspaceDialogOpen(false)
-    } catch (error) {
-      setWorkspaceStatus(error instanceof Error ? error.message : t('composer.workspace.authFailed'))
-    } finally {
-      setWorkspaceBusy(false)
+    event.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragging(false)
+    if (isUploading) {
+      return
+    }
+    const file = event.dataTransfer.files?.[0]
+    if (file) {
+      onUploadDocument(file)
     }
   }
 
   return (
-    <footer className="composer">
-      {hasChips && (
-        <div className="composer-chips">
-          {attachedDocument ? (
-            <>
-              <div className={`attachment-chip ${attachedDocument.status !== 'ready' ? 'pending' : ''}`}>
-                {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? <IconLoader2 size={15} /> : <IconFileText size={15} />}
-                <span>{t('composer.attachedDocument', { name: attachedDocument.original_name })}</span>
-                <small>
-                  {formatBytes(attachedDocument.size_bytes)} · {attachedDocument.status} · {formatDate(attachedDocument.expires_at, locale)}
-                </small>
-                <Button size="icon-xs" variant="ghost" title={t('composer.removeAttachment')} onClick={onDetachDocument}>
-                  <IconX size={14} />
-                </Button>
-              </div>
-              {attachedDocument.status === 'failed' ? (
-                <div className="document-status failed">{attachedDocument.error_message || t('composer.parseFailed')}</div>
+    <footer
+      className={`composer${isDragging ? ' composer-dragging' : ''}`}
+      ref={composerRef}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      <div className="composer-input">
+        {attachedDocument ? (
+          <div className="composer-chips">
+            <div
+              className={`attachment-thumb status-${attachedDocument.status}`}
+              title={attachedDocument.original_name}
+            >
+              {attachedPreview ? (
+                <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
+              ) : (
+                <div className="attachment-thumb-placeholder" aria-hidden="true">
+                  <IconFileText size={26} />
+                </div>
+              )}
+              {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
+                <div className="attachment-thumb-overlay" aria-hidden="true">
+                  <IconLoader2 size={18} className="attachment-thumb-spin" />
+                </div>
               ) : null}
-            </>
-          ) : null}
-          {!attachedDocument && localProject ? (
-            <div className={`local-project-chip ${localProject.authorized ? '' : 'pending'}`}>
-              <IconFolderOpen size={15} />
-              <span>{t('composer.localProject', { label: localProject.label })}</span>
-              <small>{localProject.authorized ? t('composer.authorized') : t('composer.pendingAuth')} · {localProject.path}</small>
-              <Button size="icon-xs" variant="ghost" title={t('composer.removeWorkspace')} onClick={onClearLocalProject}>
-                <IconX size={14} />
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                className="attachment-thumb-remove"
+                aria-label={t('composer.removeAttachment')}
+                title={t('composer.removeAttachment')}
+                onClick={onDetachDocument}
+              >
+                <IconX size={12} aria-hidden="true" />
               </Button>
             </div>
-          ) : null}
-        </div>
-      )}
-      <div className="composer-input">
+          </div>
+        ) : null}
         <SkillEditor
           draft={draft}
           onDraftChange={onDraftChange}
@@ -173,186 +184,70 @@ export function Composer({
           listSkills={listSkills}
           placeholder={t('composer.placeholder')}
         />
-      </div>
-      <div className="composer-toolbar">
-        <div className="composer-controls">
-          <Button
+        {/* Send / Stop button: sits in the bottom-right corner of the
+         *  input frame so it follows the editor as the textarea grows.
+         *  The editor reserves matching padding-right so typed text
+         *  doesn't slide under the button. */}
+        {canStop ? (
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            title={t('composer.attachmentTitle')}
-            onClick={() => setAttachmentDialogOpen(true)}
+            className="composer-send composer-send-stop"
+            aria-label={t('composer.stop')}
+            title={t('composer.stop')}
+            onClick={onStop}
           >
-            <IconPaperclip data-icon="inline-start" />
-            {t('composer.attachmentButton')}
-            {documents.length > 0 ? <span className="button-count">{documents.length}</span> : null}
-          </Button>
-          {!attachedDocument ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canUseLocalWorkspace}
-              title={canUseLocalWorkspace ? t('composer.workspaceTitle') : localStatusLabel}
-              onClick={() => setWorkspaceDialogOpen(true)}
-            >
-              <IconFolderOpen data-icon="inline-start" />
-              {t('composer.workspaceButton')}
-            </Button>
-          ) : null}
-        </div>
-        <span className="composer-kbd">⌘↵</span>
-        <Button className="send-button" aria-label={t('composer.send')} disabled={isSending || !draft.trim()} onClick={onSend}>
-          <IconArrowUp size={16} />
-          <span className="sr-only">{t('composer.send')}</span>
-        </Button>
+            <IconPlayerStopFilled size={14} aria-hidden="true" />
+            <span className="sr-only">{t('composer.stop')}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="composer-send"
+            aria-label={t('composer.send')}
+            disabled={isSending || !draft.trim()}
+            title={t('composer.kbdHint')}
+            onClick={onSend}
+          >
+            <IconCornerDownLeft size={16} aria-hidden="true" />
+            <span className="sr-only">{t('composer.send')}</span>
+          </button>
+        )}
       </div>
-      <Dialog open={attachmentDialogOpen} onOpenChange={setAttachmentDialogOpen}>
-        <DialogContent className="attachment-dialog sm:max-w-[560px]">
-          <DialogHeader>
-            <DialogTitle>{t('composer.attachmentDialog.title')}</DialogTitle>
-            <DialogDescription>
-              {t('composer.attachmentDialog.description')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="attachment-dialog-body">
-            <label className="document-upload document-upload-dialog">
-              <IconUpload size={18} />
-              <span>{isUploading ? t('composer.uploading') : t('composer.upload')}</span>
-              <input
-                aria-label={t('composer.upload')}
-                type="file"
-                accept={documentAccept}
-                disabled={isUploading}
-                onChange={(event) => {
-                  onUploadDocument(event.currentTarget.files?.[0])
-                  event.currentTarget.value = ''
-                }}
-              />
-            </label>
-            <div className="document-list document-list-dialog">
-              {documents.length === 0 ? (
-                <p className="empty-inline">{t('composer.noAttachments')}</p>
-              ) : (
-                documents.map((document) => (
-                  <div className={document.id === attachedDocumentID ? 'document-list-item active' : 'document-list-item'} key={document.id}>
-                    <button
-                      className="document-select"
-                      onClick={() => {
-                        onAttachDocument(document.id)
-                        setAttachmentDialogOpen(false)
-                      }}
-                    >
-                      <IconFileText size={16} />
-                      <span>{document.original_name}</span>
-                      <small>{document.status}</small>
-                    </button>
-                    <button className="document-delete" title={t('composer.deleteDocument', { name: document.original_name })} onClick={() => onDeleteDocument(document)}>
-                      <IconTrash size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            {attachedDocument ? (
-              <Button type="button" variant="outline" onClick={onDetachDocument}>
-                {t('composer.detachCurrent')}
-              </Button>
-            ) : null}
-            <Button type="button" variant="ghost" onClick={() => setAttachmentDialogOpen(false)}>
-              {t('composer.close')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={workspaceDialogOpen} onOpenChange={setWorkspaceDialogOpen}>
-        <DialogContent className="workspace-dialog sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>{t('composer.workspaceDialog.title')}</DialogTitle>
-            <DialogDescription>
-              {t('composer.workspaceDialog.description')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="workspace-dialog-body">
-            <label className="workspace-path-field">
-              <span>
-                <IconFolderOpen />
-                {t('composer.workspacePath')}
-              </span>
-              <div className="workspace-path-row">
-                <Input
-                  aria-label={t('composer.workspacePathLabel')}
-                  value={workspacePath}
-                  disabled={workspaceBusy}
-                  placeholder="/Users/you/project"
-                  onChange={(event) => setWorkspacePath(event.target.value)}
-                />
-                {canPickWorkspace ? (
-                  <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void pickWorkspace()}>
-                    {t('composer.pickFolder')}
-                  </Button>
-                ) : null}
-              </div>
-            </label>
-            <small className="workspace-dialog-note">
-              {workspaceStatus || (canUseLocalWorkspace ? t('composer.workspaceStatus', { status: localStatusLabel }) : t('composer.workspaceUnavailable', { status: localStatusLabel }))}
-            </small>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" disabled={workspaceBusy} onClick={() => void diagnoseWorkspace()}>
-              {t('composer.diagnosePath')}
-            </Button>
-            <Button type="button" disabled={workspaceBusy || !canUseLocalWorkspace} onClick={() => void authorizeWorkspace()}>
-              {workspaceBusy ? t('composer.processing') : t('composer.authorizeBind')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Tools row below the input — borderless, hover-darken icons. */}
+      <div className="composer-toolbar">
+        <button
+          type="button"
+          className="composer-tool"
+          aria-label={t('composer.attachmentTitle')}
+          title={t('composer.attachmentTitle')}
+          disabled={isUploading}
+          onClick={openFilePicker}
+        >
+          {isUploading ? (
+            <IconLoader2 size={16} aria-hidden="true" className="attachment-thumb-spin" />
+          ) : (
+            <IconPaperclip size={16} aria-hidden="true" />
+          )}
+        </button>
+        {/* Hidden native file picker — clicking the attach tool above
+            triggers it via openFilePicker(). aria-label kept so tests
+            and screen readers can find it. */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={documentAccept}
+          aria-label={t('composer.upload')}
+          disabled={isUploading}
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            onUploadDocument(event.currentTarget.files?.[0])
+            event.currentTarget.value = ''
+          }}
+        />
+      </div>
     </footer>
   )
 }
 
 const documentAccept =
   'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg,image/webp,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp'
-
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatDate(value: string, locale: Locale): string {
-  try {
-    return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en', { month: '2-digit', day: '2-digit' }).format(new Date(value))
-  } catch {
-    return value
-  }
-}
-
-function workspaceDiagnosisMessage(diagnosis: LocalWorkspaceDiagnosis, t: Translator): string {
-  if (diagnosis.authorized) {
-    return t('composer.workspace.pathAuthorized', { label: diagnosis.workspace?.label ?? workspaceLabelFromPath(diagnosis.path) })
-  }
-  if (diagnosis.reason === 'not_found') {
-    return t('composer.workspace.notFound')
-  }
-  if (diagnosis.reason === 'not_directory') {
-    return t('composer.workspace.notDirectory')
-  }
-  return t('composer.workspace.notAuthorized')
-}
-
-function workspaceLabelFromPath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed) {
-    return ''
-  }
-  return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed
-}

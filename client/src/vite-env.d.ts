@@ -15,5 +15,7 @@ interface Window {
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
     setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
+    notify?: (payload: { title: string; body: string }) => Promise<boolean>
+    onNewChatRequest?: (handler: () => void) => () => void
   }
 }
