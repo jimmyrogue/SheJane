@@ -51,12 +51,17 @@ export function ModeSelector({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align="start"
-        // Shift the popup left so it doesn't sit flush against the
-        // trigger's left edge — gives the menu a little breathing room
-        // and stops it from visually merging with the chevron underneath.
-        alignOffset={-8}
-        sideOffset={6}
+        // `align="end"` anchors the popup's RIGHT edge to the trigger's
+        // right edge — the popup extends to the LEFT from there. The
+        // earlier `align="start"` parked the popup's left edge at the
+        // trigger's left edge, so the dropdown sat partly under the
+        // chevron and extended rightward, which felt cramped.
+        align="end"
+        // Slight right-side overhang so the popup doesn't perfectly
+        // line up with the trigger edge — a tiny tail past the right
+        // edge gives a clearer parent-child relationship.
+        alignOffset={4}
+        sideOffset={8}
         className="composer-mode-menu"
       >
         {(['auto', 'fast', 'pro'] as const).map((value) => {
