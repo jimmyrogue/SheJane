@@ -1281,9 +1281,12 @@ function appendLocalRunEvent(message: ChatMessage, event: AgentRunEvent, seenEve
     return
   }
   // Accumulate DeepSeek-style thinking-mode `reasoning_content` into a
-  // dedicated `message.reasoning` field so MessageBubble can render it
-  // in a collapsible section above the answer. We dedupe on event.id
-  // so a re-streamed replay doesn't double-append.
+  // dedicated `message.reasoning` field. This is kept ONLY for backend
+  // round-trip (DeepSeek API requires reasoning_content to be passed
+  // back on subsequent calls). The UI never renders the reasoning text
+  // itself — MessageBubble only uses (reasoning != null && streaming)
+  // to show an ephemeral "Thinking…" indicator above the bubble.
+  // Dedupe on event.id so a re-streamed replay doesn't double-append.
   if (event.event_type === 'llm.reasoning') {
     if (event.id && seenEventIDs.has(event.id)) {
       return

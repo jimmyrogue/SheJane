@@ -57,9 +57,12 @@ export interface ChatMessage {
   tokens?: number
   agentEvents?: AgentTimelineItem[]
   attachments?: MessageAttachment[]
-  /** Thinking-mode trace from the model (e.g. DeepSeek `reasoning_content`).
-   *  Accumulated from `llm.reasoning` SSE events. Rendered as a
-   *  collapsible "Thinking…" section above the assistant reply. */
+  /** Thinking-mode trace from the model (DeepSeek `reasoning_content`).
+   *  Accumulated from `llm.reasoning` SSE events for backend round-trip
+   *  to subsequent LLM calls (DeepSeek API requires reasoning_content
+   *  be passed back). NOT rendered to the user — only its presence +
+   *  `status === 'streaming'` triggers the ephemeral "Thinking…"
+   *  indicator above the bubble. */
   reasoning?: string
 }
 

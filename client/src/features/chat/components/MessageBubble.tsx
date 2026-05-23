@@ -102,8 +102,8 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className="message-bubble-inner">
-        {isAssistant && message.reasoning ? (
-          <ReasoningSection reasoning={message.reasoning} streaming={message.status === 'streaming'} />
+        {isAssistant && message.reasoning && message.status === 'streaming' ? (
+          <ReasoningPill />
         ) : null}
         <div className={cn('message-content', showStream && stream.text && 'is-streaming')}>
           {showStream ? (
@@ -150,40 +150,24 @@ export function MessageBubble({
   )
 }
 
-/** Renders the model's thinking trace (DeepSeek `reasoning_content`,
- *  o1-style chain-of-thought) above the answer. Collapsed by default
- *  while streaming, so the timeline still draws attention to the
- *  arriving answer rather than the verbose intermediate reasoning;
- *  expanded by default once the message is done so the user can audit
- *  the model's logic. Click the header to toggle. */
-function ReasoningSection({ reasoning, streaming }: { reasoning: string; streaming: boolean }) {
+/** Ephemeral "thinking…" pill shown above the assistant bubble ONLY
+ *  while the model is streaming AND has emitted reasoning_content
+ *  (DeepSeek thinking mode, o1-style CoT). The reasoning text itself
+ *  is never rendered to the user — it's accumulated on
+ *  `message.reasoning` only for backend round-trip to subsequent LLM
+ *  calls (DeepSeek API requires it back). Once streaming ends, this
+ *  component is unmounted by its caller.
+ *
+ *  Named "ReasoningPill" — distinct from the file-level
+ *  ThinkingIndicator (in ThinkingIndicator.tsx), which is the
+ *  per-conversation logo + elapsed-time + token-count indicator. */
+function ReasoningPill() {
   const { t } = useI18n()
-  const [expanded, setExpanded] = useState(false)
-  // Auto-expand once the message stops streaming so users see the
-  // thinking trace at rest without an extra click. Skip if the user
-  // already toggled it during streaming.
-  const userToggledRef = useRef(false)
-  useEffect(() => {
-    if (!streaming && !userToggledRef.current) {
-      setExpanded(true)
-    }
-  }, [streaming])
   return (
-    <details
-      className="message-reasoning"
-      open={expanded}
-      onToggle={(event) => {
-        userToggledRef.current = true
-        setExpanded((event.target as HTMLDetailsElement).open)
-      }}
-    >
-      <summary className="message-reasoning-summary">
-        {streaming ? t('message.reasoningStreaming') : t('message.reasoningTitle')}
-      </summary>
-      <div className="message-reasoning-body">
-        <MarkdownContent content={reasoning} />
-      </div>
-    </details>
+    <div className="message-reasoning-pill" role="status" aria-live="polite">
+      <span className="message-reasoning-dot" aria-hidden="true" />
+      <span>{t('message.reasoningStreaming')}</span>
+    </div>
   )
 }
 
