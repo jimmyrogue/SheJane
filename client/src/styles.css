@@ -3415,8 +3415,8 @@ button:active {
 }
 
 .message-meta-action:focus-visible {
-  outline: 2px solid var(--ring, var(--accent-danger-border));
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 /* Timestamp text — pushed slightly inside the row with horizontal
@@ -4007,8 +4007,9 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-primary);
 }
 .composer-send:focus-visible {
-  outline: 2px solid var(--ring, var(--accent-danger-border));
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+  /* outline replaced by a subtle box-shadow above — no offset needed. */
 }
 .composer-send:disabled {
   opacity: 0.38;
@@ -4055,8 +4056,9 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-primary);
 }
 .composer-tool:focus-visible {
-  outline: 2px solid var(--ring, var(--accent-danger-border));
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+  /* outline replaced by a subtle box-shadow above — no offset needed. */
 }
 .composer-tool:disabled {
   opacity: 0.5;
@@ -4101,8 +4103,9 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-primary);
 }
 .composer-mode-trigger:focus-visible {
-  outline: 2px solid var(--ring, var(--accent-danger-border));
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+  /* outline replaced by a subtle box-shadow above — no offset needed. */
 }
 .composer-mode-trigger:disabled {
   opacity: 0.5;
@@ -5298,4 +5301,38 @@ select {
     transition: none;
     transform: none;
   }
+}
+
+/* === Global shadcn Button overrides =====================================
+ *
+ * Two user-visible bugs the shadcn defaults introduced:
+ *
+ * 1. First click felt like a small zoom/scale, subsequent clicks didn't.
+ *    Cause: `transition-all` smoothly animated EVERY property on state
+ *    change. First click: focus-ring fade-in + active translateY(1px)
+ *    both transitioned together → looked like a scale. Second click:
+ *    ring already there, only translate happened → no "scale".
+ *
+ * 2. Buttons occasionally kept a hard focus ring after a mouse click,
+ *    visible as a contrasting outline. Cause: `focus-visible:ring-3` is
+ *    a 3px ring; combined with the dramatic `--ring` colour it read as
+ *    a selection marker rather than a focus cue.
+ *
+ * Fix: scope the transition to color-ish properties only (no transform,
+ * no box-shadow), kill the active translateY so there's no "press
+ * down" jolt, and replace the 3px Tailwind ring with a single 2px
+ * subtle shadow that matches the rest of the app's focus treatment.
+ *
+ * Applies to every shadcn Button (which carries data-slot="button").
+ * Custom HTML <button> elsewhere is not affected. */
+[data-slot="button"] {
+  transition-property: background-color, color, border-color, opacity;
+}
+[data-slot="button"]:active {
+  transform: none;
+}
+[data-slot="button"]:focus-visible {
+  border-color: transparent !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent) !important;
+  --tw-ring-shadow: none !important;
 }
