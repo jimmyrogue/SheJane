@@ -2890,12 +2890,18 @@ button:active {
 }
 
 .topbar {
+  /* Layout: [expand button?] [title (grows + truncates)] [status (right)].
+   * No `justify-content: space-between` — that distributed the 3 items
+   * evenly when the title didn't carry `flex: 1 1 auto`, which made
+   * the title visually center even with plenty of room. Now layout is
+   * purely "title grows; status sits at the trailing edge via
+   * margin-left:auto", so a long title can't push the status off the
+   * edge and a short title still hugs the left. */
   display: flex;
   min-width: 0;
   min-height: 45px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   border-bottom: 0.5px solid var(--border-hairline);
   background: var(--bg-surface);
   padding: 0 18px;
