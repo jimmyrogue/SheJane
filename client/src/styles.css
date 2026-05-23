@@ -1128,6 +1128,79 @@ select {
   color: #FFFFFF;
 }
 
+/* ── Micro-motion ───────────────────────────────────────────────────
+ * Quiet, short-duration entry animations applied at mount time only.
+ * Avoid framer-motion-like libraries — these are CSS-only @keyframes so
+ * there's no JS overhead and exit animations are intentionally absent
+ * (unmounting elements just leave; chat surfaces don't need them).
+ * Every rule below sits behind `prefers-reduced-motion: reduce` so the
+ * OS preference disables motion globally. */
+
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.view-transition {
+  /* Block-level grid item: occupies the .app-shell's second column
+   * exactly the same way the bare `.workspace` / SkillsView used to.
+   * Explicit height: 100% + min-height: 0 lets nested grid children
+   * (notably .workspace's `grid-template-rows: auto minmax(0, 1fr)
+   * auto auto`) still resolve their middle row. */
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: view-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.view-transition > .workspace {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.message {
+  animation: message-enter 180ms ease-out;
+}
+
+@keyframes bar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.approval-bar,
+.question-bar {
+  animation: bar-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-transition,
+  .message,
+  .approval-bar,
+  .question-bar {
+    animation: none;
+  }
+}
+
 /* Ambient "thinking" indicator below the latest assistant message —
  * left-aligned, single warm-tinted icon that scales/fades in a slow
  * pulse. Replaces the older logo + elapsed-time chip. */

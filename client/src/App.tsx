@@ -1245,6 +1245,9 @@ function AppContent() {
             onPointerDown={beginSidebarResize}
           />
 
+          {/* `key={mainView}` remounts this wrapper on view change so the
+              `.view-transition` enter animation fires on every switch. */}
+          <div className="view-transition" key={mainView}>
           {mainView === 'skills' ? (
             <SkillsView
               searchRegistry={(searchQuery) =>
@@ -1337,6 +1340,7 @@ function AppContent() {
             </div>
           </section>
           )}
+          </div>
         </div>
       </main>
     </TooltipProvider>
