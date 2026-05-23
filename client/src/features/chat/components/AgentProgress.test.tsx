@@ -115,17 +115,20 @@ describe('AgentProgress', () => {
         onOpenDiagnostics={vi.fn()}
       />,
     )
-    expect(screen.getByText('正在打开受控网页 weather.com')).toBeInTheDocument()
+    // Headline carries just the action label — "正在" prefix removed,
+    // trailing dots are appended by CSS (::after) and aren't part of
+    // the rendered text content.
+    expect(screen.getByText('打开受控网页 weather.com')).toBeInTheDocument()
   })
 
   it('does not show "已完成 X" as the live headline while the run is still active', () => {
     // Regression for the user-reported "为什么显示的都是 已完成xxx" bug.
     // Between two tool calls the latest activity event is
     // tool.completed for the PREVIOUS tool — but the run keeps going.
-    // We re-frame that completed tool as "正在 X" (the agent is still
-    // working on its results). We do NOT fall back to "正在思考" here
-    // because the ThinkingIndicator above the bubble already says
-    // that — duplicate labels read as a broken UI.
+    // We re-frame that completed tool as the in-progress label (the
+    // agent is still working on its results). We do NOT fall back to
+    // "思考" here because the ThinkingIndicator above the bubble
+    // already says that — duplicate labels read as a broken UI.
     renderAgentProgress(
       <AgentProgress
         message={message({
@@ -141,8 +144,8 @@ describe('AgentProgress', () => {
     )
 
     expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
-    expect(screen.getByText('正在搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('思考')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索网页')).toBeInTheDocument()
   })
 
   it('prefers an in-flight tool over a completed sibling for the headline', () => {
@@ -164,7 +167,7 @@ describe('AgentProgress', () => {
     )
 
     expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
-    expect(screen.getByText('正在读取文件 README.md')).toBeInTheDocument()
+    expect(screen.getByText('读取文件 README.md')).toBeInTheDocument()
   })
 
   it('still shows "已完成 X" as the final headline once the run is actually done', () => {
@@ -234,7 +237,7 @@ describe('AgentProgress', () => {
           agentEvents: [{ type: 'tool.requested', label: '调用工具：阅读网页正文' }],
         }),
       ),
-    ).toMatchObject({ tone: 'working', label: '正在阅读网页正文' })
+    ).toMatchObject({ tone: 'working', label: '阅读网页正文' })
   })
 })
 

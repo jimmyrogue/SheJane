@@ -58,9 +58,13 @@ export function AgentProgress({
   const headline = summaryHeadline(events, message, t)
   const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics)
 
+  // The leading status dot we used to show next to the headline was
+  // pure ornament — the tone is already reflected in the label
+  // (e.g. "已完成 …" vs "搜索网页"). Dropped per UX feedback. The
+  // `working` state instead surfaces "ongoingness" via the CSS-animated
+  // trailing dots on `.agent-progress-summary` (see styles.css).
   const summaryInner = (
     <>
-      <span className={cn('agent-progress-dot', dotClass(progress.tone))} aria-hidden="true" />
       <span className="name" key={headline}>{headline}</span>
       {canExpand ? <IconChevronDown className="tool-card-caret" aria-hidden="true" /> : null}
     </>
@@ -492,8 +496,3 @@ function stripKnownPrefix(value: string, prefixes: string[]): string {
   return value
 }
 
-function dotClass(tone: ProgressTone): string {
-  if (tone === 'failed') return 'dot-danger'
-  if (tone === 'working' || tone === 'permission') return 'dot-warning'
-  return 'dot-success'
-}
