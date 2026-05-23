@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import {
-  IconArrowUp,
+  IconCornerDownLeft,
   IconFileText,
   IconLoader2,
   IconPaperclip,
@@ -120,7 +120,7 @@ export function Composer({
             title={t('composer.kbdHint')}
             onClick={onSend}
           >
-            <IconArrowUp size={16} aria-hidden="true" />
+            <IconCornerDownLeft size={16} aria-hidden="true" />
             <span className="sr-only">{t('composer.send')}</span>
           </button>
         )}
