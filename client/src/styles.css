@@ -4066,8 +4066,8 @@ button.agent-progress-summary:focus-visible {
 
 /* Auto-resolved mode badge in the assistant message meta row.
  * Only rendered when the user picked Auto AND the daemon's classifier
- * resolved to a concrete model. Visually quieter than buttons —
- * intended as informational, not interactive. */
+ * resolved to a concrete model. The reason (when present) is shown
+ * via a Radix Tooltip on hover — see MessageBubble.tsx. */
 .message-meta-mode {
   display: inline-flex;
   align-items: center;
@@ -4080,7 +4080,6 @@ button.agent-progress-summary:focus-visible {
   font-weight: 500;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  cursor: help;
 }
 
 .btn-chip {

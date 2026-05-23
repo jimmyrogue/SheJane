@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
 import { IconCheck, IconCopy, IconPaperclip } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
 import type { ChatMessage } from '@/shared/local-data/types'
@@ -144,14 +145,34 @@ export function MessageBubble({
             </button>
           ) : null}
           {isAssistant && message.runMode ? (
-            <span
-              className="message-meta-mode"
-              title={message.runMode.reason || undefined}
-            >
-              {t('composer.mode.autoBadge', {
-                resolved: t(message.runMode.resolved === 'pro' ? 'composer.mode.pro' : 'composer.mode.fast'),
-              })}
-            </span>
+            (() => {
+              const badge = (
+                <span className="message-meta-mode">
+                  {t('composer.mode.autoBadge', {
+                    resolved: t(
+                      message.runMode.resolved === 'pro' ? 'composer.mode.pro' : 'composer.mode.fast',
+                    ),
+                  })}
+                </span>
+              )
+              // Wrap in a real Radix tooltip ONLY when the auto router
+              // gave us a reason — otherwise the badge is purely
+              // informational and the help-cursor + empty tooltip
+              // combo we shipped first felt broken (cursor implied
+              // "click me", nothing happened).
+              const reason = message.runMode.reason?.trim()
+              if (!reason) {
+                return badge
+              }
+              return (
+                <Tooltip>
+                  <TooltipTrigger asChild>{badge}</TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={4}>
+                    {reason}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })()
           ) : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
         </div>
