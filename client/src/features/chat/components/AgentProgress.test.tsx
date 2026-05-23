@@ -122,8 +122,10 @@ describe('AgentProgress', () => {
     // Regression for the user-reported "为什么显示的都是 已完成xxx" bug.
     // Between two tool calls the latest activity event is
     // tool.completed for the PREVIOUS tool — but the run keeps going.
-    // If we show that completed event as the headline, the user reads
-    // it as "everything's done" while the agent is still working.
+    // We re-frame that completed tool as "正在 X" (the agent is still
+    // working on its results). We do NOT fall back to "正在思考" here
+    // because the ThinkingIndicator above the bubble already says
+    // that — duplicate labels read as a broken UI.
     renderAgentProgress(
       <AgentProgress
         message={message({
@@ -138,10 +140,9 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Between calls, no in-flight tool to point at → fall back to a
-    // calm "thinking" label, never the stale "已完成 X".
     expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
-    expect(screen.getByText('正在思考')).toBeInTheDocument()
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByText('正在搜索网页')).toBeInTheDocument()
   })
 
   it('prefers an in-flight tool over a completed sibling for the headline', () => {

@@ -150,26 +150,51 @@ const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
   'waiting_input',
 ])
 
-/** Build the live-action label.
+/** Strip whichever of the known "前缀X" markers prefix the event label so
+ *  the tool name comes out clean, then re-wrap it as "正在 X" — the
+ *  in-progress framing the user expects in the AgentProgress headline.
+ *  Used during active runs to relabel completed/failed events too. */
+const TOOL_PHASE_PREFIXES = [
+  '调用工具：',
+  '工具开始：',
+  '工具完成：',
+  '工具失败：',
+  '验证失败：',
+  'Tool started: ',
+  'Tool completed: ',
+  'Tool failed: ',
+]
+
+function asInProgressToolLabel(event: AgentTimelineItem, t: Translator): string {
+  return t('agent.toolRunning', { tool: stripKnownPrefix(event.label, TOOL_PHASE_PREFIXES) })
+}
+
+/** Build the live-action headline.
  *
- *  Subtlety we previously got wrong: between two tool calls the latest
- *  ACTIVITY_TYPE event is usually `tool.completed`, which made the
- *  headline say "已完成 X" for the entire active run — users read that
- *  as "everything's done already" even though more work was coming.
+ *  Earlier iterations of this got two things wrong in sequence:
+ *  1. We surfaced `tool.completed` as the headline ("已完成 X") which
+ *     read as "the whole task is done" while the run kept going.
+ *  2. We then fell back to a generic "正在思考" between tool calls —
+ *     but the ThinkingIndicator above already says "正在思考", so users
+ *     saw two duplicate labels.
  *
- *  Fix during active runs: count requests vs completions per tool to
- *  find genuinely in-flight tools, and pick the latest tool.requested
- *  among them as the headline. When nothing's in flight, the model is
- *  reasoning between tool calls — show "正在思考" instead of a stale
- *  completed label. Once the run finishes, the old behavior resumes
- *  and the latest activity is correctly framed as completed.
+ *  Current rule, during active runs:
+ *    a. Prefer a tool that has more dispatches than completions
+ *       (genuinely in flight). Frame as "正在 X".
+ *    b. Otherwise re-frame the most recent tool event (even if
+ *       completed) as "正在 X" — the agent is still working on that
+ *       tool's results until the next tool kicks off.
+ *    c. Otherwise fall through to other activity events (browser
+ *       observed / verification / UI action) with their natural label.
+ *    d. Otherwise the generic working label.
+ *  Once the run actually finishes, the inactive branch uses natural
+ *  framing so the final headline can read as completed.
  */
 function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage, t: Translator): string {
   const isActive = ACTIVE_RUN_STATUSES.has(message.status)
   if (isActive) {
-    // Per-tool tally: a positive value means more dispatches than
-    // completions for that tool — at least one call still in flight.
-    // We count by tool name (not eventId) so parallel dispatches of
+    // Per-tool tally: positive ⇒ at least one call still in flight.
+    // Counted by tool name (not eventId) so parallel dispatches of
     // the same tool collapse correctly.
     const pending = new Map<string, number>()
     for (const event of events) {
@@ -182,6 +207,7 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
         pending.set(event.tool, (pending.get(event.tool) ?? 0) - 1)
       }
     }
+    // (a) latest in-flight tool
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index]
       if (event.type !== 'tool.requested' && event.type !== 'tool.started') {
@@ -190,9 +216,31 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
       if (!event.tool || (pending.get(event.tool) ?? 0) <= 0) {
         continue
       }
-      return withTarget(operationLabel(event, t), event.target)
+      return withTarget(asInProgressToolLabel(event, t), event.target)
     }
-    return t('agent.thinking')
+    // (b) latest tool event of any phase, reframed as "正在 X"
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]
+      if (!event.tool) {
+        continue
+      }
+      if (
+        event.type === 'tool.requested' ||
+        event.type === 'tool.started' ||
+        event.type === 'tool.completed' ||
+        event.type === 'tool.failed'
+      ) {
+        return withTarget(asInProgressToolLabel(event, t), event.target)
+      }
+    }
+    // (c) non-tool activity events
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (ACTIVITY_TYPES.has(events[index].type)) {
+        return withTarget(operationLabel(events[index], t), events[index].target)
+      }
+    }
+    // (d) generic
+    return defaultWorkingLabel(message, t)
   }
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (ACTIVITY_TYPES.has(events[index].type)) {
