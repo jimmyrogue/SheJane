@@ -1822,13 +1822,11 @@ label {
     padding: 14px;
   }
 
-  .topbar {
-    align-items: flex-start;
-    flex-direction: column;
-    justify-content: center;
-    padding-block: 12px;
-  }
-
+  /* .topbar deliberately NOT switched to column here — the title
+   * truncates on its own, so a single horizontal row fits every
+   * width down to ~360px. Earlier breakpoints stacked the title
+   * above the daemon-status dot which doubled the bar height and
+   * left a confusing blank gap at common laptop widths (700-1100px). */
   .account {
     flex-wrap: wrap;
   }
