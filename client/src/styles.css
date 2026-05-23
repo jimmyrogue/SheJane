@@ -973,34 +973,19 @@ select {
 }
 
 /* Question bar: the single place all user.ask questions are surfaced —
-   docked above the composer, never in the message list. Mirrors the
-   approval bar's contained, inset card so the two share one location. */
+   docked above the composer, never in the message list. Aligned with
+   the composer's centered 760px column so the two feel like one
+   continuous UI surface. Positioning rules live under
+   `.composer-dock .question-bar` further down. */
 .question-bar {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 12px;
-  margin: 0 18px 10px;
+  gap: 14px;
   border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-lg);
-  background: var(--bg-sidebar-soft);
-  padding: 12px 14px;
-}
-
-.question-bar-head {
-  display: grid;
-  gap: 1px;
-}
-
-.question-bar-title {
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.question-bar-detail {
-  color: var(--text-secondary);
-  font-size: 12px;
+  border-radius: 16px;
+  background: var(--bg-surface);
+  padding: 14px 16px 12px;
 }
 
 .question-bar-list {
@@ -1013,38 +998,61 @@ select {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
+/* Header row: question text left, optional meta chips (progress, multi
+   hint) right. Wraps gracefully on narrow widths. */
 .question-block-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
 }
 
+/* Optional category chip — only rendered when the agent supplies a
+   non-empty `header`. Previously an empty header still painted a
+   ghost chip on the left of the question; now hidden by JSX. */
 .question-chip {
   flex: 0 0 auto;
+  align-self: center;
   border-radius: var(--radius-sm);
   background: var(--bg-canvas);
-  padding: 2px 7px;
+  padding: 2px 8px;
   color: var(--text-secondary);
   font-size: 11px;
 }
 
 .question-text {
+  flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: left;
 }
 
+.question-meta {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.question-progress,
 .question-multi-hint {
   color: var(--text-tertiary);
   font-size: 11px;
 }
 
 /* One option per row — a uniform full-width selectable list (the "Other"
-   choice uses the exact same row markup/style). */
+   choice uses the exact same row markup/style). Left-aligned: number
+   key, then label, optional check on the far right. */
 .question-options {
   display: flex;
   flex-direction: column;
@@ -1056,14 +1064,13 @@ select {
   width: 100%;
   min-width: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   background: var(--bg-surface);
-  padding: 9px 12px;
+  padding: 10px 12px;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;
@@ -1086,9 +1093,11 @@ select {
 
 .question-option-main {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
+  text-align: left;
 }
 
 .question-option-label {
@@ -1101,8 +1110,13 @@ select {
   font-weight: 400;
 }
 
+/* Check icon sits at the far right when the option is selected. Uses
+   `margin-left: auto` (NOT `justify-content: space-between` on the
+   parent) so the label stays left-aligned and the icon floats right.
+   Without auto-margin the label was right-vibing too. */
 .question-option-check {
   flex: 0 0 auto;
+  margin-left: auto;
   color: var(--text-primary);
 }
 
@@ -1292,11 +1306,19 @@ select {
 .composer-dock .approval-bar,
 .composer-dock .question-bar {
   position: absolute;
-  left: clamp(14px, 3vw, 28px);
-  right: clamp(14px, 3vw, 28px);
+  /* Align with the .composer's centered 760px column instead of
+     stretching edge-to-edge of the dock. Without this the card was
+     visibly wider than the composer below it. `margin: 0 auto` +
+     left:0/right:0 centers within the dock; max-width matches the
+     composer's max-width; the calc() shrinks the card on narrow
+     widths so it still has the same side gutter as the composer. */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: calc(100% - 2 * clamp(14px, 3vw, 28px));
+  max-width: 760px;
   bottom: calc(100% + 8px);
   z-index: 30;
-  margin: 0;
   max-height: min(62vh, 480px);
   overflow: auto;
   background: var(--bg-surface);

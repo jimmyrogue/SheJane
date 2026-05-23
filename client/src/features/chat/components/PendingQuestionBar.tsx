@@ -146,18 +146,26 @@ export function PendingQuestionBar({
 
   return (
     <div className="question-bar" role="region" aria-label={t('agent.question.title')}>
-      <div className="question-bar-head">
-        <span className="question-bar-title">{t('agent.question.title')}</span>
-        <span className="question-bar-detail">
-          {total > 1 ? t('agent.question.progress', { current: activeStep + 1, total }) : t('agent.question.detail')}
-        </span>
-      </div>
       <div className="question-bar-list">
         <div className="question-block" key={`${item.question}-${activeStep}`}>
           <div className="question-block-head">
-            <span className="question-chip">{item.header}</span>
-            <span className="question-text">{item.question}</span>
-            {multi ? <span className="question-multi-hint">{t('agent.question.multiHint')}</span> : null}
+            {/* `header` is the short chip-label the agent CAN attach to a
+                question (e.g. "Days" / "Budget"). It's optional — when
+                absent (the common case for user.ask), we don't render
+                an empty chip so the question text isn't shifted right
+                by a phantom box. */}
+            {item.header ? <span className="question-chip">{item.header}</span> : null}
+            <h3 className="question-text">{item.question}</h3>
+            <div className="question-meta">
+              {total > 1 ? (
+                <span className="question-progress">
+                  {t('agent.question.progress', { current: activeStep + 1, total })}
+                </span>
+              ) : null}
+              {multi ? (
+                <span className="question-multi-hint">{t('agent.question.multiHint')}</span>
+              ) : null}
+            </div>
           </div>
           <div className="question-options" role={multi ? 'group' : 'radiogroup'}>
             {item.options.map((option, idx) => {
