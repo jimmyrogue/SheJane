@@ -66,7 +66,11 @@ def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
 
 def _translate_messages(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, tuple) or len(payload) != 2:
-        return [{"event": "llm.delta", "data": {"raw": _safe_dump(payload)}}]
+        # Malformed payload — surface as a generic graph.node so the
+        # client doesn't render arbitrary state as model output. (See
+        # the trailing fall-through at the end of this function for
+        # the same rationale.)
+        return [{"event": "graph.node", "data": {"kind": "messages", "raw": _safe_dump(payload)}}]
     chunk, _metadata = payload
 
     if isinstance(chunk, AIMessageChunk):
@@ -150,46 +154,53 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
             }
         ]
 
-    return [{"event": "llm.delta", "data": {"raw": _safe_dump(chunk)}}]
+    # Catch-all for any other chunk type LangGraph streams in messages
+    # mode (HumanMessageChunk, SystemMessage, or middleware-injected
+    # custom types). Previously we wrapped these as `llm.delta`, which
+    # meant a middleware appending e.g. a HumanMessage to state would
+    # surface as if the assistant had streamed its content — caused the
+    # OutputGuard retry-nudge regression where "Your last response was
+    # empty…" was emitted both as an llm.delta and persisted on the
+    # message. Anything not from the model is now a graph.node event so
+    # the client never confuses it with assistant content.
+    return [
+        {
+            "event": "graph.node",
+            "data": {
+                "kind": "messages",
+                "chunk_type": type(chunk).__name__,
+                "payload": _safe_dump(chunk),
+            },
+        }
+    ]
 
 
 # ---- updates mode ----
 
 #  Updates payload is roughly `{node_name: {state_field: value, …}}`. We
-#  emit one `graph.node` per node, with the most common fields lifted to
-#  the top level so clients don't have to dig.
-
-_NODE_NAME_TOOLS = {"tools", "ToolNode"}
+#  emit one `graph.node` per node — tool completions are sourced from
+#  `messages` mode only so we don't double-emit (see docstring below).
 
 
 def _translate_updates(payload: Any) -> list[dict[str, Any]]:
+    """Emit one `graph.node` per node update.
+
+    Important: do NOT also emit per-ToolMessage `tool.completed` events
+    here. An earlier version of this function inspected the `tools` node
+    update and emitted one tool.completed per ToolMessage inside —
+    intended as best-effort tool observation. But LangGraph's `messages`
+    stream mode already yields the same ToolMessage (handled in
+    `_translate_messages`), so every tool ended up reported twice with
+    different daemon-side event IDs. Client-side dedupe is keyed on
+    event ID, so the duplicates leaked into `message.agentEvents` and
+    caused `operationCountsLabel` to double-count ("搜索 8 次" instead
+    of "搜索 4 次"). messages-mode is the single source of truth.
+    """
     if not isinstance(payload, dict):
         return [{"event": "graph.node", "data": _safe_dump(payload)}]
 
     out: list[dict[str, Any]] = []
     for node, delta in payload.items():
-        delta_dict = delta if isinstance(delta, dict) else {"value": delta}
-        # Best-effort tool start detection: ToolNode's updates carry the
-        # tool message(s) it just produced. We surface them as tool.end
-        # only — there's no "start" hook in `updates` mode (would need
-        # before/after callback or wrap_tool_call middleware for that).
-        if node in _NODE_NAME_TOOLS and "messages" in delta_dict:
-            for m in delta_dict["messages"] or []:
-                if isinstance(m, ToolMessage):
-                    m_status = getattr(m, "status", None)
-                    out.append(
-                        {
-                            "event": "tool.failed" if m_status == "error" else "tool.completed",
-                            "data": {
-                                "tool_call_id": m.tool_call_id,
-                                "name": m.name,
-                                "tool": m.name,
-                                "content": _stringify(m.content),
-                                "status": m_status or "ok",
-                            },
-                        }
-                    )
-            # Still also emit a generic graph.node for completeness
         out.append(
             {
                 "event": "graph.node",

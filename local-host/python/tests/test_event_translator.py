@@ -74,13 +74,23 @@ def test_updates_mode_emits_per_node_graph_node_event() -> None:
     assert events[0]["data"]["node"] == "router"
 
 
-def test_updates_mode_detects_tool_completed_inside_tools_node() -> None:
+def test_updates_mode_does_not_double_emit_tool_completed() -> None:
+    """Regression: updates mode used to scan the `tools` node delta for
+    ToolMessages and emit a `tool.completed` per message. But messages
+    mode already emits the same tool.completed for that ToolMessage,
+    so every tool ended up reported twice with different event IDs.
+    Client-side dedupe is keyed on event ID, so the duplicates leaked
+    into agentEvents and caused operationCountsLabel to double-count
+    ("搜索 8 次" instead of "搜索 4 次"). Updates mode is now graph.node-
+    only; messages mode is the single source of truth for tool events.
+    """
     tm = ToolMessage(content="ok", tool_call_id="c1", name="time.now")
     payload = {"tools": {"messages": [tm]}}
     events = translate("updates", payload)
     names = [e["event"] for e in events]
-    assert "tool.completed" in names
-    assert "graph.node" in names
+    assert "tool.completed" not in names
+    assert "tool.failed" not in names
+    assert names == ["graph.node"]
 
 
 def test_custom_mode_emits_agent_custom() -> None:
@@ -92,3 +102,29 @@ def test_unknown_mode_falls_back_to_graph_node() -> None:
     events = translate("weird_new_mode", {"x": 1})
     assert events[0]["event"] == "graph.node"
     assert events[0]["data"]["kind"] == "weird_new_mode"
+
+
+def test_messages_mode_non_ai_chunk_becomes_graph_node_not_llm_delta() -> None:
+    """Regression: any non-AI/Tool chunk streamed in messages mode used
+    to be wrapped as `llm.delta`. That meant a middleware appending a
+    HumanMessage to state (OutputGuard retry-nudge regression) showed
+    up on the client as if the model had streamed it. The fall-through
+    is now `graph.node` so the client never confuses internal state
+    with assistant content."""
+    from langchain_core.messages import HumanMessage
+
+    nudge = HumanMessage(content="Your last response was empty.")
+    events = translate("messages", (nudge, {}))
+    assert events[0]["event"] == "graph.node"
+    assert events[0]["event"] != "llm.delta"
+    assert events[0]["data"]["chunk_type"] == "HumanMessage"
+
+
+def test_messages_mode_malformed_payload_becomes_graph_node() -> None:
+    """Same fall-through for the payload-shape guard at the top — a
+    malformed payload (not a 2-tuple) was previously emitted as
+    llm.delta with a raw blob. Now it's graph.node so the client
+    can't render junk as model output."""
+    events = translate("messages", "not a tuple")
+    assert events[0]["event"] == "graph.node"
+    assert events[0]["data"]["kind"] == "messages"
