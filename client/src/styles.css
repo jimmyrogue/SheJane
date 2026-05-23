@@ -2944,7 +2944,11 @@ button:active {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-surface);
-  padding: 20px 22px;
+  /* No bottom padding — the composer's ::before gradient sits flush
+   * against the last visible message so it can fade the content out.
+   * Earlier the 20px bottom padding created a hard solid band between
+   * the messages and the composer, defeating the fade effect. */
+  padding: 20px 22px 0;
 }
 
 .messages {
@@ -3466,10 +3470,12 @@ button.agent-progress-summary:focus-visible {
   position: relative;
 }
 
-/* Gradient fade above the composer: messages scrolling up no longer
- * collide with a hard padding edge — they fade out into the composer
- * background. Pure visual; pointer-events none so it doesn't intercept
- * clicks on the toolbar. */
+/* Gradient fade above the composer: the bottom 32px of the chat
+ * surface fade out so messages scrolling up don't collide with a hard
+ * padding edge. The fade colour matches .chat-surface's background
+ * (--bg-surface, white) — the fade sits inside the chat-surface
+ * region visually, so anything else would create a colour seam.
+ * Pure visual; pointer-events none. */
 .composer::before {
   content: '';
   display: block;
@@ -3477,9 +3483,9 @@ button.agent-progress-summary:focus-visible {
   bottom: 100%;
   left: 0;
   right: 0;
-  height: 28px;
+  height: 32px;
   pointer-events: none;
-  background: linear-gradient(to top, var(--bg-app, #FFFFFF), transparent);
+  background: linear-gradient(to top, var(--bg-surface, #FFFFFF), transparent);
 }
 
 .composer > .composer-input,
