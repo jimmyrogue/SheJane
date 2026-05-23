@@ -2985,11 +2985,12 @@ button:active {
   gap: 18px;
   /* Top + bottom padding clear the 32px fade overlays on either end
    * (.chat-surface::before at the top, .composer::before at the
-   * bottom) so the first/last messages aren't half-hidden by the
-   * gradient. Padding-right stays 0 so the scrollbar pins to the
-   * chat-surface right edge; left padding gives content breathing
-   * room from the left wall. */
-  padding: 36px 0 36px 22px;
+   * bottom). The bottom needs extra room because the .message-meta
+   * row (copy button + timestamp on hover) is absolute-positioned
+   * 17px BELOW each message bubble — without slack here the meta of
+   * the last message lands inside the fade. 60px = 32 fade + 17 meta
+   * + ~11 clean band. */
+  padding: 36px 0 60px 22px;
 }
 
 /* Block by default. .message.user reverts to flex (right-aligned
