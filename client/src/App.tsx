@@ -742,6 +742,15 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
+      // Decision-acknowledgement toast so the user sees their click landed —
+      // the bar disappears the moment the resume stream starts, otherwise
+      // there's no feedback at all.
+      toast.success(
+        decision === 'approve'
+          ? t(scope === 'run' ? 'app.notice.permissionRunApproved' : 'app.notice.permissionApproved')
+          : t('app.notice.permissionDenied'),
+        { id: 'permission-decision', duration: 2000 },
+      )
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)
@@ -787,6 +796,7 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     try {
       await answerLocalQuestion(requestID, answers, localHostConfig)
+      toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, t)

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { IconArrowLeft, IconArrowRight, IconCheck } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/shared/i18n/i18n'
@@ -109,6 +109,41 @@ export function PendingQuestionBar({
     ? picks.length > 0 || otherValue.trim().length > 0
     : false
 
+  /** Number-key shortcuts (1–9) map to options on the current question.
+   *  Single-select: number picks + advances. Multi-select: number
+   *  toggles the option. Skipped when the user is typing in an input
+   *  / textarea / contenteditable so it doesn't fire while they're
+   *  filling in the "Other" field or the composer. Re-attached every
+   *  render so closures over `picks` / `multi` stay fresh. */
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return
+      }
+      const target = event.target as HTMLElement | null
+      if (target?.matches?.('input, textarea, [contenteditable="true"]')) {
+        return
+      }
+      const num = Number(event.key)
+      if (!Number.isInteger(num) || num < 1 || num > 9) {
+        return
+      }
+      const idx = num - 1
+      if (idx >= item.options.length) {
+        return
+      }
+      event.preventDefault()
+      const value = item.options[idx].label
+      if (multi) {
+        toggleMulti(value)
+      } else {
+        chooseSingle(value)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  })
+
   return (
     <div className="question-bar" role="region" aria-label={t('agent.question.title')}>
       <div className="question-bar-head">
@@ -125,8 +160,9 @@ export function PendingQuestionBar({
             {multi ? <span className="question-multi-hint">{t('agent.question.multiHint')}</span> : null}
           </div>
           <div className="question-options" role={multi ? 'group' : 'radiogroup'}>
-            {item.options.map((option) => {
+            {item.options.map((option, idx) => {
               const active = picks.includes(option.label)
+              const shortcut = idx < 9 ? idx + 1 : null
               return (
                 <button
                   type="button"
@@ -135,8 +171,12 @@ export function PendingQuestionBar({
                   data-active={active}
                   role={multi ? 'checkbox' : 'radio'}
                   aria-checked={active}
+                  aria-keyshortcuts={shortcut ? String(shortcut) : undefined}
                   onClick={() => (multi ? toggleMulti(option.label) : chooseSingle(option.label))}
                 >
+                  {shortcut ? (
+                    <kbd className="question-option-key" aria-hidden="true">{shortcut}</kbd>
+                  ) : null}
                   <span className="question-option-main">
                     <span className="question-option-label">{option.label}</span>
                     {option.description ? (

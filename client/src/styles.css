@@ -1106,6 +1106,28 @@ select {
   color: var(--text-primary);
 }
 
+/* Number-key hint chip on each option — tells the user they can hit
+ * 1/2/3 to pick. Compact, dim, monospaced; mirrors the macOS keyboard-
+ * accelerator look. */
+.question-option-key {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  border-radius: 5px;
+  background: var(--surface-2, rgba(120, 120, 130, 0.10));
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.question-option[data-active='true'] .question-option-key {
+  background: var(--text-primary);
+  color: #FFFFFF;
+}
+
 /* Ambient "thinking" indicator below the latest assistant message —
  * left-aligned, single warm-tinted icon that scales/fades in a slow
  * pulse. Replaces the older logo + elapsed-time chip. */
