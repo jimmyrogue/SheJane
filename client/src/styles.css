@@ -1864,7 +1864,10 @@ label {
     min-height: 0;
   }
 
-  .topbar,
+  /* .topbar stays horizontal even on narrow widths — column-stacking
+   * the title above the daemon-status dot doubled the bar height and
+   * left a weird whitespace gap. The title carries its own ellipsis
+   * now, so a single horizontal row fits any width. */
   .composer-controls,
   .account {
     align-items: flex-start;
@@ -2899,12 +2902,27 @@ button:active {
 }
 
 .chat-toolbar-title {
+  /* `flex: 1 1 auto` + `min-width: 0` + `overflow: hidden` is the
+   * trio that lets the title shrink past its content width — without
+   * `min-width: 0` the default `min-content` size keeps it from
+   * shrinking, so a long auto-generated title would push the daemon-
+   * status dot off the right edge or wrap the topbar to two lines.
+   * The inner span carries the actual ellipsis. */
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 500;
+}
+
+.chat-toolbar-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-toolbar-title svg {
