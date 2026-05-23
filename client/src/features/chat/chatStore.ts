@@ -415,6 +415,21 @@ function toolActionLabel(tool: string, t: Translator): string {
     'mcp.call': t('chat.tool.mcp.call'),
     'document.read': t('chat.tool.document.read'),
     'time.now': t('chat.tool.time.now'),
+    // Daemon-side tools (deepagents built-ins + our ALWAYS_INCLUDE
+    // set) that previously leaked their raw names into the timeline.
+    'user.ask': t('chat.tool.user.ask'),
+    write_todos: t('chat.tool.write_todos'),
+    task: t('chat.tool.task'),
+    read_file: t('chat.tool.read_file'),
+    write_file: t('chat.tool.write_file'),
+    edit_file: t('chat.tool.edit_file'),
+    ls: t('chat.tool.ls'),
+    execute: t('chat.tool.execute'),
+    'memory.search': t('chat.tool.memory.search'),
+    'memory.write': t('chat.tool.memory.write'),
+    'image.generate': t('chat.tool.image.generate'),
+    'image.edit': t('chat.tool.image.edit'),
+    'browser.task': t('chat.tool.browser.task'),
   }
   return labels[tool] || tool || t('chat.tool.fallback')
 }

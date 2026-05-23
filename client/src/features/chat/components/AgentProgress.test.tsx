@@ -42,8 +42,12 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('collapses the completed summary by default and reveals sources, artifacts and diagnostics on expand', () => {
-    const onOpenArtifact = vi.fn()
+  it('collapses to an aggregated headline; expanding exposes only the diagnostics escape hatch', () => {
+    // The expanded body used to dump a per-step list + source/artifact
+    // tallies + a "view artifact" button. Users found it noisy and
+    // mostly irrelevant — leaks internal events like graph.node /
+    // llm.tool_call_chunk. Now expansion contains ONLY the
+    // diagnostics button; everything else is gone.
     const onOpenDiagnostics = vi.fn()
     const current = message({
       status: 'done',
@@ -59,7 +63,7 @@ describe('AgentProgress', () => {
     renderAgentProgress(
       <AgentProgress
         message={current}
-        onOpenArtifact={onOpenArtifact}
+        onOpenArtifact={vi.fn()}
         onOpenDiagnostics={onOpenDiagnostics}
       />,
     )
@@ -67,17 +71,18 @@ describe('AgentProgress', () => {
     // Finished: an aggregated tally, no success/failure word or step count.
     expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
     expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
-    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
+    // None of the removed UI should be present anywhere — even collapsed.
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
+    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
 
-    expect(screen.getByText('已收集 2 个来源')).toBeInTheDocument()
-    expect(screen.getByText('生成 1 个 Artifact')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('查看 artifact'))
-    expect(onOpenArtifact).toHaveBeenCalledWith('artifact-1')
+    // Source/artifact tallies and per-step list are gone for good —
+    // the only thing in the expanded drawer is the diagnostics button.
+    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
+    expect(screen.queryByText('生成 1 个 Artifact')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('查看诊断 run-local'))
     expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
@@ -113,7 +118,12 @@ describe('AgentProgress', () => {
     expect(screen.getByText('正在打开受控网页 weather.com')).toBeInTheDocument()
   })
 
-  it('keeps the failed state muted and only shows the failing steps when expanded', () => {
+  it('marks the failed state with the failed tone class', () => {
+    // The old version of this test asserted that expanding the row
+    // revealed individual step labels. The step list is gone — there's
+    // no per-step view anymore — so this test now just verifies the
+    // failed-tone class lands on the wrapper for CSS styling. The
+    // headline itself still summarises the failure.
     const current = message({
       status: 'error',
       agentEvents: [
@@ -131,11 +141,9 @@ describe('AgentProgress', () => {
     )
 
     expect(container.querySelector('.agent-progress-failed')).toBeInTheDocument()
-    // Step labels are hidden until the row is expanded.
+    // The expanded drawer (when opened) carries only the diagnostics
+    // button — no step labels regardless of state.
     expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
-    expect(screen.getByText('调用工具：打开受控网页')).toBeInTheDocument()
   })
 
   it('derives failed and active progress labels from existing timeline items', () => {

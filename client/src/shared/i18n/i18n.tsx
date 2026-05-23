@@ -482,6 +482,23 @@ const zh = {
   'chat.tool.mcp.call': '调用扩展工具',
   'chat.tool.document.read': '阅读文档',
   'chat.tool.time.now': '读取时间',
+  // Friendly names for tools that previously surfaced raw in the
+  // timeline ("tool completed: user.ask"). All daemon-side tool names
+  // should have an entry here; the fallback path returns the raw name
+  // which leaks implementation detail to the user.
+  'chat.tool.user.ask': '向你提问',
+  'chat.tool.write_todos': '制定计划',
+  'chat.tool.task': '派发子任务',
+  'chat.tool.read_file': '读取文件',
+  'chat.tool.write_file': '写入文件',
+  'chat.tool.edit_file': '修改文件',
+  'chat.tool.ls': '列出文件',
+  'chat.tool.execute': '运行命令',
+  'chat.tool.memory.search': '查找记忆',
+  'chat.tool.memory.write': '记录笔记',
+  'chat.tool.image.generate': '生成图片',
+  'chat.tool.image.edit': '修改图片',
+  'chat.tool.browser.task': '浏览器操作',
 } as const
 
 export type TranslationKey = keyof typeof zh
@@ -963,6 +980,19 @@ const en: Record<TranslationKey, string> = {
   'chat.tool.mcp.call': 'Call extension tool',
   'chat.tool.document.read': 'Read document',
   'chat.tool.time.now': 'Read time',
+  'chat.tool.user.ask': 'Ask you a question',
+  'chat.tool.write_todos': 'Make a plan',
+  'chat.tool.task': 'Spawn subtask',
+  'chat.tool.read_file': 'Read file',
+  'chat.tool.write_file': 'Write file',
+  'chat.tool.edit_file': 'Edit file',
+  'chat.tool.ls': 'List files',
+  'chat.tool.execute': 'Run command',
+  'chat.tool.memory.search': 'Search memory',
+  'chat.tool.memory.write': 'Save note',
+  'chat.tool.image.generate': 'Generate image',
+  'chat.tool.image.edit': 'Edit image',
+  'chat.tool.browser.task': 'Browser action',
 }
 
 const dictionaries: Record<Locale, Record<TranslationKey, string>> = { zh, en }

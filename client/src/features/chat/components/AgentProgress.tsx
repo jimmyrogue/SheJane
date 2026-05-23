@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { IconChevronDown, IconDownload, IconEye } from '@tabler/icons-react'
-import { Badge } from '@/components/ui/badge'
+import { IconChevronDown, IconDownload } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
@@ -26,11 +25,14 @@ interface AgentProgressState {
 
 export function AgentProgress({
   message,
-  onOpenArtifact,
   onOpenDiagnostics,
 }: {
   message: ChatMessage
-  onOpenArtifact: (artifactID: string) => void
+  /** Kept in the prop signature for backwards compatibility with the
+   *  call site in App.tsx — the artifact preview link was removed from
+   *  this component as part of the timeline cleanup (users said the
+   *  expanded view was too noisy and they only wanted diagnostics). */
+  onOpenArtifact?: (artifactID: string) => void
   onOpenDiagnostics?: (runID: string) => void
 }) {
   const { t } = useI18n()
@@ -49,19 +51,18 @@ export function AgentProgress({
   if (!events.some((event) => OPERATION_TYPES.has(event.type))) {
     return null
   }
-  const bodyOpen = expanded
   const bodyId = `agent-progress-body-${message.id}`
-  const steps = expanded ? stepEvents(events) : []
   // While the run is active: the current action + its concrete target
   // ("正在打开 weather.com"). Once finished: an aggregated tally of what was
   // done ("读取 3 个文件 · 运行 2 条命令"). Never success/failure or step count.
   const headline = summaryHeadline(events, message, t)
+  const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics)
 
   const summaryInner = (
     <>
       <span className={cn('agent-progress-dot', dotClass(progress.tone))} aria-hidden="true" />
       <span className="name" key={headline}>{headline}</span>
-      <IconChevronDown className="tool-card-caret" aria-hidden="true" />
+      {canExpand ? <IconChevronDown className="tool-card-caret" aria-hidden="true" /> : null}
     </>
   )
 
@@ -69,95 +70,51 @@ export function AgentProgress({
     <div
       className={cn('tool-card agent-progress mt-4', `agent-progress-${progress.tone}`)}
       data-state={progress.tone}
-      data-expanded={bodyOpen}
+      data-expanded={expanded}
     >
-      <button
-        type="button"
-        className="tool-card-header agent-progress-summary"
-        aria-expanded={expanded}
-        aria-controls={bodyId}
-        aria-label={expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        {summaryInner}
-      </button>
+      {canExpand ? (
+        <button
+          type="button"
+          className="tool-card-header agent-progress-summary"
+          aria-expanded={expanded}
+          aria-controls={bodyId}
+          aria-label={expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {summaryInner}
+        </button>
+      ) : (
+        // No diagnostics → no point in being expandable. Render the
+        // headline as a passive row so users don't see a chevron that
+        // opens an empty drawer.
+        <div className="tool-card-header agent-progress-summary agent-progress-summary-static">
+          {summaryInner}
+        </div>
+      )}
 
-      {bodyOpen ? (
+      {/* Expanded body intentionally contains ONLY the diagnostics
+       *  button. The old per-event step list (graph.node /
+       *  llm.tool_call_chunk / run.started …) was internal-machinery
+       *  noise the user didn't need — the headline above already says
+       *  what's happening in plain language; diagnostics is the
+       *  escape hatch for when something feels wrong. */}
+      {expanded && canExpand ? (
         <div className="tool-card-results agent-progress-results" id={bodyId} aria-label={t('agent.summary')}>
-          {steps.length > 0 ? (
-            <ul className="agent-progress-steps">
-              {steps.map((event, index) => (
-                <li
-                  className={cn('agent-progress-step', isFailedEvent(event) && 'agent-progress-step-failed')}
-                  key={`${event.eventId ?? event.type}-${index}`}
-                >
-                  {isFailedEvent(event) ? <span className="agent-progress-dot dot-danger" aria-hidden="true" /> : null}
-                  <span className="agent-progress-step-group">{timelineGroup(event, t)}</span>
-                  <span className="agent-progress-step-label">{event.label}</span>
-                  {event.sourceUrl ? (
-                    <a
-                      className="agent-progress-step-source"
-                      href={event.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {event.sourceUrl}
-                    </a>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          {progress.sourcesCount > 0 ? (
-            <div className="row">
-              <span>{t('agent.sourcesCount', { count: progress.sourcesCount })}</span>
-              <Badge variant="outline">source</Badge>
-            </div>
-          ) : null}
-          {progress.artifactsCount > 0 ? (
-            <div className="row">
-              <span>{t('agent.artifactsCount', { count: progress.artifactsCount })}</span>
-              <Badge variant="outline">artifact</Badge>
-            </div>
-          ) : null}
-          {progress.latestArtifactID ? (
-            <Button className="agent-progress-action" size="sm" variant="ghost" onClick={() => onOpenArtifact(progress.latestArtifactID!)}>
-              <IconEye size={13} />
-              {t('agent.viewArtifact')}
-            </Button>
-          ) : null}
-          {progress.diagnosticsRunID && onOpenDiagnostics ? (
-            <Button
-              className="agent-progress-action"
-              size="sm"
-              variant="outline"
-              title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID })}
-              onClick={() => onOpenDiagnostics(progress.diagnosticsRunID!)}
-            >
-              <IconDownload size={13} />
-              {t('agent.diagnostics')}
-            </Button>
-          ) : null}
-          {!steps.length && !progress.sourcesCount && !progress.artifactsCount && !progress.latestArtifactID && !progress.diagnosticsRunID ? (
-            <div className="row muted">
-              <span>{progress.tone === 'working' ? t('agent.noResultsWorking') : t('agent.noResults')}</span>
-            </div>
-          ) : null}
+          <Button
+            className="agent-progress-action"
+            size="sm"
+            variant="outline"
+            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID! })}
+            onClick={() => onOpenDiagnostics!(progress.diagnosticsRunID!)}
+          >
+            <IconDownload size={13} />
+            {t('agent.diagnostics')}
+          </Button>
         </div>
       ) : null}
     </div>
   )
 }
-
-const STEP_HIDDEN_TYPES = new Set([
-  'run.completed',
-  'run.canceled',
-  'run.failed',
-  'permission.resolved',
-  'permission.auto_approved',
-  'llm.usage',
-])
 
 // skill.selected is emitted on every run as housekeeping — it is NOT a
 // user-facing operation, so it must not make the progress row appear for a
@@ -263,25 +220,6 @@ function operationCountsLabel(events: AgentTimelineItem[], t: Translator): strin
     parts.push(t('agent.count.operations', { count: other }))
   }
   return parts.join(' · ')
-}
-
-function stepEvents(events: AgentTimelineItem[]): AgentTimelineItem[] {
-  return events.filter((event) => !STEP_HIDDEN_TYPES.has(event.type))
-}
-
-function isFailedEvent(event: AgentTimelineItem): boolean {
-  return event.type === 'run.failed' || event.type === 'tool.failed' || event.verificationStatus === 'failed'
-}
-
-function timelineGroup(event: AgentTimelineItem, t: Translator): string {
-  if (event.type.startsWith('permission')) return t('agent.timeline.permission')
-  if (event.type.startsWith('tool')) return t('agent.timeline.tool')
-  if (event.type.startsWith('browser')) return t('agent.timeline.browser')
-  if (event.type === 'source.collected') return t('agent.timeline.source')
-  if (event.type.startsWith('verification')) return t('agent.timeline.verification')
-  if (event.type.startsWith('run')) return t('agent.timeline.run')
-  if (event.type.startsWith('artifact')) return t('agent.timeline.artifact')
-  return t('agent.timeline.event')
 }
 
 export function deriveAgentProgress(message: ChatMessage, t: Translator = createTranslator('zh')): AgentProgressState | null {
