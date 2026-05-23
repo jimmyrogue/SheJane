@@ -50,7 +50,15 @@ export function ModeSelector({
           <IconChevronDown size={12} aria-hidden="true" className="composer-mode-trigger-chevron" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="composer-mode-menu">
+      <DropdownMenuContent
+        align="start"
+        // Shift the popup left so it doesn't sit flush against the
+        // trigger's left edge — gives the menu a little breathing room
+        // and stops it from visually merging with the chevron underneath.
+        alignOffset={-8}
+        sideOffset={6}
+        className="composer-mode-menu"
+      >
         {(['auto', 'fast', 'pro'] as const).map((value) => {
           const meta = MODE_META[value]
           const isActive = value === mode
