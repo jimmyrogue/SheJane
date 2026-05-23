@@ -120,18 +120,26 @@ def test_output_guard_lets_normal_answer_through() -> None:
     assert mw.after_model(state, runtime=None) is None
 
 
-def test_output_guard_nudges_on_empty_answer() -> None:
+def test_output_guard_flags_empty_answer_without_injecting_messages() -> None:
+    """Regression: an earlier version of this middleware appended a
+    HumanMessage retry nudge to state when the assistant produced an
+    empty final answer. Because the deepagents loop had already
+    decided the model was done, that nudge never triggered another
+    model call — it just became the latest message, which
+    runs.py:_extract_final_text then surfaced as the user-visible
+    "assistant" reply ("Your last response was empty …" rendered as
+    chat output). The middleware is now observe-only: it flags the
+    state but does NOT touch messages."""
     from local_host.middleware.output_guard import OutputGuardMiddleware
 
     mw = OutputGuardMiddleware()
     state = {"messages": [HumanMessage(content="hi"), AIMessage(content="")]}
     result = mw.after_model(state, runtime=None)
-    assert result is not None
-    assert result["output_guard_nudges"] == 1
-    assert "empty" in result["messages"][0].content
+    assert result == {"output_guard_flag": "empty"}
+    assert "messages" not in result
 
 
-def test_output_guard_nudges_on_bare_refusal() -> None:
+def test_output_guard_flags_bare_refusal_without_injecting_messages() -> None:
     from local_host.middleware.output_guard import OutputGuardMiddleware
 
     mw = OutputGuardMiddleware()
@@ -142,19 +150,8 @@ def test_output_guard_nudges_on_bare_refusal() -> None:
         ]
     }
     result = mw.after_model(state, runtime=None)
-    assert result is not None
-    assert "refusal" in result["messages"][0].content
-
-
-def test_output_guard_caps_nudges() -> None:
-    from local_host.middleware.output_guard import OutputGuardMiddleware
-
-    mw = OutputGuardMiddleware(max_nudges=1)
-    state = {
-        "messages": [HumanMessage(content="hi"), AIMessage(content="")],
-        "output_guard_nudges": 1,
-    }
-    assert mw.after_model(state, runtime=None) is None
+    assert result == {"output_guard_flag": "refusal"}
+    assert "messages" not in result
 
 
 def test_output_guard_skips_if_tool_call_pending() -> None:
@@ -167,6 +164,44 @@ def test_output_guard_skips_if_tool_call_pending() -> None:
     )
     state = {"messages": [HumanMessage(content="x"), ai]}
     assert mw.after_model(state, runtime=None) is None
+
+
+def test_extract_final_text_ignores_non_ai_messages() -> None:
+    """Regression for the diagnostic where the user-visible "assistant"
+    reply was actually the OutputGuard's injected HumanMessage
+    ("Your last response was empty…"). _extract_final_text used to
+    return the first non-empty content of ANY message; it now only
+    looks at AIMessages so middleware-injected nudges, ToolMessages,
+    and HumanMessages can never leak into the chat."""
+    from langchain_core.messages import SystemMessage, ToolMessage
+
+    from local_host.runs import _extract_final_text
+
+    state = {
+        "messages": [
+            SystemMessage(content="system rules"),
+            HumanMessage(content="hi"),
+            AIMessage(content="real assistant answer"),
+            ToolMessage(content="tool output", tool_call_id="c1"),
+            HumanMessage(content="Your last response was empty. Please answer …"),
+        ]
+    }
+    assert _extract_final_text(state) == "real assistant answer"
+
+
+def test_extract_final_text_empty_when_no_ai_message() -> None:
+    """If the assistant never produced text — e.g. tool-call only run
+    that terminated abnormally — final_text is empty, not someone
+    else's content."""
+    from local_host.runs import _extract_final_text
+
+    state = {
+        "messages": [
+            HumanMessage(content="hi"),
+            HumanMessage(content="oops nudge"),
+        ]
+    }
+    assert _extract_final_text(state) == ""
 
 
 # --- reflect ---

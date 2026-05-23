@@ -637,10 +637,27 @@ def _serialize_payload(payload: Any) -> dict[str, Any]:
 
 
 def _extract_final_text(state_values: Any) -> str:
+    """Return the assistant's final visible answer for the run.
+
+    Subtle bug we hit: walking ALL messages backwards and grabbing the
+    first non-empty content would also pick up HumanMessages that
+    middlewares injected for retry nudges (e.g. OutputGuardMiddleware
+    appending "Your last response was empty…" as a HumanMessage when
+    the assistant produced empty output). When the deepagents loop had
+    already exited, that nudge ended up being the last message — and
+    the user saw the system retry-prompt rendered as the assistant's
+    final reply.
+
+    Only AIMessages (`message.type == "ai"`) can be the assistant's
+    actual answer. ToolMessages, HumanMessages, SystemMessages are
+    never the visible final text.
+    """
     if not isinstance(state_values, dict):
         return ""
     messages = state_values.get("messages") or []
     for message in reversed(messages):
+        if getattr(message, "type", None) != "ai":
+            continue
         content = getattr(message, "content", None)
         if isinstance(content, str) and content.strip():
             return content
