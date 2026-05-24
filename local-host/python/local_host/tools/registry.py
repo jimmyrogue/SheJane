@@ -18,7 +18,7 @@ from .browser import make_browser_tool
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
 from .memory import MEMORY_TOOLS
-from .office import OFFICE_READ_TOOLS
+from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
@@ -38,6 +38,11 @@ def core_tools() -> list[BaseTool]:
         *MEMORY_TOOLS,
         *USER_TOOLS,
         *OFFICE_READ_TOOLS,
+        # Office write tools (Phase 2). Deliberately NOT registered in
+        # `agent/builder.py:DESTRUCTIVE_TOOLS` — they use copy-on-first-write
+        # against `<basename>.edited.<ext>` and never touch the original,
+        # so HITL approval isn't needed.
+        *OFFICE_WRITE_TOOLS,
     ]
 
 
@@ -63,6 +68,7 @@ async def build_tools(
     tools.extend(MEMORY_TOOLS)
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
+    tools.extend(OFFICE_WRITE_TOOLS)
     if store is not None:
         tools.append(make_workspace_open_tool(store))
     # fs.list/read/write are provided by deepagents FilesystemMiddleware

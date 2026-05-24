@@ -543,6 +543,20 @@ function toolActionLabel(tool: string, t: Translator): string {
     'image.generate': t('chat.tool.image.generate'),
     'image.edit': t('chat.tool.image.edit'),
     'browser.task': t('chat.tool.browser.task'),
+    // Office tools — read + outline + read_range + 10 write tools.
+    'office.read': t('chat.tool.office.read'),
+    'office.outline': t('chat.tool.office.outline'),
+    'office.read_range': t('chat.tool.office.read_range'),
+    'office.find_replace': t('chat.tool.office.find_replace'),
+    'office.insert_paragraph': t('chat.tool.office.insert_paragraph'),
+    'office.update_paragraph': t('chat.tool.office.update_paragraph'),
+    'office.delete_paragraph': t('chat.tool.office.delete_paragraph'),
+    'office.apply_style': t('chat.tool.office.apply_style'),
+    'office.set_cells': t('chat.tool.office.set_cells'),
+    'office.set_formula': t('chat.tool.office.set_formula'),
+    'office.set_cell_format': t('chat.tool.office.set_cell_format'),
+    'office.merge_cells': t('chat.tool.office.merge_cells'),
+    'office.add_row': t('chat.tool.office.add_row'),
   }
   return labels[tool] || tool || t('chat.tool.fallback')
 }

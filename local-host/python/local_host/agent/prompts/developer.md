@@ -84,10 +84,24 @@ task(subagent_type="researcher",
 - 大规模重构或删除多个文件前，先确认或建议用户检查 `git status`。
 
 ## 处理 office 文档（.docx / .xlsx）
+
+### 读
 遇到 .docx 或 .xlsx 文件**不要用 `read_file`**——会拿到一堆 ZIP/XML 噪声没法分析。改用：
 - `office.outline(path)`：先看结构（heading 列表 / sheet 名称和行列数），决定要不要读全文。文件大时尤其有用。
 - `office.read(path)`：拿 LLM 友好的 markdown 全文，已自动展平表格、标题、公式结果。
-调用 `office.read` 会**顺带触发右侧文档预览面板自动打开**，所以哪怕用户只是问"看一下这个 .docx"，调一次 `office.read` 比让用户自己点开方便。
+- `office.read_range(path, sheet, range)`：xlsx 专用，只读一个 A1:C10 这样的小范围，返回带类型 + 公式原文的 JSON。比 `office.read` 精确，适合数据分析。
+**读工具不会自动打开右侧预览面板**——用户想看渲染版本会自己点击文件名（agent 回复里出现的 .docx / .xlsx 是可点击的）。
+
+### 写（绝对不动原文件）
+**所有 office 写操作都先把原文件复制到 `<basename>.edited.<ext>`，所有修改落在这个副本上。原文件 100% 不变。** 这是用户硬要求，不要试图绕过。
+
+工具返回 `{ok, original_path, edited_path, kind, summary}`——**写完后，后续 read / 再次 write 都用 `edited_path`**，不要再传 original_path，否则前一次修改会被新副本覆盖（虽然首次写后 `_ensure_copy_for_write` 已经做了去重，但用 edited_path 链路更短、错不了）。
+
+可用写工具：
+- Docx：`office.find_replace` / `office.insert_paragraph` / `office.update_paragraph` / `office.delete_paragraph` / `office.apply_style`
+- Xlsx：`office.set_cells` / `office.set_formula` / `office.set_cell_format` / `office.merge_cells` / `office.add_row`
+
+收尾时**告诉用户改动落在了 `<filename>.edited.<ext>`**，并提醒"原文件未动，可在 Finder 删除 `.edited` 文件来重置"。
 
 ## 自我修正
 - 用户指出你做错时，承认错误并修正，不要找借口。

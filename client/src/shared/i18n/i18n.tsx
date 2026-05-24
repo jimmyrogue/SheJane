@@ -526,6 +526,19 @@ const zh = {
   'chat.tool.image.generate': '生成图片',
   'chat.tool.image.edit': '修改图片',
   'chat.tool.browser.task': '浏览器操作',
+  'chat.tool.office.read': '读取文档',
+  'chat.tool.office.outline': '查看文档结构',
+  'chat.tool.office.read_range': '读取单元格',
+  'chat.tool.office.find_replace': '查找替换',
+  'chat.tool.office.insert_paragraph': '插入段落',
+  'chat.tool.office.update_paragraph': '修改段落',
+  'chat.tool.office.delete_paragraph': '删除段落',
+  'chat.tool.office.apply_style': '应用样式',
+  'chat.tool.office.set_cells': '写入单元格',
+  'chat.tool.office.set_formula': '写入公式',
+  'chat.tool.office.set_cell_format': '设置单元格格式',
+  'chat.tool.office.merge_cells': '合并单元格',
+  'chat.tool.office.add_row': '插入行',
 } as const
 
 export type TranslationKey = keyof typeof zh
@@ -1045,6 +1058,19 @@ const en: Record<TranslationKey, string> = {
   'chat.tool.image.generate': 'Generate image',
   'chat.tool.image.edit': 'Edit image',
   'chat.tool.browser.task': 'Browser action',
+  'chat.tool.office.read': 'Read document',
+  'chat.tool.office.outline': 'Outline document',
+  'chat.tool.office.read_range': 'Read cells',
+  'chat.tool.office.find_replace': 'Find & replace',
+  'chat.tool.office.insert_paragraph': 'Insert paragraph',
+  'chat.tool.office.update_paragraph': 'Update paragraph',
+  'chat.tool.office.delete_paragraph': 'Delete paragraph',
+  'chat.tool.office.apply_style': 'Apply style',
+  'chat.tool.office.set_cells': 'Write cells',
+  'chat.tool.office.set_formula': 'Write formula',
+  'chat.tool.office.set_cell_format': 'Format cells',
+  'chat.tool.office.merge_cells': 'Merge cells',
+  'chat.tool.office.add_row': 'Insert row',
 }
 
 const dictionaries: Record<Locale, Record<TranslationKey, string>> = { zh, en }

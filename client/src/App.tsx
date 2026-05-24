@@ -1604,11 +1604,17 @@ function appendLocalRunEvent(
     if (cached && !payload.arguments) {
       event = { ...event, payload: { ...payload, arguments: cached } }
     }
-    // Side effect: detect a successful office.read and open the
-    // right-side document preview panel. Tool result shape (from
-    // local_host/tools/office.py) is `{ok, path, kind, markdown, …}`.
+    // Side effect: detect a successful office WRITE and refresh the
+    // right-side document preview panel to the freshly-edited copy.
+    // Result shape from any office.* write tool:
+    //   {ok, original_path, edited_path, kind, summary}
+    // Reads (office.read / office.outline) intentionally do NOT
+    // auto-open the preview — that was noisy. Preview opens only on:
+    //   1. user clicking a filename in agent text
+    //   2. user clicking an attachment chip
+    //   3. an edit completing (this branch)
     if (event.event_type === 'tool.completed' && !alreadySeen) {
-      const detected = detectOfficeFileOpened(event.payload)
+      const detected = detectOfficeFileEdited(event.payload)
       if (detected) {
         onOfficeFileOpened?.(detected)
       }
@@ -1631,40 +1637,51 @@ function appendLocalRunEvent(
   }
 }
 
+/** Tool names that emit the copy-on-first-write Phase 2 result shape:
+ *  `{ok, original_path, edited_path, kind, summary}`. The renderer
+ *  follows `edited_path` so the preview shows the freshly-edited copy
+ *  rather than the untouched original. Keep this list in sync with
+ *  `local_host/tools/office.py:OFFICE_WRITE_TOOLS`. */
+const OFFICE_WRITE_TOOL_NAMES = new Set<string>([
+  'office.find_replace',
+  'office.insert_paragraph',
+  'office.update_paragraph',
+  'office.delete_paragraph',
+  'office.apply_style',
+  'office.set_cells',
+  'office.set_formula',
+  'office.set_cell_format',
+  'office.merge_cells',
+  'office.add_row',
+])
+
 /** Inspect a `tool.completed` payload and return a LocalOfficeFileRef
- *  when the underlying tool was a successful office.read.
+ *  when the underlying tool was a successful office.* WRITE — the
+ *  ref points at the `.edited.<ext>` copy that now holds the changes.
  *
- *  Detection is conservative: ok="true" + non-empty path. A malformed
- *  result silently degrades to "no preview" instead of crashing.
- *
- *  We rely on the daemon's args-cache having injected the original
- *  arguments into payload.arguments above — that lets us recover the
- *  path even when the tool result itself omits it (older runs).
- */
-function detectOfficeFileOpened(payload: AgentRunEvent['payload']): LocalOfficeFileRef | null {
+ *  Returns null for unknown tools, non-success results, and missing
+ *  edited_path (so a malformed result silently degrades to "don't
+ *  switch the preview"). */
+function detectOfficeFileEdited(payload: AgentRunEvent['payload']): LocalOfficeFileRef | null {
   if (!payload) return null
   const toolName = String((payload as Record<string, unknown>).tool ?? (payload as Record<string, unknown>).name ?? '')
-  if (toolName !== 'office.read') return null
+  if (!OFFICE_WRITE_TOOL_NAMES.has(toolName)) return null
   const result = (payload as Record<string, unknown>).result
-  const args = (payload as Record<string, unknown>).arguments
   const resultObj =
     result && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : null
-  const argsObj =
-    args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : null
-  const ok = resultObj ? String(resultObj.ok ?? '') : ''
-  if (ok && ok !== 'true') return null
-  const path = String(resultObj?.path ?? argsObj?.path ?? '')
-  if (!path) return null
-  const kindRaw = String(resultObj?.kind ?? '')
-  // Fall back to extension sniffing if the daemon didn't surface kind.
+  if (!resultObj) return null
+  if (String(resultObj.ok ?? '') !== 'true') return null
+  const editedPath = String(resultObj.edited_path ?? '')
+  if (!editedPath) return null
+  const kindRaw = String(resultObj.kind ?? '')
   const kind: LocalOfficeFileRef['kind'] =
     kindRaw === 'word' || kindRaw === 'excel'
       ? kindRaw
-      : path.toLowerCase().endsWith('.xlsx')
+      : editedPath.toLowerCase().endsWith('.xlsx')
         ? 'excel'
         : 'word'
-  const name = path.split(/[\\/]/).pop() || path
-  return { path, kind, name }
+  const name = editedPath.split(/[\\/]/).pop() || editedPath
+  return { path: editedPath, kind, name }
 }
 
 function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEvent, seenEventIDs: Set<string>) {
