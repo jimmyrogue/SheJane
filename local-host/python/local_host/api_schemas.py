@@ -328,3 +328,19 @@ class CancelRunResponse(BaseModel):
 
 class ResumeRunResponse(BaseModel):
     resumed: Literal[True] = True
+
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+
+class ClearMemoryResponse(BaseModel):
+    """DELETE /local/v1/memory — wipes the agent's long-term notes.
+
+    Reported back so the renderer can show "cleared N memories" toast
+    instead of a generic "done" message.
+    """
+
+    cleared: Literal[True] = True
+    deleted_count: int

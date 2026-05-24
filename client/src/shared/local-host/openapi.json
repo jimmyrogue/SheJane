@@ -33,6 +33,26 @@
         "title": "CancelRunResponse",
         "type": "object"
       },
+      "ClearMemoryResponse": {
+        "description": "DELETE /local/v1/memory — wipes the agent's long-term notes.\n\nReported back so the renderer can show \"cleared N memories\" toast\ninstead of a generic \"done\" message.",
+        "properties": {
+          "cleared": {
+            "const": true,
+            "default": true,
+            "title": "Cleared",
+            "type": "boolean"
+          },
+          "deleted_count": {
+            "title": "Deleted Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_count"
+        ],
+        "title": "ClearMemoryResponse",
+        "type": "object"
+      },
       "CreateRunRequest": {
         "properties": {
           "goal": {
@@ -1030,6 +1050,25 @@
         "summary": "Health"
       }
     },
+    "/local/v1/memory": {
+      "delete": {
+        "description": "Wipe every note from the long-term memory namespace.\n\nBacks the \"清空记忆 / Clear memory\" button in the agent settings\ndialog. Walks (\"notes\", \"global\") in pages of 200 (matches the\nBaseStore default search limit ceiling for SQLite stores) and\ndeletes each key. Returns the total count so the UI can render\nan accurate \"cleared N memories\" toast.\n\nIdempotent: calling it on an empty store returns\n`deleted_count: 0` without error.",
+        "operationId": "clear_memory_local_v1_memory_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearMemoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Memory"
+      }
+    },
     "/local/v1/permissions/{permission_id}": {
       "post": {
         "description": "Approve / deny a pending tool-permission request.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"reject\", ...}]}` shape\nthat `HumanInTheLoopMiddleware` expects on resume (the\nmiddleware does `interrupt(...)[\"decisions\"]` and KeyError's\non anything else).\n\nWhen `scope=run`, the coordinator caches the tool name so the\nauto-approve loop in `_drive_run` skips re-prompting on\nsubsequent gates for the same tool in the same run.",
@@ -1078,6 +1117,50 @@
           }
         },
         "summary": "Resolve Permission"
+      }
+    },
+    "/local/v1/pptx-outline": {
+      "get": {
+        "description": "Return the slide outline JSON for a .pptx file.\n\nUsed by the right-side DocPreviewPanel's PptxPreview component\n— pptx has no mature pure-browser renderer, so the panel renders\na structured outline (title + bullets + notes per slide) here\nrather than embedding a viewer in iframe.\n\nGated by `local_workspaces`, same as `/workspace-files`. The\npath's parent chain must be inside a previously-authorized\nworkspace. Calls the shared `_outline_pptx` helper that\n`office.outline` and `office.read_slides` also use, so the\nJSON shape is identical to those tools.",
+        "operationId": "get_pptx_outline_local_v1_pptx_outline_get",
+        "parameters": [
+          {
+            "description": "Absolute .pptx path inside an authorized workspace",
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "Absolute .pptx path inside an authorized workspace",
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Pptx Outline Local V1 Pptx Outline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Pptx Outline"
       }
     },
     "/local/v1/questions/{question_id}": {
@@ -1587,6 +1670,46 @@
           }
         },
         "summary": "List Tools"
+      }
+    },
+    "/local/v1/workspace-files": {
+      "get": {
+        "description": "Stream a file's bytes back to the renderer.\n\nGated by `local_workspaces` — the file's parent chain must be inside\na path the user previously authorized via `workspace.open`. We do\nNOT serve arbitrary paths; that would let a compromised renderer\nexfiltrate the entire disk.\n\nUsed by the right-side DocPreviewPanel to fetch .docx / .xlsx\nbytes for in-browser rendering (docx-preview, exceljs). No\nresponse_model — this is a binary stream, not a JSON shape, so\nit stays out of api_schemas.py / openapi.json by design.",
+        "operationId": "get_workspace_file_local_v1_workspace_files_get",
+        "parameters": [
+          {
+            "description": "Absolute file path inside an authorized workspace",
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "Absolute file path inside an authorized workspace",
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace File"
       }
     },
     "/local/v1/workspaces": {

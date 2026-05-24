@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { Conversation, MessageStatus } from '@/shared/local-data/types'
@@ -226,8 +226,9 @@ describe('ConversationSidebar', () => {
     fireEvent.click(await screen.findByText('Agent 设置'))
 
     const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    const memoryGroup = within(dialog).getByRole('group', { name: '记忆' })
-    fireEvent.click(within(memoryGroup).getByRole('button', { name: '开启' }))
+    const memorySwitch = within(dialog).getByRole('switch', { name: '记忆' })
+    expect(memorySwitch).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(memorySwitch)
     expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on', skills: 'off' })
   })
 
@@ -258,8 +259,9 @@ describe('ConversationSidebar', () => {
     fireEvent.click(await screen.findByText('Agent 设置'))
 
     const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    const skillsGroup = within(dialog).getByRole('group', { name: '技能' })
-    fireEvent.click(within(skillsGroup).getByRole('button', { name: '开启' }))
+    const skillsSwitch = within(dialog).getByRole('switch', { name: '技能' })
+    expect(skillsSwitch).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(skillsSwitch)
     expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'off', skills: 'on' })
   })
 
@@ -268,6 +270,104 @@ describe('ConversationSidebar', () => {
     renderSidebar([], undefined, { onOpenSkills })
     fireEvent.click(screen.getByText('技能'))
     expect(onOpenSkills).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the 清空记忆 row entirely when onClearMemory is not provided', async () => {
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          agentSettings={{ memory: 'on', skills: 'off' }}
+          onAgentSettingsChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: '设置' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByText('Agent 设置'))
+    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
+    expect(within(dialog).queryByText('清空记忆')).not.toBeInTheDocument()
+  })
+
+  it('opens the confirmation alert and calls onClearMemory only on confirm', async () => {
+    const onClearMemory = vi.fn(async () => 7)
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          agentSettings={{ memory: 'on', skills: 'off' }}
+          onAgentSettingsChange={vi.fn()}
+          onClearMemory={onClearMemory}
+        />
+      </I18nProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: '设置' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByText('Agent 设置'))
+    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
+
+    // The destructive action is gated behind a separate confirmation —
+    // the bare 清空 button must NOT call the handler directly.
+    fireEvent.click(within(dialog).getByRole('button', { name: '清空' }))
+    expect(onClearMemory).not.toHaveBeenCalled()
+
+    const confirmAlert = await screen.findByRole('alertdialog')
+    expect(within(confirmAlert).getByText('清空所有记忆？')).toBeInTheDocument()
+    fireEvent.click(within(confirmAlert).getByRole('button', { name: '确认清空' }))
+    await waitFor(() => expect(onClearMemory).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not call onClearMemory when the confirmation is cancelled', async () => {
+    const onClearMemory = vi.fn(async () => 0)
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          agentSettings={{ memory: 'on', skills: 'off' }}
+          onAgentSettingsChange={vi.fn()}
+          onClearMemory={onClearMemory}
+        />
+      </I18nProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: '设置' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByText('Agent 设置'))
+    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '清空' }))
+
+    const confirmAlert = await screen.findByRole('alertdialog')
+    fireEvent.click(within(confirmAlert).getByRole('button', { name: '取消' }))
+    expect(onClearMemory).not.toHaveBeenCalled()
   })
 
   it('marks the Skills nav as active when activeView is "skills"', () => {

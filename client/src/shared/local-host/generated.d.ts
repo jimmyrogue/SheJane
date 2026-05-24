@@ -44,6 +44,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Clear Memory
+         * @description Wipe every note from the long-term memory namespace.
+         *
+         *     Backs the "清空记忆 / Clear memory" button in the agent settings
+         *     dialog. Walks ("notes", "global") in pages of 200 (matches the
+         *     BaseStore default search limit ceiling for SQLite stores) and
+         *     deletes each key. Returns the total count so the UI can render
+         *     an accurate "cleared N memories" toast.
+         *
+         *     Idempotent: calling it on an empty store returns
+         *     `deleted_count: 0` without error.
+         */
+        delete: operations["clear_memory_local_v1_memory_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/permissions/{permission_id}": {
         parameters: {
             query?: never;
@@ -68,6 +97,37 @@ export interface paths {
          *     subsequent gates for the same tool in the same run.
          */
         post: operations["resolve_permission_local_v1_permissions__permission_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/pptx-outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pptx Outline
+         * @description Return the slide outline JSON for a .pptx file.
+         *
+         *     Used by the right-side DocPreviewPanel's PptxPreview component
+         *     — pptx has no mature pure-browser renderer, so the panel renders
+         *     a structured outline (title + bullets + notes per slide) here
+         *     rather than embedding a viewer in iframe.
+         *
+         *     Gated by `local_workspaces`, same as `/workspace-files`. The
+         *     path's parent chain must be inside a previously-authorized
+         *     workspace. Calls the shared `_outline_pptx` helper that
+         *     `office.outline` and `office.read_slides` also use, so the
+         *     JSON shape is identical to those tools.
+         */
+        get: operations["get_pptx_outline_local_v1_pptx_outline_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -327,6 +387,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/workspace-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workspace File
+         * @description Stream a file's bytes back to the renderer.
+         *
+         *     Gated by `local_workspaces` — the file's parent chain must be inside
+         *     a path the user previously authorized via `workspace.open`. We do
+         *     NOT serve arbitrary paths; that would let a compromised renderer
+         *     exfiltrate the entire disk.
+         *
+         *     Used by the right-side DocPreviewPanel to fetch .docx / .xlsx
+         *     bytes for in-browser rendering (docx-preview, exceljs). No
+         *     response_model — this is a binary stream, not a JSON shape, so
+         *     it stays out of api_schemas.py / openapi.json by design.
+         */
+        get: operations["get_workspace_file_local_v1_workspace_files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/workspaces": {
         parameters: {
             query?: never;
@@ -411,6 +501,23 @@ export interface components {
         CancelRunResponse: {
             /** Canceled */
             canceled: boolean;
+        };
+        /**
+         * ClearMemoryResponse
+         * @description DELETE /local/v1/memory — wipes the agent's long-term notes.
+         *
+         *     Reported back so the renderer can show "cleared N memories" toast
+         *     instead of a generic "done" message.
+         */
+        ClearMemoryResponse: {
+            /**
+             * Cleared
+             * @default true
+             * @constant
+             */
+            cleared: true;
+            /** Deleted Count */
+            deleted_count: number;
         };
         /** CreateRunRequest */
         CreateRunRequest: {
@@ -872,6 +979,26 @@ export interface operations {
             };
         };
     };
+    clear_memory_local_v1_memory_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearMemoryResponse"];
+                };
+            };
+        };
+    };
     resolve_permission_local_v1_permissions__permission_id__post: {
         parameters: {
             query?: never;
@@ -894,6 +1021,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PermissionResolution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pptx_outline_local_v1_pptx_outline_get: {
+        parameters: {
+            query: {
+                /** @description Absolute .pptx path inside an authorized workspace */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -1339,6 +1500,38 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_workspace_file_local_v1_workspace_files_get: {
+        parameters: {
+            query: {
+                /** @description Absolute file path inside an authorized workspace */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

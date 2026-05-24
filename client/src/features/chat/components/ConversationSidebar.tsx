@@ -70,6 +70,7 @@ export function ConversationSidebar({
   activeView = 'chat',
   agentSettings,
   onAgentSettingsChange,
+  onClearMemory,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -88,6 +89,10 @@ export function ConversationSidebar({
   activeView?: 'chat' | 'skills'
   agentSettings?: Required<AgentSettings>
   onAgentSettingsChange?: (next: Required<AgentSettings>) => void
+  /** Wipe every persisted note in the agent's long-term memory namespace.
+   *  Called after the user confirms the destructive prompt; resolves with
+   *  the number of notes that were deleted so the toast can be accurate. */
+  onClearMemory?: () => Promise<number>
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -98,9 +103,13 @@ export function ConversationSidebar({
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const memoryEnabled = (agentSettings?.memory ?? 'off') === 'on'
+  const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
+  const [clearingMemory, setClearingMemory] = useState(false)
+  // Memory defaults ON to match the new client default; the daemon also
+  // treats a missing `settings.memory` as on. Keep both ends aligned.
+  const memoryEnabled = (agentSettings?.memory ?? 'on') === 'on'
   const skillsEnabled = (agentSettings?.skills ?? 'off') === 'on'
-  const currentAgentSettings: Required<AgentSettings> = agentSettings ?? { memory: 'off', skills: 'off' }
+  const currentAgentSettings: Required<AgentSettings> = agentSettings ?? { memory: 'on', skills: 'off' }
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
@@ -336,57 +345,65 @@ export function ConversationSidebar({
             <DialogTitle>{t('sidebar.agentSettings.title')}</DialogTitle>
             <DialogDescription>{t('sidebar.agentSettings.description')}</DialogDescription>
           </DialogHeader>
-          <div className="agent-settings-row">
-            <div className="agent-settings-copy">
-              <div className="agent-settings-label">{t('sidebar.agentSettings.memory.label')}</div>
-              <div className="agent-settings-hint">{t('sidebar.agentSettings.memory.hint')}</div>
-            </div>
-            <div className="agent-settings-segment" role="group" aria-label={t('sidebar.agentSettings.memory.label')}>
-              <Button
+          <div className="agent-settings-card">
+            <div className="agent-settings-card-row">
+              <div className="agent-settings-card-copy">
+                <div className="agent-settings-card-label">{t('sidebar.agentSettings.memory.label')}</div>
+                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.memory.hint')}</div>
+              </div>
+              <button
                 type="button"
-                variant={memoryEnabled ? 'ghost' : 'default'}
-                className="agent-settings-segment-btn"
-                aria-pressed={!memoryEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, memory: 'off' })}
-              >
-                {t('sidebar.agentSettings.off')}
-              </Button>
-              <Button
-                type="button"
-                variant={memoryEnabled ? 'default' : 'ghost'}
-                className="agent-settings-segment-btn"
-                aria-pressed={memoryEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, memory: 'on' })}
-              >
-                {t('sidebar.agentSettings.on')}
-              </Button>
+                role="switch"
+                aria-checked={memoryEnabled}
+                aria-label={t('sidebar.agentSettings.memory.label')}
+                className="agent-settings-switch"
+                onClick={() =>
+                  onAgentSettingsChange?.({
+                    ...currentAgentSettings,
+                    memory: memoryEnabled ? 'off' : 'on',
+                  })
+                }
+              />
             </div>
-          </div>
-          <div className="agent-settings-row">
-            <div className="agent-settings-copy">
-              <div className="agent-settings-label">{t('sidebar.agentSettings.skills.label')}</div>
-              <div className="agent-settings-hint">{t('sidebar.agentSettings.skills.hint')}</div>
-            </div>
-            <div className="agent-settings-segment" role="group" aria-label={t('sidebar.agentSettings.skills.label')}>
-              <Button
+            <div className="agent-settings-card-row">
+              <div className="agent-settings-card-copy">
+                <div className="agent-settings-card-label">{t('sidebar.agentSettings.skills.label')}</div>
+                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.skills.hint')}</div>
+              </div>
+              <button
                 type="button"
-                variant={skillsEnabled ? 'ghost' : 'default'}
-                className="agent-settings-segment-btn"
-                aria-pressed={!skillsEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, skills: 'off' })}
-              >
-                {t('sidebar.agentSettings.off')}
-              </Button>
-              <Button
-                type="button"
-                variant={skillsEnabled ? 'default' : 'ghost'}
-                className="agent-settings-segment-btn"
-                aria-pressed={skillsEnabled}
-                onClick={() => onAgentSettingsChange?.({ ...currentAgentSettings, skills: 'on' })}
-              >
-                {t('sidebar.agentSettings.on')}
-              </Button>
+                role="switch"
+                aria-checked={skillsEnabled}
+                aria-label={t('sidebar.agentSettings.skills.label')}
+                className="agent-settings-switch"
+                onClick={() =>
+                  onAgentSettingsChange?.({
+                    ...currentAgentSettings,
+                    skills: skillsEnabled ? 'off' : 'on',
+                  })
+                }
+              />
             </div>
+            {onClearMemory && (
+              <div className="agent-settings-card-row">
+                <div className="agent-settings-card-copy">
+                  <div className="agent-settings-card-label">{t('sidebar.agentSettings.memory.clearAction')}</div>
+                  <div className="agent-settings-card-hint">{t('sidebar.agentSettings.memory.clearHint')}</div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="agent-settings-reset-btn"
+                  disabled={clearingMemory}
+                  onClick={() => setClearMemoryConfirmOpen(true)}
+                >
+                  {clearingMemory ? (
+                    <IconLoader2 size={14} className="animate-spin" aria-hidden="true" />
+                  ) : null}
+                  <span>{t('sidebar.agentSettings.memory.clearButton')}</span>
+                </Button>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" onClick={() => setSettingsOpen(false)}>
@@ -431,6 +448,43 @@ export function ConversationSidebar({
           </form>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={clearMemoryConfirmOpen} onOpenChange={setClearMemoryConfirmOpen}>
+        <AlertDialogContent className="conversation-delete-dialog">
+          <AlertDialogHeader className="conversation-delete-header">
+            <AlertDialogMedia className="conversation-delete-media">
+              <IconTrash aria-hidden="true" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>{t('sidebar.agentSettings.memory.clearConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('sidebar.agentSettings.memory.clearConfirmBody')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="conversation-delete-footer">
+            <AlertDialogCancel variant="outline" autoFocus>
+              <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={clearingMemory || !onClearMemory}
+              onClick={async (event) => {
+                event.preventDefault()
+                if (!onClearMemory) return
+                setClearingMemory(true)
+                try {
+                  await onClearMemory()
+                } finally {
+                  setClearingMemory(false)
+                  setClearMemoryConfirmOpen(false)
+                }
+              }}
+            >
+              <span className="conversation-delete-button-label">
+                {t('sidebar.agentSettings.memory.clearConfirmAction')}
+              </span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={Boolean(deleteConversation)} onOpenChange={(open) => !open && setDeleteConversationID(undefined)}>
         <AlertDialogContent className="conversation-delete-dialog">
           <AlertDialogHeader className="conversation-delete-header">

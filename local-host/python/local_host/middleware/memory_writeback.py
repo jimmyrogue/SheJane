@@ -21,7 +21,13 @@ NAMESPACE = ("notes", "global")
 
 
 class MemoryWritebackMiddleware(AgentMiddleware):
+    def __init__(self, *, enabled: bool = True) -> None:
+        super().__init__()
+        self._enabled = enabled
+
     async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        if not self._enabled:
+            return None
         store = getattr(runtime, "store", None)
         if store is None:
             return None
@@ -56,6 +62,8 @@ class MemoryWritebackMiddleware(AgentMiddleware):
 
     # Fallback sync path for the rare in-process invocation.
     def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        if not self._enabled:
+            return None
         # Best-effort: only run if the store has a sync `put`.
         store = getattr(runtime, "store", None)
         if store is None or not hasattr(store, "put"):

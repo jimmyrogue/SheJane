@@ -3266,47 +3266,103 @@ button:active {
   color: #B63B35;
 }
 
-.agent-settings-row {
+.agent-settings-card {
+  border: 1px solid var(--border-hairline);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.agent-settings-card-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 4px 0 8px;
+  padding: 14px 16px;
 }
 
-.agent-settings-copy {
+.agent-settings-card-row + .agent-settings-card-row {
+  border-top: 1px solid var(--border-hairline);
+}
+
+.agent-settings-card-copy {
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
+  padding-right: 8px;
 }
 
-.agent-settings-label {
+.agent-settings-card-label {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.agent-settings-hint {
-  font-size: 12px;
-  line-height: 1.5;
+.agent-settings-card-hint {
+  font-size: 12.5px;
   color: var(--text-tertiary);
-  max-width: 240px;
+  line-height: 1.5;
 }
 
-.agent-settings-segment {
-  display: inline-flex;
+/* iOS-style toggle for boolean settings. Uses --accent-danger when on
+   to match the reference design's coral-red active state — the same
+   token also drives the destructive button below for visual cohesion. */
+.agent-settings-switch {
+  position: relative;
   flex-shrink: 0;
-  padding: 2px;
-  gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--surface-muted, rgba(0, 0, 0, 0.03));
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: background 150ms ease;
 }
 
-.agent-settings-segment-btn {
-  min-height: 30px;
+.agent-settings-switch[aria-checked='true'] {
+  background: var(--accent-danger);
+}
+
+.agent-settings-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.agent-settings-switch[aria-checked='true']::after {
+  transform: translateX(16px);
+}
+
+.agent-settings-switch:focus-visible {
+  outline: 2px solid var(--accent-danger);
+  outline-offset: 2px;
+}
+
+.agent-settings-reset-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
   padding: 0 12px;
   font-size: 13px;
-  border-radius: 7px;
+  font-weight: 500;
+  border-radius: 8px;
+  background: var(--accent-danger-bg);
+  color: var(--accent-danger-text);
+  border: 1px solid var(--accent-danger-border);
+}
+
+.agent-settings-reset-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-danger-bg) 70%, var(--accent-danger));
 }
 
 .conversation-action-form {

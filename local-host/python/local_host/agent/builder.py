@@ -176,7 +176,7 @@ async def open_store(settings: Settings | None = None) -> tuple[BaseStore, Async
     return store, stack
 
 
-def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
+def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> list[AgentMiddleware]:
     """Our middleware that deepagents doesn't auto-add.
 
     Order:
@@ -187,6 +187,10 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
     `before_*` fire top-to-bottom, `after_*` fire bottom-to-top —
     so OutputGuard runs first after each LLM call, then Reflect, then
     MemoryWriteback.
+
+    `memory_enabled=False` keeps MemoryWritebackMiddleware in the chain
+    but short-circuits its hooks — surfaces of the chain stay symmetric
+    across runs, only the persistence is skipped.
     """
     middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(),  # P1
@@ -248,7 +252,7 @@ def _custom_middleware(settings: Settings) -> list[AgentMiddleware]:
             ContextEditingMiddleware(),
             OutputGuardMiddleware(),  # P9
             ReflectMiddleware(),  # P4
-            MemoryWritebackMiddleware(),  # P6
+            MemoryWritebackMiddleware(enabled=memory_enabled),  # P6
         ]
     )
     return middleware
@@ -292,6 +296,7 @@ async def build_agent(
     task_goal: str | None = None,
     turn_count: int | None = None,
     dropped_history_count: int = 0,
+    memory_enabled: bool = True,
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -317,6 +322,10 @@ async def build_agent(
                          this run started. Surfaced to the model so it
                          knows context is incomplete instead of silently
                          losing it.
+        memory_enabled:  When False, drops `memory.search` from the tool
+                         list and short-circuits the writeback middleware.
+                         The user toggle in agent settings flows in here
+                         via RunCoordinator._settings_overrides.
         settings:        Override settings (tests).
         extra_middleware: Appended after the built-in custom stack.
     """
@@ -328,6 +337,8 @@ async def build_agent(
         include_mcp=True,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
     )
+    if not memory_enabled:
+        tools = [t for t in tools if t.name != "memory.search"]
 
     model = BackendChatModel(
         cloud_base_url=settings.cloud_base_url,
@@ -345,7 +356,7 @@ async def build_agent(
     else:
         backend = FilesystemBackend(virtual_mode=True, max_file_size_mb=10)
 
-    middleware = _custom_middleware(settings)
+    middleware = _custom_middleware(settings, memory_enabled=memory_enabled)
 
     # LLM-driven tool preselection — sits in the custom middleware band
     # so the narrowed toolset is what the main LLM sees. Always-include
@@ -360,11 +371,16 @@ async def build_agent(
             run_id=run_id,
             mode="fast",
         )
+        always_include = (
+            ALWAYS_INCLUDE_TOOLS
+            if memory_enabled
+            else [name for name in ALWAYS_INCLUDE_TOOLS if name != "memory.search"]
+        )
         middleware.append(
             LLMToolSelectorMiddleware(
                 model=selector_model,
                 max_tools=settings.tool_selector_max_tools,
-                always_include=ALWAYS_INCLUDE_TOOLS,
+                always_include=always_include,
             )
         )
 

@@ -32,6 +32,7 @@ import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef
 import {
   authorizeLocalWorkspace,
   cancelLocalRun,
+  clearLocalMemory,
   createLocalRun,
   diagnoseLocalWorkspace,
   fetchWorkspaceFile,
@@ -64,9 +65,13 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
-const agentSettingsStorageKey = 'jiandanly.agentSettings.v1'
+// v2 — defaults bumped (memory: off → on). Resetting the key forces
+// every existing renderer onto the new default; users who actively
+// opted to "memory: off" before the change will pick the new default
+// once and can re-disable from the settings dialog if they want.
+const agentSettingsStorageKey = 'jiandanly.agentSettings.v2'
 const chatModeStorageKey = 'jiandanly.chatMode.v1'
-const defaultAgentSettings: Required<AgentSettings> = { memory: 'off', skills: 'off' }
+const defaultAgentSettings: Required<AgentSettings> = { memory: 'on', skills: 'off' }
 const defaultChatMode: ChatMode = 'auto'
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
@@ -140,7 +145,9 @@ function readAgentSettings(): Required<AgentSettings> {
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
     return {
-      memory: parsed.memory === 'on' ? 'on' : 'off',
+      // Memory now defaults to 'on'. Only an explicit 'off' disables it;
+      // a missing field reads as the new default rather than the old one.
+      memory: parsed.memory === 'off' ? 'off' : 'on',
       skills: parsed.skills === 'on' ? 'on' : 'off',
     }
   } catch {
@@ -1380,6 +1387,26 @@ function AppContent() {
               setAgentSettings(next)
               writeAgentSettings(next)
             }}
+            onClearMemory={
+              localHostConfig
+                ? async () => {
+                    try {
+                      const result = await clearLocalMemory(localHostConfig)
+                      toast.success(
+                        t('app.notice.memoryCleared', { count: result.deleted_count }),
+                        { id: appNoticeToastID },
+                      )
+                      return result.deleted_count
+                    } catch (error) {
+                      const message = error instanceof Error ? error.message : String(error)
+                      toast.error(t('app.notice.memoryClearFailed', { message }), {
+                        id: appNoticeToastID,
+                      })
+                      throw error
+                    }
+                  }
+                : undefined
+            }
           />
 
           <div

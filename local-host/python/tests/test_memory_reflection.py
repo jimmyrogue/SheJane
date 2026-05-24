@@ -214,6 +214,123 @@ def test_memory_search_respects_limit() -> None:
     assert len(result["results"]) <= 3
 
 
+# --- MemoryWritebackMiddleware: enabled flag gates persistence ---
+
+
+def test_memory_writeback_skips_when_disabled() -> None:
+    """`MemoryWritebackMiddleware(enabled=False)` must NOT call `store.aput`,
+    even though the store is wired up. Gate is the user's "memory: off"
+    setting flowing in from the renderer."""
+    import asyncio as _a
+
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import MemoryWritebackMiddleware
+
+    class RecordingStore:
+        def __init__(self) -> None:
+            self.put_calls: list[tuple] = []
+
+        async def aput(self, namespace, key, value) -> None:
+            self.put_calls.append((namespace, key, value))
+
+    store = RecordingStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware(enabled=False)
+    state = {
+        "messages": [
+            HumanMessage(content="goal"),
+            AIMessage(content="answer"),
+        ]
+    }
+    _a.run(mw.aafter_agent(state, runtime=_Runtime(store)))
+    assert store.put_calls == []
+
+
+def test_memory_writeback_persists_when_enabled() -> None:
+    """Default `enabled=True` preserves the original persistence behavior."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import NAMESPACE, MemoryWritebackMiddleware
+
+    store = InMemoryStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware()  # default enabled=True
+    state = {
+        "messages": [
+            HumanMessage(content="research react routing"),
+            AIMessage(content="see react-router docs"),
+        ]
+    }
+
+    async def run() -> list:
+        await mw.aafter_agent(state, runtime=_Runtime(store))
+        return list(await store.asearch(NAMESPACE))
+
+    items = asyncio.run(run())
+    assert len(items) == 1
+    note = items[0].value
+    assert "react routing" in note["goal"]
+    assert "react-router" in note["answer"]
+
+
+# --- build_agent: tool gating on memory_enabled ---
+
+
+def test_build_agent_excludes_memory_search_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    """`memory_enabled=False` should drop `memory.search` from the tool
+    set handed to `create_deep_agent`, so the model can't even attempt
+    to recall. We spy on the `tools=` kwarg rather than introspecting
+    the compiled LangGraph — the latter wraps tools in opaque nodes
+    that aren't worth our test pinning."""
+    import local_host.agent.builder as builder_mod
+    from local_host.agent.builder import build_agent, open_checkpointer
+    from local_host.store.sqlite import LocalStore
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_create_deep_agent(**kwargs):
+        captured["tool_names"] = [t.name for t in kwargs.get("tools", [])]
+        return object()  # only the tools list matters here
+
+    monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
+
+    async def run(memory_enabled: bool) -> list[str]:
+        reset_settings_for_tests(data_dir=tmp_path)
+        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        store = await LocalStore.open(tmp_path / "store.db")
+        saver, stack = await open_checkpointer()
+        try:
+            await build_agent(
+                store=store,
+                checkpointer=saver,
+                agent_store=InMemoryStore(),
+                workspace_root=str(tmp_path),
+                run_id=f"r-{memory_enabled}",
+                memory_enabled=memory_enabled,
+            )
+            return list(captured["tool_names"])
+        finally:
+            await store.close()
+            await stack.aclose()
+
+    on_names = asyncio.run(run(memory_enabled=True))
+    off_names = asyncio.run(run(memory_enabled=False))
+    assert "memory.search" in on_names, "memory.search must be present when memory_enabled=True"
+    assert "memory.search" not in off_names, (
+        "memory.search must be excluded when memory_enabled=False"
+    )
+
+
 def test_reflect_critic_swallows_errors(monkeypatch) -> None:
     import asyncio as _a
 

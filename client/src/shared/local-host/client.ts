@@ -22,6 +22,7 @@ export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunResponse = Schemas['CancelRunResponse']
+export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type LocalPermissionScope = 'once' | 'run'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
@@ -261,6 +262,23 @@ export async function getLocalRunDiagnostics(
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<LocalRunDiagnostics>(response)
+}
+
+/** Wipe every persisted note in the agent's long-term memory namespace.
+ *
+ *  Backs the "清空记忆 / Clear memory" button in the agent settings
+ *  dialog. The daemon walks ("notes","global") and deletes each key,
+ *  returning the count so the UI can show an accurate toast. Idempotent:
+ *  calling on an empty store returns `deleted_count: 0`. */
+export async function clearLocalMemory(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<ClearMemoryResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/memory`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<ClearMemoryResponse>(response)
 }
 
 /** Stop a streaming run. Daemon will emit `run.canceled` on the SSE

@@ -27,6 +27,7 @@ from .agent.builder import open_checkpointer, open_store
 from .api_schemas import (
     AnswerQuestionRequest,
     CancelRunResponse,
+    ClearMemoryResponse,
     CreateRunRequest,
     CreateWorkspaceRequest,
     DiagnoseWorkspaceRequest,
@@ -714,6 +715,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if workspace is not None:
             payload["workspace"] = workspace
         return payload
+
+    @app.delete("/local/v1/memory", response_model=ClearMemoryResponse)
+    async def clear_memory() -> dict[str, Any]:
+        """Wipe every note from the long-term memory namespace.
+
+        Backs the "清空记忆 / Clear memory" button in the agent settings
+        dialog. Walks ("notes", "global") in pages of 200 (matches the
+        BaseStore default search limit ceiling for SQLite stores) and
+        deletes each key. Returns the total count so the UI can render
+        an accurate "cleared N memories" toast.
+
+        Idempotent: calling it on an empty store returns
+        `deleted_count: 0` without error.
+        """
+        from .middleware.memory_writeback import NAMESPACE
+
+        agent_store = getattr(app.state, "agent_store", None)
+        if agent_store is None:
+            raise HTTPException(status_code=503, detail="memory store not initialized")
+        deleted = 0
+        # `asearch(query=None)` returns everything in the namespace
+        # (no semantic ranking needed — we just want the keys).
+        # Loop until a page comes back smaller than `limit` so we don't
+        # over-fetch on a single-item store.
+        page_size = 200
+        while True:
+            items = await agent_store.asearch(NAMESPACE, limit=page_size)
+            if not items:
+                break
+            for item in items:
+                try:
+                    await agent_store.adelete(NAMESPACE, item.key)
+                    deleted += 1
+                except Exception as exc:
+                    log.warning("memory delete failed key=%s: %s", item.key, exc)
+            if len(items) < page_size:
+                break
+        return {"cleared": True, "deleted_count": deleted}
 
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:
