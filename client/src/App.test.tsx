@@ -42,7 +42,10 @@ describe('user client shell', () => {
     expect(screen.queryByText('管理后台')).not.toBeInTheDocument()
     expect(document.querySelector('.window-titlebar')).toBeNull()
     expect(screen.getByRole('button', { name: '收起侧栏' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '搜索' })).toBeInTheDocument()
+    // Search button used to be asserted here as a sanity check that
+    // the sidebar header rendered. It's been removed product-side, so
+    // we just keep the "收起侧栏" assertion as the sidebar-rendered
+    // signal.
   })
 
   it('does not include the admin entry even for admin users', async () => {

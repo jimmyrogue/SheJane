@@ -7,7 +7,6 @@ import {
   IconFolderPlus,
   IconFolderOpen,
   IconFolders,
-  IconHistory,
   IconLayoutSidebarLeftCollapse,
   IconLoader2,
   IconLogout,
@@ -15,7 +14,6 @@ import {
   IconPencil,
   IconPin,
   IconPlus,
-  IconSearch,
   IconTrash,
   IconTool,
   IconUpload,
@@ -242,52 +240,13 @@ export function ConversationSidebar({
           <button className="sidebar-window-control-button" type="button" title={t('app.collapseSidebar')} aria-label={t('app.collapseSidebar')} onClick={onCollapseSidebar}>
             <IconLayoutSidebarLeftCollapse aria-hidden="true" />
           </button>
-          <button
-            className={searchOpen ? 'sidebar-window-control-button active' : 'sidebar-window-control-button'}
-            type="button"
-            title={t('app.search')}
-            aria-label={t('app.search')}
-            aria-pressed={searchOpen}
-            onClick={toggleSearch}
-          >
-            <IconSearch aria-hidden="true" />
-          </button>
+          {/* Search toggle button + the expandable search input panel
+           * are hidden for now per product feedback. The underlying
+           * state (searchOpen / searchQuery / filter logic) is kept
+           * intact so the feature can be re-enabled by restoring just
+           * the JSX. See git history for the original implementation. */}
         </div>
       </div>
-
-      {searchOpen ? (
-        <div className="sidebar-search">
-          <IconSearch className="sidebar-search-icon" size={14} aria-hidden="true" />
-          <Input
-            ref={searchInputRef}
-            type="search"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                toggleSearch()
-              }
-            }}
-            placeholder={t('sidebar.searchPlaceholder')}
-            aria-label={t('app.search')}
-          />
-          {searchQuery ? (
-            <button
-              type="button"
-              className="sidebar-search-clear"
-              title={t('sidebar.searchClear')}
-              aria-label={t('sidebar.searchClear')}
-              onClick={() => {
-                setSearchQuery('')
-                searchInputRef.current?.focus()
-              }}
-            >
-              <IconX size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
 
       <Button className="sidebar-newchat" aria-label={t('app.newChat')} onClick={onNewConversation}>
         <IconPlus size={15} />
@@ -316,10 +275,6 @@ export function ConversationSidebar({
         <button className="sidebar-item" type="button">
           <IconFolders size={14} />
           <span>{t('sidebar.projects')}</span>
-        </button>
-        <button className="sidebar-item" type="button">
-          <IconHistory size={14} />
-          <span>{t('sidebar.history')}</span>
         </button>
       </div>
 
@@ -662,19 +617,18 @@ function formatCredits(value: number): string {
 }
 
 function AccountBalance({ balance, t }: { balance: WalletBalance; t: Translator }) {
-  const limit = Math.max(0, balance.monthly_credit_limit ?? 0)
+  // The monthly-subscription quota line (`creditsMonthly` /
+  // `creditsUnlimited`) is hidden — product direction moved away from
+  // a monthly plan. The pay-as-you-go `extra_credits_balance` is the
+  // only balance worth showing now. Keep the wallet fields and i18n
+  // strings around so the line can be restored if that changes.
   const extra = Math.max(0, balance.extra_credits_balance ?? 0)
-  const remaining = Math.max(0, balance.monthly_remaining ?? 0)
+  if (extra <= 0) {
+    return null
+  }
   return (
     <div className="sidebar-account-balance">
-      <span className="sab-line">
-        {limit <= 0
-          ? t('sidebar.account.creditsUnlimited')
-          : t('sidebar.account.creditsMonthly', { remaining: formatCredits(remaining), limit: formatCredits(limit) })}
-      </span>
-      {extra > 0 ? (
-        <span className="sab-line">{t('sidebar.account.creditsExtra', { extra: formatCredits(extra) })}</span>
-      ) : null}
+      <span className="sab-line">{t('sidebar.account.creditsExtra', { extra: formatCredits(extra) })}</span>
     </div>
   )
 }

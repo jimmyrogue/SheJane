@@ -105,7 +105,11 @@ describe('ConversationSidebar', () => {
     expect(handlers.onDeleteConversation).toHaveBeenCalledWith('target-chat')
   })
 
-  it('shows the monthly and extra credit lines in the account menu', async () => {
+  it('shows only the extra-credits line in the account menu (monthly quota line is hidden)', async () => {
+    // Product moved away from a monthly subscription. The
+    // `monthly_credit_limit` / `monthly_remaining` values still come
+    // back from the API, but we no longer surface them — only the
+    // pay-as-you-go `extra_credits_balance` is shown.
     render(
       <I18nProvider>
         <ConversationSidebar
@@ -137,8 +141,52 @@ describe('ConversationSidebar', () => {
     const trigger = screen.getByRole('button', { name: '账户菜单' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    expect(await screen.findByText('本月余额 800/1,000')).toBeInTheDocument()
-    expect(screen.getByText('额外额度 50')).toBeInTheDocument()
+    // Extra balance shows; the monthly line is gone, both for finite
+    // quotas ("本月余额 X/Y") and the unlimited variant ("本月额度不限量").
+    expect(await screen.findByText('剩余Token数 50')).toBeInTheDocument()
+    expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
+  })
+
+  it('AccountBalance renders nothing when there are no extra credits', async () => {
+    // The component now early-returns null when `extra_credits_balance` is 0.
+    // Previously it would always show a "本月余额 / 不限量" line — that's
+    // gone now, so an empty wallet should render no balance UI at all.
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          balance={{
+            id: 'w1',
+            plan_code: 'free',
+            monthly_credit_limit: 0,
+            monthly_credits_used: 0,
+            monthly_remaining: 0,
+            extra_credits_balance: 0,
+            period_end: '',
+            status: 'active',
+          }}
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onAddConversationToProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    // Menu opens (logout button present) but no balance lines render.
+    expect(await screen.findByText('退出登录')).toBeInTheDocument()
+    expect(screen.queryByText(/剩余Token数/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
   })
 
   it('toggles the memory agent setting from the account menu dialog', async () => {
