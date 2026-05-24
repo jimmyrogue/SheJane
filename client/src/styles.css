@@ -3784,6 +3784,62 @@ button.agent-progress-summary:focus-visible {
   transform: rotate(180deg);
 }
 
+/* Per-subagent progress list shown under the header when ≥2 `task`
+ * dispatches are in flight. The header line carries
+ * "派发 · N 个子任务进行中"; each <li> here adds a single line of
+ * "子任务 N — short description" so the user can see at-a-glance what
+ * each parallel subagent is doing.
+ *
+ * Left-aligns under the verb (11px indent matches `.tool-card-results`
+ * so the visual rhythm of the card stays consistent). Each row is
+ * single-line with CSS ellipsis as a safety net — the description is
+ * also pre-truncated in JS so the cap is enforced regardless of
+ * viewport width. */
+.agent-progress-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0 11px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.agent-progress-task-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.55;
+}
+.agent-progress-task-label {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; /* keep the trailing 1/2/3/4 aligned */
+}
+.agent-progress-task-desc {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Animated trailing dots on each subtask row — same `./../...` cycle
+ * as the headline's `.name::after`, reusing the agent-progress-dots
+ * keyframes. The row only exists while the dispatch is in flight, so
+ * the dots naturally stop animating when the subagent completes (the
+ * <li> unmounts). Fixed `width: 1.6ch` prevents layout shift as the
+ * dot count cycles. */
+.agent-progress-task-desc::after {
+  content: '.';
+  display: inline-block;
+  margin-left: 1px;
+  width: 1.6ch;
+  text-align: left;
+  white-space: pre;
+  animation: agent-progress-dots 1.2s steps(3, end) infinite;
+}
+
 .tool-card-results {
   display: flex;
   flex-direction: column;
@@ -3841,7 +3897,8 @@ button.agent-progress-summary:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .tool-card-caret,
   .agent-progress-working .agent-progress-summary .name::after,
-  .agent-progress-permission .agent-progress-summary .name::after {
+  .agent-progress-permission .agent-progress-summary .name::after,
+  .agent-progress-task-desc::after {
     transition: none;
     animation: none;
   }

@@ -164,7 +164,8 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         label: t('chat.timeline.toolRequested', { tool: toolActionLabel(tool, t) }),
         eventId,
         tool,
-        target: toolTarget(payload),
+        toolCallId: stringValue(payload.tool_call_id) || undefined,
+        target: toolTarget(payload, tool),
         toolDetail: toolDetail(payload, tool),
       }
     }
@@ -175,7 +176,8 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(tool, t) }),
         eventId,
         tool,
-        target: toolTarget(payload),
+        toolCallId: stringValue(payload.tool_call_id) || undefined,
+        target: toolTarget(payload, tool),
         toolDetail: toolDetail(payload, tool),
       }
     }
@@ -186,7 +188,8 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         label: t('chat.timeline.toolFailed', { tool: toolActionLabel(tool, t) }),
         eventId,
         tool,
-        target: toolTarget(payload),
+        toolCallId: stringValue(payload.tool_call_id) || undefined,
+        target: toolTarget(payload, tool),
         toolDetail: toolDetail(payload, tool),
       }
     }
@@ -325,8 +328,8 @@ function truncate(value: string, max: number): string {
 /** A short, human concrete target for the current operation — a file name,
  *  a URL host, the command, or the search query. Back-compat single
  *  string; new code should call `toolDetail()` and read `.text`. */
-function toolTarget(payload: Record<string, unknown>): string {
-  return toolDetail(payload)?.text ?? ''
+function toolTarget(payload: Record<string, unknown>, tool?: string): string {
+  return toolDetail(payload, tool)?.text ?? ''
 }
 
 const TOOL_TARGET_MAX = 40
@@ -344,6 +347,27 @@ export function toolDetail(
     payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
       ? (payload.arguments as Record<string, unknown>)
       : {}
+
+  // `task` (deepagents subagent dispatcher) needs special handling —
+  // its real arg names are `description` + `subagent_type`. Older code
+  // in this file guessed `task_description` + `subagent_name`, which
+  // matched nothing on real runs, so the task headline showed only the
+  // verb. We keep the old names as aliases so any persisted timeline
+  // items from before this fix still render something sensible.
+  if (tool === 'task') {
+    const subagent = stringValue(args.subagent_type) || stringValue(args.subagent_name)
+    const description = stringValue(args.description) || stringValue(args.task_description)
+    if (description) {
+      return {
+        kind: 'text',
+        text: truncate(description, TOOL_TARGET_MAX),
+        tooltip: subagent ? `${subagent}: ${description}` : description,
+      }
+    }
+    if (subagent) {
+      return { kind: 'text', text: subagent }
+    }
+  }
 
   // Web tools — host + globe icon. Tooltip carries the full URL.
   const url = stringValue(args.url) || stringValue(payload.url)
@@ -375,7 +399,7 @@ export function toolDetail(
   if (query) {
     return { kind: 'text', text: truncate(query, TOOL_TARGET_MAX), tooltip: query }
   }
-  const task = stringValue(args.task) || stringValue(args.task_description)
+  const task = stringValue(args.task)
   if (task) {
     return { kind: 'text', text: truncate(task, TOOL_TARGET_MAX), tooltip: task }
   }
@@ -390,10 +414,6 @@ export function toolDetail(
   const pattern = stringValue(args.pattern)
   if (pattern) {
     return { kind: 'text', text: truncate(pattern, TOOL_TARGET_MAX), tooltip: pattern }
-  }
-  const subagent = stringValue(args.subagent_name)
-  if (subagent) {
-    return { kind: 'text', text: subagent }
   }
 
   // Count-style tools.

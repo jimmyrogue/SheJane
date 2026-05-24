@@ -40,6 +40,12 @@ export interface AgentTimelineItem {
   label: string
   eventId?: string
   tool?: string
+  /** Daemon-assigned ID for the underlying LLM tool_call. Same value on
+   *  the `tool.requested`, `tool.completed`, and `tool.failed` items of
+   *  one logical call, so the renderer can correlate phases when many
+   *  calls are in flight (notably `task` subagent dispatches running in
+   *  parallel). Populated by `timelineItem()` from `payload.tool_call_id`. */
+  toolCallId?: string
   /** Back-compat single-string identifier (host, basename, etc.).
    *  New code should set `toolDetail` instead; the renderer prefers
    *  toolDetail when both are present. */

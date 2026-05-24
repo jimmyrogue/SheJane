@@ -225,6 +225,170 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
   })
 
+  it('parallel task dispatches: header shows count only; descriptions render as a per-task list below', () => {
+    // When the agent emits multiple task() calls in one LLM message
+    // (the case we engineered for in the C1+C2+C3 subagent prompt fix),
+    // the timeline carries one tool.requested per dispatch. The header
+    // collapses to "派发 · N 个子任务进行中" and each subtask appears as
+    // a labelled row below — single line each, ellipsis on overflow.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_1',
+              toolDetail: { kind: 'text', text: '搜索成都5月底天气', tooltip: 'researcher: 搜索成都5月底天气' },
+            },
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_2',
+              toolDetail: { kind: 'text', text: '搜索成都核心景点', tooltip: 'researcher: 搜索成都核心景点' },
+            },
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_3',
+              toolDetail: { kind: 'text', text: '搜索成都必吃美食', tooltip: 'researcher: 搜索成都必吃美食' },
+            },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    // Header line: count only — descriptions are NOT here anymore.
+    expect(screen.getByText('3 个子任务进行中')).toBeInTheDocument()
+    // Each in-flight subtask becomes its own list item with a numbered
+    // label. Labels are stable independent of order changes.
+    expect(screen.getByText('子任务 1')).toBeInTheDocument()
+    expect(screen.getByText('子任务 2')).toBeInTheDocument()
+    expect(screen.getByText('子任务 3')).toBeInTheDocument()
+    // Descriptions render in their own <li> (verified by structure, not
+    // by appearing concatenated on the header).
+    expect(screen.getByText('搜索成都5月底天气')).toBeInTheDocument()
+    expect(screen.getByText('搜索成都核心景点')).toBeInTheDocument()
+    expect(screen.getByText('搜索成都必吃美食')).toBeInTheDocument()
+  })
+
+  it('drops a task from the list once its tool.completed lands', () => {
+    // 3 dispatched, 1 already completed → list shows the 2 still alive.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_1',
+              toolDetail: { kind: 'text', text: '已完成的任务' },
+            },
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_2',
+              toolDetail: { kind: 'text', text: '搜索成都核心景点' },
+            },
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_3',
+              toolDetail: { kind: 'text', text: '搜索成都必吃美食' },
+            },
+            { type: 'tool.completed', label: '工具完成：派发子任务', tool: 'task', toolCallId: 'call_1' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('2 个子任务进行中')).toBeInTheDocument()
+    expect(screen.getByText('搜索成都核心景点')).toBeInTheDocument()
+    expect(screen.getByText('搜索成都必吃美食')).toBeInTheDocument()
+    expect(screen.queryByText('已完成的任务')).not.toBeInTheDocument()
+  })
+
+  it('long task descriptions are truncated to ~22 chars in the list rows', () => {
+    // Each row stays scannable regardless of how chatty the agent was
+    // when writing the dispatch description.
+    const long1 =
+      '研究成都5月底~6月初的天气情况。搜索并返回以下信息：1. 这个时间段成都的气温范围（白天最高、晚上最低）...'
+    const long2 =
+      '研究成都必吃美食和推荐餐厅。搜索并返回以下信息：1. 当地最具代表性的菜品和小吃...'
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：派发子任务', tool: 'task', toolCallId: 'a', toolDetail: { kind: 'text', text: long1, tooltip: long1 } },
+            { type: 'tool.requested', label: '调用工具：派发子任务', tool: 'task', toolCallId: 'b', toolDetail: { kind: 'text', text: long2, tooltip: long2 } },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    // The full long description does NOT appear verbatim in the DOM —
+    // it's been clipped + ellipsized so each row stays short.
+    expect(screen.queryByText(long1)).not.toBeInTheDocument()
+    expect(screen.queryByText(long2)).not.toBeInTheDocument()
+    // Each row gets pre-truncated to TASK_DESC_MAX=22 chars in JS.
+    // No `…` is appended — the CSS ::after on .agent-progress-task-desc
+    // paints an animated "./../..." instead (same keyframes as the
+    // headline's .name::after). CSS text-overflow:ellipsis still acts
+    // as a secondary safety net for narrow viewports.
+    const truncated1 = long1.slice(0, 22)
+    const truncated2 = long2.slice(0, 22)
+    expect(screen.getByText(truncated1)).toBeInTheDocument()
+    expect(screen.getByText(truncated2)).toBeInTheDocument()
+    // The visible truncated span carries the full original text in
+    // its title="" attribute so hover reveals the whole dispatch
+    // description.
+    expect(screen.getByText(truncated1).getAttribute('title')).toBe(long1)
+    expect(screen.getByText(truncated2).getAttribute('title')).toBe(long2)
+  })
+
+  it('with a single task in flight, no list is rendered (no chrome for the common case)', () => {
+    // The list UI only kicks in for parallel runs (≥2 in flight).
+    // A solo task dispatch keeps the existing simple single-line
+    // headline so we don't add chrome around the common case.
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_solo',
+              toolDetail: { kind: 'text', text: '搜索成都5月底天气' },
+            },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText(/1 个子任务进行中/)).not.toBeInTheDocument()
+    expect(screen.queryByText('子任务 1')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索成都5月底天气')).toBeInTheDocument()
+  })
+
   it('derives failed and active progress labels from existing timeline items', () => {
     expect(
       deriveAgentProgress(

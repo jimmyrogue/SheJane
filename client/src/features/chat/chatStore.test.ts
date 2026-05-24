@@ -344,14 +344,35 @@ describe('chat store', () => {
       expect(detail?.text).toBe('A sunset over Phuket beach')
     })
 
-    it('subagent task call → subagent_name', () => {
+    it('subagent task call uses real deepagents arg names (description + subagent_type)', () => {
+      const detail = toolDetail(
+        { arguments: { subagent_type: 'researcher', description: 'Find current Phuket weather' } },
+        'task',
+      )
+      // description (truncated) wins over subagent_type for the visible
+      // text — the user-facing badge reads better as the actual prompt
+      // than as the subagent label.
+      expect(detail?.text).toContain('Phuket weather')
+      // tooltip carries the full prompt prefixed by the subagent type
+      // so hover reveals which subagent was dispatched.
+      expect(detail?.tooltip).toContain('researcher')
+      expect(detail?.tooltip).toContain('Phuket weather')
+    })
+
+    it('task call back-compat: old field names (subagent_name + task_description) still render', () => {
+      // Earlier versions of this file guessed the wrong field names.
+      // Any persisted timeline items from that era should still render
+      // sensibly — the aliases keep working.
       const detail = toolDetail(
         { arguments: { subagent_name: 'researcher', task_description: 'Find current Phuket weather' } },
         'task',
       )
-      // task_description wins over subagent_name (it's the most
-      // informative field a user-facing badge can show).
       expect(detail?.text).toContain('Phuket weather')
+    })
+
+    it('task call with only subagent_type falls back to subagent name', () => {
+      const detail = toolDetail({ arguments: { subagent_type: 'writer' } }, 'task')
+      expect(detail?.text).toBe('writer')
     })
   })
 })

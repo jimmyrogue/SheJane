@@ -60,10 +60,20 @@ export function AgentProgress({
   // chatStore.timelineItem when the daemon's tool.requested event
   // surfaces real args). Fall back to the legacy `target` string for
   // older persisted events / replayed conversations from before the
-  // tool.requested flow shipped.
-  const detail: AgentToolDetail | undefined =
-    headline.source?.toolDetail ??
-    (headline.source?.target ? { kind: 'text', text: headline.source.target } : undefined)
+  // tool.requested flow shipped. The `task` (subagent dispatcher) tool
+  // gets a special path when 2+ dispatches are in flight — the headline
+  // detail shows only the count ("4 个子任务进行中") and the descriptions
+  // render as a per-task list below the header (see inFlightTasks).
+  const detail = deriveProgressDetail(headline.source, events, message, t)
+  // In-flight subagent dispatches. Rendered as a small list under the
+  // header when there are ≥2; a single dispatch keeps the simple
+  // single-line headline so we don't add chrome around the common
+  // "one delegation" case.
+  const inFlightTasks =
+    headline.source?.tool === 'task' && ACTIVE_RUN_STATUSES.has(message.status)
+      ? collectInFlightTaskRequests(events)
+      : []
+  const showTaskList = inFlightTasks.length >= 2
   const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics)
 
   // The leading status dot we used to show next to the headline was
@@ -120,6 +130,36 @@ export function AgentProgress({
           {summaryInner}
         </div>
       )}
+
+      {/* Per-subagent list, shown whenever ≥2 `task` dispatches are
+       *  in flight. The header above carries "派发 · 4 个子任务进行中";
+       *  this list shows each subtask on its own line with a short
+       *  ~20-char description of what it's currently doing. Hover any
+       *  row to see the full description via title="". Always visible
+       *  during an active run — does NOT depend on the expand button,
+       *  because the user wanted at-a-glance visibility of progress
+       *  across parallel subagents. */}
+      {showTaskList ? (
+        <ul
+          className="agent-progress-tasks"
+          aria-label={t('agent.task.inFlight', { count: inFlightTasks.length })}
+        >
+          {inFlightTasks.map((task, idx) => {
+            const fullText = task.toolDetail?.text ?? task.target ?? ''
+            const tooltip = task.toolDetail?.tooltip ?? fullText
+            return (
+              <li key={task.toolCallId ?? `${idx}`} className="agent-progress-task-item">
+                <span className="agent-progress-task-label">
+                  {t('agent.task.itemLabel', { index: idx + 1 })}
+                </span>
+                <span className="agent-progress-task-desc" title={tooltip}>
+                  {truncateTaskDesc(fullText)}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
 
       {/* Expanded body intentionally contains ONLY the diagnostics
        *  button. The old per-event step list (graph.node /
@@ -534,5 +574,91 @@ function stripKnownPrefix(value: string, prefixes: string[]): string {
     }
   }
   return value
+}
+
+/** Compute the AgentToolDetail to display alongside the verb.
+ *
+ *  Base case: the source event already carries a per-tool `toolDetail`
+ *  (built by chatStore.toolDetail at event time), or — for older
+ *  persisted events — a legacy single-string `target`.
+ *
+ *  Special case for the `task` (subagent dispatcher) tool when ≥2
+ *  dispatches are in flight: the headline detail collapses to just the
+ *  count ("4 个子任务进行中") — descriptions move out of this single line
+ *  and into the per-task list rendered below the header by
+ *  `inFlightTasks`. */
+function deriveProgressDetail(
+  source: AgentTimelineItem | undefined,
+  events: AgentTimelineItem[],
+  message: ChatMessage,
+  t: Translator,
+): AgentToolDetail | undefined {
+  const base: AgentToolDetail | undefined =
+    source?.toolDetail ?? (source?.target ? { kind: 'text', text: source.target } : undefined)
+
+  if (source?.tool !== 'task' || !ACTIVE_RUN_STATUSES.has(message.status)) {
+    return base
+  }
+  const inFlight = collectInFlightTaskRequests(events)
+  if (inFlight.length < 2) {
+    return base
+  }
+  // The descriptions render in the list below; up here we only carry
+  // the count so the headline reads as a clean "派发 · 4 个子任务进行中".
+  return { kind: 'text', text: t('agent.task.inFlight', { count: inFlight.length }) }
+}
+
+/** Cap each per-task description to a fixed width so the list rows
+ *  stay short and visually scannable regardless of viewport width.
+ *  The user asked for "大概10-20个文字" — 22 leaves a touch of headroom
+ *  for Chinese sentences that end with a particle or punctuation mark
+ *  that we don't want chopped off mid-character. CSS ellipsis on the
+ *  containing span still kicks in as a safety net if a row gets
+ *  squeezed by a narrow viewport.
+ *
+ *  We do NOT append a static `…` to truncated strings — the CSS
+ *  ::after on `.agent-progress-task-desc` paints an animated
+ *  `./../...` instead. The animation doubles as both an "in progress"
+ *  cue and a "there's more in the tooltip" hint, so a single visual
+ *  element carries both signals. Hover the row to see the full text
+ *  via title="". */
+const TASK_DESC_MAX = 22
+function truncateTaskDesc(value: string): string {
+  if (!value) {
+    return ''
+  }
+  return value.length > TASK_DESC_MAX ? value.slice(0, TASK_DESC_MAX) : value
+}
+
+/** Return the list of `tool.requested` events for the `task` tool that
+ *  have NOT yet been matched by a corresponding `tool.completed` or
+ *  `tool.failed`, identified by `tool_call_id`. Falls back to skipping
+ *  events that lack a `toolCallId` (very old persisted events from
+ *  before the tool_call_id-based aggregation shipped — they simply
+ *  don't participate in the parallel grouping). */
+function collectInFlightTaskRequests(events: AgentTimelineItem[]): AgentTimelineItem[] {
+  const completedCallIds = new Set<string>()
+  for (const event of events) {
+    if (event.tool !== 'task' || !event.toolCallId) {
+      continue
+    }
+    if (event.type === 'tool.completed' || event.type === 'tool.failed') {
+      completedCallIds.add(event.toolCallId)
+    }
+  }
+  const seen = new Set<string>()
+  const result: AgentTimelineItem[] = []
+  for (const event of events) {
+    if (event.tool !== 'task' || event.type !== 'tool.requested') {
+      continue
+    }
+    const id = event.toolCallId
+    if (!id || completedCallIds.has(id) || seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    result.push(event)
+  }
+  return result
 }
 
