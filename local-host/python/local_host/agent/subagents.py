@@ -4,7 +4,11 @@ Each subagent here is a `SubAgent` TypedDict that gets compiled by
 SubAgentMiddleware into an isolated `create_agent` instance. The main
 agent invokes them via the `task` tool the middleware injects, e.g.:
 
-    task(subagent_name="researcher", task_description="Find the latest …")
+    task(subagent_type="researcher", description="Find the latest …")
+
+(The deepagents tool signature is `task(description=..., subagent_type=...)`
+— NOT `subagent_name` / `task_description` as earlier versions of this
+docstring incorrectly suggested.)
 
 Why this layout
 ---------------
@@ -84,10 +88,15 @@ def build_subagents(
         {
             "name": "researcher",
             "description": (
-                "Run deep research on a single, well-scoped question. "
-                "Returns a short written summary with citations. Use when "
-                "the answer needs fresh sources and your own context is "
-                "getting noisy."
+                "USE THIS FOR ANY INDEPENDENT RESEARCH QUESTION. Prefer "
+                "this over calling web.search yourself when you have ≥2 "
+                "questions that can be answered separately — emit multiple "
+                "`task` calls in one message to run them in parallel. Each "
+                "subagent has its own context window so raw search dumps "
+                "stay out of the main agent's context. Returns a 2-4 "
+                "paragraph synthesized summary with citations. Also use "
+                "this for a single research question that would otherwise "
+                "require many search/fetch calls (isolate the noise)."
             ),
             "system_prompt": RESEARCHER_PROMPT,
             "model": main_model,
