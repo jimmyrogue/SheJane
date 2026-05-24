@@ -6,11 +6,9 @@ import {
   getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
   getLocalArtifact,
-  installSkill,
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalRuns,
-  searchSkillRegistry,
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermission,
@@ -147,67 +145,28 @@ describe('desktop local host client', () => {
     )
   })
 
-  it('lists installed skills from the local host', async () => {
+  it('lists installed skills and roots from the local host', async () => {
     const fetcher = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ skills: [{ name: 'hunt', description: 'Diagnose', path: '/p/SKILL.md' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+      new Response(
+        JSON.stringify({
+          skills: [{ name: 'hunt', description: 'Diagnose', path: '/p/SKILL.md' }],
+          roots: [{ source: 'shejane', path: '/u/.shejane/skills' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
     )
-    const skills = await listInstalledSkills({ baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)
-    expect(skills).toEqual([{ name: 'hunt', description: 'Diagnose', path: '/p/SKILL.md' }])
+    const catalog = await listInstalledSkills(
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+    expect(catalog.skills).toEqual([
+      { name: 'hunt', description: 'Diagnose', path: '/p/SKILL.md' },
+    ])
+    expect(catalog.roots).toEqual([{ source: 'shejane', path: '/u/.shejane/skills' }])
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/skills',
       expect.objectContaining({ method: 'GET' }),
     )
-  })
-
-  it('searches the skill registry with an encoded query', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ skills: [{ id: 'a/b/c', skillId: 'c', name: 'C', installs: 3, source: 'a/b' }], count: 1 }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    )
-    const result = await searchSkillRegistry('type script', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)
-    expect(result.skills).toHaveLength(1)
-    expect(fetcher).toHaveBeenCalledWith(
-      'http://127.0.0.1:17371/local/v1/skills/registry?q=type%20script',
-      expect.objectContaining({ method: 'GET' }),
-    )
-  })
-
-  it('posts a skill install request and surfaces failure detail without throwing', async () => {
-    const okFetcher = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, code: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    )
-    const ok = await installSkill(
-      { source: 'anthropics/skills', skillId: 'skill-creator' },
-      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
-      okFetcher,
-    )
-    expect(ok.ok).toBe(true)
-    expect(okFetcher).toHaveBeenCalledWith(
-      'http://127.0.0.1:17371/local/v1/skills/install',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ source: 'anthropics/skills', skillId: 'skill-creator' }),
-      }),
-    )
-
-    const failFetcher = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: false, stderr: 'boom' }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    )
-    const failed = await installSkill(
-      { source: 'anthropics/skills', skillId: 'skill-creator' },
-      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
-      failFetcher,
-    )
-    expect(failed.ok).toBe(false)
-    expect(failed.stderr).toBe('boom')
   })
 
   it('sets and clears the Local Host cloud session through protected APIs', async () => {

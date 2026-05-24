@@ -56,31 +56,61 @@ log = logging.getLogger("local_host.server")
 
 def _list_skill_files() -> list[dict[str, str]]:
     """Lightweight skill catalog for the HTTP layer — independent of any
-    running agent. Reads md files from JIANDANLY_LOCAL_SKILLS_PATH and
-    returns {name, title, description, path}. Skill *invocation* (loading
-    full content into prompts) happens via deepagents SkillsMiddleware
-    inside a run; this endpoint just answers "what's available?"
+    running agent. Walks every roots `_resolve_skills_dirs` returns and
+    finds skills in the Anthropic / skills.sh format: each skill is a
+    directory containing `SKILL.md` with YAML frontmatter. Returns
+    `{name, title, description, path, source}` where `source` is the
+    last component of the root (`shejane`, `claude`, …) so the UI can
+    group entries by provenance.
+
+    Skill *invocation* (loading full content into prompts) happens via
+    deepagents SkillsMiddleware inside a run; this endpoint just answers
+    "what's available?". Only the SKILL.md directory format is listed
+    because deepagents only loads that format — a flat `.md` would show
+    up here but never reach the model.
     """
-    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
-    skills_dir = Path(custom) if custom else Path.home() / ".shejane" / "skills"
-    skills_dir = skills_dir.expanduser()
-    if not skills_dir.is_dir():
-        return []
+    from .agent.builder import _resolve_skills_dirs
+
     out: list[dict[str, str]] = []
-    for md in sorted(skills_dir.glob("*.md")):
-        try:
-            text = md.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        title, description = _parse_frontmatter_minimal(text)
-        out.append(
-            {
-                "name": md.stem,
-                "title": title or md.stem,
-                "description": description,
-                "path": str(md),
-            }
-        )
+    seen_names: set[str] = set()
+    for root in _resolve_skills_dirs():
+        # `source` is the parent's name stripped of any leading dot, so
+        # `~/.shejane/skills/` reports `shejane`, `~/.claude/skills/`
+        # reports `claude`, and a custom env override like
+        # `/abs/foo/skills/` reports `foo`. This is what the renderer
+        # groups by — `root.name` itself is always literally "skills"
+        # so it's useless as a label.
+        source = (root.parent.name or root.name).lstrip(".")
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir() or entry.name.startswith(("_", ".")):
+                continue
+            skill_md = entry / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            # Use frontmatter `name` over directory name when present;
+            # fall back to dir name. Dedupe across roots — first source
+            # wins, matching deepagents' "later sources override earlier"
+            # convention in reverse (we list shejane first so it's the
+            # canonical name when both roots have the same skill).
+            title, description = _parse_frontmatter_minimal(text)
+            display_name = entry.name
+            if display_name in seen_names:
+                continue
+            seen_names.add(display_name)
+            out.append(
+                {
+                    "name": display_name,
+                    "title": title or display_name,
+                    "description": description,
+                    "path": str(skill_md),
+                    "source": source,
+                    "root_path": str(root),
+                }
+            )
     return out
 
 
@@ -109,6 +139,10 @@ def _parse_frontmatter_minimal(text: str) -> tuple[str, str]:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_data_dir()
+    # Make sure the canonical user-managed skills dir exists from boot —
+    # otherwise it's invisible to the UI until the user manually creates
+    # it, and the "Personal" section silently disappears from the list.
+    (Path.home() / ".shejane" / "skills").mkdir(parents=True, exist_ok=True)
     store = await LocalStore.open(settings.local_db_path)
     checkpointer, ck_stack = await open_checkpointer(settings)
     agent_store, store_stack = await open_store(settings)
@@ -756,19 +790,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:
-        return {"skills": _list_skill_files()}
+        """Catalog of every SKILL.md the daemon can see across all
+        configured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,
+        or `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed
+        out-of-band — the user drops directories into a root themselves
+        (or installs via the skills.sh CLI into `~/.claude/skills/`) and
+        the daemon picks them up on next scan.
 
-    @app.get("/local/v1/skills/registry")
-    async def search_skill_registry(q: str = "") -> dict[str, Any]:
-        """Phase 5' stub: no external skill registry wired yet."""
-        return {"q": q, "skills": []}
+        Also surfaces the roots themselves under `roots` so the UI can
+        render section headers (e.g. "Personal" for shejane) even when
+        a root is empty — otherwise the user has no idea where to drop
+        their SKILL.md directories.
+        """
+        from .agent.builder import _resolve_skills_dirs
 
-    @app.post("/local/v1/skills/install")
-    async def install_skill(body: dict[str, Any]) -> dict[str, Any]:
-        raise HTTPException(
-            status_code=501,
-            detail="skill install not implemented (phase 6'+ feature)",
-        )
+        roots = [
+            {
+                "source": (d.parent.name or d.name).lstrip("."),
+                "path": str(d),
+            }
+            for d in _resolve_skills_dirs()
+        ]
+        return {"skills": _list_skill_files(), "roots": roots}
 
     return app
 

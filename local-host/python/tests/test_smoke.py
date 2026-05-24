@@ -270,13 +270,19 @@ def test_task_verify_empty_checks_rejected() -> None:
 # --- handled by deepagents.SkillsMiddleware) ---
 
 
-def test_skill_catalog_lists_md_files(monkeypatch: Any, tmp_path: Path) -> None:
+def test_skill_catalog_lists_skill_md_directories(monkeypatch: Any, tmp_path: Path) -> None:
+    """Scanner expects the Anthropic / skills.sh format: each skill is a
+    directory containing a SKILL.md (not a flat `<name>.md`)."""
     monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
-    (tmp_path / "alpha.md").write_text(
+    alpha_dir = tmp_path / "alpha"
+    alpha_dir.mkdir()
+    (alpha_dir / "SKILL.md").write_text(
         "---\ntitle: Alpha\ndescription: A short demo\n---\nbody",
         encoding="utf-8",
     )
-    (tmp_path / "beta.md").write_text("# Beta", encoding="utf-8")
+    beta_dir = tmp_path / "beta"
+    beta_dir.mkdir()
+    (beta_dir / "SKILL.md").write_text("# Beta", encoding="utf-8")
 
     from local_host.server import _list_skill_files
 
@@ -286,6 +292,8 @@ def test_skill_catalog_lists_md_files(monkeypatch: Any, tmp_path: Path) -> None:
     alpha = next(s for s in skills if s["name"] == "alpha")
     assert alpha["title"] == "Alpha"
     assert alpha["description"] == "A short demo"
+    # Every entry surfaces the source root name so the UI can group.
+    assert all("source" in s for s in skills)
 
 
 def test_skill_catalog_returns_empty_when_dir_missing(monkeypatch: Any, tmp_path: Path) -> None:

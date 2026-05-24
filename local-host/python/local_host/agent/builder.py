@@ -123,17 +123,38 @@ RETRY_ELIGIBLE_TOOLS: list[str] = [
 ]
 
 
-def _resolve_skills_dir() -> Path | None:
-    """Return the skills directory if configured + exists, else None.
+def _resolve_skills_dirs() -> list[Path]:
+    """Return every existing skills directory the daemon should scan.
 
-    Read order:
-      1. `JIANDANLY_LOCAL_SKILLS_PATH` env var
-      2. `~/.shejane/skills/` default
+    We deliberately accept multiple roots so the agent can see skills
+    from several ecosystems at once:
+
+      1. `JIANDANLY_LOCAL_SKILLS_PATH` env var (comma-separated for
+         multiple paths) — full override; when set, the defaults below
+         are NOT consulted.
+      2. Defaults (used when the env var is unset):
+         - `~/.shejane/skills/` — our own canonical location
+         - `~/.claude/skills/`  — Claude Code / skills.sh default install
+           target (skills.sh CLI installs here when run with
+           `--agent claude-code -g`, the most common case)
+
+    Each entry is a `Path` that exists and is a directory. Missing
+    paths are silently dropped so an unset Claude install doesn't error.
     """
-    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
-    candidate = Path(custom) if custom else Path.home() / ".shejane" / "skills"
-    candidate = candidate.expanduser()
-    return candidate if candidate.is_dir() else None
+    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH", "").strip()
+    if custom:
+        raw_paths = [p.strip() for p in custom.split(",") if p.strip()]
+    else:
+        raw_paths = [
+            str(Path.home() / ".shejane" / "skills"),
+            str(Path.home() / ".claude" / "skills"),
+        ]
+    out: list[Path] = []
+    for raw in raw_paths:
+        candidate = Path(raw).expanduser()
+        if candidate.is_dir():
+            out.append(candidate)
+    return out
 
 
 async def open_checkpointer(
@@ -297,6 +318,7 @@ async def build_agent(
     turn_count: int | None = None,
     dropped_history_count: int = 0,
     memory_enabled: bool = True,
+    skills_enabled: bool = True,
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -326,6 +348,10 @@ async def build_agent(
                          list and short-circuits the writeback middleware.
                          The user toggle in agent settings flows in here
                          via RunCoordinator._settings_overrides.
+        skills_enabled:  When False, passes `skills=None` to deepagents so
+                         no skill instructions get injected into the prompt
+                         and the agent doesn't see them. Mirrors the
+                         memory toggle pattern.
         settings:        Override settings (tests).
         extra_middleware: Appended after the built-in custom stack.
     """
@@ -351,10 +377,29 @@ async def build_agent(
     #   - FilesystemMiddleware tools (ls / read_file / write_file / edit_file)
     #   - `execute` shell tool (run commands inside the sandbox)
     #   - SubAgentMiddleware (subagents share this scratch area)
+    #   - SkillsMiddleware (reads `<skill-dir>/SKILL.md`)
+    #
+    # We deliberately never use `virtual_mode=True`. virtual_mode blocks
+    # every absolute path, which silently breaks SkillsMiddleware — it
+    # tries to read `/Users/<u>/.shejane/skills/<name>/SKILL.md` and gets
+    # nothing back, so the system prompt's "Skills System" section
+    # renders "no skills available" even when the user has skills
+    # installed (real-world bug from run diagnostics 2026-05-24).
+    #
+    # With `virtual_mode=False` (default), `root_dir` only affects how
+    # relative paths resolve; absolute paths pass through unchanged,
+    # which is what we want for skill loading. When the user has no
+    # project selected (`workspace_root` is None), we fall back to a
+    # default scratch dir under `~/.shejane/workspace/` so the agent
+    # still has a real cwd to write into instead of an unwritable
+    # virtual FS.
     if workspace_root:
-        backend = FilesystemBackend(root_dir=workspace_root, max_file_size_mb=10)
+        effective_workspace = workspace_root
     else:
-        backend = FilesystemBackend(virtual_mode=True, max_file_size_mb=10)
+        scratch = Path.home() / ".shejane" / "workspace"
+        scratch.mkdir(parents=True, exist_ok=True)
+        effective_workspace = str(scratch)
+    backend = FilesystemBackend(root_dir=effective_workspace, max_file_size_mb=10)
 
     middleware = _custom_middleware(settings, memory_enabled=memory_enabled)
 
@@ -407,8 +452,8 @@ async def build_agent(
     if extra_middleware:
         middleware.extend(extra_middleware)
 
-    skills_dir = _resolve_skills_dir()
-    skills_arg = [str(skills_dir)] if skills_dir is not None else None
+    skills_dirs = _resolve_skills_dirs() if skills_enabled else []
+    skills_arg = [str(d) for d in skills_dirs] if skills_dirs else None
 
     subagents_arg = (
         build_subagents(main_tools=tools, main_model=model) if settings.enable_subagents else None
@@ -450,7 +495,13 @@ async def build_agent(
 def _active_skill_names(skills_arg: list[str] | None) -> list[str]:
     """Best-effort: enumerate installed skill names from the skills
     directory so the ContextBuilder can hint the model that they're
-    available. Empty list when skills are off / unresolved."""
+    available. Empty list when skills are off / unresolved.
+
+    The full SKILL.md bodies are loaded into the prompt by deepagents'
+    SkillsMiddleware — this layer just primes the model that the
+    skills exist (deepagents lists them too but earlier in the loop
+    we want our own short echo so the `enabled_skills` priority sits
+    above runtime context)."""
     if not skills_arg:
         return []
     names: list[str] = []

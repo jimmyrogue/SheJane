@@ -1,220 +1,106 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  IconChevronLeft,
-  IconChevronRight,
-  IconCircleCheck,
-  IconDownload,
-  IconExternalLink,
-  IconPlus,
+  IconCheck,
+  IconFolderOpen,
+  IconRefresh,
   IconSearch,
   IconSparkles,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill, RegistrySkill, SkillInstallOutcome } from '@/shared/local-host/client'
+import type { InstalledSkill, SkillCatalog, SkillRoot } from '@/shared/local-host/client'
 
 export interface SkillsViewProps {
-  searchRegistry: (query: string) => Promise<{ skills: RegistrySkill[]; error?: string }>
-  listInstalled: () => Promise<InstalledSkill[]>
-  installSkill: (ref: { source: string; skillId: string }) => Promise<SkillInstallOutcome>
-  onCreateSkill: (description: string) => void
+  listInstalled: () => Promise<SkillCatalog>
+  /** Open a folder in the OS file manager. When the Electron bridge
+   *  isn't wired (browser-only build) the Open-folder buttons hide. */
+  onOpenFolder?: (path: string) => void
 }
 
-const pageSize = 9
-
-function githubURL(source: string): string {
-  if (/^https?:\/\//.test(source)) {
-    return source
-  }
-  const parts = source.split('/').filter(Boolean)
-  if (parts.length >= 2) {
-    return `https://github.com/${parts[0]}/${parts[1]}`
-  }
-  return `https://github.com/${source}`
+// Section ordering + display labels. Anything not in the map keeps its raw
+// source string as the header — covers custom JIANDANLY_LOCAL_SKILLS_PATH
+// overrides without code changes.
+const SECTION_ORDER: readonly string[] = ['claude', 'shejane']
+const SECTION_LABEL: Record<string, { zh: string; en: string }> = {
+  claude: { zh: '系统', en: 'System' },
+  shejane: { zh: '个人', en: 'Personal' },
 }
 
-export function SkillsView({ searchRegistry, listInstalled, installSkill, onCreateSkill }: SkillsViewProps) {
-  const { t } = useI18n()
-  const [installed, setInstalled] = useState<InstalledSkill[]>([])
-  const [installFilter, setInstallFilter] = useState('')
-  const [installedPage, setInstalledPage] = useState(1)
+function sectionLabel(source: string, locale: string): string {
+  const known = SECTION_LABEL[source]
+  if (!known) return source
+  return locale.startsWith('zh') ? known.zh : known.en
+}
 
-  const [installOpen, setInstallOpen] = useState(false)
+function matchesQuery(skill: InstalledSkill, needle: string): boolean {
+  if (!needle) return true
+  const hay = `${skill.name} ${skill.description ?? ''}`.toLowerCase()
+  return hay.includes(needle)
+}
+
+const EMPTY_CATALOG: SkillCatalog = { skills: [], roots: [] }
+
+export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
+  const { t, locale } = useI18n()
+  const [catalog, setCatalog] = useState<SkillCatalog>(EMPTY_CATALOG)
+  const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<RegistrySkill[]>([])
-  const [page, setPage] = useState(1)
-  const [searching, setSearching] = useState(false)
-  const [searched, setSearched] = useState(false)
-  const [registryError, setRegistryError] = useState<string | undefined>()
-  const [installing, setInstalling] = useState<Record<string, boolean>>({})
-  const [installErrors, setInstallErrors] = useState<Record<string, string>>({})
 
-  const [createOpen, setCreateOpen] = useState(false)
-  const [description, setDescription] = useState('')
-  const [creating, setCreating] = useState(false)
-
-  const refreshInstalled = useCallback(() => {
-    void listInstalled()
-      .then(setInstalled)
-      .catch(() => undefined)
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    try {
+      setCatalog(await listInstalled())
+    } finally {
+      setLoading(false)
+    }
   }, [listInstalled])
 
   useEffect(() => {
-    refreshInstalled()
-  }, [refreshInstalled])
+    void refresh()
+  }, [refresh])
 
-  useEffect(() => {
-    setInstalledPage(1)
-  }, [installFilter])
+  const filteredSkills = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return catalog.skills
+    return catalog.skills.filter((s) => matchesQuery(s, needle))
+  }, [catalog.skills, query])
 
-  const installedNames = useMemo(() => new Set(installed.map((skill) => skill.name)), [installed])
-
-  const filteredInstalled = useMemo(() => {
-    const needle = installFilter.trim().toLowerCase()
-    if (!needle) {
-      return installed
+  // Section list comes from `roots` so an empty Personal dir still
+  // shows a header. Skills get bucketed under their `source`; anything
+  // whose source isn't represented in roots (shouldn't happen — the
+  // daemon owns both) falls back to an "Unknown" bucket.
+  const sections = useMemo(() => {
+    const buckets = new Map<string, InstalledSkill[]>()
+    for (const skill of filteredSkills) {
+      const key = skill.source ?? 'unknown'
+      const list = buckets.get(key) ?? []
+      list.push(skill)
+      buckets.set(key, list)
     }
-    return installed.filter(
-      (skill) =>
-        skill.name.toLowerCase().includes(needle) || skill.description.toLowerCase().includes(needle),
-    )
-  }, [installed, installFilter])
-
-  const installedTotalPages = Math.max(1, Math.ceil(filteredInstalled.length / pageSize))
-  const currentInstalledPage = Math.min(installedPage, installedTotalPages)
-  const pageInstalled = useMemo(
-    () => filteredInstalled.slice((currentInstalledPage - 1) * pageSize, currentInstalledPage * pageSize),
-    [filteredInstalled, currentInstalledPage],
-  )
-
-  const totalPages = Math.max(1, Math.ceil(results.length / pageSize))
-  const currentPage = Math.min(page, totalPages)
-  const pageResults = useMemo(
-    () => results.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [results, currentPage],
-  )
-
-  const renderPagination = (current: number, total: number, go: (next: number) => void) =>
-    total > 1 ? (
-      <div className="skills-pagination">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={current <= 1}
-          onClick={() => go(Math.max(1, current - 1))}
-        >
-          <IconChevronLeft size={14} aria-hidden="true" />
-          {t('skills.pagination.prev')}
-        </Button>
-        <span className="skills-pagination-label">
-          {t('skills.pagination.page', { page: current, total })}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={current >= total}
-          onClick={() => go(Math.min(total, current + 1))}
-        >
-          {t('skills.pagination.next')}
-          <IconChevronRight size={14} aria-hidden="true" />
-        </Button>
-      </div>
-    ) : null
-
-  async function runSearch() {
-    const trimmed = query.trim()
-    if (!trimmed || searching) {
-      return
-    }
-    setSearching(true)
-    setRegistryError(undefined)
-    try {
-      const outcome = await searchRegistry(trimmed)
-      setResults(outcome.skills)
-      setPage(1)
-      setRegistryError(outcome.error ? t('skills.registryError') : undefined)
-    } catch {
-      setResults([])
-      setRegistryError(t('skills.registryError'))
-    } finally {
-      setSearching(false)
-      setSearched(true)
-    }
-  }
-
-  async function runInstall(skill: RegistrySkill) {
-    if (installing[skill.id]) {
-      return
-    }
-    setInstalling((current) => ({ ...current, [skill.id]: true }))
-    setInstallErrors((current) => {
-      const next = { ...current }
-      delete next[skill.id]
-      return next
+    const orderedRoots: SkillRoot[] = [...catalog.roots].sort((a, b) => {
+      const ai = SECTION_ORDER.indexOf(a.source)
+      const bi = SECTION_ORDER.indexOf(b.source)
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return a.source.localeCompare(b.source)
     })
-    try {
-      const outcome = await installSkill({ source: skill.source, skillId: skill.skillId })
-      if (outcome.ok) {
-        refreshInstalled()
-      } else {
-        setInstallErrors((current) => ({
-          ...current,
-          [skill.id]: t('skills.installFailed', { message: outcome.error || outcome.stderr || '' }),
-        }))
-      }
-    } catch (error) {
-      setInstallErrors((current) => ({
-        ...current,
-        [skill.id]: t('skills.installFailed', { message: error instanceof Error ? error.message : '' }),
-      }))
-    } finally {
-      setInstalling((current) => {
-        const next = { ...current }
-        delete next[skill.id]
-        return next
-      })
-    }
-  }
+    // Roots first (in canonical order), then any orphan source from
+    // skills (defensive — shouldn't trigger in practice).
+    const seen = new Set(orderedRoots.map((r) => r.source))
+    const orphans = Array.from(buckets.keys())
+      .filter((src) => !seen.has(src))
+      .sort()
+      .map<SkillRoot>((src) => ({ source: src, path: '' }))
+    return [...orderedRoots, ...orphans].map((root) => ({
+      root,
+      skills: buckets.get(root.source) ?? [],
+    }))
+  }, [catalog.roots, filteredSkills])
 
-  async function submitCreate() {
-    const trimmed = description.trim()
-    if (!trimmed || creating) {
-      return
-    }
-    setCreating(true)
-    try {
-      await onCreateSkill(trimmed)
-      setCreateOpen(false)
-      setDescription('')
-    } finally {
-      setCreating(false)
-    }
-  }
-
-  const hasInstalled = installed.length > 0
-  const filterActive = installFilter.trim().length > 0
+  const totalCount = catalog.skills.length
+  const filteredEmpty = totalCount > 0 && filteredSkills.length === 0
 
   return (
     <section className="workspace">
@@ -223,249 +109,82 @@ export function SkillsView({ searchRegistry, listInstalled, installSkill, onCrea
           <span>{t('skills.title')}</span>
         </div>
         <div className="skills-topbar-actions">
-          <Button type="button" size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-            <IconPlus size={14} aria-hidden="true" />
-            {t('skills.create.title')}
-          </Button>
-          <Button type="button" size="sm" onClick={() => setInstallOpen(true)}>
-            <IconDownload size={14} aria-hidden="true" />
-            {t('skills.install.open')}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => void refresh()}
+            disabled={loading}
+          >
+            <IconRefresh size={14} aria-hidden="true" />
+            {t('skills.refresh')}
           </Button>
         </div>
       </header>
 
       <div className="skills-scroll">
-        <p className="skills-subtitle">{t('skills.subtitle')}</p>
-
-        {!hasInstalled ? (
-          <div className="skills-empty-cta">
-            <span className="skills-empty-glyph" aria-hidden="true">
-              <IconSparkles size={26} />
-            </span>
-            <p>{t('skills.emptyCta')}</p>
-            <div className="skills-empty-actions">
-              <Button type="button" onClick={() => setInstallOpen(true)}>
-                <IconDownload size={14} aria-hidden="true" />
-                {t('skills.install.open')}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(true)}>
-                <IconPlus size={14} aria-hidden="true" />
-                {t('skills.create.title')}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="skills-filter-row">
-              <div className="skills-filter">
-                <IconSearch className="skills-filter-icon" size={15} aria-hidden="true" />
-                <Input
-                  type="search"
-                  value={installFilter}
-                  onChange={(event) => setInstallFilter(event.target.value)}
-                  placeholder={t('skills.filterPlaceholder')}
-                  aria-label={t('skills.filterPlaceholder')}
-                />
-              </div>
-              <span className="skills-count">
-                {filterActive
-                  ? t('skills.countFiltered', { total: installed.length, shown: filteredInstalled.length })
-                  : t('skills.countAll', { count: installed.length })}
-              </span>
-            </div>
-
-            {filteredInstalled.length === 0 ? (
-              <div className="skills-empty">
-                <p>{t('skills.filterEmpty')}</p>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setInstallFilter('')}>
-                  {t('skills.clearFilter')}
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="skills-table">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="skills-table-name-col">{t('skills.col.name')}</TableHead>
-                        <TableHead>{t('skills.col.desc')}</TableHead>
-                        <TableHead className="skills-table-status-col">{t('skills.col.status')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pageInstalled.map((skill) => (
-                        <TableRow key={skill.path}>
-                          <TableCell>
-                            <span className="skills-table-name">
-                              <span className="skills-installed-glyph" aria-hidden="true">
-                                <IconSparkles size={14} />
-                              </span>
-                              {skill.name}
-                            </span>
-                          </TableCell>
-                          <TableCell className="skills-table-desc">{skill.description}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="skills-status-badge">
-                              <IconCircleCheck size={12} aria-hidden="true" />
-                              {t('skills.installed')}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                {renderPagination(currentInstalledPage, installedTotalPages, setInstalledPage)}
-              </>
-            )}
-          </>
-        )}
-      </div>
-
-      <Dialog open={installOpen} onOpenChange={setInstallOpen}>
-        <DialogContent className="skills-install-dialog sm:max-w-[640px]">
-          <DialogHeader>
-            <DialogTitle>{t('skills.install.title')}</DialogTitle>
-            <DialogDescription>{t('skills.install.desc')}</DialogDescription>
-          </DialogHeader>
-
-          <div className="skills-dialog-scroll">
-            <form
-              className="skills-searchbar"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void runSearch()
-              }}
-            >
-              <IconSearch className="skills-searchbar-icon" size={16} aria-hidden="true" />
+        <div className="skills-content">
+          {totalCount > 0 ? (
+            <div className="skills-search">
+              <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
               <Input
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(e) => setQuery(e.target.value)}
                 placeholder={t('skills.searchPlaceholder')}
                 aria-label={t('skills.searchPlaceholder')}
               />
-              <Button type="submit" size="sm" disabled={searching || !query.trim()}>
-                {searching ? t('skills.searching') : t('skills.search')}
-              </Button>
-            </form>
+            </div>
+          ) : null}
 
-            {registryError ? <p className="skills-error">{registryError}</p> : null}
+          {filteredEmpty ? (
+            <p className="skills-not-found">{t('skills.notFound')}</p>
+          ) : null}
 
-            {searched && !searching && results.length === 0 && !registryError ? (
-              <p className="skills-empty">{t('skills.noResults')}</p>
-            ) : null}
-
-            {!searched && !registryError && results.length === 0 ? (
-              <p className="skills-empty">{t('skills.install.hint')}</p>
-            ) : null}
-
-            {results.length > 0 ? (
-              <>
-                <p className="skills-results-summary">
-                  {t('skills.resultsSummary', { count: results.length })}
+          {sections.map(({ root, skills }) => (
+            <section className="skills-section" key={root.source}>
+              <header className="skills-section-header">
+                <h3 className="skills-section-title">{sectionLabel(root.source, locale)}</h3>
+                {root.path && onOpenFolder ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="skills-section-open"
+                    onClick={() => onOpenFolder(root.path)}
+                    title={root.path}
+                    aria-label={t('skills.openFolder')}
+                  >
+                    <IconFolderOpen size={14} aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </header>
+              {skills.length === 0 ? (
+                <p className="skills-section-empty">
+                  {t('skills.section.emptyHint', { path: root.path || '—' })}
                 </p>
+              ) : (
                 <div className="skills-grid">
-                  {pageResults.map((skill) => {
-                    const isInstalled =
-                      installedNames.has(skill.skillId) || installedNames.has(skill.name)
-                    return (
-                      <Card key={skill.id} size="sm" className="skills-card">
-                        <CardHeader>
-                          <div className="skills-card-head">
-                            <span className="skills-card-glyph" aria-hidden="true">
-                              <IconSparkles size={15} />
-                            </span>
-                            <CardTitle className="skills-card-title">{skill.name}</CardTitle>
-                          </div>
-                          <div className="skills-card-meta">
-                            <a
-                              href={githubURL(skill.source)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="skills-source-link"
-                            >
-                              {skill.source}
-                              <IconExternalLink size={11} aria-hidden="true" />
-                            </a>
-                            <span className="skills-installs">
-                              <IconDownload size={11} aria-hidden="true" />
-                              {t('skills.installs', { count: skill.installs })}
-                            </span>
-                          </div>
-                        </CardHeader>
-                        <CardContent>
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="skills-install-btn"
-                            variant={isInstalled ? 'outline' : 'default'}
-                            disabled={isInstalled || Boolean(installing[skill.id])}
-                            onClick={() => void runInstall(skill)}
-                          >
-                            {isInstalled ? (
-                              <>
-                                <IconCircleCheck size={14} aria-hidden="true" />
-                                {t('skills.installed')}
-                              </>
-                            ) : installing[skill.id] ? (
-                              t('skills.installing')
-                            ) : (
-                              <>
-                                <IconDownload size={14} aria-hidden="true" />
-                                {t('skills.install')}
-                              </>
-                            )}
-                          </Button>
-                          {installErrors[skill.id] ? (
-                            <p className="skills-error">{installErrors[skill.id]}</p>
-                          ) : null}
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
+                  {skills.map((skill) => (
+                    <div className="skill-card" key={skill.path} data-source={root.source}>
+                      <div className="skill-card-icon" aria-hidden="true">
+                        <IconSparkles size={18} />
+                      </div>
+                      <div className="skill-card-text">
+                        <div className="skill-card-name">{skill.name}</div>
+                        {skill.description ? (
+                          <div className="skill-card-desc">{skill.description}</div>
+                        ) : null}
+                      </div>
+                      <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
+                    </div>
+                  ))}
                 </div>
-                {renderPagination(currentPage, totalPages, setPage)}
-              </>
-            ) : null}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" onClick={() => setInstallOpen(false)}>
-              {t('skills.install.done')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>{t('skills.create.title')}</DialogTitle>
-            <DialogDescription>{t('skills.create.desc')}</DialogDescription>
-          </DialogHeader>
-          <ol className="skills-create-steps">
-            <li>{t('skills.create.step1')}</li>
-            <li>{t('skills.create.step2')}</li>
-            <li>{t('skills.create.step3')}</li>
-          </ol>
-          <Textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder={t('skills.create.placeholder')}
-            aria-label={t('skills.create.title')}
-            rows={4}
-          />
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-              {t('skills.create.cancel')}
-            </Button>
-            <Button type="button" disabled={creating || !description.trim()} onClick={() => void submitCreate()}>
-              {creating ? t('skills.create.creating') : t('skills.create.button')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              )}
+            </section>
+          ))}
+        </div>
+      </div>
     </section>
   )
 }

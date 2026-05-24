@@ -5796,281 +5796,31 @@ select {
   }
 }
 
-/* Skills marketplace view (Phase 8) */
+/* === Skills view ========================================================
+ *
+ * Two-column grid of skill cards grouped by source (claude / shejane).
+ * Mirrors the Codex-style "System / Personal" layout: hairline-divided
+ * section headers, soft-tinted icon tiles per row, light hover state,
+ * unobtrusive check icon on the right as a "loaded" indicator.
+ */
+/* Outer scroll viewport spans the full workspace so the scrollbar
+ * sits flush against the right edge. The inner `.skills-content` is
+ * what holds the centered 760px column. */
 .skills-scroll {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   width: 100%;
-  max-width: 880px;
+}
+
+.skills-content {
+  width: 100%;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 24px 28px 48px;
+  padding: 28px 28px 56px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-}
-
-.skills-subtitle {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.5;
-  margin: -4px 0 2px;
-}
-
-.skills-searchbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
-  border: 1px solid var(--border-strong, var(--border));
-  border-radius: 12px;
-  background: var(--card);
-  transition: border-color 160ms ease, box-shadow 160ms ease;
-}
-
-.skills-searchbar:focus-within {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
-}
-
-.skills-searchbar-icon {
-  flex: none;
-  color: var(--muted-foreground);
-}
-
-.skills-searchbar input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  padding: 0;
-}
-
-.skills-searchbar input:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-
-.skills-error {
-  color: var(--accent-danger-text);
-  font-size: 12px;
-  margin: 6px 0 0;
-}
-
-.skills-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  margin: 0;
-  padding: 18px 0;
-  text-align: center;
-}
-
-.skills-empty p {
-  margin: 0;
-}
-
-.skills-results-summary {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-  margin: 2px 0 0;
-}
-
-.skills-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
-  gap: 12px;
-}
-
-.skills-card {
-  gap: 10px;
-  padding: 14px;
-  border-radius: 12px;
-  background: var(--card);
-  border: 1px solid var(--border-hairline);
-  box-shadow: none;
-  --tw-ring-shadow: 0 0 #0000;
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-}
-
-.skills-card:hover {
-  border-color: rgba(37, 99, 235, 0.5);
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
-}
-
-.skills-card [data-slot='card-header'],
-.skills-card [data-slot='card-content'] {
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skills-card-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.skills-card-glyph {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: #edf3fb;
-  color: #2563eb;
-}
-
-.skills-card-title {
-  font-size: 13.5px;
-  font-weight: 680;
-  color: var(--foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skills-card-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.skills-source-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #2563eb;
-  text-decoration: none;
-}
-
-.skills-source-link:hover {
-  text-decoration: underline;
-}
-
-.skills-installs {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex: none;
-}
-
-.skills-install-btn {
-  width: 100%;
-  gap: 5px;
-}
-
-.skills-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border-top: 0.5px solid var(--border-hairline);
-  padding-top: 18px;
-}
-
-.skills-section-title {
-  font-size: 14px;
-  font-weight: 680;
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.skills-table {
-  border: 1px solid var(--border-hairline);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--card);
-}
-
-.skills-table th {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-
-.skills-table td {
-  font-size: 13px;
-}
-
-.skills-table-name-col {
-  width: 32%;
-}
-
-.skills-table-status-col {
-  width: 1%;
-}
-
-.skills-table-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 640;
-  color: var(--text-primary);
-}
-
-.skills-installed-glyph {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: #edf3fb;
-  color: #2563eb;
-}
-
-.skills-table-desc {
-  max-width: 0;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted-foreground);
-}
-
-.skills-status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: #16a34a;
-  background: rgba(22, 163, 74, 0.12);
-}
-
-.skills-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding-top: 6px;
-}
-
-.skills-pagination-label {
-  font-size: 12px;
-  color: var(--muted-foreground);
-  min-width: 84px;
-  text-align: center;
+  gap: 28px;
 }
 
 .skills-topbar-actions {
@@ -6080,141 +5830,184 @@ select {
   flex: none;
 }
 
-.skills-filter-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.skills-filter {
+.skills-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
-  min-width: 0;
-  max-width: 420px;
-  padding: 4px 6px 4px 11px;
-  border: 1px solid var(--border-strong, var(--border));
+  padding: 4px 10px 4px 12px;
+  border: 1px solid var(--border-hairline);
   border-radius: 10px;
-  background: var(--card);
+  background: var(--bg-surface);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
-.skills-filter:focus-within {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+.skills-search:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
-.skills-filter-icon {
+.skills-search-icon {
   flex: none;
-  color: var(--muted-foreground);
+  color: var(--text-tertiary);
 }
 
-.skills-filter input {
+.skills-search input {
   flex: 1;
   min-width: 0;
-  height: 28px;
+  height: 30px;
   border: 0;
   background: transparent;
   box-shadow: none;
   padding: 0;
 }
 
-.skills-filter input:focus-visible {
+.skills-search input:focus-visible {
   outline: none;
   box-shadow: none;
 }
 
-.skills-count {
-  flex: none;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
+.skills-not-found {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  padding: 28px 0 0;
+  margin: 0;
 }
 
-.skills-empty-cta {
+/* Empty-section placeholder. Replaces the "no skills installed at all"
+ * giant CTA from the previous iteration — now every section header is
+ * always rendered, and the empty ones get a small hint pointing at the
+ * directory the user can drop files into. */
+.skills-section-empty {
+  margin: 0;
+  padding: 12px 8px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+/* Per-source section. Header is a thin row with the section name on the
+ * left + an unobtrusive open-folder icon button on the right; a hairline
+ * sits underneath as the visual divider (matches the Codex screenshot). */
+.skills-section {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+
+.skills-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.skills-section-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.skills-section-open {
+  height: 26px;
+  width: 26px;
+  padding: 0;
+  color: var(--text-tertiary);
+}
+
+.skills-section-open:hover {
+  color: var(--text-secondary);
+}
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  padding: 4px 0;
+}
+
+@media (max-width: 640px) {
+  .skills-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Single row in the grid. Hover bg is subtle — matches the table-row
+ * affordance elsewhere in the app, not a card lift. */
+.skill-card {
+  display: flex;
   align-items: center;
   gap: 12px;
-  padding: 48px 0;
-  text-align: center;
-  color: var(--muted-foreground);
+  padding: 10px 8px;
+  border-radius: 8px;
+  min-width: 0;
 }
 
-.skills-empty-cta p {
-  margin: 0;
-  font-size: 13px;
-  max-width: 360px;
+.skill-card:hover {
+  background: var(--bg-sidebar-soft);
 }
 
-.skills-empty-glyph {
+.skill-card-icon {
   display: inline-grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: #edf3fb;
-  color: #2563eb;
-}
-
-.skills-empty-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.skills-create-steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: skill-step;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.skills-create-steps li {
-  counter-increment: skill-step;
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  font-size: 13px;
-  color: var(--foreground);
-}
-
-.skills-create-steps li::before {
-  content: counter(skill-step);
   flex: none;
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #edf3fb;
-  color: #2563eb;
-  font-size: 11px;
-  font-weight: 700;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+  color: var(--text-secondary);
 }
 
-.skills-dialog-scroll {
+/* Tint the icon per source so the user gets a fast visual cue even when
+ * the section header scrolls out of view. */
+.skill-card[data-source='shejane'] .skill-card-icon {
+  background: color-mix(in srgb, var(--accent-warning) 22%, transparent);
+  color: var(--accent-warning-text);
+}
+
+.skill-card[data-source='claude'] .skill-card-icon {
+  background: color-mix(in srgb, var(--accent-info) 22%, transparent);
+  color: var(--accent-info);
+}
+
+.skill-card-text {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-height: 60vh;
-  overflow-y: auto;
+  gap: 2px;
+}
+
+.skill-card-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-card-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-card-check {
+  flex: none;
+  color: var(--text-tertiary);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skills-card,
-  .skills-card:hover,
-  .skills-searchbar,
-  .skills-filter,
-  .skills-installed-item {
+  .skills-search,
+  .skill-card {
     transition: none;
-    transform: none;
   }
 }
 

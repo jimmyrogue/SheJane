@@ -199,6 +199,13 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
     os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    # Pin skills lookup to an empty tmp dir — otherwise this test picks
+    # up the dev machine's real `~/.claude/skills/` (which on Jimmy's
+    # laptop has ~25 skills totaling ~30 KB), and the skills layer
+    # crowds the <state> block out of the 8 KB prompt budget. The
+    # invariant under test (dropped-count surfaced in state) is
+    # independent of skills, so isolating them is correct.
+    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp / "empty-skills"))
 
     captured_requests: list[dict] = []
 

@@ -40,13 +40,11 @@ import {
   getDesktopLocalHostConfig,
   answerLocalQuestion,
   getLocalArtifact,
-  installSkill,
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalRuns,
   probeLocalHost,
   resolveLocalPermission,
-  searchSkillRegistry,
   setLocalCloudSession,
   streamLocalRun,
   type AgentSettings,
@@ -65,13 +63,13 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
-// v2 — defaults bumped (memory: off → on). Resetting the key forces
-// every existing renderer onto the new default; users who actively
-// opted to "memory: off" before the change will pick the new default
-// once and can re-disable from the settings dialog if they want.
-const agentSettingsStorageKey = 'jiandanly.agentSettings.v2'
+// v3 — defaults bumped (memory + skills both 'on'). Resetting the key
+// forces every existing renderer onto the new default; users who
+// actively opted off before the change pick the new default once and
+// can re-disable from the settings dialog if they want.
+const agentSettingsStorageKey = 'jiandanly.agentSettings.v3'
 const chatModeStorageKey = 'jiandanly.chatMode.v1'
-const defaultAgentSettings: Required<AgentSettings> = { memory: 'on', skills: 'off' }
+const defaultAgentSettings: Required<AgentSettings> = { memory: 'on', skills: 'on' }
 const defaultChatMode: ChatMode = 'auto'
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
@@ -145,10 +143,10 @@ function readAgentSettings(): Required<AgentSettings> {
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
     return {
-      // Memory now defaults to 'on'. Only an explicit 'off' disables it;
-      // a missing field reads as the new default rather than the old one.
+      // Both default to 'on'. Only an explicit 'off' disables; a missing
+      // field reads as the new default rather than the old one.
       memory: parsed.memory === 'off' ? 'off' : 'on',
-      skills: parsed.skills === 'on' ? 'on' : 'off',
+      skills: parsed.skills === 'off' ? 'off' : 'on',
     }
   } catch {
     return { ...defaultAgentSettings }
@@ -773,43 +771,6 @@ function AppContent() {
     return conversation
   }
 
-  async function handleCreateSkill(description: string) {
-    if (!auth) {
-      setNotice(t('app.notice.loginBeforeSending'))
-      return
-    }
-    const canUseLocalHarness = Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
-    if (!canUseLocalHarness || !localHostConfig) {
-      setNotice(t('app.notice.localHostDisconnected'))
-      return
-    }
-    setMainView('chat')
-    startNewConversation()
-    setIsSending(true)
-    setNotice('')
-    const renderContext = createConversationRenderContext()
-    try {
-      // Best-effort: make sure skill-creator is available; ignore failures so a
-      // missing network / npx still lets the guided conversation start.
-      try {
-        await installSkill({ source: 'anthropics/skills', skillId: 'skill-creator' }, localHostConfig)
-      } catch {
-        // ignored on purpose
-      }
-      const prompt = t('skills.create.prompt', { description })
-      const conversation = await sendLocalHarnessMessage(prompt, renderContext, {
-        ...agentSettings,
-        skills: 'on',
-      })
-      await refreshConversationsAfterStream(conversation.id, renderContext)
-      setBalance(await api.balance())
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
-    } finally {
-      setIsSending(false)
-    }
-  }
-
   /** Stop whatever local run is currently streaming for the active
    *  conversation. The daemon emits `run.canceled` on its SSE channel,
    *  the existing stream loop finalizes the message, and the bubble
@@ -1428,20 +1389,17 @@ function AppContent() {
           <div className="view-transition" key={mainView}>
           {mainView === 'skills' ? (
             <SkillsView
-              searchRegistry={(searchQuery) =>
-                localHostConfig
-                  ? searchSkillRegistry(searchQuery, localHostConfig)
-                  : Promise.resolve({ skills: [], error: 'offline' })
-              }
               listInstalled={() =>
-                localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([])
-              }
-              installSkill={(ref) =>
                 localHostConfig
-                  ? installSkill(ref, localHostConfig)
-                  : Promise.resolve({ ok: false, error: 'offline' })
+                  ? listInstalledSkills(localHostConfig)
+                  : Promise.resolve({ skills: [], roots: [] })
               }
-              onCreateSkill={(text) => void handleCreateSkill(text)}
+              onOpenFolder={(path) => {
+                const bridge = window.jiandanDesktop
+                if (bridge?.openFileWithDefaultApp) {
+                  void bridge.openFileWithDefaultApp(path)
+                }
+              }}
             />
           ) : (
           <section className="workspace">
@@ -1533,7 +1491,11 @@ function AppContent() {
               }}
               onSend={() => void sendMessage()}
               onStop={() => void cancelActiveLocalRun()}
-              listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
+              listSkills={async () => {
+                if (!localHostConfig) return []
+                const catalog = await listInstalledSkills(localHostConfig)
+                return catalog.skills
+              }}
               mode={mode}
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}

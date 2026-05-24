@@ -156,67 +156,42 @@ export async function createLocalRun(
 export interface InstalledSkill {
   name: string
   description: string
+  /** Absolute path to the skill's SKILL.md on the user's disk. */
+  path: string
+  /** Friendly label for the root this skill was discovered in:
+   *  "shejane" for `~/.shejane/skills/`, "claude" for `~/.claude/skills/`,
+   *  or the last segment for a custom `JIANDANLY_LOCAL_SKILLS_PATH`. */
+  source?: string
+  /** Absolute path of the root directory itself, e.g.
+   *  "/Users/x/.shejane/skills". Used to open the folder in Finder. */
+  root_path?: string
+}
+
+/** One known skill root the daemon scans — surfaced even when empty so
+ *  the UI can render a section header + "drop a SKILL.md here" hint. */
+export interface SkillRoot {
+  source: string
   path: string
 }
 
-export interface RegistrySkill {
-  id: string
-  skillId: string
-  name: string
-  installs: number
-  source: string
-}
-
-export interface SkillInstallOutcome {
-  ok: boolean
-  code?: number | null
-  stdout?: string
-  stderr?: string
-  error?: string
+export interface SkillCatalog {
+  skills: InstalledSkill[]
+  roots: SkillRoot[]
 }
 
 export async function listInstalledSkills(
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
-): Promise<InstalledSkill[]> {
+): Promise<SkillCatalog> {
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills`, {
     method: 'GET',
     headers: localHeaders(config, false),
   })
-  const body = await decodeLocalResponse<{ skills?: InstalledSkill[] }>(response)
-  return body.skills ?? []
-}
-
-export async function searchSkillRegistry(
-  query: string,
-  config: LocalHostConfig,
-  fetcher: Fetcher = fetch,
-): Promise<{ skills: RegistrySkill[]; error?: string }> {
-  const response = await fetcher(
-    `${normalizeBaseURL(config.baseURL)}/local/v1/skills/registry?q=${encodeURIComponent(query)}`,
-    { method: 'GET', headers: localHeaders(config, false) },
-  )
-  const body = await decodeLocalResponse<{ skills?: RegistrySkill[]; error?: string }>(response)
-  return { skills: body.skills ?? [], error: body.error }
-}
-
-export async function installSkill(
-  input: { source: string; skillId: string },
-  config: LocalHostConfig,
-  fetcher: Fetcher = fetch,
-): Promise<SkillInstallOutcome> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills/install`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify({ source: input.source, skillId: input.skillId }),
-  })
-  let body: SkillInstallOutcome
-  try {
-    body = (await response.json()) as SkillInstallOutcome
-  } catch {
-    body = { ok: false, error: `Local Host HTTP ${response.status}` }
+  const body = await decodeLocalResponse<Partial<SkillCatalog>>(response)
+  return {
+    skills: body.skills ?? [],
+    roots: body.roots ?? [],
   }
-  return { ...body, ok: response.ok && body.ok !== false }
 }
 
 export async function setLocalCloudSession(

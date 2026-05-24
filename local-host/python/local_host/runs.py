@@ -278,10 +278,12 @@ class RunCoordinator:
             turn_count = len(kept_messages) + 1
 
             run_settings = self._settings_overrides.get(run_id) or {}
-            # Default: memory ON. The client's agent settings panel has
-            # memory enabled by default; legacy callers (curl, tests)
-            # that don't send any settings inherit the same default.
+            # Defaults: memory + skills both ON. The client's agent
+            # settings panel has them enabled by default; legacy callers
+            # (curl, tests) that don't send any settings inherit the
+            # same default. Only an explicit "off" disables either.
             memory_enabled = str(run_settings.get("memory", "on")).lower() != "off"
+            skills_enabled = str(run_settings.get("skills", "on")).lower() != "off"
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -293,6 +295,7 @@ class RunCoordinator:
                 turn_count=turn_count,
                 dropped_history_count=dropped_history_count,
                 memory_enabled=memory_enabled,
+                skills_enabled=skills_enabled,
             )
             config = {
                 "configurable": {"thread_id": run_id},
