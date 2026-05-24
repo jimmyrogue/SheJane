@@ -12,7 +12,7 @@ This file is the first stop for coding agents working in this repository. Keep i
 
 ## Current Product State
 
-Jiandanly is an individual-user AI productivity MVP.
+SheJane (石间) is an individual-user AI productivity MVP. (`jiandanly` is the legacy code name still used in package names, env vars, and on-disk paths.)
 
 - `api/`: Go API gateway, auth, wallet ledger, LLM routing, Stripe Billing webhook handling, admin APIs.
 - `client/`: user-facing React/Vite web app, local-first chat history, billing entry.

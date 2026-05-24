@@ -52,7 +52,7 @@ OpenBridge is useful as a reference for:
 - streaming markdown / deferred render
 - smart auto-scroll behavior
 
-Jiandanly does not copy OpenBridge's BYOK/provider architecture, SwiftUI/WebKit implementation, or sandbox VM approach.
+SheJane does not copy OpenBridge's BYOK/provider architecture, SwiftUI/WebKit implementation, or sandbox VM approach.
 
 ## Verification
 

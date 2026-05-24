@@ -6,7 +6,7 @@
 
 ## 1. Direction
 
-Jiandanly Phase 2 is now **Local Agent Harness**.
+SheJane Phase 2 is now **Local Agent Harness**.
 
 The user-facing experience remains a single Agentic Chat composer: the user types a question, attaches files, pastes URLs, or describes a task. The system decides whether to answer directly, parse documents, retrieve context, call tools, load skills, ask for permission, verify work, or continue a multi-step loop.
 
@@ -128,7 +128,7 @@ Cloud must not:
 
 ## 5. Harness 12 Components
 
-| Component | Jiandanly implementation |
+| Component | SheJane implementation |
 |-----------|--------------------------|
 | 1. Orchestration Loop | Local worker runs a single-agent TAO/ReAct loop: build prompt -> call cloud LLM -> parse tool calls -> permission -> execute tool -> append observation -> repeat. MVP starts single-agent. |
 | 2. Tools | Typed registry with `name`, `description`, `inputSchema`, `isReadOnly`, `isDestructive`, `isConcurrencySafe`, `maxResultSize`, `permissionPolicy`. Phase 2.15 shifts the core vocabulary to universal primitives such as `fs.*`, `open.*`, `clipboard.*`, and `task.verify`; Phase 2.17-2.21 uses Playwright-managed Chromium for `browser.search`, `browser.open`, `browser.read`, `browser.verify`, `browser.snapshot`, `browser.screenshot`, `browser.click`, `browser.type`, `browser.scroll`, and `browser.close`, plus `environment.observe`. Legacy `file.*` aliases remain for compatibility; Phase 2.22 moves paid/provider-key tools such as Tavily-backed `web.search` behind the Cloud Tool Gateway, so Local Host advertises `web.search` only when the cloud capability endpoint reports it configured. |

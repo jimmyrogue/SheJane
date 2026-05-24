@@ -1,4 +1,4 @@
-# Jiandanly 自动化测试体系进度
+# 石间 / SheJane 自动化测试体系进度
 
 Updated: 2026-05-11
 

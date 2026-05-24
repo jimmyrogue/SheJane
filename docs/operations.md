@@ -1,4 +1,4 @@
-# Jiandanly 运维与管理手册
+# 石间 / SheJane 运维与管理手册
 
 Updated: 2026-05-17
 
@@ -374,7 +374,7 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 ## 自动化测试与 Smoke
 
-Jiandanly 的默认测试按“本地确定性优先”设计：PR 和本机默认命令不依赖真实 LLM、Stripe、S3、Tavily 或外网。真实服务只通过显式 smoke 验证。
+石间的默认测试按“本地确定性优先”设计：PR 和本机默认命令不依赖真实 LLM、Stripe、S3、Tavily 或外网。真实服务只通过显式 smoke 验证。
 
 常用命令：
 

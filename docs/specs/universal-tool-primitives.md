@@ -5,7 +5,7 @@
 
 ## Summary
 
-Universal Tool Primitives turn Jiandanly Local Harness from a coding-oriented tool loop into a general work-agent foundation. The model should reason in simple verbs: read, write, open, search, list, and verify. Higher-level office automation, browser work, documents, spreadsheets, email, and calendar flows should compose these primitives instead of creating one-off scene tools.
+Universal Tool Primitives turn the SheJane Local Harness from a coding-oriented tool loop into a general work-agent foundation. The model should reason in simple verbs: read, write, open, search, list, and verify. Higher-level office automation, browser work, documents, spreadsheets, email, and calendar flows should compose these primitives instead of creating one-off scene tools.
 
 ## Tool Shape
 

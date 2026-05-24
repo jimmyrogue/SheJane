@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings = get_settings()
 
     app = FastAPI(
-        title="Jiandanly Local Host",
+        title="SheJane Local Host",
         version=__version__,
         lifespan=lifespan,
     )
