@@ -62,7 +62,7 @@ def _list_skill_files() -> list[dict[str, str]]:
     inside a run; this endpoint just answers "what's available?"
     """
     custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
-    skills_dir = Path(custom) if custom else Path.home() / ".jiandanly" / "skills"
+    skills_dir = Path(custom) if custom else Path.home() / ".shejane" / "skills"
     skills_dir = skills_dir.expanduser()
     if not skills_dir.is_dir():
         return []

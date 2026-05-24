@@ -128,10 +128,10 @@ def _resolve_skills_dir() -> Path | None:
 
     Read order:
       1. `JIANDANLY_LOCAL_SKILLS_PATH` env var
-      2. `~/.jiandanly/skills/` default
+      2. `~/.shejane/skills/` default
     """
     custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH")
-    candidate = Path(custom) if custom else Path.home() / ".jiandanly" / "skills"
+    candidate = Path(custom) if custom else Path.home() / ".shejane" / "skills"
     candidate = candidate.expanduser()
     return candidate if candidate.is_dir() else None
 

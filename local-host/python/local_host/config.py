@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     pairing_token: str = Field(default="", alias="JIANDANLY_LOCAL_HOST_TOKEN")
 
     # Storage
-    data_dir: Path = Field(default=Path.home() / ".jiandanly" / "local-host")
+    data_dir: Path = Field(default=Path.home() / ".shejane" / "local-host")
     checkpoint_db_filename: str = "agent.db"
     store_db_filename: str = "store.db"
     local_db_filename: str = "local-host.db"
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # Comma-separated AGENTS.md paths (or directories containing them) that
     # deepagents' MemoryMiddleware should load into the system prompt at
     # run start. Empty ⇒ no memory pre-load. Example:
-    #   "~/.jiandanly/AGENTS.md,/path/to/project/AGENTS.md"
+    #   "~/.shejane/AGENTS.md,/path/to/project/AGENTS.md"
     memory_sources: str = Field(
         default="",
         alias="JIANDANLY_LOCAL_MEMORY_PATHS",
