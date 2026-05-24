@@ -149,7 +149,7 @@ describe('ConversationSidebar', () => {
       </I18nProvider>,
     )
 
-    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    const trigger = screen.getByRole('button', { name: '设置' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
     // Extra balance shows; the monthly line is gone, both for finite
@@ -189,7 +189,7 @@ describe('ConversationSidebar', () => {
         />
       </I18nProvider>,
     )
-    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    const trigger = screen.getByRole('button', { name: '设置' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
     // Menu opens (logout button present) but no balance lines render.
@@ -220,7 +220,7 @@ describe('ConversationSidebar', () => {
       </I18nProvider>,
     )
 
-    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    const trigger = screen.getByRole('button', { name: '设置' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
     fireEvent.click(await screen.findByText('Agent 设置'))
@@ -252,7 +252,7 @@ describe('ConversationSidebar', () => {
       </I18nProvider>,
     )
 
-    const trigger = screen.getByRole('button', { name: '账户菜单' })
+    const trigger = screen.getByRole('button', { name: '设置' })
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
     fireEvent.click(await screen.findByText('Agent 设置'))

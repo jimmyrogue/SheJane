@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   IconAdjustmentsHorizontal,
-  IconChevronDown,
   IconDots,
   IconDownload,
   IconLayoutSidebarLeftCollapse,
@@ -10,6 +9,7 @@ import {
   IconPencil,
   IconPin,
   IconPlus,
+  IconSettings,
   IconTrash,
   IconTool,
   IconUpload,
@@ -274,12 +274,9 @@ export function ConversationSidebar({
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="sidebar-account" aria-label={t('sidebar.account.menu')}>
-            <span className="sidebar-account-avatar">{avatarInitials(userEmail)}</span>
-            <span className="sidebar-account-meta">
-              <span className="sidebar-account-name">{accountName(userEmail) || t('app.productName')}</span>
-            </span>
-            <IconChevronDown size={14} className="sidebar-account-caret" aria-hidden="true" />
+          <button type="button" className="sidebar-settings-trigger" aria-label={t('sidebar.settings')}>
+            <IconSettings size={14} aria-hidden="true" />
+            <span>{t('sidebar.settings')}</span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" sideOffset={8} className="sidebar-account-menu">
@@ -542,10 +539,6 @@ function writeSeenConversationVersions(value: Record<string, string>) {
 function avatarInitials(email: string): string {
   const label = email.trim().split('@')[0] || 'JD'
   return label.slice(0, 2).toUpperCase()
-}
-
-function accountName(email: string): string {
-  return email.trim().split('@')[0] ?? ''
 }
 
 function formatCredits(value: number): string {

@@ -740,10 +740,10 @@ function openMoreMenu(trigger: HTMLElement) {
 }
 
 // The signed-in shell no longer prints the full email in always-visible chrome;
-// it lives behind the account dropdown. The stable "we are logged in" signal is
-// the account-menu trigger in the sidebar.
+// it lives behind the bottom "设置" (settings) dropdown — the stable "we are
+// logged in" signal is that trigger being present in the sidebar.
 async function awaitSignedIn(): Promise<HTMLElement> {
-  return screen.findByRole('button', { name: '账户菜单' })
+  return screen.findByRole('button', { name: '设置' })
 }
 
 async function openAccountMenu(): Promise<void> {

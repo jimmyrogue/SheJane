@@ -3033,14 +3033,14 @@ button:active {
 
 .sidebar-item {
   display: flex;
-  min-height: 26px;
+  min-height: 34px;
   align-items: center;
   gap: 8px;
   border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
-  padding: 0 8px;
+  padding: 4px 10px;
   font-size: 13px;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
@@ -3445,29 +3445,39 @@ button:active {
 }
 
 
-.sidebar-account {
+/* Bottom-anchored "设置" trigger — replaces the old avatar+nickname
+ * "account" button. Visually a .sidebar-item so it reads as parallel
+ * to the top nav (新对话, 技能), with two extras: margin-top:auto
+ * pushes it to the sidebar bottom, and the ::before hairline carries
+ * over the visual separation the old account button had. */
+.sidebar-settings-trigger {
   position: relative;
   display: flex;
+  min-height: 34px;
   width: 100%;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   margin-top: auto;
   border: 0.5px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-secondary);
-  padding: 7px 8px;
+  color: var(--text-primary);
+  padding: 4px 10px;
+  font-size: 13px;
   text-align: left;
-  /* `transform` deliberately NOT in the transition list — the
-   * `:active { transform: scale(0.985) }` rule we used to ship made
-   * the first click visibly shrink the button before the dropdown
-   * opened, which read as a glitchy "press". Now any active state is
-   * neutered (see :active rule below) and we don't need to transition
-   * a property that never changes. */
-  transition: background 120ms ease, border-color 120ms ease;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.sidebar-account::before {
+.sidebar-settings-trigger svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: var(--text-secondary);
+}
+
+.sidebar-settings-trigger::before {
   position: absolute;
   top: -9px;
   right: 4px;
@@ -3477,19 +3487,19 @@ button:active {
   content: "";
 }
 
-.sidebar-account:hover,
-.sidebar-account[data-state="open"] {
+.sidebar-settings-trigger:hover,
+.sidebar-settings-trigger[data-state="open"] {
   border-color: var(--border-hairline);
-  background: color-mix(in srgb, #FFFFFF 78%, var(--bg-sidebar));
+  background: color-mix(in srgb, #FFFFFF 82%, var(--bg-sidebar));
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 70%);
 }
 
-/* `:active` deliberately a no-op. The original `transform: scale(0.985)`
- * was meant as press-down feedback but combined with the focus-ring
- * fade-in on FIRST click it looked like a glitchy zoom — users
- * reported it as a bug. Subsequent clicks didn't have the ring
- * fade-in so the zoom wasn't visible, which made the inconsistency
- * feel worse. Now: no transform at all on active. */
-.sidebar-account:active {
+.sidebar-settings-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+
+.sidebar-settings-trigger:active {
   transform: none;
 }
 

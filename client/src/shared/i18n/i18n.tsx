@@ -161,6 +161,7 @@ const zh = {
 
   'sidebar.skills': '技能',
   'sidebar.history': '历史',
+  'sidebar.settings': '设置',
   'sidebar.section.chats': '对话',
   'sidebar.pinned': '已固定',
   'sidebar.recent': '最近',
@@ -705,6 +706,7 @@ const en: Record<TranslationKey, string> = {
 
   'sidebar.skills': 'Skills',
   'sidebar.history': 'History',
+  'sidebar.settings': 'Settings',
   'sidebar.section.chats': 'CHATS',
   'sidebar.pinned': 'PINNED',
   'sidebar.recent': 'RECENT',
