@@ -888,12 +888,552 @@ select {
 }
 
 .artifact-preview,
-.diagnostics-preview {
+.diagnostics-preview,
+.doc-preview-panel {
   color: var(--foreground);
 }
 
 .artifact-preview pre {
   white-space: pre-wrap;
+}
+
+/* ─── Right-side office document preview ─────────────────────────────
+ * The Sheet shell (shadcn) provides the slide-in + opaque background;
+ * this block owns the inner layout — header, scroll surface, and the
+ * docx/xlsx render area. Two design rules:
+ *   1. The scroll surface is the ONLY scroll container — sheet header
+ *      stays pinned so the user always sees the filename + close.
+ *   2. The rendered document fits container width (no horizontal
+ *      clipping). docx-preview emits a section with fixed A4 width by
+ *      default; we override it to flow within the panel.
+ */
+.doc-preview-panel {
+  display: flex;
+  flex-direction: column;
+  /* The Sheet primitive ships its own absolute close button at top-right;
+   * the header padding-right leaves room so the title can't collide. */
+  /* Force the left edge separator to the project's standard gray.
+   * The Sheet primitive's `border-l` would otherwise inherit Tailwind's
+   * default border-color, which doesn't match `--border-strong`. */
+  border-left-color: var(--border-strong) !important;
+}
+
+.doc-preview-panel [data-slot='sheet-header'] {
+  padding: 18px 56px 8px 20px;
+  gap: 4px;
+}
+
+/* ── Resize handle on the left edge ───────────────────────────────────
+ * The panel's static left border (set above to `--border-strong`) is
+ * the always-visible separator. The handle sits centered on that line
+ * and lights up a thin gray strip on hover/drag — single line, no
+ * doubling, all colors from the project's gray scale. */
+.doc-preview-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+  /* Center the hit-area on the panel's left border line. */
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.doc-preview-resize-handle:hover,
+.doc-preview-resize-handle:focus-visible,
+.doc-preview-resize-handle:active {
+  background: var(--border-hairline);
+}
+
+/* ── Header row: icon + title + zoom controls ─────────────────────── */
+.doc-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.doc-preview-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: white;
+}
+
+.doc-preview-icon-word {
+  background: linear-gradient(135deg, #2b579a 0%, #1e3a6a 100%);
+}
+
+.doc-preview-icon-excel {
+  background: linear-gradient(135deg, #217346 0%, #14542f 100%);
+}
+
+.doc-preview-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.doc-preview-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-preview-subtitle {
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.doc-preview-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--muted, rgba(0, 0, 0, 0.04));
+}
+
+.doc-preview-zoom-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  text-align: center;
+}
+
+.doc-preview-zoom-label:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--foreground);
+}
+
+/* Scale wrapper for both Docx and Xlsx. We use CSS `zoom` (not
+ * `transform: scale`) so the layout dimensions update and the parent's
+ * scrollbar tracks the visible content correctly. `zoom` is
+ * non-standard but supported in every Chromium/WebKit shell we ship to
+ * (Electron + macOS Safari preview). */
+.doc-preview-zoom-stage {
+  min-width: min-content;
+  /* `zoom` is set inline by the React component. */
+}
+
+.doc-preview-panel .doc-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 12px 12px;
+  overflow: auto;
+  position: relative;
+  border-radius: 10px;
+  background: var(--muted, rgba(0, 0, 0, 0.04));
+  padding: 16px;
+  /* tinted scrollbar — sits comfortably on the muted bg */
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+  scrollbar-width: thin;
+}
+
+.doc-preview-body::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.doc-preview-body::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.doc-preview-body::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.28);
+}
+
+.doc-preview-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.doc-preview-error {
+  padding: 32px 24px;
+  color: var(--destructive, #b91c1c);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: center;
+}
+
+.doc-preview-empty,
+.doc-preview-loading {
+  padding: 32px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ─── docx-preview output ─────────────────────────────────────────────
+ * Library structure (with inWrapper + className options):
+ *   .docx-render               ← our class on the host node
+ *     .docx-wrapper            ← library wrapper
+ *       section.docx           ← one per page, fixed page width baked
+ *                                in from the source document (typically
+ *                                A4 ≈ 794px). Forcing this to 100% to
+ *                                make text reflow doesn't work — the
+ *                                library lays paragraphs out with the
+ *                                original page width baked into many
+ *                                inline rules, so leading characters
+ *                                end up clipped (regression observed
+ *                                in screenshots).
+ *
+ * Strategy: respect the natural page width. Use horizontal scroll on
+ * the body when the panel is narrower than a page, and let the user
+ * either widen the panel (left-edge drag) or zoom out (header buttons)
+ * to fit.
+ */
+.doc-preview-docx {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.doc-preview-docx .docx-render,
+.doc-preview-docx .docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+
+.doc-preview-docx .docx-wrapper > section.docx {
+  background: #ffffff;
+  color: #1a1a1a;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.04);
+  border-radius: 6px;
+  margin: 0 auto 16px !important;
+}
+
+.doc-preview-docx .docx-wrapper > section.docx:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Tables: keep within the page bounds and use a readable border style. */
+.doc-preview-docx .docx-wrapper > section.docx table {
+  border-collapse: collapse;
+}
+
+.doc-preview-docx .docx-wrapper > section.docx table td,
+.doc-preview-docx .docx-wrapper > section.docx table th {
+  border: 1px solid #e5e7eb;
+}
+
+/* Images: cap so an oversized image doesn't break the page card. */
+.doc-preview-docx .docx-wrapper > section.docx img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ─── xlsx preview ────────────────────────────────────────────────────
+ * Sheet tabs + cell grid. Tabs are sticky so they stay visible while a
+ * long sheet scrolls.
+ */
+.doc-preview-xlsx {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.xlsx-sheet-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--muted, rgba(0, 0, 0, 0.04));
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+}
+
+.xlsx-sheet-tab {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.xlsx-sheet-tab:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--foreground);
+}
+
+.xlsx-sheet-tab.active {
+  background: #ffffff;
+  border-color: var(--border, rgba(0, 0, 0, 0.12));
+  color: var(--foreground);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.xlsx-sheet-scroll {
+  overflow: auto;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.xlsx-sheet-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  color: #1a1a1a;
+  width: max-content;
+}
+
+.xlsx-sheet-table td {
+  border-right: 1px solid #eef0f3;
+  border-bottom: 1px solid #eef0f3;
+  padding: 6px 10px;
+  min-width: 96px;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.xlsx-sheet-table tr:first-child td {
+  background: #fafbfc;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.xlsx-sheet-table tr:hover td {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Office-file link in agent text — looks like a soft inline-pill but
+ * inherits the surrounding line-height so it doesn't break flow. */
+.message-office-link {
+  display: inline;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--primary, #2563eb);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.message-office-link:hover,
+.message-office-link:focus-visible {
+  background: var(--accent, rgba(37, 99, 235, 0.08));
+  border-radius: 3px;
+  outline: none;
+  text-decoration-style: solid;
+}
+
+/* Clickable variant of the attachment chip. The base chip styles
+ * already exist via .message-attachment-chip; this adds the cursor +
+ * hover affordance only when the chip is interactive. */
+.message-attachment-chip.clickable {
+  cursor: pointer;
+  background: none;
+  border: 1px solid transparent;
+}
+
+.message-attachment-chip.clickable:hover,
+.message-attachment-chip.clickable:focus-visible {
+  background: var(--accent, rgba(0, 0, 0, 0.04));
+  border-color: var(--border, rgba(0, 0, 0, 0.1));
+  outline: none;
+}
+
+/* Project picker — sidebar button with active project chip + the
+ * dialog body (list + create form). */
+.sidebar-item-projects {
+  position: relative;
+  /* Existing .sidebar-item rules supply layout; we just need the
+   * label to truncate when the active project name is long. */
+}
+
+.sidebar-item-projects-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.sidebar-projects-active-chip {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--accent, rgba(0, 0, 0, 0.06));
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.project-picker-dialog .project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.project-picker-dialog .project-list-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  border: 1px dashed var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+}
+
+.project-picker-dialog .project-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.project-picker-dialog .project-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 6px;
+  transition: background 0.12s ease;
+}
+
+.project-picker-dialog .project-row:hover {
+  background: var(--accent, rgba(0, 0, 0, 0.04));
+}
+
+.project-picker-dialog .project-row.active {
+  background: var(--accent, rgba(0, 0, 0, 0.06));
+}
+
+.project-picker-dialog .project-row-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--foreground);
+}
+
+.project-picker-dialog .project-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.project-picker-dialog .project-row-path {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.project-picker-dialog .project-row-delete {
+  align-self: center;
+  opacity: 0.45;
+}
+
+.project-picker-dialog .project-row:hover .project-row-delete,
+.project-picker-dialog .project-row-delete:hover {
+  opacity: 1;
+}
+
+.project-picker-dialog .project-create-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.project-picker-dialog .project-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.project-picker-dialog .project-create-form label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.project-picker-dialog .project-dir-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.project-picker-dialog .project-dir-row input {
+  flex: 1;
+}
+
+.project-picker-dialog .project-dir-hint {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.project-picker-dialog .project-form-error {
+  font-size: 12px;
+  color: var(--destructive, #b91c1c);
+  margin: 0;
 }
 
 .diagnostics-actions {

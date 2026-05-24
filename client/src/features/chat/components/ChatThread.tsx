@@ -4,7 +4,7 @@ import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
-import type { Conversation } from '@/shared/local-data/types'
+import type { CloudOfficeAttachmentRef, Conversation, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
@@ -13,11 +13,28 @@ export function ChatThread({
   conversation,
   onOpenArtifact,
   onOpenDiagnostics,
+  onPreviewLocalFile,
+  onPreviewCloudAttachment,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
   onOpenDiagnostics: (runID: string) => void
+  /** Open the DocPreviewPanel for an office file living inside the
+   *  conversation's workspace. Wired from App.tsx →
+   *  openOfficeDocument; MessageBubble calls this when the user clicks
+   *  a `.docx` / `.xlsx` reference rendered inside agent markdown. */
+  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+  /** Open the DocPreviewPanel for a CLOUD-uploaded office attachment
+   *  (composer upload flow). Wired from App.tsx →
+   *  openCloudOfficeDocument; MessageBubble calls this when the user
+   *  clicks the attachment chip on a `.docx` / `.xlsx` message
+   *  attachment. */
+  onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
 }) {
+  // Conversations bound to a project workspace carry the absolute path;
+  // MessageBubble uses it to resolve relative office-file refs surfaced
+  // by the agent's fs.list / ls output.
+  const workspaceRoot = conversation?.workspace?.path
   const { t } = useI18n()
   const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
   const messageCount = conversation?.messages.length ?? 0
@@ -46,6 +63,9 @@ export function ChatThread({
                 message={message}
                 initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}
                 onStreamTextCommit={handleStreamTextCommit}
+                workspaceRoot={workspaceRoot}
+                onPreviewLocalFile={onPreviewLocalFile}
+                onPreviewCloudAttachment={onPreviewCloudAttachment}
               >
                 <AgentProgress
                   message={message}

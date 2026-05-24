@@ -20,6 +20,8 @@
     "@vitejs/plugin-react": "^4.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "docx-preview": "^0.3.7",
+    "exceljs": "^4.4.0",
     "lexical": "^0.44.0",
     "radix-ui": "^1.4.3",
     "react": "^18.3.1",

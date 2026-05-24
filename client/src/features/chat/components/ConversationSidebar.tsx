@@ -74,6 +74,7 @@ export function ConversationSidebar({
   onLogout,
   onOpenSkills,
   onOpenChats,
+  onNewProject,
   activeView = 'chat',
   agentSettings,
   onAgentSettingsChange,
@@ -97,6 +98,12 @@ export function ConversationSidebar({
   activeView?: 'chat' | 'skills'
   agentSettings?: Required<AgentSettings>
   onAgentSettingsChange?: (next: Required<AgentSettings>) => void
+  /** Click handler for the "项目" sidebar button. Codex-style: one click
+   *  opens the OS directory picker, then creates a fresh conversation
+   *  bound to the chosen directory. App.tsx owns the heavy lifting
+   *  (authorize + persist). Optional — when undefined the button stays
+   *  inert. */
+  onNewProject?: () => void
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -123,7 +130,16 @@ export function ConversationSidebar({
   const matchesQuery = (conversation: Conversation) =>
     !normalizedQuery || conversation.title.toLowerCase().includes(normalizedQuery)
   const pinnedConversations = conversations.filter((conversation) => conversation.pinned && matchesQuery(conversation))
-  const recentConversations = conversations.filter((conversation) => !conversation.pinned && matchesQuery(conversation))
+  // Split unpinned conversations into Codex-style groups: chats (no project)
+  // and projects (project bound to a workspace at creation). Pinned ones
+  // stay above both groups regardless of kind — matches the previous
+  // behavior so power users who pinned a project don't lose it.
+  const recentChats = conversations.filter(
+    (conversation) => !conversation.pinned && !conversation.project && matchesQuery(conversation),
+  )
+  const recentProjects = conversations.filter(
+    (conversation) => !conversation.pinned && Boolean(conversation.project) && matchesQuery(conversation),
+  )
 
   useEffect(() => {
     if (!activeConversation) {
@@ -272,7 +288,13 @@ export function ConversationSidebar({
           <IconTool size={14} />
           <span>{t('sidebar.skills')}</span>
         </button>
-        <button className="sidebar-item" type="button">
+        <button
+          className="sidebar-item"
+          type="button"
+          disabled={!onNewProject}
+          onClick={() => onNewProject?.()}
+          title={t('sidebar.projects.newTooltip')}
+        >
           <IconFolders size={14} />
           <span>{t('sidebar.projects')}</span>
         </button>
@@ -286,16 +308,27 @@ export function ConversationSidebar({
       ) : null}
 
       <div className="sidebar-section conversation-list">
-        <div className="sidebar-section-label">{t('sidebar.recent')}</div>
-        {recentConversations.length ? (
-          recentConversations.map(renderConversationRow)
+        <div className="sidebar-section-label">{t('sidebar.section.chats')}</div>
+        {recentChats.length ? (
+          recentChats.map(renderConversationRow)
         ) : (
           <div className="sidebar-empty">
             {normalizedQuery
               ? t('sidebar.searchEmpty')
               : conversations.length
-                ? t('sidebar.emptyRecent')
+                ? t('sidebar.emptyChats')
                 : t('sidebar.empty')}
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar-section conversation-list project-list">
+        <div className="sidebar-section-label">{t('sidebar.section.projects')}</div>
+        {recentProjects.length ? (
+          recentProjects.map(renderConversationRow)
+        ) : (
+          <div className="sidebar-empty">
+            {normalizedQuery ? t('sidebar.searchEmpty') : t('sidebar.emptyProjects')}
           </div>
         )}
       </div>

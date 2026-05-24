@@ -13,6 +13,7 @@ import { createAuthClient } from './shared/api/authClient'
 import { createChatStore, timelineItem } from './features/chat/chatStore'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
+import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
 import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
@@ -27,12 +28,13 @@ import { findConversationPendingQuestion } from './features/chat/pendingQuestion
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationWorkspace } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef, Conversation, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
   cancelLocalRun,
   createLocalRun,
   diagnoseLocalWorkspace,
+  fetchWorkspaceFile,
   getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
   answerLocalQuestion,
@@ -177,6 +179,7 @@ function writeChatMode(mode: ChatMode) {
   }
 }
 
+
 export function App() {
   return (
     <I18nProvider>
@@ -232,7 +235,50 @@ function AppContent() {
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
+  const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null)
+  // Bumped on `doc.changed` (Phase 2 territory) to force the renderer to
+  // re-fetch the file bytes. Phase 1 only needs the initial open path.
+  const [docPreviewRefreshKey, setDocPreviewRefreshKey] = useState(0)
   const [runDiagnostics, setRunDiagnostics] = useState<LocalRunDiagnostics | null>(null)
+
+  /** Open the right-side DocPreviewPanel for a workspace-resident office
+   *  file. Called from `appendLocalRunEvent` (when office.read completes)
+   *  and from MessageBubble (when the user clicks a file ref in agent
+   *  text). The caller hands us a LocalOfficeFileRef; we wrap it into an
+   *  OpenDocument by binding `fetchWorkspaceFile` as the byte loader.
+   *
+   *  Bumping the refresh key forces a re-fetch even when the same path
+   *  was already open — needed once Phase 2 edits land so the panel
+   *  refreshes after every write. */
+  function openOfficeDocument(ref: LocalOfficeFileRef) {
+    if (!localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const cfg = localHostConfig
+    setActiveDocument({
+      sourceKey: `local:${ref.path}`,
+      kind: ref.kind,
+      name: ref.name,
+      tooltip: ref.path,
+      loadBytes: () => fetchWorkspaceFile(ref.path, cfg),
+    })
+    setDocPreviewRefreshKey((k) => k + 1)
+  }
+
+  /** Open the preview panel for a CLOUD-uploaded office file. Used by
+   *  MessageBubble for attachment chips on `.docx` / `.xlsx` documents.
+   *  The byte loader hits the Go API's document-source endpoint. */
+  function openCloudOfficeDocument(spec: CloudOfficeAttachmentRef) {
+    setActiveDocument({
+      sourceKey: `cloud:${spec.documentId}`,
+      kind: spec.kind,
+      name: spec.name,
+      tooltip: spec.name,
+      loadBytes: () => api.fetchDocumentBytes(spec.documentId),
+    })
+    setDocPreviewRefreshKey((k) => k + 1)
+  }
 
   function setNotice(message: string) {
     if (!message.trim()) {
@@ -342,6 +388,7 @@ function AppContent() {
       setActiveConversationID(items[0]?.id)
     })
   }, [localData])
+
 
   // Reset transient session state when the signed-in user changes, so leftovers
   // from the previous account (draft, attached doc, etc.) don't bleed across.
@@ -578,6 +625,10 @@ function AppContent() {
 
     const timestamp = new Date().toISOString()
     const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
+    // Project conversations carry their workspace from the moment they're
+    // created (see startNewProjectConversation). The only path that needs
+    // late binding is the legacy "authorize during chat" flow, which sets
+    // pendingWorkspace.
     if (!conversation.workspace && pendingWorkspace) {
       conversation.workspace = { ...pendingWorkspace }
     }
@@ -656,7 +707,7 @@ function AppContent() {
       const toolArgsByCallId: ToolArgsByCallId = new Map()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, context)
         },
         onDelta: (delta, event) => {
@@ -785,7 +836,7 @@ function AppContent() {
       )
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t)
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -832,7 +883,7 @@ function AppContent() {
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t)
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -901,7 +952,7 @@ function AppContent() {
       const toolArgsByCallId: ToolArgsByCallId = new Map()
       await streamLocalRun(run.id, localHostConfig, {
         onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t)
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
         },
         onDelta: (delta, event) => {
@@ -966,6 +1017,57 @@ function AppContent() {
       return undefined
     }
     return selectedPath
+  }
+
+  /** Codex-style "new project" — one click → directory picker → empty
+   *  conversation bound to that directory. The conversation goes into the
+   *  Projects group in the sidebar (because `project` is set), and its
+   *  workspace is the chosen directory (already authorized via
+   *  workspace.open). The conversation title defaults to the directory's
+   *  basename; the user can rename it later via the row's "重命名" menu.
+   *
+   *  Returns silently if the user cancels the OS picker. Surfaces a toast
+   *  on daemon-side errors (e.g. not yet paired).
+   */
+  async function startNewProjectConversation() {
+    if (!localHostConfig?.token) {
+      setNotice(t('app.notice.localHostNotPairedAuthorize'))
+      return
+    }
+    const picked = await chooseWorkspaceDirectory()
+    if (!picked) return
+    try {
+      const ws = await authorizeLocalWorkspace(picked, localHostConfig)
+      setAuthorizedWorkspaces((items) => upsertWorkspace(items, ws))
+      const name = pathBasename(ws.path) || ws.label || ws.path
+      const timestamp = new Date().toISOString()
+      const conversation: Conversation = {
+        id: createLocalID('conv'),
+        title: name,
+        archived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        messages: [],
+        project: { name },
+        workspace: {
+          path: ws.path,
+          label: ws.label,
+          authorized: true,
+          authorizationId: ws.id,
+        },
+      }
+      await localData.save(conversation)
+      // Refresh the conversation list so the new row appears in the
+      // Projects section immediately, then drop the user into it.
+      const items = await localData.list()
+      setConversations(items)
+      setActiveConversationID(conversation.id)
+      setMainView('chat')
+      setDraft('')
+      setNotice(t('project.notice.created', { name }))
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : t('app.notice.workspaceAuthorizeFailed'))
+    }
   }
 
   async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
@@ -1263,6 +1365,7 @@ function AppContent() {
               setAgentSettings(next)
               writeAgentSettings(next)
             }}
+            onNewProject={() => void startNewProjectConversation()}
           />
 
           <div
@@ -1338,9 +1441,16 @@ function AppContent() {
               conversation={activeConversation}
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
+              onPreviewLocalFile={openOfficeDocument}
+              onPreviewCloudAttachment={openCloudOfficeDocument}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
+            <DocPreviewPanel
+              doc={activeDocument}
+              refreshKey={docPreviewRefreshKey}
+              onClose={() => setActiveDocument(null)}
+            />
             <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
 
             <div className="composer-dock">
@@ -1429,6 +1539,7 @@ function appendLocalRunEvent(
   seenEventIDs: Set<string>,
   toolArgsByCallId: ToolArgsByCallId,
   t: Translator,
+  onOfficeFileOpened?: (ref: LocalOfficeFileRef) => void,
 ) {
   if (event.event_type === 'llm.delta') {
     return
@@ -1493,6 +1604,15 @@ function appendLocalRunEvent(
     if (cached && !payload.arguments) {
       event = { ...event, payload: { ...payload, arguments: cached } }
     }
+    // Side effect: detect a successful office.read and open the
+    // right-side document preview panel. Tool result shape (from
+    // local_host/tools/office.py) is `{ok, path, kind, markdown, …}`.
+    if (event.event_type === 'tool.completed' && !alreadySeen) {
+      const detected = detectOfficeFileOpened(event.payload)
+      if (detected) {
+        onOfficeFileOpened?.(detected)
+      }
+    }
   }
   const item = timelineItem(event, t)
   if (item) {
@@ -1509,6 +1629,42 @@ function appendLocalRunEvent(
       message.content = ''
     }
   }
+}
+
+/** Inspect a `tool.completed` payload and return a LocalOfficeFileRef
+ *  when the underlying tool was a successful office.read.
+ *
+ *  Detection is conservative: ok="true" + non-empty path. A malformed
+ *  result silently degrades to "no preview" instead of crashing.
+ *
+ *  We rely on the daemon's args-cache having injected the original
+ *  arguments into payload.arguments above — that lets us recover the
+ *  path even when the tool result itself omits it (older runs).
+ */
+function detectOfficeFileOpened(payload: AgentRunEvent['payload']): LocalOfficeFileRef | null {
+  if (!payload) return null
+  const toolName = String((payload as Record<string, unknown>).tool ?? (payload as Record<string, unknown>).name ?? '')
+  if (toolName !== 'office.read') return null
+  const result = (payload as Record<string, unknown>).result
+  const args = (payload as Record<string, unknown>).arguments
+  const resultObj =
+    result && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : null
+  const argsObj =
+    args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : null
+  const ok = resultObj ? String(resultObj.ok ?? '') : ''
+  if (ok && ok !== 'true') return null
+  const path = String(resultObj?.path ?? argsObj?.path ?? '')
+  if (!path) return null
+  const kindRaw = String(resultObj?.kind ?? '')
+  // Fall back to extension sniffing if the daemon didn't surface kind.
+  const kind: LocalOfficeFileRef['kind'] =
+    kindRaw === 'word' || kindRaw === 'excel'
+      ? kindRaw
+      : path.toLowerCase().endsWith('.xlsx')
+        ? 'excel'
+        : 'word'
+  const name = path.split(/[\\/]/).pop() || path
+  return { path, kind, name }
 }
 
 function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEvent, seenEventIDs: Set<string>) {
@@ -1662,6 +1818,16 @@ function createConversation(firstMessage: string, timestamp: string, fallbackTit
     updatedAt: timestamp,
     messages: [],
   }
+}
+
+/** Cross-platform basename: strips trailing separators then returns the
+ *  segment after the last "/" or "\\". Used as the default name for a
+ *  project conversation when the user picks a directory.
+ */
+function pathBasename(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
 }
 
 async function makeImageThumbnail(file: File): Promise<string | undefined> {

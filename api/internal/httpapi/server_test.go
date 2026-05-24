@@ -193,6 +193,63 @@ func TestDocumentCompleteExtractsDocxAndListsReadyDocument(t *testing.T) {
 	}
 }
 
+func TestDocumentSourceStreamsBytesAndGatesOwnership(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	token := registerAndToken(t, server)
+	upload := createDocumentUpload(t, server, token, "preview.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+
+	sourceBytes := minimalDocx("preview-bytes")
+	if err := objects.PutObject(t.Context(), upload.Document.SourceObjectKey, upload.Document.ContentType, sourceBytes); err != nil {
+		t.Fatalf("put source object: %v", err)
+	}
+	complete := httptest.NewRequest(http.MethodPost, "/api/v1/documents/"+upload.Document.ID+"/complete", nil)
+	complete.Header.Set("Authorization", "Bearer "+token)
+	completeRecorder := httptest.NewRecorder()
+	server.ServeHTTP(completeRecorder, complete)
+	if completeRecorder.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeRecorder.Code, completeRecorder.Body.String())
+	}
+
+	// Happy path: GET /source returns the bytes with the right Content-Type.
+	src := httptest.NewRequest(http.MethodGet, "/api/v1/documents/"+upload.Document.ID+"/source", nil)
+	src.Header.Set("Authorization", "Bearer "+token)
+	srcRecorder := httptest.NewRecorder()
+	server.ServeHTTP(srcRecorder, src)
+	if srcRecorder.Code != http.StatusOK {
+		t.Fatalf("source status = %d, body = %s", srcRecorder.Code, srcRecorder.Body.String())
+	}
+	if got := srcRecorder.Body.Bytes(); !bytes.Equal(got, sourceBytes) {
+		t.Fatalf("source bytes mismatch: got %d bytes, want %d", len(got), len(sourceBytes))
+	}
+	if got := srcRecorder.Header().Get("Content-Type"); got != upload.Document.ContentType {
+		t.Fatalf("Content-Type = %q, want %q", got, upload.Document.ContentType)
+	}
+	if got := srcRecorder.Header().Get("Content-Disposition"); !strings.Contains(got, "preview.docx") {
+		t.Fatalf("Content-Disposition = %q, want substring preview.docx", got)
+	}
+
+	// Ownership gate: a different user's token can't read it.
+	otherToken := registerAndTokenWithEmail(t, server, "other-source-reader@example.com")
+	if otherToken == token {
+		t.Fatalf("expected distinct registration tokens")
+	}
+	denied := httptest.NewRequest(http.MethodGet, "/api/v1/documents/"+upload.Document.ID+"/source", nil)
+	denied.Header.Set("Authorization", "Bearer "+otherToken)
+	deniedRecorder := httptest.NewRecorder()
+	server.ServeHTTP(deniedRecorder, denied)
+	if deniedRecorder.Code == http.StatusOK {
+		t.Fatalf("source served to non-owner; status = %d body = %s", deniedRecorder.Code, deniedRecorder.Body.String())
+	}
+
+	// Auth gate: no token → 401.
+	unauth := httptest.NewRequest(http.MethodGet, "/api/v1/documents/"+upload.Document.ID+"/source", nil)
+	unauthRecorder := httptest.NewRecorder()
+	server.ServeHTTP(unauthRecorder, unauth)
+	if unauthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated source status = %d", unauthRecorder.Code)
+	}
+}
+
 func TestDocumentAskStreamsAndSettlesUsage(t *testing.T) {
 	server, objects := newDocumentTestServer(t, nil)
 	token := registerAndToken(t, server)

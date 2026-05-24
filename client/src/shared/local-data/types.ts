@@ -116,6 +116,70 @@ export interface ConversationWorkspace {
   authorizationId?: string
 }
 
+/**
+ * Currently-previewed office document.
+ *
+ * Set whenever something in the UI wants to surface a .docx / .xlsx in
+ * the right-side DocPreviewPanel — three known triggers:
+ *  1. Successful `office.read` tool call (App.tsx mines the tool result
+ *     and opens with a local-file loader).
+ *  2. Click on a recognized filename in agent text (MessageBubble
+ *     resolves it against `conversation.workspace.path` and opens).
+ *  3. Click on a user-uploaded office attachment (MessageBubble passes a
+ *     cloud-fetch loader).
+ *
+ * The renderer (DocxPreview / XlsxPreview) consumes `loadBytes()` and
+ * doesn't care where the bytes come from. `sourceKey` lets the panel
+ * dedupe — opening the same path/document twice doesn't trigger a
+ * spurious reload (we just bump the refresh key).
+ */
+export interface OpenDocument {
+  /** Stable identifier for this document — used to dedupe opens.
+   *  Format: `local:<absolute-path>` for workspace files,
+   *  `cloud:<documentId>` for uploaded ones. */
+  sourceKey: string
+  /** "word" or "excel" — drives Docx vs Xlsx preview component. */
+  kind: 'word' | 'excel'
+  /** Display label — typically the basename. */
+  name: string
+  /** Optional full path or description shown as tooltip on the header. */
+  tooltip?: string
+  /** Resolves with the file's raw bytes. Closure over whatever
+   *  authenticated fetch backs this source (workspace endpoint, S3
+   *  presigned GET, etc.). */
+  loadBytes: () => Promise<ArrayBuffer>
+}
+
+/** Reference to an office file living inside an authorized workspace.
+ *  Emitted by detectors / clickable-filename handlers; App.tsx wraps
+ *  it into a full OpenDocument by binding `fetchWorkspaceFile`. */
+export interface LocalOfficeFileRef {
+  /** Absolute path on the user's machine. Must be inside an
+   *  authorized workspace (the daemon enforces this on fetch). */
+  path: string
+  kind: 'word' | 'excel'
+  /** Display name — typically the basename. */
+  name: string
+}
+
+/** Reference to an office file in the cloud documents service (uploaded
+ *  via the composer's attachment flow). */
+export interface CloudOfficeAttachmentRef {
+  documentId: string
+  kind: 'word' | 'excel'
+  name: string
+}
+
+/**
+ * A conversation belongs to a "project" when it was created by clicking
+ * the Projects sidebar button — which prompts for a directory and binds
+ * that directory's workspace into the conversation upfront.
+ *
+ * `project.name` is the directory's basename by default. The sidebar
+ * uses `conversation.project` to decide whether the row goes in the
+ * "Chats" group or the "Projects" group; the agent itself doesn't read
+ * this field (it only reads `conversation.workspace`).
+ */
 export interface ConversationProject {
   name: string
 }

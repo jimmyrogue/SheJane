@@ -81,6 +81,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
 	s.mux.HandleFunc("GET /api/v1/documents", s.requireAuth(s.documentsList))
 	s.mux.HandleFunc("GET /api/v1/documents/{id}", s.requireAuth(s.documentDetail))
+	s.mux.HandleFunc("GET /api/v1/documents/{id}/source", s.requireAuth(s.documentSource))
 	s.mux.HandleFunc("DELETE /api/v1/documents/{id}", s.requireAuth(s.documentDelete))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/ask", s.requireAuth(s.documentAsk))
 	s.mux.HandleFunc("GET /api/v1/admin/overview", s.requireAdmin(s.adminOverview))
@@ -913,6 +914,47 @@ func (s *Server) documentDetail(w http.ResponseWriter, r *http.Request, user sto
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[documents.Document]{Code: 0, Message: "ok", Data: document})
+}
+
+// documentSource streams the raw uploaded bytes of an owned, ready,
+// non-expired document. The renderer uses this to feed docx-preview
+// and exceljs for in-app office previews — those libraries consume
+// ArrayBuffers, not extracted text. Same ownership + expiry gates as
+// every other documents.* endpoint (Service.ReadSource handles them).
+//
+// Returns binary bytes, not JSON: no apiResponse wrapper. The client
+// fetches with `Accept: application/octet-stream` and reads
+// `response.arrayBuffer()`.
+func (s *Server) documentSource(w http.ResponseWriter, r *http.Request, user store.User) {
+	data, contentType, name, err := s.app.Documents.ReadSource(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeDocumentError(w, err, "读取文档失败")
+		return
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	// inline disposition so browsers don't force a download — docx-preview
+	// and exceljs consume the response as ArrayBuffer via fetch().
+	if name != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, sanitizeFilenameForHeader(name)))
+	}
+	// No cache: source bytes may change after a re-upload with the same id.
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// sanitizeFilenameForHeader strips characters that would break a
+// Content-Disposition header. We're not trying to be exhaustive — just
+// keep quotes/newlines out of the header value to avoid injection.
+func sanitizeFilenameForHeader(name string) string {
+	name = strings.ReplaceAll(name, "\"", "")
+	name = strings.ReplaceAll(name, "\r", "")
+	name = strings.ReplaceAll(name, "\n", "")
+	return name
 }
 
 func (s *Server) documentDelete(w http.ResponseWriter, r *http.Request, user store.User) {

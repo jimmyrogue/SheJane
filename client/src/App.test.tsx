@@ -191,22 +191,23 @@ describe('user client shell', () => {
 
     await awaitSignedIn()
     expect(screen.getAllByText('工作区').length).toBeGreaterThan(0)
-    expect(screen.getByText('对话')).toBeInTheDocument()
+    // The top tab button and the section header both render '对话' /
+    // '项目' (intentional — same word for the create button and the
+    // group it produces), so assert presence via getAllByText.
+    expect(screen.getAllByText('对话').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('工具').length).toBeGreaterThan(0)
-    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.getAllByText('项目').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('历史')).toBeInTheDocument()
-    expect(screen.getByText('最近')).toBeInTheDocument()
     expect(screen.queryByText('WORKSPACE')).not.toBeInTheDocument()
 
     openMoreMenu(await screen.findByTitle('更多'))
     fireEvent.click(await screen.findByRole('button', { name: 'English' }))
 
     expect(screen.getByText('WORKSPACE')).toBeInTheDocument()
-    expect(screen.getByText('Chats')).toBeInTheDocument()
+    expect(screen.getAllByText('Chats').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Tools')).toBeInTheDocument()
-    expect(screen.getByText('Projects')).toBeInTheDocument()
+    expect(screen.getAllByText('Projects').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('History')).toBeInTheDocument()
-    expect(screen.getByText('RECENT')).toBeInTheDocument()
   })
 
   // SKIPPED: the attachment Dialog (showing "当前对话附件" header and
@@ -279,7 +280,9 @@ describe('user client shell', () => {
     typeComposer('这份文档的结论是什么？')
     fireEvent.click(screen.getByText('发送'))
 
-    expect(await screen.findByText('文档回答')).toBeInTheDocument()
+    // useSmoothTextStream animates the reply in character-by-character;
+    // bump the wait so the full text drains even on slower CI.
+    await waitFor(() => expect(screen.getByText('文档回答')).toBeInTheDocument(), { timeout: 3000 })
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs/run-doc/stream'))).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-ready/ask'))).toBe(false)

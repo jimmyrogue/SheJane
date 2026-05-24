@@ -17,8 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
 from . import __version__
@@ -469,6 +470,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "tool_name": record.get("tool_name"),
             "created_at": record["created_at"],
         }
+
+    @app.get("/local/v1/workspace-files")
+    async def get_workspace_file(
+        path: str = Query(..., description="Absolute file path inside an authorized workspace"),
+    ):
+        """Stream a file's bytes back to the renderer.
+
+        Gated by `local_workspaces` — the file's parent chain must be inside
+        a path the user previously authorized via `workspace.open`. We do
+        NOT serve arbitrary paths; that would let a compromised renderer
+        exfiltrate the entire disk.
+
+        Used by the right-side DocPreviewPanel to fetch .docx / .xlsx
+        bytes for in-browser rendering (docx-preview, exceljs). No
+        response_model — this is a binary stream, not a JSON shape, so
+        it stays out of api_schemas.py / openapi.json by design.
+        """
+        if not path:
+            raise HTTPException(status_code=400, detail="path required")
+        resolved = Path(os.path.abspath(os.path.expanduser(path))).resolve()
+        try:
+            if not resolved.is_file():
+                raise HTTPException(status_code=404, detail="file not found")
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
+        store: LocalStore = app.state.store
+        workspaces = await store.list_workspaces()
+        # `is_relative_to` walks the parent chain; we need the file to live
+        # under *some* authorized workspace root.
+        roots = [
+            Path(os.path.abspath(os.path.expanduser(ws["path"]))).resolve() for ws in workspaces
+        ]
+        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            raise HTTPException(
+                status_code=403,
+                detail="path is not inside any authorized workspace; call workspace.open first",
+            )
+        # Let FileResponse pick the right Content-Type from the extension.
+        # docx → application/vnd.openxmlformats-officedocument.wordprocessingml.document
+        # xlsx → application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        #
+        # Do NOT override `Content-Disposition`. Starlette's FileResponse
+        # already emits an RFC-5987-compliant header (`filename*=utf-8''…`)
+        # when `filename=` contains non-ASCII characters; setting a custom
+        # header with raw CJK in the value triggers an ASGI latin-1
+        # encoding error and the renderer sees "Failed to fetch". The
+        # fetch() consumer doesn't care about the disposition anyway —
+        # it reads response.arrayBuffer() directly.
+        return FileResponse(resolved, filename=resolved.name)
 
     @app.get("/local/v1/runs/{run_id}/diagnostics", response_model=LocalRunDiagnostics)
     async def run_diagnostics(run_id: str) -> dict[str, Any]:

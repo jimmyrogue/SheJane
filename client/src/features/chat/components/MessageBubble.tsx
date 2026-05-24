@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { cloneElement, Fragment, isValidElement, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -8,7 +8,7 @@ import { ChatImage } from './ChatImage'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
-import type { ChatMessage } from '@/shared/local-data/types'
+import type { ChatMessage, CloudOfficeAttachmentRef, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 import { completePartialMarkdown } from '@/shared/streaming/completePartialMarkdown'
 
@@ -17,11 +17,24 @@ export function MessageBubble({
   children,
   initialStreamText = '',
   onStreamTextCommit,
+  workspaceRoot,
+  onPreviewLocalFile,
+  onPreviewCloudAttachment,
 }: {
   message: ChatMessage
   children?: React.ReactNode
   initialStreamText?: string
   onStreamTextCommit?: (messageID: string, displayedText: string) => void
+  /** Absolute path of the active conversation's workspace, used to
+   *  resolve relative office-file refs in agent text. Undefined for
+   *  chats without a project. */
+  workspaceRoot?: string
+  /** Callback fired when the user clicks a recognized office filename
+   *  rendered inside agent markdown. Undefined disables the click. */
+  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+  /** Callback fired when the user clicks an office-type attachment
+   *  chip on this message. Undefined disables the click. */
+  onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
 }) {
   const { locale, t } = useI18n()
   const previousMessageIDRef = useRef(message.id)
@@ -109,12 +122,21 @@ export function MessageBubble({
         <div className="message-content">
           {showStream ? (
             stream.text ? (
-              <MarkdownContent content={completePartialMarkdown(stream.text)} />
+              <MarkdownContent
+                content={completePartialMarkdown(stream.text)}
+                workspaceRoot={workspaceRoot}
+                onPreviewLocalFile={onPreviewLocalFile}
+              />
             ) : waitingText ? (
               <p className="whitespace-pre-wrap break-words">{waitingText}</p>
             ) : null
           ) : (
-            <MarkdownContent content={content} normalizeHeadings />
+            <MarkdownContent
+              content={content}
+              normalizeHeadings
+              workspaceRoot={workspaceRoot}
+              onPreviewLocalFile={onPreviewLocalFile}
+            />
           )}
         </div>
         {message.attachments && message.attachments.length > 0 ? (
@@ -123,10 +145,13 @@ export function MessageBubble({
               attachment.previewDataUrl ? (
                 <ChatImage key={attachment.documentId} src={attachment.previewDataUrl} alt={attachment.name} />
               ) : (
-                <span key={attachment.documentId} className="message-attachment-chip" title={attachment.name}>
-                  <IconPaperclip size={13} aria-hidden="true" />
-                  {attachment.name}
-                </span>
+                <AttachmentChip
+                  key={attachment.documentId}
+                  documentId={attachment.documentId}
+                  name={attachment.name}
+                  contentType={attachment.contentType}
+                  onPreviewCloudAttachment={onPreviewCloudAttachment}
+                />
               ),
             )}
           </div>
@@ -202,7 +227,17 @@ function ReasoningPill() {
   )
 }
 
-function MarkdownContent({ content, normalizeHeadings = false }: { content: string; normalizeHeadings?: boolean }) {
+function MarkdownContent({
+  content,
+  normalizeHeadings = false,
+  workspaceRoot,
+  onPreviewLocalFile,
+}: {
+  content: string
+  normalizeHeadings?: boolean
+  workspaceRoot?: string
+  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+}) {
   if (!content) {
     return null
   }
@@ -213,15 +248,273 @@ function MarkdownContent({ content, normalizeHeadings = false }: { content: stri
   const remarkPlugins = normalizeHeadings
     ? [remarkGfm, remarkBreaks, remarkNormalizeHeadings]
     : [remarkGfm, remarkBreaks]
+  // Click-to-preview is only enabled when (a) the parent gave us a
+  // callback AND (b) we know which workspace to resolve relative paths
+  // against. Without `workspaceRoot` we'd be guessing — the absolute
+  // path case still works because the regex captures it whole.
+  const previewEnabled = Boolean(onPreviewLocalFile)
+  const previewClick = onPreviewLocalFile
+  // react-markdown doesn't expose a `text`-node component override (the
+  // `components` map only takes HTML element names), so we walk the
+  // rendered children of common text containers and replace recognized
+  // office filenames inside any string descendant. This catches refs in
+  // paragraphs, list items, table cells, headings, blockquotes — without
+  // needing a custom remark/rehype plugin.
+  const renderChildren = (children: React.ReactNode): React.ReactNode => {
+    if (!previewEnabled || !previewClick) return children
+    return processChildren(children, workspaceRoot, previewClick)
+  }
   return (
     <ReactMarkdown
       remarkPlugins={remarkPlugins}
       components={{
         a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
         img: ({ node: _node, src, alt }) => <ChatImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
+        p: ({ children }) => <p>{renderChildren(children)}</p>,
+        li: ({ children }) => <li>{renderChildren(children)}</li>,
+        td: ({ children }) => <td>{renderChildren(children)}</td>,
+        th: ({ children }) => <th>{renderChildren(children)}</th>,
+        h1: ({ children }) => <h1>{renderChildren(children)}</h1>,
+        h2: ({ children }) => <h2>{renderChildren(children)}</h2>,
+        h3: ({ children }) => <h3>{renderChildren(children)}</h3>,
+        h4: ({ children }) => <h4>{renderChildren(children)}</h4>,
+        h5: ({ children }) => <h5>{renderChildren(children)}</h5>,
+        h6: ({ children }) => <h6>{renderChildren(children)}</h6>,
+        blockquote: ({ children }) => <blockquote>{renderChildren(children)}</blockquote>,
       }}
     >
       {content}
     </ReactMarkdown>
+  )
+}
+
+/** Element types we deliberately don't crack open. `a` and `button`
+ *  would produce invalid nested-interactive markup if we put an
+ *  OfficeFileLink (button) inside them; OfficeFileLink itself never
+ *  contains office refs to find. */
+const NON_RECURSIVE_INLINE_TYPES = new Set<unknown>(['a', 'button'])
+
+/** Walk a ReactNode tree, replacing any string descendants with a
+ *  fragment that has recognized office filenames wrapped in clickable
+ *  buttons. Non-string nodes recurse into their `children` prop so
+ *  refs nested inside `<code>` / `<strong>` / `<em>` / etc. get
+ *  picked up too (LLMs commonly format filenames as bold inline code,
+ *  which we'd otherwise miss). */
+function processChildren(
+  children: React.ReactNode,
+  workspaceRoot: string | undefined,
+  onPreviewLocalFile: (ref: LocalOfficeFileRef) => void,
+): React.ReactNode {
+  if (typeof children === 'string') {
+    return renderTextWithOfficeLinks(children, workspaceRoot, onPreviewLocalFile)
+  }
+  if (Array.isArray(children)) {
+    return children.map((child, i) => (
+      // Fragments are transparent to layout AND to testing-library
+      // text matching (whereas a wrapping `<span>` introduces an
+      // extra element with the same textContent and confuses
+      // `findByText`).
+      <Fragment key={i}>{processChildren(child, workspaceRoot, onPreviewLocalFile)}</Fragment>
+    ))
+  }
+  if (isValidElement(children)) {
+    if (
+      NON_RECURSIVE_INLINE_TYPES.has(children.type) ||
+      children.type === OfficeFileLink
+    ) {
+      return children
+    }
+    const props = (children.props ?? {}) as { children?: React.ReactNode }
+    if (props.children === undefined) {
+      return children
+    }
+    return cloneElement(
+      children,
+      undefined,
+      processChildren(props.children, workspaceRoot, onPreviewLocalFile),
+    )
+  }
+  // null / boolean / number — leave alone.
+  return children
+}
+
+/** Office-file extension → kind mapping. Lowercase keys; the regex
+ *  also uses lowercase so case-insensitive matches work in one pass.
+ */
+const OFFICE_EXTENSION_KIND: Record<string, 'word' | 'excel'> = {
+  docx: 'word',
+  xlsx: 'excel',
+}
+
+/** Regex that captures a chunk of "looks like a path" text ending in
+ *  `.docx` / `.xlsx`. Matches:
+ *    foo.docx
+ *    sub/foo.docx
+ *    /Users/me/project/foo.docx
+ *    ~/Documents/foo.xlsx
+ *  Doesn't try to be exhaustive — we stop at whitespace, quotes, or
+ *  common markdown delimiters (backticks, parens) so we don't swallow
+ *  surrounding punctuation. Case-insensitive on the extension only.
+ */
+const OFFICE_FILE_RE = /([^\s"'`(){}\[\]<>]+\.(?:docx|xlsx))/gi
+
+/** Cross-platform basename. Mirror of the helper in App.tsx. */
+function pathBasename(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
+}
+
+/** Returns true if `path` looks absolute (POSIX or Windows). Used to
+ *  decide whether we need to prepend `workspaceRoot`. */
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith('/') || path.startsWith('~') || /^[A-Za-z]:[\\/]/.test(path)
+}
+
+/** Join two path segments with the system's preferred separator. We
+ *  default to "/" since the daemon runs on the user's machine and
+ *  Windows tolerates forward slashes everywhere. */
+function joinPath(root: string, rel: string): string {
+  const cleanedRoot = root.replace(/[/\\]+$/, '')
+  const cleanedRel = rel.replace(/^[/\\]+/, '')
+  return `${cleanedRoot}/${cleanedRel}`
+}
+
+/** Scan a text node for office file references, returning a React
+ *  fragment with the recognized refs replaced by clickable buttons.
+ *  Non-match characters pass through verbatim, so this is safe to use
+ *  on arbitrary agent prose.
+ */
+function renderTextWithOfficeLinks(
+  text: string,
+  workspaceRoot: string | undefined,
+  onPreviewLocalFile: (ref: LocalOfficeFileRef) => void,
+): React.ReactNode {
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+  // The regex has `g` flag; we reset `lastIndex` to 0 on entry by using
+  // `matchAll` (which constructs a fresh internal cursor each call).
+  const matches = Array.from(text.matchAll(OFFICE_FILE_RE))
+  if (matches.length === 0) {
+    // Return the bare string — fragment-wrapping is invisible to React
+    // but causes Testing Library's `findByText` to occasionally fail
+    // when comparing normalized text content.
+    return text
+  }
+  for (const match of matches) {
+    const matchedText = match[0]
+    const start = match.index ?? 0
+    if (start > lastIndex) {
+      parts.push(text.slice(lastIndex, start))
+    }
+    const ext = matchedText.slice(matchedText.lastIndexOf('.') + 1).toLowerCase()
+    const kind = OFFICE_EXTENSION_KIND[ext]
+    const absolutePath = isAbsolutePath(matchedText)
+      ? matchedText.replace(/^~/, () => {
+          // Best-effort: we don't know HOME on the renderer side, so
+          // leave the tilde — the daemon doesn't expand it either,
+          // and clicking such a path will just 404. Reasonable
+          // degradation for an edge case.
+          return '~'
+        })
+      : workspaceRoot
+        ? joinPath(workspaceRoot, matchedText)
+        : null
+    if (!kind || !absolutePath) {
+      // Either the extension isn't one we preview, or we have no
+      // workspace root to resolve against — render as plain text.
+      parts.push(matchedText)
+    } else {
+      parts.push(
+        <OfficeFileLink
+          key={`${start}-${matchedText}`}
+          path={absolutePath}
+          kind={kind}
+          name={pathBasename(matchedText) || matchedText}
+          display={matchedText}
+          onClick={onPreviewLocalFile}
+        />,
+      )
+    }
+    lastIndex = start + matchedText.length
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+  return <>{parts}</>
+}
+
+function OfficeFileLink({
+  path,
+  kind,
+  name,
+  display,
+  onClick,
+}: {
+  path: string
+  kind: 'word' | 'excel'
+  name: string
+  display: string
+  onClick: (ref: LocalOfficeFileRef) => void
+}) {
+  return (
+    <button
+      type="button"
+      className="message-office-link"
+      title={path}
+      onClick={(event) => {
+        event.preventDefault()
+        onClick({ path, kind, name })
+      }}
+    >
+      {display}
+    </button>
+  )
+}
+
+/** Office-file Content-Type → kind, including the legacy
+ *  `application/msword` (.doc) which we DON'T support — those return
+ *  undefined and stay non-interactive. */
+function officeKindFromAttachment(contentType: string | undefined, name: string): 'word' | 'excel' | undefined {
+  const lowerName = name.toLowerCase()
+  if (lowerName.endsWith('.docx')) return 'word'
+  if (lowerName.endsWith('.xlsx')) return 'excel'
+  // Fallback to content type for renames / unusual casing.
+  if (contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'word'
+  if (contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'excel'
+  return undefined
+}
+
+function AttachmentChip({
+  documentId,
+  name,
+  contentType,
+  onPreviewCloudAttachment,
+}: {
+  documentId: string
+  name: string
+  contentType: string
+  onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
+}) {
+  const kind = useMemo(() => officeKindFromAttachment(contentType, name), [contentType, name])
+  const clickable = Boolean(kind && onPreviewCloudAttachment)
+  if (!clickable) {
+    return (
+      <span className="message-attachment-chip" title={name}>
+        <IconPaperclip size={13} aria-hidden="true" />
+        {name}
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="message-attachment-chip clickable"
+      title={name}
+      onClick={() => onPreviewCloudAttachment!({ documentId, kind: kind!, name })}
+    >
+      <IconPaperclip size={13} aria-hidden="true" />
+      {name}
+    </button>
   )
 }

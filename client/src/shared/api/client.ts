@@ -182,6 +182,30 @@ export class JiandanAPI implements ChatAPI {
     return decodeResponse<UserDocument>(response)
   }
 
+  /**
+   * Fetch the raw uploaded bytes of a document so the renderer can feed
+   * them to docx-preview / exceljs for in-app preview. Wraps
+   * `GET /api/v1/documents/{id}/source` which streams the file with the
+   * original Content-Type. Returns ArrayBuffer (NOT JSON — this endpoint
+   * deliberately bypasses the apiResponse<T> envelope).
+   *
+   * Throws on non-2xx so the caller can surface a renderer-level error
+   * panel; the typical failure modes are 404 (expired/missing), 403
+   * (ownership) and 401 (session expired).
+   */
+  async fetchDocumentBytes(documentID: string): Promise<ArrayBuffer> {
+    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}/source`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: this.headers(false),
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => response.statusText)
+      throw new Error(`fetchDocumentBytes failed (${response.status}): ${text || response.statusText}`)
+    }
+    return response.arrayBuffer()
+  }
+
   async streamChat(request: StreamChatRequest, handlers: StreamHandlers): Promise<StreamChatResult> {
     const response = await fetch(`${this.baseURL}/api/v1/chat/completions`, {
       method: 'POST',

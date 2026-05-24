@@ -273,6 +273,31 @@ export async function cancelLocalRun(
   return decodeLocalResponse<CancelRunResponse>(response)
 }
 
+/** Stream a file's bytes from an authorized workspace.
+ *
+ *  Backs the right-side DocPreviewPanel: docx-preview and exceljs both
+ *  consume ArrayBuffer, so we hand them the bytes the daemon serves
+ *  from `/local/v1/workspace-files`. The daemon rejects paths that
+ *  aren't inside a previously-authorized workspace, so no extra
+ *  client-side gating is needed.
+ */
+export async function fetchWorkspaceFile(
+  path: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<ArrayBuffer> {
+  const url = `${normalizeBaseURL(config.baseURL)}/local/v1/workspace-files?path=${encodeURIComponent(path)}`
+  const response = await fetcher(url, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText)
+    throw new Error(`workspace file fetch failed (${response.status}): ${text}`)
+  }
+  return response.arrayBuffer()
+}
+
 export async function listAuthorizedWorkspaces(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalWorkspaceAuthorization[]> {
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/workspaces`, {
     method: 'GET',
