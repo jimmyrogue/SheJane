@@ -21,19 +21,29 @@ from local_host.tools.office import (
     OFFICE_READ_TOOLS,
     OFFICE_WRITE_TOOLS,
     edited_copy_path,
+    office_add_image_to_slide,
     office_add_row,
+    office_add_slide,
     office_apply_style,
+    office_create_pptx,
     office_delete_paragraph,
+    office_delete_slide,
     office_find_replace,
     office_insert_paragraph,
     office_merge_cells,
     office_outline,
     office_read,
     office_read_range,
+    office_read_slides,
+    office_reorder_slides,
     office_set_cell_format,
     office_set_cells,
     office_set_formula,
+    office_set_slide_bullets,
+    office_set_slide_notes,
+    office_set_slide_title,
     office_update_paragraph,
+    office_update_slide,
 )
 
 
@@ -170,7 +180,12 @@ def test_office_outline_wrong_extension_returns_error(tmp_path: Path) -> None:
 def test_office_tools_registered_under_canonical_names() -> None:
     """Sanity: OFFICE_READ_TOOLS exposes the read tools by their dotted names."""
     names = sorted(t.name for t in OFFICE_READ_TOOLS)
-    assert names == ["office.outline", "office.read", "office.read_range"]
+    assert names == [
+        "office.outline",
+        "office.read",
+        "office.read_range",
+        "office.read_slides",
+    ]
 
 
 def test_office_read_truncates_large_output(tmp_path: Path) -> None:
@@ -194,11 +209,11 @@ def test_office_read_truncates_large_output(tmp_path: Path) -> None:
     assert len(result["markdown"]) < office_module._MARKDOWN_CHAR_CAP + 200
 
 
-@pytest.mark.parametrize("ext", [".doc", ".xls", ".pptx", ".pdf"])
+@pytest.mark.parametrize("ext", [".doc", ".xls", ".pdf"])
 def test_office_read_rejects_non_supported_office_extensions(tmp_path: Path, ext: str) -> None:
-    """office.read explicitly rejects .doc / .xls / .pptx / .pdf — we only
-    support OOXML formats in Phase 1. Phase 2 may revisit .doc/.xls (the
-    legacy binary formats require a separate parser)."""
+    """office.read rejects .doc / .xls / .pdf — we only support OOXML
+    formats (.docx / .xlsx / .pptx as of Phase 3). The legacy binary
+    formats would need a separate parser."""
     p = tmp_path / f"x{ext}"
     p.write_bytes(b"\x00")  # dummy bytes, validation happens on extension first
     result = office_read.func(path=str(p))
@@ -232,10 +247,12 @@ def _xlsx_cell(path: Path, sheet: str, cell: str):
 
 
 def test_write_tools_registered_under_canonical_names() -> None:
-    """Sanity: OFFICE_WRITE_TOOLS exposes the 10 write tools by name."""
+    """Sanity: OFFICE_WRITE_TOOLS exposes all 19 write tools by name
+    (10 Phase 2 docx/xlsx + 9 Phase 3 pptx)."""
     names = sorted(t.name for t in OFFICE_WRITE_TOOLS)
     assert names == sorted(
         [
+            # Phase 2 — docx/xlsx
             "office.find_replace",
             "office.insert_paragraph",
             "office.update_paragraph",
@@ -246,6 +263,16 @@ def test_write_tools_registered_under_canonical_names() -> None:
             "office.set_cell_format",
             "office.merge_cells",
             "office.add_row",
+            # Phase 3 — pptx
+            "office.create_pptx",
+            "office.add_slide",
+            "office.update_slide",
+            "office.delete_slide",
+            "office.reorder_slides",
+            "office.set_slide_title",
+            "office.set_slide_bullets",
+            "office.set_slide_notes",
+            "office.add_image_to_slide",
         ]
     )
 
@@ -575,3 +602,245 @@ def test_atomic_write_keeps_target_intact_on_verification_failure(
     assert _sha256(target) == sha_known_good
     # No .tmp file lingering.
     assert not (tmp_path / "sample.edited.docx.tmp").exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 3: PPT tools
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _pptx_slide_titles(path: Path) -> list[str]:
+    from pptx import Presentation
+
+    prs = Presentation(path)
+    out: list[str] = []
+    for slide in prs.slides:
+        title = slide.shapes.title
+        out.append(title.text_frame.text.strip() if title is not None else "")
+    return out
+
+
+def _pptx_slide_count(path: Path) -> int:
+    from pptx import Presentation
+
+    return len(Presentation(path).slides)
+
+
+def test_create_pptx_writes_original_directly_no_edited(tmp_path: Path) -> None:
+    """create_pptx is the special-case: writes to `<path>` (not
+    `<path>.edited.pptx`) because there's no original to protect."""
+    p = tmp_path / "deck.pptx"
+    result = office_create_pptx.func(path=str(p), title="Hello")
+    assert result["ok"] == "true", result
+    assert result["edited_path"] == str(p)
+    assert p.exists()
+    # Should NOT have created a .edited copy yet.
+    assert not (tmp_path / "deck.edited.pptx").exists()
+    assert _pptx_slide_count(p) == 1
+    assert _pptx_slide_titles(p) == ["Hello"]
+
+
+def test_create_pptx_refuses_existing_file(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="A")
+    second = office_create_pptx.func(path=str(p), title="B")
+    assert second["ok"] == "false"
+    assert "already exists" in second["error"]
+
+
+def test_add_slide_creates_edited_copy_and_preserves_original(tmp_path: Path) -> None:
+    """First add_slide triggers copy-on-first-write — original is frozen."""
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="Cover")
+    sha_orig = _sha256(p)
+    result = office_add_slide.func(path=str(p), title="Slide 2", bullets=["bullet a", "bullet b"])
+    assert result["ok"] == "true", result
+    edited = Path(result["edited_path"])
+    assert edited != p
+    assert edited.exists()
+    # Original byte-for-byte unchanged.
+    assert _sha256(p) == sha_orig
+    # Edited copy has 2 slides.
+    assert _pptx_slide_count(edited) == 2
+    titles = _pptx_slide_titles(edited)
+    assert titles[0] == "Cover"
+    assert titles[1] == "Slide 2"
+
+
+def test_add_slide_repeated_lands_in_same_edited(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p))
+    r1 = office_add_slide.func(path=str(p), title="A")
+    r2 = office_add_slide.func(path=str(p), title="B")
+    assert r1["edited_path"] == r2["edited_path"]
+    assert _pptx_slide_count(Path(r2["edited_path"])) == 3
+
+
+def test_update_slide_changes_title_and_bullets(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="Initial")
+    office_add_slide.func(path=str(p), title="Old title", bullets=["old"])
+    edited = tmp_path / "deck.edited.pptx"
+
+    result = office_update_slide.func(
+        path=str(edited), index=1, title="New title", bullets=["one", "two", "three"]
+    )
+    assert result["ok"] == "true", result
+    from pptx import Presentation
+
+    prs = Presentation(edited)
+    slide = prs.slides[1]
+    assert slide.shapes.title.text_frame.text == "New title"
+    # Bullets count check — find the body placeholder
+    bodies = [s for s in slide.placeholders if s != slide.shapes.title]
+    body_text = bodies[0].text_frame.text
+    assert "one" in body_text
+    assert "two" in body_text
+    assert "three" in body_text
+
+
+def test_delete_slide_removes_from_deck(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="First")
+    office_add_slide.func(path=str(p), title="Second")
+    office_add_slide.func(path=str(p), title="Third")
+    edited = tmp_path / "deck.edited.pptx"
+    assert _pptx_slide_count(edited) == 3
+
+    result = office_delete_slide.func(path=str(edited), index=1)
+    assert result["ok"] == "true", result
+    titles = _pptx_slide_titles(edited)
+    # "Second" deleted; First + Third remain in order
+    assert titles == ["First", "Third"]
+
+
+def test_reorder_slides_moves_position(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="A")
+    office_add_slide.func(path=str(p), title="B")
+    office_add_slide.func(path=str(p), title="C")
+    edited = tmp_path / "deck.edited.pptx"
+    # Move A (index 0) to the end (index 2).
+    result = office_reorder_slides.func(path=str(edited), from_index=0, to_index=2)
+    assert result["ok"] == "true"
+    assert _pptx_slide_titles(edited) == ["B", "C", "A"]
+
+
+def test_set_slide_title_convenience_tool(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="Old")
+    edited_result = office_set_slide_title.func(path=str(p), index=0, title="Brand new")
+    assert edited_result["ok"] == "true"
+    edited = Path(edited_result["edited_path"])
+    assert _pptx_slide_titles(edited)[0] == "Brand new"
+
+
+def test_set_slide_bullets_convenience_tool(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p))
+    office_add_slide.func(path=str(p), title="X", bullets=["old"])
+    edited = tmp_path / "deck.edited.pptx"
+
+    result = office_set_slide_bullets.func(path=str(edited), index=1, bullets=["new1", "new2"])
+    assert result["ok"] == "true"
+    from pptx import Presentation
+
+    prs = Presentation(edited)
+    bodies = [s for s in prs.slides[1].placeholders if s != prs.slides[1].shapes.title]
+    body_text = bodies[0].text_frame.text
+    assert "new1" in body_text and "new2" in body_text
+    assert "old" not in body_text
+
+
+def test_set_slide_notes_writes_speaker_notes(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p))
+    result = office_set_slide_notes.func(path=str(p), index=0, notes="Remember to smile")
+    assert result["ok"] == "true"
+    edited = Path(result["edited_path"])
+    from pptx import Presentation
+
+    prs = Presentation(edited)
+    assert "Remember to smile" in prs.slides[0].notes_slide.notes_text_frame.text
+
+
+def test_add_image_to_slide_adds_picture_shape(tmp_path: Path) -> None:
+    # Create a tiny PNG via stdlib so we don't add Pillow to test deps.
+    # 1x1 transparent PNG bytes (well-known minimal).
+    png_bytes = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000a49444154789c6300010000000500010d0a2db40000000049454e44ae426082"
+    )
+    img = tmp_path / "tiny.png"
+    img.write_bytes(png_bytes)
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p))
+
+    result = office_add_image_to_slide.func(path=str(p), index=0, image_path=str(img))
+    assert result["ok"] == "true", result
+    edited = Path(result["edited_path"])
+    from pptx import Presentation
+    from pptx.util import Emu
+
+    prs = Presentation(edited)
+    # Slide should now contain at least one PICTURE shape (type 13).
+    shapes = list(prs.slides[0].shapes)
+    pictures = [sh for sh in shapes if sh.shape_type == 13]
+    assert len(pictures) == 1
+    # Default width should be 5 inches → 5 * 914400 EMU.
+    assert abs(pictures[0].width - Emu(5 * 914400)) < 100
+
+
+def test_read_slides_returns_structured_outline(tmp_path: Path) -> None:
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="Cover")
+    office_add_slide.func(path=str(p), title="Findings", bullets=["A", "B"])
+    office_set_slide_notes.func(path=str(p), index=1, notes="Talk slowly")
+    edited = tmp_path / "deck.edited.pptx"
+
+    result = office_read_slides.func(path=str(edited))
+    assert result["ok"] == "true"
+    assert result["slide_count"] == 2
+    s0 = result["slides"][0]
+    s1 = result["slides"][1]
+    assert s0["title"] == "Cover"
+    assert s1["title"] == "Findings"
+    assert "A" in s1["bullets"]
+    assert "B" in s1["bullets"]
+    assert s1["notes"] == "Talk slowly"
+
+
+def test_outline_dispatches_pptx_via_office_outline(tmp_path: Path) -> None:
+    """office.outline (the read tool, not _outline_pptx helper) now
+    also supports .pptx files."""
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="Topic")
+    result = office_outline.func(path=str(p))
+    assert result["ok"] == "true"
+    assert result["kind"] == "powerpoint"
+    assert result["slide_count"] == 1
+    assert result["slides"][0]["title"] == "Topic"
+
+
+def test_pptx_atomic_rollback_on_verify_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Force-verify-fail on a pptx write → target keeps last-good state."""
+    from local_host.tools import office as office_module
+
+    p = tmp_path / "deck.pptx"
+    office_create_pptx.func(path=str(p), title="A")
+    # Do one real edit so .edited.pptx exists.
+    r1 = office_add_slide.func(path=str(p), title="B")
+    assert r1["ok"] == "true"
+    target = Path(r1["edited_path"])
+    sha_known_good = _sha256(target)
+
+    monkeypatch.setattr(
+        office_module,
+        "_verify_file",
+        lambda path, kind: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    r2 = office_add_slide.func(path=str(p), title="C")
+    assert r2["ok"] == "false"
+    assert _sha256(target) == sha_known_good

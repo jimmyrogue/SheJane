@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('jiandanDesktop', {
   selectWorkspaceDirectory: () => ipcRenderer.invoke('jiandanly:select-workspace-directory'),
   setLocale: (locale) => ipcRenderer.invoke('jiandanly:set-locale', locale),
   notify: (payload) => ipcRenderer.invoke('jiandanly:notify', payload),
+  /** Open a file with the OS's default application — used by the
+   *  right-side PptxPreview's "Open in PowerPoint" button. */
+  openFileWithDefaultApp: (filePath) =>
+    ipcRenderer.invoke('jiandanly:open-file-with-default-app', filePath),
   /** Subscribe to the tray's "New Chat" action. Returns an unsubscribe
    *  fn so React effects can clean up properly. */
   onNewChatRequest: (handler) => {

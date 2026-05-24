@@ -41,6 +41,11 @@ export interface DesktopBridge {
     baseURL?: string
     token?: string
   }
+  /** Open a file with the OS's default application. Returns "" on
+   *  success or an error message string on failure (mirrors
+   *  Electron's `shell.openPath` contract). Used by the right-side
+   *  PptxPreview component's "Open in PowerPoint" button. */
+  openFileWithDefaultApp?: (filePath: string) => Promise<string>
 }
 
 export interface LocalHostConfig {
@@ -271,6 +276,33 @@ export async function cancelLocalRun(
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<CancelRunResponse>(response)
+}
+
+/** Fetch the structured slide outline for a .pptx file.
+ *
+ *  The right-side DocPreviewPanel's PptxPreview component uses this
+ *  to render an outline-style view (per-slide title + bullets +
+ *  notes) — pptx has no mature pure-browser renderer, so we surface
+ *  structure rather than a faithful visual.
+ *
+ *  Backed by GET /local/v1/pptx-outline?path=... which is gated by
+ *  the same workspace authorization as workspace-files.
+ */
+export async function fetchPptxOutline(
+  path: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<{ slides: import('@/shared/local-data/types').PptxSlideOutline[]; slide_count: number }> {
+  const url = `${normalizeBaseURL(config.baseURL)}/local/v1/pptx-outline?path=${encodeURIComponent(path)}`
+  const response = await fetcher(url, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText)
+    throw new Error(`pptx outline fetch failed (${response.status}): ${text}`)
+  }
+  return response.json()
 }
 
 /** Stream a file's bytes from an authorized workspace.

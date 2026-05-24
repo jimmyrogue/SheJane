@@ -217,6 +217,20 @@ ipcMain.handle('jiandanly:select-workspace-directory', async () => {
   return result.filePaths[0]
 })
 
+ipcMain.handle('jiandanly:open-file-with-default-app', async (_event, filePath) => {
+  // Used by the right-side PptxPreview "Open in PowerPoint" button.
+  // Returns "" on success (Electron's contract) or an error message
+  // string on failure.
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return 'path required'
+  }
+  try {
+    return await shell.openPath(filePath)
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+})
+
 app.on('window-all-closed', () => {
   // Intentionally do NOT app.quit() here — the tray keeps the app
   // alive across all OSes after the user "closes" the window. Real

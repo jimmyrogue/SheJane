@@ -557,6 +557,17 @@ function toolActionLabel(tool: string, t: Translator): string {
     'office.set_cell_format': t('chat.tool.office.set_cell_format'),
     'office.merge_cells': t('chat.tool.office.merge_cells'),
     'office.add_row': t('chat.tool.office.add_row'),
+    // Phase 3 — pptx
+    'office.create_pptx': t('chat.tool.office.create_pptx'),
+    'office.add_slide': t('chat.tool.office.add_slide'),
+    'office.update_slide': t('chat.tool.office.update_slide'),
+    'office.delete_slide': t('chat.tool.office.delete_slide'),
+    'office.reorder_slides': t('chat.tool.office.reorder_slides'),
+    'office.set_slide_title': t('chat.tool.office.set_slide_title'),
+    'office.set_slide_bullets': t('chat.tool.office.set_slide_bullets'),
+    'office.set_slide_notes': t('chat.tool.office.set_slide_notes'),
+    'office.add_image_to_slide': t('chat.tool.office.add_image_to_slide'),
+    'office.read_slides': t('chat.tool.office.read_slides'),
   }
   return labels[tool] || tool || t('chat.tool.fallback')
 }

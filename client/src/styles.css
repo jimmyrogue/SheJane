@@ -976,6 +976,116 @@ select {
   background: linear-gradient(135deg, #217346 0%, #14542f 100%);
 }
 
+.doc-preview-icon-powerpoint {
+  background: linear-gradient(135deg, #d24726 0%, #8c2c12 100%);
+}
+
+/* ── PPTX outline view ─────────────────────────────────────────────
+ * No browser pptx renderer is mature, so the panel surfaces structure
+ * instead: one card per slide with title + bullets + collapsible
+ * speaker notes. Click "Open in PowerPoint" for the real visual.
+ */
+.doc-preview-pptx {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pptx-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.pptx-slide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pptx-slide-card {
+  background: #ffffff;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  padding: 14px 18px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.pptx-slide-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.pptx-slide-number {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pptx-slide-layout {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.pptx-slide-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 4px 0 8px;
+  color: var(--foreground);
+  line-height: 1.4;
+}
+
+.pptx-slide-bullets {
+  margin: 4px 0 0;
+  padding-left: 22px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--foreground);
+}
+
+.pptx-slide-bullets li {
+  margin: 0 0 2px;
+}
+
+.pptx-slide-notes {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border, rgba(0, 0, 0, 0.08));
+}
+
+.pptx-slide-notes summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  list-style: none;
+}
+
+.pptx-slide-notes summary::-webkit-details-marker {
+  display: none;
+}
+
+.pptx-slide-notes p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 .doc-preview-header-text {
   display: flex;
   flex-direction: column;
@@ -2890,34 +3000,22 @@ button:active {
   color: var(--text-primary);
 }
 
-.sidebar-newchat {
-  display: flex;
-  min-height: 34px;
-  width: 100%;
-  align-items: center;
-  gap: 8px;
-  border: 0.5px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: #FFFFFF;
-  color: var(--text-primary);
-  padding: 0 10px;
-  font-size: 13px;
-  font-weight: 400;
-  text-align: left;
-}
-
-.sidebar-newchat .kbd {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: 11px;
-}
-
-[data-icon="inline-start"],
-.sidebar-newchat svg {
+[data-icon="inline-start"] {
   display: block;
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
+}
+
+/* Right-aligned tertiary hint inside a .sidebar-item — used by "新对话"
+ * to surface the ⌘N shortcut. Mirrors the old .sidebar-newchat .kbd
+ * styling so muscle-memory readers still see the hint at the same
+ * visual weight, just in a row that now sits side-by-side with the
+ * other top nav items (Skills, etc.) instead of as a primary button. */
+.sidebar-item-hint {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .sidebar-section {
@@ -2944,6 +3042,8 @@ button:active {
   color: var(--text-primary);
   padding: 0 8px;
   font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .sidebar-item svg {
@@ -2952,6 +3052,21 @@ button:active {
   height: 14px;
   flex: 0 0 14px;
   color: var(--text-secondary);
+}
+
+/* Hover affordance — mirrors .conversation-row:hover so the top nav
+ * items (新对话, 技能) and the conversation rows below them respond
+ * with the same visual weight on mouseover. `:not(.active)` keeps
+ * the already-highlighted row from bouncing on hover. */
+.sidebar-item:hover:not(.active) {
+  border-color: var(--border-hairline);
+  background: color-mix(in srgb, #FFFFFF 82%, var(--bg-sidebar));
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 70%);
+}
+
+.sidebar-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
 .sidebar-item.active,
@@ -4663,14 +4778,21 @@ button.agent-progress-summary:focus-visible {
 
 /* Toolbar row below the input — borderless, transparent. Lives outside
  * the input frame so buttons feel like floating tools, not part of the
- * input. */
+ * input. Tool buttons (attach, project) pack left from the start of
+ * the row; ModeSelector is pushed to the right via margin-left:auto
+ * below, so when more tools land here they all grow leftward and the
+ * mode pill stays anchored at the right edge. */
 .composer-toolbar {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 4px;
   border: 0;
   background: transparent;
   padding: 6px 4px 0;
+}
+.composer-toolbar .composer-mode-trigger {
+  margin-left: auto;
 }
 
 /* Ghost icon button — no border, no background; on hover the bg
@@ -4701,6 +4823,41 @@ button.agent-progress-summary:focus-visible {
 .composer-tool:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Locked project chip — sits in the composer toolbar where the
+ * IconFolderPlus button lives before a project is picked. Wider than
+ * the standard square .composer-tool because it carries the project
+ * name; styled as a soft pill so it reads "set" rather than "click
+ * me". The cursor stays default — once bound, switching projects
+ * requires a new chat. */
+.composer-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  width: auto;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+.composer-project-chip:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+.composer-project-chip svg {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.composer-project-chip-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Mode selector trigger — same ghost feel as .composer-tool but wider
@@ -4898,16 +5055,63 @@ button.agent-progress-summary:focus-visible {
   font-weight: 400;
 }
 
-.toaster .cn-toast {
-  min-height: 36px;
-  border: 0.5px solid var(--border-strong);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-surface) 96%, var(--bg-sidebar));
+/* Top-center toaster overrides — re-center over the chat area instead
+ * of the whole viewport so the alert visually belongs to the chat
+ * dialog rather than the window. `--toast-center-offset` is written
+ * to `:root` by App.tsx and equals (visible sidebar width / 2). When
+ * the sidebar is collapsed the var resolves to 0 and the toast lands
+ * at viewport center — same as default sonner behavior. */
+[data-sonner-toaster][data-x-position='center'] {
+  left: calc(50% + var(--toast-center-offset, 0px));
+}
+
+/* Toast itself — modeled on shadcn's Alert component:
+ *   - Solid surface background (not the previous grey-tinted blend)
+ *   - 1px hairline border using our standard border token
+ *   - Generous padding so the message has breathing room
+ *   - Slightly larger font for readability at top-of-page distance
+ *   - Width caps at a comfortable reading measure; auto-shrinks for
+ *     short messages so we don't show an oversized pill for "已绑定…"
+ *
+ * `.cn-toast.cn-toast` is intentional — bumps specificity past
+ * sonner's `[data-sonner-toast][data-styled=true]` (same column
+ * count), which is injected at the *end* of <head> at runtime and
+ * would otherwise tie + win the cascade. */
+.toaster .cn-toast.cn-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  min-width: 240px;
+  max-width: 480px;
+  min-height: 44px;
+  border: 1px solid var(--border-hairline);
+  border-radius: 12px;
+  background: var(--bg-surface);
   color: var(--text-primary);
-  padding: 9px 12px;
-  box-shadow: 0 10px 28px -16px rgb(0 0 0 / 28%), 0 2px 8px -4px rgb(0 0 0 / 14%);
+  padding: 12px 16px;
+  box-shadow:
+    0 12px 32px -18px rgb(0 0 0 / 28%),
+    0 2px 8px -4px rgb(0 0 0 / 12%);
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.toaster .cn-toast.cn-toast [data-icon] {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+.toaster .cn-toast.cn-toast [data-content] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.toaster .cn-toast.cn-toast [data-title] {
+  font-weight: 500;
+}
+.toaster .cn-toast.cn-toast [data-description] {
+  margin-top: 2px;
+  color: var(--text-secondary);
   font-size: 12.5px;
-  line-height: 1.45;
 }
 
 .empty-state.welcome-body {

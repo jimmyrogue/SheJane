@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import {
   IconCornerDownLeft,
   IconFileText,
+  IconFolder,
+  IconFolderPlus,
   IconLoader2,
   IconPaperclip,
   IconPlayerStopFilled,
@@ -29,6 +31,8 @@ export function Composer({
   listSkills,
   mode,
   onModeChange,
+  projectName,
+  onSelectProject,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -47,6 +51,15 @@ export function Composer({
   listSkills: () => Promise<InstalledSkill[]>
   mode: ChatMode
   onModeChange: (mode: ChatMode) => void
+  /** Project (workspace) currently bound to this chat. When undefined,
+   *  the toolbar shows an "add project" button that opens the directory
+   *  picker. When set, the button locks into a chip showing the project
+   *  name — switching projects requires a new chat. */
+  projectName?: string
+  /** Open the OS directory picker and bind the chosen workspace as this
+   *  chat's project. Only invoked when `projectName` is undefined; the
+   *  locked-chip click is a no-op (disabled). */
+  onSelectProject?: () => void
 }) {
   const { t } = useI18n()
 
@@ -235,6 +248,30 @@ export function Composer({
             <IconPaperclip size={16} aria-hidden="true" />
           )}
         </button>
+        {projectName ? (
+          // Locked chip — once bound, project can't be changed without
+          // starting a new chat (the daemon already has the workspace
+          // path attached to this conversation's run state).
+          <span
+            className="composer-tool composer-project-chip"
+            title={t('composer.projectPicker.locked', { name: projectName })}
+            aria-label={t('composer.projectPicker.locked', { name: projectName })}
+          >
+            <IconFolder size={14} aria-hidden="true" />
+            <span className="composer-project-chip-name">{projectName}</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="composer-tool composer-project-button"
+            aria-label={t('composer.projectPicker.add')}
+            title={t('composer.projectPicker.tooltip')}
+            disabled={!onSelectProject || isSending}
+            onClick={() => onSelectProject?.()}
+          >
+            <IconFolderPlus size={16} aria-hidden="true" />
+          </button>
+        )}
         <ModeSelector mode={mode} onChange={onModeChange} disabled={isSending} />
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests

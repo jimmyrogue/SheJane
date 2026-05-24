@@ -138,16 +138,29 @@ export interface OpenDocument {
    *  Format: `local:<absolute-path>` for workspace files,
    *  `cloud:<documentId>` for uploaded ones. */
   sourceKey: string
-  /** "word" or "excel" — drives Docx vs Xlsx preview component. */
-  kind: 'word' | 'excel'
+  /** "word", "excel", or "powerpoint" — drives which preview component
+   *  the panel mounts (DocxPreview / XlsxPreview / PptxPreview). */
+  kind: 'word' | 'excel' | 'powerpoint'
   /** Display label — typically the basename. */
   name: string
   /** Optional full path or description shown as tooltip on the header. */
   tooltip?: string
   /** Resolves with the file's raw bytes. Closure over whatever
    *  authenticated fetch backs this source (workspace endpoint, S3
-   *  presigned GET, etc.). */
+   *  presigned GET, etc.).
+   *
+   *  For .pptx the preview uses the outline endpoint instead of these
+   *  bytes (no mature pure-browser pptx renderer exists), but the
+   *  loader is still required by the panel shell — pass a no-op
+   *  ArrayBuffer resolver, or wire to fetchWorkspaceFile if you want
+   *  the bytes available for a later "download" affordance. */
   loadBytes: () => Promise<ArrayBuffer>
+  /** Absolute filesystem path on the user's machine. Required when
+   *  `kind === 'powerpoint'` so the preview can call the outline
+   *  endpoint + the "open natively" button can hand the path to the
+   *  Electron shell. Optional for cloud-sourced docs (which lack a
+   *  local path). */
+  localPath?: string
 }
 
 /** Reference to an office file living inside an authorized workspace.
@@ -157,9 +170,23 @@ export interface LocalOfficeFileRef {
   /** Absolute path on the user's machine. Must be inside an
    *  authorized workspace (the daemon enforces this on fetch). */
   path: string
-  kind: 'word' | 'excel'
+  kind: 'word' | 'excel' | 'powerpoint'
   /** Display name — typically the basename. */
   name: string
+}
+
+/** One slide's outline data returned by the daemon's
+ *  GET /local/v1/pptx-outline endpoint (and equivalently by the
+ *  office.read_slides tool). The PptxPreview component renders one
+ *  card per entry. */
+export interface PptxSlideOutline {
+  index: number
+  layout: string
+  title: string
+  bullets: string[]
+  notes: string
+  shape_count: number
+  image_count: number
 }
 
 /** Reference to an office file in the cloud documents service (uploaded

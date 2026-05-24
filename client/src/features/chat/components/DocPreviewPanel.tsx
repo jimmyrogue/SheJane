@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   IconFileTypeDocx,
+  IconFileTypePpt,
   IconFileTypeXls,
   IconMinus,
   IconPlus,
@@ -10,9 +11,11 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useI18n } from '@/shared/i18n/i18n'
+import { getDesktopLocalHostConfig } from '@/shared/local-host/client'
 import type { OpenDocument } from '@/shared/local-data/types'
 
 import { DocxPreview } from './DocPreview/DocxPreview'
+import { PptxPreview } from './DocPreview/PptxPreview'
 import { XlsxPreview } from './DocPreview/XlsxPreview'
 
 interface Props {
@@ -130,8 +133,17 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
     return () => window.removeEventListener('resize', onWindowResize)
   }, [])
 
-  const KindIcon = doc?.kind === 'excel' ? IconFileTypeXls : IconFileTypeDocx
+  const KindIcon =
+    doc?.kind === 'excel'
+      ? IconFileTypeXls
+      : doc?.kind === 'powerpoint'
+        ? IconFileTypePpt
+        : IconFileTypeDocx
   const zoomPercent = Math.round(zoom * 100)
+  // Localhost config: pptx preview needs it to hit the outline
+  // endpoint; getDesktopLocalHostConfig pulls it from the desktop
+  // bridge so the panel doesn't need a config prop threaded down.
+  const localHostConfig = doc?.kind === 'powerpoint' ? getDesktopLocalHostConfig() : undefined
 
   return (
     <Sheet modal={false} open={Boolean(doc)} onOpenChange={(open) => !open && onClose()}>
@@ -162,7 +174,15 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
                 {doc?.name ?? t('docPreview.defaultTitle')}
               </SheetTitle>
               <SheetDescription className="doc-preview-subtitle">
-                {doc ? t(doc.kind === 'word' ? 'docPreview.kind.word' : 'docPreview.kind.excel') : ''}
+                {doc
+                  ? t(
+                      doc.kind === 'word'
+                        ? 'docPreview.kind.word'
+                        : doc.kind === 'excel'
+                          ? 'docPreview.kind.excel'
+                          : 'docPreview.kind.powerpoint',
+                    )
+                  : ''}
               </SheetDescription>
             </div>
             <div className="doc-preview-zoom" role="group" aria-label={t('docPreview.zoom')}>
@@ -207,22 +227,28 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
         </SheetHeader>
         <div className="doc-preview-body">
           <div className="doc-preview-zoom-stage" style={{ zoom }}>
-            {doc ? (
-              doc.kind === 'word' ? (
-                <DocxPreview
-                  sourceKey={doc.sourceKey}
-                  loadBytes={doc.loadBytes}
-                  refreshKey={refreshKey}
-                  onStatus={setStatus}
-                />
-              ) : (
-                <XlsxPreview
-                  sourceKey={doc.sourceKey}
-                  loadBytes={doc.loadBytes}
-                  refreshKey={refreshKey}
-                  onStatus={setStatus}
-                />
-              )
+            {doc?.kind === 'word' ? (
+              <DocxPreview
+                sourceKey={doc.sourceKey}
+                loadBytes={doc.loadBytes}
+                refreshKey={refreshKey}
+                onStatus={setStatus}
+              />
+            ) : doc?.kind === 'excel' ? (
+              <XlsxPreview
+                sourceKey={doc.sourceKey}
+                loadBytes={doc.loadBytes}
+                refreshKey={refreshKey}
+                onStatus={setStatus}
+              />
+            ) : doc?.kind === 'powerpoint' && doc.localPath && localHostConfig ? (
+              <PptxPreview
+                sourceKey={doc.sourceKey}
+                localPath={doc.localPath}
+                config={localHostConfig}
+                refreshKey={refreshKey}
+                onStatus={setStatus}
+              />
             ) : null}
           </div>
           {doc && status === 'loading' ? (

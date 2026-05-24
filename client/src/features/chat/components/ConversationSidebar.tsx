@@ -4,13 +4,9 @@ import {
   IconChevronDown,
   IconDots,
   IconDownload,
-  IconFolderPlus,
-  IconFolderOpen,
-  IconFolders,
   IconLayoutSidebarLeftCollapse,
   IconLoader2,
   IconLogout,
-  IconMessageCircle,
   IconPencil,
   IconPin,
   IconPlus,
@@ -18,7 +14,6 @@ import {
   IconTool,
   IconUpload,
   IconWorld,
-  IconX,
 } from '@tabler/icons-react'
 import {
   AlertDialog,
@@ -68,13 +63,10 @@ export function ConversationSidebar({
   onImportLocalData,
   onTogglePinConversation,
   onRenameConversation,
-  onAddConversationToProject,
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
   onOpenSkills,
-  onOpenChats,
-  onNewProject,
   activeView = 'chat',
   agentSettings,
   onAgentSettingsChange,
@@ -89,29 +81,19 @@ export function ConversationSidebar({
   onImportLocalData: (file?: File) => void
   onTogglePinConversation: (conversationID: string) => void
   onRenameConversation: (conversationID: string, title: string) => void
-  onAddConversationToProject: (conversationID: string, projectName: string) => void
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
   onLogout?: () => void
   onOpenSkills?: () => void
-  onOpenChats?: () => void
   activeView?: 'chat' | 'skills'
   agentSettings?: Required<AgentSettings>
   onAgentSettingsChange?: (next: Required<AgentSettings>) => void
-  /** Click handler for the "项目" sidebar button. Codex-style: one click
-   *  opens the OS directory picker, then creates a fresh conversation
-   *  bound to the chosen directory. App.tsx owns the heavy lifting
-   *  (authorize + persist). Optional — when undefined the button stays
-   *  inert. */
-  onNewProject?: () => void
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
   const [renameConversationID, setRenameConversationID] = useState<string>()
-  const [projectConversationID, setProjectConversationID] = useState<string>()
   const [deleteConversationID, setDeleteConversationID] = useState<string>()
   const [renameTitle, setRenameTitle] = useState('')
-  const [projectName, setProjectName] = useState('')
   const [seenConversationVersions, setSeenConversationVersions] = useState<Record<string, string>>(readSeenConversationVersions)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -121,7 +103,6 @@ export function ConversationSidebar({
   const currentAgentSettings: Required<AgentSettings> = agentSettings ?? { memory: 'off', skills: 'off' }
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
-  const projectConversation = conversations.find((conversation) => conversation.id === projectConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
   const deleteConversationTitle = deleteConversation?.title ?? t('sidebar.dialog.currentConversation')
   const deleteMessageCount = deleteConversation?.messages.length ?? 0
@@ -130,15 +111,12 @@ export function ConversationSidebar({
   const matchesQuery = (conversation: Conversation) =>
     !normalizedQuery || conversation.title.toLowerCase().includes(normalizedQuery)
   const pinnedConversations = conversations.filter((conversation) => conversation.pinned && matchesQuery(conversation))
-  // Split unpinned conversations into Codex-style groups: chats (no project)
-  // and projects (project bound to a workspace at creation). Pinned ones
-  // stay above both groups regardless of kind — matches the previous
-  // behavior so power users who pinned a project don't lose it.
-  const recentChats = conversations.filter(
-    (conversation) => !conversation.pinned && !conversation.project && matchesQuery(conversation),
-  )
-  const recentProjects = conversations.filter(
-    (conversation) => !conversation.pinned && Boolean(conversation.project) && matchesQuery(conversation),
+  // Single unified list — projects (workspace-bound conversations) and casual
+  // chats live together, sorted by updatedAt desc (handled upstream by
+  // LocalConversationStore.list). The composer's project chip is now how
+  // users tell a workspace-bound chat apart from a free-form one.
+  const recentConversations = conversations.filter(
+    (conversation) => !conversation.pinned && matchesQuery(conversation),
   )
 
   useEffect(() => {
@@ -220,15 +198,6 @@ export function ConversationSidebar({
               <IconPencil />
               <span>{t('sidebar.actions.rename')}</span>
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                setProjectConversationID(conversation.id)
-                setProjectName(conversation.project?.name ?? '')
-              }}
-            >
-              <IconFolderPlus />
-              <span>{t('sidebar.actions.addToProject')}</span>
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => onExportConversation(conversation.id)}>
               <IconDownload />
@@ -264,21 +233,16 @@ export function ConversationSidebar({
         </div>
       </div>
 
-      <Button className="sidebar-newchat" aria-label={t('app.newChat')} onClick={onNewConversation}>
-        <IconPlus size={15} />
-        <span>{t('app.newChat')}</span>
-        <span className="kbd">⌘N</span>
-      </Button>
-
       <div className="sidebar-section">
-        <div className="sidebar-section-label">{t('sidebar.workspace')}</div>
         <button
-          className={`sidebar-item${activeView === 'skills' ? '' : ' active'}`}
+          className="sidebar-item"
           type="button"
-          onClick={() => onOpenChats?.()}
+          aria-label={t('app.newChat')}
+          onClick={onNewConversation}
         >
-          <IconMessageCircle size={14} />
-          <span>{t('sidebar.chats')}</span>
+          <IconPlus size={14} />
+          <span>{t('app.newChat')}</span>
+          <span className="sidebar-item-hint">⌘N</span>
         </button>
         <button
           className={`sidebar-item${activeView === 'skills' ? ' active' : ''}`}
@@ -287,16 +251,6 @@ export function ConversationSidebar({
         >
           <IconTool size={14} />
           <span>{t('sidebar.skills')}</span>
-        </button>
-        <button
-          className="sidebar-item"
-          type="button"
-          disabled={!onNewProject}
-          onClick={() => onNewProject?.()}
-          title={t('sidebar.projects.newTooltip')}
-        >
-          <IconFolders size={14} />
-          <span>{t('sidebar.projects')}</span>
         </button>
       </div>
 
@@ -309,26 +263,11 @@ export function ConversationSidebar({
 
       <div className="sidebar-section conversation-list">
         <div className="sidebar-section-label">{t('sidebar.section.chats')}</div>
-        {recentChats.length ? (
-          recentChats.map(renderConversationRow)
+        {recentConversations.length ? (
+          recentConversations.map(renderConversationRow)
         ) : (
           <div className="sidebar-empty">
-            {normalizedQuery
-              ? t('sidebar.searchEmpty')
-              : conversations.length
-                ? t('sidebar.emptyChats')
-                : t('sidebar.empty')}
-          </div>
-        )}
-      </div>
-
-      <div className="sidebar-section conversation-list project-list">
-        <div className="sidebar-section-label">{t('sidebar.section.projects')}</div>
-        {recentProjects.length ? (
-          recentProjects.map(renderConversationRow)
-        ) : (
-          <div className="sidebar-empty">
-            {normalizedQuery ? t('sidebar.searchEmpty') : t('sidebar.emptyProjects')}
+            {normalizedQuery ? t('sidebar.searchEmpty') : t('sidebar.empty')}
           </div>
         )}
       </div>
@@ -490,42 +429,6 @@ export function ConversationSidebar({
               </Button>
               <Button type="submit" disabled={!renameTitle.trim()}>
                 {t('sidebar.rename.save')}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={Boolean(projectConversation)} onOpenChange={(open) => !open && setProjectConversationID(undefined)}>
-        <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
-          <DialogHeader>
-            <DialogTitle>{t('sidebar.project.title')}</DialogTitle>
-            <DialogDescription>
-              {t('sidebar.project.description', { title: projectConversation?.title ?? t('sidebar.dialog.currentConversation') })}
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="conversation-action-form"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!projectConversation || !projectName.trim()) {
-                return
-              }
-              onAddConversationToProject(projectConversation.id, projectName.trim())
-              setProjectConversationID(undefined)
-            }}
-          >
-            <label htmlFor="conversation-project-input">{t('sidebar.project.nameLabel')}</label>
-            <Input
-              id="conversation-project-input"
-              value={projectName}
-              onChange={(event) => setProjectName(event.currentTarget.value)}
-            />
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setProjectConversationID(undefined)}>
-                {t('sidebar.dialog.close')}
-              </Button>
-              <Button type="submit" disabled={!projectName.trim()}>
-                {t('sidebar.project.save')}
               </Button>
             </DialogFooter>
           </form>

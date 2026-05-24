@@ -520,6 +520,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # it reads response.arrayBuffer() directly.
         return FileResponse(resolved, filename=resolved.name)
 
+    @app.get("/local/v1/pptx-outline")
+    async def get_pptx_outline(
+        path: str = Query(..., description="Absolute .pptx path inside an authorized workspace"),
+    ) -> dict[str, Any]:
+        """Return the slide outline JSON for a .pptx file.
+
+        Used by the right-side DocPreviewPanel's PptxPreview component
+        — pptx has no mature pure-browser renderer, so the panel renders
+        a structured outline (title + bullets + notes per slide) here
+        rather than embedding a viewer in iframe.
+
+        Gated by `local_workspaces`, same as `/workspace-files`. The
+        path's parent chain must be inside a previously-authorized
+        workspace. Calls the shared `_outline_pptx` helper that
+        `office.outline` and `office.read_slides` also use, so the
+        JSON shape is identical to those tools.
+        """
+        if not path:
+            raise HTTPException(status_code=400, detail="path required")
+        resolved = Path(os.path.abspath(os.path.expanduser(path))).resolve()
+        try:
+            if not resolved.is_file():
+                raise HTTPException(status_code=404, detail="file not found")
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
+        if resolved.suffix.lower() != ".pptx":
+            raise HTTPException(status_code=400, detail="path must point to a .pptx file")
+        store: LocalStore = app.state.store
+        workspaces = await store.list_workspaces()
+        roots = [
+            Path(os.path.abspath(os.path.expanduser(ws["path"]))).resolve() for ws in workspaces
+        ]
+        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            raise HTTPException(
+                status_code=403,
+                detail="path is not inside any authorized workspace; call workspace.open first",
+            )
+        # Defer the import so the daemon boot path doesn't pay for
+        # python-pptx unless someone actually previews a deck.
+        from .tools.office import _outline_pptx
+
+        try:
+            return _outline_pptx(str(resolved))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"failed to outline .pptx: {exc.__class__.__name__}: {exc}",
+            ) from exc
+
     @app.get("/local/v1/runs/{run_id}/diagnostics", response_model=LocalRunDiagnostics)
     async def run_diagnostics(run_id: str) -> dict[str, Any]:
         """Return the full `LocalRunDiagnostics` payload.

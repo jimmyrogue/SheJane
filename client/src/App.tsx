@@ -28,7 +28,7 @@ import { findConversationPendingQuestion } from './features/chat/pendingQuestion
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef, Conversation, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
   cancelLocalRun,
@@ -232,6 +232,13 @@ function AppContent() {
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
   const [pendingWorkspace, setPendingWorkspace] = useState<ConversationWorkspace | undefined>()
+  /** Project (= workspace) the user picked in the composer before a
+   *  conversation existed. Drained when `sendMessage` creates the
+   *  first conversation; cleared on new-chat / select. Mirrors the
+   *  `pendingWorkspace` slot — they're set together when the picker
+   *  resolves, since "project" in this product means "this chat is
+   *  bound to that workspace directory". */
+  const [pendingProject, setPendingProject] = useState<ConversationProject | undefined>()
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
@@ -261,7 +268,12 @@ function AppContent() {
       kind: ref.kind,
       name: ref.name,
       tooltip: ref.path,
+      // PptxPreview doesn't actually need the bytes (it calls the
+      // outline endpoint), but the panel API still requires a loader
+      // — point at fetchWorkspaceFile for consistency; if a future
+      // "download" affordance lands it can reuse this.
       loadBytes: () => fetchWorkspaceFile(ref.path, cfg),
+      localPath: ref.path,
     })
     setDocPreviewRefreshKey((k) => k + 1)
   }
@@ -299,6 +311,17 @@ function AppContent() {
     writeSidebarCollapsed(sidebarCollapsed)
   }, [sidebarCollapsed])
 
+  /** Mirror the visible sidebar width onto `:root` so the sonner
+   *  toaster — which portals to <body> and therefore can't inherit the
+   *  `--sidebar-width` set on `.app-shell` — can offset its
+   *  horizontal centering to land over the chat area, not the whole
+   *  viewport. Collapsed sidebar → 0px; expanded → the same
+   *  clamp(176, sidebarWidth, 340) used in styles.css. */
+  useEffect(() => {
+    const visible = sidebarCollapsed ? 0 : Math.min(340, Math.max(176, sidebarWidth))
+    document.documentElement.style.setProperty('--toast-center-offset', `${visible / 2}px`)
+  }, [sidebarWidth, sidebarCollapsed])
+
   /** Global Cmd/Ctrl+N → start a fresh conversation. Bypasses the
    *  OS-level "new window" intent because in this app it's a chat
    *  shell, not a browser. setState fns are stable across renders so
@@ -316,6 +339,7 @@ function AppContent() {
       navigationVersionRef.current += 1
       setActiveConversationID(undefined)
       setPendingWorkspace(undefined)
+      setPendingProject(undefined)
       setDraft('')
       setMainView('chat')
     }
@@ -330,6 +354,7 @@ function AppContent() {
       navigationVersionRef.current += 1
       setActiveConversationID(undefined)
       setPendingWorkspace(undefined)
+      setPendingProject(undefined)
       setDraft('')
       setMainView('chat')
     })
@@ -397,6 +422,7 @@ function AppContent() {
     setAttachedDocumentID(undefined)
     setAttachedPreview(undefined)
     setPendingWorkspace(undefined)
+    setPendingProject(undefined)
     setDocuments([])
   }, [auth?.user?.id])
 
@@ -504,6 +530,7 @@ function AppContent() {
     navigationVersionRef.current += 1
     setActiveConversationID(undefined)
     setPendingWorkspace(undefined)
+    setPendingProject(undefined)
     setDraft('')
     setMainView('chat')
   }
@@ -511,6 +538,7 @@ function AppContent() {
   function selectConversation(id: string) {
     navigationVersionRef.current += 1
     setPendingWorkspace(undefined)
+    setPendingProject(undefined)
     setActiveConversationID(id)
     setMainView('chat')
   }
@@ -625,12 +653,14 @@ function AppContent() {
 
     const timestamp = new Date().toISOString()
     const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
-    // Project conversations carry their workspace from the moment they're
-    // created (see startNewProjectConversation). The only path that needs
-    // late binding is the legacy "authorize during chat" flow, which sets
-    // pendingWorkspace.
+    // Composer's project picker can run before the first message, in
+    // which case the workspace + project sit in pending* slots until
+    // we materialize the conversation here.
     if (!conversation.workspace && pendingWorkspace) {
       conversation.workspace = { ...pendingWorkspace }
+    }
+    if (!conversation.project && pendingProject) {
+      conversation.project = { ...pendingProject }
     }
     const userMessage: ChatMessage = {
       id: createLocalID('msg'),
@@ -1019,17 +1049,24 @@ function AppContent() {
     return selectedPath
   }
 
-  /** Codex-style "new project" — one click → directory picker → empty
-   *  conversation bound to that directory. The conversation goes into the
-   *  Projects group in the sidebar (because `project` is set), and its
-   *  workspace is the chosen directory (already authorized via
-   *  workspace.open). The conversation title defaults to the directory's
-   *  basename; the user can rename it later via the row's "重命名" menu.
+  /** Composer's project-picker handler — opens the OS directory picker
+   *  and binds the chosen workspace as this chat's project. Two paths:
    *
-   *  Returns silently if the user cancels the OS picker. Surfaces a toast
-   *  on daemon-side errors (e.g. not yet paired).
-   */
-  async function startNewProjectConversation() {
+   *  - **No active conversation yet** (user clicked "新对话" but hasn't
+   *    sent the first message): stash the project + workspace as
+   *    pending. The next `sendMessage` will pick them up when it
+   *    creates the conversation, so the user sees the locked chip in
+   *    the composer immediately without us writing an empty chat to
+   *    IndexedDB.
+   *
+   *  - **Active conversation exists**: bind workspace + project to it
+   *    in-place. Idempotent enough — but the composer-side guard
+   *    (locked chip when `projectName` is set) means this should not
+   *    fire twice for one conversation.
+   *
+   *  Returns silently if the user cancels the OS picker. Surfaces a
+   *  toast on daemon-side errors (e.g. not yet paired). */
+  async function selectProjectForActiveConversation() {
     if (!localHostConfig?.token) {
       setNotice(t('app.notice.localHostNotPairedAuthorize'))
       return
@@ -1040,31 +1077,23 @@ function AppContent() {
       const ws = await authorizeLocalWorkspace(picked, localHostConfig)
       setAuthorizedWorkspaces((items) => upsertWorkspace(items, ws))
       const name = pathBasename(ws.path) || ws.label || ws.path
-      const timestamp = new Date().toISOString()
-      const conversation: Conversation = {
-        id: createLocalID('conv'),
-        title: name,
-        archived: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        messages: [],
-        project: { name },
-        workspace: {
-          path: ws.path,
-          label: ws.label,
-          authorized: true,
-          authorizationId: ws.id,
-        },
+      const workspace: ConversationWorkspace = {
+        path: ws.path,
+        label: ws.label,
+        authorized: true,
+        authorizationId: ws.id,
       }
-      await localData.save(conversation)
-      // Refresh the conversation list so the new row appears in the
-      // Projects section immediately, then drop the user into it.
-      const items = await localData.list()
-      setConversations(items)
-      setActiveConversationID(conversation.id)
-      setMainView('chat')
-      setDraft('')
-      setNotice(t('project.notice.created', { name }))
+      const project: ConversationProject = { name }
+      if (activeIDRef.current) {
+        await updateConversationMetadata(activeIDRef.current, (item) => {
+          item.project = project
+          item.workspace = workspace
+        })
+      } else {
+        setPendingWorkspace(workspace)
+        setPendingProject(project)
+      }
+      setNotice(t('project.notice.bound', { name }))
     } catch (err) {
       setNotice(err instanceof Error ? err.message : t('app.notice.workspaceAuthorizeFailed'))
     }
@@ -1164,19 +1193,6 @@ function AppContent() {
     }
   }
 
-  async function addConversationToProject(conversationID: string, projectName: string) {
-    const nextProjectName = projectName.trim()
-    if (!nextProjectName) {
-      return
-    }
-    const conversation = await updateConversationMetadata(conversationID, (item) => {
-      item.project = { name: nextProjectName }
-    })
-    if (conversation) {
-      setNotice(t('app.notice.conversationAddedToProject', { title: conversation.title, project: nextProjectName }))
-    }
-  }
-
   async function deleteConversationData(conversationID: string) {
     const conversation = await localData.get(conversationID)
     if (!conversation) {
@@ -1187,6 +1203,7 @@ function AppContent() {
     await localData.delete(conversationID)
     if (deletedActive) {
       setPendingWorkspace(undefined)
+      setPendingProject(undefined)
     }
     await refreshConversations(deletedActive ? undefined : activeIDRef.current, {
       preserveEmptyActive: !deletedActive && !activeIDRef.current,
@@ -1351,11 +1368,9 @@ function AppContent() {
             onImportLocalData={(file) => void importLocalData(file)}
             onTogglePinConversation={(conversationID) => void togglePinConversation(conversationID)}
             onRenameConversation={(conversationID, title) => void renameConversation(conversationID, title)}
-            onAddConversationToProject={(conversationID, projectName) => void addConversationToProject(conversationID, projectName)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
             onOpenSkills={() => setMainView('skills')}
-            onOpenChats={() => setMainView('chat')}
             activeView={mainView}
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
@@ -1365,7 +1380,6 @@ function AppContent() {
               setAgentSettings(next)
               writeAgentSettings(next)
             }}
-            onNewProject={() => void startNewProjectConversation()}
           />
 
           <div
@@ -1495,6 +1509,8 @@ function AppContent() {
               listSkills={() => (localHostConfig ? listInstalledSkills(localHostConfig) : Promise.resolve([]))}
               mode={mode}
               onModeChange={changeMode}
+              projectName={activeConversation?.project?.name ?? pendingProject?.name}
+              onSelectProject={() => void selectProjectForActiveConversation()}
               />
             </div>
           </section>
@@ -1643,6 +1659,7 @@ function appendLocalRunEvent(
  *  rather than the untouched original. Keep this list in sync with
  *  `local_host/tools/office.py:OFFICE_WRITE_TOOLS`. */
 const OFFICE_WRITE_TOOL_NAMES = new Set<string>([
+  // Phase 2 — docx/xlsx
   'office.find_replace',
   'office.insert_paragraph',
   'office.update_paragraph',
@@ -1653,6 +1670,16 @@ const OFFICE_WRITE_TOOL_NAMES = new Set<string>([
   'office.set_cell_format',
   'office.merge_cells',
   'office.add_row',
+  // Phase 3 — pptx
+  'office.create_pptx',
+  'office.add_slide',
+  'office.update_slide',
+  'office.delete_slide',
+  'office.reorder_slides',
+  'office.set_slide_title',
+  'office.set_slide_bullets',
+  'office.set_slide_notes',
+  'office.add_image_to_slide',
 ])
 
 /** Inspect a `tool.completed` payload and return a LocalOfficeFileRef
@@ -1674,12 +1701,15 @@ function detectOfficeFileEdited(payload: AgentRunEvent['payload']): LocalOfficeF
   const editedPath = String(resultObj.edited_path ?? '')
   if (!editedPath) return null
   const kindRaw = String(resultObj.kind ?? '')
+  const lower = editedPath.toLowerCase()
   const kind: LocalOfficeFileRef['kind'] =
-    kindRaw === 'word' || kindRaw === 'excel'
+    kindRaw === 'word' || kindRaw === 'excel' || kindRaw === 'powerpoint'
       ? kindRaw
-      : editedPath.toLowerCase().endsWith('.xlsx')
+      : lower.endsWith('.xlsx')
         ? 'excel'
-        : 'word'
+        : lower.endsWith('.pptx')
+          ? 'powerpoint'
+          : 'word'
   const name = editedPath.split(/[\\/]/).pop() || editedPath
   return { path: editedPath, kind, name }
 }

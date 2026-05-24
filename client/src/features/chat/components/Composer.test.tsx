@@ -18,11 +18,15 @@ function Harness({
   onSend = vi.fn(),
   listSkills = vi.fn().mockResolvedValue(sampleSkills),
   onDraft = vi.fn(),
+  projectName,
+  onSelectProject,
 }: {
   initialDraft?: string
   onSend?: () => void
   listSkills?: () => Promise<InstalledSkill[]>
   onDraft?: (value: string) => void
+  projectName?: string
+  onSelectProject?: () => void
 }) {
   const [draft, setDraft] = useState(initialDraft)
   return (
@@ -41,6 +45,8 @@ function Harness({
         listSkills={listSkills}
         mode="auto"
         onModeChange={vi.fn()}
+        projectName={projectName}
+        onSelectProject={onSelectProject}
       />
     </I18nProvider>
   )
@@ -80,5 +86,22 @@ describe('Composer (Lexical skill editor)', () => {
     render(<Harness onSend={onSend} />)
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter', shiftKey: true })
     expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('shows "添加项目" button when no project is bound, fires onSelectProject on click', () => {
+    const onSelectProject = vi.fn()
+    render(<Harness onSelectProject={onSelectProject} />)
+    const button = screen.getByRole('button', { name: '添加项目' })
+    fireEvent.click(button)
+    expect(onSelectProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('locks into a project chip (non-button) when a project is bound', () => {
+    const onSelectProject = vi.fn()
+    render(<Harness projectName="客户A" onSelectProject={onSelectProject} />)
+    // Project name is visible on the chip…
+    expect(screen.getByText('客户A')).toBeInTheDocument()
+    // …and the "添加项目" affordance is gone.
+    expect(screen.queryByRole('button', { name: '添加项目' })).not.toBeInTheDocument()
   })
 })

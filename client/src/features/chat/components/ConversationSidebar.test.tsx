@@ -52,44 +52,41 @@ describe('ConversationSidebar', () => {
     expect(screen.queryByLabelText('需要用户操作')).not.toBeInTheDocument()
   })
 
-  it('renders pinned conversations above unpinned chats, and splits chats vs projects', () => {
+  it('puts pinned conversations above the unified chats list (no project split)', () => {
     const { container } = renderSidebar([
       emptyConversation('recent-chat', '普通对话'),
       emptyConversation('pinned-chat', '固定对话', { pinned: true }),
       emptyConversation('project-chat', '我的项目', { project: { name: '我的项目' } }),
     ])
 
-    // The pinned section + the two unpinned section labels render in
-    // visual order. Pull them by their CSS class so they're not
-    // ambiguous with the same-text top tab buttons. The first entry
-    // ('工作区') belongs to the top-level Workspace section that hosts
-    // the Chats/Tools/Projects tab buttons — we just check it comes
-    // before the conversation-list labels.
+    // After the redesign the top section is unlabeled (新对话 + 技能
+    // sit as parallel nav items); the only labeled segments below are
+    // "已固定" (when there are pins) and "对话" (the unified list — no
+    // more "项目" split). Projects and casual chats share that one
+    // list and are sorted purely by recency.
     const sectionLabels = Array.from(container.querySelectorAll('.sidebar-section-label')) as HTMLElement[]
     const labelTexts = sectionLabels.map((el) => el.textContent?.trim())
-    expect(labelTexts).toEqual(['工作区', '已固定', '对话', '项目'])
+    expect(labelTexts).toEqual(['已固定', '对话'])
 
     const pinnedConversation = screen.getByRole('button', { name: '固定对话' })
     const recentConversation = screen.getByRole('button', { name: '普通对话' })
     const projectConversation = screen.getByRole('button', { name: '我的项目' })
 
-    // pinned label → pinned row → chats label → chat row → projects label → project row
-    expect(sectionLabels[1].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(pinnedConversation.compareDocumentPosition(sectionLabels[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[2].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(recentConversation.compareDocumentPosition(sectionLabels[3]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[3].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 已固定 label → pinned row → 对话 label → both unpinned rows
+    expect(sectionLabels[0].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pinnedConversation.compareDocumentPosition(sectionLabels[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 普通对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 我的项目')).toHaveLength(1)
   })
 
-  it('exposes row actions for pinning, renaming, adding to a project, and deleting', async () => {
+  it('exposes row actions for pinning, renaming, and deleting', async () => {
     const handlers = {
       onTogglePinConversation: vi.fn(),
       onRenameConversation: vi.fn(),
-      onAddConversationToProject: vi.fn(),
       onDeleteConversation: vi.fn(),
     }
     renderSidebar([emptyConversation('target-chat', '操作目标')], undefined, handlers)
@@ -104,14 +101,14 @@ describe('ConversationSidebar', () => {
     fireEvent.click(screen.getByText('保存名称'))
     expect(handlers.onRenameConversation).toHaveBeenCalledWith('target-chat', '新的标题')
 
+    // After the redesign, project assignment lives on the composer's
+    // project picker — not as a row action — so the dropdown no
+    // longer carries an "添加到项目" item. The remaining items still
+    // fire as expected.
     openConversationActions('操作目标')
-    fireEvent.click(await screen.findByText('添加到项目'))
-    fireEvent.change(await screen.findByLabelText('项目名称'), { target: { value: '客户项目' } })
-    fireEvent.click(screen.getByRole('button', { name: '添加到项目' }))
-    expect(handlers.onAddConversationToProject).toHaveBeenCalledWith('target-chat', '客户项目')
-
-    openConversationActions('操作目标')
-    fireEvent.click(await screen.findByText('删除'))
+    const deleteItem = await screen.findByText('删除')
+    expect(screen.queryByText('添加到项目')).not.toBeInTheDocument()
+    fireEvent.click(deleteItem)
     const deleteDialog = await screen.findByRole('alertdialog', { name: '删除这个对话？' })
     expect(within(deleteDialog).getByText('操作目标')).toBeInTheDocument()
     expect(within(deleteDialog).getByText(/全部 0 条消息将被永久删除/)).toBeInTheDocument()
@@ -146,7 +143,6 @@ describe('ConversationSidebar', () => {
           onImportLocalData={vi.fn()}
           onTogglePinConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
         />
@@ -188,7 +184,6 @@ describe('ConversationSidebar', () => {
           onImportLocalData={vi.fn()}
           onTogglePinConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
         />
@@ -217,7 +212,6 @@ describe('ConversationSidebar', () => {
           onImportLocalData={vi.fn()}
           onTogglePinConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
           agentSettings={{ memory: 'off', skills: 'off' }}
@@ -250,7 +244,6 @@ describe('ConversationSidebar', () => {
           onImportLocalData={vi.fn()}
           onTogglePinConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
           agentSettings={{ memory: 'off', skills: 'off' }}
@@ -277,8 +270,11 @@ describe('ConversationSidebar', () => {
     expect(onOpenSkills).toHaveBeenCalledTimes(1)
   })
 
-  it('marks the active workspace tab and switches back to chats from the chats tab', () => {
-    const onOpenChats = vi.fn()
+  it('marks the Skills nav as active when activeView is "skills"', () => {
+    // After the redesign the only persistent workspace nav item is
+    // Skills (the "对话" / "项目" buttons are gone — switching back to
+    // chat is done by clicking any conversation row, which fires
+    // onSelectConversation in App.tsx and also sets mainView='chat').
     render(
       <I18nProvider>
         <ConversationSidebar
@@ -290,24 +286,15 @@ describe('ConversationSidebar', () => {
           onImportLocalData={vi.fn()}
           onTogglePinConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onAddConversationToProject={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
           onOpenSkills={vi.fn()}
-          onOpenChats={onOpenChats}
           activeView="skills"
         />
       </I18nProvider>,
     )
-    // Top tab buttons (not the section labels) — use the button role to
-    // disambiguate from the same-text section header that now also renders
-    // "对话" in the empty-state.
     const skillsItem = screen.getByRole('button', { name: '技能' })
-    const chatsItem = screen.getByRole('button', { name: '对话' })
     expect(skillsItem.className).toContain('active')
-    expect(chatsItem.className).not.toContain('active')
-    fireEvent.click(chatsItem)
-    expect(onOpenChats).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -342,7 +329,6 @@ function sidebarElement(
         onImportLocalData={vi.fn()}
         onTogglePinConversation={handlers.onTogglePinConversation ?? vi.fn()}
         onRenameConversation={handlers.onRenameConversation ?? vi.fn()}
-        onAddConversationToProject={handlers.onAddConversationToProject ?? vi.fn()}
         onDeleteConversation={handlers.onDeleteConversation ?? vi.fn()}
         onCollapseSidebar={vi.fn()}
         onOpenSkills={handlers.onOpenSkills ?? vi.fn()}
@@ -354,7 +340,6 @@ function sidebarElement(
 interface ConversationSidebarHandlers {
   onTogglePinConversation: (conversationID: string) => void
   onRenameConversation: (conversationID: string, title: string) => void
-  onAddConversationToProject: (conversationID: string, projectName: string) => void
   onDeleteConversation: (conversationID: string) => void
   onOpenSkills: () => void
 }
