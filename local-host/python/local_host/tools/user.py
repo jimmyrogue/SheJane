@@ -26,10 +26,27 @@ from langgraph.types import interrupt
 def user_ask(question: str, options: list[str] | None = None) -> str:
     """Ask the human a clarifying question and wait for their answer.
 
-    Call this whenever you need information from the user to make
-    progress. The client renders the question as a clickable card
-    above the composer with the supplied options as buttons — much
-    better UX than writing the question as markdown in your reply.
+    CALL THIS *BEFORE* OTHER TOOLS when the user's request is missing
+    a key input. The full "input audit" rule lives in the developer
+    system prompt under "动手前的输入盘点"; in short — list what your
+    answer needs, list what you have, ask for the gap before reaching
+    for web.search / read_file / image.generate.
+
+    Common cases where this tool runs first:
+      * "今天天气怎么样"   → ask city BEFORE web.search
+      * "总结这个文档"     → ask file path BEFORE read_file
+      * "帮我写个 PPT"     → ask topic / audience BEFORE drafting
+      * "搜一下最新进展"   → ask the actual subject BEFORE web.search
+      * "帮我订机票"       → ask origin / destination / date
+
+    Skipping this and calling web.search / read_file / image.generate
+    with incomplete inputs wastes user credits, clutters the context
+    with irrelevant results, and forces you to ask anyway one turn
+    later — a real failure mode this codebase has shipped.
+
+    The client renders the question as a clickable card above the
+    composer with the supplied options as buttons — much better UX
+    than writing the question as markdown in your reply.
 
     HARD RULES (see "向用户澄清" in the developer system prompt for
     full guidance):
