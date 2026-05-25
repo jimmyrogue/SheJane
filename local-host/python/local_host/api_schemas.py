@@ -344,3 +344,44 @@ class ClearMemoryResponse(BaseModel):
 
     cleared: Literal[True] = True
     deleted_count: int
+
+
+# ---------------------------------------------------------------------------
+# MCP servers (discovery only — we never install / manage these)
+# ---------------------------------------------------------------------------
+
+
+class McpServerInfo(BaseModel):
+    """One MCP server we discovered on the user's machine.
+
+    `name` is the unique key the user (or installer tool) gave it.
+    `transport` is the normalized transport — `stdio` / `streamable_http`
+    / `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are
+    descriptive only — we never echo env *values* (could be secrets).
+    `source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`
+    / `env` — used by the UI to group servers by provenance.
+    `source_path` is the absolute path of the config file the entry was
+    read from, displayed in the settings panel so the user knows where
+    to go edit it.
+    """
+
+    name: str
+    transport: str
+    source: str
+    source_path: str
+    command: str | None = None
+    args: list[str] = []
+    url: str | None = None
+    env_keys: list[str] = []
+    cwd: str | None = None
+
+
+class McpServerCatalog(BaseModel):
+    """GET /local/v1/mcp-servers — the full list of discovered servers
+    plus the set of sources we scanned. `sources` lets the UI render
+    empty-state hints like "no Claude Desktop config found" even when
+    no server came from there.
+    """
+
+    servers: list[McpServerInfo]
+    sources_scanned: list[str]

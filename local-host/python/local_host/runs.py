@@ -278,12 +278,21 @@ class RunCoordinator:
             turn_count = len(kept_messages) + 1
 
             run_settings = self._settings_overrides.get(run_id) or {}
-            # Defaults: memory + skills both ON. The client's agent
-            # settings panel has them enabled by default; legacy callers
-            # (curl, tests) that don't send any settings inherit the
-            # same default. Only an explicit "off" disables either.
+            # Defaults: memory + skills + mcp all ON. The client's
+            # agent settings panel has them enabled by default; legacy
+            # callers (curl, tests) that don't send any settings
+            # inherit the same default. Only an explicit "off" disables.
             memory_enabled = str(run_settings.get("memory", "on")).lower() != "off"
             skills_enabled = str(run_settings.get("skills", "on")).lower() != "off"
+            mcp_enabled = str(run_settings.get("mcp", "on")).lower() != "off"
+            # Per-server opt-out from the MCP tab. The client persists
+            # a list of names the user disabled and ships it on every
+            # run. Defensive coercion: drop non-strings and dedupe so
+            # a buggy renderer can't crash the loop.
+            raw_disabled = run_settings.get("mcp_disabled") or []
+            mcp_disabled_servers: set[str] = {
+                str(name) for name in raw_disabled if isinstance(name, str)
+            }
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -296,6 +305,8 @@ class RunCoordinator:
                 dropped_history_count=dropped_history_count,
                 memory_enabled=memory_enabled,
                 skills_enabled=skills_enabled,
+                mcp_enabled=mcp_enabled,
+                mcp_disabled_servers=mcp_disabled_servers or None,
             )
             config = {
                 "configurable": {"thread_id": run_id},

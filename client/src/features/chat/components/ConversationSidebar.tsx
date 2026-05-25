@@ -9,6 +9,7 @@ import {
   IconPencil,
   IconPin,
   IconPlus,
+  IconServer,
   IconSettings,
   IconTrash,
   IconTool,
@@ -67,6 +68,7 @@ export function ConversationSidebar({
   onCollapseSidebar,
   onLogout,
   onOpenSkills,
+  onOpenMcp,
   activeView = 'chat',
   agentSettings,
   onAgentSettingsChange,
@@ -86,7 +88,8 @@ export function ConversationSidebar({
   onCollapseSidebar: () => void
   onLogout?: () => void
   onOpenSkills?: () => void
-  activeView?: 'chat' | 'skills'
+  onOpenMcp?: () => void
+  activeView?: 'chat' | 'skills' | 'mcp'
   agentSettings?: Required<AgentSettings>
   onAgentSettingsChange?: (next: Required<AgentSettings>) => void
   /** Wipe every persisted note in the agent's long-term memory namespace.
@@ -105,11 +108,18 @@ export function ConversationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
-  // Memory defaults ON to match the new client default; the daemon also
-  // treats a missing `settings.memory` as on. Keep both ends aligned.
+  // Memory + skills + MCP default ON to match the client default; the
+  // daemon also treats a missing `settings.*` as on. Keep both ends
+  // aligned.
   const memoryEnabled = (agentSettings?.memory ?? 'on') === 'on'
-  const skillsEnabled = (agentSettings?.skills ?? 'off') === 'on'
-  const currentAgentSettings: Required<AgentSettings> = agentSettings ?? { memory: 'on', skills: 'off' }
+  const skillsEnabled = (agentSettings?.skills ?? 'on') === 'on'
+  const mcpEnabled = (agentSettings?.mcp ?? 'on') === 'on'
+  const currentAgentSettings: Required<AgentSettings> = agentSettings ?? {
+    memory: 'on',
+    skills: 'on',
+    mcp: 'on',
+    mcpDisabled: [],
+  }
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
@@ -261,6 +271,14 @@ export function ConversationSidebar({
           <IconTool size={14} />
           <span>{t('sidebar.skills')}</span>
         </button>
+        <button
+          className={`sidebar-item${activeView === 'mcp' ? ' active' : ''}`}
+          type="button"
+          onClick={() => onOpenMcp?.()}
+        >
+          <IconServer size={14} />
+          <span>{t('sidebar.mcp')}</span>
+        </button>
       </div>
 
       {pinnedConversations.length ? (
@@ -380,6 +398,25 @@ export function ConversationSidebar({
                   onAgentSettingsChange?.({
                     ...currentAgentSettings,
                     skills: skillsEnabled ? 'off' : 'on',
+                  })
+                }
+              />
+            </div>
+            <div className="agent-settings-card-row">
+              <div className="agent-settings-card-copy">
+                <div className="agent-settings-card-label">{t('sidebar.agentSettings.mcp.label')}</div>
+                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.mcp.hint')}</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={mcpEnabled}
+                aria-label={t('sidebar.agentSettings.mcp.label')}
+                className="agent-settings-switch"
+                onClick={() =>
+                  onAgentSettingsChange?.({
+                    ...currentAgentSettings,
+                    mcp: mcpEnabled ? 'off' : 'on',
                   })
                 }
               />

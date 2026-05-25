@@ -40,6 +40,8 @@ from .api_schemas import (
     LocalRunDiagnostics,
     LocalWorkspaceAuthorization,
     LocalWorkspaceDiagnosis,
+    McpServerCatalog,
+    McpServerInfo,
     PermissionResolution,
     QuestionAnswer,
     ResolvePermissionRequest,
@@ -787,6 +789,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if len(items) < page_size:
                 break
         return {"cleared": True, "deleted_count": deleted}
+
+    @app.get("/local/v1/mcp-servers", response_model=McpServerCatalog)
+    async def list_mcp_servers() -> McpServerCatalog:
+        """Catalog of every MCP server we discovered across the user's
+        machine. Pure read — we never start, install, or modify these
+        servers. The user manages them through whatever tool they
+        prefer (Claude Desktop, Cursor, Codex, or our own
+        `~/.shejane/mcp-servers.json`), and the daemon picks them up
+        on the next agent boot.
+
+        `sources_scanned` reports the source labels we attempted to
+        read (regardless of whether the file existed or had servers),
+        so the UI can render section headers like "Cursor — no
+        config found at ~/.cursor/mcp.json" instead of silently
+        hiding the section.
+        """
+        from .config import get_settings
+        from .tools.mcp import _candidate_source_files, discover_servers
+
+        settings = get_settings()
+        discovered = discover_servers(settings.data_dir)
+        # `_candidate_source_files` returns the full ordered list of
+        # sources we'd look at — perfect for "what did we try?". We
+        # always include "env" so the UI can call it out when the user
+        # has JIANDANLY_LOCAL_MCP_SERVERS set.
+        sources_scanned: list[str] = ["env"]
+        for src in _candidate_source_files(settings.data_dir):
+            if src.source not in sources_scanned:
+                sources_scanned.append(src.source)
+        servers = [
+            McpServerInfo(
+                name=srv.name,
+                transport=srv.config.get("transport", "stdio"),
+                source=srv.source,
+                source_path=srv.source_path,
+                command=srv.config.get("command"),
+                args=list(srv.config.get("args", []) or []),
+                url=srv.config.get("url"),
+                # Never leak env *values* — only the keys, so the UI
+                # can show "needs API_KEY, TAVILY_KEY" without exposing
+                # secrets that were copy-pasted in.
+                env_keys=sorted(list((srv.config.get("env") or {}).keys())),
+                cwd=srv.config.get("cwd"),
+            )
+            for srv in discovered
+        ]
+        return McpServerCatalog(servers=servers, sources_scanned=sources_scanned)
 
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:

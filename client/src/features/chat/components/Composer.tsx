@@ -14,7 +14,7 @@ import { ModeSelector } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
-import type { InstalledSkill } from '@/shared/local-host/client'
+import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 import type { ChatMode } from '@/shared/local-data/types'
 
 export function Composer({
@@ -29,6 +29,7 @@ export function Composer({
   onSend,
   onStop,
   listSkills,
+  listMcpServers,
   mode,
   onModeChange,
   projectName,
@@ -49,6 +50,10 @@ export function Composer({
    *  "send" while `isSending` is true. */
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
+  /** Optional — when omitted the MCP slash group hides instead of
+   *  rendering an empty section. Provided by App.tsx only when the
+   *  daemon is online. */
+  listMcpServers?: () => Promise<McpServerInfo[]>
   mode: ChatMode
   onModeChange: (mode: ChatMode) => void
   /** Project (workspace) currently bound to this chat. When undefined,
@@ -201,6 +206,7 @@ export function Composer({
           onDraftChange={onDraftChange}
           onSend={onSend}
           listSkills={listSkills}
+          listMcpServers={listMcpServers}
           placeholder={t('composer.placeholder')}
         />
         {/* Send / Stop button: sits in the bottom-right corner of the

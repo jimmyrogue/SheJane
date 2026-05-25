@@ -29,25 +29,31 @@ import {
 } from 'lexical'
 import {
   $createFunctionNode,
+  $createMCPNode,
   $createSkillNode,
   $isFunctionNode,
+  $isMCPNode,
   $isSkillNode,
   FunctionNode,
+  MCPNode,
   SkillNode,
 } from './SkillNode'
 import { tokenizeDraft } from '../skillDraft'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill } from '@/shared/local-host/client'
+import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 
 export interface SkillEditorProps {
   draft: string
   onDraftChange: (value: string) => void
   onSend: () => void
   listSkills: () => Promise<InstalledSkill[]>
+  /** Optional — when omitted (probe not yet ready) the MCP group is
+   *  hidden from the slash menu instead of crashing. */
+  listMcpServers?: () => Promise<McpServerInfo[]>
   placeholder: string
 }
 
-type MenuKind = 'function' | 'skill'
+type MenuKind = 'function' | 'skill' | 'mcp'
 
 class ComposerMenuOption extends MenuOption {
   kind: MenuKind
@@ -74,6 +80,10 @@ function buildRootFromDraft(draft: string): void {
     }
     if (node.type === 'function') {
       paragraph.append($createFunctionNode(node.name))
+      continue
+    }
+    if (node.type === 'mcp') {
+      paragraph.append($createMCPNode(node.name))
       continue
     }
     const parts = node.value.split('\n')
@@ -172,7 +182,7 @@ function SkillDeletePlugin(): null {
         const index = isBackward ? anchor.offset - 1 : anchor.offset
         target = 'getChildAtIndex' in node ? node.getChildAtIndex(index) : null
       }
-      if (target && ($isSkillNode(target) || $isFunctionNode(target))) {
+      if (target && ($isSkillNode(target) || $isFunctionNode(target) || $isMCPNode(target))) {
         target.remove()
         return true
       }
@@ -198,31 +208,45 @@ function SkillDeletePlugin(): null {
 
 function SkillTypeaheadPlugin({
   listSkills,
+  listMcpServers,
   menuOpenRef,
 }: {
   listSkills: () => Promise<InstalledSkill[]>
+  listMcpServers?: () => Promise<McpServerInfo[]>
   menuOpenRef: { current: boolean }
 }) {
   const [editor] = useLexicalComposerContext()
   const { t } = useI18n()
   const [query, setQuery] = useState<string | null>(null)
   const [skills, setSkills] = useState<InstalledSkill[]>([])
+  const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([])
   const [loading, setLoading] = useState(false)
+  const [mcpLoading, setMcpLoading] = useState(false)
   const loadedRef = useRef(false)
 
   useEffect(() => {
     if (query !== null && !loadedRef.current) {
       loadedRef.current = true
+      // Kick off both lookups in parallel — they hit different daemon
+      // endpoints and the menu shouldn't wait for the slower one to
+      // render the faster one's group.
       setLoading(true)
       listSkills()
         .then(setSkills)
         .catch(() => setSkills([]))
         .finally(() => setLoading(false))
+      if (listMcpServers) {
+        setMcpLoading(true)
+        listMcpServers()
+          .then(setMcpServers)
+          .catch(() => setMcpServers([]))
+          .finally(() => setMcpLoading(false))
+      }
     }
     if (query === null) {
       loadedRef.current = false
     }
-  }, [query, listSkills])
+  }, [query, listSkills, listMcpServers])
 
   const triggerFn = useCallback((text: string): MenuTextMatch | null => {
     const match = /(^|\s)\/([^\s/]*)$/.exec(text)
@@ -243,7 +267,8 @@ function SkillTypeaheadPlugin({
     [t],
   )
 
-  // Functions first, then skills — so the "功能" group renders above "技能".
+  // Functions first, then skills, then MCP — fixed group order so the
+  // user develops muscle memory for "/" → top options.
   const options = useMemo(() => {
     const normalized = (query ?? '').toLowerCase()
     const match = (name: string, description: string) =>
@@ -256,13 +281,34 @@ function SkillTypeaheadPlugin({
     const skillOptions = skills
       .filter((skill) => match(skill.name, skill.description))
       .map((skill) => new ComposerMenuOption('skill', skill.name, skill.name, skill.description))
-    return [...funcOptions, ...skillOptions]
-  }, [functionsCatalog, skills, query])
+    const mcpOptions = mcpServers
+      .filter((server) => match(server.name, `${server.source} ${server.transport}`))
+      .map(
+        (server) =>
+          new ComposerMenuOption(
+            'mcp',
+            server.name,
+            server.name,
+            // Pack source + transport into the description slot so the
+            // user can tell two same-named servers apart (rare, but
+            // happens when shejane overrides a Claude Desktop one).
+            `${server.source} · ${server.transport}`,
+          ),
+      )
+    return [...funcOptions, ...skillOptions, ...mcpOptions]
+  }, [functionsCatalog, skills, mcpServers, query])
 
   const onSelectOption = useCallback(
     (option: ComposerMenuOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
       editor.update(() => {
-        const node = option.kind === 'function' ? $createFunctionNode(option.id) : $createSkillNode(option.id)
+        let node
+        if (option.kind === 'function') {
+          node = $createFunctionNode(option.id)
+        } else if (option.kind === 'mcp') {
+          node = $createMCPNode(option.id)
+        } else {
+          node = $createSkillNode(option.id)
+        }
         if (textNodeContainingQuery) {
           textNodeContainingQuery.replace(node)
         } else {
@@ -298,7 +344,13 @@ function SkillTypeaheadPlugin({
         }
         const funcOptions = options.filter((option) => option.kind === 'function')
         const skillOptions = options.filter((option) => option.kind === 'skill')
+        const mcpOptions = options.filter((option) => option.kind === 'mcp')
         const showSkillsGroup = skillOptions.length > 0 || loading
+        // The MCP group only renders when there's something to show AND
+        // the App actually wired the listMcpServers prop — when the
+        // daemon isn't online yet the prop is undefined and the
+        // section silently disappears (avoids "empty group" noise).
+        const showMcpGroup = listMcpServers !== undefined && (mcpOptions.length > 0 || mcpLoading)
         const renderItem = (option: ComposerMenuOption) => {
           const index = options.indexOf(option)
           return (
@@ -331,7 +383,7 @@ function SkillTypeaheadPlugin({
         }
         if (showSkillsGroup) {
           if (funcOptions.length > 0) {
-            rows.push(<li key="divider" className="composer-menu-divider" aria-hidden="true" />)
+            rows.push(<li key="divider-fn-skill" className="composer-menu-divider" aria-hidden="true" />)
           }
           rows.push(
             <li key="grp-skill" className="composer-menu-group" aria-hidden="true">
@@ -346,6 +398,31 @@ function SkillTypeaheadPlugin({
             )
           } else {
             skillOptions.forEach((option) => rows.push(renderItem(option)))
+          }
+        }
+        if (showMcpGroup) {
+          if (funcOptions.length > 0 || showSkillsGroup) {
+            rows.push(<li key="divider-skill-mcp" className="composer-menu-divider" aria-hidden="true" />)
+          }
+          rows.push(
+            <li key="grp-mcp" className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.mcpGroup')}
+            </li>,
+          )
+          if (mcpLoading && mcpOptions.length === 0) {
+            rows.push(
+              <li key="mcp-loading" className="composer-skill-menu-empty">
+                {t('composer.mcpMenu.loading')}
+              </li>,
+            )
+          } else if (mcpOptions.length === 0) {
+            rows.push(
+              <li key="mcp-empty" className="composer-skill-menu-empty">
+                {t('composer.mcpMenu.empty')}
+              </li>,
+            )
+          } else {
+            mcpOptions.forEach((option) => rows.push(renderItem(option)))
           }
         }
         if (rows.length === 0) {
@@ -366,7 +443,14 @@ function SkillTypeaheadPlugin({
   )
 }
 
-export function SkillEditor({ draft, onDraftChange, onSend, listSkills, placeholder }: SkillEditorProps) {
+export function SkillEditor({
+  draft,
+  onDraftChange,
+  onSend,
+  listSkills,
+  listMcpServers,
+  placeholder,
+}: SkillEditorProps) {
   const draftRef = useRef(draft)
   const lastSerializedRef = useRef(draft)
   const menuOpenRef = useRef(false)
@@ -374,7 +458,7 @@ export function SkillEditor({ draft, onDraftChange, onSend, listSkills, placehol
   const initialConfig = useMemo(
     () => ({
       namespace: 'composer-skill-editor',
-      nodes: [SkillNode, FunctionNode],
+      nodes: [SkillNode, FunctionNode, MCPNode],
       onError: (error: Error) => {
         // Surface in dev; never crash the composer.
         console.error('[skill-editor]', error)
@@ -407,7 +491,11 @@ export function SkillEditor({ draft, onDraftChange, onSend, listSkills, placehol
       />
       <HistoryPlugin />
       <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
-      <SkillTypeaheadPlugin listSkills={listSkills} menuOpenRef={menuOpenRef} />
+      <SkillTypeaheadPlugin
+        listSkills={listSkills}
+        listMcpServers={listMcpServers}
+        menuOpenRef={menuOpenRef}
+      />
       <SubmitPlugin onSend={onSend} menuOpenRef={menuOpenRef} />
       <SkillDeletePlugin />
       <ExternalDraftPlugin draft={draft} lastSerializedRef={lastSerializedRef} />

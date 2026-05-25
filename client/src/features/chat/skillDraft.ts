@@ -14,10 +14,20 @@ export const SKILL_CLOSE = ''
 export const FUNC_OPEN = ''
 export const FUNC_CLOSE = ''
 
+// MCP server inline tokens — third sentinel pair so the slash menu can
+// render three distinct groups (功能 / 技能 / MCP) and the send path can
+// flip the per-server allowlist + inject a "prefer these MCP tools"
+// directive. Kept as a separate token kind rather than collapsing into
+// skill: directive text differs, and the per-run settings overrides
+// touch different fields (`mcpDisabled` instead of `skills`).
+export const MCP_OPEN = ''
+export const MCP_CLOSE = ''
+
 export type DraftNode =
   | { type: 'text'; value: string }
   | { type: 'skill'; name: string }
   | { type: 'function'; name: string }
+  | { type: 'mcp'; name: string }
 
 /** Wrap a skill name into its sentinel token form. */
 export function skillToken(name: string): string {
@@ -29,6 +39,11 @@ export function functionToken(name: string): string {
   return `${FUNC_OPEN}${name}${FUNC_CLOSE}`
 }
 
+/** Wrap an MCP server name into its sentinel token form. */
+export function mcpToken(name: string): string {
+  return `${MCP_OPEN}${name}${MCP_CLOSE}`
+}
+
 /**
  * Split a raw draft into ordered text / skill nodes. Malformed sentinels
  * (an open without a matching close, or an empty name) are treated as plain
@@ -37,7 +52,8 @@ export function functionToken(name: string): string {
 const tokenPattern = (): RegExp =>
   new RegExp(
     `${SKILL_OPEN}([^${SKILL_OPEN}${SKILL_CLOSE}]+)${SKILL_CLOSE}` +
-      `|${FUNC_OPEN}([^${FUNC_OPEN}${FUNC_CLOSE}]+)${FUNC_CLOSE}`,
+      `|${FUNC_OPEN}([^${FUNC_OPEN}${FUNC_CLOSE}]+)${FUNC_CLOSE}` +
+      `|${MCP_OPEN}([^${MCP_OPEN}${MCP_CLOSE}]+)${MCP_CLOSE}`,
     'g',
   )
 
@@ -51,8 +67,10 @@ export function tokenizeDraft(draft: string): DraftNode[] {
     }
     if (match[1] !== undefined) {
       nodes.push({ type: 'skill', name: match[1] })
-    } else {
+    } else if (match[2] !== undefined) {
       nodes.push({ type: 'function', name: match[2] })
+    } else {
+      nodes.push({ type: 'mcp', name: match[3] })
     }
     lastIndex = match.index + match[0].length
   }
@@ -69,9 +87,12 @@ export function tokenizeDraft(draft: string): DraftNode[] {
  * - `skills`: skill names in first-seen order, de-duplicated (used to force
  *   per-run skills + the skill.use directive prefix).
  */
-export function parseSkillDraft(draft: string): { text: string; skills: string[]; functions: string[] } {
+export function parseSkillDraft(
+  draft: string,
+): { text: string; skills: string[]; functions: string[]; mcps: string[] } {
   const skills: string[] = []
   const functions: string[] = []
+  const mcps: string[] = []
   let text = ''
   for (const node of tokenizeDraft(draft)) {
     if (node.type === 'text') {
@@ -81,13 +102,21 @@ export function parseSkillDraft(draft: string): { text: string; skills: string[]
       if (!skills.includes(node.name)) {
         skills.push(node.name)
       }
-    } else {
+    } else if (node.type === 'function') {
       // Function tokens are mode markers, not literal text: they add no text
       // (the per-function directive is injected by the send path).
       if (!functions.includes(node.name)) {
         functions.push(node.name)
       }
+    } else {
+      // MCP tokens render as @mcp:name so the chat bubble shows the user's
+      // intent verbatim. The actual server allowlist override + 'prefer
+      // these tools' directive get injected by the send path.
+      text += `@mcp:${node.name}`
+      if (!mcps.includes(node.name)) {
+        mcps.push(node.name)
+      }
     }
   }
-  return { text, skills, functions }
+  return { text, skills, functions, mcps }
 }

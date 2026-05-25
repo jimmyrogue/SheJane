@@ -360,10 +360,18 @@ def test_mcp_malformed_json_ignored(monkeypatch: Any, tmp_path: Path) -> None:
 
 
 def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
-    """When the env var is empty but mcp-servers.json exists, it's read."""
+    """When the env var is empty but mcp-servers.json exists, it's read.
+
+    Disk scan is suppressed by conftest's autouse fixture; this test
+    needs the actual disk path consulted so it flips DISCOVERY back on
+    and points HOME at tmp_path so the scan sees only its fixture
+    (not the dev machine's real Claude Desktop / Cursor configs).
+    """
 
     from local_host.tools.mcp import _load_mcp_config
 
+    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_DISCOVERY", "on")
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
     monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
     (tmp_path / "mcp-servers.json").write_text(
         '{"demo": {"command": "python", "args": ["x.py"], "transport": "stdio"}}',

@@ -822,6 +822,109 @@
         "title": "LocalWorkspaceDiagnosis",
         "type": "object"
       },
+      "McpServerCatalog": {
+        "description": "GET /local/v1/mcp-servers — the full list of discovered servers\nplus the set of sources we scanned. `sources` lets the UI render\nempty-state hints like \"no Claude Desktop config found\" even when\nno server came from there.",
+        "properties": {
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerInfo"
+            },
+            "title": "Servers",
+            "type": "array"
+          },
+          "sources_scanned": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources Scanned",
+            "type": "array"
+          }
+        },
+        "required": [
+          "servers",
+          "sources_scanned"
+        ],
+        "title": "McpServerCatalog",
+        "type": "object"
+      },
+      "McpServerInfo": {
+        "description": "One MCP server we discovered on the user's machine.\n\n`name` is the unique key the user (or installer tool) gave it.\n`transport` is the normalized transport — `stdio` / `streamable_http`\n/ `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are\ndescriptive only — we never echo env *values* (could be secrets).\n`source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`\n/ `env` — used by the UI to group servers by provenance.\n`source_path` is the absolute path of the config file the entry was\nread from, displayed in the settings panel so the user knows where\nto go edit it.",
+        "properties": {
+          "args": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "array"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "env_keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Env Keys",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "transport": {
+            "title": "Transport",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "name",
+          "transport",
+          "source",
+          "source_path"
+        ],
+        "title": "McpServerInfo",
+        "type": "object"
+      },
       "PermissionResolution": {
         "properties": {
           "decision": {
@@ -1048,6 +1151,25 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/local/v1/mcp-servers": {
+      "get": {
+        "description": "Catalog of every MCP server we discovered across the user's\nmachine. Pure read — we never start, install, or modify these\nservers. The user manages them through whatever tool they\nprefer (Claude Desktop, Cursor, Codex, or our own\n`~/.shejane/mcp-servers.json`), and the daemon picks them up\non the next agent boot.\n\n`sources_scanned` reports the source labels we attempted to\nread (regardless of whether the file existed or had servers),\nso the UI can render section headers like \"Cursor — no\nconfig found at ~/.cursor/mcp.json\" instead of silently\nhiding the section.",
+        "operationId": "list_mcp_servers_local_v1_mcp_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Mcp Servers"
       }
     },
     "/local/v1/memory": {
@@ -1549,6 +1671,7 @@
     },
     "/local/v1/skills": {
       "get": {
+        "description": "Catalog of every SKILL.md the daemon can see across all\nconfigured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,\nor `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed\nout-of-band — the user drops directories into a root themselves\n(or installs via the skills.sh CLI into `~/.claude/skills/`) and\nthe daemon picks them up on next scan.\n\nAlso surfaces the roots themselves under `roots` so the UI can\nrender section headers (e.g. \"Personal\" for shejane) even when\na root is empty — otherwise the user has no idea where to drop\ntheir SKILL.md directories.",
         "operationId": "list_local_skills_local_v1_skills_get",
         "responses": {
           "200": {
@@ -1565,91 +1688,6 @@
           }
         },
         "summary": "List Local Skills"
-      }
-    },
-    "/local/v1/skills/install": {
-      "post": {
-        "operationId": "install_skill_local_v1_skills_install_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Install Skill Local V1 Skills Install Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Install Skill"
-      }
-    },
-    "/local/v1/skills/registry": {
-      "get": {
-        "description": "Phase 5' stub: no external skill registry wired yet.",
-        "operationId": "search_skill_registry_local_v1_skills_registry_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "q",
-            "required": false,
-            "schema": {
-              "default": "",
-              "title": "Q",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Search Skill Registry Local V1 Skills Registry Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Search Skill Registry"
       }
     },
     "/local/v1/tools": {

@@ -22,6 +22,7 @@ import { ConversationSidebar } from './features/chat/components/ConversationSide
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
+import { MCPView } from './features/mcp/MCPView'
 import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
@@ -43,6 +44,7 @@ import {
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalRuns,
+  listMcpServers,
   probeLocalHost,
   resolveLocalPermission,
   setLocalCloudSession,
@@ -63,13 +65,18 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
-// v3 — defaults bumped (memory + skills both 'on'). Resetting the key
-// forces every existing renderer onto the new default; users who
-// actively opted off before the change pick the new default once and
-// can re-disable from the settings dialog if they want.
-const agentSettingsStorageKey = 'jiandanly.agentSettings.v3'
+// v5 — added per-server `mcpDisabled` list for the MCP tab's per-row
+// switches. Bumping the key forces every existing renderer onto the
+// new default; users keep their global memory/skills/mcp state by
+// re-confirming once.
+const agentSettingsStorageKey = 'jiandanly.agentSettings.v5'
 const chatModeStorageKey = 'jiandanly.chatMode.v1'
-const defaultAgentSettings: Required<AgentSettings> = { memory: 'on', skills: 'on' }
+const defaultAgentSettings: Required<AgentSettings> = {
+  memory: 'on',
+  skills: 'on',
+  mcp: 'on',
+  mcpDisabled: [],
+}
 const defaultChatMode: ChatMode = 'auto'
 const defaultSidebarWidth = 220
 const minSidebarWidth = 176
@@ -143,10 +150,16 @@ function readAgentSettings(): Required<AgentSettings> {
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
     return {
-      // Both default to 'on'. Only an explicit 'off' disables; a missing
-      // field reads as the new default rather than the old one.
+      // All three flags default to 'on'. Only an explicit 'off' disables;
+      // a missing field reads as the new default rather than the old one.
       memory: parsed.memory === 'off' ? 'off' : 'on',
       skills: parsed.skills === 'off' ? 'off' : 'on',
+      mcp: parsed.mcp === 'off' ? 'off' : 'on',
+      // Defensive: anything non-string in the persisted list gets
+      // dropped. Empty array if missing.
+      mcpDisabled: Array.isArray(parsed.mcpDisabled)
+        ? parsed.mcpDisabled.filter((name): name is string => typeof name === 'string')
+        : [],
     }
   } catch {
     return { ...defaultAgentSettings }
@@ -231,7 +244,7 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
-  const [mainView, setMainView] = useState<'chat' | 'skills'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
@@ -650,7 +663,12 @@ function AppContent() {
     if (!localHostConfig) {
       throw new Error(t('app.notice.localHostDisconnected'))
     }
-    const { text: parsedText, skills: draftSkills, functions: draftFunctions } = parseSkillDraft(content)
+    const {
+      text: parsedText,
+      skills: draftSkills,
+      functions: draftFunctions,
+      mcps: draftMcps,
+    } = parseSkillDraft(content)
     const text = parsedText.trim()
     if (!text) {
       throw new Error(t('app.notice.emptyMessage'))
@@ -707,6 +725,7 @@ function AppContent() {
 
     const skillsForRun = !settingsOverride ? draftSkills : []
     const functionsForRun = !settingsOverride ? draftFunctions : []
+    const mcpsForRun = !settingsOverride ? draftMcps : []
     const directives: string[] = []
     if (functionsForRun.includes('image')) {
       directives.push(t('functions.imageDirective'))
@@ -714,14 +733,35 @@ function AppContent() {
     if (skillsForRun.length > 0) {
       directives.push(t('skills.useDirective', { names: skillsForRun.join('、') }))
     }
+    if (mcpsForRun.length > 0) {
+      directives.push(t('mcp.useDirective', { names: mcpsForRun.join('、') }))
+    }
     if (!settingsOverride && attachedDocument && attachedDocument.content_type.startsWith('image/')) {
       directives.push(
         t('functions.imageEditDirective', { documentId: attachedDocument.id, name: attachedDocument.original_name }),
       )
     }
     const goal = directives.length > 0 ? `${directives.join('\n\n')}\n\n${text}` : text
-    const effectiveSettings =
-      skillsForRun.length > 0 ? { ...agentSettings, skills: 'on' as const } : settingsOverride ?? agentSettings
+    // Layered settings overrides — later wins. settingsOverride is used
+    // for things like the auto-retry path that wants the user's bare
+    // settings without slash-injected forcing.
+    let effectiveSettings: Required<AgentSettings> = settingsOverride ?? agentSettings
+    if (skillsForRun.length > 0) {
+      effectiveSettings = { ...effectiveSettings, skills: 'on' as const }
+    }
+    if (mcpsForRun.length > 0) {
+      // Force MCP on AND make sure none of the explicitly referenced
+      // servers are in the disabled list (the user just asked for
+      // them by typing /name — the previous "off" state is overridden
+      // for THIS run only; the persistent toggle on the MCP tab
+      // stays untouched).
+      const requested = new Set(mcpsForRun)
+      effectiveSettings = {
+        ...effectiveSettings,
+        mcp: 'on' as const,
+        mcpDisabled: effectiveSettings.mcpDisabled.filter((name) => !requested.has(name)),
+      }
+    }
 
     try {
       const run = await createLocalRun(
@@ -1339,6 +1379,7 @@ function AppContent() {
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
             onOpenSkills={() => setMainView('skills')}
+            onOpenMcp={() => setMainView('mcp')}
             activeView={mainView}
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
@@ -1394,6 +1435,26 @@ function AppContent() {
                   ? listInstalledSkills(localHostConfig)
                   : Promise.resolve({ skills: [], roots: [] })
               }
+              onOpenFolder={(path) => {
+                const bridge = window.jiandanDesktop
+                if (bridge?.openFileWithDefaultApp) {
+                  void bridge.openFileWithDefaultApp(path)
+                }
+              }}
+            />
+          ) : mainView === 'mcp' ? (
+            <MCPView
+              listCatalog={() =>
+                localHostConfig
+                  ? listMcpServers(localHostConfig)
+                  : Promise.resolve({ servers: [], sources_scanned: [] })
+              }
+              disabledServers={agentSettings.mcpDisabled}
+              onDisabledChange={(next) => {
+                const updated: Required<AgentSettings> = { ...agentSettings, mcpDisabled: next }
+                setAgentSettings(updated)
+                writeAgentSettings(updated)
+              }}
               onOpenFolder={(path) => {
                 const bridge = window.jiandanDesktop
                 if (bridge?.openFileWithDefaultApp) {
@@ -1496,6 +1557,14 @@ function AppContent() {
                 const catalog = await listInstalledSkills(localHostConfig)
                 return catalog.skills
               }}
+              listMcpServers={
+                localHostConfig
+                  ? async () => {
+                      const catalog = await listMcpServers(localHostConfig)
+                      return catalog.servers
+                    }
+                  : undefined
+              }
               mode={mode}
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}

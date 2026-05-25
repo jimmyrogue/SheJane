@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { functionToken, parseSkillDraft, skillToken, SKILL_OPEN, SKILL_CLOSE, tokenizeDraft } from './skillDraft'
+import {
+  functionToken,
+  mcpToken,
+  parseSkillDraft,
+  skillToken,
+  SKILL_OPEN,
+  SKILL_CLOSE,
+  tokenizeDraft,
+} from './skillDraft'
 
 const hunt = skillToken('hunt')
 const write = skillToken('write')
 const imageFn = functionToken('image')
+const githubMcp = mcpToken('github')
+const playwrightMcp = mcpToken('playwright')
 
 describe('skillDraft.tokenizeDraft', () => {
   it('returns nothing for an empty draft', () => {
@@ -57,16 +67,27 @@ describe('skillDraft.parseSkillDraft', () => {
       text: '先 @hunt 看，再 @write 改，最后再 @hunt 复查',
       skills: ['hunt', 'write'],
       functions: [],
+      mcps: [],
     })
   })
 
   it('returns plain text unchanged with no skills', () => {
-    expect(parseSkillDraft('no skills here')).toEqual({ text: 'no skills here', skills: [], functions: [] })
+    expect(parseSkillDraft('no skills here')).toEqual({
+      text: 'no skills here',
+      skills: [],
+      functions: [],
+      mcps: [],
+    })
   })
 
   it('round-trips: skillToken is exactly OPEN+name+CLOSE', () => {
     expect(skillToken('demo')).toBe(`${SKILL_OPEN}demo${SKILL_CLOSE}`)
-    expect(parseSkillDraft(skillToken('demo'))).toEqual({ text: '@demo', skills: ['demo'], functions: [] })
+    expect(parseSkillDraft(skillToken('demo'))).toEqual({
+      text: '@demo',
+      skills: ['demo'],
+      functions: [],
+      mcps: [],
+    })
   })
 
   it('collects function tokens separately and adds no literal text', () => {
@@ -78,6 +99,7 @@ describe('skillDraft.parseSkillDraft', () => {
       text: '画一只在月球上的猫',
       skills: [],
       functions: ['image'],
+      mcps: [],
     })
   })
 
@@ -86,6 +108,34 @@ describe('skillDraft.parseSkillDraft', () => {
       text: '@hunt 用  再来 @write',
       skills: ['hunt', 'write'],
       functions: ['image'],
+      mcps: [],
+    })
+  })
+
+  it('tokenizes MCP server references as their own node type', () => {
+    expect(tokenizeDraft(`查一下 ${githubMcp} 仓库`)).toEqual([
+      { type: 'text', value: '查一下 ' },
+      { type: 'mcp', name: 'github' },
+      { type: 'text', value: ' 仓库' },
+    ])
+  })
+
+  it('renders MCP tokens as @mcp:name and dedupes them', () => {
+    const draft = `${githubMcp} 列 PR，然后 ${githubMcp} 拉 issue，再用 ${playwrightMcp} 跑用例`
+    expect(parseSkillDraft(draft)).toEqual({
+      text: '@mcp:github 列 PR，然后 @mcp:github 拉 issue，再用 @mcp:playwright 跑用例',
+      skills: [],
+      functions: [],
+      mcps: ['github', 'playwright'],
+    })
+  })
+
+  it('mixes skill + function + MCP tokens in a single draft', () => {
+    expect(parseSkillDraft(`${imageFn}${hunt} ${githubMcp} 帮我做这件事`)).toEqual({
+      text: '@hunt @mcp:github 帮我做这件事',
+      skills: ['hunt'],
+      functions: ['image'],
+      mcps: ['github'],
     })
   })
 })

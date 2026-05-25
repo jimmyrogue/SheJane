@@ -51,6 +51,7 @@ async def build_tools(
     store: LocalStore | None = None,
     workspace_root: str | None = None,
     include_mcp: bool = True,
+    mcp_disabled_servers: set[str] | None = None,
     browser_llm: Any = None,
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
@@ -81,7 +82,7 @@ async def build_tools(
 
     if include_mcp:
         data_dir = get_settings().data_dir
-        tools.extend(await build_mcp_tools(data_dir))
+        tools.extend(await build_mcp_tools(data_dir, disabled_servers=mcp_disabled_servers))
 
     return tools
 

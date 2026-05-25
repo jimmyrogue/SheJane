@@ -44,6 +44,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/mcp-servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mcp Servers
+         * @description Catalog of every MCP server we discovered across the user's
+         *     machine. Pure read — we never start, install, or modify these
+         *     servers. The user manages them through whatever tool they
+         *     prefer (Claude Desktop, Cursor, Codex, or our own
+         *     `~/.shejane/mcp-servers.json`), and the daemon picks them up
+         *     on the next agent boot.
+         *
+         *     `sources_scanned` reports the source labels we attempted to
+         *     read (regardless of whether the file existed or had servers),
+         *     so the UI can render section headers like "Cursor — no
+         *     config found at ~/.cursor/mcp.json" instead of silently
+         *     hiding the section.
+         */
+        get: operations["list_mcp_servers_local_v1_mcp_servers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/memory": {
         parameters: {
             query?: never;
@@ -323,45 +354,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Local Skills */
-        get: operations["list_local_skills_local_v1_skills_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/local/v1/skills/install": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Install Skill */
-        post: operations["install_skill_local_v1_skills_install_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/local/v1/skills/registry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         /**
-         * Search Skill Registry
-         * @description Phase 5' stub: no external skill registry wired yet.
+         * List Local Skills
+         * @description Catalog of every SKILL.md the daemon can see across all
+         *     configured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,
+         *     or `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed
+         *     out-of-band — the user drops directories into a root themselves
+         *     (or installs via the skills.sh CLI into `~/.claude/skills/`) and
+         *     the daemon picks them up on next scan.
+         *
+         *     Also surfaces the roots themselves under `roots` so the UI can
+         *     render section headers (e.g. "Personal" for shejane) even when
+         *     a root is empty — otherwise the user has no idea where to drop
+         *     their SKILL.md directories.
          */
-        get: operations["search_skill_registry_local_v1_skills_registry_get"];
+        get: operations["list_local_skills_local_v1_skills_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -840,6 +847,59 @@ export interface components {
             reason: "authorized" | "not_authorized" | "not_found" | "not_directory";
             workspace?: components["schemas"]["LocalWorkspaceAuthorization"] | null;
         };
+        /**
+         * McpServerCatalog
+         * @description GET /local/v1/mcp-servers — the full list of discovered servers
+         *     plus the set of sources we scanned. `sources` lets the UI render
+         *     empty-state hints like "no Claude Desktop config found" even when
+         *     no server came from there.
+         */
+        McpServerCatalog: {
+            /** Servers */
+            servers: components["schemas"]["McpServerInfo"][];
+            /** Sources Scanned */
+            sources_scanned: string[];
+        };
+        /**
+         * McpServerInfo
+         * @description One MCP server we discovered on the user's machine.
+         *
+         *     `name` is the unique key the user (or installer tool) gave it.
+         *     `transport` is the normalized transport — `stdio` / `streamable_http`
+         *     / `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are
+         *     descriptive only — we never echo env *values* (could be secrets).
+         *     `source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`
+         *     / `env` — used by the UI to group servers by provenance.
+         *     `source_path` is the absolute path of the config file the entry was
+         *     read from, displayed in the settings panel so the user knows where
+         *     to go edit it.
+         */
+        McpServerInfo: {
+            /**
+             * Args
+             * @default []
+             */
+            args: string[];
+            /** Command */
+            command?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /**
+             * Env Keys
+             * @default []
+             */
+            env_keys: string[];
+            /** Name */
+            name: string;
+            /** Source */
+            source: string;
+            /** Source Path */
+            source_path: string;
+            /** Transport */
+            transport: string;
+            /** Url */
+            url?: string | null;
+        };
         /** PermissionResolution */
         PermissionResolution: {
             /**
@@ -975,6 +1035,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    list_mcp_servers_local_v1_mcp_servers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerCatalog"];
                 };
             };
         };
@@ -1408,76 +1488,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-        };
-    };
-    install_skill_local_v1_skills_install_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    search_skill_registry_local_v1_skills_registry_get: {
-        parameters: {
-            query?: {
-                q?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

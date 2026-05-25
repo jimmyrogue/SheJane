@@ -23,6 +23,8 @@ export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunResponse = Schemas['CancelRunResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
+export type McpServerInfo = Schemas['McpServerInfo']
+export type McpServerCatalog = Schemas['McpServerCatalog']
 export type LocalPermissionScope = 'once' | 'run'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
@@ -119,6 +121,13 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
 export interface AgentSettings {
   memory?: 'off' | 'on'
   skills?: 'off' | 'on'
+  mcp?: 'off' | 'on'
+  /** Per-server opt-out list. When `mcp === 'on'`, every discovered
+   *  server is loaded EXCEPT names in this list. When `mcp === 'off'`
+   *  this is moot (no servers load at all). Wire format is snake_case
+   *  `mcp_disabled` to match the daemon's run_settings reader; the
+   *  serializer below handles that. */
+  mcpDisabled?: string[]
 }
 
 export async function createLocalRun(
@@ -136,8 +145,21 @@ export async function createLocalRun(
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
 ): Promise<LocalRun> {
-  const settings =
-    input.settings && Object.keys(input.settings).length > 0 ? input.settings : undefined
+  // Translate camelCase → snake_case for the few keys the daemon
+  // reads as snake_case (mcp_disabled). Everything else (memory /
+  // skills / mcp) is already named the same on both sides.
+  const settings = (() => {
+    const src = input.settings
+    if (!src || Object.keys(src).length === 0) return undefined
+    const out: Record<string, unknown> = {}
+    if (src.memory !== undefined) out.memory = src.memory
+    if (src.skills !== undefined) out.skills = src.skills
+    if (src.mcp !== undefined) out.mcp = src.mcp
+    if (src.mcpDisabled !== undefined && src.mcpDisabled.length > 0) {
+      out.mcp_disabled = src.mcpDisabled
+    }
+    return Object.keys(out).length === 0 ? undefined : out
+  })()
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
     method: 'POST',
     headers: localHeaders(config, true),
@@ -191,6 +213,34 @@ export async function listInstalledSkills(
   return {
     skills: body.skills ?? [],
     roots: body.roots ?? [],
+  }
+}
+
+/** Discover MCP servers configured on the user's machine.
+ *
+ *  We never install or manage MCP servers — this just walks the same
+ *  config files that Claude Desktop, Cursor, and Codex already write,
+ *  plus our own canonical `~/.shejane/mcp-servers.json`. Whatever's
+ *  there gets surfaced so the user can see what their agent has
+ *  access to. The full env values are deliberately NOT returned
+ *  (would leak secrets); only `env_keys` is exposed.
+ *
+ *  `sources_scanned` lists every source label we attempted to read,
+ *  letting the UI render empty-state hints like "No Cursor config
+ *  found at ~/.cursor/mcp.json" instead of silently hiding the
+ *  section. */
+export async function listMcpServers(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<McpServerCatalog> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/mcp-servers`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<Partial<McpServerCatalog>>(response)
+  return {
+    servers: body.servers ?? [],
+    sources_scanned: body.sources_scanned ?? [],
   }
 }
 

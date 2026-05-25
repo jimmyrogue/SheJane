@@ -319,6 +319,8 @@ async def build_agent(
     dropped_history_count: int = 0,
     memory_enabled: bool = True,
     skills_enabled: bool = True,
+    mcp_enabled: bool = True,
+    mcp_disabled_servers: set[str] | None = None,
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -352,6 +354,19 @@ async def build_agent(
                          no skill instructions get injected into the prompt
                          and the agent doesn't see them. Mirrors the
                          memory toggle pattern.
+        mcp_enabled:     When False, skips MCP discovery + tool loading
+                         entirely so no MCP tools land in the agent's tool
+                         list. The discovered servers are still reported
+                         via GET /local/v1/mcp-servers — only their
+                         activation is suppressed. Same toggle pattern as
+                         memory + skills.
+        mcp_disabled_servers:
+                         Per-server opt-out. Names in this set are
+                         filtered before MultiServerMCPClient even sees
+                         the config, so we never spawn the subprocess.
+                         Driven by the per-row switches in the client's
+                         MCP tab; layered ON TOP of mcp_enabled — if the
+                         master flag is off, this set is moot.
         settings:        Override settings (tests).
         extra_middleware: Appended after the built-in custom stack.
     """
@@ -360,7 +375,8 @@ async def build_agent(
     tools = await build_tools(
         store=store,
         workspace_root=workspace_root,
-        include_mcp=True,
+        include_mcp=mcp_enabled,
+        mcp_disabled_servers=mcp_disabled_servers,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
     )
     if not memory_enabled:

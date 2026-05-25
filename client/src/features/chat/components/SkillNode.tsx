@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { IconPhoto, IconSparkles } from '@tabler/icons-react'
+import { IconPhoto, IconServer, IconSparkles } from '@tabler/icons-react'
 import {
   $applyNodeReplacement,
   DecoratorNode,
@@ -10,7 +10,7 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from 'lexical'
-import { functionToken, skillToken } from '../skillDraft'
+import { functionToken, mcpToken, skillToken } from '../skillDraft'
 
 // Display labels for function ids. Extensible: add more capabilities here.
 export const FUNCTION_LABELS: Record<string, string> = {
@@ -155,4 +155,76 @@ export function $createFunctionNode(name: string): FunctionNode {
 
 export function $isFunctionNode(node: LexicalNode | null | undefined): node is FunctionNode {
   return node instanceof FunctionNode
+}
+
+export type SerializedMCPNode = Spread<{ name: string }, SerializedLexicalNode>
+
+function MCPChip({ name }: { name: string }): JSX.Element {
+  return (
+    <span className="mcp-chip--inline" data-mcp={name}>
+      <IconServer className="skill-chip-icon" size={12} aria-hidden="true" />
+      {name}
+    </span>
+  )
+}
+
+/** Inline MCP server reference (selected from the slash menu's MCP
+ *  group). Round-trips through the draft string as
+ *  `${MCP_OPEN}name${MCP_CLOSE}` so deletion/serialization is
+ *  symmetric with skill + function nodes. */
+export class MCPNode extends DecoratorNode<JSX.Element> {
+  __name: string
+
+  static getType(): string {
+    return 'mcp'
+  }
+
+  static clone(node: MCPNode): MCPNode {
+    return new MCPNode(node.__name, node.__key)
+  }
+
+  static importJSON(serialized: SerializedMCPNode): MCPNode {
+    return $createMCPNode(serialized.name)
+  }
+
+  constructor(name: string, key?: NodeKey) {
+    super(key)
+    this.__name = name
+  }
+
+  exportJSON(): SerializedMCPNode {
+    return { type: 'mcp', version: 1, name: this.__name }
+  }
+
+  createDOM(): HTMLElement {
+    return document.createElement('span')
+  }
+
+  updateDOM(): false {
+    return false
+  }
+
+  isInline(): boolean {
+    return true
+  }
+
+  isKeyboardSelectable(): boolean {
+    return true
+  }
+
+  getTextContent(): string {
+    return mcpToken(this.__name)
+  }
+
+  decorate(_editor: LexicalEditor, _config: EditorConfig): JSX.Element {
+    return <MCPChip name={this.__name} />
+  }
+}
+
+export function $createMCPNode(name: string): MCPNode {
+  return $applyNodeReplacement(new MCPNode(name))
+}
+
+export function $isMCPNode(node: LexicalNode | null | undefined): node is MCPNode {
+  return node instanceof MCPNode
 }
