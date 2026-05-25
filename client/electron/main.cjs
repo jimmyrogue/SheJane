@@ -27,6 +27,13 @@ function readDockLocale() {
 }
 const appName = readDockLocale() === 'en' ? 'SheJane' : '石间'
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
+// Separate path for the menu-bar (Tray) icon. macOS template images
+// must be a black + transparent mask — the full-color app-icon.png
+// rendered as nothing visible because `setTemplateImage(true)`
+// discards color. app-tray.png is a hand-tuned stone silhouette
+// matching the product name 石间. Electron auto-loads `@2x` for
+// Retina menu bars when the file sits in the same directory.
+const trayIconPath = path.join(__dirname, 'assets/app-tray.png')
 
 /** Module-scope references so tray/menu/notification handlers can find
  *  the main window without searching every time. */
@@ -101,7 +108,11 @@ function showOrCreateMainWindow() {
 }
 
 function createTray() {
-  const trayIcon = nativeImage.createFromPath(appIconPath).resize({ width: 18, height: 18 })
+  // app-tray.png is 16×16, app-tray@2x.png is 32×32 — both sit next
+  // to each other so Electron picks the right one for the current
+  // display. No manual `.resize()` call (which used to mangle the
+  // alpha edges by re-scaling already-pixelated 18px output).
+  const trayIcon = nativeImage.createFromPath(trayIconPath)
   if (process.platform === 'darwin') {
     trayIcon.setTemplateImage(true)
   }
@@ -196,7 +207,10 @@ ipcMain.handle('jiandanly:notify', async (_event, payload) => {
   if (mainWindow && mainWindow.isFocused() && mainWindow.isVisible()) {
     return false
   }
-  const notification = new Notification({ title, body, silent: false })
+  // `icon` is only honored on Windows + Linux; macOS pulls the icon
+  // from the bundle's .icns. The branded .icns gets dropped into the
+  // wrapper bundle by scripts/run-branded-electron.sh during dev.
+  const notification = new Notification({ title, body, silent: false, icon: appIconPath })
   notification.on('click', () => {
     showOrCreateMainWindow()
   })

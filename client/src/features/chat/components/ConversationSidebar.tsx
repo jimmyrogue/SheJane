@@ -263,6 +263,10 @@ export function ConversationSidebar({
           <span>{t('app.newChat')}</span>
           <span className="sidebar-item-hint">⌘N</span>
         </button>
+      </div>
+
+      <div className="sidebar-section">
+        <div className="sidebar-section-label">{t('sidebar.section.tools')}</div>
         <button
           className={`sidebar-item${activeView === 'skills' ? ' active' : ''}`}
           type="button"

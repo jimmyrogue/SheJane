@@ -59,24 +59,24 @@ describe('ConversationSidebar', () => {
       emptyConversation('project-chat', '我的项目', { project: { name: '我的项目' } }),
     ])
 
-    // After the redesign the top section is unlabeled (新对话 + 技能
-    // sit as parallel nav items); the only labeled segments below are
-    // "已固定" (when there are pins) and "对话" (the unified list — no
-    // more "项目" split). Projects and casual chats share that one
-    // list and are sorted purely by recency.
+    // Section labels in document order: 工具 (skills + MCP nav group),
+    // 已固定 (when there are pins), 对话 (the unified list — projects
+    // and casual chats share that one list, sorted by recency).
+    // 新对话 sits alone in its own unlabeled section above 工具.
     const sectionLabels = Array.from(container.querySelectorAll('.sidebar-section-label')) as HTMLElement[]
     const labelTexts = sectionLabels.map((el) => el.textContent?.trim())
-    expect(labelTexts).toEqual(['已固定', '对话'])
+    expect(labelTexts).toEqual(['工具', '已固定', '对话'])
 
     const pinnedConversation = screen.getByRole('button', { name: '固定对话' })
     const recentConversation = screen.getByRole('button', { name: '普通对话' })
     const projectConversation = screen.getByRole('button', { name: '我的项目' })
 
-    // 已固定 label → pinned row → 对话 label → both unpinned rows
-    expect(sectionLabels[0].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(pinnedConversation.compareDocumentPosition(sectionLabels[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 工具 → 已固定 label → pinned row → 对话 label → both unpinned rows.
+    // sectionLabels[0] is 工具 (skills+MCP nav), [1] is 已固定, [2] is 对话.
+    expect(sectionLabels[1].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pinnedConversation.compareDocumentPosition(sectionLabels[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[2].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[2].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 普通对话')).toHaveLength(1)
