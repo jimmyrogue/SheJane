@@ -149,12 +149,25 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 		}
 	}
 
+	documentService := documents.NewService(st, documentStorage, documentConfig)
+	// Hard-delete expired documents (S3 + DB row) on a background
+	// cadence. Pairs with — but does NOT replace — bucket-level S3
+	// Lifecycle policy: Lifecycle handles the bytes if the reaper
+	// misses anything; the reaper handles the Postgres rows that
+	// Lifecycle can't see. Process exit cancels the ticker via the
+	// context.
+	documentService.StartReaper(
+		context.Background(),
+		time.Duration(cfg.DocumentReaperIntervalMinutes)*time.Minute,
+		cfg.DocumentReaperBatchSize,
+	)
+
 	return &App{
 		Config:      cfg,
 		Store:       st,
 		Router:      router,
 		Registry:    registry,
-		Documents:   documents.NewService(st, documentStorage, documentConfig),
+		Documents:   documentService,
 		E2BSessions: e2bSessions,
 	}
 }

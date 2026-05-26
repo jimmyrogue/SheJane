@@ -307,6 +307,14 @@ type Store interface {
 	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error)
 	DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error)
+	// ListExpiredDocuments returns up to `limit` documents whose
+	// expires_at is strictly before `cutoff` and whose status isn't
+	// already 'deleted'. Used by the documents reaper background
+	// job to find candidates for hard deletion (S3 object delete +
+	// row tombstone). Ordered by created_at ASC so the oldest go
+	// first — bounds the tail latency of any single reaper tick
+	// when there's a large backlog (post-incident catch-up case).
+	ListExpiredDocuments(ctx context.Context, cutoff time.Time, limit int) ([]documents.Document, error)
 
 	CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error)
 	PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error)

@@ -631,6 +631,31 @@ func (s *MemoryStore) DeleteDocument(ctx context.Context, userID string, documen
 	return document, nil
 }
 
+func (s *MemoryStore) ListExpiredDocuments(ctx context.Context, cutoff time.Time, limit int) ([]documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]documents.Document, 0)
+	for _, doc := range s.documents {
+		if doc.Status == documents.StatusDeleted {
+			continue
+		}
+		if doc.ExpiresAt.IsZero() || !doc.ExpiresAt.Before(cutoff) {
+			continue
+		}
+		out = append(out, doc)
+	}
+	// Mirror PG ordering: created_at ASC. Older first → caps tail
+	// latency during backlog catch-up.
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (s *MemoryStore) CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

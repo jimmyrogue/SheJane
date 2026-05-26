@@ -667,6 +667,40 @@ func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, docum
 	`, userID, documentID))
 }
 
+// ListExpiredDocuments — see Store interface for contract. Index
+// idx_documents_expiry (migration 002) supports the WHERE clause.
+func (s *PostgresStore) ListExpiredDocuments(ctx context.Context, cutoff time.Time, limit int) ([]documents.Document, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at
+		FROM documents
+		WHERE expires_at < $1 AND status <> 'deleted'
+		ORDER BY created_at ASC
+		LIMIT $2
+	`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]documents.Document, 0, limit)
+	for rows.Next() {
+		var doc documents.Document
+		if err := rows.Scan(
+			&doc.ID, &doc.UserID, &doc.OriginalName, &doc.ContentType, &doc.SizeBytes, &doc.Status,
+			&doc.SourceObjectKey, &doc.TextObjectKey, &doc.ErrorMessage,
+			&doc.ExpiresAt, &doc.CreatedAt, &doc.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, doc)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error) {
 	if order.Status == "" {
 		order.Status = "pending"

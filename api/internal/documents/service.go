@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Service struct {
@@ -161,6 +163,99 @@ func (s *Service) DeleteDocument(ctx context.Context, userID string, documentID 
 	_ = s.objects.DeleteObject(ctx, document.SourceObjectKey)
 	_ = s.objects.DeleteObject(ctx, document.TextObjectKey)
 	return document, nil
+}
+
+// ReapExpired hard-deletes documents whose ExpiresAt is before
+// `cutoff` and that aren't already tombstoned. For each: best-effort
+// delete the S3 source + text objects, then flip the row to
+// 'deleted'. Returns the count actually killed and the first error
+// encountered (subsequent rows still attempted — one bad object
+// shouldn't stall the rest of the batch).
+//
+// Why we keep this even when S3 Lifecycle is configured to expire
+// objects on its own:
+//   - Lifecycle runs once a day on AWS's schedule, with no SLA. A
+//     burst of uploads near a Lifecycle pass can leave files sitting
+//     for ~24h past their TTL.
+//   - Lifecycle doesn't clean the Postgres `documents` row — those
+//     would accumulate indefinitely and bloat the index even after
+//     S3 has reclaimed the bytes.
+//   - Defense in depth: if someone forgets to configure Lifecycle on
+//     a new bucket, the reaper still keeps the system honest.
+func (s *Service) ReapExpired(ctx context.Context, cutoff time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	expired, err := s.store.ListExpiredDocuments(ctx, cutoff, limit)
+	if err != nil {
+		return 0, err
+	}
+	reaped := 0
+	var firstErr error
+	for _, doc := range expired {
+		// S3 deletes first — if these fail we still tombstone the
+		// row (so the next pass doesn't keep retrying forever); the
+		// orphaned S3 object will eventually be reclaimed by the
+		// bucket Lifecycle policy.
+		if doc.SourceObjectKey != "" {
+			if err := s.objects.DeleteObject(ctx, doc.SourceObjectKey); err != nil {
+				log.Printf("documents.reaper: delete source object %q: %v", doc.SourceObjectKey, err)
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		if doc.TextObjectKey != "" {
+			if err := s.objects.DeleteObject(ctx, doc.TextObjectKey); err != nil {
+				log.Printf("documents.reaper: delete text object %q: %v", doc.TextObjectKey, err)
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		if _, err := s.store.DeleteDocument(ctx, doc.UserID, doc.ID); err != nil {
+			log.Printf("documents.reaper: tombstone document %q: %v", doc.ID, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		reaped++
+	}
+	return reaped, firstErr
+}
+
+// StartReaper kicks off a goroutine that calls ReapExpired every
+// `interval` until ctx is cancelled. Idempotent no-op when interval
+// is zero or negative (lets callers disable cleanly via config).
+//
+// `batchSize` caps how many documents one tick processes — if a tick
+// finds the limit, it's likely backlog and the next tick continues.
+// Tail latency stays bounded; we don't try to drain in a tight loop.
+func (s *Service) StartReaper(ctx context.Context, interval time.Duration, batchSize int) {
+	if interval <= 0 {
+		return
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				count, err := s.ReapExpired(ctx, s.config.Now().UTC(), batchSize)
+				if err != nil {
+					log.Printf("documents.reaper: tick err=%v reaped=%d", err, count)
+				} else if count > 0 {
+					log.Printf("documents.reaper: tick reaped=%d", count)
+				}
+			}
+		}
+	}()
 }
 
 func (s *Service) fail(ctx context.Context, userID string, documentID string, cause error) (Document, error) {

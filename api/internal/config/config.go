@@ -66,7 +66,19 @@ type Config struct {
 	DocumentMaxBytes  int64
 	DocumentTextLimit int
 	DocumentTTLHours  int
-	AgentRunTTLHours  int
+	// DocumentReaperIntervalMinutes is how often the background job
+	// scans for past-TTL documents and hard-deletes their S3 objects
+	// + DB rows. 0 disables the job entirely (useful in tests + when
+	// the operator wants to rely solely on S3 Lifecycle for cleanup).
+	// 60 min is a reasonable default — we don't need real-time
+	// cleanup, just bounded backlog growth between passes.
+	DocumentReaperIntervalMinutes int
+	// DocumentReaperBatchSize caps how many expired documents one
+	// tick processes. Prevents a single tick from chewing through
+	// thousands of S3 deletes during catch-up after the job was
+	// disabled. Following tick picks up where the previous left off.
+	DocumentReaperBatchSize int
+	AgentRunTTLHours        int
 
 	TavilyAPIKey        string
 	TavilyBaseURL       string
@@ -109,44 +121,46 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		HTTPAddr:            ":8080",
-		AppBaseURL:          "http://localhost:8080",
-		ClientBaseURL:       "http://localhost:5173",
-		AdminBaseURL:        "http://localhost:5174",
-		JWTSecret:           "dev-change-me",
-		AccessTokenTTL:      15 * time.Minute,
-		RefreshTokenTTL:     30 * 24 * time.Hour,
-		DatabaseURL:         "",
-		AdminEmails:         nil,
-		MonthlyCredits:      0,
-		SignupCredits:       0,
-		MockLLM:             true,
-		FastProviderKind:    "",
-		FastProviderBaseURL: "https://api.deepseek.com",
-		FastModel:           "deepseek-v4-flash",
-		DeepProviderKind:    "",
-		DeepModel:           "claude-3-5-sonnet-latest",
-		AnthropicVersion:    "2023-06-01",
-		StripeWebhookSecret: "",
-		StripeSecretKey:     "",
-		StripePriceID:       "",
-		DeepProviderBaseURL: "",
-		DeepProviderAPIKey:  "",
-		FastProviderAPIKey:  "",
-		AWSRegion:           "",
-		AWSAccessKeyID:      "",
-		AWSSecretAccessKey:  "",
-		S3Bucket:            "",
-		S3UseAccelerate:     false,
-		S3DocumentPrefix:    "documents",
-		DocumentMaxBytes:    30 * 1024 * 1024,
-		DocumentTextLimit:   60_000,
-		DocumentTTLHours:    168,
-		AgentRunTTLHours:    168,
-		TavilyAPIKey:        "",
-		TavilyBaseURL:       "https://api.tavily.com",
-		TavilySearchCredits: 20,
-		ToolGatewayTimeout:  15 * time.Second,
+		HTTPAddr:                      ":8080",
+		AppBaseURL:                    "http://localhost:8080",
+		ClientBaseURL:                 "http://localhost:5173",
+		AdminBaseURL:                  "http://localhost:5174",
+		JWTSecret:                     "dev-change-me",
+		AccessTokenTTL:                15 * time.Minute,
+		RefreshTokenTTL:               30 * 24 * time.Hour,
+		DatabaseURL:                   "",
+		AdminEmails:                   nil,
+		MonthlyCredits:                0,
+		SignupCredits:                 0,
+		MockLLM:                       true,
+		FastProviderKind:              "",
+		FastProviderBaseURL:           "https://api.deepseek.com",
+		FastModel:                     "deepseek-v4-flash",
+		DeepProviderKind:              "",
+		DeepModel:                     "claude-3-5-sonnet-latest",
+		AnthropicVersion:              "2023-06-01",
+		StripeWebhookSecret:           "",
+		StripeSecretKey:               "",
+		StripePriceID:                 "",
+		DeepProviderBaseURL:           "",
+		DeepProviderAPIKey:            "",
+		FastProviderAPIKey:            "",
+		AWSRegion:                     "",
+		AWSAccessKeyID:                "",
+		AWSSecretAccessKey:            "",
+		S3Bucket:                      "",
+		S3UseAccelerate:               false,
+		S3DocumentPrefix:              "documents",
+		DocumentMaxBytes:              30 * 1024 * 1024,
+		DocumentTextLimit:             60_000,
+		DocumentTTLHours:              168,
+		DocumentReaperIntervalMinutes: 60,
+		DocumentReaperBatchSize:       100,
+		AgentRunTTLHours:              168,
+		TavilyAPIKey:                  "",
+		TavilyBaseURL:                 "https://api.tavily.com",
+		TavilySearchCredits:           20,
+		ToolGatewayTimeout:            15 * time.Second,
 
 		E2BAPIKey:                       "",
 		E2BBaseURL:                      "https://api.e2b.dev",
@@ -195,6 +209,8 @@ func Load() Config {
 	cfg.DocumentMaxBytes = getEnvInt64("DOCUMENT_MAX_BYTES", cfg.DocumentMaxBytes)
 	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)
 	cfg.DocumentTTLHours = getEnvInt("DOCUMENT_TTL_HOURS", cfg.DocumentTTLHours)
+	cfg.DocumentReaperIntervalMinutes = getEnvInt("DOCUMENT_REAPER_INTERVAL_MINUTES", cfg.DocumentReaperIntervalMinutes)
+	cfg.DocumentReaperBatchSize = getEnvInt("DOCUMENT_REAPER_BATCH_SIZE", cfg.DocumentReaperBatchSize)
 	cfg.AgentRunTTLHours = getEnvInt("AGENT_RUN_TTL_HOURS", cfg.AgentRunTTLHours)
 	cfg.TavilyAPIKey = getEnv("TAVILY_API_KEY", cfg.TavilyAPIKey)
 	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)

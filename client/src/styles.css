@@ -4699,6 +4699,31 @@ button.agent-progress-summary:focus-visible {
   padding: 10px 12px 0;
 }
 
+/* attachment-tile groups the thumbnail with its expiry caption so
+ * they stack vertically. The thumb itself stays a fixed 56×56; the
+ * caption sits beneath in muted gray text. flex-direction:column
+ * keeps the caption flush under the chip without disturbing the
+ * surrounding flex row of multiple chips (future). */
+.attachment-tile {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/* Expiry caption — small, muted, single-line. max-width matches the
+ * chip width so a long localized phrase truncates instead of
+ * blowing out the layout. */
+.attachment-expiry-caption {
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  max-width: 64px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Compact thumbnail tile shown above the composer for the attached
  * document. Images use their data: URL as the tile background; other
  * file types fall back to a generic file icon on a tinted background.

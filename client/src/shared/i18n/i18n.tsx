@@ -265,6 +265,15 @@ const zh = {
   'composer.removeAttachment': '移除附件',
   'composer.uploadProgress': '上传中 {percent}%',
   'composer.parseFailed': '解析失败',
+  // Expiry hints surfaced in the attachment chip tooltip. Users
+  // need to know their uploaded file isn't kept forever (cloud TTL
+  // ~7 days) so they don't reattach it days later only to hit
+  // "document expired" mid-run. Granularity steps down as expiry
+  // approaches: days → hours → "soon" → "expired".
+  'composer.expiresInDays': '{days} 天后过期',
+  'composer.expiresInHours': '{hours} 小时后过期',
+  'composer.expiresSoon': '即将过期',
+  'composer.expired': '已过期',
   'composer.localProject': '本地项目：{label}',
   'composer.authorized': '已授权',
   'composer.pendingAuth': '待授权',
@@ -809,6 +818,10 @@ const en: Record<TranslationKey, string> = {
   'composer.removeAttachment': 'Remove attachment',
   'composer.uploadProgress': 'Uploading {percent}%',
   'composer.parseFailed': 'Parsing failed',
+  'composer.expiresInDays': 'Expires in {days} days',
+  'composer.expiresInHours': 'Expires in {hours}h',
+  'composer.expiresSoon': 'Expires soon',
+  'composer.expired': 'Expired',
   'composer.localProject': 'Local project: {label}',
   'composer.authorized': 'Authorized',
   'composer.pendingAuth': 'Pending authorization',

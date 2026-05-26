@@ -73,6 +73,11 @@ type MetadataStore interface {
 	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (Document, error)
 	DeleteDocument(ctx context.Context, userID string, documentID string) (Document, error)
+	// ListExpiredDocuments returns documents past their expires_at
+	// that haven't yet been marked deleted. Used by the reaper to
+	// find candidates for hard cleanup. See Store interface for the
+	// full contract; cutoff is typically `time.Now().UTC()`.
+	ListExpiredDocuments(ctx context.Context, cutoff time.Time, limit int) ([]Document, error)
 }
 
 type ServiceConfig struct {

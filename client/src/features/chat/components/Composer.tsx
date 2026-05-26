@@ -12,10 +12,55 @@ import {
 import { Button } from '@/components/ui/button'
 import { ModeSelector } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
-import { useI18n } from '@/shared/i18n/i18n'
+import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { UserDocument } from '@/shared/api/client'
 import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 import type { ChatMode } from '@/shared/local-data/types'
+
+/**
+ * Format the time-until-expiry of a document into a human-readable
+ * hint string. Granularity steps down as the expiry approaches:
+ *   - > 24h: "Expires in {days} days" (rounded, never zero — at
+ *     <24h we drop into the hours branch instead)
+ *   - 1-24h: "Expires in {hours}h"
+ *   - 0-1h: "Expires soon"
+ *   - past: "Expired"
+ *
+ * Returns `null` if expiresAtIso is empty/invalid so the caller can
+ * choose to render nothing. Pulled out as a pure function so the
+ * tests can lock in the cutoffs without rendering a whole chip.
+ *
+ * `t` is the i18n lookup — Composer hands in its `useI18n` callback
+ * so the wording matches the rest of the UI's locale.
+ */
+export function formatDocumentExpiry(
+  expiresAtIso: string | undefined | null,
+  now: Date,
+  t: Translator,
+): string | null {
+  if (!expiresAtIso) {
+    return null
+  }
+  const expiresAt = new Date(expiresAtIso)
+  if (Number.isNaN(expiresAt.getTime())) {
+    return null
+  }
+  const diffMs = expiresAt.getTime() - now.getTime()
+  if (diffMs <= 0) {
+    return t('composer.expired')
+  }
+  const oneHourMs = 60 * 60 * 1000
+  const oneDayMs = 24 * oneHourMs
+  if (diffMs < oneHourMs) {
+    return t('composer.expiresSoon')
+  }
+  if (diffMs < oneDayMs) {
+    const hours = Math.max(1, Math.floor(diffMs / oneHourMs))
+    return t('composer.expiresInHours', { hours: String(hours) })
+  }
+  const days = Math.max(1, Math.floor(diffMs / oneDayMs))
+  return t('composer.expiresInDays', { days: String(days) })
+}
 
 export function Composer({
   draft,
@@ -198,9 +243,24 @@ export function Composer({
       <div className="composer-input">
         {attachedDocument ? (
           <div className="composer-chips">
+            {(() => {
+              // Compute the expiry hint once per render. Only surface
+              // it after the document is "ready" — while uploading or
+              // processing, the expires_at field exists but is moot
+              // (the user can't even reuse the file yet), and showing
+              // "expires in 7 days" next to a spinner reads as noise.
+              const expiryHint =
+                attachedDocument.status === 'ready'
+                  ? formatDocumentExpiry(attachedDocument.expires_at, new Date(), t)
+                  : null
+              const tooltip = expiryHint
+                ? `${attachedDocument.original_name} · ${expiryHint}`
+                : attachedDocument.original_name
+              return (
+            <div className="attachment-tile">
             <div
               className={`attachment-thumb status-${attachedDocument.status}`}
-              title={attachedDocument.original_name}
+              title={tooltip}
             >
               {attachedPreview ? (
                 <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
@@ -249,6 +309,19 @@ export function Composer({
                 <IconX size={12} aria-hidden="true" />
               </Button>
             </div>
+              {expiryHint ? (
+                // Visible caption below the chip so the retention
+                // window is discoverable without hovering. Cloud
+                // documents auto-expire ~7 days after upload; without
+                // this, users only learned the limit when a stale
+                // attachment failed mid-run.
+                <span className="attachment-expiry-caption" aria-label={expiryHint}>
+                  {expiryHint}
+                </span>
+              ) : null}
+            </div>
+              )
+            })()}
           </div>
         ) : null}
         <SkillEditor
