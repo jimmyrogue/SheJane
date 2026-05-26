@@ -104,4 +104,40 @@ describe('Composer (Lexical skill editor)', () => {
     // …and the "添加项目" affordance is gone.
     expect(screen.queryByRole('button', { name: '添加项目' })).not.toBeInTheDocument()
   })
+
+  // Regression: the stop button used to disappear the moment the
+  // send promise resolved, which happens early when an SSE stream
+  // blocks at a HITL permission card. Users were stranded with no
+  // way to cancel a run paused for approval. The fix routes the
+  // stop visibility off `isSending || hasActiveLocalRun`.
+  it('shows the stop button when a run is still active even if isSending is false', () => {
+    const onStop = vi.fn()
+    render(
+      <I18nProvider>
+        <Composer
+          draft=""
+          onDraftChange={vi.fn()}
+          isSending={false}
+          hasActiveLocalRun
+          isUploading={false}
+          onUploadDocument={vi.fn()}
+          onDetachDocument={vi.fn()}
+          onSend={vi.fn()}
+          onStop={onStop}
+          listSkills={vi.fn().mockResolvedValue([])}
+          mode="auto"
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    const stopButton = screen.getByRole('button', { name: '停止生成' })
+    fireEvent.click(stopButton)
+    expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the send button (not stop) when neither isSending nor hasActiveLocalRun is set', () => {
+    render(<Harness />)
+    // Stop button uses aria-label "停止生成" (i18n key composer.stop).
+    expect(screen.queryByRole('button', { name: '停止生成' })).not.toBeInTheDocument()
+  })
 })

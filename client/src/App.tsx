@@ -522,6 +522,22 @@ function AppContent() {
   }, [api, auth, localHost?.online, localHostConfig])
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
+  // Any assistant message that's still streaming OR paused at HITL
+  // counts as an "active" run from the user's perspective — the daemon
+  // can still be told to cancel it. Used to keep the composer's stop
+  // button visible during permission/question pauses, because the
+  // isSending state flips to false the moment the SSE stream blocks.
+  // Matches the precondition list in cancelActiveLocalRun below so
+  // the button and the cancel function agree on what's cancelable.
+  const hasActiveLocalRun = Boolean(
+    activeConversation?.messages.some(
+      (msg) =>
+        msg.role === 'assistant' &&
+        msg.runOrigin === 'local' &&
+        Boolean(msg.runId) &&
+        (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
+    ),
+  )
   const pendingApproval = findConversationPendingApproval(activeConversation, t)
   const pendingQuestion = pendingApproval ? null : findConversationPendingQuestion(activeConversation)
   const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
@@ -1547,6 +1563,7 @@ function AppContent() {
               draft={draft}
               onDraftChange={setDraft}
               isSending={isSending}
+              hasActiveLocalRun={hasActiveLocalRun}
               attachedDocument={attachedDocument}
               attachedPreview={attachedPreview}
               isUploading={isUploading}
