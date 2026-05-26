@@ -15,6 +15,7 @@ from langchain_core.tools import BaseTool
 from ..config import get_settings
 from ..store.sqlite import LocalStore
 from .browser import make_browser_tool
+from .code import CODE_TOOLS_for_workspace
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
 from .memory import MEMORY_TOOLS
@@ -52,6 +53,7 @@ async def build_tools(
     workspace_root: str | None = None,
     include_mcp: bool = True,
     mcp_disabled_servers: set[str] | None = None,
+    include_code_exec: bool = False,
     browser_llm: Any = None,
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
@@ -60,6 +62,11 @@ async def build_tools(
     (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP +
     browser.task. The browser tool is always present but reports
     "configure-me" if `browser_llm` is None.
+
+    `include_code_exec` gates the code.execute tool — defaulted to
+    False so legacy callers (curl / tests / older client builds) don't
+    accidentally expose it. The client's "Code Execution" agent-setting
+    toggle drives this via runs.py → build_agent.
     """
     tools: list[BaseTool] = []
     tools.extend(TRIVIAL_TOOLS)
@@ -70,6 +77,14 @@ async def build_tools(
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
     tools.extend(OFFICE_WRITE_TOOLS)
+    if include_code_exec:
+        # Bind code.execute to the run's workspace so files_in/files_out
+        # can read/write against the correct directory. The closure
+        # form is required because LangChain tools can't pull arbitrary
+        # runtime state out of RunnableConfig without an InjectedToolArg,
+        # and we also need the workspace AFTER the tool returns (to
+        # write files_out).
+        tools.extend(CODE_TOOLS_for_workspace(workspace_root))
     if store is not None:
         tools.append(make_workspace_open_tool(store))
     # fs.list/read/write are provided by deepagents FilesystemMiddleware

@@ -68,6 +68,12 @@ export interface AgentTimelineItem {
   sourceTitle?: string
   sourceUrl?: string
   verificationStatus?: 'passed' | 'failed'
+  /** Base64-encoded image/png payloads captured from a `code.execute`
+   *  tool.completed event's `data.results[].data["image/png"]` (and
+   *  variants). Populated by chatStore.ts so the message renderer can
+   *  show matplotlib figures inline without re-parsing the wire
+   *  envelope. Empty/absent when the tool produced no images. */
+  codeExecImages?: string[]
 }
 
 export interface MessageAttachment {

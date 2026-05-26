@@ -65,11 +65,16 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'jiandanly-app-notice'
 const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
-// v5 — added per-server `mcpDisabled` list for the MCP tab's per-row
-// switches. Bumping the key forces every existing renderer onto the
-// new default; users keep their global memory/skills/mcp state by
-// re-confirming once.
-const agentSettingsStorageKey = 'jiandanly.agentSettings.v5'
+// v7 — dropped the codeExec field. Cloud code execution is now always
+// on (no user-facing toggle): in practice every test confirmed the
+// flow works, and the original opt-in friction was hurting first-run
+// experience more than it was protecting privacy (files are only
+// uploaded when the LLM explicitly calls code.execute with files_in,
+// which already passes through the daemon-side sensitive-filename
+// blacklist + size cap). Bumping the storage key wipes any leftover
+// `codeExec: 'off'` from v6 storage so legacy users don't end up
+// silently disabled.
+const agentSettingsStorageKey = 'jiandanly.agentSettings.v7'
 const chatModeStorageKey = 'jiandanly.chatMode.v1'
 const defaultAgentSettings: Required<AgentSettings> = {
   memory: 'on',
@@ -150,7 +155,7 @@ function readAgentSettings(): Required<AgentSettings> {
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
     return {
-      // All three flags default to 'on'. Only an explicit 'off' disables;
+      // memory/skills/mcp default 'on'. Only an explicit 'off' disables;
       // a missing field reads as the new default rather than the old one.
       memory: parsed.memory === 'off' ? 'off' : 'on',
       skills: parsed.skills === 'off' ? 'off' : 'on',

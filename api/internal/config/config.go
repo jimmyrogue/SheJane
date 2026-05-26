@@ -59,6 +59,39 @@ type Config struct {
 	TavilyBaseURL       string
 	TavilySearchCredits int64
 	ToolGatewayTimeout  time.Duration
+
+	// E2B (cloud microVM sandbox) — used by code.execute tool.
+	// E2BAPIKey empty disables code.execute entirely (the gateway
+	// returns a "tool not configured" envelope so the agent gracefully
+	// degrades). Per CLAUDE.md Invariant #1, this key MUST live in the
+	// Go API only — never in the Python daemon's env. The daemon talks
+	// to E2B exclusively through /api/v1/agent/tools/execute.
+	E2BAPIKey  string
+	E2BBaseURL string
+	// E2BTemplateID picks which E2B base image is provisioned. Default
+	// "code-interpreter-v1" ships with Python 3.10 + jupyter + pandas /
+	// numpy / matplotlib / scikit-learn / pdfplumber / ffmpeg / etc.
+	E2BTemplateID string
+	// E2BSandboxIdleTTLSeconds is how long an idle conversation-bound
+	// sandbox lives before the reaper kills it. 900s (15 min) matches
+	// E2B's own default. Set lower in dev to debug the reaper.
+	E2BSandboxIdleTTLSeconds int
+	// E2BSandboxMaxLifetimeSeconds is the hard ceiling regardless of
+	// activity — protects against runaway agents holding a sandbox
+	// open for hours. 3600s (1 hr) is a reasonable safety net.
+	E2BSandboxMaxLifetimeSeconds int
+	// E2BCodeExecBaseCredits is the per-call flat charge (covers
+	// startup + overhead amortized). 0 = free.
+	E2BCodeExecBaseCredits int64
+	// E2BCodeExecPerSecondCredits is the credits-per-sandbox-second
+	// multiplier used when settling the reservation after the call
+	// returns. Real E2B price ~$0.000014/vCPU-s; this lets us pick a
+	// product-friendly integer mapping (e.g. 1 credit ≈ 10 seconds).
+	E2BCodeExecPerSecondCredits int64
+	// E2BSandboxRequestTimeoutSeconds is how long a single code.execute
+	// request can take before we abort and release the reservation.
+	// Plan says 60s for v0 (no streaming yet).
+	E2BSandboxRequestTimeoutSeconds int
 }
 
 func Default() Config {
@@ -100,6 +133,15 @@ func Default() Config {
 		TavilyBaseURL:       "https://api.tavily.com",
 		TavilySearchCredits: 20,
 		ToolGatewayTimeout:  15 * time.Second,
+
+		E2BAPIKey:                       "",
+		E2BBaseURL:                      "https://api.e2b.dev",
+		E2BTemplateID:                   "code-interpreter-v1",
+		E2BSandboxIdleTTLSeconds:        900,
+		E2BSandboxMaxLifetimeSeconds:    3600,
+		E2BCodeExecBaseCredits:          5,
+		E2BCodeExecPerSecondCredits:     1,
+		E2BSandboxRequestTimeoutSeconds: 60,
 	}
 }
 
@@ -143,6 +185,14 @@ func Load() Config {
 	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)
 	cfg.TavilySearchCredits = getEnvInt64("TAVILY_SEARCH_CREDITS", cfg.TavilySearchCredits)
 	cfg.ToolGatewayTimeout = time.Duration(getEnvInt("TOOL_GATEWAY_TIMEOUT_MS", int(cfg.ToolGatewayTimeout/time.Millisecond))) * time.Millisecond
+	cfg.E2BAPIKey = getEnv("E2B_API_KEY", cfg.E2BAPIKey)
+	cfg.E2BBaseURL = getEnv("E2B_BASE_URL", cfg.E2BBaseURL)
+	cfg.E2BTemplateID = getEnv("E2B_TEMPLATE_ID", cfg.E2BTemplateID)
+	cfg.E2BSandboxIdleTTLSeconds = getEnvInt("E2B_SANDBOX_IDLE_TTL_SECONDS", cfg.E2BSandboxIdleTTLSeconds)
+	cfg.E2BSandboxMaxLifetimeSeconds = getEnvInt("E2B_SANDBOX_MAX_LIFETIME_SECONDS", cfg.E2BSandboxMaxLifetimeSeconds)
+	cfg.E2BCodeExecBaseCredits = getEnvInt64("E2B_CODE_EXEC_BASE_CREDITS", cfg.E2BCodeExecBaseCredits)
+	cfg.E2BCodeExecPerSecondCredits = getEnvInt64("E2B_CODE_EXEC_PER_SECOND_CREDITS", cfg.E2BCodeExecPerSecondCredits)
+	cfg.E2BSandboxRequestTimeoutSeconds = getEnvInt("E2B_SANDBOX_REQUEST_TIMEOUT_SECONDS", cfg.E2BSandboxRequestTimeoutSeconds)
 	return cfg
 }
 

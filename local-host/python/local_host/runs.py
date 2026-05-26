@@ -285,6 +285,16 @@ class RunCoordinator:
             memory_enabled = str(run_settings.get("memory", "on")).lower() != "off"
             skills_enabled = str(run_settings.get("skills", "on")).lower() != "off"
             mcp_enabled = str(run_settings.get("mcp", "on")).lower() != "off"
+            # Code execution defaults ON now (since v7 of the client
+            # storage, ~2026-05-26). The original opt-in toggle was
+            # removed from the UI — first-call friction was costing
+            # more than it was protecting (files only upload when the
+            # LLM explicitly calls code.execute with files_in, which
+            # already passes the daemon-side sensitive-filename
+            # blacklist + size cap). The setting is still honored if
+            # explicitly passed as "off" — leaves an env-level kill
+            # switch for future enterprise/regulated deployments.
+            code_exec_enabled = str(run_settings.get("code_exec", "on")).lower() != "off"
             # Per-server opt-out from the MCP tab. The client persists
             # a list of names the user disabled and ships it on every
             # run. Defensive coercion: drop non-strings and dedupe so
@@ -307,6 +317,7 @@ class RunCoordinator:
                 skills_enabled=skills_enabled,
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
+                code_exec_enabled=code_exec_enabled,
             )
             config = {
                 "configurable": {"thread_id": run_id},

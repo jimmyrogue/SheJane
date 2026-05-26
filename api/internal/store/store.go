@@ -73,6 +73,34 @@ type ExternalToolCallRecord struct {
 	FinishedAt      time.Time      `json:"finished_at,omitempty"`
 }
 
+// SandboxSessionRecord is one row of the sandbox_sessions table (Phase 5).
+//
+// A user's conversation owns at most one *active* sandbox at a time —
+// reuse keeps the Jupyter kernel variables alive across multiple
+// code.execute calls so the agent can iterate ("now do X to that
+// DataFrame") without losing state. When status flips to
+// timeout/killed/failed the unique-active-per-conversation index frees
+// up and the next code.execute call provisions a fresh sandbox.
+type SandboxSessionRecord struct {
+	ID             string `json:"id"`
+	UserID         string `json:"user_id"`
+	ConversationID string `json:"conversation_id"`
+	E2BSandboxID   string `json:"e2b_sandbox_id"`
+	// E2BClientID is the routing component E2B returns at sandbox
+	// create time. The per-sandbox URL is
+	// `https://{port}-{E2BSandboxID}-{E2BClientID}.e2b.dev`. Without
+	// it we can't talk to the sandbox at all post-create.
+	E2BClientID      string    `json:"e2b_client_id"`
+	Provider         string    `json:"provider"`
+	TemplateID       string    `json:"template_id"`
+	Status           string    `json:"status"` // active | timeout | killed | failed
+	CreatedAt        time.Time `json:"created_at"`
+	LastUsedAt       time.Time `json:"last_used_at"`
+	KilledAt         time.Time `json:"killed_at,omitempty"`
+	TotalSeconds     int       `json:"total_seconds"`
+	TotalCreditsCost int64     `json:"total_credits_cost"`
+}
+
 type AgentAttachment struct {
 	Type       string `json:"type"`
 	DocumentID string `json:"document_id,omitempty"`
@@ -248,6 +276,23 @@ type Store interface {
 	CreateExternalToolCall(ctx context.Context, record ExternalToolCallRecord) (ExternalToolCallRecord, bool, error)
 	ExternalToolCallByIdempotencyKey(ctx context.Context, userID string, idempotencyKey string) (ExternalToolCallRecord, error)
 	FinishExternalToolCall(ctx context.Context, requestID string, status string, units int, creditsCost int64, errorCode string, errorMessage string, responseContent string, responseData map[string]any) error
+
+	// Sandbox session lifecycle (Phase 5 — code.execute tool).
+	//
+	// GetActiveSandboxSessionByConversation returns ErrNotFound when no
+	// active row exists; callers should then provision via E2B + Create.
+	// Concurrent code.execute calls on the same conversation are
+	// serialized at the gateway level (per-tool_call_id idempotency
+	// already in place), so we don't need a SELECT … FOR UPDATE here.
+	GetActiveSandboxSessionByConversation(ctx context.Context, userID string, conversationID string) (SandboxSessionRecord, error)
+	CreateSandboxSession(ctx context.Context, record SandboxSessionRecord) (SandboxSessionRecord, error)
+	TouchSandboxSession(ctx context.Context, id string, addedSeconds int, addedCreditsCost int64) error
+	MarkSandboxSessionStatus(ctx context.Context, id string, status string) error
+	// ListReapableSandboxSessions returns active sandboxes that have
+	// either been idle for `idleSince` or live past `bornBefore`. The
+	// reaper job calls KillSandbox + MarkSandboxSessionStatus("timeout"
+	// or "killed") on each result.
+	ListReapableSandboxSessions(ctx context.Context, idleSince time.Time, bornBefore time.Time, limit int) ([]SandboxSessionRecord, error)
 
 	CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error)
 	AgentRunByID(ctx context.Context, userID string, runID string) (AgentRun, error)

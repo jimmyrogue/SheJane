@@ -385,3 +385,44 @@ class McpServerCatalog(BaseModel):
 
     servers: list[McpServerInfo]
     sources_scanned: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Code execution (E2B microVM sandbox)
+# ---------------------------------------------------------------------------
+
+
+class CodeExecuteResultModel(BaseModel):
+    """Wire shape for the `code.execute` tool's structured result.
+
+    The Python @tool returns this nested under the tool message's
+    `data` field so the client renderer (CodeExecutionPreview) can
+    render rich output (matplotlib figures as base64 PNGs, pandas
+    DataFrames as HTML, etc.) without re-parsing free text.
+
+    Field naming mirrors what the Go API gateway returns
+    (api/internal/httpapi/code_gateway.go:codeExecData) so the daemon
+    can pass-through the gateway envelope's `data` dict unchanged.
+    Keep them in sync — drift here means the client renders nothing.
+    """
+
+    source: Literal["code.execute"] = "code.execute"
+    sandbox_id: str = ""
+    session_id: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    error_name: str = ""
+    error_value: str = ""
+    traceback: list[str] = []
+    results: list[dict[str, Any]] = []
+    # Each entry: {path: "/output/foo.png", content_b64: "...", size: 1234}
+    # Set by the Go gateway after listing /output/ in the sandbox; the
+    # daemon decodes + writes them to workspace/.code-output/<conv_id>/
+    # before returning to the agent.
+    files_out: list[dict[str, Any]] = []
+    # Workspace-relative paths the daemon actually wrote files_out to.
+    # Only present when at least one file was synced successfully —
+    # the client renders these as "open this file" chips. Populated
+    # by tools/code.py:_write_files_out, not by the Go gateway.
+    files_out_local: list[str] = []
+    execution_ms: int = 0

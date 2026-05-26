@@ -18,38 +18,40 @@ import (
 type MemoryStore struct {
 	mu sync.Mutex
 
-	usersByID    map[string]User
-	usersByEmail map[string]User
-	refresh      map[string]RefreshToken
-	wallets      map[string]*billing.Wallet
-	llmCalls     map[string]LLMCallRecord
-	toolCalls    map[string]ExternalToolCallRecord
-	agentRuns    map[string]AgentRun
-	agentEvents  map[string][]AgentEvent
-	documents    map[string]documents.Document
-	orders       map[string]PaymentOrder
-	stripeEvents map[string]bool
-	auditLogs    []AuditLog
-	modelConfigs map[string]ModelConfig
-	appSettings  map[string]AppSetting
+	usersByID       map[string]User
+	usersByEmail    map[string]User
+	refresh         map[string]RefreshToken
+	wallets         map[string]*billing.Wallet
+	llmCalls        map[string]LLMCallRecord
+	toolCalls       map[string]ExternalToolCallRecord
+	agentRuns       map[string]AgentRun
+	agentEvents     map[string][]AgentEvent
+	documents       map[string]documents.Document
+	orders          map[string]PaymentOrder
+	stripeEvents    map[string]bool
+	auditLogs       []AuditLog
+	modelConfigs    map[string]ModelConfig
+	appSettings     map[string]AppSetting
+	sandboxSessions map[string]SandboxSessionRecord // id → record
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		usersByID:    make(map[string]User),
-		usersByEmail: make(map[string]User),
-		refresh:      make(map[string]RefreshToken),
-		wallets:      make(map[string]*billing.Wallet),
-		llmCalls:     make(map[string]LLMCallRecord),
-		toolCalls:    make(map[string]ExternalToolCallRecord),
-		agentRuns:    make(map[string]AgentRun),
-		agentEvents:  make(map[string][]AgentEvent),
-		documents:    make(map[string]documents.Document),
-		orders:       make(map[string]PaymentOrder),
-		stripeEvents: make(map[string]bool),
-		auditLogs:    make([]AuditLog, 0),
-		modelConfigs: make(map[string]ModelConfig),
-		appSettings:  make(map[string]AppSetting),
+		usersByID:       make(map[string]User),
+		usersByEmail:    make(map[string]User),
+		refresh:         make(map[string]RefreshToken),
+		wallets:         make(map[string]*billing.Wallet),
+		llmCalls:        make(map[string]LLMCallRecord),
+		toolCalls:       make(map[string]ExternalToolCallRecord),
+		agentRuns:       make(map[string]AgentRun),
+		agentEvents:     make(map[string][]AgentEvent),
+		documents:       make(map[string]documents.Document),
+		orders:          make(map[string]PaymentOrder),
+		stripeEvents:    make(map[string]bool),
+		auditLogs:       make([]AuditLog, 0),
+		modelConfigs:    make(map[string]ModelConfig),
+		appSettings:     make(map[string]AppSetting),
+		sandboxSessions: make(map[string]SandboxSessionRecord),
 	}
 }
 
@@ -327,6 +329,102 @@ func (s *MemoryStore) FinishExternalToolCall(ctx context.Context, requestID stri
 	record.FinishedAt = time.Now().UTC()
 	s.toolCalls[requestID] = record
 	return nil
+}
+
+// ---- Sandbox sessions (Phase 5) ----
+
+func (s *MemoryStore) GetActiveSandboxSessionByConversation(ctx context.Context, userID string, conversationID string) (SandboxSessionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rec := range s.sandboxSessions {
+		if rec.UserID == userID && rec.ConversationID == conversationID && rec.Status == "active" {
+			return rec, nil
+		}
+	}
+	return SandboxSessionRecord{}, ErrNotFound
+}
+
+func (s *MemoryStore) CreateSandboxSession(ctx context.Context, record SandboxSessionRecord) (SandboxSessionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Enforce unique-active per conversation (the SQL index does this in
+	// PG; we mirror it here so tests catch double-active bugs).
+	if record.Status == "" {
+		record.Status = "active"
+	}
+	if record.Status == "active" {
+		for _, existing := range s.sandboxSessions {
+			if existing.UserID == record.UserID && existing.ConversationID == record.ConversationID && existing.Status == "active" {
+				return SandboxSessionRecord{}, ErrAlreadyExists
+			}
+		}
+	}
+	if record.ID == "" {
+		record.ID = newUUID()
+	}
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = time.Now().UTC()
+	}
+	if record.LastUsedAt.IsZero() {
+		record.LastUsedAt = record.CreatedAt
+	}
+	if record.Provider == "" {
+		record.Provider = "e2b"
+	}
+	s.sandboxSessions[record.ID] = record
+	return record, nil
+}
+
+func (s *MemoryStore) TouchSandboxSession(ctx context.Context, id string, addedSeconds int, addedCreditsCost int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.sandboxSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	rec.LastUsedAt = time.Now().UTC()
+	if addedSeconds > 0 {
+		rec.TotalSeconds += addedSeconds
+	}
+	if addedCreditsCost > 0 {
+		rec.TotalCreditsCost += addedCreditsCost
+	}
+	s.sandboxSessions[id] = rec
+	return nil
+}
+
+func (s *MemoryStore) MarkSandboxSessionStatus(ctx context.Context, id string, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.sandboxSessions[id]
+	if !ok {
+		return ErrNotFound
+	}
+	rec.Status = status
+	if status != "active" {
+		rec.KilledAt = time.Now().UTC()
+	}
+	s.sandboxSessions[id] = rec
+	return nil
+}
+
+func (s *MemoryStore) ListReapableSandboxSessions(ctx context.Context, idleSince time.Time, bornBefore time.Time, limit int) ([]SandboxSessionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]SandboxSessionRecord, 0, limit)
+	for _, rec := range s.sandboxSessions {
+		if rec.Status != "active" {
+			continue
+		}
+		// Reap if either (a) idle past idleSince OR (b) born before bornBefore.
+		if rec.LastUsedAt.Before(idleSince) || rec.CreatedAt.Before(bornBefore) {
+			out = append(out, rec)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (s *MemoryStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {

@@ -1408,6 +1408,27 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	return true
 }
 
+// decodeLargeJSON is decodeJSON with a much higher body cap, for
+// endpoints whose payload may legitimately be tens of megabytes —
+// today only the agent tool gateway when code.execute carries base64
+// `files_in` (per-file cap 50 MB on the daemon, total 200 MB on Go,
+// so the worst-case JSON body is ~270 MB after base64 inflation).
+//
+// We keep the 1 MB default everywhere else so a single bad client
+// can't OOM the API; explicit opt-in here makes the trade-off visible.
+func decodeLargeJSON(w http.ResponseWriter, r *http.Request, target any, maxBytes int64) bool {
+	if maxBytes <= 0 {
+		maxBytes = 1 << 20
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, 40201, "请求参数无效")
+		return false
+	}
+	return true
+}
+
 func writeJSON[T any](w http.ResponseWriter, status int, response apiResponse[T]) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

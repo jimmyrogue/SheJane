@@ -321,6 +321,7 @@ async def build_agent(
     skills_enabled: bool = True,
     mcp_enabled: bool = True,
     mcp_disabled_servers: set[str] | None = None,
+    code_exec_enabled: bool = False,
     settings: Settings | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -377,6 +378,7 @@ async def build_agent(
         workspace_root=workspace_root,
         include_mcp=mcp_enabled,
         mcp_disabled_servers=mcp_disabled_servers,
+        include_code_exec=code_exec_enabled,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
     )
     if not memory_enabled:

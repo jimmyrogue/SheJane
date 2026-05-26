@@ -56,13 +56,24 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 			},
 			imageToolName:     s.imageToolCapability(r.Context()),
 			imageEditToolName: s.imageToolCapability(r.Context()),
+			codeExecToolName: {
+				Configured:   s.app.IsCodeExecEnabled(),
+				Provider:     "e2b",
+				CreditsCost:  positiveCredits(s.app.Config.E2BCodeExecBaseCredits),
+				RequiresAuth: true,
+			},
 		}},
 	})
 }
 
 func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body agentToolExecuteRequest
-	if !decodeJSON(w, r, &body) {
+	// 300 MB cap — covers a max-size code.execute call (200 MB raw
+	// files × 4/3 base64 overhead ≈ 267 MB, plus envelope headroom).
+	// Image.* / web.search payloads are tiny — the larger cap costs
+	// nothing for them, and bounds the worst-case allocation for
+	// code.execute so a malicious daemon can't OOM the API.
+	if !decodeLargeJSON(w, r, &body, 300<<20) {
 		return
 	}
 	body.Tool = strings.TrimSpace(body.Tool)
@@ -102,11 +113,28 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 		writeJSON(w, status, apiResponse[agentToolExecuteResult]{Code: code, Message: result.Content, Data: result})
 		return
 	}
+	if body.Tool == codeExecToolName {
+		result, status := s.runCodeExecute(r.Context(), user, codeExecInput{
+			RunID:          body.RunID,
+			ToolCallID:     body.ToolCallID,
+			IdempotencyKey: body.IdempotencyKey,
+			ConversationID: argString(body.Arguments, "conversation_id"),
+			Code:           argString(body.Arguments, "code"),
+			Language:       argString(body.Arguments, "language"),
+			FilesIn:        argCodeExecFiles(body.Arguments, "files_in"),
+		})
+		code := 0
+		if !result.OK {
+			code = 1
+		}
+		writeJSON(w, status, apiResponse[agentToolExecuteResult]{Code: code, Message: result.Content, Data: result})
+		return
+	}
 	if body.Tool != "web.search" {
 		writeJSON(w, http.StatusBadRequest, apiResponse[agentToolExecuteResult]{
 			Code:    40040,
 			Message: "unsupported tool",
-			Data:    toolError("unsupported_tool", "Only web.search is supported by the cloud tool gateway in this phase."),
+			Data:    toolError("unsupported_tool", "Only web.search / image.* / code.execute are supported by the cloud tool gateway in this phase."),
 		})
 		return
 	}

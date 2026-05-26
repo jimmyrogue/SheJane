@@ -16,6 +16,7 @@ import (
 
 	"github.com/coldflame/jiandanly/api/internal/config"
 	"github.com/coldflame/jiandanly/api/internal/documents"
+	"github.com/coldflame/jiandanly/api/internal/e2b"
 	"github.com/coldflame/jiandanly/api/internal/llm"
 	"github.com/coldflame/jiandanly/api/internal/modelreg"
 	"github.com/coldflame/jiandanly/api/internal/store"
@@ -34,6 +35,11 @@ type App struct {
 	Router    *llm.Router
 	Registry  *modelreg.Registry
 	Documents *documents.Service
+	// E2BSessions is nil when E2B_API_KEY is unconfigured. Callers
+	// (the code.execute tool gateway branch) MUST check IsCodeExecEnabled
+	// before dereferencing — an unconfigured E2B reports a "tool not
+	// configured" envelope to the daemon instead of panicking.
+	E2BSessions *e2b.SessionManager
 }
 
 type AuthResult struct {
@@ -53,6 +59,18 @@ type Option func(*appOptions)
 
 type appOptions struct {
 	documentStorage documents.ObjectStorage
+	e2bOptions      *e2b.Options
+}
+
+// WithE2BOptions overrides the E2B client construction options. Used
+// by tests to inject a custom http.Client + HostSuffix so per-sandbox
+// URLs (https://{port}-{sbx}-{client}.e2b.dev) route to an httptest
+// server instead of trying real DNS resolution. Production callers
+// should NOT use this — the default behavior reads from Config.
+func WithE2BOptions(opts e2b.Options) Option {
+	return func(options *appOptions) {
+		options.e2bOptions = &opts
+	}
 }
 
 func WithDocumentObjectStorage(storage documents.ObjectStorage) Option {
@@ -89,13 +107,61 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 	}
 	router.SetResolver(registry.Resolve)
 
-	return &App{
-		Config:    cfg,
-		Store:     st,
-		Router:    router,
-		Registry:  registry,
-		Documents: documents.NewService(st, documentStorage, documentConfig),
+	// E2B is optional: empty API key disables code.execute entirely
+	// (no panic, the gateway returns a "tool not configured" envelope).
+	// Per CLAUDE.md Invariant #1 the key MUST live here in the Go API,
+	// never in the Python daemon's env.
+	var e2bSessions *e2b.SessionManager
+	if strings.TrimSpace(cfg.E2BAPIKey) != "" {
+		e2bOpts := e2b.Options{
+			APIKey:  cfg.E2BAPIKey,
+			BaseURL: cfg.E2BBaseURL,
+		}
+		// Test override: pull HTTPClient + HostSuffix from injected
+		// options so per-sandbox URLs route to an httptest server.
+		if options.e2bOptions != nil {
+			if options.e2bOptions.HTTPClient != nil {
+				e2bOpts.HTTPClient = options.e2bOptions.HTTPClient
+			}
+			if options.e2bOptions.HostSuffix != "" {
+				e2bOpts.HostSuffix = options.e2bOptions.HostSuffix
+			}
+			if options.e2bOptions.UserAgent != "" {
+				e2bOpts.UserAgent = options.e2bOptions.UserAgent
+			}
+		}
+		client, err := e2b.New(e2bOpts)
+		if err != nil {
+			log.Printf("app: e2b client init failed (code.execute disabled): %v", err)
+		} else {
+			e2bSessions = e2b.NewSessionManager(client, st, e2b.SessionConfig{
+				TemplateID:          cfg.E2BTemplateID,
+				IdleTTL:             time.Duration(cfg.E2BSandboxIdleTTLSeconds) * time.Second,
+				MaxLifetime:         time.Duration(cfg.E2BSandboxMaxLifetimeSeconds) * time.Second,
+				CodeExecuteTimeout:  time.Duration(cfg.E2BSandboxRequestTimeoutSeconds) * time.Second,
+				PerSecondCreditCost: cfg.E2BCodeExecPerSecondCredits,
+			})
+			// 5-min reaper cadence — frequent enough that a stuck
+			// sandbox doesn't lurk for a full TTL but not so chatty
+			// it floods PG. Reaper exits when the process does.
+			e2bSessions.StartReaper(context.Background(), 5*time.Minute)
+		}
 	}
+
+	return &App{
+		Config:      cfg,
+		Store:       st,
+		Router:      router,
+		Registry:    registry,
+		Documents:   documents.NewService(st, documentStorage, documentConfig),
+		E2BSessions: e2bSessions,
+	}
+}
+
+// IsCodeExecEnabled reports whether the code.execute tool gateway
+// branch should accept requests. False when E2B is unconfigured.
+func (a *App) IsCodeExecEnabled() bool {
+	return a.E2BSessions != nil
 }
 
 func (a *App) Register(ctx context.Context, email string, password string, name string) (AuthResult, error) {

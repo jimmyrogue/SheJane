@@ -8,7 +8,7 @@ import { ChatImage } from './ChatImage'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
-import type { ChatMessage, CloudOfficeAttachmentRef, LocalOfficeFileRef } from '@/shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, CloudOfficeAttachmentRef, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 import { completePartialMarkdown } from '@/shared/streaming/completePartialMarkdown'
 
@@ -156,6 +156,12 @@ export function MessageBubble({
             )}
           </div>
         ) : null}
+        {/* Rich rendering for matplotlib/PIL figures from code.execute.
+         *  We pull image/png base64 payloads out of every tool.completed
+         *  event for code.execute and inline them — that way users see
+         *  the actual chart instead of just LLM prose describing it (or,
+         *  worse, the model's hallucinated `![](imgbb.com/…)` URL). */}
+        {isAssistant ? <CodeExecutionImages events={message.agentEvents} /> : null}
         {children}
         <div className="message-meta">
           {message.content.trim() ? (
@@ -516,5 +522,44 @@ function AttachmentChip({
       <IconPaperclip size={13} aria-hidden="true" />
       {name}
     </button>
+  )
+}
+
+/**
+ * Pulls all base64-encoded image/png payloads out of an assistant
+ * message's `tool.completed` events for `code.execute` and renders
+ * them as inline `<img>` elements. Used to surface matplotlib/PIL
+ * figures so the user actually sees what the agent generated, rather
+ * than relying on the LLM's text description (which often hallucinates
+ * markdown image links pointing at fake URLs).
+ *
+ * Returns `null` when there are no images — the surrounding bubble
+ * keeps its layout clean for text-only replies.
+ */
+function CodeExecutionImages({ events }: { events?: AgentTimelineItem[] }) {
+  if (!events || events.length === 0) return null
+  const images: string[] = []
+  const seen = new Set<string>()
+  for (const item of events) {
+    if (item.type !== 'tool.completed' || item.tool !== 'code.execute') continue
+    for (const img of item.codeExecImages ?? []) {
+      if (!img || seen.has(img)) continue
+      seen.add(img)
+      images.push(img)
+    }
+  }
+  if (images.length === 0) return null
+  return (
+    <div className="message-code-images">
+      {images.map((b64, idx) => (
+        <img
+          key={`${b64.slice(0, 24)}-${idx}`}
+          src={`data:image/png;base64,${b64}`}
+          alt=""
+          className="message-code-image"
+          loading="lazy"
+        />
+      ))}
+    </div>
   )
 }

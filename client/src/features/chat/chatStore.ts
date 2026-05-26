@@ -171,7 +171,7 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     }
     case 'tool.completed': {
       const tool = stringValue(payload.tool)
-      return {
+      const item: AgentTimelineItem = {
         type: event.event_type,
         label: t('chat.timeline.toolCompleted', { tool: toolActionLabel(tool, t) }),
         eventId,
@@ -180,6 +180,15 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         target: toolTarget(payload, tool),
         toolDetail: toolDetail(payload, tool),
       }
+      // For code.execute, extract any image/png payloads from the
+      // tool result so MessageBubble can render them inline. Without
+      // this the user only sees the LLM's text, which often makes up
+      // bogus `![](https://imgbb.com/...)` URLs as placeholders for
+      // charts it knows it produced but can't reference.
+      if (tool === 'code.execute') {
+        item.codeExecImages = extractCodeExecImages(payload)
+      }
+      return item
     }
     case 'tool.failed': {
       const tool = stringValue(payload.tool)
@@ -319,6 +328,48 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+/** Extract base64-encoded image payloads from a code.execute tool
+ *  result payload. The wire envelope is set by
+ *  api/internal/httpapi/code_gateway.go:codeExecData → JSON-encoded
+ *  into `payload.content` AND mirrored on `payload.data`. We try both
+ *  so older daemon builds still produce images; current daemons
+ *  populate `data.results[].data["image/png" | "image/jpeg" | "image/svg+xml"]`.
+ *  Returns the unique image strings in document order. */
+function extractCodeExecImages(payload: Record<string, unknown>): string[] {
+  const out: string[] = []
+  const visit = (results: unknown) => {
+    if (!Array.isArray(results)) return
+    for (const entry of results) {
+      if (!entry || typeof entry !== 'object') continue
+      const data = (entry as { data?: unknown }).data
+      if (!data || typeof data !== 'object') continue
+      const dataMap = data as Record<string, unknown>
+      for (const key of ['image/png', 'image/jpeg', 'image/svg+xml']) {
+        const value = dataMap[key]
+        if (typeof value === 'string' && value.length > 0 && !out.includes(value)) {
+          out.push(value)
+        }
+      }
+    }
+  }
+  // Daemon path: payload.data.results.
+  const data = payload.data
+  if (data && typeof data === 'object') {
+    visit((data as { results?: unknown }).results)
+  }
+  // Wire-envelope fallback: payload.content is a JSON string of the
+  // full result envelope (see daemon code.py wrapper).
+  if (out.length === 0 && typeof payload.content === 'string') {
+    try {
+      const parsed = JSON.parse(payload.content) as { data?: { results?: unknown } }
+      visit(parsed?.data?.results)
+    } catch {
+      // Not JSON — ignore.
+    }
+  }
+  return out
 }
 
 function truncate(value: string, max: number): string {
@@ -523,6 +574,7 @@ function toolActionLabel(tool: string, t: Translator): string {
     'browser.close': t('chat.tool.browser.close'),
     'environment.observe': t('chat.tool.environment.observe'),
     'shell.run': t('chat.tool.shell.run'),
+    'code.execute': t('chat.tool.code.execute'),
     'web.fetch': t('chat.tool.web.fetch'),
     'web.search': t('chat.tool.web.search'),
     'mcp.call': t('chat.tool.mcp.call'),

@@ -362,6 +362,117 @@ func (s *PostgresStore) FinishExternalToolCall(ctx context.Context, requestID st
 	return err
 }
 
+// ---- Sandbox sessions (Phase 5 — code.execute tool) ----
+
+func (s *PostgresStore) GetActiveSandboxSessionByConversation(ctx context.Context, userID string, conversationID string) (SandboxSessionRecord, error) {
+	var rec SandboxSessionRecord
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text, conversation_id, e2b_sandbox_id, e2b_client_id, provider, template_id,
+			status, created_at, last_used_at, COALESCE(killed_at, '0001-01-01'::timestamptz),
+			total_seconds, total_credits_cost
+		FROM sandbox_sessions
+		WHERE user_id=$1 AND conversation_id=$2 AND status='active'
+	`, userID, conversationID).Scan(
+		&rec.ID, &rec.UserID, &rec.ConversationID, &rec.E2BSandboxID, &rec.E2BClientID, &rec.Provider, &rec.TemplateID,
+		&rec.Status, &rec.CreatedAt, &rec.LastUsedAt, &rec.KilledAt,
+		&rec.TotalSeconds, &rec.TotalCreditsCost,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SandboxSessionRecord{}, ErrNotFound
+		}
+		return SandboxSessionRecord{}, err
+	}
+	return rec, nil
+}
+
+func (s *PostgresStore) CreateSandboxSession(ctx context.Context, record SandboxSessionRecord) (SandboxSessionRecord, error) {
+	if record.Provider == "" {
+		record.Provider = "e2b"
+	}
+	if record.Status == "" {
+		record.Status = "active"
+	}
+	var created SandboxSessionRecord
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO sandbox_sessions (
+			user_id, conversation_id, e2b_sandbox_id, e2b_client_id, provider, template_id, status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id::text, user_id::text, conversation_id, e2b_sandbox_id, e2b_client_id, provider, template_id,
+			status, created_at, last_used_at, COALESCE(killed_at, '0001-01-01'::timestamptz),
+			total_seconds, total_credits_cost
+	`, record.UserID, record.ConversationID, record.E2BSandboxID, record.E2BClientID, record.Provider, record.TemplateID, record.Status).
+		Scan(
+			&created.ID, &created.UserID, &created.ConversationID, &created.E2BSandboxID, &created.E2BClientID, &created.Provider, &created.TemplateID,
+			&created.Status, &created.CreatedAt, &created.LastUsedAt, &created.KilledAt,
+			&created.TotalSeconds, &created.TotalCreditsCost,
+		)
+	if err != nil {
+		// Unique violation on (user_id, conversation_id, status='active')
+		// → another concurrent code.execute call beat us to it. Return
+		// ErrAlreadyExists so the caller can fall back to GetActive.
+		if isUniqueViolation(err) {
+			return SandboxSessionRecord{}, ErrAlreadyExists
+		}
+		return SandboxSessionRecord{}, err
+	}
+	return created, nil
+}
+
+func (s *PostgresStore) TouchSandboxSession(ctx context.Context, id string, addedSeconds int, addedCreditsCost int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sandbox_sessions
+		SET last_used_at = NOW(),
+			total_seconds = total_seconds + $2,
+			total_credits_cost = total_credits_cost + $3
+		WHERE id = $1
+	`, id, addedSeconds, addedCreditsCost)
+	return err
+}
+
+func (s *PostgresStore) MarkSandboxSessionStatus(ctx context.Context, id string, status string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sandbox_sessions
+		SET status = $2,
+			killed_at = CASE WHEN $2 = 'active' THEN killed_at ELSE NOW() END
+		WHERE id = $1
+	`, id, status)
+	return err
+}
+
+func (s *PostgresStore) ListReapableSandboxSessions(ctx context.Context, idleSince time.Time, bornBefore time.Time, limit int) ([]SandboxSessionRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id::text, user_id::text, conversation_id, e2b_sandbox_id, e2b_client_id, provider, template_id,
+			status, created_at, last_used_at, COALESCE(killed_at, '0001-01-01'::timestamptz),
+			total_seconds, total_credits_cost
+		FROM sandbox_sessions
+		WHERE status = 'active'
+		  AND (last_used_at < $1 OR created_at < $2)
+		ORDER BY last_used_at
+		LIMIT $3
+	`, idleSince, bornBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SandboxSessionRecord, 0, limit)
+	for rows.Next() {
+		var rec SandboxSessionRecord
+		if err := rows.Scan(
+			&rec.ID, &rec.UserID, &rec.ConversationID, &rec.E2BSandboxID, &rec.E2BClientID, &rec.Provider, &rec.TemplateID,
+			&rec.Status, &rec.CreatedAt, &rec.LastUsedAt, &rec.KilledAt,
+			&rec.TotalSeconds, &rec.TotalCreditsCost,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) CreateAgentRun(ctx context.Context, run AgentRun) (AgentRun, error) {
 	if run.ID == "" {
 		run.ID = newUUID()
