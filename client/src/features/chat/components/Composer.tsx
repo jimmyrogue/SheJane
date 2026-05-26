@@ -314,10 +314,10 @@ export function Composer({
                 // window is discoverable without hovering. Cloud
                 // documents auto-expire ~7 days after upload; without
                 // this, users only learned the limit when a stale
-                // attachment failed mid-run.
-                <span className="attachment-expiry-caption" aria-label={expiryHint}>
-                  {expiryHint}
-                </span>
+                // attachment failed mid-run. No aria-label needed —
+                // the visible text content is already accessible to
+                // screen readers; adding aria-label would double-read.
+                <span className="attachment-expiry-caption">{expiryHint}</span>
               ) : null}
             </div>
               )

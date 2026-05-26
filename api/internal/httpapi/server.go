@@ -1449,7 +1449,10 @@ func writeStoreReadError(w http.ResponseWriter, err error, fallback string) {
 
 func writeDocumentError(w http.ResponseWriter, err error, fallback string) {
 	switch {
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, documents.ErrAlreadyDeleted):
+		// Both render as 404 to the client — "row missing" and "row
+		// was already tombstoned" are indistinguishable from the
+		// user's perspective (there's nothing to act on).
 		writeError(w, http.StatusNotFound, 40401, "文档不存在")
 	case errors.Is(err, documents.ErrExpired):
 		writeError(w, http.StatusGone, 41001, "文档已过期")

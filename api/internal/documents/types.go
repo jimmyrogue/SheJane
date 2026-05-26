@@ -23,6 +23,15 @@ var (
 	ErrObjectStorageMissing = errors.New("object storage is not configured")
 	ErrTooLarge             = errors.New("document is too large")
 	ErrUnsupportedType      = errors.New("unsupported document type")
+	// ErrAlreadyDeleted is returned by MetadataStore.DeleteDocument
+	// when the target row was already tombstoned (status='deleted')
+	// or no longer exists. Distinct from a generic "not found" so
+	// the reaper can distinguish a benign race ("another tick / a
+	// user delete got there first") from a real lookup failure and
+	// skip the log + firstErr bookkeeping. HTTP handlers map it to
+	// 404, same as not-found, since the user-visible outcome is
+	// identical: there's nothing left to delete.
+	ErrAlreadyDeleted = errors.New("document already deleted")
 )
 
 type Document struct {

@@ -4711,17 +4711,16 @@ button.agent-progress-summary:focus-visible {
   gap: 4px;
 }
 
-/* Expiry caption — small, muted, single-line. max-width matches the
- * chip width so a long localized phrase truncates instead of
- * blowing out the layout. */
+/* Expiry caption — small, muted, single-line. Allowed to grow past
+ * the 56px chip width: at 11px Inter the English variants
+ * ("Expires in 7 days", ~95px) need the room or they'd truncate to
+ * "Expires in 7 d…". The parent .composer-chips is flex-wrap:wrap,
+ * so multi-chip layouts wrap to a new row instead of clipping. */
 .attachment-expiry-caption {
   font-size: 11px;
   line-height: 1.2;
   color: var(--text-tertiary);
-  max-width: 64px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Compact thumbnail tile shown above the composer for the attached

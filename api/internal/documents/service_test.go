@@ -89,8 +89,11 @@ func (f *fakeMetadataStore) DeleteDocument(ctx context.Context, userID string, d
 		return Document{}, err
 	}
 	doc, ok := f.documents[documentID]
-	if !ok || doc.UserID != userID {
-		return Document{}, fmt.Errorf("not found: %s", documentID)
+	// Match the real store contract: missing row OR already-tombstoned
+	// → ErrAlreadyDeleted (the reaper relies on this sentinel to
+	// silently skip benign races).
+	if !ok || doc.UserID != userID || doc.Status == StatusDeleted {
+		return Document{}, ErrAlreadyDeleted
 	}
 	doc.Status = StatusDeleted
 	doc.UpdatedAt = time.Now().UTC()
@@ -309,6 +312,31 @@ func TestReapExpiredContinuesAfterS3Failure(t *testing.T) {
 		if docs[id].Status != StatusDeleted {
 			t.Fatalf("doc %s not tombstoned after reap (status=%q)", id, docs[id].Status)
 		}
+	}
+}
+
+func TestReapExpiredSilentlySkipsAlreadyDeletedRace(t *testing.T) {
+	// Scenario: between our ListExpired call and our DeleteDocument
+	// call, another reaper instance (multi-instance deploy) or a
+	// concurrent user-initiated DELETE finished tombstoning the
+	// row. The store now reports ErrAlreadyDeleted. The reaper
+	// MUST NOT log it, MUST NOT bump firstErr, and MUST NOT count
+	// it as reaped (the other caller already did the work).
+	now := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	svc, store, _, _ := buildReaperFixture(t, now)
+
+	store.mu.Lock()
+	store.deleteErr["expired-ready"] = ErrAlreadyDeleted
+	store.mu.Unlock()
+
+	count, err := svc.ReapExpired(context.Background(), now, 100)
+	if err != nil {
+		t.Fatalf("ErrAlreadyDeleted from store should NOT propagate as error, got %v", err)
+	}
+	// Only the second expired doc was actually reaped by us; the
+	// first was already gone by the time we tried (no double-count).
+	if count != 1 {
+		t.Fatalf("expected 1 reaped (the other doc; the racy one is no-op), got %d", count)
 	}
 }
 

@@ -623,6 +623,14 @@ func (s *MemoryStore) DeleteDocument(ctx context.Context, userID string, documen
 
 	document, err := s.documentByIDLocked(userID, documentID)
 	if err != nil {
+		// documentByIDLocked treats missing-row and already-deleted
+		// the same (returns ErrNotFound). For Delete's contract,
+		// flatten that into the documents-specific sentinel so the
+		// reaper can distinguish a benign no-op from a real error
+		// — matches the Postgres implementation's behaviour.
+		if errors.Is(err, ErrNotFound) {
+			return documents.Document{}, documents.ErrAlreadyDeleted
+		}
 		return documents.Document{}, err
 	}
 	document.Status = documents.StatusDeleted

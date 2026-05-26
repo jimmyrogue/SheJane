@@ -657,7 +657,7 @@ func (s *PostgresStore) MarkDocumentFailed(ctx context.Context, userID string, d
 }
 
 func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error) {
-	return scanDocument(s.db.QueryRowContext(ctx, `
+	document, err := scanDocument(s.db.QueryRowContext(ctx, `
 		UPDATE documents
 		SET status='deleted', updated_at=NOW(), deleted_at=NOW()
 		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
@@ -665,6 +665,15 @@ func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, docum
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
 			expires_at, created_at, updated_at
 	`, userID, documentID))
+	if errors.Is(err, ErrNotFound) {
+		// `WHERE status <> 'deleted'` matched zero rows. The row is
+		// either already tombstoned (benign race with another
+		// reaper tick or a user-initiated delete) or never existed
+		// at all. Surface a typed sentinel so the reaper can skip
+		// silently and the HTTP layer can still map to 404.
+		return documents.Document{}, documents.ErrAlreadyDeleted
+	}
+	return document, err
 }
 
 // ListExpiredDocuments — see Store interface for contract. Index

@@ -214,6 +214,13 @@ func (s *Service) ReapExpired(ctx context.Context, cutoff time.Time, limit int) 
 			}
 		}
 		if _, err := s.store.DeleteDocument(ctx, doc.UserID, doc.ID); err != nil {
+			if errors.Is(err, ErrAlreadyDeleted) {
+				// Benign race: another reaper tick (multi-instance
+				// deploy) or a concurrent user-initiated delete
+				// tombstoned this row between our List and Delete.
+				// Skip silently — nothing to log, nothing to count.
+				continue
+			}
 			log.Printf("documents.reaper: tombstone document %q: %v", doc.ID, err)
 			if firstErr == nil {
 				firstErr = err
