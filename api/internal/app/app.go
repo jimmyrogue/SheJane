@@ -92,6 +92,7 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 			AccessKeyID:     cfg.AWSAccessKeyID,
 			SecretAccessKey: cfg.AWSSecretAccessKey,
 			Bucket:          cfg.S3Bucket,
+			UseAccelerate:   cfg.S3UseAccelerate,
 		})
 	}
 	documentConfig := documents.DefaultServiceConfig()

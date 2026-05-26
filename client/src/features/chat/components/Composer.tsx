@@ -25,6 +25,7 @@ export function Composer({
   attachedDocument,
   attachedPreview,
   isUploading,
+  uploadProgress,
   onUploadDocument,
   onDetachDocument,
   onSend,
@@ -55,6 +56,13 @@ export function Composer({
    *  this undefined and we fall back to a file-icon tile. */
   attachedPreview?: string
   isUploading: boolean
+  /** 0..100 percentage during an in-flight upload, undefined when
+   *  idle. Used to render a determinate progress overlay on the
+   *  attachment chip — slow cross-border S3 uploads (30+ seconds
+   *  from China even with Transfer Acceleration) otherwise look
+   *  like the app froze. When undefined but `isUploading` is true,
+   *  the indeterminate spinner is shown instead. */
+  uploadProgress?: number
   onUploadDocument: (file?: File) => void
   onDetachDocument: () => void
   onSend: () => void
@@ -202,8 +210,31 @@ export function Composer({
                 </div>
               )}
               {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
-                <div className="attachment-thumb-overlay" aria-hidden="true">
-                  <IconLoader2 size={18} className="attachment-thumb-spin" />
+                <div
+                  className="attachment-thumb-overlay"
+                  aria-hidden="true"
+                  aria-label={
+                    typeof uploadProgress === 'number'
+                      ? t('composer.uploadProgress', { percent: String(Math.round(uploadProgress)) })
+                      : t('composer.uploading')
+                  }
+                >
+                  {typeof uploadProgress === 'number' ? (
+                    // Determinate: show the rounded percentage so users
+                    // can tell whether the upload is making progress.
+                    // The conic-gradient ring under it is driven by a
+                    // CSS custom property so we don't trigger React
+                    // reconciliation on every byte chunk — the
+                    // attachment-thumb-progress class reads --percent.
+                    <span
+                      className="attachment-thumb-progress"
+                      style={{ ['--percent' as never]: `${Math.round(uploadProgress)}%` }}
+                    >
+                      {Math.round(uploadProgress)}%
+                    </span>
+                  ) : (
+                    <IconLoader2 size={18} className="attachment-thumb-spin" />
+                  )}
                 </div>
               ) : null}
               <Button

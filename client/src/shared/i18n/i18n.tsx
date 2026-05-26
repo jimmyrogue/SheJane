@@ -263,6 +263,7 @@ const zh = {
 
   'composer.attachedDocument': '已附加 {name}',
   'composer.removeAttachment': '移除附件',
+  'composer.uploadProgress': '上传中 {percent}%',
   'composer.parseFailed': '解析失败',
   'composer.localProject': '本地项目：{label}',
   'composer.authorized': '已授权',
@@ -806,6 +807,7 @@ const en: Record<TranslationKey, string> = {
 
   'composer.attachedDocument': 'Attached {name}',
   'composer.removeAttachment': 'Remove attachment',
+  'composer.uploadProgress': 'Uploading {percent}%',
   'composer.parseFailed': 'Parsing failed',
   'composer.localProject': 'Local project: {label}',
   'composer.authorized': 'Authorized',

@@ -10,6 +10,7 @@ import {
   type WalletBalance,
 } from './shared/api/client'
 import { createAuthClient } from './shared/api/authClient'
+import { uploadWithProgress } from './shared/api/uploadWithProgress'
 import { createChatStore, timelineItem } from './features/chat/chatStore'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
@@ -246,6 +247,14 @@ function AppContent() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
+  // 0..100 during an S3 PUT, undefined when idle. Fed by the XHR
+  // upload progress listener in uploadDocument(); rendered as a
+  // ring + percent overlay on the attachment chip so users get
+  // continuous feedback for slow cross-border uploads (typical
+  // China → AWS Singapore takes tens of seconds even with Transfer
+  // Acceleration). Without it the chip just spins indefinitely and
+  // users wonder if the app froze.
+  const [uploadProgress, setUploadProgress] = useState<number | undefined>(undefined)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
@@ -1288,6 +1297,7 @@ function AppContent() {
     }
     setNotice('')
     setIsUploading(true)
+    setUploadProgress(0)
     try {
       const upload = await api.createDocumentUpload({
         filename: file.name,
@@ -1296,10 +1306,19 @@ function AppContent() {
       })
       setDocuments((items) => upsertDocument(items, upload.document))
       setAttachedDocumentID(upload.document.id)
-      const uploadResponse = await fetch(upload.upload.url, {
+      // XHR-based PUT so we can render a progress ring on the
+      // attachment chip. Slow cross-border S3 uploads (typical
+      // China → Singapore, even with Transfer Acceleration on)
+      // would otherwise just spin for ~30s with no feedback and
+      // the user would assume the app is frozen.
+      const uploadResponse = await uploadWithProgress({
         method: upload.upload.method,
+        url: upload.upload.url,
         headers: upload.upload.headers,
         body: file,
+        onProgress: ({ percent }) => {
+          setUploadProgress(Number.isFinite(percent) ? percent : undefined)
+        },
       })
       if (!uploadResponse.ok) {
         throw new Error(t('app.notice.s3UploadFailed', { status: uploadResponse.status }))
@@ -1313,6 +1332,7 @@ function AppContent() {
       setNotice(error instanceof Error ? error.message : t('app.notice.documentUploadFailed'))
     } finally {
       setIsUploading(false)
+      setUploadProgress(undefined)
     }
   }
 
@@ -1567,6 +1587,7 @@ function AppContent() {
               attachedDocument={attachedDocument}
               attachedPreview={attachedPreview}
               isUploading={isUploading}
+              uploadProgress={uploadProgress}
               onUploadDocument={(file) => void uploadDocument(file)}
               onDetachDocument={() => {
                 setAttachedDocumentID(undefined)

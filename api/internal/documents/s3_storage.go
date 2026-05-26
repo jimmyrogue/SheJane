@@ -18,6 +18,13 @@ type StorageConfig struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	Bucket          string
+	// UseAccelerate makes the presigner emit Transfer Acceleration
+	// endpoints (<bucket>.s3-accelerate.amazonaws.com). The bucket
+	// must have Transfer Acceleration ENABLED via the AWS Console
+	// — this flag alone only changes which URL the SDK signs.
+	// Saves ~3-10× upload time for cross-border PUTs (notably from
+	// mainland China to non-CN regions).
+	UseAccelerate bool
 }
 
 type S3ObjectStorage struct {
@@ -41,7 +48,17 @@ func NewObjectStorageFromConfig(ctx context.Context, cfg StorageConfig) ObjectSt
 	if err != nil {
 		return NewDisabledObjectStorage(err.Error())
 	}
-	client := s3.NewFromConfig(awsCfg)
+	// When UseAccelerate is on, the client routes BOTH presigned URLs
+	// and direct API calls through the accelerated endpoint. For our
+	// flow only the presigned PUT matters (that's what the browser
+	// hits) — direct PutObject / GetObject from the API server happen
+	// inside AWS infra and don't benefit from the edge network. But
+	// enabling it globally keeps the codepath uniform and costs the
+	// same for our scale, so we don't bother gating per-call.
+	s3Opts := func(o *s3.Options) {
+		o.UseAccelerate = cfg.UseAccelerate
+	}
+	client := s3.NewFromConfig(awsCfg, s3Opts)
 	return &S3ObjectStorage{
 		client:    client,
 		presigner: s3.NewPresignClient(client),

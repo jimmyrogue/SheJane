@@ -49,11 +49,24 @@ type Config struct {
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
 	S3Bucket           string
-	S3DocumentPrefix   string
-	DocumentMaxBytes   int64
-	DocumentTextLimit  int
-	DocumentTTLHours   int
-	AgentRunTTLHours   int
+	// S3UseAccelerate routes presigned PUT / GET URLs through AWS's
+	// Transfer Acceleration network (CloudFront edge → AWS backbone),
+	// which is dramatically faster for cross-border uploads (typical
+	// 3-10× speedup from China to AWS Singapore). Requires the bucket
+	// to have Transfer Acceleration ENABLED in the AWS Console — the
+	// SDK option alone doesn't enable the feature server-side, just
+	// asks the SDK to use the accelerated endpoint when generating
+	// URLs. Bucket name must not contain dots (DNS-style names only)
+	// for accelerate to work; the SDK silently falls back to the
+	// standard endpoint on dot-containing names.
+	// Default off so an unprepared bucket doesn't break uploads;
+	// enable per-environment after flipping the bucket flag.
+	S3UseAccelerate   bool
+	S3DocumentPrefix  string
+	DocumentMaxBytes  int64
+	DocumentTextLimit int
+	DocumentTTLHours  int
+	AgentRunTTLHours  int
 
 	TavilyAPIKey        string
 	TavilyBaseURL       string
@@ -124,6 +137,7 @@ func Default() Config {
 		AWSAccessKeyID:      "",
 		AWSSecretAccessKey:  "",
 		S3Bucket:            "",
+		S3UseAccelerate:     false,
 		S3DocumentPrefix:    "documents",
 		DocumentMaxBytes:    30 * 1024 * 1024,
 		DocumentTextLimit:   60_000,
@@ -176,6 +190,7 @@ func Load() Config {
 	cfg.AWSAccessKeyID = getEnv("AWS_ACCESS_KEY_ID", cfg.AWSAccessKeyID)
 	cfg.AWSSecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", cfg.AWSSecretAccessKey)
 	cfg.S3Bucket = getEnv("S3_BUCKET", cfg.S3Bucket)
+	cfg.S3UseAccelerate = getEnvBool("S3_USE_ACCELERATE", cfg.S3UseAccelerate)
 	cfg.S3DocumentPrefix = getEnv("S3_DOCUMENT_PREFIX", cfg.S3DocumentPrefix)
 	cfg.DocumentMaxBytes = getEnvInt64("DOCUMENT_MAX_BYTES", cfg.DocumentMaxBytes)
 	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)

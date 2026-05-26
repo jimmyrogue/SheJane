@@ -2,6 +2,22 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// The composer's document upload now goes through an XHR-based helper
+// (for upload progress reporting); jsdom can't hit the real S3 host
+// the upload tests assert against, so we stub the helper to immediately
+// succeed and mirror the request onto the shared mockFetch `calls`
+// recorder. Tests can then keep asserting on `calls.some(call => …)`
+// without caring whether the underlying transport was fetch or XHR.
+const recordedUploadCalls: Array<{ url: string; method: string }> = []
+vi.mock('./shared/api/uploadWithProgress', () => ({
+  uploadWithProgress: vi.fn(async (options: { method: string; url: string; onProgress?: (e: { loaded: number; total: number; percent: number }) => void }) => {
+    recordedUploadCalls.push({ url: options.url, method: options.method })
+    options.onProgress?.({ loaded: 100, total: 100, percent: 100 })
+    return { status: 200, ok: true, body: '' }
+  }),
+}))
+
 import { App } from './App'
 import { $createParagraphNode, $createTextNode, $getRoot } from 'lexical'
 
@@ -23,6 +39,7 @@ describe('user client shell', () => {
     Object.defineProperty(window, 'indexedDB', { value: freshIndexedDB, configurable: true })
     localStorage.clear()
     window.jiandanDesktop = undefined
+    recordedUploadCalls.length = 0
   })
 
   afterEach(() => {
@@ -252,7 +269,11 @@ describe('user client shell', () => {
     // The chip is a thumbnail tile that exposes the filename only via
     // its `title` attribute (browser tooltip on long hover).
     expect(await screen.findByTitle('brief.docx')).toBeInTheDocument()
-    expect(calls.some((call) => call.url === 'https://s3.example.com/upload' && call.init?.method === 'PUT')).toBe(true)
+    // S3 PUT now goes through the XHR-based uploadWithProgress helper
+    // (so the chip can show byte-level upload progress on slow
+    // cross-border S3 puts). The recorder above captures every helper
+    // call; we assert against it instead of `fetch`.
+    expect(recordedUploadCalls.some((call) => call.url === 'https://s3.example.com/upload' && call.method === 'PUT')).toBe(true)
     expect(calls.some((call) => call.url.endsWith('/api/v1/documents/doc-upload/complete'))).toBe(true)
   })
 

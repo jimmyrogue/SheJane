@@ -4743,6 +4743,30 @@ button.agent-progress-summary:focus-visible {
 .attachment-thumb-spin {
   animation: reasoning-dot 1.2s linear infinite;
 }
+/* Determinate upload progress on the attachment chip. A conic-gradient
+   ring around the percentage number — `--percent` is set inline by
+   the renderer on every chunk. Mid-color is the brand accent; the
+   trailing arc fades to a near-transparent gray so the ring still
+   reads against any thumbnail underneath. Number is monospaced so
+   incrementing digits don't jitter the layout. */
+.attachment-thumb-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle, var(--surface-1, #fff) 60%, transparent 61%),
+    conic-gradient(
+      var(--accent, #4f46e5) var(--percent, 0%),
+      rgba(120, 120, 130, 0.18) 0
+    );
+}
 .attachment-thumb.status-failed {
   border-color: var(--accent-danger-border);
 }
