@@ -62,6 +62,16 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 				CreditsCost:  positiveCredits(s.app.Config.E2BCodeExecBaseCredits),
 				RequiresAuth: true,
 			},
+			pdfInspectToolName: {
+				// Always-configured: relies on poppler-utils
+				// installed in the API container (alpine
+				// apk add poppler-utils) plus the user's own
+				// uploaded PDFs. No external API key.
+				Configured:   true,
+				Provider:     "poppler",
+				CreditsCost:  pdfInspectCreditsCost,
+				RequiresAuth: true,
+			},
 		}},
 	})
 }
@@ -130,11 +140,27 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 		writeJSON(w, status, apiResponse[agentToolExecuteResult]{Code: code, Message: result.Content, Data: result})
 		return
 	}
+	if body.Tool == pdfInspectToolName {
+		result, status := s.runPdfInspect(r.Context(), user, pdfInspectInput{
+			RunID:          body.RunID,
+			ToolCallID:     body.ToolCallID,
+			IdempotencyKey: body.IdempotencyKey,
+			DocumentID:     argString(body.Arguments, "document_id"),
+			Operation:      argString(body.Arguments, "operation"),
+			Query:          argString(body.Arguments, "query"),
+		})
+		code := 0
+		if !result.OK {
+			code = 1
+		}
+		writeJSON(w, status, apiResponse[agentToolExecuteResult]{Code: code, Message: result.Content, Data: result})
+		return
+	}
 	if body.Tool != "web.search" {
 		writeJSON(w, http.StatusBadRequest, apiResponse[agentToolExecuteResult]{
 			Code:    40040,
 			Message: "unsupported tool",
-			Data:    toolError("unsupported_tool", "Only web.search / image.* / code.execute are supported by the cloud tool gateway in this phase."),
+			Data:    toolError("unsupported_tool", "Only web.search / image.* / code.execute / pdf.inspect are supported by the cloud tool gateway in this phase."),
 		})
 		return
 	}

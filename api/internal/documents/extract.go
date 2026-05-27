@@ -166,6 +166,12 @@ func extractPDFMetadata(data []byte) (map[string]any, error) {
 	return parsePDFInfo(stdout.Bytes()), nil
 }
 
+// ParsePDFInfoBytes is the exported entry point for callers outside
+// this package (the pdf.inspect gateway in httpapi runs pdfinfo
+// itself and needs to parse the same shape). Internal callers stay
+// on parsePDFInfo for the shorter name.
+func ParsePDFInfoBytes(out []byte) map[string]any { return parsePDFInfo(out) }
+
 // parsePDFInfo reads `pdfinfo` stdout (colon-delimited key:value
 // per line) into a sparse map keyed by snake_case. Numeric and
 // boolean fields are typed so the JSON shape on the wire stays

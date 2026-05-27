@@ -20,6 +20,7 @@ from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
 from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
+from .pdf import PDF_TOOLS
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
@@ -44,6 +45,11 @@ def core_tools() -> list[BaseTool]:
         # against `<basename>.edited.<ext>` and never touch the original,
         # so HITL approval isn't needed.
         *OFFICE_WRITE_TOOLS,
+        # pdf.inspect: proxies to the cloud Tool Gateway which runs
+        # Poppler (pdfinfo, pdfgrep) on the user's uploaded PDF.
+        # Always-on — the gateway re-checks document ownership +
+        # bills credits per call. No external API key required.
+        *PDF_TOOLS,
     ]
 
 
@@ -77,6 +83,10 @@ async def build_tools(
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
     tools.extend(OFFICE_WRITE_TOOLS)
+    # pdf.inspect — see core_tools() comment for rationale. No
+    # workspace binding needed (it operates on cloud document_id,
+    # not on workspace files).
+    tools.extend(PDF_TOOLS)
     if include_code_exec:
         # Bind code.execute to the run's workspace so files_in/files_out
         # can read/write against the correct directory. The closure
