@@ -144,9 +144,10 @@ export interface OpenDocument {
    *  Format: `local:<absolute-path>` for workspace files,
    *  `cloud:<documentId>` for uploaded ones. */
   sourceKey: string
-  /** "word", "excel", or "powerpoint" — drives which preview component
-   *  the panel mounts (DocxPreview / XlsxPreview / PptxPreview). */
-  kind: 'word' | 'excel' | 'powerpoint'
+  /** "word", "excel", "powerpoint", or "pdf" — drives which preview
+   *  component the panel mounts (DocxPreview / XlsxPreview /
+   *  PptxPreview / PdfPreview). */
+  kind: 'word' | 'excel' | 'powerpoint' | 'pdf'
   /** Display label — typically the basename. */
   name: string
   /** Optional full path or description shown as tooltip on the header. */
@@ -195,11 +196,15 @@ export interface PptxSlideOutline {
   image_count: number
 }
 
-/** Reference to an office file in the cloud documents service (uploaded
- *  via the composer's attachment flow). */
+/** Reference to a previewable file in the cloud documents service
+ *  (uploaded via the composer's attachment flow). Originally only
+ *  office types; PDF was added when the side-panel learned to
+ *  render PDFs via Chromium's embedded viewer. Name kept as
+ *  `CloudOfficeAttachmentRef` for git-blame continuity, but the
+ *  scope is wider than "office" now. */
 export interface CloudOfficeAttachmentRef {
   documentId: string
-  kind: 'word' | 'excel'
+  kind: 'word' | 'excel' | 'pdf'
   name: string
 }
 

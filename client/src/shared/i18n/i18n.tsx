@@ -549,11 +549,21 @@ const zh = {
   'chat.tool.office.add_image_to_slide': '插入幻灯片图片',
   'chat.tool.office.read_slides': '读取幻灯片',
   'docPreview.kind.powerpoint': 'PowerPoint 演示文稿',
+  'docPreview.kind.pdf': 'PDF 文档',
   'pptxPreview.openNatively': '在 PowerPoint 中打开',
   'pptxPreview.empty': '这份演示文稿还没有任何幻灯片',
   'pptxPreview.slideNumber': '幻灯片 {n}',
   'pptxPreview.notesLabel': '演讲者备注',
   'pptxPreview.loadFailed': '无法读取 PPT 大纲：{error}',
+  'pdfPreview.loadFailed': '无法加载 PDF：{error}',
+  // Chat-bubble attachment chip actions. Two affordances: click the
+  // chip to preview in the side panel (when supported), or click the
+  // small external-link button to download the file to OS Downloads.
+  'chat.attachment.openInPanel': '在侧边栏预览 {name}',
+  'chat.attachment.downloadToFolder': '下载到本机',
+  // Surfaced via the global notice toast when openAttachmentExternally
+  // can't fetch the bytes (network, expired document, etc.).
+  'app.notice.downloadFailed': '下载附件失败',
 } as const
 
 export type TranslationKey = keyof typeof zh
@@ -1091,11 +1101,16 @@ const en: Record<TranslationKey, string> = {
   'chat.tool.office.add_image_to_slide': 'Add image to slide',
   'chat.tool.office.read_slides': 'Read slides',
   'docPreview.kind.powerpoint': 'PowerPoint deck',
+  'docPreview.kind.pdf': 'PDF document',
   'pptxPreview.openNatively': 'Open in PowerPoint',
   'pptxPreview.empty': 'This presentation has no slides yet.',
   'pptxPreview.slideNumber': 'Slide {n}',
   'pptxPreview.notesLabel': 'Speaker notes',
   'pptxPreview.loadFailed': 'Failed to load PPT outline: {error}',
+  'pdfPreview.loadFailed': 'Failed to load PDF: {error}',
+  'chat.attachment.openInPanel': 'Preview {name} in side panel',
+  'chat.attachment.downloadToFolder': 'Download to computer',
+  'app.notice.downloadFailed': 'Failed to download attachment',
 }
 
 const dictionaries: Record<Locale, Record<TranslationKey, string>> = { zh, en }

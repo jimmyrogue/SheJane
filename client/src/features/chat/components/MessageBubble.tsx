@@ -3,11 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy, IconPaperclip } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
+import { fileIconFor } from '@/shared/files/fileIcons'
 import type { AgentTimelineItem, ChatMessage, CloudOfficeAttachmentRef, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 import { completePartialMarkdown } from '@/shared/streaming/completePartialMarkdown'
@@ -20,6 +21,7 @@ export function MessageBubble({
   workspaceRoot,
   onPreviewLocalFile,
   onPreviewCloudAttachment,
+  onOpenAttachmentExternally,
 }: {
   message: ChatMessage
   children?: React.ReactNode
@@ -32,9 +34,16 @@ export function MessageBubble({
   /** Callback fired when the user clicks a recognized office filename
    *  rendered inside agent markdown. Undefined disables the click. */
   onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
-  /** Callback fired when the user clicks an office-type attachment
-   *  chip on this message. Undefined disables the click. */
+  /** Callback fired when the user clicks a previewable attachment
+   *  chip on this message. Undefined disables in-app preview;
+   *  non-previewable kinds always go through external-open instead. */
   onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
+  /** Callback fired when the user clicks the small "external open"
+   *  button next to a chip. Receives the documentId + filename;
+   *  App.tsx routes to a browser download (cloud-source files have
+   *  no local path to reveal in Finder). Undefined hides the
+   *  button entirely. */
+  onOpenAttachmentExternally?: (ref: { documentId: string; name: string }) => void
 }) {
   const { locale, t } = useI18n()
   const previousMessageIDRef = useRef(message.id)
@@ -151,6 +160,7 @@ export function MessageBubble({
                   name={attachment.name}
                   contentType={attachment.contentType}
                   onPreviewCloudAttachment={onPreviewCloudAttachment}
+                  onOpenAttachmentExternally={onOpenAttachmentExternally}
                 />
               ),
             )}
@@ -478,16 +488,23 @@ function OfficeFileLink({
   )
 }
 
-/** Office-file Content-Type → kind, including the legacy
- *  `application/msword` (.doc) which we DON'T support — those return
- *  undefined and stay non-interactive. */
-function officeKindFromAttachment(contentType: string | undefined, name: string): 'word' | 'excel' | undefined {
+/** Attachment Content-Type / filename → preview kind. Returns
+ *  undefined for types we can't currently render in the side panel
+ *  (the chip falls back to non-interactive + external-open button).
+ *  Includes the legacy `application/msword` (.doc) which we DON'T
+ *  preview — kept out of the mapping intentionally. */
+function previewableKindFromAttachment(
+  contentType: string | undefined,
+  name: string,
+): 'word' | 'excel' | 'pdf' | undefined {
   const lowerName = name.toLowerCase()
   if (lowerName.endsWith('.docx')) return 'word'
   if (lowerName.endsWith('.xlsx')) return 'excel'
+  if (lowerName.endsWith('.pdf')) return 'pdf'
   // Fallback to content type for renames / unusual casing.
   if (contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'word'
   if (contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'excel'
+  if (contentType === 'application/pdf') return 'pdf'
   return undefined
 }
 
@@ -496,32 +513,64 @@ function AttachmentChip({
   name,
   contentType,
   onPreviewCloudAttachment,
+  onOpenAttachmentExternally,
 }: {
   documentId: string
   name: string
   contentType: string
   onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
+  onOpenAttachmentExternally?: (ref: { documentId: string; name: string }) => void
 }) {
-  const kind = useMemo(() => officeKindFromAttachment(contentType, name), [contentType, name])
-  const clickable = Boolean(kind && onPreviewCloudAttachment)
-  if (!clickable) {
-    return (
-      <span className="message-attachment-chip" title={name}>
-        <IconPaperclip size={13} aria-hidden="true" />
-        {name}
+  const { t } = useI18n()
+  const kind = useMemo(() => previewableKindFromAttachment(contentType, name), [contentType, name])
+  // Typed icon (colored) per file type — replaces the old generic
+  // paperclip. Centralized in fileIconFor so the composer chip and
+  // this chip stay visually consistent.
+  const { Icon, colorKey } = useMemo(() => fileIconFor(name, contentType), [name, contentType])
+  const previewable = Boolean(kind && onPreviewCloudAttachment)
+  // The "open externally" button is always visible when a handler
+  // exists — gives power users an escape hatch even for previewable
+  // files ("I'd rather open this .docx in real Word").
+  const externalEnabled = Boolean(onOpenAttachmentExternally)
+
+  const chipBody = (
+    <>
+      <span className={`message-attachment-icon file-icon-${colorKey}`} aria-hidden="true">
+        <Icon size={16} />
       </span>
-    )
-  }
+      <span className="message-attachment-name">{name}</span>
+    </>
+  )
+  const labelTitle = previewable ? t('chat.attachment.openInPanel', { name }) : name
+
   return (
-    <button
-      type="button"
-      className="message-attachment-chip clickable"
-      title={name}
-      onClick={() => onPreviewCloudAttachment!({ documentId, kind: kind!, name })}
-    >
-      <IconPaperclip size={13} aria-hidden="true" />
-      {name}
-    </button>
+    <span className="message-attachment-wrap">
+      {previewable ? (
+        <button
+          type="button"
+          className="message-attachment-chip clickable"
+          title={labelTitle}
+          onClick={() => onPreviewCloudAttachment!({ documentId, kind: kind!, name })}
+        >
+          {chipBody}
+        </button>
+      ) : (
+        <span className="message-attachment-chip" title={name}>
+          {chipBody}
+        </span>
+      )}
+      {externalEnabled ? (
+        <button
+          type="button"
+          className="message-attachment-external"
+          title={t('chat.attachment.downloadToFolder')}
+          aria-label={t('chat.attachment.downloadToFolder')}
+          onClick={() => onOpenAttachmentExternally!({ documentId, name })}
+        >
+          <IconExternalLink size={13} aria-hidden="true" />
+        </button>
+      ) : null}
+    </span>
   )
 }
 

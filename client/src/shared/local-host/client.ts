@@ -49,6 +49,11 @@ export interface DesktopBridge {
    *  Electron's `shell.openPath` contract). Used by the right-side
    *  PptxPreview component's "Open in PowerPoint" button. */
   openFileWithDefaultApp?: (filePath: string) => Promise<string>
+  /** Reveal a file in Finder / Explorer with the file highlighted
+   *  in its containing folder. Returns 'ok' on success or an error
+   *  string. Used by the message-bubble attachment chip's external-
+   *  open button for local workspace files. */
+  showItemInFolder?: (filePath: string) => Promise<string>
 }
 
 export interface LocalHostConfig {

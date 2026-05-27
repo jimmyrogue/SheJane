@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   IconFileTypeDocx,
+  IconFileTypePdf,
   IconFileTypePpt,
   IconFileTypeXls,
   IconMinus,
@@ -15,6 +16,7 @@ import { getDesktopLocalHostConfig } from '@/shared/local-host/client'
 import type { OpenDocument } from '@/shared/local-data/types'
 
 import { DocxPreview } from './DocPreview/DocxPreview'
+import { PdfPreview } from './DocPreview/PdfPreview'
 import { PptxPreview } from './DocPreview/PptxPreview'
 import { XlsxPreview } from './DocPreview/XlsxPreview'
 
@@ -138,7 +140,9 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
       ? IconFileTypeXls
       : doc?.kind === 'powerpoint'
         ? IconFileTypePpt
-        : IconFileTypeDocx
+        : doc?.kind === 'pdf'
+          ? IconFileTypePdf
+          : IconFileTypeDocx
   const zoomPercent = Math.round(zoom * 100)
   // Localhost config: pptx preview needs it to hit the outline
   // endpoint; getDesktopLocalHostConfig pulls it from the desktop
@@ -180,7 +184,9 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
                         ? 'docPreview.kind.word'
                         : doc.kind === 'excel'
                           ? 'docPreview.kind.excel'
-                          : 'docPreview.kind.powerpoint',
+                          : doc.kind === 'powerpoint'
+                            ? 'docPreview.kind.powerpoint'
+                            : 'docPreview.kind.pdf',
                     )
                   : ''}
               </SheetDescription>
@@ -246,6 +252,13 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
                 sourceKey={doc.sourceKey}
                 localPath={doc.localPath}
                 config={localHostConfig}
+                refreshKey={refreshKey}
+                onStatus={setStatus}
+              />
+            ) : doc?.kind === 'pdf' ? (
+              <PdfPreview
+                sourceKey={doc.sourceKey}
+                loadBytes={doc.loadBytes}
                 refreshKey={refreshKey}
                 onStatus={setStatus}
               />

@@ -215,4 +215,85 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByRole('button', { name: /notes\.txt/ })).not.toBeInTheDocument()
     expect(screen.getByText(/notes\.txt/)).toBeInTheDocument()
   })
+
+  it('renders PDF attachment chips as clickable previewable buttons (kind=pdf)', () => {
+    // Regression: PDFs used to fall through to the non-clickable
+    // path because previewableKindFromAttachment didn't know about
+    // them. After Plan 1, PDF is a first-class previewable kind
+    // routed to the side panel's PdfPreview.
+    const onPreviewCloudAttachment = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            role: 'user',
+            content: '',
+            attachments: [
+              {
+                documentId: 'doc_pdf',
+                name: 'paper.pdf',
+                contentType: 'application/pdf',
+              },
+            ],
+          })}
+          onPreviewCloudAttachment={onPreviewCloudAttachment}
+        />
+      </I18nProvider>,
+    )
+    const chip = screen.getByRole('button', { name: /paper\.pdf/ })
+    fireEvent.click(chip)
+    expect(onPreviewCloudAttachment).toHaveBeenCalledWith({
+      documentId: 'doc_pdf',
+      kind: 'pdf',
+      name: 'paper.pdf',
+    })
+  })
+
+  it('renders the external-open button when onOpenAttachmentExternally is provided', () => {
+    const onOpenAttachmentExternally = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            role: 'user',
+            content: '',
+            attachments: [
+              {
+                documentId: 'doc_x',
+                name: 'archive.zip',
+                contentType: 'application/zip',
+              },
+            ],
+          })}
+          onOpenAttachmentExternally={onOpenAttachmentExternally}
+        />
+      </I18nProvider>,
+    )
+    // The chip itself is NOT a button (.zip isn't previewable) but
+    // the external-open button next to it IS, regardless of preview
+    // support — that's the escape hatch we just added.
+    const externalBtn = screen.getByRole('button', { name: '下载到本机' })
+    fireEvent.click(externalBtn)
+    expect(onOpenAttachmentExternally).toHaveBeenCalledWith({
+      documentId: 'doc_x',
+      name: 'archive.zip',
+    })
+  })
+
+  it('hides the external-open button entirely when no handler is supplied', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            role: 'user',
+            content: '',
+            attachments: [
+              { documentId: 'doc_x', name: 'something.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+            ],
+          })}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('button', { name: '下载到本机' })).not.toBeInTheDocument()
+  })
 })

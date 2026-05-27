@@ -15,6 +15,7 @@ export function ChatThread({
   onOpenDiagnostics,
   onPreviewLocalFile,
   onPreviewCloudAttachment,
+  onOpenAttachmentExternally,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
@@ -24,12 +25,16 @@ export function ChatThread({
    *  openOfficeDocument; MessageBubble calls this when the user clicks
    *  a `.docx` / `.xlsx` reference rendered inside agent markdown. */
   onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
-  /** Open the DocPreviewPanel for a CLOUD-uploaded office attachment
-   *  (composer upload flow). Wired from App.tsx →
+  /** Open the DocPreviewPanel for a CLOUD-uploaded previewable
+   *  attachment (.docx / .xlsx / .pdf). Wired from App.tsx →
    *  openCloudOfficeDocument; MessageBubble calls this when the user
-   *  clicks the attachment chip on a `.docx` / `.xlsx` message
-   *  attachment. */
+   *  clicks the attachment chip body. */
   onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
+  /** Download a cloud attachment to the user's Downloads folder.
+   *  Powers the small external-link button rendered next to every
+   *  attachment chip — the escape hatch for non-previewable files
+   *  + power users who'd rather open the file in their native app. */
+  onOpenAttachmentExternally?: (ref: { documentId: string; name: string }) => void
 }) {
   // Conversations bound to a project workspace carry the absolute path;
   // MessageBubble uses it to resolve relative office-file refs surfaced
@@ -66,6 +71,7 @@ export function ChatThread({
                 workspaceRoot={workspaceRoot}
                 onPreviewLocalFile={onPreviewLocalFile}
                 onPreviewCloudAttachment={onPreviewCloudAttachment}
+                onOpenAttachmentExternally={onOpenAttachmentExternally}
               >
                 <AgentProgress
                   message={message}

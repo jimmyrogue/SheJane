@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   IconCornerDownLeft,
-  IconFileText,
   IconFolder,
   IconFolderPlus,
   IconLoader2,
@@ -13,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { ModeSelector } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
+import { fileIconFor } from '@/shared/files/fileIcons'
 import type { UserDocument } from '@/shared/api/client'
 import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 import type { ChatMode } from '@/shared/local-data/types'
@@ -265,9 +265,23 @@ export function Composer({
               {attachedPreview ? (
                 <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
               ) : (
-                <div className="attachment-thumb-placeholder" aria-hidden="true">
-                  <IconFileText size={26} />
-                </div>
+                (() => {
+                  // Typed icon: red PDF, blue DOCX, green XLSX, etc.
+                  // — much more scannable than the old generic file
+                  // glyph when the chip is showing as a 56px square.
+                  const { Icon, colorKey } = fileIconFor(
+                    attachedDocument.original_name,
+                    attachedDocument.content_type,
+                  )
+                  return (
+                    <div
+                      className={`attachment-thumb-placeholder file-icon-${colorKey}`}
+                      aria-hidden="true"
+                    >
+                      <Icon size={28} />
+                    </div>
+                  )
+                })()
               )}
               {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
                 <div

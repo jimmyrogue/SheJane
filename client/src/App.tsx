@@ -310,9 +310,11 @@ function AppContent() {
     setDocPreviewRefreshKey((k) => k + 1)
   }
 
-  /** Open the preview panel for a CLOUD-uploaded office file. Used by
-   *  MessageBubble for attachment chips on `.docx` / `.xlsx` documents.
-   *  The byte loader hits the Go API's document-source endpoint. */
+  /** Open the preview panel for a CLOUD-uploaded previewable file
+   *  (.docx, .xlsx, .pdf). Used by MessageBubble for attachment-chip
+   *  clicks. The byte loader hits the Go API's document-source
+   *  endpoint; PdfPreview wraps the bytes in a blob URL for
+   *  Chromium's built-in PDF viewer. */
   function openCloudOfficeDocument(spec: CloudOfficeAttachmentRef) {
     setActiveDocument({
       sourceKey: `cloud:${spec.documentId}`,
@@ -322,6 +324,44 @@ function AppContent() {
       loadBytes: () => api.fetchDocumentBytes(spec.documentId),
     })
     setDocPreviewRefreshKey((k) => k + 1)
+  }
+
+  /** Download a cloud attachment to the user's Downloads folder with
+   *  its original filename. Powers the small "external open" button
+   *  next to every message-bubble attachment chip — the escape hatch
+   *  for files we can't preview in-app AND for power users who'd
+   *  rather open the file in their native app (e.g. .docx in real
+   *  Word with track-changes).
+   *
+   *  Implementation: fetch bytes via the existing authenticated
+   *  endpoint, wrap in a blob, click a synthetic <a download> with
+   *  the original filename. No Electron bridge needed — Chromium's
+   *  download path handles this and writes to the OS default
+   *  Downloads directory.
+   *
+   *  Cloud files have no stable local path so `showItemInFolder`
+   *  isn't an option; the closest faithful mapping of "open the
+   *  containing folder" is "let the user find it in Downloads".
+   */
+  async function openAttachmentExternally(ref: { documentId: string; name: string }) {
+    try {
+      const bytes = await api.fetchDocumentBytes(ref.documentId)
+      const blob = new Blob([bytes])
+      const url = URL.createObjectURL(blob)
+      const anchor = window.document.createElement('a')
+      anchor.href = url
+      anchor.download = ref.name
+      // Append + click + remove pattern: some Chromium builds need the
+      // element to be in the DOM for the download to fire reliably.
+      window.document.body.appendChild(anchor)
+      anchor.click()
+      window.document.body.removeChild(anchor)
+      // Revoke a tick later so the download has time to grab the
+      // URL before we invalidate it.
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.downloadFailed'))
+    }
   }
 
   function setNotice(message: string) {
@@ -1558,6 +1598,7 @@ function AppContent() {
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
               onPreviewLocalFile={openOfficeDocument}
               onPreviewCloudAttachment={openCloudOfficeDocument}
+              onOpenAttachmentExternally={(ref) => void openAttachmentExternally(ref)}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />

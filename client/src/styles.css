@@ -991,6 +991,24 @@ select {
   gap: 12px;
 }
 
+/* PDF preview — Chromium's built-in viewer rendered via <embed>.
+ * Stretch to fill the panel's zoom-stage and let the native chrome
+ * (toolbar, pagination, search) handle interaction. Min-height
+ * keeps the embed visible on tall stages with short content. */
+.doc-preview-pdf {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  display: flex;
+}
+.doc-preview-pdf-embed {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  border: 0;
+  flex: 1;
+}
+
 .pptx-toolbar {
   display: flex;
   justify-content: flex-end;
@@ -2465,6 +2483,65 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Wrap = chip + small external-open button sitting side by side.
+ * Hover on the wrap reveals the button (which is muted by default
+ * so it doesn't compete with the chip itself for attention). */
+.message-attachment-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.message-attachment-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.message-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* External-open: small ghost-button, gray by default, hover state
+ * darkens. Aria-label provides the accessible name; the icon is
+ * hidden from AT to avoid double-announce. */
+.message-attachment-external {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.message-attachment-external:hover,
+.message-attachment-external:focus-visible {
+  background: var(--muted);
+  color: var(--text-primary);
+}
+
+/* Typed file-icon color palette. Used by:
+ *   - .message-attachment-icon (chat-bubble chip)
+ *   - .attachment-thumb-placeholder.file-icon-* (composer chip)
+ *   - DocPreviewPanel header `.doc-preview-icon-*` (existing)
+ * Single source of truth so a future color tweak only edits one
+ * block. Each color is the Tabler-style brand tone for that type. */
+.file-icon-pdf { color: #DC2626; }       /* red — PDF */
+.file-icon-word { color: #2563EB; }      /* blue — DOCX */
+.file-icon-excel { color: #16A34A; }     /* green — XLSX */
+.file-icon-powerpoint { color: #EA580C; } /* orange — PPTX */
+.file-icon-image { color: #7C3AED; }     /* purple — image */
+.file-icon-other { color: var(--text-tertiary); } /* gray fallback */
 
 .message-attachments .chat-image {
   max-width: min(320px, 100%);
@@ -4762,6 +4839,9 @@ button.agent-progress-summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Default color when no typed file-icon-* class is applied
+   * (legacy callers / unknown file types). Typed icons override
+   * via the .file-icon-* class set on the same element. */
   color: var(--text-tertiary);
   background: var(--surface-2, rgba(120, 120, 130, 0.06));
 }
