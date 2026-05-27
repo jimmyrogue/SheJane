@@ -2367,6 +2367,16 @@ select {
   top: 75px;
 }
 
+/* When the chip ALSO has an expiry caption stacked under it (status
+ * = ready + non-null expiry hint), the chip area is taller by one
+ * caption row (~13px font line + 4px gap = ~17px). Push the
+ * placeholder further down so it doesn't overlap the caption.
+ * Source order beats specificity here — both selectors are class+
+ * descendant, so this rule wins when the caption is in the DOM. */
+.composer-input:has(.attachment-expiry-caption) .composer-editor-ph {
+  top: 95px;
+}
+
 .skill-chip--inline {
   display: inline-flex;
   align-items: center;
