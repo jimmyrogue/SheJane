@@ -644,9 +644,20 @@ function AppContent() {
       return
     }
     const content = draft
+    // Snapshot the attachment before we optimistically clear it so we
+    // can roll back if the send fails. The chip used to linger until
+    // the assistant stream finished — that read as "the file's still
+    // attached for some reason" to users. Clearing right after the
+    // draft mirrors the message-bar behaviour: the prompt + its
+    // attachment vanish from the composer the instant Enter fires;
+    // the catch path restores both if the request never landed.
+    const sentDocumentID = attachedDocumentID
+    const sentPreview = attachedPreview
     setIsSending(true)
     setNotice('')
     setDraft('')
+    setAttachedDocumentID(undefined)
+    setAttachedPreview(undefined)
     const renderContext = createConversationRenderContext()
     try {
       // Image attachments go through the tool-capable local harness (so the
@@ -671,10 +682,13 @@ function AppContent() {
           })
       await refreshConversationsAfterStream(conversation.id, renderContext)
       setBalance(await api.balance())
-      setAttachedDocumentID(undefined)
-      setAttachedPreview(undefined)
     } catch (error) {
       setDraft((current) => current || content)
+      // Only restore the attachment if the user hasn't picked a new
+      // one in the meantime (same guard the draft uses) — otherwise
+      // we'd clobber the new pick on a failed retry.
+      setAttachedDocumentID((current) => current ?? sentDocumentID)
+      setAttachedPreview((current) => current ?? sentPreview)
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
       await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
