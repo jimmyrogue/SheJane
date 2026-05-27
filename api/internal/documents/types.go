@@ -47,6 +47,14 @@ type Document struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// Metadata captured from the source at upload time. For PDFs we
+	// surface pdfinfo's output: {pages: int, title: str, author:
+	// str, encrypted: bool, creator: str, producer: str, ...}.
+	// Schema is intentionally open (map[string]any) so future file
+	// types can populate their own keys without a Go struct change.
+	// Empty/missing for documents that predate the Layer-A reaper
+	// or for types we don't yet extract metadata from.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 type UploadTarget struct {
@@ -81,6 +89,10 @@ type MetadataStore interface {
 	MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (Document, error)
 	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (Document, error)
+	// SetDocumentMetadata persists pdfinfo-style structured metadata
+	// alongside the existing text extraction. See store.Store for
+	// the full contract.
+	SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (Document, error)
 	DeleteDocument(ctx context.Context, userID string, documentID string) (Document, error)
 	// ListExpiredDocuments returns documents past their expires_at
 	// that haven't yet been marked deleted. Used by the reaper to

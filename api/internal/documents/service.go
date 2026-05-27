@@ -105,7 +105,27 @@ func (s *Service) CompleteUpload(ctx context.Context, userID string, documentID 
 	if err := s.objects.PutObject(ctx, textKey, "text/plain; charset=utf-8", []byte(text)); err != nil {
 		return s.fail(ctx, userID, documentID, err)
 	}
-	return s.store.MarkDocumentReady(ctx, userID, documentID, textKey)
+	ready, err := s.store.MarkDocumentReady(ctx, userID, documentID, textKey)
+	if err != nil {
+		return ready, err
+	}
+	// Best-effort metadata capture — happens AFTER the doc is
+	// marked ready so a flaky pdfinfo run can't hold up the
+	// happy path. Failures are logged + dropped; absence of
+	// metadata degrades to "no badge in the preview header" but
+	// the doc is still queryable. Currently only PDFs produce
+	// non-nil metadata.
+	if meta, mErr := ExtractMetadata(document.OriginalName, document.ContentType, data); mErr == nil && meta != nil {
+		updated, sErr := s.store.SetDocumentMetadata(ctx, userID, documentID, meta)
+		if sErr != nil {
+			log.Printf("documents.service: SetDocumentMetadata for %q: %v", documentID, sErr)
+		} else {
+			ready = updated
+		}
+	} else if mErr != nil {
+		log.Printf("documents.service: ExtractMetadata for %q: %v", documentID, mErr)
+	}
+	return ready, nil
 }
 
 func (s *Service) DocumentsByUser(ctx context.Context, userID string) ([]Document, error) {

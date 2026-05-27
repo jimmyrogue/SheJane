@@ -91,6 +91,29 @@ export interface UserDocument {
   expires_at: string
   created_at: string
   updated_at: string
+  /** Structured metadata captured at upload time (PDFs only for
+   *  now — pdfinfo output: page count, author, title, encrypted,
+   *  …). Other types reserve the field but populate {} until they
+   *  grow their own extractor. */
+  metadata?: PdfDocumentMetadata
+}
+
+/** Sparse, all-optional view of the pdfinfo output. Server-side
+ *  shape: `api/internal/documents/extract.go::parsePDFInfo`.
+ *  Encrypted / legacy / corrupted PDFs may surface only a subset
+ *  (or nothing at all, in which case the whole `metadata` field
+ *  is absent on the wire). */
+export interface PdfDocumentMetadata {
+  title?: string
+  author?: string
+  creator?: string
+  producer?: string
+  subject?: string
+  keywords?: string
+  pages?: number
+  encrypted?: boolean
+  pdf_version?: string
+  page_size?: string
 }
 
 export interface UploadTarget {

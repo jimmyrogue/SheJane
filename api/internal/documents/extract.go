@@ -2,16 +2,36 @@ package documents
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ledongthuc/pdf"
+)
+
+// popplerTimeout caps how long pdftotext / pdfinfo may run on one
+// document. Real-world parses finish in well under a second; a hung
+// subprocess (corrupt PDF, OOM-killed) shouldn't block an HTTP
+// request indefinitely. 30s is generous for very large PDFs while
+// still being a hard upper bound.
+const popplerTimeout = 30 * time.Second
+
+// pdftotextPath / pdfinfoPath are exposed as package vars so tests
+// can swap them to "" and exercise the Go-native fallback path
+// without depending on Poppler being installed in CI. Production
+// containers ship with poppler-utils (see api/Dockerfile).
+var (
+	pdftotextPath = "pdftotext"
+	pdfinfoPath   = "pdfinfo"
 )
 
 func ExtractText(filename string, contentType string, data []byte, limit int) (string, error) {
@@ -40,7 +60,67 @@ func ExtractText(filename string, contentType string, data []byte, limit int) (s
 	return truncateRunes(text, limit), nil
 }
 
+// ExtractMetadata returns a structured metadata map for the source
+// document. PDFs go through `pdfinfo` (page count, title, author,
+// creator, producer, encrypted flag, …). Other types currently
+// return nil — they can grow their own extractor later (DOCX has
+// word counts in app.xml, XLSX has sheet counts in workbook.xml).
+//
+// Errors are *non-fatal* in the caller's eyes — the document upload
+// still succeeds even if metadata extraction fails (corrupt PDF,
+// missing pdfinfo binary, encrypted document we can't introspect).
+// Callers should log + continue. Returning (nil, nil) means "no
+// metadata available, don't store anything."
+func ExtractMetadata(filename string, contentType string, data []byte) (map[string]any, error) {
+	normalized, _, err := NormalizeContentType(filename, contentType)
+	if err != nil {
+		return nil, err
+	}
+	if normalized != "application/pdf" {
+		// Non-PDF types — no metadata path defined yet. Returning
+		// (nil, nil) is a "no-op" signal to the caller.
+		return nil, nil
+	}
+	return extractPDFMetadata(data)
+}
+
+// extractPDF tries Poppler's pdftotext first (better quality —
+// preserves layout, handles custom fonts) and falls back to the
+// pure-Go ledongthuc/pdf library if pdftotext is missing or fails.
+// The fallback path also covers the dev/test scenario where Poppler
+// isn't installed.
 func extractPDF(data []byte) (string, error) {
+	if text, err := extractPDFViaPoppler(data); err == nil {
+		return text, nil
+	}
+	return extractPDFViaGo(data)
+}
+
+func extractPDFViaPoppler(data []byte) (string, error) {
+	if pdftotextPath == "" {
+		return "", fmt.Errorf("pdftotext disabled")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), popplerTimeout)
+	defer cancel()
+	// `pdftotext - -`: read PDF from stdin, write text to stdout.
+	// -layout preserves columnar layout (better for tables); -nopgbrk
+	// drops the form-feed page separators that confuse downstream
+	// LLM tokenizers.
+	cmd := exec.CommandContext(ctx, pdftotextPath, "-layout", "-nopgbrk", "-", "-")
+	cmd.Stdin = bytes.NewReader(data)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// Don't surface stderr — pdftotext prints "Syntax Warning"
+		// noise for many otherwise-readable PDFs and we don't want
+		// to fail the extract over warnings.
+		return "", fmt.Errorf("pdftotext: %w", err)
+	}
+	return stdout.String(), nil
+}
+
+func extractPDFViaGo(data []byte) (string, error) {
 	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return "", err
@@ -60,6 +140,81 @@ func extractPDF(data []byte) (string, error) {
 		builder.WriteByte('\n')
 	}
 	return builder.String(), nil
+}
+
+// extractPDFMetadata shells out to `pdfinfo -` (read from stdin)
+// and parses the colon-delimited key:value lines into a typed map.
+// Returns (nil, nil) when pdfinfo is unavailable or fails — the
+// caller treats absent metadata as "nothing to store" rather than
+// a hard error so document uploads stay resilient.
+func extractPDFMetadata(data []byte) (map[string]any, error) {
+	if pdfinfoPath == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), popplerTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, pdfinfoPath, "-")
+	cmd.Stdin = bytes.NewReader(data)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// Soft-fail: log + keep going. Encrypted PDFs are the
+		// common case here — pdfinfo refuses without a password.
+		return nil, nil
+	}
+	return parsePDFInfo(stdout.Bytes()), nil
+}
+
+// parsePDFInfo reads `pdfinfo` stdout (colon-delimited key:value
+// per line) into a sparse map keyed by snake_case. Numeric and
+// boolean fields are typed so the JSON shape on the wire stays
+// useful (clients can render "12 pages" instead of "12 pages\n").
+// Unknown / unparseable keys are dropped — pdfinfo emits a stable
+// header set across versions, and unknown lines (custom XMP) are
+// not worth surfacing.
+func parsePDFInfo(out []byte) map[string]any {
+	meta := make(map[string]any)
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		line := scanner.Text()
+		colon := strings.Index(line, ":")
+		if colon < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:colon])
+		value := strings.TrimSpace(line[colon+1:])
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "Title":
+			meta["title"] = value
+		case "Author":
+			meta["author"] = value
+		case "Creator":
+			meta["creator"] = value
+		case "Producer":
+			meta["producer"] = value
+		case "Subject":
+			meta["subject"] = value
+		case "Keywords":
+			meta["keywords"] = value
+		case "Pages":
+			if n, err := strconv.Atoi(value); err == nil {
+				meta["pages"] = n
+			}
+		case "Encrypted":
+			// Pdfinfo emits "yes" / "no" / "yes (print:yes copy:no…)".
+			// We only care about the boolean lead.
+			meta["encrypted"] = strings.HasPrefix(strings.ToLower(value), "yes")
+		case "PDF version":
+			meta["pdf_version"] = value
+		case "Page size":
+			meta["page_size"] = value
+		}
+	}
+	return meta
 }
 
 func extractDOCX(data []byte) (string, error) {

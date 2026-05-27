@@ -617,6 +617,32 @@ func (s *MemoryStore) MarkDocumentFailed(ctx context.Context, userID string, doc
 	return document, nil
 }
 
+func (s *MemoryStore) SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (documents.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	document, err := s.documentByIDLocked(userID, documentID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return documents.Document{}, documents.ErrAlreadyDeleted
+		}
+		return documents.Document{}, err
+	}
+	// Defensive copy: caller might keep mutating the map, and we
+	// don't want their changes to silently rewrite our row.
+	if metadata != nil {
+		copied := make(map[string]any, len(metadata))
+		for k, v := range metadata {
+			copied[k] = v
+		}
+		document.Metadata = copied
+	} else {
+		document.Metadata = nil
+	}
+	document.UpdatedAt = time.Now().UTC()
+	s.documents[document.ID] = document
+	return document, nil
+}
+
 func (s *MemoryStore) DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

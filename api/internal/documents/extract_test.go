@@ -98,6 +98,88 @@ func zipBytes(files map[string]string) []byte {
 	return buffer.Bytes()
 }
 
+func TestParsePDFInfoMapsKnownKeys(t *testing.T) {
+	// Snapshot of `pdfinfo -` output from Poppler 24.x. Whitespace
+	// preserved verbatim — parsePDFInfo must tolerate variable
+	// spaces between key, colon, and value.
+	raw := []byte(`Title:           Attention Is All You Need
+Author:          Vaswani et al.
+Creator:         LaTeX
+Producer:        pdfTeX-1.40.20
+Subject:         NIPS 2017
+Keywords:        attention transformer
+Pages:           15
+Encrypted:       no
+PDF version:     1.5
+Page size:       612 x 792 pts
+unrelated-line-without-colon-pattern
+`)
+	meta := parsePDFInfo(raw)
+	if meta["title"] != "Attention Is All You Need" {
+		t.Fatalf("title=%v", meta["title"])
+	}
+	if meta["author"] != "Vaswani et al." {
+		t.Fatalf("author=%v", meta["author"])
+	}
+	if got, ok := meta["pages"].(int); !ok || got != 15 {
+		t.Fatalf("pages=%v (%T) — expected typed int 15", meta["pages"], meta["pages"])
+	}
+	if meta["encrypted"] != false {
+		t.Fatalf("encrypted=%v — expected typed bool false", meta["encrypted"])
+	}
+	if meta["pdf_version"] != "1.5" {
+		t.Fatalf("pdf_version=%v", meta["pdf_version"])
+	}
+	if _, exists := meta["unrelated"]; exists {
+		t.Fatal("unrelated key leaked into parsed metadata")
+	}
+}
+
+func TestParsePDFInfoHandlesEncryptedYesPrefix(t *testing.T) {
+	// Real Poppler emits "yes (print:yes copy:no…)" for encrypted
+	// PDFs — parser must coerce to plain boolean true.
+	meta := parsePDFInfo([]byte("Encrypted:       yes (print:yes copy:no change:no addNotes:no)\n"))
+	if meta["encrypted"] != true {
+		t.Fatalf("encrypted=%v — expected true", meta["encrypted"])
+	}
+}
+
+func TestExtractMetadataReturnsNilForNonPDF(t *testing.T) {
+	// DOCX / XLSX / images currently have no metadata extractor;
+	// ExtractMetadata returns (nil, nil) which the caller treats
+	// as "nothing to store".
+	for _, ct := range []string{
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"image/png",
+	} {
+		meta, err := ExtractMetadata("x", ct, []byte("noop"))
+		if err != nil {
+			t.Fatalf("%s: unexpected err %v", ct, err)
+		}
+		if meta != nil {
+			t.Fatalf("%s: expected nil metadata, got %v", ct, meta)
+		}
+	}
+}
+
+func TestExtractPDFFallsBackWhenPopplerMissing(t *testing.T) {
+	// If pdftotext isn't installed (CI / sparse dev shells), the
+	// extractor must still pull text via the Go-native fallback.
+	// Swap the binary path to "" and confirm the minimal PDF
+	// still extracts its known string.
+	original := pdftotextPath
+	pdftotextPath = ""
+	defer func() { pdftotextPath = original }()
+	text, err := ExtractText("brief.pdf", "application/pdf", minimalPDF("Fallback text"), 60_000)
+	if err != nil {
+		t.Fatalf("extract via Go fallback: %v", err)
+	}
+	if !strings.Contains(text, "Fallback text") {
+		t.Fatalf("fallback path missed expected text: %q", text)
+	}
+}
+
 func minimalPDF(text string) []byte {
 	objects := []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",

@@ -81,6 +81,18 @@ func (f *fakeMetadataStore) MarkDocumentFailed(ctx context.Context, userID strin
 	panic("not implemented in tests")
 }
 
+func (f *fakeMetadataStore) SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (Document, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.documents[documentID]
+	if !ok || doc.UserID != userID || doc.Status == StatusDeleted {
+		return Document{}, ErrAlreadyDeleted
+	}
+	doc.Metadata = metadata
+	f.documents[documentID] = doc
+	return doc, nil
+}
+
 func (f *fakeMetadataStore) DeleteDocument(ctx context.Context, userID string, documentID string) (Document, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

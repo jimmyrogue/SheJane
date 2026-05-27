@@ -306,6 +306,12 @@ type Store interface {
 	MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error)
 	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error)
+	// SetDocumentMetadata replaces the document's `metadata` jsonb
+	// column with the supplied map. Used by the documents service
+	// to persist pdfinfo output at upload time. nil clears it to
+	// '{}'. Returns documents.ErrAlreadyDeleted if the row is
+	// already tombstoned (callers treat this as a benign no-op).
+	SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (documents.Document, error)
 	DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error)
 	// ListExpiredDocuments returns up to `limit` documents whose
 	// expires_at is strictly before `cutoff` and whose status isn't

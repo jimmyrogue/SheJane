@@ -596,6 +596,12 @@ func (s *PostgresStore) AgentEventsByRun(ctx context.Context, userID string, run
 }
 
 func (s *PostgresStore) CreateDocument(ctx context.Context, document documents.Document) (documents.Document, error) {
+	// metadataJSON discarded after Scan — a freshly-created row
+	// always has metadata = '{}', and Document.Metadata stays nil
+	// (json.Unmarshal of "{}" produces an empty map but we treat
+	// nil vs empty equivalently downstream). Service.go calls
+	// SetDocumentMetadata later when it has the extractor output.
+	var metadataJSON []byte
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO documents (
 			id, user_id, original_name, content_type, size_bytes, status,
@@ -603,9 +609,10 @@ func (s *PostgresStore) CreateDocument(ctx context.Context, document documents.D
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),NULLIF($9, ''),$10,$11,$12)
 		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 	`, document.ID, document.UserID, document.OriginalName, document.ContentType, document.SizeBytes, document.Status, document.SourceObjectKey, document.TextObjectKey, document.ErrorMessage, document.ExpiresAt, nonZeroTime(document.CreatedAt), nonZeroTime(document.UpdatedAt)).
-		Scan(&document.ID, &document.UserID, &document.OriginalName, &document.ContentType, &document.SizeBytes, &document.Status, &document.SourceObjectKey, &document.TextObjectKey, &document.ErrorMessage, &document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt)
+		Scan(&document.ID, &document.UserID, &document.OriginalName, &document.ContentType, &document.SizeBytes, &document.Status, &document.SourceObjectKey, &document.TextObjectKey, &document.ErrorMessage, &document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt, &metadataJSON)
 	return document, err
 }
 
@@ -613,7 +620,8 @@ func (s *PostgresStore) DocumentsByUser(ctx context.Context, userID string) ([]d
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 		FROM documents
 		WHERE user_id=$1 AND status <> 'deleted'
 		ORDER BY created_at DESC
@@ -638,7 +646,8 @@ func (s *PostgresStore) DocumentByID(ctx context.Context, userID string, documen
 	return scanDocument(s.db.QueryRowContext(ctx, `
 		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 		FROM documents
 		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
 	`, userID, documentID))
@@ -656,6 +665,31 @@ func (s *PostgresStore) MarkDocumentFailed(ctx context.Context, userID string, d
 	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusFailed, "", truncateString(errorMessage, 500), false)
 }
 
+// SetDocumentMetadata persists the structured metadata extracted at
+// upload time (PDF: pdfinfo output; future: DOCX page count etc.).
+// Intentionally non-fatal in the calling service — failure here
+// degrades to "no metadata visible" rather than tanking the whole
+// upload (caller logs + continues). Uses jsonb so future keys
+// don't require migrations.
+func (s *PostgresStore) SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (documents.Document, error) {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return documents.Document{}, fmt.Errorf("marshal metadata: %w", err)
+	}
+	return scanDocument(s.db.QueryRowContext(ctx, `
+		UPDATE documents
+		SET metadata=$3::jsonb, updated_at=NOW()
+		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
+		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
+			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
+	`, userID, documentID, string(payload)))
+}
+
 func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, documentID string) (documents.Document, error) {
 	document, err := scanDocument(s.db.QueryRowContext(ctx, `
 		UPDATE documents
@@ -663,7 +697,8 @@ func (s *PostgresStore) DeleteDocument(ctx context.Context, userID string, docum
 		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
 		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 	`, userID, documentID))
 	if errors.Is(err, ErrNotFound) {
 		// `WHERE status <> 'deleted'` matched zero rows. The row is
@@ -685,7 +720,8 @@ func (s *PostgresStore) ListExpiredDocuments(ctx context.Context, cutoff time.Ti
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 		FROM documents
 		WHERE expires_at < $1 AND status <> 'deleted'
 		ORDER BY created_at ASC
@@ -697,11 +733,17 @@ func (s *PostgresStore) ListExpiredDocuments(ctx context.Context, cutoff time.Ti
 	defer rows.Close()
 	out := make([]documents.Document, 0, limit)
 	for rows.Next() {
+		// The reaper doesn't actually use the metadata, but we Scan
+		// it anyway so this stays parallel with scanDocument and
+		// the SELECT projection (which had to add the column to
+		// satisfy the new "metadata column on all reads" invariant).
 		var doc documents.Document
+		var metadataJSON []byte
 		if err := rows.Scan(
 			&doc.ID, &doc.UserID, &doc.OriginalName, &doc.ContentType, &doc.SizeBytes, &doc.Status,
 			&doc.SourceObjectKey, &doc.TextObjectKey, &doc.ErrorMessage,
 			&doc.ExpiresAt, &doc.CreatedAt, &doc.UpdatedAt,
+			&metadataJSON,
 		); err != nil {
 			return nil, err
 		}
@@ -1378,7 +1420,8 @@ func (s *PostgresStore) updateDocumentStatus(ctx context.Context, userID string,
 		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
 		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
 			source_object_key, COALESCE(text_object_key, ''), COALESCE(error_message, ''),
-			expires_at, created_at, updated_at
+			expires_at, created_at, updated_at,
+			COALESCE(metadata, '{}'::jsonb)::text
 	`
 	return scanDocument(s.db.QueryRowContext(ctx, query, userID, documentID, status, textObjectKey, errorMessage, clearError))
 }
@@ -1423,9 +1466,28 @@ func scanUser(row rowScanner) (User, error) {
 
 func scanDocument(row rowScanner) (documents.Document, error) {
 	var document documents.Document
-	err := row.Scan(&document.ID, &document.UserID, &document.OriginalName, &document.ContentType, &document.SizeBytes, &document.Status, &document.SourceObjectKey, &document.TextObjectKey, &document.ErrorMessage, &document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt)
+	// Metadata comes back as JSON bytes (text-cast in the SQL) so we
+	// don't need a Postgres-specific scanner. Decoding into the
+	// map[string]any field happens here so every doc query path
+	// gets the same treatment.
+	var metadataJSON []byte
+	err := row.Scan(
+		&document.ID, &document.UserID, &document.OriginalName, &document.ContentType,
+		&document.SizeBytes, &document.Status, &document.SourceObjectKey,
+		&document.TextObjectKey, &document.ErrorMessage,
+		&document.ExpiresAt, &document.CreatedAt, &document.UpdatedAt,
+		&metadataJSON,
+	)
 	if err != nil {
 		return documents.Document{}, mapNotFound(err)
+	}
+	if len(metadataJSON) > 0 && string(metadataJSON) != "{}" {
+		if err := json.Unmarshal(metadataJSON, &document.Metadata); err != nil {
+			// Soft-fail: a corrupt metadata column shouldn't tank
+			// the whole read. The map stays nil; clients see no
+			// metadata, same as a freshly-uploaded doc.
+			document.Metadata = nil
+		}
 	}
 	return document, nil
 }
