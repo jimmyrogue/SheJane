@@ -7,14 +7,19 @@ COPY . .
 RUN go build -o /out/jiandanly-api ./cmd/api
 
 FROM alpine:3.21
-# poppler-utils provides pdftotext + pdfinfo, used by
-# documents.ExtractText to pull text + metadata out of uploaded
-# PDFs. The Go-native library we used previously (ledongthuc/pdf)
-# misses layout, custom fonts, and has no metadata surface;
-# Poppler is the industry standard. Extractor falls back to the
-# Go library if pdftotext is missing, so this install only changes
-# quality — the system still works without it.
-RUN apk add --no-cache poppler-utils
+# poppler-utils → pdftotext + pdfinfo, used by
+#   • documents.ExtractText / ExtractMetadata at upload time
+#     (Layer A — text + metadata extraction), and
+#   • the pdf.inspect gateway's "info" operation (Layer B).
+# pdfgrep → the pdf.inspect gateway's "search" operation. It is a
+# SEPARATE package from poppler-utils (lives in Alpine's community
+# repo), so it must be listed explicitly — poppler-utils alone does
+# NOT provide it.
+# Both are best-effort: ExtractText falls back to the Go-native pdf
+# library when pdftotext is missing, and pdf.inspect returns a
+# clean tool-error envelope if a binary is absent — so a build
+# without these only degrades features, never crashes.
+RUN apk add --no-cache poppler-utils pdfgrep
 RUN adduser -D -H jiandan
 USER jiandan
 WORKDIR /app
