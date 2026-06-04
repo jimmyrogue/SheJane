@@ -723,6 +723,7 @@ function AppContent() {
               ? {
                   id: attachedDocument.id,
                   name: attachedDocument.original_name,
+                  contentType: attachedDocument.content_type,
                 }
               : undefined,
             onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),

@@ -27,6 +27,10 @@ interface SendMessageInput {
   document?: {
     id: string
     name: string
+    /** MIME type — lets the rendered attachment chip pick the right
+     *  typed icon + decide previewability. Optional for back-compat;
+     *  the chip falls back to filename-extension sniffing. */
+    contentType?: string
   }
   onConversationUpdate?: (conversation: Conversation) => void
 }
@@ -50,9 +54,25 @@ export function createChatStore(deps: ChatStoreDeps) {
       const userMessage: ChatMessage = {
         id: createLocalID('msg'),
         role: 'user',
-        content: formatUserMessage(text, input.document),
+        // Content is the user's text ONLY. The attachment is carried
+        // as a STRUCTURED attachment below (not embedded in the text
+        // via the old `📎 name\n…` formatter) so MessageBubble renders
+        // the clickable AttachmentChip — typed icon, side-panel
+        // preview, download button. The agent still receives the doc
+        // independently via createAgentRun({ attachments }) below, so
+        // dropping the text embedding doesn't starve the backend.
+        content: text,
         createdAt: timestamp,
         status: 'done',
+        attachments: input.document
+          ? [
+              {
+                documentId: input.document.id,
+                name: input.document.name,
+                contentType: input.document.contentType ?? '',
+              },
+            ]
+          : undefined,
       }
       const assistantMessage: ChatMessage = {
         id: createLocalID('msg'),
@@ -134,13 +154,6 @@ function createConversation(firstMessage: string, timestamp: string, t: Translat
     updatedAt: timestamp,
     messages: [],
   }
-}
-
-function formatUserMessage(text: string, document?: { name: string }): string {
-  if (!document) {
-    return text
-  }
-  return `📎 ${document.name}\n${text}`
 }
 
 export function timelineItem(event: AgentRunEvent, t: Translator = createTranslator('zh')): AgentTimelineItem | null {

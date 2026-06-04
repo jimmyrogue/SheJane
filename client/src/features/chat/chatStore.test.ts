@@ -68,12 +68,16 @@ describe('chat store', () => {
       content: '总结这份材料',
       mode: 'fast',
       scene: 'chat',
-      document: { id: 'doc-1', name: 'roadmap.pdf' },
+      document: { id: 'doc-1', name: 'roadmap.pdf', contentType: 'application/pdf' },
     })
 
+    // The user message's CONTENT is the plain text (no more `📎 name`
+    // embedding); the attachment rides as a STRUCTURED attachment so
+    // MessageBubble renders the clickable AttachmentChip.
     expect(conversation.messages[0]).toMatchObject({
       role: 'user',
-      content: '📎 roadmap.pdf\n总结这份材料',
+      content: '总结这份材料',
+      attachments: [{ documentId: 'doc-1', name: 'roadmap.pdf', contentType: 'application/pdf' }],
     })
     expect(conversation.messages[1]).toMatchObject({
       role: 'assistant',
