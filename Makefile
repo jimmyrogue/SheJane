@@ -1,4 +1,4 @@
-.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor setup-hooks lint schemas
+.PHONY: test test-ci test-e2e build api-test client-test admin-test local-host-test client-build admin-build local-host-build dev dev-electron dev-fresh dev-nuke docker-up docker-down migrate logs-api logs-local-host logs-client logs-llm-errors logs-dev smoke-local-host smoke-agent-research smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external doctor setup-hooks lint schemas
 
 test: api-test client-test admin-test local-host-test
 
@@ -45,6 +45,14 @@ dev-electron:
 
 dev-fresh:
 	./scripts/dev-fresh.sh
+
+# Scorched-earth reset: docker compose down --remove-orphans +
+# build --no-cache + up --force-recreate, then relaunch native.
+# Use when dev-fresh isn't enough — poisoned build cache (stale
+# image despite --build) or a wedged container. Keeps DB volumes;
+# for an empty DB run `docker compose down -v` first.
+dev-nuke:
+	./scripts/dev-nuke.sh
 
 docker-up:
 	docker compose up --build

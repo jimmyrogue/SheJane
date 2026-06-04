@@ -56,8 +56,18 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 make dev-electron
 
 # After daemon code edits where stragglers might be running, OR after
-# Docker images need rebuild (api/admin/postgres)
+# Docker images need rebuild (api/admin/postgres). Does
+# `docker compose up -d --build` (rebuild WITH layer cache).
 make dev-fresh
+
+# Scorched-earth reset — when dev-fresh isn't enough: a poisoned
+# build-cache layer (stale image despite --build, e.g. a client
+# `COPY . .` cache-hit that skips `npm run build`) or a wedged
+# container. Does `down --remove-orphans` + `build --no-cache` +
+# `up --force-recreate`, then relaunches native. Keeps DB volumes
+# (uploaded docs / conversations survive); for an empty DB run
+# `docker compose down -v` first.
+make dev-nuke
 
 # One-shot diagnostic — answers "why isn't dev working?"
 make doctor
