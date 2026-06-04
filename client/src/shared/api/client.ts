@@ -207,10 +207,16 @@ export class JiandanAPI implements ChatAPI {
    * (ownership) and 401 (session expired).
    */
   async fetchDocumentBytes(documentID: string): Promise<ArrayBuffer> {
+    // requireAuth=true: this endpoint is behind requireAuth on the Go
+    // side, and the app authenticates with a Bearer access token (not
+    // a cookie), so we MUST attach the Authorization header. Passing
+    // `false` here sent the request unauthenticated → 401 "未登录"
+    // even for a logged-in user. Every other authed call uses
+    // headers(true); this one was the outlier.
     const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}/source`, {
       method: 'GET',
       credentials: 'include',
-      headers: this.headers(false),
+      headers: this.headers(true),
     })
     if (!response.ok) {
       const text = await response.text().catch(() => response.statusText)
