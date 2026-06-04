@@ -1395,19 +1395,20 @@ select {
   text-decoration-style: solid;
 }
 
-/* Clickable variant of the attachment chip. The base chip styles
- * already exist via .message-attachment-chip; this adds the cursor +
- * hover affordance only when the chip is interactive. */
+/* Clickable variant of the attachment chip. Keeps the card look
+ * from the base rule (the old override stripped the background to
+ * `none`, which is what left the PDF chip bare); just adds the
+ * pointer + a lift on hover so it reads as "open me". */
 .message-attachment-chip.clickable {
   cursor: pointer;
-  background: none;
-  border: 1px solid transparent;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
 .message-attachment-chip.clickable:hover,
 .message-attachment-chip.clickable:focus-visible {
-  background: var(--accent, rgba(0, 0, 0, 0.04));
-  border-color: var(--border, rgba(0, 0, 0, 0.1));
+  border-color: var(--border-strong, rgba(0, 0, 0, 0.18));
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
   outline: none;
 }
 
@@ -2469,16 +2470,30 @@ select {
   margin-top: 6px;
 }
 
+/* User attachments hug the right edge under the text bubble; the
+ * 6px column gap on .message-bubble-inner already spaces them from
+ * the text, so zero the row's own top margin to avoid a double gap. */
+.message.user .message-attachments {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 .message-attachment-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--muted);
-  color: var(--foreground);
-  font-size: 12px;
-  max-width: 260px;
+  gap: 7px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  /* Elevated white card (not a flat muted pill) so the attachment
+   * reads as a tidy, secondary object beneath the message text —
+   * the red type-icon carries the emphasis, the card itself stays
+   * quiet. */
+  background: var(--bg-elevated, #ffffff);
+  border: 1px solid var(--border-hairline, rgba(0, 0, 0, 0.08));
+  box-shadow: var(--shadow-xs);
+  color: var(--text-primary, var(--foreground));
+  font-size: 12.5px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4122,6 +4137,20 @@ button:active {
   background: transparent;
   box-shadow: none;
   padding: 0;
+}
+
+/* User message: stack the text bubble + attachment chip as a
+ * RIGHT-aligned column. Without align-items:flex-end the
+ * bubble-inner shrink-wraps to its widest child (the attachment
+ * chip) and short text ("111") floats to the LEFT edge of that
+ * block — so the message reads as left-aligned and gets visually
+ * dominated by the chip. flex-end pins both the text bubble and the
+ * chip to the right, and the gap replaces per-child margins. */
+.message.user .message-bubble-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 /* Each row in the chat — message or ambient indicator — sits in a
