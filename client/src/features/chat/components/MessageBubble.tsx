@@ -528,10 +528,13 @@ function AttachmentChip({
   // this chip stay visually consistent.
   const { Icon, colorKey } = useMemo(() => fileIconFor(name, contentType), [name, contentType])
   const previewable = Boolean(kind && onPreviewCloudAttachment)
-  // The "open externally" button is always visible when a handler
-  // exists — gives power users an escape hatch even for previewable
-  // files ("I'd rather open this .docx in real Word").
-  const externalEnabled = Boolean(onOpenAttachmentExternally)
+  // External-open (download) button shows ONLY for files we can't
+  // preview in-app. Previewable files (pdf/docx/xlsx) move the
+  // download affordance INTO the opened preview panel's header, so
+  // the chip stays a clean "click to preview" target with no extra
+  // button. Non-previewable files (zip, etc.) keep the inline
+  // download button — it's their only affordance.
+  const externalEnabled = Boolean(onOpenAttachmentExternally) && !previewable
 
   const chipBody = (
     <>

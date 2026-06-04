@@ -992,21 +992,28 @@ select {
 }
 
 /* PDF preview — Chromium's built-in viewer rendered via <embed>.
- * Stretch to fill the panel's zoom-stage and let the native chrome
- * (toolbar, pagination, search) handle interaction. Min-height
- * keeps the embed visible on tall stages with short content. */
+ * Rendered as a direct child of .doc-preview-body (NOT the CSS
+ * zoom-stage, which has no definite height), so height:100% resolves
+ * against the body's flex height and the embed fills the panel. */
 .doc-preview-pdf {
   width: 100%;
   height: 100%;
-  min-height: 600px;
   display: flex;
 }
 .doc-preview-pdf-embed {
   width: 100%;
   height: 100%;
-  min-height: 600px;
   border: 0;
   flex: 1;
+}
+
+/* When the body holds a PDF, drop the page-style padding + muted bg
+ * and let the embed go full-bleed (its own viewer chrome supplies
+ * the frame). overflow:hidden because the embed scrolls internally. */
+.doc-preview-body-pdf {
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: transparent !important;
 }
 
 .pptx-toolbar {

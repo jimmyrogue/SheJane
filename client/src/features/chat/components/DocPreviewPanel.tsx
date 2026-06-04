@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  IconDownload,
   IconFileTypeDocx,
   IconFileTypePdf,
   IconFileTypePpt,
@@ -160,10 +161,38 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
   const metaSummary = buildPdfMetaSummary(doc?.metadata, t)
   const subtitleText = metaSummary ? `${kindLabel} · ${metaSummary}` : kindLabel
   const zoomPercent = Math.round(zoom * 100)
+  // PDFs render in Chromium's built-in viewer, which has its OWN
+  // zoom + page nav, so we (a) skip the app's CSS zoom-stage wrapper
+  // — letting the embed fill the panel height — and (b) hide the
+  // app zoom controls (they'd no-op on the embed).
+  const isPdf = doc?.kind === 'pdf'
   // Localhost config: pptx preview needs it to hit the outline
   // endpoint; getDesktopLocalHostConfig pulls it from the desktop
   // bridge so the panel doesn't need a config prop threaded down.
   const localHostConfig = doc?.kind === 'powerpoint' ? getDesktopLocalHostConfig() : undefined
+
+  // Download / "save a copy" lives in the opened detail view (not on
+  // the chat chip). Reuses the doc's own byte loader so it works for
+  // every source (cloud presigned GET, workspace file, …) without
+  // threading the documentId down — fetch bytes, blob, click a
+  // synthetic <a download> with the original filename.
+  const downloadDoc = useCallback(async () => {
+    if (!doc) return
+    try {
+      const bytes = await doc.loadBytes()
+      const url = URL.createObjectURL(new Blob([bytes]))
+      const anchor = window.document.createElement('a')
+      anchor.href = url
+      anchor.download = doc.name
+      window.document.body.appendChild(anchor)
+      anchor.click()
+      window.document.body.removeChild(anchor)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      /* preview already surfaces load errors; a failed download is
+         non-fatal and the user can retry. */
+    }
+  }, [doc])
 
   return (
     <Sheet modal={false} open={Boolean(doc)} onOpenChange={(open) => !open && onClose()}>
@@ -198,78 +227,104 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
               </SheetDescription>
             </div>
             <div className="doc-preview-zoom" role="group" aria-label={t('docPreview.zoom')}>
+              {/* App CSS-zoom only applies to the docx/xlsx render
+                  stage. PDFs use Chromium's own viewer zoom, so we
+                  hide these for PDF to avoid dead controls. */}
+              {!isPdf ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t('docPreview.zoomOut')}
+                    disabled={zoom <= MIN_ZOOM + 1e-6}
+                    onClick={() => setZoom(zoom - ZOOM_STEP)}
+                  >
+                    <IconMinus size={14} />
+                  </Button>
+                  <button
+                    type="button"
+                    className="doc-preview-zoom-label"
+                    onClick={() => setZoom(DEFAULT_ZOOM)}
+                    title={t('docPreview.zoomReset')}
+                    aria-label={t('docPreview.zoomReset')}
+                  >
+                    {zoomPercent}%
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t('docPreview.zoomIn')}
+                    disabled={zoom >= MAX_ZOOM - 1e-6}
+                    onClick={() => setZoom(zoom + ZOOM_STEP)}
+                  >
+                    <IconPlus size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t('docPreview.zoomReset')}
+                    disabled={Math.abs(zoom - DEFAULT_ZOOM) < 1e-6}
+                    onClick={() => setZoom(DEFAULT_ZOOM)}
+                  >
+                    <IconRestore size={14} />
+                  </Button>
+                </>
+              ) : null}
+              {/* Download / save a copy — moved here from the chat
+                  chip so the chip is just "click to preview". */}
               <Button
                 variant="ghost"
                 size="icon-sm"
-                title={t('docPreview.zoomOut')}
-                disabled={zoom <= MIN_ZOOM + 1e-6}
-                onClick={() => setZoom(zoom - ZOOM_STEP)}
+                title={t('docPreview.download')}
+                aria-label={t('docPreview.download')}
+                onClick={() => void downloadDoc()}
+                disabled={!doc}
               >
-                <IconMinus size={14} />
-              </Button>
-              <button
-                type="button"
-                className="doc-preview-zoom-label"
-                onClick={() => setZoom(DEFAULT_ZOOM)}
-                title={t('docPreview.zoomReset')}
-                aria-label={t('docPreview.zoomReset')}
-              >
-                {zoomPercent}%
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title={t('docPreview.zoomIn')}
-                disabled={zoom >= MAX_ZOOM - 1e-6}
-                onClick={() => setZoom(zoom + ZOOM_STEP)}
-              >
-                <IconPlus size={14} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title={t('docPreview.zoomReset')}
-                disabled={Math.abs(zoom - DEFAULT_ZOOM) < 1e-6}
-                onClick={() => setZoom(DEFAULT_ZOOM)}
-              >
-                <IconRestore size={14} />
+                <IconDownload size={14} />
               </Button>
             </div>
           </div>
         </SheetHeader>
-        <div className="doc-preview-body">
-          <div className="doc-preview-zoom-stage" style={{ zoom }}>
-            {doc?.kind === 'word' ? (
-              <DocxPreview
-                sourceKey={doc.sourceKey}
-                loadBytes={doc.loadBytes}
-                refreshKey={refreshKey}
-                onStatus={setStatus}
-              />
-            ) : doc?.kind === 'excel' ? (
-              <XlsxPreview
-                sourceKey={doc.sourceKey}
-                loadBytes={doc.loadBytes}
-                refreshKey={refreshKey}
-                onStatus={setStatus}
-              />
-            ) : doc?.kind === 'powerpoint' && doc.localPath && localHostConfig ? (
-              <PptxPreview
-                sourceKey={doc.sourceKey}
-                localPath={doc.localPath}
-                config={localHostConfig}
-                refreshKey={refreshKey}
-                onStatus={setStatus}
-              />
-            ) : doc?.kind === 'pdf' ? (
-              <PdfPreview
-                sourceKey={doc.sourceKey}
-                loadBytes={doc.loadBytes}
-                refreshKey={refreshKey}
-                onStatus={setStatus}
-              />
-            ) : null}
-          </div>
+        <div className={`doc-preview-body${isPdf ? ' doc-preview-body-pdf' : ''}`}>
+          {isPdf && doc ? (
+            // PDF renders OUTSIDE the CSS zoom-stage: the stage has no
+            // definite height, so an embed's height:100% there
+            // collapsed to a sliver. As a direct flex child of the
+            // body (which DOES have a definite height) the embed fills
+            // the panel. Chromium's viewer brings its own zoom.
+            <PdfPreview
+              sourceKey={doc.sourceKey}
+              loadBytes={doc.loadBytes}
+              refreshKey={refreshKey}
+              onStatus={setStatus}
+            />
+          ) : (
+            <div className="doc-preview-zoom-stage" style={{ zoom }}>
+              {doc?.kind === 'word' ? (
+                <DocxPreview
+                  sourceKey={doc.sourceKey}
+                  loadBytes={doc.loadBytes}
+                  refreshKey={refreshKey}
+                  onStatus={setStatus}
+                />
+              ) : doc?.kind === 'excel' ? (
+                <XlsxPreview
+                  sourceKey={doc.sourceKey}
+                  loadBytes={doc.loadBytes}
+                  refreshKey={refreshKey}
+                  onStatus={setStatus}
+                />
+              ) : doc?.kind === 'powerpoint' && doc.localPath && localHostConfig ? (
+                <PptxPreview
+                  sourceKey={doc.sourceKey}
+                  localPath={doc.localPath}
+                  config={localHostConfig}
+                  refreshKey={refreshKey}
+                  onStatus={setStatus}
+                />
+              ) : null}
+            </div>
+          )}
           {doc && status === 'loading' ? (
             <div className="doc-preview-status">{t('docPreview.loading')}</div>
           ) : null}
