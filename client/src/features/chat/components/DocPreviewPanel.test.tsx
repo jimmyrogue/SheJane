@@ -1,10 +1,10 @@
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { I18nProvider } from '@/shared/i18n/i18n'
+import { I18nProvider, createTranslator } from '@/shared/i18n/i18n'
 import type { OpenDocument } from '@/shared/local-data/types'
 
-import { DocPreviewPanel } from './DocPreviewPanel'
+import { DocPreviewPanel, buildPdfMetaSummary } from './DocPreviewPanel'
 
 // docx-preview and exceljs both touch DOM APIs (canvas / blob) that jsdom
 // only partially implements. We stub the subcomponents so this test focuses
@@ -18,6 +18,11 @@ vi.mock('./DocPreview/DocxPreview', () => ({
 vi.mock('./DocPreview/XlsxPreview', () => ({
   XlsxPreview: ({ sourceKey }: { sourceKey: string }) => (
     <div data-testid="xlsx-preview-stub">xlsx:{sourceKey}</div>
+  ),
+}))
+vi.mock('./DocPreview/PdfPreview', () => ({
+  PdfPreview: ({ sourceKey }: { sourceKey: string }) => (
+    <div data-testid="pdf-preview-stub">pdf:{sourceKey}</div>
   ),
 }))
 
@@ -116,6 +121,41 @@ describe('DocPreviewPanel', () => {
     expect(screen.getByText('100%')).toBeInTheDocument()
   })
 
+  it('mounts the PDF renderer and shows the metadata badge in the subtitle', () => {
+    const doc = makeDoc({
+      sourceKey: 'cloud:doc_pdf',
+      kind: 'pdf',
+      name: 'paper.pdf',
+      metadata: { pages: 15, author: 'Vaswani et al.' },
+    })
+    render(
+      <I18nProvider>
+        <DocPreviewPanel doc={doc} onClose={vi.fn()} />
+      </I18nProvider>,
+    )
+    expect(screen.getByTestId('pdf-preview-stub')).toHaveTextContent('pdf:cloud:doc_pdf')
+    // Subtitle = kind label · pages · author (proves Layer A
+    // metadata threaded all the way to the header).
+    expect(screen.getByText('PDF 文档 · 15 页 · Vaswani et al.')).toBeInTheDocument()
+  })
+
+  it('omits the metadata badge for a PDF with no metadata', () => {
+    const doc = makeDoc({
+      sourceKey: 'cloud:doc_bare',
+      kind: 'pdf',
+      name: 'bare.pdf',
+      // no metadata field
+    })
+    render(
+      <I18nProvider>
+        <DocPreviewPanel doc={doc} onClose={vi.fn()} />
+      </I18nProvider>,
+    )
+    // Subtitle is just the kind label — no trailing " · ".
+    expect(screen.getByText('PDF 文档')).toBeInTheDocument()
+    expect(screen.queryByText(/· /)).not.toBeInTheDocument()
+  })
+
   it('clamps stored width to the viewport so an oversized saved value does not break layout', () => {
     // Pre-seed a width way beyond the viewport. The panel reads from
     // localStorage on mount and should clamp on first render.
@@ -132,5 +172,38 @@ describe('DocPreviewPanel', () => {
     expect(widthPx).toBeGreaterThan(0)
     expect(widthPx).toBeLessThanOrEqual(Math.floor(window.innerWidth * 0.95))
     window.localStorage.removeItem('jiandanly.docPreview.width')
+  })
+})
+
+describe('buildPdfMetaSummary', () => {
+  const t = createTranslator('zh')
+
+  it('returns empty string for undefined metadata', () => {
+    expect(buildPdfMetaSummary(undefined, t)).toBe('')
+  })
+
+  it('returns empty string when metadata has no surfaced fields', () => {
+    // creator/producer aren't surfaced — only pages/author/encrypted.
+    expect(buildPdfMetaSummary({ creator: 'LaTeX', producer: 'pdfTeX' }, t)).toBe('')
+  })
+
+  it('joins pages + author with a middot', () => {
+    expect(buildPdfMetaSummary({ pages: 15, author: 'Vaswani et al.' }, t)).toBe('15 页 · Vaswani et al.')
+  })
+
+  it('shows pages alone when author is missing', () => {
+    expect(buildPdfMetaSummary({ pages: 7 }, t)).toBe('7 页')
+  })
+
+  it('ignores a zero/negative page count', () => {
+    expect(buildPdfMetaSummary({ pages: 0, author: 'X' }, t)).toBe('X')
+  })
+
+  it('appends the encrypted marker', () => {
+    expect(buildPdfMetaSummary({ pages: 3, encrypted: true }, t)).toBe('3 页 · 已加密')
+  })
+
+  it('trims whitespace-only author to nothing', () => {
+    expect(buildPdfMetaSummary({ pages: 2, author: '   ' }, t)).toBe('2 页')
   })
 })

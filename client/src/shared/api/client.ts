@@ -1,6 +1,6 @@
 import { parseSSEBuffer, type AgentRunEvent } from './sse'
 import { streamAgentSSE } from '../streaming/streamTransport'
-import type { ChatMode } from '../local-data/types'
+import type { ChatMode, PdfDocumentMetadata } from '../local-data/types'
 
 export interface StreamChatRequest {
   mode: ChatMode
@@ -94,27 +94,17 @@ export interface UserDocument {
   /** Structured metadata captured at upload time (PDFs only for
    *  now — pdfinfo output: page count, author, title, encrypted,
    *  …). Other types reserve the field but populate {} until they
-   *  grow their own extractor. */
+   *  grow their own extractor. Canonical type lives in
+   *  local-data/types (re-exported below) so OpenDocument can
+   *  reference it without a circular import. */
   metadata?: PdfDocumentMetadata
 }
 
-/** Sparse, all-optional view of the pdfinfo output. Server-side
- *  shape: `api/internal/documents/extract.go::parsePDFInfo`.
- *  Encrypted / legacy / corrupted PDFs may surface only a subset
- *  (or nothing at all, in which case the whole `metadata` field
- *  is absent on the wire). */
-export interface PdfDocumentMetadata {
-  title?: string
-  author?: string
-  creator?: string
-  producer?: string
-  subject?: string
-  keywords?: string
-  pages?: number
-  encrypted?: boolean
-  pdf_version?: string
-  page_size?: string
-}
+// PdfDocumentMetadata is defined in local-data/types (the
+// dependency-free leaf) and re-exported here so existing importers
+// of `@/shared/api/client` keep working unchanged. (Imported above
+// for use in UserDocument; re-exported here for downstream callers.)
+export type { PdfDocumentMetadata }
 
 export interface UploadTarget {
   method: 'PUT'

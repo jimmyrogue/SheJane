@@ -139,6 +139,25 @@ export interface ConversationWorkspace {
  * dedupe — opening the same path/document twice doesn't trigger a
  * spurious reload (we just bump the refresh key).
  */
+/** Sparse, all-optional view of the server-side pdfinfo parse
+ *  (api/internal/documents/extract.go::parsePDFInfo). Lives here
+ *  (the dependency-free leaf module) rather than in api/client.ts
+ *  so OpenDocument can reference it without a circular import;
+ *  client.ts re-exports it for API-response typing. Encrypted /
+ *  legacy / corrupted PDFs may surface only a subset. */
+export interface PdfDocumentMetadata {
+  title?: string
+  author?: string
+  creator?: string
+  producer?: string
+  subject?: string
+  keywords?: string
+  pages?: number
+  encrypted?: boolean
+  pdf_version?: string
+  page_size?: string
+}
+
 export interface OpenDocument {
   /** Stable identifier for this document — used to dedupe opens.
    *  Format: `local:<absolute-path>` for workspace files,
@@ -152,6 +171,12 @@ export interface OpenDocument {
   name: string
   /** Optional full path or description shown as tooltip on the header. */
   tooltip?: string
+  /** Optional document metadata (currently PDFs only — pdfinfo
+   *  output captured server-side at upload). The preview header
+   *  renders a "15 页 · Author" badge when present. Undefined for
+   *  local workspace files and for cloud docs missing from the
+   *  current documents list. */
+  metadata?: PdfDocumentMetadata
   /** Resolves with the file's raw bytes. Closure over whatever
    *  authenticated fetch backs this source (workspace endpoint, S3
    *  presigned GET, etc.).

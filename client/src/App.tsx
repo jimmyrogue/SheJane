@@ -316,12 +316,19 @@ function AppContent() {
    *  endpoint; PdfPreview wraps the bytes in a blob URL for
    *  Chromium's built-in PDF viewer. */
   function openCloudOfficeDocument(spec: CloudOfficeAttachmentRef) {
+    // Look up the full document record (if still in the user's
+    // recent list) to surface its server-captured metadata —
+    // pdfinfo's page count / author drive the preview header
+    // badge. Missing from the list (old/expired) → undefined,
+    // and the header simply omits the badge.
+    const record = documents.find((document) => document.id === spec.documentId)
     setActiveDocument({
       sourceKey: `cloud:${spec.documentId}`,
       kind: spec.kind,
       name: spec.name,
       tooltip: spec.name,
       loadBytes: () => api.fetchDocumentBytes(spec.documentId),
+      metadata: record?.metadata,
     })
     setDocPreviewRefreshKey((k) => k + 1)
   }

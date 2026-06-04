@@ -11,9 +11,9 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { useI18n } from '@/shared/i18n/i18n'
+import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import { getDesktopLocalHostConfig } from '@/shared/local-host/client'
-import type { OpenDocument } from '@/shared/local-data/types'
+import type { OpenDocument, PdfDocumentMetadata } from '@/shared/local-data/types'
 
 import { DocxPreview } from './DocPreview/DocxPreview'
 import { PdfPreview } from './DocPreview/PdfPreview'
@@ -143,6 +143,22 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
         : doc?.kind === 'pdf'
           ? IconFileTypePdf
           : IconFileTypeDocx
+  // Subtitle = kind label, plus a metadata summary ("· 15 页 ·
+  // Author") when the doc carries pdfinfo output. Lets users
+  // confirm extraction worked without leaving the preview.
+  const kindLabel = doc
+    ? t(
+        doc.kind === 'word'
+          ? 'docPreview.kind.word'
+          : doc.kind === 'excel'
+            ? 'docPreview.kind.excel'
+            : doc.kind === 'powerpoint'
+              ? 'docPreview.kind.powerpoint'
+              : 'docPreview.kind.pdf',
+      )
+    : ''
+  const metaSummary = buildPdfMetaSummary(doc?.metadata, t)
+  const subtitleText = metaSummary ? `${kindLabel} · ${metaSummary}` : kindLabel
   const zoomPercent = Math.round(zoom * 100)
   // Localhost config: pptx preview needs it to hit the outline
   // endpoint; getDesktopLocalHostConfig pulls it from the desktop
@@ -178,17 +194,7 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
                 {doc?.name ?? t('docPreview.defaultTitle')}
               </SheetTitle>
               <SheetDescription className="doc-preview-subtitle">
-                {doc
-                  ? t(
-                      doc.kind === 'word'
-                        ? 'docPreview.kind.word'
-                        : doc.kind === 'excel'
-                          ? 'docPreview.kind.excel'
-                          : doc.kind === 'powerpoint'
-                            ? 'docPreview.kind.powerpoint'
-                            : 'docPreview.kind.pdf',
-                    )
-                  : ''}
+                {subtitleText}
               </SheetDescription>
             </div>
             <div className="doc-preview-zoom" role="group" aria-label={t('docPreview.zoom')}>
@@ -271,6 +277,37 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
       </SheetContent>
     </Sheet>
   )
+}
+
+/**
+ * Build the short metadata summary shown after the kind label in the
+ * preview header — e.g. "15 页 · Vaswani et al." / "Encrypted".
+ * Returns '' when there's nothing worth showing (no metadata, or a
+ * metadata object with none of the fields we surface), so the caller
+ * can decide whether to render the " · " separator.
+ *
+ * We deliberately surface only the high-signal fields: page count
+ * (most useful), author (when present), and the encrypted flag (so
+ * users understand why text extraction might be empty). Title is
+ * skipped — it's usually redundant with the filename already shown
+ * in the header.
+ */
+export function buildPdfMetaSummary(
+  metadata: PdfDocumentMetadata | undefined,
+  t: Translator,
+): string {
+  if (!metadata) return ''
+  const parts: string[] = []
+  if (typeof metadata.pages === 'number' && metadata.pages > 0) {
+    parts.push(t('docPreview.metaPages', { count: String(metadata.pages) }))
+  }
+  if (metadata.author && metadata.author.trim()) {
+    parts.push(metadata.author.trim())
+  }
+  if (metadata.encrypted) {
+    parts.push(t('docPreview.metaEncrypted'))
+  }
+  return parts.join(' · ')
 }
 
 function viewportMaxWidth(): number {

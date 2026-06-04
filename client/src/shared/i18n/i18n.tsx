@@ -551,6 +551,10 @@ const zh = {
   'chat.tool.office.read_slides': '读取幻灯片',
   'docPreview.kind.powerpoint': 'PowerPoint 演示文稿',
   'docPreview.kind.pdf': 'PDF 文档',
+  // Metadata badge in the preview header (PDF only) — confirms the
+  // server-side pdfinfo extraction landed. e.g. "PDF 文档 · 15 页 · 作者".
+  'docPreview.metaPages': '{count} 页',
+  'docPreview.metaEncrypted': '已加密',
   'pptxPreview.openNatively': '在 PowerPoint 中打开',
   'pptxPreview.empty': '这份演示文稿还没有任何幻灯片',
   'pptxPreview.slideNumber': '幻灯片 {n}',
@@ -1104,6 +1108,8 @@ const en: Record<TranslationKey, string> = {
   'chat.tool.office.read_slides': 'Read slides',
   'docPreview.kind.powerpoint': 'PowerPoint deck',
   'docPreview.kind.pdf': 'PDF document',
+  'docPreview.metaPages': '{count} pages',
+  'docPreview.metaEncrypted': 'Encrypted',
   'pptxPreview.openNatively': 'Open in PowerPoint',
   'pptxPreview.empty': 'This presentation has no slides yet.',
   'pptxPreview.slideNumber': 'Slide {n}',
