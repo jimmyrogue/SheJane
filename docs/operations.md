@@ -28,7 +28,6 @@ docker compose ps
 - Admin: `http://localhost:5174`
 - API: `http://localhost:8080`
 - Postgres: `localhost:15432`
-- Redis: `localhost:16379`
 
 可选 Caddy reverse proxy 已预留 `shejane.com` 和 `admin.shejane.com` 两个入口；生产环境需要把 `CLIENT_BASE_URL`、`ADMIN_BASE_URL` 配到真实域名。
 
@@ -197,7 +196,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 
 Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两个平面理解：
 
-- **Cloud Control Plane**：继续部署在现有 API/admin/postgres/redis/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
+- **Cloud Control Plane**：继续部署在现有 API/admin/postgres/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
 - **Phase 2.3-2.22 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/verify/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Phase 2.20 起普通 client 可直接从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON；Phase 2.21 起研究策略会排除搜索结果页来源并达到来源/搜索预算后阻止继续浏览；Phase 2.22 起 Tavily 等平台付费搜索只走 Cloud Tool Gateway，Local Host 不保存第三方 API key；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。

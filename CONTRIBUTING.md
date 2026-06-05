@@ -11,7 +11,7 @@ the project's [Apache License 2.0](./LICENSE).
 SheJane is an agentic-chat product split across four stacks:
 
 ```
-Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph daemon ──▶ Go API ──▶ Postgres / Redis / S3 / Stripe
+Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph daemon ──▶ Go API ──▶ Postgres / S3 / Stripe
         │                                          (local agent harness)        (cloud control plane)
         └────────────────────── HTTPS (auth / billing / documents) ────────────────────────┘
 ```
@@ -28,7 +28,7 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 - **Go** 1.25+
 - **Node** 22+
 - **Python** 3.12+ with [`uv`](https://docs.astral.sh/uv/)
-- **Docker** + Docker Compose (Postgres, Redis, API)
+- **Docker** + Docker Compose (Postgres, API)
 - macOS or Linux (the dev launcher is macOS-tuned; Linux works with minor tweaks)
 
 ## First-time setup

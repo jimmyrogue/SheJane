@@ -62,7 +62,6 @@ make smoke-stripe-webhook
   - Admin web: `http://localhost:5174`
   - API: `http://localhost:8080`
   - Postgres host port: `15432`
-  - Redis host port: `16379`
 
 ## Backend Rules
 

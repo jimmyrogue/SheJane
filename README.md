@@ -32,7 +32,7 @@ auth/billing/documents.
         ▼                                            ▼
 ┌─────────────────────────────┐        ┌─────────────────────────┐
 │  Local agent harness        │ ─────▶ │  Go API (cloud)         │
-│  Python · FastAPI · uvicorn │        │  Postgres · Redis · S3  │
+│  Python · FastAPI · uvicorn │        │  Postgres · S3          │
 │  LangGraph 1.2 + deepagents │        │  Stripe billing         │
 │  AsyncSqlite checkpoints    │        │                         │
 │                             │        │  Holds ALL platform-    │
@@ -79,7 +79,7 @@ Prerequisites: **Go 1.25+**, **Node 22+**, **Python 3.12+ with [uv](https://docs
 ```bash
 make setup-hooks            # install lefthook git hooks (once)
 cp .env.example .env        # MOCK_LLM=true by default — no provider key needed
-make dev-electron           # Docker (Postgres/Redis/API) + daemon + Vite + Electron
+make dev-electron           # Docker (Postgres/API) + daemon + Vite + Electron
 ```
 
 `MOCK_LLM=true` returns canned LLM responses, so the full stack runs with
@@ -95,7 +95,7 @@ Trouble? `make doctor` diagnoses the common "why isn't dev working" causes.
 |---|---|
 | Client | Electron · React 18 · Vite · TypeScript · Tailwind 4 · shadcn/ui |
 | Daemon | Python 3.12 · FastAPI · uvicorn · LangGraph 1.2 · deepagents |
-| API | Go 1.25 · Postgres · Redis · S3 · Stripe |
+| API | Go 1.25 · Postgres · S3 · Stripe |
 | Admin | React · Vite · shadcn/ui |
 
 ## Project layout

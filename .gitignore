@@ -98,7 +98,6 @@ local-host/python/large_tool_results/
 *.sqlite
 *.sqlite3
 postgres-data/
-redis-data/
 
 # Docker / deployment local overrides
 docker-compose.override.yml

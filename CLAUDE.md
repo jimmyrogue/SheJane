@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
            ▼                                              ▼
 ┌─────────────────────────────────┐         ┌──────────────────────┐
 │ Local-host daemon               │ ──────▶ │ Go API (api/)        │
-│ local-host/python/local_host/   │         │ Postgres + Redis +   │
+│ local-host/python/local_host/   │         │ Postgres +           │
 │ FastAPI + uvicorn               │         │ S3 (documents) +     │
 │ LangGraph 1.2 + deepagents      │         │ Stripe (billing)     │
 │ AsyncSqliteSaver (checkpoints)  │         │                      │

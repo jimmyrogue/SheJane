@@ -34,7 +34,7 @@
         ▼                                            ▼
 ┌─────────────────────────────┐        ┌─────────────────────────┐
 │  本地 agent harness         │ ─────▶ │  Go API(云端)          │
-│  Python · FastAPI · uvicorn │        │  Postgres · Redis · S3  │
+│  Python · FastAPI · uvicorn │        │  Postgres · S3          │
 │  LangGraph 1.2 + deepagents │        │  Stripe 计费            │
 │  AsyncSqlite checkpoints    │        │                         │
 │  工具本地执行,或把计费类     │        │  持有所有平台付费       │
@@ -76,7 +76,7 @@
 ```bash
 make setup-hooks            # 安装 lefthook git hooks(一次性)
 cp .env.example .env        # 默认 MOCK_LLM=true —— 不需要任何 provider key
-make dev-electron           # Docker(Postgres/Redis/API)+ daemon + Vite + Electron
+make dev-electron           # Docker(Postgres/API)+ daemon + Vite + Electron
 ```
 
 `MOCK_LLM=true` 返回预设的 LLM 响应,整套栈零外部凭证即可跑通。要接真实
@@ -91,7 +91,7 @@ key 基本够用)。完整带注释的配置项见 [`.env.example`](./.env.examp
 |---|---|
 | 客户端 | Electron · React 18 · Vite · TypeScript · Tailwind 4 · shadcn/ui |
 | Daemon | Python 3.12 · FastAPI · uvicorn · LangGraph 1.2 · deepagents |
-| API | Go 1.25 · Postgres · Redis · S3 · Stripe |
+| API | Go 1.25 · Postgres · S3 · Stripe |
 | 后台 | React · Vite · shadcn/ui |
 
 ## 目录结构
