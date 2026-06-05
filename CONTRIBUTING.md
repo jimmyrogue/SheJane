@@ -1,0 +1,85 @@
+# Contributing to SheJane (石间)
+
+Thanks for your interest in contributing! This guide covers the dev
+setup, the project layout, and the workflow we expect for pull requests.
+
+By contributing you agree that your contributions are licensed under
+the project's [Apache License 2.0](./LICENSE).
+
+## Architecture in one minute
+
+SheJane is an agentic-chat product split across four stacks:
+
+```
+Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph daemon ──▶ Go API ──▶ Postgres / Redis / S3 / Stripe
+        │                                          (local agent harness)        (cloud control plane)
+        └────────────────────── HTTPS (auth / billing / documents) ────────────────────────┘
+```
+
+- `api/` — Go API: auth, credit ledger, LLM routing, cloud Tool Gateway, Stripe billing, documents (S3), admin APIs.
+- `local-host/python/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
+- `client/` — Electron + React + Vite + Tailwind user app (local-first chat history).
+- `admin/` — standalone React/Vite admin panel (shadcn/ui).
+
+**Read [CLAUDE.md](./CLAUDE.md) first** — it has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend/frontend/testing rules.
+
+## Prerequisites
+
+- **Go** 1.25+
+- **Node** 22+
+- **Python** 3.12+ with [`uv`](https://docs.astral.sh/uv/)
+- **Docker** + Docker Compose (Postgres, Redis, API)
+- macOS or Linux (the dev launcher is macOS-tuned; Linux works with minor tweaks)
+
+## First-time setup
+
+```bash
+make setup-hooks            # installs lefthook + wires git hooks
+cp .env.example .env        # fill in dev credentials (a DeepSeek key covers most things)
+make dev-electron           # Docker + daemon + Vite + Electron, with log tail
+```
+
+`MOCK_LLM=true` (the default in `.env.example`) returns canned LLM
+responses so you can run the whole stack without any provider key.
+
+If anything looks wrong, `make doctor` is the first stop.
+
+## The four invariants (don't break these)
+
+1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS, E2B) live in the Go API only** — never in the Python daemon. Billed tools proxy through the cloud Tool Gateway (`local-host/python/local_host/tools/_gateway.py`). Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (pre-commit + CI).
+2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `client/src/shared/local-host/generated.d.ts`.
+3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
+4. **The credit ledger reserves before the external call and settles/releases after**, on every exit path including errors (`api/internal/billing/`).
+
+## Workflow
+
+1. Branch off `main` (`feat/…`, `fix/…`, `chore/…`, `docs/…`).
+2. Make your change with a focused test where practical (we lean TDD for auth, wallet/ledger, Stripe, admin, SSE/chat-store, and import/export).
+3. Run the checks below until green.
+4. Open a PR against `main` and fill in the template.
+
+## Tests & lint
+
+```bash
+make lint                   # ruff + gofmt + go vet + the no-platform-keys guard
+make test                   # all four stacks (Go + Python + client + admin)
+
+# focused:
+make api-test               # go test ./...
+make local-host-test        # uv run pytest
+make client-test            # client vitest
+make admin-test             # admin vitest
+```
+
+CI runs the same lint + deterministic-test + contract jobs on every PR.
+
+## Commit messages
+
+Conventional-ish prefixes (`feat:`, `fix:`, `chore:`, `docs:`, `ci:`,
+`perf:`, `refactor:`). Pre-commit only enforces non-empty (≥5 chars);
+the history follows the convention by habit.
+
+## Reporting bugs / requesting features
+
+Use the GitHub issue templates. For anything security-sensitive, follow
+[SECURITY.md](./SECURITY.md) instead of opening a public issue.
