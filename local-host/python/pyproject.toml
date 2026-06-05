@@ -9,8 +9,6 @@ dependencies = [
     "langchain-core>=1.0.0",
     "langgraph>=1.2.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
-    # Tool ecosystem
-    "langchain-community>=0.4.0",
     "langchain-mcp-adapters>=0.2.0",
     # Browser agent (replaces 10 granular browser.* tools)
     "browser-use>=0.7.0",
@@ -36,7 +34,6 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
     "structlog>=24.4.0",
-    "aiofiles>=24.1.0",
     "aiosqlite>=0.20.0",
     # Office document parsing (Phase 1: read + outline only; edit
     # primitives land in Phase 2). markitdown produces LLM-ready
