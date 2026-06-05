@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -1717,8 +1716,4 @@ func requestIDFromContext(ctx context.Context, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func cloneBody(body []byte) io.ReadCloser {
-	return io.NopCloser(bytes.NewReader(body))
 }

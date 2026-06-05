@@ -166,13 +166,6 @@ func (m *SessionManager) InvalidateSession(ctx context.Context, rec store.Sandbo
 	return m.store.MarkSandboxSessionStatus(ctx, rec.ID, "failed")
 }
 
-// UploadFile is a thin pass-through to the client. Lives here so the
-// gateway only depends on SessionManager (one shape), not the raw
-// Client. Useful for the retry-with-fresh-sandbox flow.
-func (m *SessionManager) UploadFile(ctx context.Context, rec store.SandboxSessionRecord, path string, data []byte) error {
-	return m.client.UploadSandboxFile(ctx, rec.E2BSandboxID, rec.E2BClientID, path, data)
-}
-
 // ReapTick scans for sandboxes that have crossed either the idle TTL
 // or the absolute max-lifetime ceiling, kills them on E2B, and
 // updates the DB row. Intended to be called periodically by the
@@ -200,20 +193,6 @@ func (m *SessionManager) ReapTick(ctx context.Context) (killed int, err error) {
 		killed++
 	}
 	return killed, nil
-}
-
-// KillForConversation is used when the conversation explicitly ends
-// (user closed it, daemon-side termination signal). Marks the row
-// "killed" and tells E2B to release the microVM.
-func (m *SessionManager) KillForConversation(ctx context.Context, userID string, conversationID string) error {
-	rec, err := m.store.GetActiveSandboxSessionByConversation(ctx, userID, conversationID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil // nothing to kill
-		}
-		return err
-	}
-	return m.killAndMark(ctx, rec, "killed")
 }
 
 func (m *SessionManager) killAndMark(ctx context.Context, rec store.SandboxSessionRecord, newStatus string) error {

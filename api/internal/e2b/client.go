@@ -58,7 +58,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,17 +68,6 @@ import (
 	"strings"
 	"time"
 )
-
-// base64Encode/Decode wrap the std library so the file-IO helpers
-// read cleanly. We use standard padded base64 (the E2B JSON shape's
-// convention).
-func base64Encode(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-func base64Decode(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
-}
 
 // ErrSandboxNotFound is returned when an operation references a
 // sandbox ID that E2B reports as missing (404). Used by the session
@@ -635,9 +623,3 @@ func (c *Client) doLifecycle(ctx context.Context, method, path string, body any,
 	}
 	return nil
 }
-
-// Re-export base64 helpers in case external packages need them
-// (httpapi/code_gateway.go has its own copy to avoid this dep, but
-// keeping them exported here is harmless and useful for tests).
-var _ = base64Encode
-var _ = base64Decode

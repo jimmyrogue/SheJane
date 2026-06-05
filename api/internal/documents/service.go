@@ -315,7 +315,3 @@ func newDocumentID() string {
 	encoded := hex.EncodeToString(bytes[:])
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
 }
-
-func IsValidationError(err error) bool {
-	return errors.Is(err, ErrTooLarge) || errors.Is(err, ErrUnsupportedType)
-}

@@ -1553,11 +1553,7 @@ func mapNotFound(err error) error {
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && (contains(err.Error(), "duplicate key") || contains(err.Error(), "SQLSTATE 23505"))
-}
-
-func contains(value string, needle string) bool {
-	return len(value) >= len(needle) && (value == needle || len(needle) == 0 || stringContains(value, needle))
+	return err != nil && (strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "SQLSTATE 23505"))
 }
 
 func truncateString(value string, limit int) string {
@@ -1566,15 +1562,6 @@ func truncateString(value string, limit int) string {
 		return value
 	}
 	return string(runes[:limit])
-}
-
-func stringContains(value string, needle string) bool {
-	for i := 0; i+len(needle) <= len(value); i++ {
-		if value[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func minInt64(a int64, b int64) int64 {
