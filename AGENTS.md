@@ -1,32 +1,21 @@
-# SheJane Agent Guide
+# AGENTS.md — SheJane Contributor Guide
 
-This file is the first stop for coding agents working in this repository. Keep it practical: follow the existing project shape, protect secrets, and verify changes before calling them done.
+The first stop for coding agents (and humans) working in this repository. Keep it practical: follow the existing project shape, protect secrets, and verify changes before calling them done.
 
-## Communication
+For the full architecture, the critical invariants, and "where things live", read **[CLAUDE.md](./CLAUDE.md)** first. Dev setup + workflow live in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
-- The project owner usually works in Chinese. Reply in Chinese unless the user asks otherwise.
-- If the user writes English with grammar or phrasing mistakes, add a short correction block at the end of your reply:
-  - `😇 original → corrected (Pattern name)`
-  - Keep it kind and brief.
-- Prefer concrete outcomes: code, tests, docs, commands, and clear status. Avoid abstract planning when the user asked to execute.
+## Product shape
 
-## Current Product State
+SheJane (石间) is an agentic chat product. `jiandanly` is the legacy code name still used in package names, env-var prefixes (`JIANDANLY_*`), and on-disk paths.
 
-SheJane (石间) is an individual-user AI productivity MVP. (`jiandanly` is the legacy code name still used in package names, env vars, and on-disk paths.)
+- `api/` — Go API: auth, wallet/credit ledger, LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
+- `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
+- `client/` — Electron/React user app; local-first chat history.
+- `admin/` — standalone React/Vite admin app (shadcn/ui).
+- `api/migrations/` — sequential, idempotent PostgreSQL migrations.
+- `docs/operations.md` — operator runbook.
 
-- `api/`: Go API gateway, auth, wallet ledger, LLM routing, Stripe Billing webhook handling, admin APIs.
-- `client/`: user-facing React/Vite web app, local-first chat history, billing entry.
-- `admin/`: standalone React/Vite admin web app using shadcn/ui.
-- `api/migrations/001_phase1.sql`: canonical PostgreSQL schema for the current MVP.
-- `docs/progress/`: phase trackers. Keep these accurate when finishing a phase.
-- `docs/operations.md`: operator runbook.
-
-Implemented phases:
-
-- Phase 1: auth, chat, wallet ledger, local-first client, Docker setup.
-- Phase 1.5: real LLM provider support through DeepSeek/OpenAI-compatible APIs.
-- Phase 1.6: standalone admin web MVP.
-- Phase 1.7: Stripe subscription lifecycle, admin audit visibility, production readiness smoke checks.
+See CLAUDE.md for the request flow, the SSE protocol, and the four non-negotiable invariants.
 
 ## Commands
 
@@ -164,7 +153,6 @@ Add or update tests when touching:
 
 - Update `README.md` for user/developer setup changes.
 - Update `docs/operations.md` for operational, env, Stripe, admin, or deployment changes.
-- Update `docs/progress/phase-*.md` when closing or materially advancing a phase.
 - Keep docs truthful about boundaries. Mark unimplemented future work as future work, not hidden capability.
 
 ## Git And Generated Files

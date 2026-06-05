@@ -95,7 +95,7 @@ make smoke-real-llm
 - **基准每 token 成本**（¥/token，默认 `0.00002` ≈ ¥20/1M）= 「1 credit ≈ 1 个 DeepSeek-Pro token 成本」的锚点，**仅生图等按次金额模型换算用**；文本计费不需要它。建议按 **Pro 原价**（非 2.5 折促销价）锚定，促销到期不亏。
 - 生图作为 **Agent 工具 `image.generate`** 经 Cloud Tool Gateway 计费（复用 `external_tool_call_records` reserve/settle/release，幂等），也提供 `POST /api/v1/images/generations` REST 入口。未配置基准成本时生图直接拒绝（`image_billing_not_configured`），不会乱扣。
 
-DeepSeek 当前价（每 1M tokens，CNY）换算与推荐值见 [`/ONBOARDING.md`](../ONBOARDING.md)。
+生图与各档模型的基准成本/加价口径在 Admin「模型」页配置（见管理员文档）。
 
 > 历史兼容：`FAST_PROVIDER_KIND` / `DEEP_PROVIDER_KIND` 仍可显式选 `deepseek-v4` / `openai-compatible` / `anthropic`，仅影响**首启种子**；未设置时 `https://api.deepseek.com` 自动按 `deepseek-v4`，其它 OpenAI 兼容地址按通用兼容模式。
 
