@@ -72,11 +72,23 @@ make dev-nuke
 # One-shot diagnostic — answers "why isn't dev working?"
 make doctor
 
+# Hot-restart ONLY the Python daemon after a code edit (seconds, not a
+# full relaunch); then Cmd+R Electron to re-pair. Encapsulates the
+# `lsof -ti :17371 | xargs kill -9` dance — the daemon-restart skill.
+make restart-daemon
+
+# Grouped, self-documenting help (the default target — bare `make` too)
+make help
+
 # Tests (all 4 stacks)
 make test               # python + client vitest + admin vitest + go
 make local-host-test    # just python (uv run pytest)
 make client-test        # just client (vitest --run)
 make api-test           # just go (go test ./...)
+make test-race          # go test -race ./... (catches ledger data races)
+make test-e2e           # Playwright simulated E2E
+make test-contract      # client ↔ daemon contract over real HTTP (:17399)
+make ci                 # run EVERYTHING CI runs, locally (pre-push gate)
 
 # A single Python test
 cd local-host/python && uv run pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
@@ -95,6 +107,11 @@ make smoke-local-host        # standalone daemon HTTP smoke
 make smoke-docker-local      # full Docker stack
 make smoke-real-llm          # real LLM provider
 make smoke-stripe-webhook    # Stripe webhook simulation
+
+# Deploy / release (production — GHCR images + docker-compose.prod.yml)
+make release VERSION=v0.1.0  # tag + push → CI builds & pushes images to GHCR
+make deploy                  # pull prebuilt images + (re)start prod stack
+make deploy-logs             # tail the prod stack
 
 # Logs
 make logs-local-host         # tail .tmp/dev/local-host.log
@@ -151,7 +168,8 @@ make logs-dev                # snapshot of all of the above
 | Type | Where | What |
 |---|---|---|
 | Pre-commit | `lefthook.yml` | ruff/gofmt/go vet/no-platform-keys/no-env-files |
-| CI | `.github/workflows/ci.yml` | lint job + deterministic-tests job + contract round-trip job |
+| CI | `.github/workflows/ci.yml` | 4 parallel jobs: lint / test (unit + `-race` + build) / e2e (Playwright) / contract round-trip |
+| Release | `.github/workflows/release.yml` | on `v*` tag: buildx multi-arch (amd64+arm64) → push `api`/`client`/`admin` images to GHCR |
 | Nightly | `.github/workflows/external-smoke.yml` | external service smoke (Stripe / Tavily / S3 / API at 18:00 UTC) |
 | Deps | `.github/dependabot.yml` | weekly grouped PRs for gomod/npm×3/pip/github-actions |
 | Skills (Claude Code) | `.claude/skills/` | `sync-schemas`, `daemon-restart` |
@@ -176,6 +194,6 @@ If anything's wrong, `make doctor` is the first stop. The output tells you wheth
 
 - Don't add `os.environ.get("OPENAI_API_KEY")` or any other platform-paid key to daemon code. Use `tools/_gateway.py:call_tool_gateway`. Lefthook will block the commit.
 - Don't hand-edit `client/src/shared/local-host/generated.d.ts` or `client/src/shared/local-host/openapi.json`. They're build artifacts of `make schemas`.
-- Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `lsof -ti :17371 | xargs kill -9`. The `daemon-restart` skill encapsulates this.
+- Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.

@@ -17,6 +17,12 @@ description: Hard-restart the local-host Python daemon. Kills whatever's on port
 
 ## What to do
 
+**Fastest path: `make restart-daemon`.** It runs exactly the steps below —
+kill-by-port (not by name), respawn under the `env -i` allowlist (no
+platform-paid keys leak in — CLAUDE.md Invariant #1), wait for
+`/local/v1/health`, print old/new PID, and remind you to Cmd+R Electron.
+Reach for the manual version below only when you need to tweak a step:
+
 ```bash
 # 1. Find AND kill the actual process bound to 17371, not just the
 #    one matching `python -m local_host` (sometimes the process name

@@ -82,12 +82,16 @@ jobs:
             exit 1
           fi
 
-  deterministic-tests:
-    name: Deterministic tests
+  # Unit + race + build. Split out from E2E so a Playwright flake can't
+  # mask a unit failure (and vice-versa) — each surfaces as its own
+  # check. `test-race` runs `go test -race ./...`, which supersedes the
+  # plain Go pass, so we run the non-Go unit suites + the race suite +
+  # a full build (compile check) and skip the redundant non-race run.
+  test:
+    name: Tests (unit + race + build)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -103,7 +107,6 @@ jobs:
           cache-dependency-path: |
             client/package-lock.json
             admin/package-lock.json
-            e2e/package-lock.json
 
       - name: Setup Python (local-host daemon)
         uses: actions/setup-python@v5
@@ -128,6 +131,35 @@ jobs:
         run: uv sync
         working-directory: local-host/python
 
+      - name: Unit suites + race + build
+        run: make client-test admin-test local-host-test test-race build
+
+  # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
+  # client/ and admin/, so both need their deps installed (not just e2e/).
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            admin/package-lock.json
+            e2e/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: client
+
+      - name: Install admin dependencies
+        run: npm ci
+        working-directory: admin
+
       - name: Install E2E dependencies
         run: npm ci
         working-directory: e2e
@@ -136,8 +168,8 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: e2e
 
-      - name: Run deterministic suite
-        run: make test-ci
+      - name: Run Playwright E2E
+        run: make test-e2e
 
   # Contract round-trip — the ONE thing that would have caught the
   # 9+ silent shape drifts in the Phase 5'+ migration. Boots a real

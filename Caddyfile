@@ -1,4 +1,17 @@
-jiandanly.com {
+# Reverse proxy + TLS for the production stack (docker-compose.prod.yml)
+# and the optional dev `proxy` profile (docker-compose.yml).
+#
+# Domains come from the environment so one file works everywhere:
+#   • prod: APP_DOMAIN / ADMIN_DOMAIN are set from .env → real domains,
+#     Caddy auto-provisions Let's Encrypt TLS on first request.
+#   • dev / unset: fall back to localhost / admin.localhost (Caddy uses
+#     its internal CA).
+#
+# Each site serves the SPA at the root and proxies /api/* + /health to
+# the api container — so the client/admin images can be built with an
+# empty VITE_API_BASE_URL and issue relative, same-origin requests.
+
+{$APP_DOMAIN:localhost} {
   encode zstd gzip
 
   handle /api/* {
@@ -14,7 +27,7 @@ jiandanly.com {
   }
 }
 
-admin.jiandanly.com {
+{$ADMIN_DOMAIN:admin.localhost} {
   encode zstd gzip
 
   handle /api/* {
