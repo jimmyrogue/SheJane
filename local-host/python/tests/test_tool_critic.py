@@ -83,7 +83,7 @@ def test_explicit_mode_overrides_env(monkeypatch) -> None:
 
 
 def test_default_watch_list_contains_expected_tools() -> None:
-    assert {"web.fetch", "tavily_search", "task", "browser.task", "execute"}.issubset(
+    assert {"web.fetch", "web.search", "task", "browser.task", "execute"}.issubset(
         DEFAULT_WATCH_TOOLS
     )
 
@@ -170,11 +170,11 @@ def test_block_replaces_content_when_usable_false() -> None:
         response_text='{"usable": false, "reason": "search results were off-topic"}'
     )
     mw = ToolResultCriticMiddleware(critic_model=critic, mode="block")
-    original = ToolMessage(content="garbage results", tool_call_id="c1", name="tavily_search")
+    original = ToolMessage(content="garbage results", tool_call_id="c1", name="web.search")
 
     async def run() -> ToolMessage:
         handler = await _handler_returns(original)
-        return await mw.awrap_tool_call(_make_request("tavily_search"), handler)
+        return await mw.awrap_tool_call(_make_request("web.search"), handler)
 
     out = asyncio.run(run())
     assert "Tool result rejected" in out.content

@@ -588,6 +588,7 @@ function toolActionLabel(tool: string, t: Translator): string {
     'environment.observe': t('chat.tool.environment.observe'),
     'shell.run': t('chat.tool.shell.run'),
     'code.execute': t('chat.tool.code.execute'),
+    'pdf.inspect': t('chat.tool.pdf.inspect'),
     'web.fetch': t('chat.tool.web.fetch'),
     'web.search': t('chat.tool.web.search'),
     'mcp.call': t('chat.tool.mcp.call'),

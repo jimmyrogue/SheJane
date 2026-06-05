@@ -238,6 +238,9 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 		return
 	}
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, creditsCost); err != nil {
+		// Reservation is still Reserved on settle failure — release it so
+		// the held estimate isn't stranded.
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
 		_ = s.app.Store.FinishExternalToolCall(r.Context(), requestID, "failed", units, 0, "settlement_failed", err.Error(), result.Content, result.Data)
 		if billing.IsInsufficientCredits(err) {
 			writeError(w, http.StatusPaymentRequired, 40202, "额度不足，请升级或充值")

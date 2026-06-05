@@ -75,7 +75,7 @@ def build_subagents(
     """
     research_tool_names = {
         "web.fetch",
-        "tavily_search",
+        "web.search",
         "browser.task",
         "task.verify",
         "time.now",

@@ -61,7 +61,7 @@ docker-down:
 	docker compose down
 
 migrate:
-	@for file in api/migrations/*.sql; do psql "$$DATABASE_URL" -f "$$file"; done
+	@set -e; for file in api/migrations/*.sql; do psql -v ON_ERROR_STOP=1 "$$DATABASE_URL" -f "$$file"; done
 
 logs-api:
 	./scripts/dev-logs.sh api

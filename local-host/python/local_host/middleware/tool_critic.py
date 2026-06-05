@@ -40,7 +40,7 @@ log = logging.getLogger("local_host.middleware.tool_critic")
 DEFAULT_WATCH_TOOLS = frozenset(
     {
         "web.fetch",
-        "tavily_search",
+        "web.search",
         "task",  # subagent dispatch
         "browser.task",  # browser-use agent
         "execute",  # deepagents shell-equivalent

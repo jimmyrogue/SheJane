@@ -53,6 +53,38 @@ func TestWalletReserveSettleAndRelease(t *testing.T) {
 	}
 }
 
+func TestWalletSettleOverageFailureIsReleasable(t *testing.T) {
+	// Regression: when actual usage exceeds the reserved estimate AND the
+	// overage exceeds the balance, Settle must fail but leave the
+	// reservation Reserved (not Failed), so the caller can Release it and
+	// recover the held estimate. Previously Settle marked it Failed, which
+	// made Release a no-op and stranded the reserved credits.
+	wallet := NewWallet("wallet-1", 1_000, 0)
+
+	res, err := wallet.Reserve(600, ReservationMeta{UserID: "u", RequestID: "r", Mode: "fast"})
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if wallet.MonthlyRemaining() != 400 {
+		t.Fatalf("after reserve remaining = %d, want 400", wallet.MonthlyRemaining())
+	}
+
+	// actual 1200 > estimate 600; overage 600 > remaining 400 → must fail.
+	err = wallet.Settle(res.ID, 1200)
+	if err == nil || !IsInsufficientCredits(err) {
+		t.Fatalf("settle overage err = %v, want insufficient credits", err)
+	}
+
+	// The reservation must still be releasable, and release must restore
+	// the full held estimate — no stranded credits.
+	if err := wallet.Release(res.ID); err != nil {
+		t.Fatalf("release after failed settle: %v", err)
+	}
+	if wallet.MonthlyRemaining() != 1_000 {
+		t.Fatalf("after release remaining = %d, want 1000 (held estimate recovered)", wallet.MonthlyRemaining())
+	}
+}
+
 func TestWalletRejectsInsufficientCredits(t *testing.T) {
 	wallet := NewWallet("wallet-1", 100, 20)
 

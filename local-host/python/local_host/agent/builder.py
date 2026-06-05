@@ -114,7 +114,7 @@ ALWAYS_INCLUDE_TOOLS: list[str] = [
 # exception and convert it to a ToolMessage, defeating the pause.
 RETRY_ELIGIBLE_TOOLS: list[str] = [
     "web.fetch",
-    "tavily_search",
+    "web.search",
     "browser.task",
     "execute",  # deepagents shell — FS races etc.
     "read_file",
@@ -235,7 +235,7 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
     middleware.extend(
         [
             ToolCallLimitMiddleware(  # P8
-                tool_name="tavily_search",
+                tool_name="web.search",
                 run_limit=settings.research_search_limit,
             ),
             # Retry only network/IO-flaky tools, with a tight retryable
@@ -448,7 +448,7 @@ async def build_agent(
         )
 
     # Mid-loop tool-result critic. Watches "lossy" tools (web.fetch,
-    # tavily_search, task, browser.task, execute, read_file, edit_file)
+    # web.search, task, browser.task, execute, read_file, edit_file)
     # and asks a cheap LLM whether each result is usable for the task.
     # Annotates or replaces ToolMessages based on mode.
     if settings.tool_critic_mode.lower() in {"watch", "nudge", "block"}:

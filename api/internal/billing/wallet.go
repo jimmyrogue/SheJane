@@ -159,7 +159,15 @@ func (w *Wallet) Settle(reservationID string, actualCredits int64) error {
 
 	if actualCredits > reservation.EstimatedCredits {
 		if err := w.consumeAdditionalLocked(actualCredits - reservation.EstimatedCredits); err != nil {
-			reservation.Status = ReservationFailed
+			// Leave the reservation Reserved (consumeAdditionalLocked is
+			// all-or-nothing, so there's no partial mutation to undo).
+			// This lets the caller Release() it and recover the held
+			// estimate — matching the Postgres finishReservation, which
+			// returns the insufficient error before any UPDATE and so
+			// rolls back to Reserved. Previously this set
+			// ReservationFailed, which made a subsequent Release a no-op
+			// and stranded the reserved estimate (a real credit leak in
+			// production once handlers release on settle failure).
 			return err
 		}
 	}

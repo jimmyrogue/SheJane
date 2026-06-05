@@ -622,6 +622,10 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 	outputTokens := completion.OutputTokens
 	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
+		// Settle failed (e.g. actual > estimate and the overage exceeds
+		// the balance): the reservation is still Reserved, so release it
+		// to return the held estimate instead of stranding those credits.
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		if billing.IsInsufficientCredits(err) {
 			writeError(w, http.StatusPaymentRequired, 40202, "额度不足，请升级或充值")
@@ -856,6 +860,9 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 
 	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
+		// Reservation is still Reserved on settle failure — release it so
+		// the held estimate isn't stranded.
+		_ = s.app.Store.ReleaseUsage(ctx, user.ID, reservation.ID)
 		_ = s.app.Store.FinishLLMCall(ctx, requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		errorCode := "settlement_failed"
 		message := "额度结算失败"
@@ -1076,6 +1083,9 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 
 	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
+		// Reservation is still Reserved on settle failure — release it so
+		// the held estimate isn't stranded.
+		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		if billing.IsInsufficientCredits(err) {
 			_ = writeSSE(w, requestID, "额度不足，请升级或充值", "error")
