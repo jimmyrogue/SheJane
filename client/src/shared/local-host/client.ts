@@ -87,10 +87,6 @@ export function getDesktopLocalHostConfig(bridge: DesktopBridge | undefined = wi
   }
 }
 
-export function getDesktopLocalHostBaseURL(bridge: DesktopBridge | undefined = window.jiandanDesktop): string | undefined {
-  return getDesktopLocalHostConfig(bridge)?.baseURL
-}
-
 export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch): Promise<LocalHostProbe> {
   const controller = new AbortController()
   // `globalThis.setTimeout` so this works in both browser (Electron
