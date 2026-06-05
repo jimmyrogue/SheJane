@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${JIANDANLY_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
+LOG_DIR="${SHEJANE_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
 TARGET="${1:-help}"
 
 show_file_log() {
@@ -18,7 +18,7 @@ show_file_log() {
 
 recent_llm_errors() {
   cd "$ROOT_DIR"
-  docker compose exec -T postgres psql -U jiandanly -d jiandanly -c "
+  docker compose exec -T postgres psql -U shejane -d shejane -c "
     select request_id, scene, provider, model, status, error_message, started_at
     from llm_call_records
     order by started_at desc

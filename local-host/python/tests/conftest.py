@@ -6,7 +6,7 @@ Desktop / Cursor / Codex MCP server list — which (a) makes the test
 flaky (tries to spawn npx / uv subprocesses that may not exist in CI)
 and (b) leaks environment-specific config into otherwise hermetic
 tests. Tests that DO want to exercise discovery (test_mcp.py) opt
-back in explicitly by setting JIANDANLY_LOCAL_MCP_DISCOVERY=on inside
+back in explicitly by setting SHEJANE_LOCAL_MCP_DISCOVERY=on inside
 the test body.
 """
 
@@ -20,7 +20,7 @@ def _disable_mcp_disk_scan_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Force MCP discovery to skip on-disk sources in every test.
 
     Honored by `local_host.tools.mcp.discover_servers`: when
-    JIANDANLY_LOCAL_MCP_DISCOVERY != "on", only the env var
-    JIANDANLY_LOCAL_MCP_SERVERS is consulted.
+    SHEJANE_LOCAL_MCP_DISCOVERY != "on", only the env var
+    SHEJANE_LOCAL_MCP_SERVERS is consulted.
     """
-    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_DISCOVERY", "off")
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "off")

@@ -135,7 +135,7 @@ function toCloudMode(mode: ChatMode): 'fast' | 'deep' {
   return 'fast'
 }
 
-export class JiandanAPI implements ChatAPI {
+export class SheJaneAPI implements ChatAPI {
   private accessToken = ''
 
   constructor(readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}

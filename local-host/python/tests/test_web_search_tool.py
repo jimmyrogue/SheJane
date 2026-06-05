@@ -51,9 +51,9 @@ def _patch_httpx(monkeypatch, handler) -> list[httpx.Request]:
 def settings_with_session(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     return reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://api.test",
-        JIANDANLY_CLOUD_TOKEN="cloud-jwt",
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://api.test",
+        SHEJANE_CLOUD_TOKEN="cloud-jwt",
     )
 
 
@@ -61,9 +61,9 @@ def settings_with_session(monkeypatch):
 def settings_unpaired(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     return reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://api.test",
-        JIANDANLY_CLOUD_TOKEN="",
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://api.test",
+        SHEJANE_CLOUD_TOKEN="",
     )
 
 

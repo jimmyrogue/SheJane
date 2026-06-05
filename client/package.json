@@ -1,5 +1,5 @@
 {
-  "name": "jiandanly-client",
+  "name": "shejane-client",
   "productName": "石间",
   "version": "0.1.0",
   "private": true,
@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jimmyrogue/Jiandanly",
+    "url": "https://github.com/jimmyrogue/SheJane",
     "directory": "client"
   },
   "type": "module",

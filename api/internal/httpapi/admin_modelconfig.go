@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/coldflame/jiandanly/api/internal/modelreg"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/modelreg"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 const creditRateSettingKey = modelreg.BillingSettingsKey

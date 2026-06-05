@@ -32,12 +32,12 @@ load_dotenv() {
 
 load_dotenv
 
-LOG_DIR="${JIANDANLY_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
-TOKEN="${JIANDANLY_LOCAL_HOST_TOKEN:-dev-local-token}"
+LOG_DIR="${SHEJANE_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
+TOKEN="${SHEJANE_LOCAL_HOST_TOKEN:-dev-local-token}"
 API_PORT="${API_PORT:-8080}"
-API_BASE_URL="${JIANDANLY_CLOUD_BASE_URL:-http://localhost:${API_PORT}}"
-LOCAL_HOST_PORT="${JIANDANLY_LOCAL_HOST_PORT:-17371}"
-LOCAL_HOST_URL="${JIANDANLY_LOCAL_HOST_URL:-http://127.0.0.1:${LOCAL_HOST_PORT}}"
+API_BASE_URL="${SHEJANE_CLOUD_BASE_URL:-http://localhost:${API_PORT}}"
+LOCAL_HOST_PORT="${SHEJANE_LOCAL_HOST_PORT:-17371}"
+LOCAL_HOST_URL="${SHEJANE_LOCAL_HOST_URL:-http://127.0.0.1:${LOCAL_HOST_PORT}}"
 CLIENT_DEV_PORT="${CLIENT_DEV_PORT:-55173}"
 CLIENT_DEV_URL="${ELECTRON_DEV_URL:-http://127.0.0.1:${CLIENT_DEV_PORT}}"
 
@@ -85,11 +85,11 @@ force_kill_stragglers() {
   # short-circuit silently masks the fact that your latest code edits
   # never loaded. Spent hours on 2026-05-22 chasing that ghost.
   #
-  # Opt out with `JIANDANLY_DEV_REUSE=1 make dev-electron` if you
+  # Opt out with `SHEJANE_DEV_REUSE=1 make dev-electron` if you
   # genuinely want to attach to an existing daemon (e.g. you started
   # it manually with custom env).
-  if [[ "${JIANDANLY_DEV_REUSE:-0}" == "1" ]]; then
-    echo "[dev-electron] JIANDANLY_DEV_REUSE=1 — keeping existing processes"
+  if [[ "${SHEJANE_DEV_REUSE:-0}" == "1" ]]; then
+    echo "[dev-electron] SHEJANE_DEV_REUSE=1 — keeping existing processes"
     return
   fi
 
@@ -121,8 +121,8 @@ open_log_tail_terminal() {
   # macOS-only; on other OSes this is a no-op and the user can run
   # `make logs-local-host` manually.
   #
-  # Opt out with `JIANDANLY_DEV_LOG_TAIL=0`.
-  [[ "${JIANDANLY_DEV_LOG_TAIL:-1}" == "1" ]] || return 0
+  # Opt out with `SHEJANE_DEV_LOG_TAIL=0`.
+  [[ "${SHEJANE_DEV_LOG_TAIL:-1}" == "1" ]] || return 0
   [[ "$(uname -s)" == "Darwin" ]] || return 0
   local log="${LOG_DIR}/local-host.log"
   # Touch the file so `tail -F` doesn't complain on a never-written
@@ -193,29 +193,29 @@ start_local_host() {
       "USER=${USER:-}"
       "TMPDIR=${TMPDIR:-/tmp}"
       "SHELL=${SHELL:-/bin/zsh}"
-      "JIANDANLY_LOCAL_HOST_TOKEN=$TOKEN"
-      "JIANDANLY_LOCAL_HOST_PORT=$LOCAL_HOST_PORT"
-      "JIANDANLY_LOCAL_HOST_URL=$LOCAL_HOST_URL"
-      "JIANDANLY_CLOUD_BASE_URL=$API_BASE_URL"
+      "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN"
+      "SHEJANE_LOCAL_HOST_PORT=$LOCAL_HOST_PORT"
+      "SHEJANE_LOCAL_HOST_URL=$LOCAL_HOST_URL"
+      "SHEJANE_CLOUD_BASE_URL=$API_BASE_URL"
       "PYTHONUNBUFFERED=1"
     )
     # Pairing / cloud (host addr override, cloud token, MCP servers).
-    [[ -n "${JIANDANLY_LOCAL_HOST_ADDR:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_HOST_ADDR=$JIANDANLY_LOCAL_HOST_ADDR")
-    [[ -n "${JIANDANLY_CLOUD_TOKEN:-}" ]] && env_cmd+=("JIANDANLY_CLOUD_TOKEN=$JIANDANLY_CLOUD_TOKEN")
-    [[ -n "${JIANDANLY_LOCAL_MCP_SERVERS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MCP_SERVERS=$JIANDANLY_LOCAL_MCP_SERVERS")
-    [[ -n "${JIANDANLY_LOCAL_SKILLS_PATH:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_SKILLS_PATH=$JIANDANLY_LOCAL_SKILLS_PATH")
+    [[ -n "${SHEJANE_LOCAL_HOST_ADDR:-}" ]] && env_cmd+=("SHEJANE_LOCAL_HOST_ADDR=$SHEJANE_LOCAL_HOST_ADDR")
+    [[ -n "${SHEJANE_CLOUD_TOKEN:-}" ]] && env_cmd+=("SHEJANE_CLOUD_TOKEN=$SHEJANE_CLOUD_TOKEN")
+    [[ -n "${SHEJANE_LOCAL_MCP_SERVERS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_MCP_SERVERS=$SHEJANE_LOCAL_MCP_SERVERS")
+    [[ -n "${SHEJANE_LOCAL_SKILLS_PATH:-}" ]] && env_cmd+=("SHEJANE_LOCAL_SKILLS_PATH=$SHEJANE_LOCAL_SKILLS_PATH")
 
-    # Middleware tuning — every JIANDANLY_LOCAL_* / JIANDANLY_PLAN_FIRST that
+    # Middleware tuning — every SHEJANE_LOCAL_* / SHEJANE_PLAN_FIRST that
     # the Python config layer reads. Stays in lockstep with .env so editing
     # values actually takes effect in the subprocess.
-    [[ -n "${JIANDANLY_LOCAL_INPUT_GUARD:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_INPUT_GUARD=$JIANDANLY_LOCAL_INPUT_GUARD")
-    [[ -n "${JIANDANLY_PLAN_FIRST:-}" ]] && env_cmd+=("JIANDANLY_PLAN_FIRST=$JIANDANLY_PLAN_FIRST")
-    [[ -n "${JIANDANLY_LOCAL_TOOL_CRITIC:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_TOOL_CRITIC=$JIANDANLY_LOCAL_TOOL_CRITIC")
-    [[ -n "${JIANDANLY_LOCAL_CRITIC:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_CRITIC=$JIANDANLY_LOCAL_CRITIC")
-    [[ -n "${JIANDANLY_LOCAL_TOOL_SELECTOR_MAX:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX=$JIANDANLY_LOCAL_TOOL_SELECTOR_MAX")
-    [[ -n "${JIANDANLY_LOCAL_FALLBACK_MODELS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_FALLBACK_MODELS=$JIANDANLY_LOCAL_FALLBACK_MODELS")
-    [[ -n "${JIANDANLY_LOCAL_PII_REDACT:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_PII_REDACT=$JIANDANLY_LOCAL_PII_REDACT")
-    [[ -n "${JIANDANLY_LOCAL_MEMORY_PATHS:-}" ]] && env_cmd+=("JIANDANLY_LOCAL_MEMORY_PATHS=$JIANDANLY_LOCAL_MEMORY_PATHS")
+    [[ -n "${SHEJANE_LOCAL_INPUT_GUARD:-}" ]] && env_cmd+=("SHEJANE_LOCAL_INPUT_GUARD=$SHEJANE_LOCAL_INPUT_GUARD")
+    [[ -n "${SHEJANE_PLAN_FIRST:-}" ]] && env_cmd+=("SHEJANE_PLAN_FIRST=$SHEJANE_PLAN_FIRST")
+    [[ -n "${SHEJANE_LOCAL_TOOL_CRITIC:-}" ]] && env_cmd+=("SHEJANE_LOCAL_TOOL_CRITIC=$SHEJANE_LOCAL_TOOL_CRITIC")
+    [[ -n "${SHEJANE_LOCAL_CRITIC:-}" ]] && env_cmd+=("SHEJANE_LOCAL_CRITIC=$SHEJANE_LOCAL_CRITIC")
+    [[ -n "${SHEJANE_LOCAL_TOOL_SELECTOR_MAX:-}" ]] && env_cmd+=("SHEJANE_LOCAL_TOOL_SELECTOR_MAX=$SHEJANE_LOCAL_TOOL_SELECTOR_MAX")
+    [[ -n "${SHEJANE_LOCAL_FALLBACK_MODELS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_FALLBACK_MODELS=$SHEJANE_LOCAL_FALLBACK_MODELS")
+    [[ -n "${SHEJANE_LOCAL_PII_REDACT:-}" ]] && env_cmd+=("SHEJANE_LOCAL_PII_REDACT=$SHEJANE_LOCAL_PII_REDACT")
+    [[ -n "${SHEJANE_LOCAL_MEMORY_PATHS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_MEMORY_PATHS=$SHEJANE_LOCAL_MEMORY_PATHS")
 
     # NO platform-paid provider keys are forwarded to the daemon:
     #   • image.* routes through `/api/v1/agent/tools/execute`; the
@@ -234,7 +234,7 @@ start_local_host() {
     [[ -n "${LANGSMITH_PROJECT:-}" ]] && env_cmd+=("LANGSMITH_PROJECT=$LANGSMITH_PROJECT")
     [[ -n "${LANGFUSE_PUBLIC_KEY:-}" ]] && env_cmd+=("LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY")
     [[ -n "${LANGFUSE_SECRET_KEY:-}" ]] && env_cmd+=("LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY")
-    [[ -n "${JIANDANLY_DISABLE_OBSERVABILITY:-}" ]] && env_cmd+=("JIANDANLY_DISABLE_OBSERVABILITY=$JIANDANLY_DISABLE_OBSERVABILITY")
+    [[ -n "${SHEJANE_DISABLE_OBSERVABILITY:-}" ]] && env_cmd+=("SHEJANE_DISABLE_OBSERVABILITY=$SHEJANE_DISABLE_OBSERVABILITY")
     "${env_cmd[@]}" uv run python -m local_host >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
@@ -276,8 +276,8 @@ launch_electron() {
       "SHELL=${SHELL:-/bin/zsh}" \
       "ELECTRON_DEV=true" \
       "ELECTRON_DEV_URL=$CLIENT_DEV_URL" \
-      "JIANDANLY_LOCAL_HOST_URL=$LOCAL_HOST_URL" \
-      "JIANDANLY_LOCAL_HOST_TOKEN=$TOKEN" \
+      "SHEJANE_LOCAL_HOST_URL=$LOCAL_HOST_URL" \
+      "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
       "VITE_API_BASE_URL=$API_BASE_URL" \
       npm run electron
   ) &
@@ -295,7 +295,7 @@ main() {
 
   # Hard restart: kill any leftover daemon/vite/electron + free ports
   # FIRST, so the rest of the script can assume a clean slate. Opt out
-  # with JIANDANLY_DEV_REUSE=1.
+  # with SHEJANE_DEV_REUSE=1.
   force_kill_stragglers
 
   start_cloud_stack

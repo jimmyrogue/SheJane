@@ -159,7 +159,7 @@ describe('DocPreviewPanel', () => {
   it('clamps stored width to the viewport so an oversized saved value does not break layout', () => {
     // Pre-seed a width way beyond the viewport. The panel reads from
     // localStorage on mount and should clamp on first render.
-    window.localStorage.setItem('jiandanly.docPreview.width', '99999')
+    window.localStorage.setItem('shejane.docPreview.width', '99999')
     const doc = makeDoc()
     render(
       <I18nProvider>
@@ -171,7 +171,7 @@ describe('DocPreviewPanel', () => {
     const widthPx = Number((sheet!.style.width || '0').replace('px', ''))
     expect(widthPx).toBeGreaterThan(0)
     expect(widthPx).toBeLessThanOrEqual(Math.floor(window.innerWidth * 0.95))
-    window.localStorage.removeItem('jiandanly.docPreview.width')
+    window.localStorage.removeItem('shejane.docPreview.width')
   })
 })
 

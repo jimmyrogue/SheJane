@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coldflame/jiandanly/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/config"
 )
 
 func TestAdminUpdateModelConfigReproUserPayload(t *testing.T) {

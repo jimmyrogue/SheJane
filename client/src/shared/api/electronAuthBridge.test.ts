@@ -42,7 +42,7 @@ describe('Electron auth bridge helpers', () => {
     const cookies = mockCookies()
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(authResponse, {
-        'Set-Cookie': 'jiandan_refresh=refresh-1; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax',
+        'Set-Cookie': 'shejane_refresh=refresh-1; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax',
       }),
     )
 
@@ -52,7 +52,7 @@ describe('Electron auth bridge helpers', () => {
 
     expect(cookies.set).toHaveBeenCalledWith(expect.objectContaining({
       url: 'http://localhost:8080/',
-      name: 'jiandan_refresh',
+      name: 'shejane_refresh',
       value: 'refresh-1',
       path: '/',
       httpOnly: true,
@@ -62,7 +62,7 @@ describe('Electron auth bridge helpers', () => {
   })
 
   it('sends the saved refresh cookie when refreshing the Electron session', async () => {
-    const cookies = mockCookies([{ name: 'jiandan_refresh', value: 'refresh-1' }])
+    const cookies = mockCookies([{ name: 'shejane_refresh', value: 'refresh-1' }])
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(authResponse))
 
     const auth = createElectronAuthHandlers({ apiBaseURL: 'http://localhost:8080', cookies, fetchImpl })
@@ -72,13 +72,13 @@ describe('Electron auth bridge helpers', () => {
     expect(fetchImpl).toHaveBeenCalledWith('http://localhost:8080/api/v1/auth/refresh', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
-        Cookie: 'jiandan_refresh=refresh-1',
+        Cookie: 'shejane_refresh=refresh-1',
       }),
     }))
   })
 
   it('clears the saved refresh cookie after logout', async () => {
-    const cookies = mockCookies([{ name: 'jiandan_refresh', value: 'refresh-1' }])
+    const cookies = mockCookies([{ name: 'shejane_refresh', value: 'refresh-1' }])
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ code: 0, message: 'ok', data: { logged_out: true } }))
 
     const auth = createElectronAuthHandlers({ apiBaseURL: 'http://localhost:8080', cookies, fetchImpl })
@@ -88,10 +88,10 @@ describe('Electron auth bridge helpers', () => {
     expect(fetchImpl).toHaveBeenCalledWith('http://localhost:8080/api/v1/auth/logout', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
-        Cookie: 'jiandan_refresh=refresh-1',
+        Cookie: 'shejane_refresh=refresh-1',
       }),
     }))
-    expect(cookies.remove).toHaveBeenCalledWith('http://localhost:8080/', 'jiandan_refresh')
+    expect(cookies.remove).toHaveBeenCalledWith('http://localhost:8080/', 'shejane_refresh')
   })
 
   it('serializes expected auth IPC failures so the main handler does not reject', async () => {

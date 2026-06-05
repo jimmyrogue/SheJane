@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/documents"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/documents"
 )
 
 type MemoryStore struct {

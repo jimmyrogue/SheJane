@@ -227,7 +227,7 @@ func TestOpenAICompatibleProviderDoesNotSendDeepSeekOnlyFields(t *testing.T) {
 	_, err := provider.CompleteWithTools(context.Background(), ChatRequest{
 		Messages: []Message{
 			{Role: "user", Content: "read file"},
-			{Role: "assistant", ReasoningContent: "provider-specific reasoning", ToolCalls: []ToolCall{{ID: "call-prev", Name: "browser.search", Arguments: map[string]any{"query": "Jiandanly"}}}},
+			{Role: "assistant", ReasoningContent: "provider-specific reasoning", ToolCalls: []ToolCall{{ID: "call-prev", Name: "browser.search", Arguments: map[string]any{"query": "SheJane"}}}},
 			{Role: "tool", ToolCallID: "call-prev", Name: "browser.search", Content: "search result"},
 		},
 		Tools: []ToolDefinition{{

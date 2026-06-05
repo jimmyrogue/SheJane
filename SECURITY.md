@@ -5,7 +5,7 @@
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
 Instead, report privately via GitHub's
-[Report a vulnerability](https://github.com/jimmyrogue/Jiandanly/security/advisories/new)
+[Report a vulnerability](https://github.com/jimmyrogue/SheJane/security/advisories/new)
 (Security → Advisories) so we can triage and fix before disclosure.
 
 Please include:

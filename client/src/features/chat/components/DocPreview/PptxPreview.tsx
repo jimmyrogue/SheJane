@@ -53,7 +53,7 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
   }, [sourceKey, refreshKey, localPath, config, onStatus])
 
   function openNatively() {
-    const bridge = window.jiandanDesktop
+    const bridge = window.shejaneDesktop
     if (bridge?.openFileWithDefaultApp) {
       void bridge.openFileWithDefaultApp(localPath)
     }

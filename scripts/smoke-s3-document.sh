@@ -3,8 +3,8 @@ set -euo pipefail
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
 RUN_ID="$(date +%s)_$$"
-EMAIL="${SMOKE_EMAIL:-s3-smoke+${RUN_ID}@jiandanly.local}"
-PASSWORD="${SMOKE_PASSWORD:-Jiandanly123!}"
+EMAIL="${SMOKE_EMAIL:-s3-smoke+${RUN_ID}@shejane.local}"
+PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {

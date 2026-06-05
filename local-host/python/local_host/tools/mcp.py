@@ -13,7 +13,7 @@ it up automatically — no separate "add MCP server" UI required.
 
 Sources, in priority order (first one that defines a given name wins):
 
-  1. `JIANDANLY_LOCAL_MCP_SERVERS` env var — full override. When set,
+  1. `SHEJANE_LOCAL_MCP_SERVERS` env var — full override. When set,
      the on-disk sources below are skipped entirely. JSON value matches
      MultiServerMCPClient's schema. Test escape hatch and one-off
      debugging.
@@ -273,10 +273,10 @@ def _normalize_entry(name: str, raw: Any) -> dict[str, Any] | None:
 
 
 def _disk_scan_enabled() -> bool:
-    """Tests set `JIANDANLY_LOCAL_MCP_DISCOVERY=off` (via the autouse
+    """Tests set `SHEJANE_LOCAL_MCP_DISCOVERY=off` (via the autouse
     fixture in tests/conftest.py) to keep their environment hermetic.
     Production leaves it unset → scan runs."""
-    flag = os.environ.get("JIANDANLY_LOCAL_MCP_DISCOVERY", "").strip().lower()
+    flag = os.environ.get("SHEJANE_LOCAL_MCP_DISCOVERY", "").strip().lower()
     return flag != "off"
 
 
@@ -289,13 +289,13 @@ def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
     the shejane version, which is what we want (their explicit
     override).
 
-    Env override (`JIANDANLY_LOCAL_MCP_SERVERS`) is treated as its own
+    Env override (`SHEJANE_LOCAL_MCP_SERVERS`) is treated as its own
     "source" at the head of the priority list. When the env var is
     set, on-disk sources are STILL consulted afterwards (so a test or
     debug var augments rather than replaces) — except names that
     collide with the env, which the env wins.
 
-    Disk scanning is suppressed when `JIANDANLY_LOCAL_MCP_DISCOVERY` is
+    Disk scanning is suppressed when `SHEJANE_LOCAL_MCP_DISCOVERY` is
     `off` — used by the test suite via conftest.py to avoid loading the
     dev machine's real MCP configs.
     """
@@ -304,7 +304,7 @@ def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
 
     # 1. env override goes first. Always honored regardless of the
     # disk-scan flag — it's the explicit-config path.
-    env_raw = os.environ.get("JIANDANLY_LOCAL_MCP_SERVERS", "").strip()
+    env_raw = os.environ.get("SHEJANE_LOCAL_MCP_SERVERS", "").strip()
     if env_raw:
         try:
             env_map = json.loads(env_raw)
@@ -322,11 +322,11 @@ def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
                             name=name,
                             config=norm,
                             source=SOURCE_ENV,
-                            source_path="<env JIANDANLY_LOCAL_MCP_SERVERS>",
+                            source_path="<env SHEJANE_LOCAL_MCP_SERVERS>",
                         )
                     )
         except json.JSONDecodeError as exc:
-            log.warning("ignoring malformed JIANDANLY_LOCAL_MCP_SERVERS: %s", exc)
+            log.warning("ignoring malformed SHEJANE_LOCAL_MCP_SERVERS: %s", exc)
 
     # 2. then each on-disk source in priority order.
     if not _disk_scan_enabled():

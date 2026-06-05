@@ -1671,7 +1671,7 @@
     },
     "/local/v1/skills": {
       "get": {
-        "description": "Catalog of every SKILL.md the daemon can see across all\nconfigured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,\nor `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed\nout-of-band — the user drops directories into a root themselves\n(or installs via the skills.sh CLI into `~/.claude/skills/`) and\nthe daemon picks them up on next scan.\n\nAlso surfaces the roots themselves under `roots` so the UI can\nrender section headers (e.g. \"Personal\" for shejane) even when\na root is empty — otherwise the user has no idea where to drop\ntheir SKILL.md directories.",
+        "description": "Catalog of every SKILL.md the daemon can see across all\nconfigured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,\nor `SHEJANE_LOCAL_SKILLS_PATH` overrides). Skills are managed\nout-of-band — the user drops directories into a root themselves\n(or installs via the skills.sh CLI into `~/.claude/skills/`) and\nthe daemon picks them up on next scan.\n\nAlso surfaces the roots themselves under `roots` so the UI can\nrender section headers (e.g. \"Personal\" for shejane) even when\na root is empty — otherwise the user has no idea where to drop\ntheir SKILL.md directories.",
         "operationId": "list_local_skills_local_v1_skills_get",
         "responses": {
           "200": {

@@ -17,7 +17,7 @@ else
   APP_NAME="石间"
 fi
 APP_ID="com.coldflame.shejane.dev"
-WRAPPER_APP="${JIANDANLY_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/SheJane.app}"
+WRAPPER_APP="${SHEJANE_DEV_ELECTRON_APP:-${ROOT_DIR}/.tmp/dev/SheJane.app}"
 SOURCE_APP="${CLIENT_DIR}/node_modules/electron/dist/Electron.app"
 SOURCE_VERSION_FILE="${CLIENT_DIR}/node_modules/electron/dist/version"
 WRAPPER_VERSION_FILE="${WRAPPER_APP}/Contents/Resources/.shejane-electron-version"

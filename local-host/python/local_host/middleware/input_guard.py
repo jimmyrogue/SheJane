@@ -1,6 +1,6 @@
 """P1 input_guard — coarse prompt-injection / jailbreak heuristic.
 
-Mode (env JIANDANLY_LOCAL_INPUT_GUARD):
+Mode (env SHEJANE_LOCAL_INPUT_GUARD):
   off        — disable entirely
   observe    — flag suspicious input via an `input_guard` state key but
                let the run continue (default)
@@ -44,7 +44,7 @@ class InputGuardMiddleware(AgentMiddleware):
 
     def __init__(self, mode: str | None = None) -> None:
         super().__init__()
-        self.mode = (mode or os.environ.get("JIANDANLY_LOCAL_INPUT_GUARD", "observe")).lower()
+        self.mode = (mode or os.environ.get("SHEJANE_LOCAL_INPUT_GUARD", "observe")).lower()
 
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         if self.mode == "off":

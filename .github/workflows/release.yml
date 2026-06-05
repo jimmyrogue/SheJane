@@ -65,7 +65,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           # metadata-action lowercases the image name automatically.
-          images: ghcr.io/${{ github.repository_owner }}/jiandanly-${{ matrix.service }}
+          images: ghcr.io/${{ github.repository_owner }}/shejane-${{ matrix.service }}
           tags: |
             type=ref,event=tag
             type=raw,value=latest

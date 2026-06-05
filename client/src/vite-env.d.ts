@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface Window {
-  jiandanDesktop?: {
+  shejaneDesktop?: {
     platform: string
     localHost?: {
       baseURL?: string

@@ -39,7 +39,7 @@ def test_resolve_memory_sources_empty_returns_none() -> None:
     from local_host.agent.builder import _resolve_memory_sources
     from local_host.config import Settings
 
-    s = Settings(JIANDANLY_LOCAL_MEMORY_PATHS="")
+    s = Settings(SHEJANE_LOCAL_MEMORY_PATHS="")
     assert _resolve_memory_sources(s) is None
 
 
@@ -48,7 +48,7 @@ def test_resolve_memory_sources_splits_and_expands(monkeypatch) -> None:
     from local_host.config import Settings
 
     monkeypatch.setenv("HOME", "/home/test")
-    s = Settings(JIANDANLY_LOCAL_MEMORY_PATHS="~/a.md,/abs/b.md, /spaced/c.md ")
+    s = Settings(SHEJANE_LOCAL_MEMORY_PATHS="~/a.md,/abs/b.md, /spaced/c.md ")
     out = _resolve_memory_sources(s)
     assert out is not None
     # Order preserved, ~ expanded, whitespace trimmed
@@ -64,7 +64,7 @@ def test_build_agent_accepts_agent_store(tmp_path: Path, monkeypatch) -> None:
 
     async def run() -> bool:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -98,7 +98,7 @@ def test_reflect_returns_stats_when_critic_disabled(monkeypatch) -> None:
 
     from local_host.middleware.reflect import ReflectMiddleware
 
-    monkeypatch.delenv("JIANDANLY_LOCAL_CRITIC", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_CRITIC", raising=False)
     mw = ReflectMiddleware()
     state = {
         "messages": [
@@ -124,7 +124,7 @@ def test_reflect_runs_critic_when_env_enabled(monkeypatch) -> None:
 
     from local_host.middleware.reflect import ReflectMiddleware
 
-    monkeypatch.setenv("JIANDANLY_LOCAL_CRITIC", "1")
+    monkeypatch.setenv("SHEJANE_LOCAL_CRITIC", "1")
 
     class FakeCriticModel:
         last_messages = None
@@ -305,7 +305,7 @@ def test_build_agent_excludes_memory_search_when_disabled(tmp_path: Path, monkey
 
     async def run(memory_enabled: bool) -> list[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -338,7 +338,7 @@ def test_reflect_critic_swallows_errors(monkeypatch) -> None:
 
     from local_host.middleware.reflect import ReflectMiddleware
 
-    monkeypatch.setenv("JIANDANLY_LOCAL_CRITIC", "1")
+    monkeypatch.setenv("SHEJANE_LOCAL_CRITIC", "1")
 
     class BrokenModel:
         async def ainvoke(self, msgs):

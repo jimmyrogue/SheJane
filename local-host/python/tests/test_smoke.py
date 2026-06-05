@@ -17,11 +17,11 @@ from local_host.server import create_app
 @pytest.fixture
 def client() -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-test-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "test-pairing-token"
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "test-pairing-token"
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="test-pairing-token",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="test-pairing-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -93,7 +93,7 @@ def test_workspaces_crud(client: TestClient) -> None:
 def test_alternate_token_header(client: TestClient) -> None:
     r = client.get(
         "/local/v1/tools",
-        headers={"X-Jiandanly-Local-Token": "test-pairing-token"},
+        headers={"X-SheJane-Local-Token": "test-pairing-token"},
     )
     assert r.status_code == 200
 
@@ -273,7 +273,7 @@ def test_task_verify_empty_checks_rejected() -> None:
 def test_skill_catalog_lists_skill_md_directories(monkeypatch: Any, tmp_path: Path) -> None:
     """Scanner expects the Anthropic / skills.sh format: each skill is a
     directory containing a SKILL.md (not a flat `<name>.md`)."""
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path))
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp_path))
     alpha_dir = tmp_path / "alpha"
     alpha_dir.mkdir()
     (alpha_dir / "SKILL.md").write_text(
@@ -297,7 +297,7 @@ def test_skill_catalog_lists_skill_md_directories(monkeypatch: Any, tmp_path: Pa
 
 
 def test_skill_catalog_returns_empty_when_dir_missing(monkeypatch: Any, tmp_path: Path) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp_path / "nope"))
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp_path / "nope"))
     from local_host.server import _list_skill_files
 
     assert _list_skill_files() == []
@@ -320,9 +320,9 @@ def test_image_generate_without_cloud_session(monkeypatch: Any) -> None:
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://api.test",
-        JIANDANLY_CLOUD_TOKEN="",  # unpaired
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://api.test",
+        SHEJANE_CLOUD_TOKEN="",  # unpaired
     )
     out = asyncio.run(
         _invoke_image_tool(
@@ -344,7 +344,7 @@ def test_mcp_empty_config_returns_empty_list(monkeypatch: Any, tmp_path: Path) -
 
     from local_host.tools.mcp import build_mcp_tools
 
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     tools = asyncio.run(build_mcp_tools(tmp_path))
     assert tools == []
 
@@ -354,7 +354,7 @@ def test_mcp_malformed_json_ignored(monkeypatch: Any, tmp_path: Path) -> None:
 
     from local_host.tools.mcp import build_mcp_tools
 
-    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_SERVERS", "{ not valid json")
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_SERVERS", "{ not valid json")
     tools = asyncio.run(build_mcp_tools(tmp_path))
     assert tools == []
 
@@ -370,9 +370,9 @@ def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
 
     from local_host.tools.mcp import _load_mcp_config
 
-    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_DISCOVERY", "on")
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "on")
     monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     (tmp_path / "mcp-servers.json").write_text(
         '{"demo": {"command": "python", "args": ["x.py"], "transport": "stdio"}}',
         encoding="utf-8",

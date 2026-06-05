@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/coldflame/jiandanly/api/internal/config"
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {

@@ -7,7 +7,7 @@ MultiServerMCPClient's schema, and surface them to the agent + UI.
 
 The autouse fixture in `conftest.py` disables disk scanning by
 default. Tests in this file re-enable it via
-`monkeypatch.setenv("JIANDANLY_LOCAL_MCP_DISCOVERY", "on")` and point
+`monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "on")` and point
 `HOME` at a tmp_path so the scan finds only fixture files instead of
 the developer's real Claude Desktop config.
 """
@@ -39,7 +39,7 @@ from local_host.tools.mcp import (
 def _isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Re-enable disk scan + redirect HOME so discovery only sees
     what THIS test wrote. Returns the fake home for convenience."""
-    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_DISCOVERY", "on")
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "on")
     monkeypatch.setenv("HOME", str(tmp_path))
     # macOS-only fallback for Path.home() — older Python honors $HOME
     # first, but we set it anyway for belt-and-suspenders.
@@ -124,7 +124,7 @@ def test_normalize_non_dict_returns_none() -> None:
 def test_discover_skips_disk_when_flag_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # conftest sets DISCOVERY=off by default. Without an env var, we
     # get nothing — even though we'd be scanning the real home dir.
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     out = discover_servers(tmp_path)
     assert out == []
 
@@ -135,7 +135,7 @@ def test_discover_env_override_works_even_when_disk_off(
     # Env var is the explicit-config path and must work regardless of
     # the disk-scan flag — useful for tests + one-off debugging.
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_MCP_SERVERS",
+        "SHEJANE_LOCAL_MCP_SERVERS",
         json.dumps({"e": {"command": "node", "args": ["e.js"]}}),
     )
     out = discover_servers(tmp_path)
@@ -149,7 +149,7 @@ def test_discover_env_accepts_mcpservers_wrapper(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_MCP_SERVERS",
+        "SHEJANE_LOCAL_MCP_SERVERS",
         json.dumps({"mcpServers": {"e": {"command": "node"}}}),
     )
     out = discover_servers(tmp_path)
@@ -159,7 +159,7 @@ def test_discover_env_accepts_mcpservers_wrapper(
 def test_discover_malformed_env_logged_and_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_MCP_SERVERS", "{not valid json")
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_SERVERS", "{not valid json")
     out = discover_servers(tmp_path)
     assert out == []
 
@@ -173,7 +173,7 @@ def test_discover_reads_shejane_user_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     shejane_dir = home / ".shejane"
     shejane_dir.mkdir(parents=True, exist_ok=True)
     (shejane_dir / "mcp-servers.json").write_text(
@@ -196,7 +196,7 @@ def test_discover_reads_claude_desktop_macos(
     if sys.platform != "darwin":
         pytest.skip("Claude Desktop macOS path only")
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     claude_dir = home / "Library" / "Application Support" / "Claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
     (claude_dir / "claude_desktop_config.json").write_text(
@@ -221,7 +221,7 @@ def test_discover_reads_claude_desktop_macos(
 
 def test_discover_reads_cursor_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     cursor_dir = home / ".cursor"
     cursor_dir.mkdir(parents=True, exist_ok=True)
     (cursor_dir / "mcp.json").write_text(
@@ -235,7 +235,7 @@ def test_discover_reads_cursor_config(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_discover_reads_codex_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     codex_dir = home / ".codex"
     codex_dir.mkdir(parents=True, exist_ok=True)
     (codex_dir / "config.toml").write_text(
@@ -264,7 +264,7 @@ def test_discover_dedupes_by_name_first_source_wins(
     if sys.platform != "darwin":
         pytest.skip("multi-source dedupe test pinned to macOS Claude path")
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     # shejane has the canonical version
     shejane_dir = home / ".shejane"
     shejane_dir.mkdir(parents=True, exist_ok=True)
@@ -291,7 +291,7 @@ def test_discover_malformed_disk_file_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     shejane_dir = home / ".shejane"
     shejane_dir.mkdir(parents=True, exist_ok=True)
     (shejane_dir / "mcp-servers.json").write_text("{ not json", encoding="utf-8")
@@ -310,14 +310,14 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """Spin up the daemon with an isolated tmp data dir + tok auth.
 
     Doesn't enable disk scan — tests that want disk scan flip the
-    JIANDANLY_LOCAL_MCP_DISCOVERY env per test body.
+    SHEJANE_LOCAL_MCP_DISCOVERY env per test body.
     """
     tmp = Path(tempfile.mkdtemp(prefix="jdl-mcp-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -343,7 +343,7 @@ def test_http_mcp_servers_lists_env_entries(
 ) -> None:
     # Setting the env var should produce one normalized server row.
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_MCP_SERVERS",
+        "SHEJANE_LOCAL_MCP_SERVERS",
         json.dumps(
             {
                 "mcpServers": {
@@ -404,7 +404,7 @@ def test_build_agent_skips_mcp_when_disabled(
 
     async def run() -> bool:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
         try:
@@ -441,7 +441,7 @@ def test_build_mcp_tools_drops_disabled_names_before_client(
     import local_host.tools.mcp as mcp_mod
 
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_MCP_SERVERS",
+        "SHEJANE_LOCAL_MCP_SERVERS",
         json.dumps(
             {
                 "mcpServers": {
@@ -481,7 +481,7 @@ def test_build_mcp_tools_empty_after_disable_returns_early(
     import local_host.tools.mcp as mcp_mod
 
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_MCP_SERVERS",
+        "SHEJANE_LOCAL_MCP_SERVERS",
         json.dumps({"only": {"command": "node"}}),
     )
 
@@ -529,7 +529,7 @@ def test_build_agent_threads_disabled_set_to_build_tools(
 
     async def run() -> set[str] | None:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
         try:

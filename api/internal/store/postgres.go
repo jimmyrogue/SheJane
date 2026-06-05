@@ -13,8 +13,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/documents"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/documents"
 )
 
 type PostgresStore struct {

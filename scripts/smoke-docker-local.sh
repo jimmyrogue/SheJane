@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${COMPOSE_PROJECT_NAME:-}" == "jiandanly" && "${ALLOW_EXISTING_COMPOSE_PROJECT:-}" != "1" ]]; then
-  echo "Refusing to run smoke cleanup against COMPOSE_PROJECT_NAME=jiandanly. Use a disposable project name or set ALLOW_EXISTING_COMPOSE_PROJECT=1." >&2
+if [[ "${COMPOSE_PROJECT_NAME:-}" == "shejane" && "${ALLOW_EXISTING_COMPOSE_PROJECT:-}" != "1" ]]; then
+  echo "Refusing to run smoke cleanup against COMPOSE_PROJECT_NAME=shejane. Use a disposable project name or set ALLOW_EXISTING_COMPOSE_PROJECT=1." >&2
   exit 2
 fi
 
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-jiandanly_smoke}"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-shejane_smoke}"
 export API_PORT="${API_PORT:-18080}"
 export CLIENT_PORT="${CLIENT_PORT:-15173}"
 export ADMIN_PORT="${ADMIN_PORT:-15174}"
@@ -14,15 +14,15 @@ export POSTGRES_PORT="${POSTGRES_PORT:-15433}"
 export REDIS_PORT="${REDIS_PORT:-16380}"
 export CLIENT_BASE_URL="${CLIENT_BASE_URL:-http://localhost:${CLIENT_PORT}}"
 export ADMIN_BASE_URL="${ADMIN_BASE_URL:-http://localhost:${ADMIN_PORT}}"
-export JWT_SECRET="${JWT_SECRET:-jiandanly-smoke-jwt-secret-change-me}"
-export ADMIN_EMAILS="${ADMIN_EMAILS:-admin-smoke@jiandanly.local}"
+export JWT_SECRET="${JWT_SECRET:-shejane-smoke-jwt-secret-change-me}"
+export ADMIN_EMAILS="${ADMIN_EMAILS:-admin-smoke@shejane.local}"
 export MOCK_LLM=true
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:${API_PORT}}"
 RUN_ID="$(date +%s)_$$"
-USER_EMAIL="${SMOKE_EMAIL:-docker-smoke+${RUN_ID}@jiandanly.local}"
+USER_EMAIL="${SMOKE_EMAIL:-docker-smoke+${RUN_ID}@shejane.local}"
 ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-${ADMIN_EMAILS%%,*}}"
-PASSWORD="${SMOKE_PASSWORD:-Jiandanly123!}"
+PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {

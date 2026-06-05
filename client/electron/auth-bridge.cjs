@@ -1,4 +1,4 @@
-const REFRESH_COOKIE_NAME = 'jiandan_refresh'
+const REFRESH_COOKIE_NAME = 'shejane_refresh'
 
 function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cookies, fetchImpl = globalThis.fetch } = {}) {
   if (!cookies) {

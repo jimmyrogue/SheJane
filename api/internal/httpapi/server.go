@@ -16,14 +16,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/app"
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/documents"
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/app"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/documents"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
-const refreshCookieName = "jiandan_refresh"
+const refreshCookieName = "shejane_refresh"
 
 type Server struct {
 	app *app.App
@@ -1000,7 +1000,7 @@ func (s *Server) documentAsk(w http.ResponseWriter, r *http.Request, user store.
 		Messages: []llm.Message{
 			{
 				Role:    "system",
-				Content: "你是简单 Jiandan 的文档阅读助手。只能基于用户上传文档的提取文本回答；如果文档中没有答案，请直接说明。文档名：" + document.OriginalName + "\n\n文档文本：\n" + text,
+				Content: "你是简单 SheJane 的文档阅读助手。只能基于用户上传文档的提取文本回答；如果文档中没有答案，请直接说明。文档名：" + document.OriginalName + "\n\n文档文本：\n" + text,
 			},
 			{Role: "user", Content: body.Question},
 		},

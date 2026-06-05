@@ -42,7 +42,7 @@ def test_resolve_skills_dirs_returns_only_existing_paths(tmp_path: Path, monkeyp
     # Only the .shejane dir gets created — .claude intentionally missing
     # so we can prove the resolver silently drops non-existent paths.
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     # `~/.shejane/skills/` and `~/.claude/skills/` are the defaults;
     # we patch home() so they resolve under tmp_path. Only the existing
@@ -59,7 +59,7 @@ def test_resolve_skills_dirs_includes_both_when_both_exist(tmp_path: Path, monke
     from local_host.agent.builder import _resolve_skills_dirs
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     (tmp_path / ".shejane" / "skills").mkdir(parents=True)
     (tmp_path / ".claude" / "skills").mkdir(parents=True)
@@ -73,7 +73,7 @@ def test_resolve_skills_dirs_includes_both_when_both_exist(tmp_path: Path, monke
 
 
 def test_resolve_skills_dirs_env_override_full_takeover(tmp_path: Path, monkeypatch) -> None:
-    """When `JIANDANLY_LOCAL_SKILLS_PATH` is set, the home defaults are
+    """When `SHEJANE_LOCAL_SKILLS_PATH` is set, the home defaults are
     ignored — that's the documented contract so a power user can pin the
     list to exactly what they want."""
     from local_host.agent.builder import _resolve_skills_dirs
@@ -85,7 +85,7 @@ def test_resolve_skills_dirs_env_override_full_takeover(tmp_path: Path, monkeypa
 
     override = tmp_path / "custom" / "skills"
     override.mkdir(parents=True)
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(override))
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(override))
 
     dirs = _resolve_skills_dirs()
     assert dirs == [override]
@@ -98,7 +98,7 @@ def test_resolve_skills_dirs_env_override_supports_comma(tmp_path: Path, monkeyp
     b = tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", f"{a}, {b}")
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", f"{a}, {b}")
 
     dirs = _resolve_skills_dirs()
     assert dirs == [a, b]
@@ -118,7 +118,7 @@ def test_list_skill_files_walks_all_roots(tmp_path: Path, monkeypatch) -> None:
     _write_skill(claude, "claude-only", title="Claude Only")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     skills = _list_skill_files()
     names = {s["name"] for s in skills}
@@ -149,7 +149,7 @@ def test_list_skill_files_requires_SKILL_md(tmp_path: Path, monkeypatch) -> None
     (invalid / "README.md").write_text("not a skill", encoding="utf-8")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     names = {s["name"] for s in _list_skill_files()}
     assert "valid" in names
@@ -170,7 +170,7 @@ def test_list_skill_files_dedupes_across_roots(tmp_path: Path, monkeypatch) -> N
     _write_skill(claude, "shared", title="From Claude")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     skills = _list_skill_files()
     shared = [s for s in skills if s["name"] == "shared"]
@@ -190,7 +190,7 @@ def test_list_skill_files_skips_underscore_and_dot_dirs(tmp_path: Path, monkeypa
     _write_skill(shejane, "real", title="Should show")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     names = {s["name"] for s in _list_skill_files()}
     assert "real" in names
@@ -218,7 +218,7 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     _write_skill(shejane, "test-skill", title="Test Skill", description="A demo")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     captured: dict[str, object] = {}
 
@@ -231,7 +231,7 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore_open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -269,7 +269,7 @@ def test_build_agent_passes_none_when_skills_disabled(tmp_path: Path, monkeypatc
     _write_skill(shejane, "test-skill")
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     captured: dict[str, object] = {}
 
@@ -281,7 +281,7 @@ def test_build_agent_passes_none_when_skills_disabled(tmp_path: Path, monkeypatc
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore_open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -313,7 +313,7 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
     from local_host.agent.builder import build_agent, open_checkpointer
 
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.delenv("JIANDANLY_LOCAL_SKILLS_PATH", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
     captured: dict[str, object] = {}
 
@@ -325,7 +325,7 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore_open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()

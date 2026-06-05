@@ -5,7 +5,7 @@ touching any other tool — concretely, the first model turn is steered
 toward calling `write_todos` via a strong system-prompt injection at
 `before_agent` time.
 
-Modes (env JIANDANLY_PLAN_FIRST):
+Modes (env SHEJANE_PLAN_FIRST):
   off / 0           — disabled (default)
   on / always / 1   — every run gets the plan-first prompt
   auto              — only complex tasks get it
@@ -71,7 +71,7 @@ class PlanFirstMiddleware(AgentMiddleware):
         super().__init__()
         # Lock the mode at construction time so a single run sees a
         # consistent decision — env reads at before_agent could race.
-        resolved = (mode or os.environ.get("JIANDANLY_PLAN_FIRST", "off")).lower().strip()
+        resolved = (mode or os.environ.get("SHEJANE_PLAN_FIRST", "off")).lower().strip()
         if resolved in {"1", "true", "yes", "on", "always"}:
             self.mode = "always"
         elif resolved == "auto":

@@ -30,7 +30,7 @@ docker compose ps
 - Postgres: `localhost:15432`
 - Redis: `localhost:16379`
 
-可选 Caddy reverse proxy 已预留 `jiandanly.com` 和 `admin.jiandanly.com` 两个入口；生产环境需要把 `CLIENT_BASE_URL`、`ADMIN_BASE_URL` 配到真实域名。
+可选 Caddy reverse proxy 已预留 `shejane.com` 和 `admin.shejane.com` 两个入口；生产环境需要把 `CLIENT_BASE_URL`、`ADMIN_BASE_URL` 配到真实域名。
 
 ## 创建第一个管理员
 
@@ -210,15 +210,15 @@ Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两
 cd local-host
 npm install
 npm run browser:install
-JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token npm run dev
+SHEJANE_LOCAL_HOST_TOKEN=dev-local-token npm run dev
 ```
 
 Electron client 连接本地 Host：
 
 ```bash
 cd client
-JIANDANLY_LOCAL_HOST_URL=http://127.0.0.1:17371 \
-JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
+SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
+SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 npm run electron
 ```
 
@@ -226,13 +226,13 @@ npm run electron
 
 ```bash
 cd local-host
-JIANDANLY_LOCAL_HOST_TOKEN=dev-local-token \
-JIANDANLY_CLOUD_BASE_URL=http://localhost:8080 \
-JIANDANLY_CLOUD_ACCESS_TOKEN=用户 access token \
+SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
+SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
+SHEJANE_CLOUD_ACCESS_TOKEN=用户 access token \
 npm run dev
 ```
 
-上面的 `JIANDANLY_CLOUD_ACCESS_TOKEN` 只用于无 UI 调试或 smoke。Electron 手动测试推荐走正常登录流程：
+上面的 `SHEJANE_CLOUD_ACCESS_TOKEN` 只用于无 UI 调试或 smoke。Electron 手动测试推荐走正常登录流程：
 
 ```bash
 make dev-electron
@@ -245,18 +245,18 @@ make dev-electron
 托管浏览器环境变量：
 
 ```dotenv
-JIANDANLY_LOCAL_MAX_STEPS=
-JIANDANLY_LOCAL_STEP_WARNING_INTERVAL=20
-JIANDANLY_BROWSER_ENGINE=playwright
-JIANDANLY_BROWSER_HEADLESS=true
-JIANDANLY_BROWSER_TIMEOUT_MS=15000
-JIANDANLY_BROWSER_SEARCH_URL=https://cn.bing.com/search?q={query}
-JIANDANLY_ALLOW_PROXY_FAKE_IPS=true
+SHEJANE_LOCAL_MAX_STEPS=
+SHEJANE_LOCAL_STEP_WARNING_INTERVAL=20
+SHEJANE_BROWSER_ENGINE=playwright
+SHEJANE_BROWSER_HEADLESS=true
+SHEJANE_BROWSER_TIMEOUT_MS=15000
+SHEJANE_BROWSER_SEARCH_URL=https://cn.bing.com/search?q={query}
+SHEJANE_ALLOW_PROXY_FAKE_IPS=true
 ```
 
-`JIANDANLY_LOCAL_MAX_STEPS` 是可选硬安全阀。默认留空，表示不按工具轮数硬停止，Local Harness 会像 Claude Code 风格的交互式 loop 一样持续运行直到模型给出无工具最终答案、用户取消、权限暂停、额度/模型错误或显式配置的硬上限触发。设置为正整数时，达到上限会再发起一次不带工具的 finalization 调用，让模型基于已收集证据给出阶段性答案。`JIANDANLY_LOCAL_STEP_WARNING_INTERVAL` 只发出软提醒和系统提示，不会停止 run；设为 `0` 可关闭。
+`SHEJANE_LOCAL_MAX_STEPS` 是可选硬安全阀。默认留空，表示不按工具轮数硬停止，Local Harness 会像 Claude Code 风格的交互式 loop 一样持续运行直到模型给出无工具最终答案、用户取消、权限暂停、额度/模型错误或显式配置的硬上限触发。设置为正整数时，达到上限会再发起一次不带工具的 finalization 调用，让模型基于已收集证据给出阶段性答案。`SHEJANE_LOCAL_STEP_WARNING_INTERVAL` 只发出软提醒和系统提示，不会停止 run；设为 `0` 可关闭。
 默认 `headless=true`，避免 Electron 手动测试时额外弹出浏览器窗口；需要观察真实 Chromium 时可临时设为 `false`。
-`JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 用于兼容 Clash、Surge 等本地代理/TUN 的 fake-ip DNS（常见为 `198.18.0.0/15`）。如果部署在不使用本地代理的服务器环境，可以设为 `false`，让 SSRF guard 继续拦截该保留网段。
+`SHEJANE_ALLOW_PROXY_FAKE_IPS=true` 用于兼容 Clash、Surge 等本地代理/TUN 的 fake-ip DNS（常见为 `198.18.0.0/15`）。如果部署在不使用本地代理的服务器环境，可以设为 `false`，让 SSRF guard 继续拦截该保留网段。
 
 本地开发日志：
 
@@ -273,11 +273,11 @@ make logs-llm-errors   # 查看最近 LLM 调用和错误原因
 如果 UI timeline 只显示“工具失败”但没有具体原因，打开 Local Host debug 日志：
 
 ```bash
-JIANDANLY_LOCAL_HOST_DEBUG=1 make dev-electron
+SHEJANE_LOCAL_HOST_DEBUG=1 make dev-electron
 make logs-local-host
 ```
 
-`make dev-electron` 默认会用 `JIANDANLY_LOCAL_HOST_DEBUG=1` 启动 Local Host，并把日志写到 `.dev-logs/local-host.log`。日志会输出 `tool.requested`、`tool.failed`、`verification.completed`、`run.budget_warning`、`run.failed` 等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页能力时重点看：
+`make dev-electron` 默认会用 `SHEJANE_LOCAL_HOST_DEBUG=1` 启动 Local Host，并把日志写到 `.dev-logs/local-host.log`。日志会输出 `tool.requested`、`tool.failed`、`verification.completed`、`run.budget_warning`、`run.failed` 等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页能力时重点看：
 
 - `cloud_session_required`：本地 `web.search` 需要登录后的 Cloud Tool Gateway session；Electron 正常登录后会自动注入。
 - `web_search_disabled`：Cloud API 未配置 Tavily，`web.search` 不会暴露给模型；托管浏览器搜索 `browser.search` 仍可作为 fallback。
@@ -290,8 +290,8 @@ make logs-local-host
 - `research_search_budget_exhausted` / `research_navigation_budget_exhausted`：当前 run 已达到搜索或候选来源打开预算；模型应收束回答或说明仍缺少的证据。
 - `run.output_guardrail`：最终回答声称已打开/读取/核实来源，但事件流里没有足够 `source.collected` 或最近 `browser.verify` 失败；Harness 会要求模型继续取证或明确说明限制。
 - `browser_navigation_blocked`：点击后跳转到了被禁止的 localhost、私网或非 HTTP(S) 目标。
-- `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `JIANDANLY_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
-- `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `JIANDANLY_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
+- `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `SHEJANE_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
+- `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `SHEJANE_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
 
 Phase 2.19-2.20 Electron 手动 smoke：
 
@@ -311,17 +311,17 @@ TAVILY_BASE_URL=https://api.tavily.com
 TAVILY_SEARCH_CREDITS=20
 
 # Local Host 只保留本地 MCP 配置，不保存 Tavily / Stripe / AWS / LLM provider key
-JIANDANLY_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read
-JIANDANLY_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}'
+SHEJANE_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read
+SHEJANE_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}'
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态向 `/api/v1/agent/tool-capabilities` 查询能力，并通过 `/api/v1/agent/tools/execute` 执行和扣费。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。Cloud API 配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有云端搜索不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `JIANDANLY_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`JIANDANLY_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态向 `/api/v1/agent/tool-capabilities` 查询能力，并通过 `/api/v1/agent/tools/execute` 执行和扣费。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。Cloud API 配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有云端搜索不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `SHEJANE_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`SHEJANE_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 研究策略预算可用环境变量微调：
 
-- `JIANDANLY_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
-- `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
-- `JIANDANLY_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
+- `SHEJANE_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
+- `SHEJANE_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
+- `SHEJANE_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
 - 调试时可运行 `make logs-local-host`，启动日志不应出现 `tavily_configured` 或任何 provider key；如果需要确认云端搜索是否可用，先登录 Electron，再看模型是否收到 `web.search` 工具，或用 admin 的“工具调用”页查看 `web.search` 记录。
 
 Phase 2.15 通用工具原语：
@@ -337,7 +337,7 @@ Phase 2.15 通用工具原语：
 
 Phase 2.17-2.20 Playwright 托管浏览器：
 
-- `browser.search`：使用 `JIANDANLY_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
+- `browser.search`：使用 `SHEJANE_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
 - `browser.open`：在 Local Host 自己管理的 Playwright Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。研究任务应使用 `browser.open` + `browser.read` 收集来源，而不是 `open.url`。
 - `browser.read`：读取当前托管页面的标题、URL、meta 描述、正文和关键链接；长正文保存为 artifact，模型上下文只拿到来源元数据和 artifact 引用。
 - `browser.verify`：验证当前托管页面是否包含期望文本、是否处于 usable 状态；验证失败是可恢复 observation，可按需保存页面截图 artifact。
@@ -353,7 +353,7 @@ Phase 2.17-2.20 Playwright 托管浏览器：
 - 研究任务中如果模型误调用 `open.url`，Local Harness 会返回 `research_external_open_blocked`，不会请求权限，也不会打开用户系统浏览器。
 - 研究任务中如果模型误用 `shell.run` 执行 `curl` / `wget` / URL 抓取，Local Harness 会返回 `research_shell_network_blocked`，要求改用 `web.search` / `web.fetch` 或 `browser.open` / `browser.read`。
 - 同一 run 内第三次重复相同搜索 query 或打开相同 URL 会被拦截为可恢复 observation，避免模型在同一来源上绕圈。
-- 默认使用 headless Chromium；调试时可设 `JIANDANLY_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
+- 默认使用 headless Chromium；调试时可设 `SHEJANE_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
 - CloakBrowser 只作为未来可选 engine 预留，不进入默认依赖，也不打包 binary。
 - 本阶段不做提交订单、支付、发帖、发送邮件、读取用户现有浏览器标签页、Chrome extension/native messaging、屏幕 OCR 或系统设置修改。
 
@@ -367,7 +367,7 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 注意：
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
-- `JIANDANLY_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
+- `SHEJANE_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
 - Phase 2.22 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.verify` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、研究策略预算、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、云端 `/api/v1/agent/tools/execute` 非 LLM 工具扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、Cloud Tool Gateway 计费版 `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client/admin 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览、验证结果展示和 admin 工具调用只读观察。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
 - 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制、桌面 OCR 或 LLM-as-judge 视觉裁判。
@@ -413,7 +413,7 @@ RUN_EXTERNAL_SMOKE=1 make smoke-external
 注意：
 
 - 不要把真实 provider、Stripe、AWS 密钥写入仓库；CI 的 External Smoke workflow 只通过 GitHub Secrets 注入。
-- Docker smoke 会使用独立 `COMPOSE_PROJECT_NAME=jiandanly_smoke` 并在退出时 `down -v` 清理；不要把它指向正在使用的生产或日常开发 Compose project。
+- Docker smoke 会使用独立 `COMPOSE_PROJECT_NAME=shejane_smoke` 并在退出时 `down -v` 清理；不要把它指向正在使用的生产或日常开发 Compose project。
 - Playwright E2E 只验证用户可见行为和关键网络契约，不替代 API/Local Host 单元与集成测试。
 - 外部 smoke 可能消耗 LLM 额度、创建 Stripe test object、写入 S3 dev bucket，不应放进每次 PR 的默认门禁。
 
@@ -428,7 +428,7 @@ docker compose logs -f api
 查看数据库记录：
 
 ```bash
-docker compose exec postgres psql -U jiandanly -d jiandanly
+docker compose exec postgres psql -U shejane -d shejane
 ```
 
 常用查询：
@@ -568,9 +568,9 @@ make release VERSION=v0.1.0
 
 会校验工作区干净、当前在 `main`，然后打 annotated tag 并推送。推 tag 触发 `.github/workflows/release.yml`：用 buildx 把 `api` / `client` / `admin` 构建成多架构（amd64 + arm64）镜像并推到 GHCR：
 
-- `ghcr.io/jimmyrogue/jiandanly-api:v0.1.0`（同时打 `latest`）
-- `ghcr.io/jimmyrogue/jiandanly-client:v0.1.0`
-- `ghcr.io/jimmyrogue/jiandanly-admin:v0.1.0`
+- `ghcr.io/jimmyrogue/shejane-api:v0.1.0`（同时打 `latest`）
+- `ghcr.io/jimmyrogue/shejane-client:v0.1.0`
+- `ghcr.io/jimmyrogue/shejane-admin:v0.1.0`
 
 `client` / `admin` 用**空的 `VITE_API_BASE_URL`** 构建，因此发出相对、同源的 `/api/*` 请求，由 Caddy 路由到 `api`——一套镜像适用于任意域名，无需为每个部署重建。
 

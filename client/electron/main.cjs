@@ -134,7 +134,7 @@ function createTray() {
       click: () => {
         showOrCreateMainWindow()
         if (mainWindow) {
-          mainWindow.webContents.send('jiandanly:new-chat')
+          mainWindow.webContents.send('shejane:new-chat')
         }
       },
     },
@@ -150,7 +150,7 @@ function createTray() {
 app.setName(appName)
 
 function apiBaseURL() {
-  return process.env.JIANDANLY_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  return process.env.SHEJANE_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080'
 }
 
 function registerAuthHandlers() {
@@ -160,10 +160,10 @@ function registerAuthHandlers() {
     fetchImpl: globalThis.fetch,
   })
 
-  ipcMain.handle('jiandanly:auth-register', (_event, input) => authIPCResult(() => auth.register(input)))
-  ipcMain.handle('jiandanly:auth-login', (_event, input) => authIPCResult(() => auth.login(input)))
-  ipcMain.handle('jiandanly:auth-refresh', () => authIPCResult(() => auth.refresh()))
-  ipcMain.handle('jiandanly:auth-logout', () => authIPCResult(() => auth.logout()))
+  ipcMain.handle('shejane:auth-register', (_event, input) => authIPCResult(() => auth.register(input)))
+  ipcMain.handle('shejane:auth-login', (_event, input) => authIPCResult(() => auth.login(input)))
+  ipcMain.handle('shejane:auth-refresh', () => authIPCResult(() => auth.refresh()))
+  ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout()))
 }
 
 app.whenReady().then(() => {
@@ -183,7 +183,7 @@ app.on('before-quit', () => {
   app.isQuitting = true
 })
 
-ipcMain.handle('jiandanly:set-locale', async (_event, locale) => {
+ipcMain.handle('shejane:set-locale', async (_event, locale) => {
   const normalized = locale === 'en' ? 'en' : 'zh'
   try {
     fs.mkdirSync(path.dirname(dockLangFile), { recursive: true })
@@ -198,7 +198,7 @@ ipcMain.handle('jiandanly:set-locale', async (_event, locale) => {
  *  window is currently focused — in that case the user can already see
  *  whatever just happened, so adding a notification on top is noise.
  *  Clicking the notification brings the main window forward. */
-ipcMain.handle('jiandanly:notify', async (_event, payload) => {
+ipcMain.handle('shejane:notify', async (_event, payload) => {
   if (!Notification.isSupported()) {
     return false
   }
@@ -218,7 +218,7 @@ ipcMain.handle('jiandanly:notify', async (_event, payload) => {
   return true
 })
 
-ipcMain.handle('jiandanly:select-workspace-directory', async () => {
+ipcMain.handle('shejane:select-workspace-directory', async () => {
   const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
   const options = {
     title: '选择本地工作区',
@@ -231,7 +231,7 @@ ipcMain.handle('jiandanly:select-workspace-directory', async () => {
   return result.filePaths[0]
 })
 
-ipcMain.handle('jiandanly:open-file-with-default-app', async (_event, filePath) => {
+ipcMain.handle('shejane:open-file-with-default-app', async (_event, filePath) => {
   // Used by the right-side PptxPreview "Open in PowerPoint" button.
   // Returns "" on success (Electron's contract) or an error message
   // string on failure.
@@ -245,7 +245,7 @@ ipcMain.handle('jiandanly:open-file-with-default-app', async (_event, filePath) 
   }
 })
 
-ipcMain.handle('jiandanly:show-item-in-folder', async (_event, filePath) => {
+ipcMain.handle('shejane:show-item-in-folder', async (_event, filePath) => {
   // Used by the message-bubble attachment chip's external-open
   // button (LOCAL files only — Finder / Explorer pops open with the
   // file highlighted). Returns 'ok' on success, an error string

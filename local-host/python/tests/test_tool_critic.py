@@ -55,26 +55,26 @@ async def _handler_returns(result: Any):
 
 
 def test_mode_off_default(monkeypatch) -> None:
-    monkeypatch.delenv("JIANDANLY_LOCAL_TOOL_CRITIC", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_TOOL_CRITIC", raising=False)
     mw = ToolResultCriticMiddleware()
     assert mw.mode == "off"
 
 
 def test_mode_resolves_each_supported_value(monkeypatch) -> None:
     for value in ("watch", "nudge", "block"):
-        monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_CRITIC", value)
+        monkeypatch.setenv("SHEJANE_LOCAL_TOOL_CRITIC", value)
         mw = ToolResultCriticMiddleware()
         assert mw.mode == value
 
 
 def test_invalid_mode_falls_back_to_off(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_CRITIC", "verbose-shouting")
+    monkeypatch.setenv("SHEJANE_LOCAL_TOOL_CRITIC", "verbose-shouting")
     mw = ToolResultCriticMiddleware()
     assert mw.mode == "off"
 
 
 def test_explicit_mode_overrides_env(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_CRITIC", "off")
+    monkeypatch.setenv("SHEJANE_LOCAL_TOOL_CRITIC", "off")
     mw = ToolResultCriticMiddleware(mode="block")
     assert mw.mode == "block"
 

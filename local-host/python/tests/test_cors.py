@@ -8,7 +8,7 @@ handshake (`POST /local/v1/session`) never reaches the server, leaving
 chat silently routed through the cloud-only path.
 
 These tests lock the default CORS allow-list to "any loopback origin +
-file:// (`null`)" and verify the JIANDANLY_LOCAL_CORS_ORIGINS env
+file:// (`null`)" and verify the SHEJANE_LOCAL_CORS_ORIGINS env
 override.
 """
 
@@ -26,15 +26,15 @@ from local_host.server import create_app
 
 def _build_client(monkeypatch, **env: str) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-cors-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -105,10 +105,10 @@ def test_cors_blocks_non_loopback_origin(monkeypatch) -> None:
 
 def test_cors_env_override(monkeypatch) -> None:
     """An operator fronting the daemon behind a custom reverse proxy can
-    pin the allow-list via JIANDANLY_LOCAL_CORS_ORIGINS."""
+    pin the allow-list via SHEJANE_LOCAL_CORS_ORIGINS."""
     with _build_client(
         monkeypatch,
-        JIANDANLY_LOCAL_CORS_ORIGINS="https://my-proxy.example.com,https://other.example.com",
+        SHEJANE_LOCAL_CORS_ORIGINS="https://my-proxy.example.com,https://other.example.com",
     ) as client:
         resp = client.get(
             "/local/v1/health",

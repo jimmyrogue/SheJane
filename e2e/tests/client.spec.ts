@@ -75,9 +75,9 @@ test.describe('client simulated user flows', () => {
 
     await expect(page.getByText('本地 Harness').first()).toBeVisible()
     await page.getByRole('button', { name: '工作区' }).click()
-    await page.getByLabel('当前对话工作区路径').fill('/tmp/jiandanly-workspace')
+    await page.getByLabel('当前对话工作区路径').fill('/tmp/shejane-workspace')
     await page.getByRole('button', { name: '授权并绑定' }).click()
-    await expect(page.getByText('本地项目：jiandanly-workspace')).toBeVisible()
+    await expect(page.getByText('本地项目：shejane-workspace')).toBeVisible()
     await page.getByPlaceholder('描述你的问题、任务，或让简单阅读附件').fill('运行本地检查')
     await page.getByRole('button', { name: '发送' }).click()
 
@@ -100,7 +100,7 @@ test.describe('client simulated user flows', () => {
     const downloadPromise = page.waitForEvent('download')
     await page.getByRole('button', { name: '导出当前诊断' }).click()
     const download = await downloadPromise
-    expect(download.suggestedFilename()).toBe('jiandanly-local-run-local-run-diagnostics.json')
+    expect(download.suggestedFilename()).toBe('shejane-local-run-local-run-diagnostics.json')
     await expect(page.getByText('诊断已导出：local-run')).toBeVisible()
 
     expect(requestWasMade(state, '/local/v1/runs')).toBe(true)

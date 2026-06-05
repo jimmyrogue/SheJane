@@ -58,8 +58,8 @@ def _patched_async_client(handler):
 @pytest.fixture
 def client(monkeypatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-sse-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -74,9 +74,9 @@ def client(monkeypatch) -> TestClient:
 
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)

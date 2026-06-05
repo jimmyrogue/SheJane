@@ -54,7 +54,7 @@ def test_build_agent_assembles_without_workspace(tmp_path: Path, monkeypatch) ->
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path)
         # Ensure MCP isn't enabled (no config), Tavily disabled (no key)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -82,7 +82,7 @@ def test_build_agent_with_workspace_includes_shell_middleware(tmp_path: Path, mo
 
     async def run() -> list[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -131,7 +131,7 @@ def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeyp
 
     async def run() -> str:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()

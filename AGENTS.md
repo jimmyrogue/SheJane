@@ -6,7 +6,7 @@ For the full architecture, the critical invariants, and "where things live", rea
 
 ## Product shape
 
-SheJane (石间) is an agentic chat product. `jiandanly` is the legacy code name still used in package names, env-var prefixes (`JIANDANLY_*`), and on-disk paths.
+SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
 
 - `api/` — Go API: auth, wallet/credit ledger, LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.

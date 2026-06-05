@@ -358,7 +358,7 @@ export interface paths {
          * List Local Skills
          * @description Catalog of every SKILL.md the daemon can see across all
          *     configured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,
-         *     or `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed
+         *     or `SHEJANE_LOCAL_SKILLS_PATH` overrides). Skills are managed
          *     out-of-band — the user drops directories into a root themselves
          *     (or installs via the skills.sh CLI into `~/.claude/skills/`) and
          *     the daemon picks them up on next scan.

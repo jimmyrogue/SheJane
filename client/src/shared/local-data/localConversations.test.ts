@@ -6,13 +6,13 @@ import type { Conversation } from './types'
 describe('LocalConversationStore', () => {
   beforeEach(async () => {
     await Promise.all([
-      deleteDatabase('jiandanly-test'),
-      deleteDatabase('jiandanly-test-pinned'),
+      deleteDatabase('shejane-test'),
+      deleteDatabase('shejane-test-pinned'),
     ])
   })
 
   it('saves, lists, exports, imports, and deletes local conversations', async () => {
-    const store = new LocalConversationStore('jiandanly-test')
+    const store = new LocalConversationStore('shejane-test')
     const conversation: Conversation = {
       id: 'conv-1',
       title: '客户跟进',
@@ -43,7 +43,7 @@ describe('LocalConversationStore', () => {
   })
 
   it('keeps pinned conversations before regular recent conversations', async () => {
-    const store = new LocalConversationStore('jiandanly-test-pinned')
+    const store = new LocalConversationStore('shejane-test-pinned')
     await store.save(conversation('older-pinned', '固定会话', '2026-05-10T00:00:00.000Z', true))
     await store.save(conversation('newer-regular', '普通会话', '2026-05-11T00:00:00.000Z'))
     await store.save(conversation('newest-pinned', '更新固定会话', '2026-05-12T00:00:00.000Z', true))

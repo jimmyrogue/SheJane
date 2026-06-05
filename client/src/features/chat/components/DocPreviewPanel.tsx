@@ -27,8 +27,8 @@ interface Props {
   onClose: () => void
 }
 
-const WIDTH_STORAGE_KEY = 'jiandanly.docPreview.width'
-const ZOOM_STORAGE_KEY = 'jiandanly.docPreview.zoom'
+const WIDTH_STORAGE_KEY = 'shejane.docPreview.width'
+const ZOOM_STORAGE_KEY = 'shejane.docPreview.zoom'
 const DEFAULT_WIDTH = 760
 const MIN_WIDTH = 420
 const MAX_WIDTH_VW = 95 // % of viewport

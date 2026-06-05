@@ -32,14 +32,14 @@ from local_host.server import create_app
 @pytest.fixture
 def client(monkeypatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-session-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://localhost:8080",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://localhost:8080",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -78,7 +78,7 @@ def test_post_session_returns_localcloudsession_shape(client: TestClient) -> Non
 
 def test_post_session_overrides_cloud_base_url(client: TestClient) -> None:
     """The JWT was issued against the supplied cloud — daemon must talk
-    to THAT cloud, not whatever JIANDANLY_CLOUD_BASE_URL was at boot."""
+    to THAT cloud, not whatever SHEJANE_CLOUD_BASE_URL was at boot."""
     resp = client.post(
         "/local/v1/session",
         headers=HEADERS,

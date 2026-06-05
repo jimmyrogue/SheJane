@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/coldflame/jiandanly/api/internal/app"
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/config"
-	"github.com/coldflame/jiandanly/api/internal/documents"
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/app"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/documents"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 func TestRegisterLoginAndMe(t *testing.T) {

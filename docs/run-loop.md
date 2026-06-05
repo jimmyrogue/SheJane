@@ -151,7 +151,7 @@
   │     │  • MemoryWritebackMiddleware (P6)  await runtime.store.aput(...)        │     │
   │     │                                    ← 存 goal + final_answer ✅ fix       │     │
   │     │  • ReflectMiddleware (P4)         默认：stats 写入 state                  │     │
-  │     │                                   opt-in (JIANDANLY_LOCAL_CRITIC=1):     │     │
+  │     │                                   opt-in (SHEJANE_LOCAL_CRITIC=1):     │     │
   │     │                                   真 LLM critic（coverage/clarity/grounding）│  │
   │     │  • 其他 middleware 反向 cleanup                                          │     │
   │     └─────────────────────────────────────────────────────────────────────────┘     │

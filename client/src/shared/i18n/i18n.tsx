@@ -4,7 +4,7 @@ export type Locale = 'zh' | 'en'
 
 type TranslationValues = Record<string, number | string | undefined>
 
-export const localeStorageKey = 'jiandanly.locale'
+export const localeStorageKey = 'shejane.locale'
 
 const zh = {
   'language.switchTitle': '切换语言',
@@ -1210,12 +1210,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore storage failures; the in-memory locale still changes.
     }
-    void window.jiandanDesktop?.setLocale?.(nextLocale)
+    void window.shejaneDesktop?.setLocale?.(nextLocale)
   }, [])
 
   useEffect(() => {
     document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
-    void window.jiandanDesktop?.setLocale?.(locale)
+    void window.shejaneDesktop?.setLocale?.(locale)
   }, [locale])
 
   const t = useMemo(() => createTranslator(locale), [locale])

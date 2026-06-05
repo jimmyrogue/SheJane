@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def test_input_guard_off(monkeypatch: Any) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_INPUT_GUARD", "off")
+    monkeypatch.setenv("SHEJANE_LOCAL_INPUT_GUARD", "off")
     from local_host.middleware.input_guard import InputGuardMiddleware
 
     mw = InputGuardMiddleware()
@@ -23,7 +23,7 @@ def test_input_guard_off(monkeypatch: Any) -> None:
 
 
 def test_input_guard_observe_flags_but_does_not_block(monkeypatch: Any) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_INPUT_GUARD", "observe")
+    monkeypatch.setenv("SHEJANE_LOCAL_INPUT_GUARD", "observe")
     from local_host.middleware.input_guard import InputGuardMiddleware
 
     mw = InputGuardMiddleware()
@@ -35,7 +35,7 @@ def test_input_guard_observe_flags_but_does_not_block(monkeypatch: Any) -> None:
 
 
 def test_input_guard_block_writes_refusal(monkeypatch: Any) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_INPUT_GUARD", "block")
+    monkeypatch.setenv("SHEJANE_LOCAL_INPUT_GUARD", "block")
     from local_host.middleware.input_guard import InputGuardMiddleware
 
     mw = InputGuardMiddleware()
@@ -47,7 +47,7 @@ def test_input_guard_block_writes_refusal(monkeypatch: Any) -> None:
 
 
 def test_input_guard_clean_message_returns_none(monkeypatch: Any) -> None:
-    monkeypatch.delenv("JIANDANLY_LOCAL_INPUT_GUARD", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_INPUT_GUARD", raising=False)
     from local_host.middleware.input_guard import InputGuardMiddleware
 
     mw = InputGuardMiddleware()

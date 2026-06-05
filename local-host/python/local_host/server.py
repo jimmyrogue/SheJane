@@ -206,7 +206,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # plumbing.
     #
     # Override via env if you front the daemon with a custom reverse proxy.
-    cors_origins_env = os.environ.get("JIANDANLY_LOCAL_CORS_ORIGINS", "").strip()
+    cors_origins_env = os.environ.get("SHEJANE_LOCAL_CORS_ORIGINS", "").strip()
     if cors_origins_env:
         allow_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
         allow_origin_regex = None
@@ -813,7 +813,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # `_candidate_source_files` returns the full ordered list of
         # sources we'd look at — perfect for "what did we try?". We
         # always include "env" so the UI can call it out when the user
-        # has JIANDANLY_LOCAL_MCP_SERVERS set.
+        # has SHEJANE_LOCAL_MCP_SERVERS set.
         sources_scanned: list[str] = ["env"]
         for src in _candidate_source_files(settings.data_dir):
             if src.source not in sources_scanned:
@@ -841,7 +841,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def list_local_skills() -> dict[str, Any]:
         """Catalog of every SKILL.md the daemon can see across all
         configured skill roots (`~/.shejane/skills/`, `~/.claude/skills/`,
-        or `JIANDANLY_LOCAL_SKILLS_PATH` overrides). Skills are managed
+        or `SHEJANE_LOCAL_SKILLS_PATH` overrides). Skills are managed
         out-of-band — the user drops directories into a root themselves
         (or installs via the skills.sh CLI into `~/.claude/skills/`) and
         the daemon picks them up on next scan.

@@ -1,5 +1,5 @@
 [project]
-name = "jiandanly-local-host"
+name = "shejane-local-host"
 version = "0.1.0"
 description = "Local Agent Harness daemon (Python + LangGraph + create_agent)"
 requires-python = ">=3.12"
@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jiandanly-local-host = "local_host.__main__:main"
+shejane-local-host = "local_host.__main__:main"
 
 [dependency-groups]
 dev = [

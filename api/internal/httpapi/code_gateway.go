@@ -37,9 +37,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/e2b"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/e2b"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 // Local base64 helpers — mirror the unexported helpers in

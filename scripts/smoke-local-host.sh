@@ -3,7 +3,7 @@ set -euo pipefail
 
 HOST="${LOCAL_HOST_SMOKE_ADDR:-127.0.0.1}"
 PORT="${LOCAL_HOST_SMOKE_PORT:-17373}"
-TOKEN="${LOCAL_HOST_SMOKE_TOKEN:-jiandanly-local-smoke-token}"
+TOKEN="${LOCAL_HOST_SMOKE_TOKEN:-shejane-local-smoke-token}"
 BASE_URL="http://${HOST}:${PORT}"
 TMP_DIR="$(mktemp -d)"
 PID=""
@@ -48,9 +48,9 @@ require_command uv
 echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL}"
 (
   cd local-host/python
-  JIANDANLY_LOCAL_HOST_ADDR="$HOST" \
-    JIANDANLY_LOCAL_HOST_PORT="$PORT" \
-    JIANDANLY_LOCAL_HOST_TOKEN="$TOKEN" \
+  SHEJANE_LOCAL_HOST_ADDR="$HOST" \
+    SHEJANE_LOCAL_HOST_PORT="$PORT" \
+    SHEJANE_LOCAL_HOST_TOKEN="$TOKEN" \
     PYTHONUNBUFFERED=1 \
     uv run python -m local_host >"${TMP_DIR}/local-host.log" 2>&1
 ) &
@@ -93,7 +93,7 @@ const names = new Set((payload.tools ?? []).map((tool) => tool.name));
 // `file.read`/`shell.run`/`mcp.call` were Node-daemon names; they no
 // longer exist (filesystem access goes through deepagents
 // FilesystemMiddleware, shell is intentionally absent, MCP is auto-
-// surfaced from JIANDANLY_LOCAL_MCP_SERVERS).
+// surfaced from SHEJANE_LOCAL_MCP_SERVERS).
 for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch', 'web.search', 'image.generate']) {
   if (!names.has(name)) {
     console.error(`Missing expected tool: ${name}`);

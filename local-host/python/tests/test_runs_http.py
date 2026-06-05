@@ -39,8 +39,8 @@ def _patched_async_client(handler):
 @pytest.fixture
 def client(monkeypatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -54,9 +54,9 @@ def client(monkeypatch) -> TestClient:
 
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -196,8 +196,8 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
     happened" failure mode.
     """
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-trunc-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     # Pin skills lookup to an empty tmp dir — otherwise this test picks
     # up the dev machine's real `~/.claude/skills/` (which on Jimmy's
@@ -205,7 +205,7 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
     # crowds the <state> block out of the 8 KB prompt budget. The
     # invariant under test (dropped-count surfaced in state) is
     # independent of skills, so isolating them is correct.
-    monkeypatch.setenv("JIANDANLY_LOCAL_SKILLS_PATH", str(tmp / "empty-skills"))
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp / "empty-skills"))
 
     captured_requests: list[dict] = []
 
@@ -225,9 +225,9 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)

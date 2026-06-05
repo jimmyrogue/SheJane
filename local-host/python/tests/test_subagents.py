@@ -104,7 +104,7 @@ def test_compiled_agent_exposes_task_tool_when_subagents_enabled(
 
     async def run() -> set[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -151,7 +151,7 @@ def test_disabling_subagents_drops_custom_specialists(tmp_path: Path, monkeypatc
 
     async def run() -> set[str]:
         reset_settings_for_tests(data_dir=tmp_path, enable_subagents=False)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()

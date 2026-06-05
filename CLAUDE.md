@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-石间 / SheJane (`jiandanly` is the legacy code name) — an Agentic Chat product. A Go API backend handles auth/billing/LLM routing/document storage, a Python LangGraph daemon (the "local agent harness") runs the agent loop with tools and middleware, and an Electron/React renderer is what users see. Each layer has a distinct technology, distinct boundary, and the failure mode "things look fine but the next layer disagrees about the contract" is the single most common bug class this codebase has produced.
+石间 / SheJane — an Agentic Chat product. A Go API backend handles auth/billing/LLM routing/document storage, a Python LangGraph daemon (the "local agent harness") runs the agent loop with tools and middleware, and an Electron/React renderer is what users see. Each layer has a distinct technology, distinct boundary, and the failure mode "things look fine but the next layer disagrees about the contract" is the single most common bug class this codebase has produced.
 
 ## Architecture
 
@@ -45,7 +45,7 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 
 3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "seq": ..., "created_at": ...}`, separator is **LF** double-newline (not CRLF), terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
 
-4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `JIANDANLY_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
+4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `SHEJANE_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
 
 5. **`.env` audit is honest.** Every key in `.env` corresponds to a real `os.getenv` / `getEnvInt` / pydantic alias somewhere in the code. Don't add dead keys; don't read undocumented keys. See `.env.example` for the schema with section comments.
 

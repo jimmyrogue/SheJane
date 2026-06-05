@@ -5,7 +5,7 @@ const STORE_NAME = 'conversations'
 export class LocalConversationStore {
   private dbPromise?: Promise<IDBDatabase>
 
-  constructor(private readonly dbName = 'jiandanly-local') {}
+  constructor(private readonly dbName = 'shejane-local') {}
 
   async list(): Promise<Conversation[]> {
     const store = await this.objectStore('readonly')

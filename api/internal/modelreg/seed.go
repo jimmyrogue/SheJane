@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 // defaultBaselineTokenCostCNY is the seeded "1 credit ≈ 1 DeepSeek-V4-Pro

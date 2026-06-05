@@ -15,7 +15,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        "postgresql://jiandanly:jiandanly@localhost:15432/jiandanly"
+        "postgresql://shejane:shejane@localhost:15432/shejane"
       ],
       "env": {}
     }

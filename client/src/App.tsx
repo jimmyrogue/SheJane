@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
-  JiandanAPI,
+  SheJaneAPI,
   type AuthPayload,
   type UserDocument,
   type WalletBalance,
@@ -63,9 +63,9 @@ import {
 } from './shared/local-host/client'
 
 const documentMaxBytes = 30 * 1024 * 1024
-const appNoticeToastID = 'jiandanly-app-notice'
-const sidebarWidthStorageKey = 'jiandanly.sidebar.width.v1'
-const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
+const appNoticeToastID = 'shejane-app-notice'
+const sidebarWidthStorageKey = 'shejane.sidebar.width.v1'
+const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 // v7 — dropped the codeExec field. Cloud code execution is now always
 // on (no user-facing toggle): in practice every test confirmed the
 // flow works, and the original opt-in friction was hurting first-run
@@ -75,8 +75,8 @@ const sidebarCollapsedStorageKey = 'jiandanly.sidebar.collapsed.v1'
 // blacklist + size cap). Bumping the storage key wipes any leftover
 // `codeExec: 'off'` from v6 storage so legacy users don't end up
 // silently disabled.
-const agentSettingsStorageKey = 'jiandanly.agentSettings.v7'
-const chatModeStorageKey = 'jiandanly.chatMode.v1'
+const agentSettingsStorageKey = 'shejane.agentSettings.v7'
+const chatModeStorageKey = 'shejane.chatMode.v1'
 const defaultAgentSettings: Required<AgentSettings> = {
   memory: 'on',
   skills: 'on',
@@ -215,13 +215,13 @@ export function App() {
 
 function AppContent() {
   const { t } = useI18n()
-  const api = useMemo(() => new JiandanAPI(), [])
+  const api = useMemo(() => new SheJaneAPI(), [])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   // Per-user IndexedDB so switching accounts in the same Electron window does
   // not leak the previous user's conversations.
   const localData = useMemo(
-    () => new LocalConversationStore(`jiandanly-local:${auth?.user?.id ?? 'anonymous'}`),
+    () => new LocalConversationStore(`shejane-local:${auth?.user?.id ?? 'anonymous'}`),
     [auth?.user?.id],
   )
   const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
@@ -427,9 +427,9 @@ function AppContent() {
   }, [])
 
   /** Listen for the tray's "New Chat" menu item — the main process
-   *  sends `jiandanly:new-chat` after bringing the window forward. */
+   *  sends `shejane:new-chat` after bringing the window forward. */
   useEffect(() => {
-    const unsubscribe = window.jiandanDesktop?.onNewChatRequest?.(() => {
+    const unsubscribe = window.shejaneDesktop?.onNewChatRequest?.(() => {
       navigationVersionRef.current += 1
       setActiveConversationID(undefined)
       setPendingWorkspace(undefined)
@@ -1142,7 +1142,7 @@ function AppContent() {
   }
 
   async function chooseWorkspaceDirectory(): Promise<string | undefined> {
-    const selectedPath = await window.jiandanDesktop?.selectWorkspaceDirectory?.()
+    const selectedPath = await window.shejaneDesktop?.selectWorkspaceDirectory?.()
     if (!selectedPath) {
       return undefined
     }
@@ -1325,7 +1325,7 @@ function AppContent() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
     const link = document.createElement('a')
     link.href = url
-    link.download = `jiandan-conversation-${safeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.json`
+    link.download = `shejane-conversation-${safeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.json`
     link.click()
     URL.revokeObjectURL(url)
     setNotice(t('app.notice.conversationExported', { title: conversation.title }))
@@ -1415,7 +1415,7 @@ function AppContent() {
     return <AuthScreen onAuthed={handleAuth} authClient={authClient} />
   }
 
-  const shellClassName = window.jiandanDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
+  const shellClassName = window.shejaneDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
 
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1539,7 +1539,7 @@ function AppContent() {
                   : Promise.resolve({ skills: [], roots: [] })
               }
               onOpenFolder={(path) => {
-                const bridge = window.jiandanDesktop
+                const bridge = window.shejaneDesktop
                 if (bridge?.openFileWithDefaultApp) {
                   void bridge.openFileWithDefaultApp(path)
                 }
@@ -1559,7 +1559,7 @@ function AppContent() {
                 writeAgentSettings(updated)
               }}
               onOpenFolder={(path) => {
-                const bridge = window.jiandanDesktop
+                const bridge = window.shejaneDesktop
                 if (bridge?.openFileWithDefaultApp) {
                   void bridge.openFileWithDefaultApp(path)
                 }
@@ -1897,7 +1897,7 @@ function totalCredits(balance: WalletBalance): number {
  *  focused, so this is safe to call on every completion. We trim the
  *  body so the OS doesn't have to deal with a multi-screen reply. */
 function notifyAgentCompleted(message: ChatMessage, t: Translator): void {
-  const bridge = window.jiandanDesktop
+  const bridge = window.shejaneDesktop
   if (!bridge?.notify) {
     return
   }
@@ -1956,7 +1956,7 @@ function downloadLocalRunDiagnostics(diagnostics: LocalRunDiagnostics) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' }))
   const link = document.createElement('a')
   link.href = url
-  link.download = `jiandanly-local-run-${diagnostics.run.id}-diagnostics.json`
+  link.download = `shejane-local-run-${diagnostics.run.id}-diagnostics.json`
   link.click()
   URL.revokeObjectURL(url)
 }

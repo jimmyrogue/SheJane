@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAuthClient } from './authClient'
-import type { AuthPayload, JiandanAPI } from './client'
+import type { AuthPayload, SheJaneAPI } from './client'
 
 const payload: AuthPayload = {
   access_token: 'electron-token',
@@ -63,5 +63,5 @@ function mockAPI() {
     login: vi.fn().mockResolvedValue(payload),
     refresh: vi.fn().mockResolvedValue(payload),
     logout: vi.fn().mockResolvedValue(undefined),
-  } as unknown as Pick<JiandanAPI, 'register' | 'login' | 'refresh' | 'logout'>
+  } as unknown as Pick<SheJaneAPI, 'register' | 'login' | 'refresh' | 'logout'>
 }

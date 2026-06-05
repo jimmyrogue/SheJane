@@ -17,7 +17,7 @@ cd "$ROOT_DIR"
 PORT="${CONTRACT_LOCAL_HOST_PORT:-17399}"
 TOKEN="${CONTRACT_LOCAL_HOST_TOKEN:-contract-token}"
 URL="http://127.0.0.1:${PORT}"
-LOG_DIR="${JIANDANLY_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
+LOG_DIR="${SHEJANE_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
 LOG_FILE="${LOG_DIR}/contract-daemon.log"
 mkdir -p "$LOG_DIR"
 
@@ -50,10 +50,10 @@ echo "→ Starting contract daemon at ${URL}"
   # endpoints only; no cloud, no platform-paid keys (Invariant #1).
   nohup env -i \
     "PATH=$PATH" "HOME=$HOME" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
-    "JIANDANLY_LOCAL_HOST_TOKEN=$TOKEN" \
-    "JIANDANLY_LOCAL_HOST_PORT=$PORT" \
-    "JIANDANLY_LOCAL_HOST_URL=$URL" \
-    "JIANDANLY_CLOUD_BASE_URL=http://127.0.0.1:8080" \
+    "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
+    "SHEJANE_LOCAL_HOST_PORT=$PORT" \
+    "SHEJANE_LOCAL_HOST_URL=$URL" \
+    "SHEJANE_CLOUD_BASE_URL=http://127.0.0.1:8080" \
     "PYTHONUNBUFFERED=1" \
     uv run python -m local_host >"$LOG_FILE" 2>&1 &
   echo "$!" >"${LOG_DIR}/contract-daemon.pid"

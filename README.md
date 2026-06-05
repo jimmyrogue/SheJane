@@ -15,10 +15,6 @@ English · [简体中文](./README.zh-CN.md)
 ---
 
 > **Status:** pre-1.0, under active development. APIs and schemas may change.
->
-> **Naming:** the product is **SheJane (石间)**. `jiandanly` is the legacy
-> code name still used in package names, the `JIANDANLY_*` env prefix, and
-> on-disk paths — kept for backward compatibility.
 
 ## What it is
 

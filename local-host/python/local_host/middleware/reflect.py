@@ -6,7 +6,7 @@
   ├──────────────────┼──────────────────────────────────────────────────────┤
   │ critic           │ One extra LLM call against the final answer: a      │
   │                  │ critic model scores it on coverage/clarity/grounding.│
-  │ JIANDANLY_LOCAL_ │ Result lands in `state["reflection"]["critic"]`.    │
+  │ SHEJANE_LOCAL_ │ Result lands in `state["reflection"]["critic"]`.    │
   │ CRITIC=1         │ Caller decides whether to surface to the user.       │
   └──────────────────┴──────────────────────────────────────────────────────┘
 
@@ -72,7 +72,7 @@ class ReflectMiddleware(AgentMiddleware):
 
         import os
 
-        if os.environ.get("JIANDANLY_LOCAL_CRITIC", "").lower() not in {"1", "true", "yes"}:
+        if os.environ.get("SHEJANE_LOCAL_CRITIC", "").lower() not in {"1", "true", "yes"}:
             return stats
 
         critic_result = await self._run_critic(state, runtime)

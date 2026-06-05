@@ -1196,7 +1196,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jiandanly-local-host"
+name = "shejane-local-host"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

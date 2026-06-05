@@ -37,18 +37,18 @@ def test_configure_logging_is_idempotent() -> None:
 
 
 def test_is_disabled_respects_env(monkeypatch: Any) -> None:
-    monkeypatch.delenv("JIANDANLY_DISABLE_OBSERVABILITY", raising=False)
+    monkeypatch.delenv("SHEJANE_DISABLE_OBSERVABILITY", raising=False)
     assert is_disabled() is False
-    monkeypatch.setenv("JIANDANLY_DISABLE_OBSERVABILITY", "1")
+    monkeypatch.setenv("SHEJANE_DISABLE_OBSERVABILITY", "1")
     assert is_disabled() is True
-    monkeypatch.setenv("JIANDANLY_DISABLE_OBSERVABILITY", "true")
+    monkeypatch.setenv("SHEJANE_DISABLE_OBSERVABILITY", "true")
     assert is_disabled() is True
-    monkeypatch.setenv("JIANDANLY_DISABLE_OBSERVABILITY", "0")
+    monkeypatch.setenv("SHEJANE_DISABLE_OBSERVABILITY", "0")
     assert is_disabled() is False
 
 
 def test_build_callbacks_returns_observer_by_default(monkeypatch: Any) -> None:
-    monkeypatch.delenv("JIANDANLY_DISABLE_OBSERVABILITY", raising=False)
+    monkeypatch.delenv("SHEJANE_DISABLE_OBSERVABILITY", raising=False)
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     callbacks = build_callbacks()
@@ -57,14 +57,14 @@ def test_build_callbacks_returns_observer_by_default(monkeypatch: Any) -> None:
 
 
 def test_build_callbacks_empty_when_disabled(monkeypatch: Any) -> None:
-    monkeypatch.setenv("JIANDANLY_DISABLE_OBSERVABILITY", "1")
+    monkeypatch.setenv("SHEJANE_DISABLE_OBSERVABILITY", "1")
     assert build_callbacks() == []
 
 
 def test_build_callbacks_skips_langfuse_when_sdk_missing(monkeypatch: Any) -> None:
     """If credentials are set but the langfuse SDK isn't installed, we should
     log a warning but still return the daemon observer."""
-    monkeypatch.delenv("JIANDANLY_DISABLE_OBSERVABILITY", raising=False)
+    monkeypatch.delenv("SHEJANE_DISABLE_OBSERVABILITY", raising=False)
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk_test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk_test")
     callbacks = build_callbacks()

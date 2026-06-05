@@ -33,7 +33,7 @@ def _patched_async_client(handler):
 
 def test_disabled_by_default(monkeypatch) -> None:
     """tool_selector_max_tools defaults to 0 ⇒ middleware not added."""
-    monkeypatch.delenv("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_TOOL_SELECTOR_MAX", raising=False)
     from local_host.config import Settings
 
     s = Settings()
@@ -41,7 +41,7 @@ def test_disabled_by_default(monkeypatch) -> None:
 
 
 def test_enabled_via_env(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX", "8")
+    monkeypatch.setenv("SHEJANE_LOCAL_TOOL_SELECTOR_MAX", "8")
     from local_host.config import Settings
 
     s = Settings()
@@ -59,8 +59,8 @@ def test_selector_appears_in_middleware_when_enabled(monkeypatch, tmp_path) -> N
     from local_host.agent.builder import _custom_middleware
     from local_host.config import Settings
 
-    monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX", "8")
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.setenv("SHEJANE_LOCAL_TOOL_SELECTOR_MAX", "8")
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
 
     s = Settings()
     # _custom_middleware itself doesn't include the selector (it's added
@@ -106,10 +106,10 @@ def test_e2e_happy_path_with_selector_enabled(monkeypatch) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-sel-"))
     import os as _os
 
-    _os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    _os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setenv("JIANDANLY_LOCAL_TOOL_SELECTOR_MAX", "4")
+    monkeypatch.setenv("SHEJANE_LOCAL_TOOL_SELECTOR_MAX", "4")
 
     # Selector calls the LLM first asking which tools to keep — we
     # return a minimal "use these" structured response; the main model
@@ -125,9 +125,9 @@ def test_e2e_happy_path_with_selector_enabled(monkeypatch) -> None:
 
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
         tool_selector_max_tools=4,
     )

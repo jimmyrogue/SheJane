@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/app"
-	"github.com/coldflame/jiandanly/api/internal/config"
-	"github.com/coldflame/jiandanly/api/internal/e2b"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/app"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/e2b"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 // newCodeExecTestServer wires a fake E2B HTTP server into the App, so

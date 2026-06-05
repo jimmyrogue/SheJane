@@ -1,8 +1,6 @@
 """Daemon configuration loaded from environment.
 
-All env vars use the `JIANDANLY_LOCAL_` prefix to match the existing Node
-daemon's convention so Electron can keep using the same env names during
-the cutover.
+All env vars use the `SHEJANE_LOCAL_` prefix.
 """
 
 from __future__ import annotations
@@ -16,16 +14,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="JIANDANLY_LOCAL_",
+        env_prefix="SHEJANE_LOCAL_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # HTTP server
-    host: str = Field(default="127.0.0.1", alias="JIANDANLY_LOCAL_HOST_ADDR")
-    port: int = Field(default=17371, alias="JIANDANLY_LOCAL_HOST_PORT")
-    pairing_token: str = Field(default="", alias="JIANDANLY_LOCAL_HOST_TOKEN")
+    host: str = Field(default="127.0.0.1", alias="SHEJANE_LOCAL_HOST_ADDR")
+    port: int = Field(default=17371, alias="SHEJANE_LOCAL_HOST_PORT")
+    pairing_token: str = Field(default="", alias="SHEJANE_LOCAL_HOST_TOKEN")
 
     # Storage
     data_dir: Path = Field(default=Path.home() / ".shejane" / "local-host")
@@ -36,9 +34,9 @@ class Settings(BaseSettings):
     # Cloud backend (Phase 1 SSE LLM endpoint)
     cloud_base_url: str = Field(
         default="http://127.0.0.1:8080",
-        alias="JIANDANLY_CLOUD_BASE_URL",
+        alias="SHEJANE_CLOUD_BASE_URL",
     )
-    cloud_token: str = Field(default="", alias="JIANDANLY_CLOUD_TOKEN")
+    cloud_token: str = Field(default="", alias="SHEJANE_CLOUD_TOKEN")
 
     # Agent runtime knobs
     max_model_calls: int = 20
@@ -59,7 +57,7 @@ class Settings(BaseSettings):
     # ModelFallbackMiddleware not added.
     fallback_models: str = Field(
         default="",
-        alias="JIANDANLY_LOCAL_FALLBACK_MODELS",
+        alias="SHEJANE_LOCAL_FALLBACK_MODELS",
     )
 
     # Comma-separated list of PII types to detect + redact. Empty ⇒
@@ -67,7 +65,7 @@ class Settings(BaseSettings):
     # mac_address, url. Example: "credit_card,email"
     pii_redact_types: str = Field(
         default="",
-        alias="JIANDANLY_LOCAL_PII_REDACT",
+        alias="SHEJANE_LOCAL_PII_REDACT",
     )
 
     # Comma-separated AGENTS.md paths (or directories containing them) that
@@ -76,7 +74,7 @@ class Settings(BaseSettings):
     #   "~/.shejane/AGENTS.md,/path/to/project/AGENTS.md"
     memory_sources: str = Field(
         default="",
-        alias="JIANDANLY_LOCAL_MEMORY_PATHS",
+        alias="SHEJANE_LOCAL_MEMORY_PATHS",
     )
 
     # LLM-driven tool preselection. When the agent has many tools (we ship
@@ -85,7 +83,7 @@ class Settings(BaseSettings):
     # Set to e.g. 8 to enable filtering down to 8 most-relevant tools.
     tool_selector_max_tools: int = Field(
         default=0,
-        alias="JIANDANLY_LOCAL_TOOL_SELECTOR_MAX",
+        alias="SHEJANE_LOCAL_TOOL_SELECTOR_MAX",
     )
 
     # Mid-loop tool-result critic mode. After each watched tool returns,
@@ -96,7 +94,7 @@ class Settings(BaseSettings):
     #   block  — replace ToolMessage with "retry" signal when unusable
     tool_critic_mode: str = Field(
         default="off",
-        alias="JIANDANLY_LOCAL_TOOL_CRITIC",
+        alias="SHEJANE_LOCAL_TOOL_CRITIC",
     )
 
     # Reflection: when enabled, ReflectMiddleware after_agent runs a real
@@ -104,13 +102,13 @@ class Settings(BaseSettings):
     # Default off — keeps current statistics-only behavior.
     enable_critic_reflection: bool = Field(
         default=False,
-        alias="JIANDANLY_LOCAL_CRITIC",
+        alias="SHEJANE_LOCAL_CRITIC",
     )
 
     @field_validator("enable_critic_reflection", mode="before")
     @classmethod
     def _coerce_bool_env(cls, value: Any) -> Any:
-        # `JIANDANLY_LOCAL_CRITIC=` (empty string) is a common shape in
+        # `SHEJANE_LOCAL_CRITIC=` (empty string) is a common shape in
         # .env files where the key exists as documentation but the user
         # hasn't opted in. Pydantic's default bool parser rejects empty
         # strings — that crashes daemon startup AND the test suite. Map

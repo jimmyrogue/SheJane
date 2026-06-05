@@ -51,7 +51,7 @@ import type { Conversation } from '@/shared/local-data/types'
 
 type ConversationSidebarStatus = 'needs_attention' | 'running'
 
-const seenConversationVersionsStorageKey = 'jiandanly.sidebar.seenConversationVersions.v1'
+const seenConversationVersionsStorageKey = 'shejane.sidebar.seenConversationVersions.v1'
 
 export function ConversationSidebar({
   conversations,

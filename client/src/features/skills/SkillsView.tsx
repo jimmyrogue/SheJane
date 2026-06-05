@@ -19,7 +19,7 @@ export interface SkillsViewProps {
 }
 
 // Section ordering + display labels. Anything not in the map keeps its raw
-// source string as the header — covers custom JIANDANLY_LOCAL_SKILLS_PATH
+// source string as the header — covers custom SHEJANE_LOCAL_SKILLS_PATH
 // overrides without code changes.
 const SECTION_ORDER: readonly string[] = ['claude', 'shejane']
 const SECTION_LABEL: Record<string, { zh: string; en: string }> = {

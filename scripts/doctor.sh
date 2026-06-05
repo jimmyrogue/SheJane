@@ -63,7 +63,7 @@ else
     if echo "$HEALTH_JSON" | grep -q '"pairing_configured":true'; then
       row "✅" "pairing token configured" ""
     else
-      row "⚠️" "no pairing token" "JIANDANLY_LOCAL_HOST_TOKEN empty"
+      row "⚠️" "no pairing token" "SHEJANE_LOCAL_HOST_TOKEN empty"
     fi
   else
     row "❌" "health endpoint" "/local/v1/health didn't respond"
@@ -88,7 +88,7 @@ else
   # Cloud session paired? Required for any tool that proxies through
   # /api/v1/agent/tools/execute (image.*, web.search).
   SESSION_JSON="$(curl -fsS --max-time 2 \
-    -H "Authorization: Bearer ${JIANDANLY_LOCAL_HOST_TOKEN:-dev-local-token}" \
+    -H "Authorization: Bearer ${SHEJANE_LOCAL_HOST_TOKEN:-dev-local-token}" \
     http://127.0.0.1:17371/local/v1/session 2>/dev/null || true)"
   if echo "$SESSION_JSON" | grep -q '"connected":true'; then
     row "✅" "cloud session paired" "image.*/web.search will work"
@@ -99,8 +99,8 @@ fi
 
 # ---------------------------------------------------------------------------
 section "☁️  Cloud API (port 8080)"
-if curl -fsS --max-time 2 "${JIANDANLY_CLOUD_BASE_URL:-http://localhost:8080}/health" >/dev/null 2>&1; then
-  row "✅" "reachable" "${JIANDANLY_CLOUD_BASE_URL:-http://localhost:8080}/health"
+if curl -fsS --max-time 2 "${SHEJANE_CLOUD_BASE_URL:-http://localhost:8080}/health" >/dev/null 2>&1; then
+  row "✅" "reachable" "${SHEJANE_CLOUD_BASE_URL:-http://localhost:8080}/health"
 else
   row "❌" "down" "→ docker compose up -d (or check api-1 container logs)"
 fi

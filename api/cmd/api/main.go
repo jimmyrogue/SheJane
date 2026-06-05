@@ -5,10 +5,10 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/coldflame/jiandanly/api/internal/app"
-	"github.com/coldflame/jiandanly/api/internal/config"
-	"github.com/coldflame/jiandanly/api/internal/httpapi"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/app"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/httpapi"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 func main() {

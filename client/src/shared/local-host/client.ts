@@ -75,12 +75,12 @@ export interface LocalStreamHandlers {
 
 type Fetcher = typeof fetch
 
-export function getDesktopLocalHostConfig(bridge: DesktopBridge | undefined = window.jiandanDesktop): LocalHostConfig | undefined {
+export function getDesktopLocalHostConfig(bridge: DesktopBridge | undefined = window.shejaneDesktop): LocalHostConfig | undefined {
   const baseURL = bridge?.localHost?.baseURL?.trim()
   if (!baseURL) {
     return undefined
   }
-  const token = bridge?.localHost?.token?.trim() || import.meta.env.VITE_JIANDANLY_LOCAL_HOST_TOKEN?.trim()
+  const token = bridge?.localHost?.token?.trim() || import.meta.env.VITE_SHEJANE_LOCAL_HOST_TOKEN?.trim()
   return {
     baseURL,
     token: token || undefined,
@@ -183,7 +183,7 @@ export interface InstalledSkill {
   path: string
   /** Friendly label for the root this skill was discovered in:
    *  "shejane" for `~/.shejane/skills/`, "claude" for `~/.claude/skills/`,
-   *  or the last segment for a custom `JIANDANLY_LOCAL_SKILLS_PATH`. */
+   *  or the last segment for a custom `SHEJANE_LOCAL_SKILLS_PATH`. */
   source?: string
   /** Absolute path of the root directory itself, e.g.
    *  "/Users/x/.shejane/skills". Used to open the folder in Finder. */

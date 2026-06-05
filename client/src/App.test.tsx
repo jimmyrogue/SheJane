@@ -38,7 +38,7 @@ describe('user client shell', () => {
     Object.defineProperty(globalThis, 'indexedDB', { value: freshIndexedDB, configurable: true })
     Object.defineProperty(window, 'indexedDB', { value: freshIndexedDB, configurable: true })
     localStorage.clear()
-    window.jiandanDesktop = undefined
+    window.shejaneDesktop = undefined
     recordedUploadCalls.length = 0
   })
 
@@ -100,7 +100,7 @@ describe('user client shell', () => {
 
     fireEvent.keyDown(resizeHandle, { key: 'End' })
     expect(shell.style.getPropertyValue('--sidebar-width')).toBe('340px')
-    await waitFor(() => expect(localStorage.getItem('jiandanly.sidebar.width.v1')).toBe('340'))
+    await waitFor(() => expect(localStorage.getItem('shejane.sidebar.width.v1')).toBe('340'))
 
     // Collapsing is now a separate state (data-collapsed) rather than a width clamp.
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
@@ -119,7 +119,7 @@ describe('user client shell', () => {
         status: 'active',
       },
     })
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       auth: {
         register: vi.fn(),
@@ -140,7 +140,7 @@ describe('user client shell', () => {
   it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
     const calls = mockFetch('user')
     const refresh = vi.fn().mockRejectedValue(new Error('expired'))
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       auth: {
         register: vi.fn(),
@@ -184,7 +184,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'English' }))
 
     expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
-    expect(localStorage.getItem('jiandanly.locale')).toBe('en')
+    expect(localStorage.getItem('shejane.locale')).toBe('en')
 
     unmount()
     render(<App />)
@@ -192,7 +192,7 @@ describe('user client shell', () => {
     expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '中文' }))
     expect(screen.getByRole('heading', { name: '创建你的账号' })).toBeInTheDocument()
-    expect(localStorage.getItem('jiandanly.locale')).toBe('zh')
+    expect(localStorage.getItem('shejane.locale')).toBe('zh')
   })
 
   // SKIPPED: the global topbar "更多" menu (language switch, host status,
@@ -344,7 +344,7 @@ describe('user client shell', () => {
   it('keeps a new chat active when an older local harness stream updates after permission waiting', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -397,7 +397,7 @@ describe('user client shell', () => {
     Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
     Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -417,7 +417,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('Fast agent')).not.toBeInTheDocument()
     expect(screen.queryByText('Local Harness')).not.toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
-    await bindWorkspace('/tmp/jiandanly-workspace')
+    await bindWorkspace('/tmp/shejane-workspace')
     typeComposer('运行本地检查')
     fireEvent.click(screen.getByText('发送'))
 
@@ -447,7 +447,7 @@ describe('user client shell', () => {
     expect(calls.some((call) =>
       call.url === 'http://127.0.0.1:17371/local/v1/runs'
       && call.init?.method === 'POST'
-      && call.init.body === JSON.stringify({ goal: '运行本地检查', workspace_path: '/tmp/jiandanly-workspace' }),
+      && call.init.body === JSON.stringify({ goal: '运行本地检查', workspace_path: '/tmp/shejane-workspace' }),
     )).toBe(true)
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/diagnostics')).toBe(true)
     expect(calls.some((call) =>
@@ -463,7 +463,7 @@ describe('user client shell', () => {
   // confirmation on where local status now surfaces.
   it.skip('syncs the cloud login session into the paired Local Harness and shows local status in the topbar menu', async () => {
     const calls = mockFetch('user')
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -499,7 +499,7 @@ describe('user client shell', () => {
   // against the new local-run timeline pending product confirmation.
   it.skip('previews local artifacts from the agent timeline', async () => {
     mockFetch('user')
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -513,7 +513,7 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    await bindWorkspace('/tmp/jiandanly-workspace')
+    await bindWorkspace('/tmp/shejane-workspace')
     typeComposer('读取大文件')
     fireEvent.click(screen.getByText('发送'))
 
@@ -530,7 +530,7 @@ describe('user client shell', () => {
   // this test if/when the workspace picker UI returns.
   it.skip('authorizes a picked Electron workspace before creating local runs', async () => {
     const calls = mockFetch('user')
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -571,7 +571,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user', {
       workspaces: [{ id: 'workspace-1', path: '/tmp/project', label: 'project' }],
     })
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -610,7 +610,7 @@ describe('user client shell', () => {
         },
       ],
     })
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
@@ -680,7 +680,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user', {
       workspaces: [{ id: 'workspace-one', path: '/tmp/one', label: 'one' }],
     })
-    window.jiandanDesktop = {
+    window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',

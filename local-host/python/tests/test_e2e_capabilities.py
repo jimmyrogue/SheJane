@@ -79,14 +79,14 @@ def _patched_async_client(handler):
 
 def _make_client(monkeypatch, handler) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-e2e-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -453,7 +453,7 @@ def test_capability_3_anthropic_caching_marks_messages_with_cache_control(
 
     # AnthropicPromptCachingMiddleware is configured with
     # unsupported_model_behavior='ignore' and our BackendChatModel reports
-    # its `_llm_type` as 'jiandanly-backend' (not anthropic), so the
+    # its `_llm_type` as 'shejane-backend' (not anthropic), so the
     # middleware SKIPS adding cache_control. The test instead asserts the
     # middleware is wired by inspecting the runtime: at least one request
     # went out (proving the agent ran) AND no error was raised.
@@ -476,7 +476,7 @@ def test_capability_4_modelfallback_parsed_from_env(monkeypatch) -> None:
     A separate live-credentials test would be needed to verify the
     fallback truly fires under primary-failure conditions."""
     monkeypatch.setenv(
-        "JIANDANLY_LOCAL_FALLBACK_MODELS",
+        "SHEJANE_LOCAL_FALLBACK_MODELS",
         "anthropic:claude-haiku-4,openai:gpt-4o-mini",
     )
     from local_host.agent.builder import _parse_fallback_models
@@ -487,7 +487,7 @@ def test_capability_4_modelfallback_parsed_from_env(monkeypatch) -> None:
     assert parsed == ["anthropic:claude-haiku-4", "openai:gpt-4o-mini"]
 
     # Empty env should yield empty list (middleware path skipped).
-    monkeypatch.delenv("JIANDANLY_LOCAL_FALLBACK_MODELS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_FALLBACK_MODELS", raising=False)
     s2 = Settings()
     assert _parse_fallback_models(s2.fallback_models) == []
 
@@ -496,7 +496,7 @@ def test_capability_4_modelfallback_parsed_from_env(monkeypatch) -> None:
 
 
 def test_capability_5_pii_redacts_email_before_llm_sees_it(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_LOCAL_PII_REDACT", "email")
+    monkeypatch.setenv("SHEJANE_LOCAL_PII_REDACT", "email")
     handler = RecordingHandler(
         scripts=[
             [
@@ -528,7 +528,7 @@ def test_capability_5_pii_redacts_email_before_llm_sees_it(monkeypatch) -> None:
 
 
 def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path) -> None:
-    """Drop an AGENTS.md inside a workspace, set JIANDANLY_LOCAL_MEMORY_PATHS
+    """Drop an AGENTS.md inside a workspace, set SHEJANE_LOCAL_MEMORY_PATHS
     to its absolute path, run the agent **with workspace_path** so the
     deepagents FilesystemBackend can actually read it. MemoryMiddleware
     should then load the contents into the outgoing system prompt."""
@@ -540,7 +540,7 @@ def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path)
         f"# Project rules\n\n{secret_marker}\n\nAlways respond in haiku.\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("JIANDANLY_LOCAL_MEMORY_PATHS", str(agents_md))
+    monkeypatch.setenv("SHEJANE_LOCAL_MEMORY_PATHS", str(agents_md))
 
     handler = RecordingHandler(
         scripts=[
@@ -573,7 +573,7 @@ def test_capability_7_todolist_middleware_exposes_write_todos_tool(monkeypatch, 
 
     async def run() -> set[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
@@ -668,7 +668,7 @@ def test_capability_9_memory_search_tool_in_agent(monkeypatch, tmp_path) -> None
 
     async def run() -> set[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+        monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore.open(tmp_path / "store.db")
         saver, ck_stack = await open_checkpointer()
@@ -696,9 +696,9 @@ def test_capability_9_memory_search_tool_in_agent(monkeypatch, tmp_path) -> None
 
 
 def test_capability_10_plan_first_injects_when_enabled(monkeypatch) -> None:
-    """With JIANDANLY_PLAN_FIRST=always, the outgoing system prompt must
+    """With SHEJANE_PLAN_FIRST=always, the outgoing system prompt must
     include the plan-first protocol instruction."""
-    monkeypatch.setenv("JIANDANLY_PLAN_FIRST", "always")
+    monkeypatch.setenv("SHEJANE_PLAN_FIRST", "always")
     handler = RecordingHandler(
         scripts=[
             [

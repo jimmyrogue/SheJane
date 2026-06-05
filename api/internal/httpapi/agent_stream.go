@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 // agentLLMStream is the SSE-streaming counterpart to agentLLMGateway.

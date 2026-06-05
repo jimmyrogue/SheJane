@@ -77,7 +77,7 @@ class BackendChatModel(BaseChatModel):
 
     @property
     def _llm_type(self) -> str:
-        return "jiandanly-backend"
+        return "shejane-backend"
 
     def bind_tools(
         self,

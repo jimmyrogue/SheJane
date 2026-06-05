@@ -1,4 +1,4 @@
-module github.com/coldflame/jiandanly/api
+module github.com/coldflame/shejane/api
 
 go 1.25.0
 

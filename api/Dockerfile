@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /out/jiandanly-api ./cmd/api
+RUN go build -o /out/shejane-api ./cmd/api
 
 FROM alpine:3.21
 # poppler-utils → pdftotext + pdfinfo, used by
@@ -20,9 +20,9 @@ FROM alpine:3.21
 # clean tool-error envelope if a binary is absent — so a build
 # without these only degrades features, never crashes.
 RUN apk add --no-cache poppler-utils pdfgrep
-RUN adduser -D -H jiandan
-USER jiandan
+RUN adduser -D -H shejane
+USER shejane
 WORKDIR /app
-COPY --from=build /out/jiandanly-api /app/jiandanly-api
+COPY --from=build /out/shejane-api /app/shejane-api
 EXPOSE 8080
-CMD ["/app/jiandanly-api"]
+CMD ["/app/shejane-api"]

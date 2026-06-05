@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/billing"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/billing"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 type toolCapability struct {

@@ -21,7 +21,7 @@ export function AuthScreen({ authClient, onAuthed }: { authClient: AuthClient; o
   const [acceptedTerms, setAcceptedTerms] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const pageClassName = window.jiandanDesktop ? 'auth-page electron-auth-page' : 'auth-page'
+  const pageClassName = window.shejaneDesktop ? 'auth-page electron-auth-page' : 'auth-page'
   const isRegistering = mode === 'register'
   const emailLooksValid = isValidEmail(email)
 

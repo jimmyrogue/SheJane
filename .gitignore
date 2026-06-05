@@ -73,7 +73,7 @@ out/
 
 # Go build/test artifacts
 api/api
-api/jiandanly-api
+api/shejane-api
 *.test
 *.prof
 coverage.out

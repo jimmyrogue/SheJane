@@ -12,7 +12,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 // SessionConfig captures the timing knobs that govern when a sandbox

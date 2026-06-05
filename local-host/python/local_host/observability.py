@@ -16,7 +16,7 @@ Optional integrations
 - `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` set ⇒ a `langfuse` callback
   is added alongside `DaemonObserver` automatically (vendor SDK must be
   installed separately; we don't pin it to keep the default footprint small).
-- `JIANDANLY_DISABLE_OBSERVABILITY=1` turns the whole layer into no-ops —
+- `SHEJANE_DISABLE_OBSERVABILITY=1` turns the whole layer into no-ops —
   useful for benchmarking the cold-path overhead.
 
 The handler is intentionally lightweight: each event becomes one log line.
@@ -92,7 +92,7 @@ def configure_logging(*, json_output: bool | None = None) -> None:
 
 
 def is_disabled() -> bool:
-    return os.environ.get("JIANDANLY_DISABLE_OBSERVABILITY", "").lower() in {
+    return os.environ.get("SHEJANE_DISABLE_OBSERVABILITY", "").lower() in {
         "1",
         "true",
         "yes",

@@ -129,7 +129,7 @@ def _resolve_skills_dirs() -> list[Path]:
     We deliberately accept multiple roots so the agent can see skills
     from several ecosystems at once:
 
-      1. `JIANDANLY_LOCAL_SKILLS_PATH` env var (comma-separated for
+      1. `SHEJANE_LOCAL_SKILLS_PATH` env var (comma-separated for
          multiple paths) — full override; when set, the defaults below
          are NOT consulted.
       2. Defaults (used when the env var is unset):
@@ -141,7 +141,7 @@ def _resolve_skills_dirs() -> list[Path]:
     Each entry is a `Path` that exists and is a directory. Missing
     paths are silently dropped so an unset Claude install doesn't error.
     """
-    custom = os.environ.get("JIANDANLY_LOCAL_SKILLS_PATH", "").strip()
+    custom = os.environ.get("SHEJANE_LOCAL_SKILLS_PATH", "").strip()
     if custom:
         raw_paths = [p.strip() for p in custom.split(",") if p.strip()]
     else:
@@ -216,11 +216,11 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
     middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(),  # P1
         FastDeepRouterMiddleware(),  # P2
-        # Plan & Execute mode (env JIANDANLY_PLAN_FIRST: off | always | auto).
+        # Plan & Execute mode (env SHEJANE_PLAN_FIRST: off | always | auto).
         # auto-skips trivial tasks; default off.
         PlanFirstMiddleware(),
     ]
-    # PII redaction (opt-in via JIANDANLY_LOCAL_PII_REDACT). One
+    # PII redaction (opt-in via SHEJANE_LOCAL_PII_REDACT). One
     # PIIMiddleware instance per PII type — they compose cleanly.
     for pii_type in _parse_pii_types(settings.pii_redact_types):
         middleware.append(
@@ -534,7 +534,7 @@ def _active_skill_names(skills_arg: list[str] | None) -> list[str]:
 
 
 def _resolve_memory_sources(settings: Settings) -> list[str] | None:
-    """Parse JIANDANLY_LOCAL_MEMORY_PATHS (comma-separated paths) into the
+    """Parse SHEJANE_LOCAL_MEMORY_PATHS (comma-separated paths) into the
     `memory=` argument of `create_deep_agent`. Each path is typically an
     `AGENTS.md` file or a directory of such files — `MemoryMiddleware`
     loads them into the system prompt at run start.

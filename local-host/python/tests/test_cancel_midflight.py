@@ -48,8 +48,8 @@ async def _slow_astream(self, messages, stop=None, run_manager=None, **kwargs):
 @pytest.fixture
 def slow_client(monkeypatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-cancel-"))
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     # Patch the LLM stream to be artificially slow so cancel can interrupt.
@@ -59,9 +59,9 @@ def slow_client(monkeypatch) -> TestClient:
     )
 
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)

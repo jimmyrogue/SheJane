@@ -6,11 +6,11 @@ import type { ChatAPI } from '../../shared/api/client'
 
 describe('chat store', () => {
   beforeEach(() => {
-    indexedDB.deleteDatabase('jiandanly-chat-test')
+    indexedDB.deleteDatabase('shejane-chat-test')
   })
 
   it('creates local messages before streaming and persists assistant deltas', async () => {
-    const localData = new LocalConversationStore('jiandanly-chat-test-stream')
+    const localData = new LocalConversationStore('shejane-chat-test-stream')
     const api: ChatAPI = {
       createAgentRun: async (request) => {
         expect(request.goal).toBe('写一封客户跟进邮件')
@@ -47,7 +47,7 @@ describe('chat store', () => {
   })
 
   it('streams attached document questions through the same agent run protocol', async () => {
-    const localData = new LocalConversationStore('jiandanly-chat-test-document')
+    const localData = new LocalConversationStore('shejane-chat-test-document')
     const api: ChatAPI = {
       createAgentRun: async (request) => {
         expect(request.goal).toBe('总结这份材料')

@@ -18,10 +18,10 @@ jobs:
     # secret, Tavily key, S3 creds). Without this guard the scheduled
     # job runs on every fork and fails red daily for contributors who
     # have none of those secrets configured.
-    if: github.repository == 'jimmyrogue/Jiandanly'
+    if: github.repository == 'jimmyrogue/SheJane'
     env:
       RUN_EXTERNAL_SMOKE: "1"
-      API_BASE_URL: ${{ secrets.JIANDANLY_API_BASE_URL }}
+      API_BASE_URL: ${{ secrets.SHEJANE_API_BASE_URL }}
       STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
     steps:
       - name: Checkout

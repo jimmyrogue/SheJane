@@ -1,4 +1,4 @@
-import type { AuthPayload, JiandanAPI } from './client'
+import type { AuthPayload, SheJaneAPI } from './client'
 
 export interface AuthClient {
   register(input: { email: string; password: string; name: string }): Promise<AuthPayload>
@@ -10,7 +10,7 @@ export interface AuthClient {
 export type ElectronAuthBridge = AuthClient
 
 export function createAuthClient(
-  api: Pick<JiandanAPI, 'register' | 'login' | 'refresh' | 'logout'>,
+  api: Pick<SheJaneAPI, 'register' | 'login' | 'refresh' | 'logout'>,
   bridge: ElectronAuthBridge | undefined = desktopAuthBridge(),
 ): AuthClient {
   return {
@@ -22,5 +22,5 @@ export function createAuthClient(
 }
 
 function desktopAuthBridge(): ElectronAuthBridge | undefined {
-  return typeof window === 'undefined' ? undefined : window.jiandanDesktop?.auth
+  return typeof window === 'undefined' ? undefined : window.shejaneDesktop?.auth
 }

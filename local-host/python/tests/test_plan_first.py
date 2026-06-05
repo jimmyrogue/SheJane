@@ -15,26 +15,26 @@ from local_host.middleware.plan_first import (
 
 
 def test_mode_off_by_default(monkeypatch) -> None:
-    monkeypatch.delenv("JIANDANLY_PLAN_FIRST", raising=False)
+    monkeypatch.delenv("SHEJANE_PLAN_FIRST", raising=False)
     mw = PlanFirstMiddleware()
     assert mw.mode == "off"
 
 
 def test_mode_always_synonyms(monkeypatch) -> None:
     for val in ("1", "true", "yes", "on", "always", "ALWAYS"):
-        monkeypatch.setenv("JIANDANLY_PLAN_FIRST", val)
+        monkeypatch.setenv("SHEJANE_PLAN_FIRST", val)
         mw = PlanFirstMiddleware()
         assert mw.mode == "always", f"value {val!r} should map to always"
 
 
 def test_mode_auto(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_PLAN_FIRST", "auto")
+    monkeypatch.setenv("SHEJANE_PLAN_FIRST", "auto")
     mw = PlanFirstMiddleware()
     assert mw.mode == "auto"
 
 
 def test_mode_explicit_constructor_overrides_env(monkeypatch) -> None:
-    monkeypatch.setenv("JIANDANLY_PLAN_FIRST", "off")
+    monkeypatch.setenv("SHEJANE_PLAN_FIRST", "off")
     mw = PlanFirstMiddleware(mode="always")
     assert mw.mode == "always"
 

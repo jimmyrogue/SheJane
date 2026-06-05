@@ -2,7 +2,7 @@
 
 Compatible shape with the Node daemon:
 - `Authorization: Bearer <token>` (preferred)
-- `X-Jiandanly-Local-Token: <token>` (fallback)
+- `X-SheJane-Local-Token: <token>` (fallback)
 
 `/v1/health` is exempt so Electron can probe readiness without configuring
 auth first.
@@ -54,7 +54,7 @@ def _extract_token(request: Request) -> str | None:
     if auth_header and auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
 
-    direct = request.headers.get("X-Jiandanly-Local-Token")
+    direct = request.headers.get("X-SheJane-Local-Token")
     if direct:
         return direct.strip()
 

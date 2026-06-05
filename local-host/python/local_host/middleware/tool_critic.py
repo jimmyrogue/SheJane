@@ -13,7 +13,7 @@ original task?" If not, we either:
   - replace the ToolMessage entirely with a "retry with different
     approach" signal (mode='block').
 
-Modes (env `JIANDANLY_LOCAL_TOOL_CRITIC`):
+Modes (env `SHEJANE_LOCAL_TOOL_CRITIC`):
   off       — middleware not added (default)
   watch     — run critic + log verdict but don't mutate the ToolMessage
   nudge     — prepend ⚠️ warning when verdict.usable == false
@@ -86,7 +86,7 @@ class ToolResultCriticMiddleware(AgentMiddleware):
 
     @staticmethod
     def _resolve_mode(explicit: str | None) -> str:
-        raw = (explicit or os.environ.get("JIANDANLY_LOCAL_TOOL_CRITIC", "off")).lower().strip()
+        raw = (explicit or os.environ.get("SHEJANE_LOCAL_TOOL_CRITIC", "off")).lower().strip()
         if raw in {"watch", "nudge", "block"}:
             return raw
         return "off"

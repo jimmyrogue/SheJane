@@ -36,10 +36,10 @@ lsof -i :17371 2>/dev/null  # confirm port is free
 (
   set -a; source .env; set +a
   cd local-host/python
-  JIANDANLY_LOCAL_HOST_TOKEN="${JIANDANLY_LOCAL_HOST_TOKEN:-dev-local-token}" \
-  JIANDANLY_LOCAL_HOST_PORT=17371 \
-  JIANDANLY_LOCAL_HOST_URL=http://127.0.0.1:17371 \
-  JIANDANLY_CLOUD_BASE_URL=http://localhost:8080 \
+  SHEJANE_LOCAL_HOST_TOKEN="${SHEJANE_LOCAL_HOST_TOKEN:-dev-local-token}" \
+  SHEJANE_LOCAL_HOST_PORT=17371 \
+  SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
+  SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
   PYTHONUNBUFFERED=1 \
   nohup uv run python -m local_host > /tmp/local-host.log 2>&1 &
   echo "respawned pid $!"
@@ -64,5 +64,5 @@ ls -la --time=mtime local-host/python/local_host/server.py | awk '{print "server
 
 - Don't use `pkill -f 'python -m local_host'` alone — we've seen processes survive that. Always use the `lsof -ti :17371 | xargs kill -9` pattern.
 - Don't restart from within `make dev-electron`'s child process — that's how stragglers happen in the first place.
-- Don't forget to source `.env` — without it the daemon comes up with default values for `LANGSMITH_*` / `JIANDANLY_LOCAL_TOOL_CRITIC` / etc., which look "working" but disable observability silently.
+- Don't forget to source `.env` — without it the daemon comes up with default values for `LANGSMITH_*` / `SHEJANE_LOCAL_TOOL_CRITIC` / etc., which look "working" but disable observability silently.
 - Don't kill the Docker postgres container or the Electron app — they're independent of the daemon.

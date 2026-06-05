@@ -67,7 +67,7 @@ Common bugs:
 - `agentToolExecuteResult.Usage` (the API's response) — does the daemon record it? Is it reconcilable with what Stripe saw? Spot-check by running:
 
   ```bash
-  docker compose exec postgres psql -U jiandanly -d jiandanly -c \
+  docker compose exec postgres psql -U shejane -d shejane -c \
     "SELECT request_id, input_tokens, output_tokens, credits_cost FROM llm_call_records ORDER BY started_at DESC LIMIT 10"
   ```
 

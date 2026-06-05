@@ -32,7 +32,7 @@ def _make_docx(path: Path) -> None:
 @pytest.fixture
 def client(monkeypatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-wsfiles-"))
-    monkeypatch.delenv("JIANDANLY_LOCAL_MCP_SERVERS", raising=False)
+    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
 
     # Mock backend AsyncClient so RunCoordinator startup doesn't try to
     # phone home during lifespan setup (it doesn't here, but stays
@@ -48,11 +48,11 @@ def client(monkeypatch) -> TestClient:
             )
 
     monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _Patched)
-    os.environ["JIANDANLY_LOCAL_HOST_TOKEN"] = "tok"
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     settings = reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_ADDR="127.0.0.1",
-        JIANDANLY_LOCAL_HOST_PORT=17371,
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
         data_dir=tmp,
     )
     app = create_app(settings)

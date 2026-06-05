@@ -31,7 +31,7 @@ export async function installClientMocks(page: Page, options: { localHost?: bool
   if (options.localHost) {
     await page.addInitScript({
       content: `
-        window.jiandanDesktop = {
+        window.shejaneDesktop = {
           platform: 'darwin',
           localHost: {
             baseURL: 'http://127.0.0.1:17371',
@@ -440,7 +440,7 @@ function corsHeaders(route?: Route): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Jiandanly-Local-Token',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-SheJane-Local-Token',
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS, PUT',
   }
 }

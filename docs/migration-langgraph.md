@@ -78,14 +78,14 @@ from langchain.agents.middleware import (
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite import SqliteStore
 
-from pyjiandanly.middleware.input_guard import InputGuardMiddleware       # P1
-from pyjiandanly.middleware.router import FastDeepRouterMiddleware        # P2
-from pyjiandanly.middleware.skills import SkillInjectionMiddleware        # P7
-from pyjiandanly.middleware.output_guard import OutputGuardMiddleware     # P9
-from pyjiandanly.middleware.reflect import ReflectMiddleware              # P4
-from pyjiandanly.middleware.memory import MemoryWritebackMiddleware       # P6
-from pyjiandanly.tools.registry import all_tools
-from pyjiandanly.llm.backend import BackendChatModel
+from pyshejane.middleware.input_guard import InputGuardMiddleware       # P1
+from pyshejane.middleware.router import FastDeepRouterMiddleware        # P2
+from pyshejane.middleware.skills import SkillInjectionMiddleware        # P7
+from pyshejane.middleware.output_guard import OutputGuardMiddleware     # P9
+from pyshejane.middleware.reflect import ReflectMiddleware              # P4
+from pyshejane.middleware.memory import MemoryWritebackMiddleware       # P6
+from pyshejane.tools.registry import all_tools
+from pyshejane.llm.backend import BackendChatModel
 
 agent = create_agent(
     model=BackendChatModel(...),     # 直连 Phase 1 SSE 端点
@@ -237,7 +237,7 @@ agent = create_agent(
 ### Phase 2' 验收
 ```bash
 # 起 daemon
-cd local-host/python && uv run pyjiandanly
+cd local-host/python && uv run pyshejane
 
 # 基本健康
 curl http://127.0.0.1:17371/v1/health
@@ -262,7 +262,7 @@ curl -N -X POST http://127.0.0.1:17371/v1/runs \
 - Windows x64
 - Linux x64
 
-每平台跑 `pytest` + `uv run pyjiandanly --health-check`。
+每平台跑 `pytest` + `uv run pyshejane --health-check`。
 
 ---
 
@@ -337,7 +337,7 @@ Phase 2' 完成后单独 commit。
 - structlog JSON / console 双输出（自动检测 TTY）
 - `DaemonObserver(AsyncCallbackHandler)` 接 LangChain 全生命周期事件
 - Langfuse 可选（`LANGFUSE_PUBLIC_KEY`+`LANGFUSE_SECRET_KEY` 设了就启用）
-- `JIANDANLY_DISABLE_OBSERVABILITY=1` 一键关闭整层（基准测试用）
+- `SHEJANE_DISABLE_OBSERVABILITY=1` 一键关闭整层（基准测试用）
 
 ---
 

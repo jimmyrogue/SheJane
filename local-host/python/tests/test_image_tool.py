@@ -55,9 +55,9 @@ def settings_with_session(monkeypatch):
     user has logged in via the Electron app."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     return reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://api.test",
-        JIANDANLY_CLOUD_TOKEN="cloud-jwt",
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://api.test",
+        SHEJANE_CLOUD_TOKEN="cloud-jwt",
     )
 
 
@@ -66,9 +66,9 @@ def settings_unpaired(monkeypatch):
     """Settings before the user has logged in — cloud_token is empty."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     return reset_settings_for_tests(
-        JIANDANLY_LOCAL_HOST_TOKEN="tok",
-        JIANDANLY_CLOUD_BASE_URL="http://api.test",
-        JIANDANLY_CLOUD_TOKEN="",
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://api.test",
+        SHEJANE_CLOUD_TOKEN="",
     )
 
 

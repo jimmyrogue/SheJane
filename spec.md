@@ -321,8 +321,8 @@ Pairing:
 ### Phase 2.11: MCP Runtime Adapter
 
 - Execute allowlisted `mcp.call` tool calls through configured local stdio MCP servers. **Done for stdio JSON-RPC MVP.**
-- Require both `JIANDANLY_MCP_ALLOWLIST` and local user permission approval before execution. **Done.**
-- Configure servers through `JIANDANLY_MCP_SERVERS_JSON`; do not expose command, args, env, tokens, or server stderr in tool metadata. **Done.**
+- Require both `SHEJANE_MCP_ALLOWLIST` and local user permission approval before execution. **Done.**
+- Configure servers through `SHEJANE_MCP_SERVERS_JSON`; do not expose command, args, env, tokens, or server stderr in tool metadata. **Done.**
 - Convert MCP startup failure, timeout, JSON-RPC error, and tool error into recoverable tool observations. **Done.**
 - Keep browser/IDE tools and visual verification as later phases. **Pending.**
 
@@ -406,7 +406,7 @@ Pairing:
 - Avoid false `login_required` classification when a readable article merely contains header login links. **Done.**
 - Add a final-answer output guardrail so research answers cannot claim sources were opened/read/verified when `source.collected` or `browser.verify` evidence does not support that claim. **Done.**
 - Reject final answers that cite URLs outside the collected `source.collected` set unless the model first opens and reads those sources. **Done.**
-- Expose budget tuning with `JIANDANLY_RESEARCH_MAX_SEARCHES`, `JIANDANLY_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `JIANDANLY_RESEARCH_TARGET_SOURCES`. **Done.**
+- Expose budget tuning with `SHEJANE_RESEARCH_MAX_SEARCHES`, `SHEJANE_RESEARCH_MAX_SOURCE_NAVIGATIONS`, and `SHEJANE_RESEARCH_TARGET_SOURCES`. **Done.**
 
 ## 9. Test Strategy
 

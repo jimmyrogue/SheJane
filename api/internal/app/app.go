@@ -14,12 +14,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/coldflame/jiandanly/api/internal/config"
-	"github.com/coldflame/jiandanly/api/internal/documents"
-	"github.com/coldflame/jiandanly/api/internal/e2b"
-	"github.com/coldflame/jiandanly/api/internal/llm"
-	"github.com/coldflame/jiandanly/api/internal/modelreg"
-	"github.com/coldflame/jiandanly/api/internal/store"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/documents"
+	"github.com/coldflame/shejane/api/internal/e2b"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/modelreg"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 var (
@@ -327,7 +327,7 @@ func (a *App) issueAuth(ctx context.Context, user store.User) (AuthResult, error
 		Role:   user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
-			Issuer:    "jiandanly-api",
+			Issuer:    "shejane-api",
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.Config.AccessTokenTTL)),
 		},
