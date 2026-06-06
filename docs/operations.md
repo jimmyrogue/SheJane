@@ -73,6 +73,7 @@ CONFIG_ENCRYPTION_KEY=任意足够强的口令（用于 AES-GCM 加密落库的 
 - 槽位（下拉）：`chat.fast`（快速对话）、`chat.deep`（深度对话）、`image.default`（生图）。每个槽位同一时刻只有一个「启用」的配置生效。
 - 每行：provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）、成本倍率，生图行另填「每次金额」。
 - 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(成本倍率 0.1)、`chat.deep`=deepseek-v4-pro(1.0)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
+- 种子条件是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把某槽位的**全部模型行删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
 
 真实模型 smoke 仍可用：
 
