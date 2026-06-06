@@ -27,11 +27,13 @@ files:
 
 asar: true
 
-# Phase 2 — bundle the frozen Python daemon OUTSIDE the asar so main.cjs can
-# spawn it from process.resourcesPath/local-host:
-# extraResources:
-#   - from: ../local-host/python/dist/local-host
-#     to: local-host
+# The frozen Python daemon, shipped OUTSIDE the asar so main.cjs can spawn it
+# from process.resourcesPath/local-host. Build it FIRST with `make build-daemon`
+# (per-OS/arch — the bundle is native-wheel specific, so CI must build it on a
+# native runner for each target before electron-builder runs).
+extraResources:
+  - from: ../local-host/python/dist/local-host
+    to: local-host
 
 mac:
   category: public.app-category.productivity

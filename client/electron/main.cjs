@@ -12,6 +12,9 @@ const {
 } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
+const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
@@ -39,6 +42,10 @@ const trayIconPath = path.join(__dirname, 'assets/app-tray.png')
  *  the main window without searching every time. */
 let mainWindow = null
 let tray = null
+// Bundled local-agent daemon (packaged builds spawn it; dev uses dev-electron.sh).
+let daemonProcess = null
+let daemonURL = null
+let daemonToken = null
 
 function createWindow() {
   const windowOptions = {
@@ -60,6 +67,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: localHostArgs(),
     },
   }
 
@@ -163,6 +171,126 @@ function apiBaseURL() {
   )
 }
 
+// ─── Bundled local-agent daemon ────────────────────────────────────────────
+// Packaged builds spawn the frozen daemon (shipped via electron-builder
+// extraResources) on a fresh loopback port with a one-time pairing token, then
+// hand the URL+token to the renderer. In dev, scripts/dev-electron.sh does this
+// instead, so main.cjs leaves the daemon alone (app.isPackaged === false).
+
+function pickFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer()
+    srv.on('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address()
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
+function daemonBinaryPath() {
+  const exe = process.platform === 'win32' ? 'shejane-local-host.exe' : 'shejane-local-host'
+  return path.join(process.resourcesPath, 'local-host', exe)
+}
+
+// Allowlist env forward (mirrors dev-electron.sh's `env -i`): the daemon never
+// inherits platform-paid keys (Invariant #1). It proxies LLM + paid tools
+// through the cloud API with the user's JWT, never a provider key.
+function daemonEnv(extra) {
+  const allow =
+    process.platform === 'win32'
+      ? ['PATH', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'TEMP', 'TMP', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'COMSPEC', 'WINDIR', 'LANG', 'NUMBER_OF_PROCESSORS']
+      : ['PATH', 'HOME', 'USER', 'TMPDIR', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE']
+  const env = {}
+  for (const key of allow) {
+    if (process.env[key] !== undefined) {
+      env[key] = process.env[key]
+    }
+  }
+  return { ...env, ...extra }
+}
+
+// Preload args so the renderer reliably gets the daemon URL+token (not reliant
+// on env crossing the main→renderer process boundary). Empty in dev → preload
+// falls back to the env that dev-electron.sh set.
+function localHostArgs() {
+  if (!daemonURL || !daemonToken) {
+    return []
+  }
+  return [`--shejane-local-host-url=${daemonURL}`, `--shejane-local-host-token=${daemonToken}`]
+}
+
+async function waitForHealth(url, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${url}/local/v1/health`)
+      if (res.ok) {
+        return true
+      }
+    } catch {
+      // daemon not accepting connections yet — retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+  return false
+}
+
+async function startBundledDaemon() {
+  const port = await pickFreePort()
+  daemonToken = crypto.randomBytes(32).toString('hex')
+  daemonURL = `http://127.0.0.1:${port}`
+
+  daemonProcess = spawn(daemonBinaryPath(), [], {
+    env: daemonEnv({
+      SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
+      SHEJANE_LOCAL_HOST_PORT: String(port),
+      SHEJANE_LOCAL_HOST_TOKEN: daemonToken,
+      SHEJANE_CLOUD_BASE_URL: apiBaseURL(),
+      PYTHONUNBUFFERED: '1',
+    }),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  daemonProcess.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
+  daemonProcess.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
+  daemonProcess.on('error', (err) => {
+    dialog.showErrorBox(appName, `无法启动本地引擎：${err.message}`)
+  })
+  daemonProcess.on('exit', (code, signal) => {
+    daemonProcess = null
+    if (!app.isQuitting) {
+      dialog.showErrorBox(appName, `本地引擎已退出（code=${code}, signal=${signal}），请重启应用。`)
+    }
+  })
+
+  // Belt-and-suspenders: also expose via env (the dev handoff channel).
+  process.env.SHEJANE_LOCAL_HOST_URL = daemonURL
+  process.env.SHEJANE_LOCAL_HOST_TOKEN = daemonToken
+
+  if (!(await waitForHealth(daemonURL))) {
+    dialog.showErrorBox(appName, '本地引擎启动超时，请重启应用。')
+  }
+}
+
+function stopBundledDaemon() {
+  if (!daemonProcess) {
+    return
+  }
+  const pid = daemonProcess.pid
+  daemonProcess = null
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
+    } else {
+      // uvicorn traps SIGTERM (CLAUDE.md invariant #4) — force-kill.
+      process.kill(pid, 'SIGKILL')
+    }
+  } catch {
+    // already gone
+  }
+}
+
 function registerAuthHandlers() {
   const auth = createElectronAuthHandlers({
     apiBaseURL: apiBaseURL(),
@@ -176,12 +304,17 @@ function registerAuthHandlers() {
   ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout()))
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName(appName)
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
   }
   registerAuthHandlers()
+  // Packaged builds carry the frozen daemon and must start it themselves;
+  // dev relies on scripts/dev-electron.sh (which also sets the env).
+  if (app.isPackaged) {
+    await startBundledDaemon()
+  }
   createWindow()
   createTray()
 })
@@ -191,6 +324,7 @@ app.whenReady().then(() => {
 // to tray or actually let the close go through.
 app.on('before-quit', () => {
   app.isQuitting = true
+  stopBundledDaemon()
 })
 
 ipcMain.handle('shejane:set-locale', async (_event, locale) => {
