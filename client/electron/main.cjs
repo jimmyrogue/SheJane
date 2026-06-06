@@ -317,6 +317,20 @@ app.whenReady().then(async () => {
   }
   createWindow()
   createTray()
+  // Auto-update (packaged only). Downloads in the background and installs on
+  // quit. Works on Windows unsigned; on macOS it no-ops until the app is signed
+  // + notarized (Phase 4) — Gatekeeper rejects unsigned updates. Lazy-required
+  // and fully guarded so a missing/erroring updater never blocks startup.
+  if (app.isPackaged) {
+    try {
+      const { autoUpdater } = require('electron-updater')
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+        console.warn('[updater] check failed:', err && err.message)
+      })
+    } catch (err) {
+      console.warn('[updater] unavailable:', err && err.message)
+    }
+  }
 })
 
 // Marker that "real quit" was requested (vs. window-close). The close

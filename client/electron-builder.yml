@@ -60,6 +60,12 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
 
-# Phase 5 — auto-update feed:
-# publish:
-#   provider: github
+# Auto-update feed (electron-updater): published installers + latest*.yml land
+# on GitHub Releases; the installed app checks here on launch. electron-builder
+# only publishes when invoked with `--publish always` (the release workflow) or
+# a tagged CI build — local `dist`/`dist:dir` and the manual build-windows
+# workflow do NOT publish.
+publish:
+  provider: github
+  owner: jimmyrogue
+  repo: SheJane
