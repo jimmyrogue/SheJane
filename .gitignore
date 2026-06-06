@@ -105,3 +105,6 @@ Caddyfile.local
 
 # Local Postgres dumps from `make deploy-backup` — never commit DB data
 backup-*.sql.gz
+
+# PyInstaller intermediate build dir for the frozen daemon (dist/ already ignored)
+local-host/python/build/

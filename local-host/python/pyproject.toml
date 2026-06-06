@@ -10,9 +10,6 @@ dependencies = [
     "langgraph>=1.2.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
     "langchain-mcp-adapters>=0.2.0",
-    # Browser agent (replaces 10 granular browser.* tools)
-    "browser-use>=0.7.0",
-    "playwright>=1.50.0",
     # Subagents via deepagents (SubAgentMiddleware)
     "deepagents>=0.2.0",
     # LangChain wrappers for fallback model chains (init_chat_model).
@@ -46,6 +43,19 @@ dependencies = [
     "python-pptx>=1.0.2",
 ]
 
+[project.optional-dependencies]
+# Agentic browser (the browser.task tool). DELIBERATELY OPTIONAL and NOT in the
+# desktop bundle: the feature is currently a stub (browser_llm is None in
+# agent/builder.py until the browser sub-agent is wired), and playwright +
+# Chromium would add hundreds of MB plus extra code-signing surface. The daemon
+# import-guards browser-use (tools/browser.py), so without this extra the
+# browser.task tool returns a "not installed" envelope and the daemon boots
+# fine. Install for dev work on the feature: `uv sync --extra browser`.
+browser = [
+    "browser-use>=0.7.0",
+    "playwright>=1.50.0",
+]
+
 [project.scripts]
 shejane-local-host = "local_host.__main__:main"
 
@@ -56,6 +66,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.7.0",
     "mypy>=1.13.0",
+    "pyinstaller>=6.20.0",
 ]
 
 [tool.uv]

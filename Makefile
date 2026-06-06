@@ -108,6 +108,10 @@ admin-build: ## Build only the admin
 local-host-build: ## Sync only the daemon deps
 	cd local-host/python && uv sync
 
+build-daemon: ## Freeze the local-agent daemon into a standalone bundle for the desktop app (PyInstaller onedir → local-host/python/dist/local-host/)
+	cd local-host/python && uv run pyinstaller shejane-local-host.spec --noconfirm --clean
+	@echo "✅ Daemon frozen → local-host/python/dist/local-host/ (run it on THIS OS/arch only)"
+
 ##@ Lint & schemas
 lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-keys)
 	@echo "→ ruff (Python)"
