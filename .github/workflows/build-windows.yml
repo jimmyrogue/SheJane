@@ -63,18 +63,32 @@ jobs:
           fi
           npm run build:desktop
 
-      - name: Package + (on a tag) publish the Windows installer
+      - name: Package the Windows installer
+        working-directory: client
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build
+        run: npx electron-builder --win --publish never
+
+      # electron-builder's own GitHub publisher races into TWO draft releases per
+      # tag (one ends up with the .exe + latest.yml, the other with just the
+      # .blockmap). We publish ourselves instead: one idempotent draft per tag,
+      # carrying only the installer + the electron-updater feed (latest.yml). The
+      # .blockmap (delta-update optimization) is dropped to keep the Release
+      # clean — auto-update falls back to a full download without it. The user
+      # reviews the draft and clicks Publish.
+      - name: Publish installer to a single draft Release (tag builds only)
+        if: github.ref_type == 'tag'
         working-directory: client
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            npx electron-builder --win --publish always
-          else
-            npx electron-builder --win --publish never
-          fi
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --draft --title "$tag" \
+              --notes "Automated desktop build for $tag. Unsigned (Windows SmartScreen cold-start applies)."
+          gh release upload "$tag" release/*.exe release/latest.yml --clobber
 
       - name: Upload installer artifact (manual builds)
         if: github.ref_type != 'tag'
