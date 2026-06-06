@@ -1,0 +1,61 @@
+name: Build Windows desktop (unsigned)
+
+# On-demand Windows desktop build — runs on a GitHub-hosted Windows machine, so
+# you don't need your own. Produces an UNSIGNED .exe installer as a downloadable
+# artifact (good enough for you + a friend to try; Windows SmartScreen will show
+# an "unrecognized app" warning → "More info" → "Run anyway"). Real public
+# distribution needs code signing — see docs/desktop-distribution.md Phase 4.
+#
+# Trigger: Actions tab → "Build Windows desktop (unsigned)" → Run workflow.
+# (workflow_dispatch workflows must live on the default branch to appear.)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The daemon's native wheels are platform-specific, so the freeze MUST run
+      # on Windows for a Windows app. Pin Python to match requires-python.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Freeze the local-agent daemon (Windows, PyInstaller onedir)
+        working-directory: local-host/python
+        run: |
+          uv sync
+          uv run pyinstaller shejane-local-host.spec --noconfirm --clean
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build + package the desktop app (renderer → prod API, then NSIS)
+        working-directory: client
+        env:
+          # Unsigned build — don't let electron-builder hunt for a cert.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm ci
+          npm run dist
+
+      - name: Upload the Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: shejane-windows-installer
+          path: |
+            client/release/*.exe
+          if-no-files-found: error
+          retention-days: 14
