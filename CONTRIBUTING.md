@@ -66,7 +66,7 @@ make test                   # all four stacks (Go + Python + client + admin)
 
 # focused:
 make api-test               # go test ./...
-make local-host-test        # uv run pytest
+make local-host-test        # uv run python -m pytest
 make client-test            # client vitest
 make admin-test             # admin vitest
 ```

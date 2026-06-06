@@ -84,7 +84,7 @@ make help
 
 # Tests (all 4 stacks)
 make test               # python + client vitest + admin vitest + go
-make local-host-test    # just python (uv run pytest)
+make local-host-test    # just python (uv run python -m pytest)
 make client-test        # just client (vitest --run)
 make admin-test         # just admin (vitest --run)
 make api-test           # just go (go test ./...)
@@ -94,7 +94,7 @@ make test-contract      # client ↔ daemon contract over real HTTP (:17399)
 make ci                 # run EVERYTHING CI runs, locally (pre-push gate)
 
 # A single Python test
-cd local-host/python && uv run pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
+cd local-host/python && uv run python -m pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
 
 # A single client test
 cd client && npm test -- --run -t "permission.resolved clears card"

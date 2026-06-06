@@ -246,7 +246,7 @@ curl http://127.0.0.1:17371/v1/health
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:17371/v1/tools
 
 # pytest
-uv run pytest -v
+uv run python -m pytest -v
 ```
 
 ### Phase 3' 端到端 run（验证 interrupt + 流式）

@@ -97,7 +97,7 @@ admin-test: ## Admin vitest (run once)
 	cd admin && npm test -- --run
 
 local-host-test: ## Daemon pytest
-	cd local-host/python && uv run pytest
+	cd local-host/python && uv run python -m pytest
 
 client-build: ## Build only the client
 	cd client && npm run build
