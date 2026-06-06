@@ -256,3 +256,72 @@ func (s *Server) adminSetCreditRate(w http.ResponseWriter, r *http.Request, user
 	s.app.Registry.Invalidate()
 	writeJSON(w, http.StatusOK, apiResponse[creditRateView]{Code: 0, Message: "ok", Data: view})
 }
+
+const billingLeversSettingKey = modelreg.BillingLeversKey
+
+// billingLeversView carries the admin-tunable per-call cost levers (pure
+// Reserve→Settle inputs, never wallet grants). A field of 0 falls back to the
+// env/coded default at read time (registry.loadBillingLevers), so 0 can never
+// silently make a paid tool free.
+type billingLeversView struct {
+	TavilySearchCredits         int64 `json:"tavily_search_credits"`
+	E2BCodeExecBaseCredits      int64 `json:"e2b_code_exec_base_credits"`
+	E2BCodeExecPerSecondCredits int64 `json:"e2b_code_exec_per_second_credits"`
+	Configured                  bool  `json:"configured"`
+}
+
+// applyBillingLeverDefaults replaces any non-positive field with the env/coded
+// default, mirroring registry.loadBillingLevers so the admin form always shows
+// the value actually in effect.
+func (s *Server) applyBillingLeverDefaults(v *billingLeversView) {
+	if v.TavilySearchCredits <= 0 {
+		v.TavilySearchCredits = s.app.Config.TavilySearchCredits
+	}
+	if v.E2BCodeExecBaseCredits <= 0 {
+		v.E2BCodeExecBaseCredits = s.app.Config.E2BCodeExecBaseCredits
+	}
+	if v.E2BCodeExecPerSecondCredits <= 0 {
+		v.E2BCodeExecPerSecondCredits = s.app.Config.E2BCodeExecPerSecondCredits
+	}
+}
+
+func (s *Server) adminGetBillingLevers(w http.ResponseWriter, r *http.Request, user store.User) {
+	view := billingLeversView{}
+	if setting, err := s.app.Store.GetAppSetting(r.Context(), billingLeversSettingKey); err == nil {
+		_ = json.Unmarshal([]byte(setting.Value), &view)
+		view.Configured = true
+	}
+	s.applyBillingLeverDefaults(&view)
+	writeJSON(w, http.StatusOK, apiResponse[billingLeversView]{Code: 0, Message: "ok", Data: view})
+}
+
+func (s *Server) adminSetBillingLevers(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		TavilySearchCredits         int64 `json:"tavily_search_credits"`
+		E2BCodeExecBaseCredits      int64 `json:"e2b_code_exec_base_credits"`
+		E2BCodeExecPerSecondCredits int64 `json:"e2b_code_exec_per_second_credits"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	for _, v := range []int64{body.TavilySearchCredits, body.E2BCodeExecBaseCredits, body.E2BCodeExecPerSecondCredits} {
+		if v < 0 || v > 1_000_000 {
+			writeError(w, http.StatusBadRequest, 40201, "每次费用必须在 0–1000000 credits 之间（0 表示沿用环境默认值）")
+			return
+		}
+	}
+	view := billingLeversView{
+		TavilySearchCredits:         body.TavilySearchCredits,
+		E2BCodeExecBaseCredits:      body.E2BCodeExecBaseCredits,
+		E2BCodeExecPerSecondCredits: body.E2BCodeExecPerSecondCredits,
+		Configured:                  true,
+	}
+	raw, _ := json.Marshal(view)
+	if _, err := s.app.Store.SetAppSetting(r.Context(), user.ID, billingLeversSettingKey, string(raw)); err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "保存计费杠杆失败")
+		return
+	}
+	s.app.Registry.Invalidate()
+	s.applyBillingLeverDefaults(&view)
+	writeJSON(w, http.StatusOK, apiResponse[billingLeversView]{Code: 0, Message: "ok", Data: view})
+}

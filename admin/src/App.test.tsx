@@ -353,6 +353,18 @@ function mockFetch(role: 'admin' | 'user') {
         data: { markup_factor: 1.15, currency_per_credit: 0.0001, currency: 'cny', configured: true },
       })
     }
+    if (url.endsWith('/api/v1/admin/settings/billing-levers')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          tavily_search_credits: 20,
+          e2b_code_exec_base_credits: 5,
+          e2b_code_exec_per_second_credits: 1,
+          configured: true,
+        },
+      })
+    }
     throw new Error(`Unexpected fetch ${url}`)
   })
   return calls

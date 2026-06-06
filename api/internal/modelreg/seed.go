@@ -44,6 +44,16 @@ func (r *Registry) EnsureSeed(ctx context.Context) error {
 			return err
 		}
 	}
+	if _, err := r.store.GetAppSetting(ctx, BillingLeversKey); err != nil {
+		raw, _ := json.Marshal(map[string]any{
+			"tavily_search_credits":            r.cfg.TavilySearchCredits,
+			"e2b_code_exec_base_credits":       r.cfg.E2BCodeExecBaseCredits,
+			"e2b_code_exec_per_second_credits": r.cfg.E2BCodeExecPerSecondCredits,
+		})
+		if _, err := r.store.SetAppSetting(ctx, "", BillingLeversKey, string(raw)); err != nil {
+			return err
+		}
+	}
 	if !r.cipher.Enabled() && (r.cfg.FastProviderAPIKey != "" || r.cfg.DeepProviderAPIKey != "" || r.cfg.AnthropicAPIKey != "") {
 		log.Printf("modelreg: CONFIG_ENCRYPTION_KEY is not set — model API keys are stored in plaintext")
 	}

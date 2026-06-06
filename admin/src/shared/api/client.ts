@@ -167,6 +167,13 @@ export interface AdminCreditRate {
   configured: boolean
 }
 
+export interface AdminBillingLevers {
+  tavily_search_credits: number
+  e2b_code_exec_base_credits: number
+  e2b_code_exec_per_second_credits: number
+  configured: boolean
+}
+
 export interface AdminAgentRun {
   id: string
   user_id: string
@@ -307,6 +314,18 @@ export class AdminAPI {
 
   async adminSetCreditRate(input: { markup_factor: number; currency_per_credit: number; currency: string }): Promise<AdminCreditRate> {
     return this.put<AdminCreditRate>('/api/v1/admin/settings/credit-rate', input)
+  }
+
+  async adminBillingLevers(): Promise<AdminBillingLevers> {
+    return this.get<AdminBillingLevers>('/api/v1/admin/settings/billing-levers')
+  }
+
+  async adminSetBillingLevers(input: {
+    tavily_search_credits: number
+    e2b_code_exec_base_credits: number
+    e2b_code_exec_per_second_credits: number
+  }): Promise<AdminBillingLevers> {
+    return this.put<AdminBillingLevers>('/api/v1/admin/settings/billing-levers', input)
   }
 
   async adminAuditLogs(limit?: number, offset?: number): Promise<AdminAuditLog[]> {

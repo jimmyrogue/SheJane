@@ -51,7 +51,7 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 			"web.search": {
 				Configured:   strings.TrimSpace(s.app.Config.TavilyAPIKey) != "",
 				Provider:     "tavily",
-				CreditsCost:  positiveCredits(s.app.Config.TavilySearchCredits),
+				CreditsCost:  positiveCredits(s.app.Registry.TavilySearchCredits()),
 				RequiresAuth: true,
 			},
 			imageToolName:     s.imageToolCapability(r.Context()),
@@ -59,7 +59,7 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 			codeExecToolName: {
 				Configured:   s.app.IsCodeExecEnabled(),
 				Provider:     "e2b",
-				CreditsCost:  positiveCredits(s.app.Config.E2BCodeExecBaseCredits),
+				CreditsCost:  positiveCredits(s.app.Registry.E2BCodeExecBaseCredits()),
 				RequiresAuth: true,
 			},
 			pdfInspectToolName: {
@@ -182,7 +182,7 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 		return
 	}
 
-	creditsCost := positiveCredits(s.app.Config.TavilySearchCredits)
+	creditsCost := positiveCredits(s.app.Registry.TavilySearchCredits())
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, creditsCost, billing.ReservationMeta{
 		UserID:    user.ID,

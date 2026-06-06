@@ -54,6 +54,7 @@ import {
   AdminAPI,
   type AdminAgentRun,
   type AdminAuditLog,
+  type AdminBillingLevers,
   type AdminCreditRate,
   type AdminModelConfig,
   type AdminOrder,
@@ -243,6 +244,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [hasMoreOrders, setHasMoreOrders] = useState(false)
   const [modelConfigs, setModelConfigs] = useState<AdminModelConfig[]>([])
   const [creditRate, setCreditRate] = useState<AdminCreditRate | null>(null)
+  const [billingLevers, setBillingLevers] = useState<AdminBillingLevers | null>(null)
   const [agentRuns, setAgentRuns] = useState<AdminAgentRun[]>([])
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([])
   const [auditPage, setAuditPage] = useState(0)
@@ -290,23 +292,30 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   }
 
   async function reloadModelConfigs() {
-    const [configs, rate] = await Promise.all([api.adminModelConfigs(), api.adminCreditRate()])
+    const [configs, rate, levers] = await Promise.all([
+      api.adminModelConfigs(),
+      api.adminCreditRate(),
+      api.adminBillingLevers(),
+    ])
     setModelConfigs(configs)
     setCreditRate(rate)
+    setBillingLevers(levers)
   }
 
   async function loadAdminData(nextQuery = query, announce = false) {
     setLoading(true)
     try {
-      const [overviewData, modelConfigData, creditRateData, agentRunData] = await Promise.all([
+      const [overviewData, modelConfigData, creditRateData, billingLeversData, agentRunData] = await Promise.all([
         api.adminOverview(),
         api.adminModelConfigs(),
         api.adminCreditRate(),
+        api.adminBillingLevers(),
         api.adminAgentRuns(),
       ])
       setOverview(overviewData)
       setModelConfigs(modelConfigData)
       setCreditRate(creditRateData)
+      setBillingLevers(billingLeversData)
       setAgentRuns(agentRunData)
       await Promise.all([
         loadUsersPage(nextQuery, 0),
@@ -565,6 +574,7 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
               <ModelConfigCard
                 configs={modelConfigs}
                 creditRate={creditRate}
+                billingLevers={billingLevers}
                 api={api}
                 onReload={reloadModelConfigs}
                 onNotice={setNotice}
@@ -1101,12 +1111,14 @@ function emptyModelForm(): ModelConfigForm {
 function ModelConfigCard({
   configs,
   creditRate,
+  billingLevers,
   api,
   onReload,
   onNotice,
 }: {
   configs: AdminModelConfig[]
   creditRate: AdminCreditRate | null
+  billingLevers: AdminBillingLevers | null
   api: AdminAPI
   onReload: () => Promise<void>
   onNotice: (message: string) => void
@@ -1120,6 +1132,10 @@ function ModelConfigCard({
   const [rateInput, setRateInput] = useState('')
   const [rateCurrency, setRateCurrency] = useState('cny')
   const [rateSaving, setRateSaving] = useState(false)
+  const [tavilyInput, setTavilyInput] = useState('')
+  const [e2bBaseInput, setE2bBaseInput] = useState('')
+  const [e2bPerSecInput, setE2bPerSecInput] = useState('')
+  const [leversSaving, setLeversSaving] = useState(false)
 
   useEffect(() => {
     if (creditRate) {
@@ -1128,6 +1144,16 @@ function ModelConfigCard({
       setRateCurrency(creditRate.currency || 'cny')
     }
   }, [creditRate])
+
+  useEffect(() => {
+    if (billingLevers) {
+      setTavilyInput(billingLevers.tavily_search_credits ? String(billingLevers.tavily_search_credits) : '')
+      setE2bBaseInput(billingLevers.e2b_code_exec_base_credits ? String(billingLevers.e2b_code_exec_base_credits) : '')
+      setE2bPerSecInput(
+        billingLevers.e2b_code_exec_per_second_credits ? String(billingLevers.e2b_code_exec_per_second_credits) : '',
+      )
+    }
+  }, [billingLevers])
 
   function openCreate() {
     setEditingId(null)
@@ -1238,6 +1264,37 @@ function ModelConfigCard({
       onNotice(caught instanceof Error ? caught.message : '保存计费参数失败')
     } finally {
       setRateSaving(false)
+    }
+  }
+
+  async function saveLevers() {
+    const parseLever = (raw: string, label: string): number | null => {
+      const n = Number(raw || 0)
+      if (!Number.isFinite(n) || n < 0 || n > 1_000_000) {
+        onNotice(`${label}必须在 0–1000000 credits 之间（0 表示沿用环境默认值）`)
+        return null
+      }
+      return Math.floor(n)
+    }
+    const tavily = parseLever(tavilyInput, 'web.search 每次费用')
+    if (tavily === null) return
+    const e2bBase = parseLever(e2bBaseInput, 'code.execute 基础费用')
+    if (e2bBase === null) return
+    const e2bPerSec = parseLever(e2bPerSecInput, 'code.execute 每秒费用')
+    if (e2bPerSec === null) return
+    setLeversSaving(true)
+    try {
+      await api.adminSetBillingLevers({
+        tavily_search_credits: tavily,
+        e2b_code_exec_base_credits: e2bBase,
+        e2b_code_exec_per_second_credits: e2bPerSec,
+      })
+      await onReload()
+      onNotice('工具计费杠杆已更新并即时生效')
+    } catch (caught) {
+      onNotice(caught instanceof Error ? caught.message : '保存工具计费杠杆失败')
+    } finally {
+      setLeversSaving(false)
     }
   }
 
@@ -1357,6 +1414,54 @@ function ModelConfigCard({
             </div>
             <Button onClick={saveRate} disabled={rateSaving}>
               {rateSaving ? <Loader2 className="size-4 animate-spin" /> : null}
+              保存
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>工具计费杠杆</CardTitle>
+          <CardDescription>
+            每次调用工具收取的 credits，保存后即时生效（本实例立即，其它实例 ≤30s 收敛）。留空或 0 表示沿用环境默认值。
+            这些是 Reserve→Settle 的成本输入，不涉及钱包发放。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="lever-tavily">web.search 每次</Label>
+              <Input
+                id="lever-tavily"
+                value={tavilyInput}
+                onChange={(event) => setTavilyInput(event.target.value)}
+                placeholder="默认 20"
+                className="w-32"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="lever-e2b-base">code.execute 基础</Label>
+              <Input
+                id="lever-e2b-base"
+                value={e2bBaseInput}
+                onChange={(event) => setE2bBaseInput(event.target.value)}
+                placeholder="默认 5"
+                className="w-32"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="lever-e2b-persec">code.execute 每秒</Label>
+              <Input
+                id="lever-e2b-persec"
+                value={e2bPerSecInput}
+                onChange={(event) => setE2bPerSecInput(event.target.value)}
+                placeholder="默认 1"
+                className="w-32"
+              />
+            </div>
+            <Button onClick={saveLevers} disabled={leversSaving}>
+              {leversSaving ? <Loader2 className="size-4 animate-spin" /> : null}
               保存
             </Button>
           </div>

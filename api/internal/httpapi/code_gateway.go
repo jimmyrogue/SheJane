@@ -193,8 +193,11 @@ func (s *Server) runCodeExecute(ctx context.Context, user store.User, input code
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 60
 	}
-	baseCredits := positiveCredits(s.app.Config.E2BCodeExecBaseCredits)
-	perSecondCredits := s.app.Config.E2BCodeExecPerSecondCredits
+	// Read both levers ONCE here so the reservation ceiling (below) and the
+	// settle (actualCredits, further down) use the same value even if an admin
+	// edits billing.levers mid-request — reserve and settle can never split.
+	baseCredits := positiveCredits(s.app.Registry.E2BCodeExecBaseCredits())
+	perSecondCredits := s.app.Registry.E2BCodeExecPerSecondCredits()
 	if perSecondCredits < 0 {
 		perSecondCredits = 0
 	}

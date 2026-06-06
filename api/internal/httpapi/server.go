@@ -101,6 +101,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/admin/model-configs/{id}", s.requireAdmin(s.adminDeleteModelConfig))
 	s.mux.HandleFunc("GET /api/v1/admin/settings/credit-rate", s.requireAdmin(s.adminGetCreditRate))
 	s.mux.HandleFunc("PUT /api/v1/admin/settings/credit-rate", s.requireAdmin(s.adminSetCreditRate))
+	s.mux.HandleFunc("GET /api/v1/admin/settings/billing-levers", s.requireAdmin(s.adminGetBillingLevers))
+	s.mux.HandleFunc("PUT /api/v1/admin/settings/billing-levers", s.requireAdmin(s.adminSetBillingLevers))
 }
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
