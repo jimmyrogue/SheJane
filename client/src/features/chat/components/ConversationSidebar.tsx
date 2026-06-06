@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconAdjustmentsHorizontal,
+  IconChevronRight,
   IconDots,
   IconDownload,
   IconLayoutSidebarLeftCollapse,
@@ -44,14 +45,53 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import { useI18n, formatRelativeTime, type Translator } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
-import type { AgentSettings } from '@/shared/local-host/client'
+import type { AdvancedAgentSettings, AgentSettings } from '@/shared/local-host/client'
 import type { Conversation } from '@/shared/local-data/types'
 
 type ConversationSidebarStatus = 'needs_attention' | 'running'
 
 const seenConversationVersionsStorageKey = 'shejane.sidebar.seenConversationVersions.v1'
+
+// One labelled row in the "Advanced" agent-settings section: copy on the left,
+// a control (number input / switch / select) on the right. Mirrors the
+// `agent-settings-card-row` layout the basic toggles above it use.
+function AdvSettingRow({
+  label,
+  hint,
+  className,
+  children,
+}: {
+  label: string
+  hint: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn('agent-settings-card-row', className)}>
+      <div className="agent-settings-card-copy">
+        <div className="agent-settings-card-label">{label}</div>
+        <div className="agent-settings-card-hint">{hint}</div>
+      </div>
+      {children}
+    </div>
+  )
+}
 
 export function ConversationSidebar({
   conversations,
@@ -119,7 +159,13 @@ export function ConversationSidebar({
     skills: 'on',
     mcp: 'on',
     mcpDisabled: [],
+    advanced: {},
   }
+  // "Advanced" section state. `adv` is the current advanced knobs; `setAdv`
+  // merges a patch and bubbles the whole settings object up to be persisted.
+  const adv: AdvancedAgentSettings = currentAgentSettings.advanced ?? {}
+  const setAdv = (patch: Partial<AdvancedAgentSettings>) =>
+    onAgentSettingsChange?.({ ...currentAgentSettings, advanced: { ...adv, ...patch } })
   const searchInputRef = useRef<HTMLInputElement>(null)
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
@@ -362,69 +408,276 @@ export function ConversationSidebar({
         }}
       />
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="conversation-actions-dialog sm:max-w-[420px]">
-          <DialogHeader>
+        <DialogContent className="conversation-actions-dialog flex max-h-[85dvh] flex-col gap-3 sm:max-w-[460px]">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t('sidebar.agentSettings.title')}</DialogTitle>
             <DialogDescription>{t('sidebar.agentSettings.description')}</DialogDescription>
           </DialogHeader>
-          <div className="agent-settings-card">
-            <div className="agent-settings-card-row">
-              <div className="agent-settings-card-copy">
-                <div className="agent-settings-card-label">{t('sidebar.agentSettings.memory.label')}</div>
-                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.memory.hint')}</div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={memoryEnabled}
-                aria-label={t('sidebar.agentSettings.memory.label')}
-                className="agent-settings-switch"
-                onClick={() =>
-                  onAgentSettingsChange?.({
-                    ...currentAgentSettings,
-                    memory: memoryEnabled ? 'off' : 'on',
-                  })
-                }
-              />
-            </div>
-            <div className="agent-settings-card-row">
-              <div className="agent-settings-card-copy">
-                <div className="agent-settings-card-label">{t('sidebar.agentSettings.skills.label')}</div>
-                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.skills.hint')}</div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={skillsEnabled}
-                aria-label={t('sidebar.agentSettings.skills.label')}
-                className="agent-settings-switch"
-                onClick={() =>
-                  onAgentSettingsChange?.({
-                    ...currentAgentSettings,
-                    skills: skillsEnabled ? 'off' : 'on',
-                  })
-                }
-              />
-            </div>
-            <div className="agent-settings-card-row">
-              <div className="agent-settings-card-copy">
-                <div className="agent-settings-card-label">{t('sidebar.agentSettings.mcp.label')}</div>
-                <div className="agent-settings-card-hint">{t('sidebar.agentSettings.mcp.hint')}</div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={mcpEnabled}
-                aria-label={t('sidebar.agentSettings.mcp.label')}
-                className="agent-settings-switch"
-                onClick={() =>
-                  onAgentSettingsChange?.({
-                    ...currentAgentSettings,
-                    mcp: mcpEnabled ? 'off' : 'on',
-                  })
-                }
-              />
-            </div>
+          <div className="-mx-1 min-h-0 overflow-y-auto px-1">
+            <div className="agent-settings-card">
+              <AdvSettingRow
+                label={t('sidebar.agentSettings.memory.label')}
+                hint={t('sidebar.agentSettings.memory.hint')}
+              >
+                <Switch
+                  checked={memoryEnabled}
+                  aria-label={t('sidebar.agentSettings.memory.label')}
+                  onCheckedChange={(checked) =>
+                    onAgentSettingsChange?.({
+                      ...currentAgentSettings,
+                      memory: checked ? 'on' : 'off',
+                    })
+                  }
+                />
+              </AdvSettingRow>
+              <AdvSettingRow
+                label={t('sidebar.agentSettings.skills.label')}
+                hint={t('sidebar.agentSettings.skills.hint')}
+              >
+                <Switch
+                  checked={skillsEnabled}
+                  aria-label={t('sidebar.agentSettings.skills.label')}
+                  onCheckedChange={(checked) =>
+                    onAgentSettingsChange?.({
+                      ...currentAgentSettings,
+                      skills: checked ? 'on' : 'off',
+                    })
+                  }
+                />
+              </AdvSettingRow>
+              <AdvSettingRow
+                label={t('sidebar.agentSettings.mcp.label')}
+                hint={t('sidebar.agentSettings.mcp.hint')}
+              >
+                <Switch
+                  checked={mcpEnabled}
+                  aria-label={t('sidebar.agentSettings.mcp.label')}
+                  onCheckedChange={(checked) =>
+                    onAgentSettingsChange?.({
+                      ...currentAgentSettings,
+                      mcp: checked ? 'on' : 'off',
+                    })
+                  }
+                />
+              </AdvSettingRow>
+            <Collapsible className="agent-settings-advanced">
+              <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 bg-transparent px-4 py-3 text-left text-sm font-semibold text-[var(--text-primary)] outline-none transition-colors hover:bg-black/[0.02] focus-visible:bg-black/[0.03]">
+                <span>{t('sidebar.agentSettings.advanced.title')}</span>
+                <IconChevronRight
+                  size={15}
+                  className="shrink-0 text-[var(--text-tertiary)] transition-transform duration-150 group-data-[state=open]:rotate-90"
+                  aria-hidden="true"
+                />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <p className="agent-settings-advanced-desc">
+                  {t('sidebar.agentSettings.advanced.description')}
+                </p>
+                <div className="agent-settings-advanced-body">
+                  <div className="agent-settings-group">{t('sidebar.agentSettings.advanced.group.run')}</div>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.maxModelCalls.label')}
+                    hint={t('sidebar.agentSettings.advanced.maxModelCalls.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.maxModelCalls.label')}
+                      placeholder="20"
+                      value={adv.maxModelCalls ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          maxModelCalls: e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.maxToolRetries.label')}
+                    hint={t('sidebar.agentSettings.advanced.maxToolRetries.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.maxToolRetries.label')}
+                      placeholder="2"
+                      value={adv.maxToolRetries ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          maxToolRetries: e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.toolSelectorMax.label')}
+                    hint={t('sidebar.agentSettings.advanced.toolSelectorMax.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.toolSelectorMax.label')}
+                      placeholder="0"
+                      value={adv.toolSelectorMax ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          toolSelectorMax: e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <div className="agent-settings-group">{t('sidebar.agentSettings.advanced.group.quality')}</div>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.planFirst.label')}
+                    hint={t('sidebar.agentSettings.advanced.planFirst.hint')}
+                  >
+                    <Select
+                      value={adv.planFirst ?? '__default__'}
+                      onValueChange={(value) =>
+                        setAdv({
+                          planFirst:
+                            value === '__default__' ? undefined : (value as 'off' | 'auto' | 'always'),
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-[136px]"
+                        aria-label={t('sidebar.agentSettings.advanced.planFirst.label')}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
+                        <SelectItem value="off">off</SelectItem>
+                        <SelectItem value="auto">auto</SelectItem>
+                        <SelectItem value="always">always</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.reflect.label')}
+                    hint={t('sidebar.agentSettings.advanced.reflect.hint')}
+                  >
+                    <Switch
+                      checked={adv.reflect ?? false}
+                      aria-label={t('sidebar.agentSettings.advanced.reflect.label')}
+                      onCheckedChange={(checked) => setAdv({ reflect: checked })}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.toolCritic.label')}
+                    hint={t('sidebar.agentSettings.advanced.toolCritic.hint')}
+                  >
+                    <Select
+                      value={adv.toolCritic ?? '__default__'}
+                      onValueChange={(value) =>
+                        setAdv({
+                          toolCritic:
+                            value === '__default__'
+                              ? undefined
+                              : (value as 'off' | 'watch' | 'nudge' | 'block'),
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-[136px]"
+                        aria-label={t('sidebar.agentSettings.advanced.toolCritic.label')}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
+                        <SelectItem value="off">off</SelectItem>
+                        <SelectItem value="watch">watch</SelectItem>
+                        <SelectItem value="nudge">nudge</SelectItem>
+                        <SelectItem value="block">block</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </AdvSettingRow>
+
+                  <div className="agent-settings-group">{t('sidebar.agentSettings.advanced.group.capability')}</div>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.subagents.label')}
+                    hint={t('sidebar.agentSettings.advanced.subagents.hint')}
+                  >
+                    <Switch
+                      checked={adv.subagents ?? true}
+                      aria-label={t('sidebar.agentSettings.advanced.subagents.label')}
+                      onCheckedChange={(checked) => setAdv({ subagents: checked })}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.browserHeadless.label')}
+                    hint={t('sidebar.agentSettings.advanced.browserHeadless.hint')}
+                  >
+                    <Switch
+                      checked={adv.browserHeadless ?? true}
+                      aria-label={t('sidebar.agentSettings.advanced.browserHeadless.label')}
+                      onCheckedChange={(checked) => setAdv({ browserHeadless: checked })}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.inputGuard.label')}
+                    hint={t('sidebar.agentSettings.advanced.inputGuard.hint')}
+                  >
+                    <Select
+                      value={adv.inputGuard ?? '__default__'}
+                      onValueChange={(value) =>
+                        setAdv({
+                          inputGuard:
+                            value === '__default__' ? undefined : (value as 'observe' | 'block'),
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        className="w-[136px]"
+                        aria-label={t('sidebar.agentSettings.advanced.inputGuard.label')}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
+                        <SelectItem value="observe">observe</SelectItem>
+                        <SelectItem value="block">block</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.piiRedact.label')}
+                    hint={t('sidebar.agentSettings.advanced.piiRedact.hint')}
+                  >
+                    <Input
+                      type="text"
+                      className="h-8 w-[150px]"
+                      aria-label={t('sidebar.agentSettings.advanced.piiRedact.label')}
+                      placeholder="email, credit_card"
+                      value={adv.piiRedact ?? ''}
+                      onChange={(e) => setAdv({ piiRedact: e.target.value === '' ? undefined : e.target.value })}
+                    />
+                  </AdvSettingRow>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
             {onClearMemory && (
               <div className="agent-settings-card-row">
                 <div className="agent-settings-card-copy">
@@ -445,8 +698,9 @@ export function ConversationSidebar({
                 </Button>
               </div>
             )}
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button type="button" onClick={() => setSettingsOpen(false)}>
               {t('sidebar.agentSettings.done')}
             </Button>

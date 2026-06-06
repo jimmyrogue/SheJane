@@ -39,12 +39,24 @@ Return JSON only, this exact shape:
 
 
 class ReflectMiddleware(AgentMiddleware):
-    def __init__(self, *, critic_model: Any = None) -> None:
+    def __init__(self, *, critic_model: Any = None, enabled: bool | None = None) -> None:
         super().__init__()
-        # `critic_model` is an injected `BaseChatModel` (only used when
-        # critic mode is enabled by env). If None at runtime, we fall
-        # back to the agent's primary model — see `_run_critic`.
+        # `critic_model` is an injected `BaseChatModel` (only used when the
+        # critic runs). If None at runtime, we fall back to the agent's
+        # primary model — see `_run_critic`.
         self.critic_model = critic_model
+        # Whether the real LLM critic runs. None ⇒ fall back to the
+        # SHEJANE_LOCAL_CRITIC env var (legacy / standalone behavior);
+        # builder.py passes an explicit bool so a per-run override
+        # (Advanced agent settings) wins over the env default.
+        self.enabled = enabled
+
+    def _critic_enabled(self) -> bool:
+        if self.enabled is not None:
+            return self.enabled
+        import os
+
+        return os.environ.get("SHEJANE_LOCAL_CRITIC", "").lower() in {"1", "true", "yes"}
 
     def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         messages = state.get("messages") or []
@@ -70,9 +82,7 @@ class ReflectMiddleware(AgentMiddleware):
         # Default to the sync stats summary first.
         stats = self.after_agent(state, runtime) or {}
 
-        import os
-
-        if os.environ.get("SHEJANE_LOCAL_CRITIC", "").lower() not in {"1", "true", "yes"}:
+        if not self._critic_enabled():
             return stats
 
         critic_result = await self._run_critic(state, runtime)

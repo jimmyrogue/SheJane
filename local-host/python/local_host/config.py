@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # Subagents (Phase 6'+ — deepagents SubAgentMiddleware)
     enable_subagents: bool = True
 
+    # Middleware modes with explicit (non-prefixed) aliases. These are also
+    # read directly by their middleware as an env fallback; builder.py now
+    # passes them explicitly so a per-run override (the client's Advanced
+    # agent-settings panel) can win over the env default.
+    #   input_guard_mode: observe | block
+    #   plan_first_mode:  off | auto | always
+    input_guard_mode: str = Field(default="observe", alias="SHEJANE_LOCAL_INPUT_GUARD")
+    plan_first_mode: str = Field(default="off", alias="SHEJANE_PLAN_FIRST")
+
     # Comma-separated list of fallback model identifiers that
     # ModelFallbackMiddleware should try when the primary model errors out.
     # Format: each entry is "provider:model" (e.g. "anthropic:claude-haiku-4")

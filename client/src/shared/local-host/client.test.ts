@@ -145,6 +145,74 @@ describe('desktop local host client', () => {
     )
   })
 
+  it('maps advanced agent settings to snake_case wire keys', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-adv',
+          goal: 'g',
+          status: 'queued',
+          created_at: '2026-05-16T00:00:00Z',
+          updated_at: '2026-05-16T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await createLocalRun(
+      {
+        goal: 'g',
+        settings: {
+          advanced: {
+            maxModelCalls: 50,
+            subagents: false,
+            browserHeadless: false,
+            toolCritic: 'block',
+            planFirst: 'auto',
+            piiRedact: 'email,credit_card',
+            // unset knobs must NOT appear on the wire (daemon keeps its default)
+          },
+        },
+      },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
+    expect(sent.settings).toEqual({
+      max_model_calls: 50,
+      subagents: false,
+      browser_headless: false,
+      tool_critic: 'block',
+      plan_first: 'auto',
+      pii_redact: 'email,credit_card',
+    })
+  })
+
+  it('omits settings entirely when only an empty advanced object is given', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-empty',
+          goal: 'g',
+          status: 'queued',
+          created_at: '2026-05-16T00:00:00Z',
+          updated_at: '2026-05-16T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await createLocalRun(
+      { goal: 'g', settings: { advanced: {} } },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
+    expect('settings' in sent).toBe(false)
+  })
+
   it('lists installed skills and roots from the local host', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(

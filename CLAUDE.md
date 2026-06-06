@@ -35,6 +35,8 @@ There's also an admin panel (`admin/`) — separate Vite/React app for model reg
 
 The most important architectural file to read first: **[docs/run-loop.md](docs/run-loop.md)** has the complete flow of one agent run from `POST /local/v1/runs` to terminal state, including the LangGraph middleware stack, the auto-approve loop for `scope=run` permission grants, and how SSE events flow back to the client.
 
+**Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook — it carries the detailed backend/billing/frontend rules (store dual-impl, wallet-ledger discipline, Stripe webhook idempotency, admin read-only surfaces, the supported subscription lifecycle). [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. The product spec is [spec.md](spec.md).
+
 ## Critical invariants
 
 These are not arbitrary style rules — each one corresponds to a class of bug that has actually shipped and burned hours in this repo.
@@ -84,6 +86,7 @@ make help
 make test               # python + client vitest + admin vitest + go
 make local-host-test    # just python (uv run pytest)
 make client-test        # just client (vitest --run)
+make admin-test         # just admin (vitest --run)
 make api-test           # just go (go test ./...)
 make test-race          # go test -race ./... (catches ledger data races)
 make test-e2e           # Playwright simulated E2E
@@ -129,9 +132,9 @@ make logs-dev                # snapshot of all of the above
 | Why we moved Node → Python and what was deferred to which phase | `docs/migration-langgraph.md` |
 | Pre-Phase-5'+ Node daemon architecture (historical) | `docs/architecture-local-host.md` |
 | Production deployment / migrations | `docs/operations.md` |
-| Daemon code | `local-host/python/local_host/` (server.py is the router, runs.py owns the run loop, agent/builder.py wires middleware, tools/ has the @tool functions) |
-| API code | `api/internal/` (httpapi/ routes, billing/ ledger, llm/ provider gateway, modelreg/ model registry, documents/ S3 service, secrets/ encryption) |
-| Client code | `client/src/` — `App.tsx` is the chat shell, `features/chat/` has the timeline + composer, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
+| Daemon code | `local-host/python/local_host/` — `server.py` router, `runs.py` run loop, `agent/builder.py` wires the middleware stack, `agent/auto_router.py` picks fast/deep tier for "Auto" runs, `agent/subagents.py` defines deepagents subagents (invoked via the injected `task` tool), `middleware/` is the input-guard/plan-first/router/reflect/tool-critic/output-guard/memory-writeback stack, `tools/` has the `@tool` functions, `store/sqlite.py` is the local checkpoint + KV store |
+| API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |
+| Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Admin panel | `admin/` — separate Vite app; model configs, credit rate, audit logs |
 | Contract tests (real HTTP, not MockTransport) | `client/src/shared/local-host/client.contract.test.ts` |
 
@@ -144,12 +147,15 @@ make logs-dev                # snapshot of all of the above
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
 - New tool: add `@tool("name.action")` in `local-host/python/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
+- Gateway-billed tools today (proxy through `_gateway.py`, keys in the Go API only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), `code.execute` (E2B microVM, brokered by `api/internal/e2b`). Everything else runs locally in the daemon: `web.fetch` (SSRF-guarded), the fs/`workspace.*` toolkit, `memory.*`, `browser.task`, `office.*` read/write, MCP tools. `code.execute` is gated by the client's "Code Execution" toggle (`include_code_exec` in `build_tools`); the diagram's tool lists are illustrative, this bullet is the source of truth.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
 ### Go (api/)
 
 - `go vet ./...` + `gofmt -l` enforced via lefthook + CI.
-- The credit ledger (`api/internal/billing/`) reserves credits BEFORE the external call and settles or releases AFTER. The pattern is `Reserve → external operation → Settle | Release`. Every code path that calls `Reserve` must have a guaranteed Settle/Release on every exit, including error paths. The `billing-flow-reviewer` subagent audits this on every billing-related change.
+- The credit ledger (`api/internal/billing/`) reserves credits BEFORE the external call and settles or releases AFTER. The pattern is `Reserve → external operation → Settle | Release`. Every code path that calls `Reserve` must have a guaranteed Settle/Release on every exit, including error paths. The `billing-flow-reviewer` subagent audits this on every billing-related change. Wallet balances move ONLY through this ledger (`billing/wallet.go`, writing `wallet_transactions`) — never mutate a balance ad hoc.
+- `api/internal/store` is an interface (`store.go`) with two implementations that MUST stay in lockstep: `memory.go` (tests/dev) and `postgres.go` (prod), plus their `*_modelconfig.go` siblings for the model registry. Add a method to the interface → implement it in both, or the Postgres path silently diverges from a green in-memory test suite. This is the contract-drift bug class from the intro, living inside one stack.
+- Stripe webhook handling must stay idempotent: dedupe on `stripe_events`, set `processed_at` only after local processing succeeds, and key credit grants with `wallet_transactions.idempotency_key = stripe:<event_id>`. See AGENTS.md for the full lifecycle + admin-audit rules.
 
 ### TypeScript (client/, admin/)
 

@@ -8,6 +8,7 @@ import {
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { McpServerCatalog, McpServerInfo } from '@/shared/local-host/client'
 
@@ -240,13 +241,10 @@ export function MCPView({
                             ) : null}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={!isOff}
+                        <Switch
+                          checked={!isOff}
                           aria-label={server.name}
-                          className="agent-settings-switch"
-                          onClick={() => toggle(server.name)}
+                          onCheckedChange={() => toggle(server.name)}
                         />
                       </div>
                     )

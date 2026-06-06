@@ -214,11 +214,12 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
     across runs, only the persistence is skipped.
     """
     middleware: list[AgentMiddleware] = [
-        InputGuardMiddleware(),  # P1
+        InputGuardMiddleware(mode=settings.input_guard_mode),  # P1
         FastDeepRouterMiddleware(),  # P2
-        # Plan & Execute mode (env SHEJANE_PLAN_FIRST: off | always | auto).
-        # auto-skips trivial tasks; default off.
-        PlanFirstMiddleware(),
+        # Plan & Execute mode (off | always | auto; auto-skips trivial
+        # tasks). Sourced from settings so the Advanced agent-settings
+        # panel can override the SHEJANE_PLAN_FIRST env default per-run.
+        PlanFirstMiddleware(mode=settings.plan_first_mode),
     ]
     # PII redaction (opt-in via SHEJANE_LOCAL_PII_REDACT). One
     # PIIMiddleware instance per PII type — they compose cleanly.
@@ -272,7 +273,7 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
             ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
             ContextEditingMiddleware(),
             OutputGuardMiddleware(),  # P9
-            ReflectMiddleware(),  # P4
+            ReflectMiddleware(enabled=settings.enable_critic_reflection),  # P4
             MemoryWritebackMiddleware(enabled=memory_enabled),  # P6
         ]
     )
@@ -380,6 +381,7 @@ async def build_agent(
         mcp_disabled_servers=mcp_disabled_servers,
         include_code_exec=code_exec_enabled,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
+        browser_headless=settings.browser_headless,
     )
     if not memory_enabled:
         tools = [t for t in tools if t.name != "memory.search"]

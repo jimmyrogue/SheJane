@@ -50,6 +50,7 @@ import {
   resolveLocalPermission,
   setLocalCloudSession,
   streamLocalRun,
+  type AdvancedAgentSettings,
   type AgentSettings,
   type LocalArtifact,
   type LocalCloudSession,
@@ -82,6 +83,9 @@ const defaultAgentSettings: Required<AgentSettings> = {
   skills: 'on',
   mcp: 'on',
   mcpDisabled: [],
+  // Empty = every advanced knob inherits the daemon's own default. The user
+  // only ever populates the fields they explicitly change in the panel.
+  advanced: {},
 }
 const defaultChatMode: ChatMode = 'auto'
 const defaultSidebarWidth = 220
@@ -145,6 +149,40 @@ function writeSidebarWidth(width: number) {
   }
 }
 
+function readAdvancedAgentSettings(raw: unknown): AdvancedAgentSettings {
+  // Defensive read — localStorage can be hand-edited / stale. Keep only
+  // well-typed, in-range values; everything else falls back to the daemon
+  // default by being omitted.
+  if (!raw || typeof raw !== 'object') {
+    return {}
+  }
+  const a = raw as Record<string, unknown>
+  const out: AdvancedAgentSettings = {}
+  if (typeof a.maxModelCalls === 'number' && Number.isFinite(a.maxModelCalls)) {
+    out.maxModelCalls = a.maxModelCalls
+  }
+  if (typeof a.maxToolRetries === 'number' && Number.isFinite(a.maxToolRetries)) {
+    out.maxToolRetries = a.maxToolRetries
+  }
+  if (typeof a.toolSelectorMax === 'number' && Number.isFinite(a.toolSelectorMax)) {
+    out.toolSelectorMax = a.toolSelectorMax
+  }
+  if (typeof a.subagents === 'boolean') out.subagents = a.subagents
+  if (typeof a.reflect === 'boolean') out.reflect = a.reflect
+  if (typeof a.browserHeadless === 'boolean') out.browserHeadless = a.browserHeadless
+  if (a.toolCritic === 'off' || a.toolCritic === 'watch' || a.toolCritic === 'nudge' || a.toolCritic === 'block') {
+    out.toolCritic = a.toolCritic
+  }
+  if (a.inputGuard === 'observe' || a.inputGuard === 'block') {
+    out.inputGuard = a.inputGuard
+  }
+  if (a.planFirst === 'off' || a.planFirst === 'auto' || a.planFirst === 'always') {
+    out.planFirst = a.planFirst
+  }
+  if (typeof a.piiRedact === 'string') out.piiRedact = a.piiRedact
+  return out
+}
+
 function readAgentSettings(): Required<AgentSettings> {
   if (typeof window === 'undefined') {
     return { ...defaultAgentSettings }
@@ -166,6 +204,7 @@ function readAgentSettings(): Required<AgentSettings> {
       mcpDisabled: Array.isArray(parsed.mcpDisabled)
         ? parsed.mcpDisabled.filter((name): name is string => typeof name === 'string')
         : [],
+      advanced: readAdvancedAgentSettings((parsed as { advanced?: unknown }).advanced),
     }
   } catch {
     return { ...defaultAgentSettings }

@@ -119,6 +119,36 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
  * and applied by local-host (overriding its env defaults). Open-ended shape so
  * more knobs can be surfaced later; only `memory` is exposed today.
  */
+/**
+ * Advanced per-run knobs surfaced in the settings dialog's "Advanced" section.
+ * Every field is optional: an unset field is omitted from the wire payload so
+ * the daemon keeps its own env/default value. Keys mirror what
+ * `runs._apply_advanced_overrides` reads on the daemon (snake_case on the wire;
+ * the serializer below translates).
+ */
+export interface AdvancedAgentSettings {
+  /** Hard cap on LLM calls per run (runaway guard). Daemon default 20. */
+  maxModelCalls?: number
+  /** Retries for a failing tool before giving up. Daemon default 2. */
+  maxToolRetries?: number
+  /** LLM tool-preselection: keep the N most-relevant tools. 0 = off. */
+  toolSelectorMax?: number
+  /** deepagents subagents (the `task` tool). Daemon default on. */
+  subagents?: boolean
+  /** End-of-run LLM critic reflection (extra cost). Daemon default off. */
+  reflect?: boolean
+  /** Run the browser tool headless. Daemon default on. */
+  browserHeadless?: boolean
+  /** Mid-loop tool-result critic. Daemon default off. */
+  toolCritic?: 'off' | 'watch' | 'nudge' | 'block'
+  /** Prompt-injection input guard. Daemon default observe. */
+  inputGuard?: 'observe' | 'block'
+  /** Plan-first middleware. Daemon default off. */
+  planFirst?: 'off' | 'auto' | 'always'
+  /** Comma-separated PII types to redact (e.g. "email,credit_card"). */
+  piiRedact?: string
+}
+
 export interface AgentSettings {
   memory?: 'off' | 'on'
   skills?: 'off' | 'on'
@@ -129,6 +159,9 @@ export interface AgentSettings {
    *  `mcp_disabled` to match the daemon's run_settings reader; the
    *  serializer below handles that. */
   mcpDisabled?: string[]
+  /** Advanced knobs (settings dialog → "Advanced"). Omitted fields keep
+   *  the daemon's env/default value. */
+  advanced?: AdvancedAgentSettings
 }
 
 export async function createLocalRun(
@@ -158,6 +191,24 @@ export async function createLocalRun(
     if (src.mcp !== undefined) out.mcp = src.mcp
     if (src.mcpDisabled !== undefined && src.mcpDisabled.length > 0) {
       out.mcp_disabled = src.mcpDisabled
+    }
+    // Advanced knobs → flat snake_case keys the daemon's run_settings
+    // reader understands. Only defined fields ship, so an untouched knob
+    // leaves the daemon's own default in force.
+    const adv = src.advanced
+    if (adv) {
+      if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
+      if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
+      if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
+      if (adv.subagents !== undefined) out.subagents = adv.subagents
+      if (adv.reflect !== undefined) out.reflect = adv.reflect
+      if (adv.browserHeadless !== undefined) out.browser_headless = adv.browserHeadless
+      if (adv.toolCritic !== undefined) out.tool_critic = adv.toolCritic
+      if (adv.inputGuard !== undefined) out.input_guard = adv.inputGuard
+      if (adv.planFirst !== undefined) out.plan_first = adv.planFirst
+      if (adv.piiRedact !== undefined && adv.piiRedact.trim() !== '') {
+        out.pii_redact = adv.piiRedact.trim()
+      }
     }
     return Object.keys(out).length === 0 ? undefined : out
   })()

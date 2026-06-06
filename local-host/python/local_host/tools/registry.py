@@ -61,6 +61,7 @@ async def build_tools(
     mcp_disabled_servers: set[str] | None = None,
     include_code_exec: bool = False,
     browser_llm: Any = None,
+    browser_headless: bool = True,
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
 
@@ -103,7 +104,7 @@ async def build_tools(
     # `web.search` is now part of WEB_TOOLS (proxied through the cloud
     # gateway), so no conditional wiring is needed here.
 
-    tools.append(make_browser_tool(llm=browser_llm))
+    tools.append(make_browser_tool(llm=browser_llm, headless=browser_headless))
 
     if include_mcp:
         data_dir = get_settings().data_dir

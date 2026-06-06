@@ -3437,48 +3437,6 @@ button:active {
   line-height: 1.5;
 }
 
-/* iOS-style toggle for boolean settings. Uses --accent-danger when on
-   to match the reference design's coral-red active state — the same
-   token also drives the destructive button below for visual cohesion. */
-.agent-settings-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: 36px;
-  height: 20px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.18);
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  transition: background 150ms ease;
-}
-
-.agent-settings-switch[aria-checked='true'] {
-  background: var(--accent-danger);
-}
-
-.agent-settings-switch::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 150ms ease;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-}
-
-.agent-settings-switch[aria-checked='true']::after {
-  transform: translateX(16px);
-}
-
-.agent-settings-switch:focus-visible {
-  outline: 2px solid var(--accent-danger);
-  outline-offset: 2px;
-}
-
 .agent-settings-reset-btn {
   flex-shrink: 0;
   display: inline-flex;
@@ -3496,6 +3454,42 @@ button:active {
 
 .agent-settings-reset-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-danger-bg) 70%, var(--accent-danger));
+}
+
+/* "Advanced" disclosure — a flush section inside the basics card. The
+   trigger styling + chevron rotation now live on the Collapsible's
+   <CollapsibleTrigger> via Tailwind; this rule only owns the top divider
+   that separates it from the basic toggles, and the divider before the
+   "clear memory" row that follows it. */
+.agent-settings-advanced {
+  border-top: 1px solid var(--border-hairline);
+}
+.agent-settings-advanced + .agent-settings-card-row {
+  border-top: 1px solid var(--border-hairline);
+}
+.agent-settings-advanced-desc {
+  margin: 0;
+  padding: 11px 16px 2px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+/* Small group label that breaks the advanced rows into scannable sections. */
+.agent-settings-group {
+  padding: 12px 16px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.agent-settings-card-row + .agent-settings-group {
+  border-top: 1px solid var(--border-hairline);
+}
+/* Advanced rows sit a touch denser than the basics card. */
+.agent-settings-advanced-body .agent-settings-card-row {
+  padding: 11px 16px;
 }
 
 .conversation-action-form {
@@ -6213,8 +6207,9 @@ select {
  *
  * Per-row layout differs from skills: we need room for command/url +
  * env keys metadata + a switch on the right. One row per server, full
- * width of the section column. Switch reuses .agent-settings-switch
- * styling so the on/off look matches the sidebar settings dialog. */
+ * width of the section column. The on/off control is the shared shadcn
+ * <Switch> component (@/components/ui/switch), same as the sidebar
+ * settings dialog. */
 .mcp-overall-empty {
   font-size: 13px;
   color: var(--text-tertiary);

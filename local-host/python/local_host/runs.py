@@ -35,7 +35,7 @@ from langgraph.types import Command
 
 from .agent.auto_router import classify_mode
 from .agent.builder import build_agent
-from .config import get_settings
+from .config import Settings, get_settings
 from .event_translator import translate
 from .observability import build_callbacks
 from .store.sqlite import LocalStore
@@ -50,6 +50,61 @@ log = logging.getLogger("local_host.runs")
 # pairs, which covers most real conversations before we'd want LLM-based
 # summarization anyway.
 _MAX_HISTORY_TURNS = 40
+
+
+def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> Settings:
+    """Fold the client's "Advanced" agent-settings knobs onto a copy of the
+    base Settings.
+
+    Knobs absent from `run_settings` keep the daemon's env/default value, so
+    legacy callers (curl, tests, pre-panel client builds) are unaffected.
+    `model_copy(update=...)` does NOT re-validate, so each value is coerced to
+    its field's type here; unknown keys and unparseable / out-of-range values
+    are ignored rather than crashing the run.
+    """
+    overrides: dict[str, Any] = {}
+    # Integer knobs.
+    for key, field in (
+        ("max_model_calls", "max_model_calls"),
+        ("max_tool_retries", "max_tool_retries"),
+        ("tool_selector_max", "tool_selector_max_tools"),
+    ):
+        raw = run_settings.get(key)
+        if raw is None:
+            continue
+        try:
+            overrides[field] = int(raw)
+        except (TypeError, ValueError):
+            pass
+    # Boolean knobs (accept real bools or "on"/"true"/"1"/"yes").
+    for key, field in (
+        ("subagents", "enable_subagents"),
+        ("reflect", "enable_critic_reflection"),
+        ("browser_headless", "browser_headless"),
+    ):
+        raw = run_settings.get(key)
+        if raw is None:
+            continue
+        overrides[field] = (
+            raw if isinstance(raw, bool) else str(raw).strip().lower() in {"1", "true", "yes", "on"}
+        )
+    # Enumerated string knobs — only accepted from a fixed allow-list.
+    for key, field, allowed in (
+        ("tool_critic", "tool_critic_mode", {"off", "watch", "nudge", "block"}),
+        ("input_guard", "input_guard_mode", {"observe", "block"}),
+        ("plan_first", "plan_first_mode", {"off", "auto", "always"}),
+    ):
+        raw = run_settings.get(key)
+        if raw is None:
+            continue
+        val = str(raw).strip().lower()
+        if val in allowed:
+            overrides[field] = val
+    # Free-form comma-separated string (validated downstream in builder.py).
+    pii = run_settings.get("pii_redact")
+    if pii is not None:
+        overrides["pii_redact_types"] = str(pii)
+    return base.model_copy(update=overrides) if overrides else base
 
 
 class RunCoordinator:
@@ -303,6 +358,9 @@ class RunCoordinator:
             mcp_disabled_servers: set[str] = {
                 str(name) for name in raw_disabled if isinstance(name, str)
             }
+            # Per-run effective settings = base daemon settings with any
+            # "Advanced" knobs the client sent folded on top.
+            effective_settings = _apply_advanced_overrides(settings, run_settings)
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -318,6 +376,7 @@ class RunCoordinator:
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
                 code_exec_enabled=code_exec_enabled,
+                settings=effective_settings,
             )
             config = {
                 "configurable": {"thread_id": run_id},

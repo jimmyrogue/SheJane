@@ -214,7 +214,7 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [] }}
+          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
           onAgentSettingsChange={onAgentSettingsChange}
         />
       </I18nProvider>,
@@ -229,7 +229,7 @@ describe('ConversationSidebar', () => {
     const memorySwitch = within(dialog).getByRole('switch', { name: '记忆' })
     expect(memorySwitch).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(memorySwitch)
-    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [] })
+    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} })
   })
 
   it('toggles the skills agent setting from the account menu dialog', async () => {
@@ -247,7 +247,7 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [] }}
+          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
           onAgentSettingsChange={onAgentSettingsChange}
         />
       </I18nProvider>,
@@ -262,7 +262,7 @@ describe('ConversationSidebar', () => {
     const skillsSwitch = within(dialog).getByRole('switch', { name: '技能' })
     expect(skillsSwitch).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(skillsSwitch)
-    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'off', skills: 'on', mcp: 'off', mcpDisabled: [] })
+    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'off', skills: 'on', mcp: 'off', mcpDisabled: [], advanced: {} })
   })
 
   it('opens the skills view when the skills nav item is clicked', () => {
@@ -286,7 +286,7 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [] }}
+          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
           onAgentSettingsChange={vi.fn()}
         />
       </I18nProvider>,
@@ -314,7 +314,7 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [] }}
+          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
           onAgentSettingsChange={vi.fn()}
           onClearMemory={onClearMemory}
         />
@@ -352,7 +352,7 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [] }}
+          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
           onAgentSettingsChange={vi.fn()}
           onClearMemory={onClearMemory}
         />
