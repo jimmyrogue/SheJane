@@ -161,6 +161,19 @@ deploy-down: ## Stop the prod stack (keeps named volumes / data)
 deploy-logs: ## Tail the prod stack logs
 	$(COMPOSE_PROD) logs -f
 
+deploy-backup: ## Dump prod Postgres → backup-<ts>.sql.gz (then copy it OFF-host!)
+	@ts=$$(date +%Y%m%d-%H%M%S); out="backup-$$ts.sql.gz"; \
+	$(COMPOSE_PROD) exec -T postgres pg_dump --clean --if-exists -U shejane -d shejane | gzip > "$$out"; \
+	echo "✅ Wrote $$out ($$(du -h "$$out" | cut -f1)). This is NOT a backup until you copy it off this host."
+
+deploy-restore: ## DANGER: overwrite prod Postgres from BACKUP=<file.sql.gz>
+	@test -n "$$BACKUP" || { echo "Usage: make deploy-restore BACKUP=backup-YYYYMMDD-HHMMSS.sql.gz"; exit 1; }
+	@test -f "$$BACKUP" || { echo "No such file: $$BACKUP"; exit 1; }
+	@printf '⚠️  This OVERWRITES the prod database from %s. Type yes to continue: ' "$$BACKUP"; \
+	read ok; [ "$$ok" = "yes" ] || { echo "aborted"; exit 1; }
+	@gunzip -c "$$BACKUP" | $(COMPOSE_PROD) exec -T postgres psql -v ON_ERROR_STOP=1 -U shejane -d shejane >/dev/null
+	@echo "✅ Restored from $$BACKUP"
+
 migrate: ## Apply SQL migrations against DATABASE_URL (psql, fail-fast)
 	@set -e; for file in api/migrations/*.sql; do psql -v ON_ERROR_STOP=1 "$$DATABASE_URL" -f "$$file"; done
 

@@ -578,9 +578,12 @@ make release VERSION=v0.1.0
 
 ```bash
 # 1. 准备 .env（见 .env.example 的 “M. Deployment” 段）。至少改：
-#    JWT_SECRET（强随机）、MOCK_LLM=false、COOKIE_SECURE=true、
+#    JWT_SECRET（强随机）、CONFIG_ENCRYPTION_KEY（32B hex，加密落库的
+#    provider key；不设则明文存库）、POSTGRES_PASSWORD（别留默认 shejane）、
+#    MOCK_LLM=false、COOKIE_SECURE=true、
 #    CLIENT_BASE_URL / ADMIN_BASE_URL（真实 https 域名）、
-#    APP_DOMAIN / ADMIN_DOMAIN，以及 provider / Stripe / S3 凭据。
+#    APP_DOMAIN / ADMIN_DOMAIN、IMAGE_TAG（钉到发布版本，别留 latest），
+#    以及 provider / Stripe / S3 凭据。
 cp .env.example .env
 
 # 2. 把 APP_DOMAIN / ADMIN_DOMAIN 的 DNS A 记录指向本机。
@@ -589,7 +592,13 @@ cp .env.example .env
 make deploy
 ```
 
-`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。
+`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。
+
+> **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
+>
+> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐槽位改。`CONFIG_ENCRYPTION_KEY` 未设则 provider key **明文**落库（仅启动告警）。
+> - **（开计费时）`STRIPE_PRICE_ID` / `STRIPE_SECRET_KEY` 不能留空** —— 否则结账走 dev 假成功路径（伪造 `dev_` 会话、不扣款、不发 webhook、不发放 credits），前端却显示「订阅成功」。不开计费可忽略。
+> - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 
 常用：
 
@@ -601,12 +610,24 @@ make deploy-down               # 停栈（保留数据卷）
 
 数据（Postgres）落在命名卷 `postgres-data`，`deploy-down` 不会删它；要彻底清空需 `docker compose -f docker-compose.prod.yml down -v`（危险）。Postgres、client、admin 都不对外暴露端口，只有 Caddy 的 80/443 和 api 的 `127.0.0.1:8080`（给本机反代或巡检用）对外可达。
 
+**备份与恢复**：持久卷不等于备份。仓库提供：
+
+```bash
+make deploy-backup                 # pg_dump --clean --if-exists → backup-<时间戳>.sql.gz
+make deploy-restore BACKUP=<文件>   # 覆盖当前库（需输入 yes 确认）
+```
+
+`deploy-backup` 只是导出到本机当前目录，**务必再拷到异地**才算备份。没有自动定时任务，请在基础设施层加 cron（例如每日跑 `make deploy-backup` 并上传对象存储）。注意迁移是**只进不退**、每次 `up` 全量重跑且无版本表，因此镜像回滚 **不会** 回滚数据库；破坏性 schema 变更只能从备份恢复，切勿用 `down -v` 当恢复手段。
+
 ## 生产上线检查
 
 上线前至少确认：
 
-- `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名。
-- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库。
-- Stripe webhook endpoint 已订阅 Phase 1.7 事件列表，Dashboard 中最近一次投递为 2xx。
+- `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`MOCK_LLM=false`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名（与浏览器 Origin 精确一致、无尾斜杠）。
+- `CONFIG_ENCRYPTION_KEY` 已设（32B hex），且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐槽位改）。
+- `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库（任一缺失会让结账走 dev 假成功路径）。
+- Stripe webhook endpoint 已订阅事件列表，Dashboard 中最近一次投递为 2xx。
+- 数据库备份方案已就位：`make deploy-backup` 能跑通且产物已拷到异地（持久卷不是备份）。
 - `make ci` 通过；本地或预发环境按需跑过 `RUN_EXTERNAL_SMOKE=1 make smoke-external`。
 - 管理员只能通过 `ADMIN_EMAILS` 创建/提权，生产后台域名只开放给可信运营人员。

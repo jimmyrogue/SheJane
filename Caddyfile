@@ -11,6 +11,13 @@
 # the api container — so the client/admin images can be built with an
 # empty VITE_API_BASE_URL and issue relative, same-origin requests.
 
+# Global options. The ACME contact email receives Let's Encrypt
+# expiry / renewal-failure notifications. Override per-deploy with the
+# ACME_EMAIL env var; ignored for the localhost internal-CA fallback.
+{
+	email {$ACME_EMAIL:tliang92@gmail.com}
+}
+
 {$APP_DOMAIN:localhost} {
   encode zstd gzip
 

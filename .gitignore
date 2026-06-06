@@ -102,3 +102,6 @@ postgres-data/
 # Docker / deployment local overrides
 docker-compose.override.yml
 Caddyfile.local
+
+# Local Postgres dumps from `make deploy-backup` — never commit DB data
+backup-*.sql.gz
