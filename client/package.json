@@ -5,19 +5,24 @@
   "private": true,
   "description": "SheJane (石间) desktop client — Electron + React agentic chat UI.",
   "license": "Apache-2.0",
+  "author": "SheJane",
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",
     "directory": "client"
   },
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest",
     "test:contract": "vitest run --config vitest.contract.config.ts",
-    "electron": "../scripts/run-branded-electron.sh electron/main.cjs"
+    "electron": "../scripts/run-branded-electron.sh electron/main.cjs",
+    "build:desktop": "tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build",
+    "dist": "npm run build:desktop && electron-builder",
+    "dist:dir": "npm run build:desktop && electron-builder --dir"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
@@ -49,7 +54,9 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
+    "cross-env": "^10.1.0",
     "electron": "^33.2.1",
+    "electron-builder": "^26.15.0",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^25.0.1",
     "openapi-typescript": "^7.13.0",

@@ -1,0 +1,63 @@
+# electron-builder config for the SheJane (石间) desktop app.
+# See docs/desktop-distribution.md for the phased plan.
+#
+# Phase 1 (here): build the Electron SHELL only — loads the prod-pointed
+#   renderer (cloud chat). The local-agent daemon is NOT bundled yet.
+# Phase 2: add the PyInstaller-frozen daemon via `extraResources` (stub below).
+# Phase 4: turn on macOS hardenedRuntime + entitlements + notarization,
+#   and Windows signing.
+# Phase 5: add `publish:` for electron-updater.
+
+appId: com.shejane.desktop
+productName: 石间
+copyright: Copyright © SheJane
+# ASCII artifact filenames (the installed app is still 石间.app):
+artifactName: SheJane-${version}-${arch}.${ext}
+
+directories:
+  output: release
+
+# What goes inside the asar: built renderer + Electron main/preload + runtime
+# assets (main.cjs loads assets/app-icon.png + app-tray.png at runtime).
+files:
+  - dist/**/*
+  - electron/**/*.cjs
+  - electron/assets/**/*
+  - package.json
+
+asar: true
+
+# Phase 2 — bundle the frozen Python daemon OUTSIDE the asar so main.cjs can
+# spawn it from process.resourcesPath/local-host:
+# extraResources:
+#   - from: ../local-host/python/dist/local-host
+#     to: local-host
+
+mac:
+  category: public.app-category.productivity
+  icon: electron/assets/app-icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip # required by electron-updater (Phase 5)
+      arch: [arm64, x64]
+  # Phase 4 turns these on (do NOT enable before the daemon is signed too):
+  hardenedRuntime: false
+  # entitlements: build/entitlements.mac.plist
+  # entitlementsInherit: build/entitlements.mac.inherit.plist
+
+win:
+  # electron-builder generates the .ico from the 1024px PNG.
+  icon: electron/assets/app-icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+# Phase 5 — auto-update feed:
+# publish:
+#   provider: github

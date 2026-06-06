@@ -149,8 +149,18 @@ function createTray() {
 
 app.setName(appName)
 
+// The cloud API the main-process auth bridge (register/login/refresh) talks to.
+// Must match the renderer's build-time VITE_API_BASE_URL or auth cookies bind to
+// one origin while data calls hit another (silent session-refresh breakage).
+// Packaged builds default to production; dev stays on the local API. An explicit
+// env var still overrides either.
+const PROD_API_BASE_URL = 'https://app.shejane.com'
 function apiBaseURL() {
-  return process.env.SHEJANE_API_BASE_URL || process.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  return (
+    process.env.SHEJANE_API_BASE_URL ||
+    process.env.VITE_API_BASE_URL ||
+    (app.isPackaged ? PROD_API_BASE_URL : 'http://localhost:8080')
+  )
 }
 
 function registerAuthHandlers() {
