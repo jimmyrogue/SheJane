@@ -1,7 +1,7 @@
 {
   "name": "shejane-client",
   "productName": "石间",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "SheJane (石间) desktop client — Electron + React agentic chat UI.",
   "license": "Apache-2.0",
