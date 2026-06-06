@@ -547,6 +547,23 @@ function AppContent() {
     setDocuments([])
   }, [auth?.user?.id])
 
+  // Let the API client silently renew an expired access token mid-session
+  // (15-min TTL) using the long-lived refresh cookie, instead of bouncing
+  // the user to "登录已过期". A genuinely-dead refresh token drops to login.
+  useEffect(() => {
+    api.setTokenRefresher(async () => {
+      try {
+        const payload = await authClient.refresh()
+        api.setAccessToken(payload.access_token)
+        setAuth(payload)
+        return payload.access_token
+      } catch {
+        setAuth(null)
+        return null
+      }
+    })
+  }, [api, authClient])
+
   useEffect(() => {
     authClient
       .refresh()

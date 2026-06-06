@@ -85,6 +85,22 @@ export function App() {
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
 
+  // Silently renew an expired access token mid-session (15-min TTL) using
+  // the refresh cookie, instead of bouncing to "登录已过期". A dead refresh
+  // token drops to login.
+  useEffect(() => {
+    api.setTokenRefresher(async () => {
+      try {
+        const payload = await api.refresh()
+        api.setAccessToken(payload.access_token)
+        return payload.access_token
+      } catch {
+        setAuth(null)
+        return null
+      }
+    })
+  }, [api])
+
   useEffect(() => {
     api
       .refresh()

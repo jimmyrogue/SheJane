@@ -212,11 +212,64 @@ function pageQuery(limit?: number, offset?: number): string {
 
 export class AdminAPI {
   private accessToken = ''
+  private tokenRefresher?: () => Promise<string | null>
+  private refreshInFlight: Promise<string | null> | null = null
 
   constructor(private readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
 
   setAccessToken(token: string): void {
     this.accessToken = token
+  }
+
+  /** Wired by the app shell so authedFetch can silently mint a new access
+   *  token on a mid-session 401 instead of bouncing to the login screen.
+   *  Returns the new access token, or null when refresh failed. */
+  setTokenRefresher(refresher: () => Promise<string | null>): void {
+    this.tokenRefresher = refresher
+  }
+
+  /** Dedupes concurrent refreshes: a burst of 401s triggers exactly one
+   *  /auth/refresh, and every waiter resolves to the same result. */
+  private refreshAccessToken(): Promise<string | null> {
+    if (!this.tokenRefresher) {
+      return Promise.resolve(null)
+    }
+    if (!this.refreshInFlight) {
+      const inflight = this.tokenRefresher().catch(() => null)
+      this.refreshInFlight = inflight
+      void inflight.finally(() => {
+        if (this.refreshInFlight === inflight) {
+          this.refreshInFlight = null
+        }
+      })
+    }
+    return this.refreshInFlight
+  }
+
+  /** fetch + one automatic retry on 401: the access token lives ~15 min,
+   *  so an open admin session routinely outlives it. On the first 401 of
+   *  an authed request we refresh via the refresh cookie and replay once.
+   *  Auth endpoints are excluded to avoid recursion. */
+  private async authedFetch(path: string, init: RequestInit, requireAuth: boolean): Promise<Response> {
+    const run = () =>
+      fetch(`${this.baseURL}${path}`, {
+        ...init,
+        credentials: 'include',
+        headers: this.headers(requireAuth),
+      })
+    const response = await run()
+    if (
+      response.status === 401 &&
+      requireAuth &&
+      this.tokenRefresher &&
+      !path.startsWith('/api/v1/auth/')
+    ) {
+      const token = await this.refreshAccessToken()
+      if (token) {
+        return run()
+      }
+    }
+    return response
   }
 
   async login(input: { email: string; password: string }): Promise<AuthPayload> {
@@ -333,49 +386,27 @@ export class AdminAPI {
   }
 
   private async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(path, { method: 'GET' }, true)
     return decodeResponse<T>(response)
   }
 
   private async post<T>(path: string, body: unknown, requireAuth: boolean): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: this.headers(requireAuth),
-      body: JSON.stringify(body),
-    })
+    const response = await this.authedFetch(path, { method: 'POST', body: JSON.stringify(body) }, requireAuth)
     return decodeResponse<T>(response)
   }
 
   private async patch<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: this.headers(true),
-      body: JSON.stringify(body),
-    })
+    const response = await this.authedFetch(path, { method: 'PATCH', body: JSON.stringify(body) }, true)
     return decodeResponse<T>(response)
   }
 
   private async put<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: this.headers(true),
-      body: JSON.stringify(body),
-    })
+    const response = await this.authedFetch(path, { method: 'PUT', body: JSON.stringify(body) }, true)
     return decodeResponse<T>(response)
   }
 
   private async del<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'DELETE',
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(path, { method: 'DELETE' }, true)
     return decodeResponse<T>(response)
   }
 

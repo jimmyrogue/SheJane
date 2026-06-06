@@ -137,11 +137,65 @@ function toCloudMode(mode: ChatMode): 'fast' | 'deep' {
 
 export class SheJaneAPI implements ChatAPI {
   private accessToken = ''
+  private tokenRefresher?: () => Promise<string | null>
+  private refreshInFlight: Promise<string | null> | null = null
 
   constructor(readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
 
   setAccessToken(token: string): void {
     this.accessToken = token
+  }
+
+  /** Wired by the app shell to the (Electron-bridge-aware) refresh flow.
+   *  Lets authedFetch silently mint a new access token on a mid-session
+   *  401 instead of bouncing the user to the login screen. Returns the
+   *  new access token, or null when refresh is unavailable / failed. */
+  setTokenRefresher(refresher: () => Promise<string | null>): void {
+    this.tokenRefresher = refresher
+  }
+
+  /** Dedupes concurrent refreshes: a burst of 401s triggers exactly one
+   *  /auth/refresh, and every waiter resolves to the same result. */
+  private refreshAccessToken(): Promise<string | null> {
+    if (!this.tokenRefresher) {
+      return Promise.resolve(null)
+    }
+    if (!this.refreshInFlight) {
+      const inflight = this.tokenRefresher().catch(() => null)
+      this.refreshInFlight = inflight
+      void inflight.finally(() => {
+        if (this.refreshInFlight === inflight) {
+          this.refreshInFlight = null
+        }
+      })
+    }
+    return this.refreshInFlight
+  }
+
+  /** fetch + one automatic retry on 401: the access token lives ~15 min,
+   *  so an active session routinely outlives it. On the first 401 of an
+   *  authed request we refresh via the long-lived refresh cookie and
+   *  replay once. Auth endpoints are excluded to avoid recursion. */
+  private async authedFetch(path: string, init: RequestInit, requireAuth: boolean): Promise<Response> {
+    const run = () =>
+      fetch(`${this.baseURL}${path}`, {
+        ...init,
+        credentials: 'include',
+        headers: this.headers(requireAuth),
+      })
+    const response = await run()
+    if (
+      response.status === 401 &&
+      requireAuth &&
+      this.tokenRefresher &&
+      !path.startsWith('/api/v1/auth/')
+    ) {
+      const token = await this.refreshAccessToken()
+      if (token) {
+        return run()
+      }
+    }
+    return response
   }
 
   async register(input: { email: string; password: string; name: string }): Promise<AuthPayload> {
@@ -187,11 +241,7 @@ export class SheJaneAPI implements ChatAPI {
   }
 
   async deleteDocument(documentID: string): Promise<UserDocument> {
-    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}`, {
-      method: 'DELETE',
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(`/api/v1/documents/${documentID}`, { method: 'DELETE' }, true)
     return decodeResponse<UserDocument>(response)
   }
 
@@ -213,11 +263,7 @@ export class SheJaneAPI implements ChatAPI {
     // `false` here sent the request unauthenticated → 401 "未登录"
     // even for a logged-in user. Every other authed call uses
     // headers(true); this one was the outlier.
-    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}/source`, {
-      method: 'GET',
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(`/api/v1/documents/${documentID}/source`, { method: 'GET' }, true)
     if (!response.ok) {
       const text = await response.text().catch(() => response.statusText)
       throw new Error(`fetchDocumentBytes failed (${response.status}): ${text || response.statusText}`)
@@ -226,10 +272,8 @@ export class SheJaneAPI implements ChatAPI {
   }
 
   async streamChat(request: StreamChatRequest, handlers: StreamHandlers): Promise<StreamChatResult> {
-    const response = await fetch(`${this.baseURL}/api/v1/chat/completions`, {
+    const response = await this.authedFetch('/api/v1/chat/completions', {
       method: 'POST',
-      credentials: 'include',
-      headers: this.headers(true),
       body: JSON.stringify({
         model: toCloudMode(request.mode),
         stream: true,
@@ -238,7 +282,7 @@ export class SheJaneAPI implements ChatAPI {
         client_message_id: request.clientMessageId,
         messages: request.messages,
       }),
-    })
+    }, true)
     if (!response.ok || !response.body) {
       throw new Error(await errorMessage(response))
     }
@@ -280,11 +324,7 @@ export class SheJaneAPI implements ChatAPI {
   }
 
   async streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult> {
-    const response = await fetch(`${this.baseURL}/api/v1/agent/runs/${encodeURIComponent(runID)}/stream`, {
-      method: 'GET',
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(`/api/v1/agent/runs/${encodeURIComponent(runID)}/stream`, { method: 'GET' }, true)
     if (!response.ok || !response.body) {
       throw new Error(await errorMessage(response))
     }
@@ -307,15 +347,13 @@ export class SheJaneAPI implements ChatAPI {
     request: { mode: ChatMode; question: string },
     handlers: StreamHandlers,
   ): Promise<StreamChatResult> {
-    const response = await fetch(`${this.baseURL}/api/v1/documents/${documentID}/ask`, {
+    const response = await this.authedFetch(`/api/v1/documents/${documentID}/ask`, {
       method: 'POST',
-      credentials: 'include',
-      headers: this.headers(true),
       body: JSON.stringify({
         model: toCloudMode(request.mode),
         question: request.question,
       }),
-    })
+    }, true)
     if (!response.ok || !response.body) {
       throw new Error(await errorMessage(response))
     }
@@ -346,20 +384,12 @@ export class SheJaneAPI implements ChatAPI {
   }
 
   private async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      credentials: 'include',
-      headers: this.headers(true),
-    })
+    const response = await this.authedFetch(path, { method: 'GET' }, true)
     return decodeResponse<T>(response)
   }
 
   private async post<T>(path: string, body: unknown, requireAuth: boolean): Promise<T> {
-    const response = await fetch(`${this.baseURL}${path}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: this.headers(requireAuth),
-      body: JSON.stringify(body),
-    })
+    const response = await this.authedFetch(path, { method: 'POST', body: JSON.stringify(body) }, requireAuth)
     return decodeResponse<T>(response)
   }
 
