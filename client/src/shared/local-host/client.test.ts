@@ -165,6 +165,7 @@ describe('desktop local host client', () => {
         settings: {
           advanced: {
             maxModelCalls: 50,
+            researchSearchLimit: 8,
             subagents: false,
             browserHeadless: false,
             toolCritic: 'block',
@@ -181,6 +182,7 @@ describe('desktop local host client', () => {
     const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
     expect(sent.settings).toEqual({
       max_model_calls: 50,
+      research_search_limit: 8,
       subagents: false,
       browser_headless: false,
       tool_critic: 'block',

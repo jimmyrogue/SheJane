@@ -52,6 +52,28 @@ log = logging.getLogger("local_host.runs")
 _MAX_HISTORY_TURNS = 40
 
 
+def _merge_pii_types(base: str, extra: str) -> str:
+    """Union two comma-separated PII entity-type lists, base order first.
+
+    Used to enforce that a per-run client override can only ADD PII types to
+    the machine/env baseline, never drop one — clearing the field must not
+    re-expose data the deployment chose to redact before it reaches the cloud
+    tool gateway. Dedup is case-insensitive; the first-seen spelling is kept.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for chunk in (base, extra):
+        for raw in chunk.split(","):
+            item = raw.strip()
+            if not item:
+                continue
+            key = item.upper()
+            if key not in seen:
+                seen.add(key)
+                out.append(item)
+    return ",".join(out)
+
+
 def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> Settings:
     """Fold the client's "Advanced" agent-settings knobs onto a copy of the
     base Settings.
@@ -61,12 +83,19 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
     `model_copy(update=...)` does NOT re-validate, so each value is coerced to
     its field's type here; unknown keys and unparseable / out-of-range values
     are ignored rather than crashing the run.
+
+    Security-posture knobs (`input_guard`, `pii_redact`) are special-cased: a
+    per-run override may only STRENGTHEN the machine/env baseline, never weaken
+    it. A client cannot downgrade the input guard (e.g. block → observe) nor
+    clear/shrink PII redaction — otherwise the per-run path would be a hole in
+    a server-set data-protection policy.
     """
     overrides: dict[str, Any] = {}
     # Integer knobs.
     for key, field in (
         ("max_model_calls", "max_model_calls"),
         ("max_tool_retries", "max_tool_retries"),
+        ("research_search_limit", "research_search_limit"),
         ("tool_selector_max", "tool_selector_max_tools"),
     ):
         raw = run_settings.get(key)
@@ -89,9 +118,10 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
             raw if isinstance(raw, bool) else str(raw).strip().lower() in {"1", "true", "yes", "on"}
         )
     # Enumerated string knobs — only accepted from a fixed allow-list.
+    # NOTE: input_guard is a security-posture knob handled separately below
+    # (a per-run override may only strengthen it, never weaken it).
     for key, field, allowed in (
         ("tool_critic", "tool_critic_mode", {"off", "watch", "nudge", "block"}),
-        ("input_guard", "input_guard_mode", {"observe", "block"}),
         ("plan_first", "plan_first_mode", {"off", "auto", "always"}),
     ):
         raw = run_settings.get(key)
@@ -100,10 +130,26 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
         val = str(raw).strip().lower()
         if val in allowed:
             overrides[field] = val
-    # Free-form comma-separated string (validated downstream in builder.py).
+    # Security-posture knob — input guard. A per-run override may only RAISE the
+    # guard, never lower the machine/env baseline (strength: off < observe <
+    # block). A client sending "observe" against a base of "block" is ignored.
+    raw = run_settings.get("input_guard")
+    if raw is not None:
+        val = str(raw).strip().lower()
+        rank = {"off": 0, "observe": 1, "block": 2}
+        base_rank = rank.get(str(base.input_guard_mode).strip().lower(), 0)
+        # Strictly-greater: only a real strengthening is applied; same-or-lower
+        # is left at the baseline (same level would be a no-op copy anyway).
+        if val in rank and rank[val] > base_rank:
+            overrides["input_guard_mode"] = val
+    # Security-posture knob — PII redaction. A per-run override may only ADD
+    # entity types; it can never drop one the baseline redacts (so pii_redact=""
+    # can't ship unredacted PII to the cloud gateway). Effective set = union.
     pii = run_settings.get("pii_redact")
     if pii is not None:
-        overrides["pii_redact_types"] = str(pii)
+        merged = _merge_pii_types(base.pii_redact_types, str(pii))
+        if merged != base.pii_redact_types:
+            overrides["pii_redact_types"] = merged
     return base.model_copy(update=overrides) if overrides else base
 
 

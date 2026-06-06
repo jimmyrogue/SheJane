@@ -519,6 +519,28 @@ export function ConversationSidebar({
                   </AdvSettingRow>
 
                   <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.researchSearchLimit.label')}
+                    hint={t('sidebar.agentSettings.advanced.researchSearchLimit.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.researchSearchLimit.label')}
+                      placeholder="3"
+                      value={adv.researchSearchLimit ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          researchSearchLimit:
+                            e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
                     label={t('sidebar.agentSettings.advanced.toolSelectorMax.label')}
                     hint={t('sidebar.agentSettings.advanced.toolSelectorMax.hint')}
                   >

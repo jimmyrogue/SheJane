@@ -131,6 +131,8 @@ export interface AdvancedAgentSettings {
   maxModelCalls?: number
   /** Retries for a failing tool before giving up. Daemon default 2. */
   maxToolRetries?: number
+  /** Results the research / deep-search path requests per query. Daemon default 3. */
+  researchSearchLimit?: number
   /** LLM tool-preselection: keep the N most-relevant tools. 0 = off. */
   toolSelectorMax?: number
   /** deepagents subagents (the `task` tool). Daemon default on. */
@@ -199,6 +201,7 @@ export async function createLocalRun(
     if (adv) {
       if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
       if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
+      if (adv.researchSearchLimit !== undefined) out.research_search_limit = adv.researchSearchLimit
       if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
       if (adv.subagents !== undefined) out.subagents = adv.subagents
       if (adv.reflect !== undefined) out.reflect = adv.reflect

@@ -45,7 +45,6 @@ class Settings(BaseSettings):
 
     # Browser
     browser_headless: bool = True
-    browser_timeout_ms: int = 15_000
 
     # Subagents (Phase 6'+ — deepagents SubAgentMiddleware)
     enable_subagents: bool = True

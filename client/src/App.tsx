@@ -164,6 +164,9 @@ function readAdvancedAgentSettings(raw: unknown): AdvancedAgentSettings {
   if (typeof a.maxToolRetries === 'number' && Number.isFinite(a.maxToolRetries)) {
     out.maxToolRetries = a.maxToolRetries
   }
+  if (typeof a.researchSearchLimit === 'number' && Number.isFinite(a.researchSearchLimit)) {
+    out.researchSearchLimit = a.researchSearchLimit
+  }
   if (typeof a.toolSelectorMax === 'number' && Number.isFinite(a.toolSelectorMax)) {
     out.toolSelectorMax = a.toolSelectorMax
   }

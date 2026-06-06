@@ -36,6 +36,7 @@ def test_all_knobs_applied_with_coercion() -> None:
         {
             "max_model_calls": "50",  # string → int
             "max_tool_retries": 4,
+            "research_search_limit": "6",
             "tool_selector_max": "8",
             "subagents": False,  # real bool
             "reflect": "on",  # truthy string
@@ -48,6 +49,7 @@ def test_all_knobs_applied_with_coercion() -> None:
     )
     assert eff.max_model_calls == 50 and isinstance(eff.max_model_calls, int)
     assert eff.max_tool_retries == 4
+    assert eff.research_search_limit == 6
     assert eff.tool_selector_max_tools == 8
     assert eff.enable_subagents is False
     assert eff.enable_critic_reflection is True
@@ -85,3 +87,42 @@ def test_partial_override_leaves_others_at_base() -> None:
     assert eff.input_guard_mode == base.input_guard_mode
     assert eff.enable_subagents == base.enable_subagents
     assert eff.max_model_calls == base.max_model_calls
+
+
+def test_input_guard_override_may_strengthen_but_not_weaken() -> None:
+    # Security-posture floor: a per-run client override can RAISE the guard
+    # but never lower a machine/env baseline. Strength: off < observe < block.
+    strong = Settings(SHEJANE_LOCAL_INPUT_GUARD="block")
+    # Client tries to downgrade block → observe: ignored, stays block.
+    assert _apply_advanced_overrides(strong, {"input_guard": "observe"}).input_guard_mode == "block"
+    # Client tries to downgrade block → off: ignored (off not even allowed).
+    assert _apply_advanced_overrides(strong, {"input_guard": "off"}).input_guard_mode == "block"
+
+    weak = Settings(SHEJANE_LOCAL_INPUT_GUARD="observe")
+    # Client strengthens observe → block: applied.
+    assert _apply_advanced_overrides(weak, {"input_guard": "block"}).input_guard_mode == "block"
+    # Same level is a no-op (and never copies needlessly).
+    assert _apply_advanced_overrides(weak, {"input_guard": "observe"}) is weak
+
+
+def test_pii_redaction_override_can_only_add_types() -> None:
+    # Security-posture floor: a per-run override unions onto the baseline; it
+    # can ADD entity types but never drop one (clearing must not re-expose PII).
+    base = Settings(SHEJANE_LOCAL_PII_REDACT="email,credit_card")
+    # Clearing is refused — baseline types survive.
+    assert (
+        _apply_advanced_overrides(base, {"pii_redact": ""}).pii_redact_types == "email,credit_card"
+    )
+    # A subset is refused — still the full baseline.
+    assert (
+        _apply_advanced_overrides(base, {"pii_redact": "email"}).pii_redact_types
+        == "email,credit_card"
+    )
+    # Adding a new type unions it on (baseline order preserved).
+    assert (
+        _apply_advanced_overrides(base, {"pii_redact": "ip"}).pii_redact_types
+        == "email,credit_card,ip"
+    )
+    # From an empty baseline the client may freely set types.
+    empty = Settings(SHEJANE_LOCAL_PII_REDACT="")
+    assert _apply_advanced_overrides(empty, {"pii_redact": "email"}).pii_redact_types == "email"
