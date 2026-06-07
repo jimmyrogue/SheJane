@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -262,12 +263,22 @@ func (s *Server) resolveImageBytes(ctx context.Context, userID, documentID, rawU
 }
 
 func fetchURLBytes(ctx context.Context, rawURL string) ([]byte, string, error) {
+	// SSRF guard: the URL comes from the user/agent (image_url / mask_url),
+	// so restrict the scheme and refuse to connect to private/loopback/
+	// link-local addresses (the safe client re-checks the resolved IP at
+	// dial time, defeating DNS rebinding).
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, "", fmt.Errorf("unsupported URL scheme %q", parsed.Scheme)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := safeHTTPClient(60 * time.Second).Do(req)
 	if err != nil {
 		return nil, "", err
 	}
