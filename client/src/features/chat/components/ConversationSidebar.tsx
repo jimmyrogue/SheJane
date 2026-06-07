@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconAdjustmentsHorizontal,
   IconChevronRight,
+  IconCreditCard,
   IconDots,
   IconDownload,
   IconLayoutSidebarLeftCollapse,
@@ -107,6 +108,7 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   onLogout,
+  onRecharge,
   onOpenSkills,
   onOpenMcp,
   activeView = 'chat',
@@ -127,6 +129,7 @@ export function ConversationSidebar({
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
   onLogout?: () => void
+  onRecharge?: () => void
   onOpenSkills?: () => void
   onOpenMcp?: () => void
   activeView?: 'chat' | 'skills' | 'mcp'
@@ -364,6 +367,17 @@ export function ConversationSidebar({
             </div>
           </div>
           {balance ? <AccountBalance balance={balance} t={t} /> : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={!onRecharge}
+            onSelect={(event) => {
+              event.preventDefault()
+              onRecharge?.()
+            }}
+          >
+            <IconCreditCard />
+            <span>{t('sidebar.account.recharge')}</span>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(event) => {
