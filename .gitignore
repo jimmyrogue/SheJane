@@ -103,8 +103,12 @@ postgres-data/
 docker-compose.override.yml
 Caddyfile.local
 
-# Local Postgres dumps from `make deploy-backup` — never commit DB data
+# Local Postgres dumps — never commit DB data. Backups default to
+# $HOME/shejane-backups (outside the repo); these patterns guard against
+# anyone pointing SHEJANE_BACKUP_DIR back into the tree.
 backup-*.sql.gz
+shejane-*.sql.gz
+shejane-backups/
 
 # PyInstaller intermediate build dir for the frozen daemon (dist/ already ignored)
 local-host/python/build/

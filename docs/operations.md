@@ -613,11 +613,16 @@ make deploy-down               # 停栈（保留数据卷）
 **备份与恢复**：持久卷不等于备份。仓库提供：
 
 ```bash
-make deploy-backup                 # pg_dump --clean --if-exists → backup-<时间戳>.sql.gz
-make deploy-restore BACKUP=<文件>   # 覆盖当前库（需输入 yes 确认）
+make backup                         # = scripts/backup-db.sh：导出到仓库外 + 自动拷到 S3
+make backup-cron-install            # 装每日 03:00 的 cron（幂等），日志写 ~/shejane-backup.log
+make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需输入 yes 确认）
 ```
 
-`deploy-backup` 只是导出到本机当前目录，**务必再拷到异地**才算备份。没有自动定时任务，请在基础设施层加 cron（例如每日跑 `make deploy-backup` 并上传对象存储）。注意迁移是**只进不退**、每次 `up` 全量重跑且无版本表，因此镜像回滚 **不会** 回滚数据库；破坏性 schema 变更只能从备份恢复，切勿用 `down -v` 当恢复手段。
+`scripts/backup-db.sh` 做三件事：① `pg_dump` → gzip 到 **`$HOME/shejane-backups/`（仓库之外）**，绝不落进 repo；② 本地按 `SHEJANE_BACKUP_KEEP`（默认 14 份）滚动保留；③ 机器上有 `aws` CLI 且 `.env` 配了 `S3_BUCKET` 时，自动 `aws s3 cp` 到 `s3://$S3_BUCKET/db-backups/` 并同样滚动保留 —— **这一步才让它成为「异地备份」**（同机快照不算备份）。缺 aws/桶时只警告、仍保留本地快照，不会让 cron 失败。
+
+上线必做：服务器装 AWS CLI（Amazon Linux：`dnf install -y awscli`）并确认 `.env` 有 `S3_BUCKET` + `AWS_*` → `make backup` 手跑一次验证本地产物 + S3 对象都出现 → `make backup-cron-install` 装上每日定时 → **定期做恢复演练**（把某个 `.sql.gz` 拉到临时机 `make deploy-restore` 验证能还原，没演练过的备份不算数）。
+
+> ⚠️ 旧的「导出到当前目录」已改为写仓库外。注意迁移是**只进不退**、每次 `up` 全量重跑且无版本表，因此镜像回滚 **不会** 回滚数据库；破坏性 schema 变更只能从备份恢复，切勿用 `down -v` 当恢复手段。
 
 ## 生产上线检查
 

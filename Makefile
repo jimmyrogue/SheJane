@@ -21,6 +21,7 @@
 	client-build admin-build local-host-build \
 	lint schemas setup-hooks \
 	release deploy deploy-pull deploy-down deploy-logs migrate \
+	backup deploy-backup deploy-restore backup-cron-install \
 	smoke-local-host smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external \
 	logs-api logs-local-host logs-client logs-llm-errors logs-dev
 
@@ -165,10 +166,13 @@ deploy-down: ## Stop the prod stack (keeps named volumes / data)
 deploy-logs: ## Tail the prod stack logs
 	$(COMPOSE_PROD) logs -f
 
-deploy-backup: ## Dump prod Postgres → backup-<ts>.sql.gz (then copy it OFF-host!)
-	@ts=$$(date +%Y%m%d-%H%M%S); out="backup-$$ts.sql.gz"; \
-	$(COMPOSE_PROD) exec -T postgres pg_dump --clean --if-exists -U shejane -d shejane | gzip > "$$out"; \
-	echo "✅ Wrote $$out ($$(du -h "$$out" | cut -f1)). This is NOT a backup until you copy it off this host."
+backup deploy-backup: ## Dump prod Postgres OUTSIDE the repo + copy off-site to S3 (scripts/backup-db.sh)
+	./scripts/backup-db.sh
+
+backup-cron-install: ## Install a daily 03:00 cron entry that runs the backup script
+	@line="0 3 * * * cd $(CURDIR) && ./scripts/backup-db.sh >> $$HOME/shejane-backup.log 2>&1"; \
+	( crontab -l 2>/dev/null | grep -v 'scripts/backup-db.sh' || true; echo "$$line" ) | crontab -; \
+	echo "✅ Installed daily backup cron (03:00). Current entries:"; crontab -l | grep 'backup-db.sh'
 
 deploy-restore: ## DANGER: overwrite prod Postgres from BACKUP=<file.sql.gz>
 	@test -n "$$BACKUP" || { echo "Usage: make deploy-restore BACKUP=backup-YYYYMMDD-HHMMSS.sql.gz"; exit 1; }
