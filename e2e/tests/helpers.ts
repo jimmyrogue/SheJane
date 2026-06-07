@@ -117,7 +117,7 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
           status: 'ready',
           source_object_key: 'documents/user/doc-ready/source.pdf',
           text_object_key: 'documents/user/doc-ready/extracted.txt',
-          expires_at: '2026-05-17T00:00:00Z',
+          expires_at: '2099-05-17T00:00:00Z',
           created_at: '2026-05-10T00:00:00Z',
           updated_at: '2026-05-10T00:00:00Z',
         },
@@ -138,7 +138,7 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
           size_bytes: 5,
           status: 'uploading',
           source_object_key: 'documents/user/doc-upload/source.docx',
-          expires_at: '2026-05-17T00:00:00Z',
+          expires_at: '2099-05-17T00:00:00Z',
           created_at: '2026-05-10T00:00:00Z',
           updated_at: '2026-05-10T00:00:00Z',
         },
@@ -146,7 +146,7 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
           method: 'PUT',
           url: 'https://s3.example.com/upload',
           headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-          expires_at: '2026-05-10T01:00:00Z',
+          expires_at: '2099-05-10T01:00:00Z',
         },
       },
     })
@@ -165,7 +165,7 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
         status: 'ready',
         source_object_key: 'documents/user/doc-upload/source.docx',
         text_object_key: 'documents/user/doc-upload/extracted.txt',
-        expires_at: '2026-05-17T00:00:00Z',
+        expires_at: '2099-05-17T00:00:00Z',
         created_at: '2026-05-10T00:00:00Z',
         updated_at: '2026-05-10T00:00:00Z',
       },
@@ -193,7 +193,7 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
         status: 'queued',
         mode: 'fast',
         goal_summary: hasAttachments ? '用户任务（12 字，含附件 1 个）' : body.goal ?? '普通对话',
-        expires_at: '2026-05-17T00:00:00Z',
+        expires_at: '2099-05-17T00:00:00Z',
         created_at: '2026-05-10T00:00:00Z',
         updated_at: '2026-05-10T00:00:00Z',
       },
@@ -221,13 +221,29 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
 }
 
 async function handleAdminAPI(route: Route, role: 'admin' | 'user'): Promise<void> {
-  const url = route.request().url()
+  // Match on the pathname only — paginated admin endpoints now append
+  // `?limit=&offset=`, which would break exact `endsWith(path)` matching.
+  const url = new URL(route.request().url()).pathname
   if (role !== 'admin' && url.includes('/api/v1/admin/')) {
     await json(route, { code: 40301, message: '无管理员权限', data: null }, 403)
     return
   }
   if (url.endsWith('/api/v1/admin/overview')) {
     await json(route, { code: 0, message: 'ok', data: { users_total: 2, active_users: 2, disabled_users: 0, llm_calls_total: 3, llm_calls_failed: 0, credits_cost_total: 1200, orders_total: 1 } })
+    return
+  }
+  // Loaded eagerly by loadAdminData's Promise.all — must be mocked or the
+  // whole startup load rejects and every list (users/orders/...) stays empty.
+  if (url.endsWith('/api/v1/admin/model-configs')) {
+    await json(route, { code: 0, message: 'ok', data: [{ id: 'mc-1', slot: 'chat.fast', capability: 'chat', provider_kind: 'deepseek-v4', display_name: 'DeepSeek Flash', base_url: 'https://api.deepseek.com', model_name: 'deepseek-v4-flash', credit_multiplier: 1, price_per_call_cny: 0, enabled: true, params: {}, api_key_configured: true, updated_at: '2026-05-10T00:00:00Z' }] })
+    return
+  }
+  if (url.endsWith('/api/v1/admin/settings/credit-rate')) {
+    await json(route, { code: 0, message: 'ok', data: { markup_factor: 1.5, currency_per_credit: 0.01, currency: 'CNY', configured: true } })
+    return
+  }
+  if (url.endsWith('/api/v1/admin/settings/billing-levers')) {
+    await json(route, { code: 0, message: 'ok', data: { tavily_search_credits: 20, e2b_code_exec_base_credits: 50, e2b_code_exec_per_second_credits: 2, configured: true } })
     return
   }
   if (url.endsWith('/api/v1/admin/users')) {
@@ -259,7 +275,7 @@ async function handleAdminAPI(route: Route, role: 'admin' | 'user'): Promise<voi
     return
   }
   if (url.endsWith('/api/v1/admin/agent-runs')) {
-    await json(route, { code: 0, message: 'ok', data: [{ id: 'run_1', user_id: 'user-1', user_email: 'user@example.com', origin: 'cloud', status: 'completed', mode: 'fast', goal_summary: '用户任务（18 字）', expires_at: '2026-05-17T00:00:00Z', created_at: '2026-05-10T00:00:00Z', updated_at: '2026-05-10T00:00:00Z' }] })
+    await json(route, { code: 0, message: 'ok', data: [{ id: 'run_1', user_id: 'user-1', user_email: 'user@example.com', origin: 'cloud', status: 'completed', mode: 'fast', goal_summary: '用户任务（18 字）', expires_at: '2099-05-17T00:00:00Z', created_at: '2026-05-10T00:00:00Z', updated_at: '2026-05-10T00:00:00Z' }] })
     return
   }
   if (url.endsWith('/api/v1/admin/audit-logs')) {

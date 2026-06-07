@@ -13,22 +13,24 @@ test.describe('admin simulated operations flows', () => {
     await expect(page.getByRole('heading', { name: '管理后台' })).toBeVisible()
     await expect(page.getByText('运营概览')).toBeVisible()
 
-    await page.getByRole('tab', { name: '订单' }).click()
+    await page.getByRole('button', { name: '订单', exact: true }).click()
     await expect(page.getByText(/order_1/)).toBeVisible()
     await expect(page.getByText(/sub_test_123/)).toBeVisible()
     await expect(page.getByRole('button', { name: /修改|退款|补单|删除/ })).toHaveCount(0)
 
-    await page.getByRole('tab', { name: '模型' }).click()
+    await page.getByRole('button', { name: '模型', exact: true }).click()
     await expect(page.getByText(/deepseek-v4-flash/)).toBeVisible()
     await expect(page.getByText(/https:\/\/api\.deepseek\.com/)).toBeVisible()
-    await expect(page.getByText(/secret|sk-|API_KEY|token/i)).toHaveCount(0)
+    // Guard against a leaked key VALUE — not the benign word "token", which
+    // now appears in the merged billing copy ("每 token 成本").
+    await expect(page.getByText(/secret|sk-[A-Za-z0-9]|API_KEY/i)).toHaveCount(0)
 
-    await page.getByRole('tab', { name: 'Agent' }).click()
+    await page.getByRole('button', { name: 'Agent', exact: true }).click()
     await expect(page.getByText(/run_1/)).toBeVisible()
     await expect(page.getByText('用户任务（18 字）')).toBeVisible()
     await expect(page.getByRole('button', { name: /取消|重试|删除/ })).toHaveCount(0)
 
-    await page.getByRole('tab', { name: '工具' }).click()
+    await page.getByRole('button', { name: '工具', exact: true }).click()
     await expect(page.getByText('web.search')).toBeVisible()
     await expect(page.getByText(/tavily/)).toBeVisible()
     await expect(page.getByRole('button', { name: /修改|重试|删除/ })).toHaveCount(0)
@@ -43,7 +45,10 @@ test.describe('admin simulated operations flows', () => {
     await page.getByRole('button', { name: '登录' }).click()
     await expect(page.getByText('运营概览')).toBeVisible()
 
-    await page.getByRole('tab', { name: '用户' }).click()
+    await page.getByRole('button', { name: '用户', exact: true }).click()
+    // The credit-adjust controls now live in the per-user detail dialog —
+    // open it by clicking the user row first.
+    await page.getByRole('button', { name: 'admin@example.com' }).click()
     await page.getByRole('button', { name: '调整额度' }).click()
     await expect(page.getByText('额度调整不能为 0')).toBeVisible()
 
