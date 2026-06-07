@@ -453,15 +453,41 @@ func (s *Server) processStripeEvent(ctx context.Context, event stripeWebhookEven
 		}
 		return s.updateStripeSubscriptionStatus(ctx, event.ID, object.ID, status, periodEnd)
 	case "customer.subscription.deleted":
-		status := object.Status
-		if status == "" {
-			status = "canceled"
+		// Cancellation (including cancel-after-refund) is the canonical
+		// claw-back trigger: drop to the free tier and revoke the unused
+		// monthly allotment. Pay-as-you-go extra credits are kept (option A).
+		return s.revokeStripeSubscription(ctx, event.ID, object.ID)
+	case "charge.refunded", "charge.dispute.created":
+		// A refund or chargeback on a subscription charge should claw back the
+		// monthly credits too. Stripe's charge/dispute objects don't carry the
+		// subscription id directly (it lives two hops away via the invoice), so
+		// we can only act when it's resolvable from the event. When it isn't,
+		// log for manual review rather than guessing — the reliable path is to
+		// also cancel the subscription in Stripe, which fires
+		// customer.subscription.deleted (handled above).
+		if object.Subscription.String() == "" {
+			slog.Warn("stripe refund/dispute could not be linked to a subscription; cancel the subscription in Stripe to revoke credits",
+				"event_id", event.ID, "event_type", event.Type, "charge_id", object.ID)
+			return nil
 		}
-		return s.updateStripeSubscriptionStatus(ctx, event.ID, object.ID, status, periodEnd)
+		return s.revokeStripeSubscription(ctx, event.ID, object.Subscription.String())
 	default:
 		slog.Info("stripe event ignored", "event_id", event.ID, "event_type", event.Type)
 		return nil
 	}
+}
+
+func (s *Server) revokeStripeSubscription(ctx context.Context, eventID string, subscriptionID string) error {
+	if subscriptionID == "" {
+		slog.Warn("stripe subscription revoke event missing subscription id", "event_id", eventID)
+		return nil
+	}
+	err := s.app.Store.RevokeSubscriptionCredits(ctx, subscriptionID, eventID)
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Warn("stripe subscription revoke did not match local subscription", "event_id", eventID, "stripe_subscription_id", subscriptionID)
+		return nil
+	}
+	return err
 }
 
 func (s *Server) markStripeSubscriptionRenewed(ctx context.Context, eventID string, subscriptionID string, periodEnd time.Time) error {

@@ -254,6 +254,25 @@ func (w *Wallet) AdjustExtraCredits(delta int64, reason string, idempotencyKey s
 	return nil
 }
 
+// RevokeSubscriptionCredits drops the wallet back to the free tier when a
+// subscription is canceled, refunded, or disputed. Only the unused MONTHLY
+// allotment is clawed back; pay-as-you-go extra credits are deliberately left
+// intact (option A). Returns the number of monthly credits revoked so the
+// caller can record it. The negative ledger entry keys on idempotencyKey, so a
+// dispute following a cancellation (or a webhook retry) won't double-apply.
+func (w *Wallet) RevokeSubscriptionCredits(reason string, idempotencyKey string) int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	revoked := w.monthlyRemainingLocked()
+	w.PlanCode = "free_trial"
+	w.MonthlyCreditLimit = 0
+	w.MonthlyCreditsUsed = 0
+	w.Status = "canceled"
+	w.appendTransactionLocked("subscription_revoke", "", -revoked, reason, idempotencyKey)
+	return revoked
+}
+
 func (w *Wallet) Snapshot() WalletSnapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()

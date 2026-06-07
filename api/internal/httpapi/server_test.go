@@ -1074,6 +1074,96 @@ func TestStripeSubscriptionFailureAndCancellationUpdateWalletStatus(t *testing.T
 	}
 }
 
+func TestStripeSubscriptionDeletedRevokesMonthlyCreditsButKeepsExtra(t *testing.T) {
+	server, _ := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.MonthlyCredits = 9000
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	userToken := registerAndTokenWithEmail(t, server, "cancel-revoke@example.com")
+	user := currentUser(t, server, userToken)
+
+	order := createSubscriptionCheckout(t, server, userToken)
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_clawback", "checkout.session.completed", map[string]any{
+		"id":           order.StripeSessionID,
+		"subscription": "sub_clawback_1",
+	}))
+
+	// Grant pay-as-you-go extra credits — these must survive cancellation.
+	adjust := httptest.NewRequest(http.MethodPost, "/api/v1/admin/users/"+user.ID+"/credits/adjust", strings.NewReader(`{"delta":1500,"reason":"support"}`))
+	adjust.Header.Set("Authorization", "Bearer "+adminToken)
+	adjust.Header.Set("Content-Type", "application/json")
+	adjustRec := httptest.NewRecorder()
+	server.ServeHTTP(adjustRec, adjust)
+	if adjustRec.Code != http.StatusOK {
+		t.Fatalf("adjust credits = %d, body = %s", adjustRec.Code, adjustRec.Body.String())
+	}
+
+	sendTestChat(t, server, userToken) // consume part of the monthly allotment
+	before := billingBalance(t, server, userToken)
+	if before.MonthlyCreditLimit != 9000 {
+		t.Fatalf("monthly limit before cancel = %d, want 9000", before.MonthlyCreditLimit)
+	}
+	if before.ExtraCreditsBalance != 1500 {
+		t.Fatalf("extra before cancel = %d, want 1500", before.ExtraCreditsBalance)
+	}
+
+	postStripeWebhook(t, server, stripeEvent("evt_sub_deleted_clawback", "customer.subscription.deleted", map[string]any{
+		"id": "sub_clawback_1",
+	}))
+
+	after := billingBalance(t, server, userToken)
+	if after.Status != "canceled" {
+		t.Fatalf("status after cancel = %q, want canceled", after.Status)
+	}
+	if after.PlanCode != "free_trial" {
+		t.Fatalf("plan after cancel = %q, want free_trial", after.PlanCode)
+	}
+	if after.MonthlyCreditLimit != 0 || after.MonthlyCreditsUsed != 0 {
+		t.Fatalf("monthly after cancel = %d/%d, want 0/0", after.MonthlyCreditLimit, after.MonthlyCreditsUsed)
+	}
+	if after.ExtraCreditsBalance != 1500 {
+		t.Fatalf("extra after cancel = %d, want 1500 (pay-as-you-go kept)", after.ExtraCreditsBalance)
+	}
+
+	revokes := 0
+	for _, tx := range walletTransactions(t, server, userToken) {
+		if tx.Type == "subscription_revoke" {
+			revokes++
+		}
+	}
+	if revokes != 1 {
+		t.Fatalf("subscription_revoke ledger entries = %d, want 1", revokes)
+	}
+}
+
+func TestStripeChargeRefundedWithoutSubscriptionIsAcceptedAsNoOp(t *testing.T) {
+	server, _ := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.MonthlyCredits = 9000
+	})
+	userToken := registerAndTokenWithEmail(t, server, "refund-noop@example.com")
+	order := createSubscriptionCheckout(t, server, userToken)
+	postStripeWebhook(t, server, stripeEvent("evt_checkout_refund_noop", "checkout.session.completed", map[string]any{
+		"id":           order.StripeSessionID,
+		"subscription": "sub_refund_noop_1",
+	}))
+
+	// A charge.refunded we can't link back to a subscription must be accepted
+	// (HTTP 200 — postStripeWebhook asserts it — so Stripe stops retrying) and
+	// must leave the wallet untouched rather than guessing which sub to revoke.
+	postStripeWebhook(t, server, stripeEvent("evt_charge_refunded_1", "charge.refunded", map[string]any{
+		"id": "ch_unlinked_1",
+	}))
+
+	after := billingBalance(t, server, userToken)
+	if after.Status != "active" {
+		t.Fatalf("status after unlinked refund = %q, want active (unchanged)", after.Status)
+	}
+	if after.MonthlyCreditLimit != 9000 {
+		t.Fatalf("monthly limit after unlinked refund = %d, want 9000 (unchanged)", after.MonthlyCreditLimit)
+	}
+}
+
 func TestAdminAuditLogsAreReadOnlyAndOrdersExposeSubscriptionID(t *testing.T) {
 	server := newTestServerWithConfig(t, func(cfg *config.Config) {
 		cfg.AdminEmails = []string{"admin@example.com"}

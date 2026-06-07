@@ -809,6 +809,17 @@ func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionI
 		eventID = stripeSessionID
 	}
 
+	// Whole-operation idempotency: if this Stripe event already produced a
+	// wallet transaction, no-op. The transaction insert is ON CONFLICT-guarded
+	// on its own, but the wallet RESET below is not — so a reprocess (crash
+	// between this grant committing and the event being marked processed)
+	// would otherwise re-zero monthly_credits_used.
+	if applied, err := stripeEventApplied(ctx, tx, eventID); err != nil {
+		return err
+	} else if applied {
+		return tx.Commit()
+	}
+
 	var walletID string
 	err = tx.QueryRowContext(ctx, `
 		UPDATE payment_orders
@@ -855,6 +866,14 @@ func (s *PostgresStore) MarkSubscriptionRenewed(ctx context.Context, stripeSubsc
 	defer rollback(tx)
 	if periodEnd.IsZero() {
 		periodEnd = time.Now().UTC().AddDate(0, 1, 0)
+	}
+	if eventID == "" {
+		eventID = stripeSubscriptionID
+	}
+	if applied, err := stripeEventApplied(ctx, tx, eventID); err != nil {
+		return err
+	} else if applied {
+		return tx.Commit()
 	}
 
 	var walletID string
@@ -920,6 +939,66 @@ func (s *PostgresStore) UpdateSubscriptionStatus(ctx context.Context, stripeSubs
 		}
 	}
 	if err := insertAuditLog(ctx, tx, "", "billing.subscription_status_update", "wallet", walletID, map[string]any{"status": status, "stripe_subscription_id": stripeSubscriptionID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RevokeSubscriptionCredits revokes the MONTHLY subscription allotment when a
+// subscription is canceled/refunded (the wallet drops to the free tier with
+// zero monthly credits and status 'canceled'). Pay-as-you-go extra credits
+// are left untouched. Idempotent per Stripe event id, so retries / a dispute
+// following a cancellation don't double-apply.
+func (s *PostgresStore) RevokeSubscriptionCredits(ctx context.Context, stripeSubscriptionID string, eventID string) error {
+	if strings.TrimSpace(stripeSubscriptionID) == "" {
+		return ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	if eventID == "" {
+		eventID = stripeSubscriptionID
+	}
+	if applied, err := stripeEventApplied(ctx, tx, eventID); err != nil {
+		return err
+	} else if applied {
+		return tx.Commit()
+	}
+
+	var walletID string
+	var monthlyLimit, monthlyUsed, extraBalance int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT id::text, monthly_credit_limit, monthly_credits_used, extra_credits_balance
+		FROM wallets WHERE stripe_subscription_id=$1 FOR UPDATE
+	`, stripeSubscriptionID).Scan(&walletID, &monthlyLimit, &monthlyUsed, &extraBalance)
+	if err != nil {
+		return mapNotFound(err)
+	}
+	revoked := monthlyLimit - monthlyUsed
+	if revoked < 0 {
+		revoked = 0
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE wallets
+		SET plan_code='free_trial', monthly_credit_limit=0, monthly_credits_used=0,
+			status='canceled', updated_at=NOW()
+		WHERE id=$1
+	`, walletID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payment_orders SET status='refunded'
+		WHERE stripe_subscription_id=$1 AND type='subscription'
+	`, stripeSubscriptionID); err != nil {
+		return err
+	}
+	// Negative amount = credits removed; extra balance unchanged.
+	if err := insertWalletTransaction(ctx, tx, walletID, "", "subscription_revoke", -revoked, 0, extraBalance, "subscription canceled/refunded — monthly credits revoked", "stripe:"+eventID); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.subscription_revoked", "wallet", walletID, map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID, "revoked_credits": revoked}); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1401,6 +1480,16 @@ func insertWalletTransaction(ctx context.Context, tx *sql.Tx, walletID string, r
 		ON CONFLICT (idempotency_key) DO NOTHING
 	`, walletID, reservationID, txType, amount, monthlyUsedAfter, extraBalanceAfter, description, idempotencyKey)
 	return err
+}
+
+// stripeEventApplied reports whether a wallet transaction keyed to this
+// Stripe event already exists. Used to make webhook-driven grants/revokes
+// idempotent as a whole operation (not just the transaction insert), so a
+// reprocess after a mid-flight crash is a true no-op.
+func stripeEventApplied(ctx context.Context, tx *sql.Tx, eventID string) (bool, error) {
+	var applied bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM wallet_transactions WHERE idempotency_key=$1)`, "stripe:"+eventID).Scan(&applied)
+	return applied, err
 }
 
 func insertAuditLog(ctx context.Context, tx *sql.Tx, actorUserID string, action string, targetType string, targetID string, metadata map[string]any) error {
