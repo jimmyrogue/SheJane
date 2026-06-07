@@ -1687,6 +1687,7 @@ function AppContent() {
               onPreviewLocalFile={openOfficeDocument}
               onPreviewCloudAttachment={openCloudOfficeDocument}
               onOpenAttachmentExternally={(ref) => void openAttachmentExternally(ref)}
+              onPickSuggestion={setDraft}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
