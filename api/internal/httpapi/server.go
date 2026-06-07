@@ -28,6 +28,14 @@ const refreshCookieName = "shejane_refresh"
 type Server struct {
 	app *app.App
 	mux *http.ServeMux
+	// Process-local rate limiters. authLimiter guards /auth/* against
+	// credential brute-force (per client IP); webhookLimiter caps the
+	// public Stripe webhook against floods (per IP); userLimiter is a
+	// generous per-user ceiling on authenticated (incl. paid) endpoints,
+	// a backstop to the credit ledger against cost-amplification abuse.
+	authLimiter    *rateLimiter
+	webhookLimiter *rateLimiter
+	userLimiter    *rateLimiter
 }
 
 type apiResponse[T any] struct {
@@ -43,8 +51,11 @@ type authPayload struct {
 
 func NewServer(application *app.App) http.Handler {
 	server := &Server{
-		app: application,
-		mux: http.NewServeMux(),
+		app:            application,
+		mux:            http.NewServeMux(),
+		authLimiter:    newRateLimiter(30),  // per-IP brute-force guard on /auth/*
+		webhookLimiter: newRateLimiter(120), // per-IP flood guard on the Stripe webhook
+		userLimiter:    newRateLimiter(600), // per-user abuse ceiling on authed endpoints
 	}
 	server.routes()
 	return server.withMiddleware(server.mux)
@@ -122,6 +133,10 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		if !s.allowRequest(w, r) {
+			return
+		}
+
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				slog.Error("request panic", "request_id", requestID, "error", recovered)
@@ -131,6 +146,27 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKeyRequestID{}, requestID)))
 	})
+}
+
+// allowRequest applies per-IP rate limits to the unauthenticated,
+// abuse-prone endpoints — credential brute-force on /auth/* and floods on
+// the public Stripe webhook. Authenticated endpoints are limited per-user
+// in requireAuth instead. Returns false after writing a 429.
+func (s *Server) allowRequest(w http.ResponseWriter, r *http.Request) bool {
+	var limiter *rateLimiter
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/v1/auth/"):
+		limiter = s.authLimiter
+	case r.URL.Path == "/api/v1/payment/webhook":
+		limiter = s.webhookLimiter
+	default:
+		return true
+	}
+	if !limiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, 42900, "请求过于频繁，请稍后再试")
+		return false
+	}
+	return true
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -1341,6 +1377,10 @@ func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store
 		user, err := s.app.Authenticate(r.Context(), token)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, 40001, "未登录或登录已过期")
+			return
+		}
+		if !s.userLimiter.allow(user.ID) {
+			writeError(w, http.StatusTooManyRequests, 42900, "请求过于频繁，请稍后再试")
 			return
 		}
 		next(w, r, user)
