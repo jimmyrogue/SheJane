@@ -41,6 +41,46 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 	}
 }
 
+func TestBuildProviderUnconfiguredOnMissingKey(t *testing.T) {
+	reg := New(store.NewMemoryStore(), config.Default())
+	ctx := context.Background()
+
+	// A real chat provider with no API key must NOT become a billable mock
+	// that emits a fake reply — it must be an erroring "unconfigured"
+	// provider so the LLM billing path releases the reservation.
+	chat := reg.buildProvider(store.ModelConfig{Slot: SlotChatFast, ProviderKind: "deepseek-v4", BaseURL: "https://api.deepseek.com"})
+	if _, ok := chat.(*llm.UnconfiguredProvider); !ok {
+		t.Fatalf("missing-key chat provider = %T, want *llm.UnconfiguredProvider", chat)
+	}
+	chunks, errs := chat.Stream(ctx, llm.ChatRequest{}, "m")
+	for range chunks {
+		t.Fatal("unconfigured provider must not emit any chunks")
+	}
+	if err := <-errs; err == nil {
+		t.Fatal("unconfigured provider Stream must return an error")
+	}
+
+	// Anthropic with no key is the same.
+	if _, ok := reg.buildProvider(store.ModelConfig{Slot: SlotChatDeep, ProviderKind: "anthropic"}).(*llm.UnconfiguredProvider); !ok {
+		t.Fatal("missing-key anthropic provider must be *llm.UnconfiguredProvider")
+	}
+
+	// Image slot with no key must also be unconfigured, not a placeholder
+	// image that still settles credits.
+	img := reg.buildImageProvider(store.ModelConfig{Slot: SlotImageDefault, ProviderKind: "openai-compatible", BaseURL: "https://api.example.com"})
+	if _, ok := img.(*llm.UnconfiguredImageProvider); !ok {
+		t.Fatalf("missing-key image provider = %T, want *llm.UnconfiguredImageProvider", img)
+	}
+	if _, err := img.GenerateImage(ctx, llm.ImageRequest{}, "m"); err == nil {
+		t.Fatal("unconfigured image provider must return an error")
+	}
+
+	// An explicit mock kind stays a usable mock (dev/tests rely on it).
+	if _, ok := reg.buildProvider(store.ModelConfig{Slot: SlotChatFast, ProviderKind: "mock"}).(*llm.MockProvider); !ok {
+		t.Fatal("explicit mock-kind provider must remain *llm.MockProvider")
+	}
+}
+
 func TestMarkupDefaultsAndOverrides(t *testing.T) {
 	cfg := config.Default()
 	st := store.NewMemoryStore()

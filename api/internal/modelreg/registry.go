@@ -262,7 +262,9 @@ func (r *Registry) buildImageProvider(cfg store.ModelConfig) llm.ImageProvider {
 	}
 	apiKey := r.cipher.Decrypt(cfg.APIKeyEncrypted)
 	if apiKey == "" || cfg.BaseURL == "" {
-		return llm.NewMockImageProvider(name)
+		// Real image provider with no usable credentials: fail loud instead
+		// of returning a placeholder image that still settles credits.
+		return llm.NewUnconfiguredImageProvider(name, "missing API key or base URL")
 	}
 	return llm.NewOpenAIImageProvider(name, cfg.BaseURL, apiKey)
 }
@@ -279,13 +281,15 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 		return llm.NewMockProvider(name, stringParam(cfg.Params, "mock_reply", "Mock SheJane response"))
 	case llm.ProviderKindAnthropic:
 		if apiKey == "" {
-			return llm.NewMockProvider(name, "Mock SheJane response (anthropic key missing)")
+			// Misconfigured real provider: error so the LLM billing path
+			// releases the reservation, rather than charging for a mock reply.
+			return llm.NewUnconfiguredProvider(name, "anthropic API key missing")
 		}
 		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
 		return llm.NewAnthropicProvider(apiKey, version)
 	default:
 		if apiKey == "" || cfg.BaseURL == "" {
-			return llm.NewMockProvider(name, "Mock SheJane response (provider not configured)")
+			return llm.NewUnconfiguredProvider(name, "missing API key or base URL")
 		}
 		profileKind := llm.InferOpenAIProviderKind(cfg.ProviderKind, cfg.BaseURL)
 		return llm.NewOpenAICompatibleProviderWithProfile(name, cfg.BaseURL, apiKey, llm.ProfileForProviderKind(profileKind))
