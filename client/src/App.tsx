@@ -1522,6 +1522,23 @@ function AppContent() {
     setSidebarCollapsed(false)
   }
 
+  // Open the Stripe checkout / top-up page. The cloud API returns a
+  // checkout_url (a real Stripe session when configured, a dev success
+  // stub otherwise); window.open is intercepted by the Electron main
+  // process (setWindowOpenHandler → shell.openExternal) so it lands in
+  // the user's default browser, and works normally on the web.
+  async function startRecharge() {
+    try {
+      const { checkout_url } = await api.createSubscriptionCheckout()
+      if (!checkout_url) {
+        throw new Error('missing checkout url')
+      }
+      window.open(checkout_url, '_blank', 'noopener,noreferrer')
+    } catch {
+      setNotice(t('billing.rechargeFailed'))
+    }
+  }
+
   return (
     <TooltipProvider>
       <main className={shellClassName}>
@@ -1546,6 +1563,7 @@ function AppContent() {
             onLogout={() => {
               void authClient.logout().finally(() => setAuth(null))
             }}
+            onRecharge={() => void startRecharge()}
             agentSettings={agentSettings}
             onAgentSettingsChange={(next) => {
               setAgentSettings(next)
@@ -1656,6 +1674,9 @@ function AppContent() {
             ) : balance && totalCredits(balance) <= 0 ? (
               <div className="status-banner status-banner-warning" role="status">
                 <span className="status-banner-text">{t('topbar.bannerCreditsEmpty')}</span>
+                <button type="button" className="status-banner-action" onClick={() => void startRecharge()}>
+                  {t('sidebar.account.recharge')}
+                </button>
               </div>
             ) : null}
 

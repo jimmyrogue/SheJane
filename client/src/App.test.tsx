@@ -137,6 +137,27 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
   })
 
+  it('opens the Stripe checkout from the account-menu top-up entry', async () => {
+    const calls = mockFetch('user')
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    await openAccountMenu()
+    fireEvent.click(await screen.findByText('充值'))
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(true),
+    )
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+  })
+
   it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
     const calls = mockFetch('user')
     const refresh = vi.fn().mockRejectedValue(new Error('expired'))
@@ -1054,6 +1075,9 @@ function mockFetch(
     }
     if (url.endsWith('/api/v1/billing/balance')) {
       return jsonResponse({ code: 0, message: 'ok', data: balance })
+    }
+    if (url.endsWith('/api/v1/billing/subscription/checkout')) {
+      return jsonResponse({ code: 0, message: 'ok', data: { checkout_url: 'https://stripe.example.com/checkout/sess_test' } })
     }
     if (url.endsWith('/api/v1/documents')) {
       return jsonResponse({
