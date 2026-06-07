@@ -332,6 +332,7 @@ type Store interface {
 	MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
 	MarkSubscriptionRenewed(ctx context.Context, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
 	UpdateSubscriptionStatus(ctx context.Context, stripeSubscriptionID string, status string, periodEnd time.Time) error
+	RevokeSubscriptionCredits(ctx context.Context, stripeSubscriptionID string, eventID string) error
 	RecordStripeEvent(ctx context.Context, eventID string, eventType string, payload []byte) (bool, error)
 	MarkStripeEventProcessed(ctx context.Context, eventID string) error
 

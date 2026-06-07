@@ -730,13 +730,21 @@ func (s *MemoryStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if eventID == "" {
+		eventID = stripeSessionID
+	}
 	for id, order := range s.orders {
 		if order.StripeSessionID == stripeSessionID || order.ID == stripeSessionID {
-			order.Status = "paid"
-			order.StripeSubscriptionID = stripeSubscriptionID
-			s.orders[id] = order
 			for _, wallet := range s.wallets {
 				if wallet.ID == order.WalletID {
+					// Idempotency guard before any mutation, so a retry of an
+					// already-applied event is a clean no-op (matches Postgres).
+					if walletHasIdempotencyKey(wallet, "stripe:"+eventID) {
+						return nil
+					}
+					order.Status = "paid"
+					order.StripeSubscriptionID = stripeSubscriptionID
+					s.orders[id] = order
 					wallet.ApplySubscriptionGrant(monthlyCredits, stripeSubscriptionID, periodEnd, "stripe:"+eventID)
 					s.appendAuditLocked("", "billing.subscription_paid", "wallet", wallet.ID, "stripe checkout completed", map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID})
 					return nil
@@ -751,8 +759,14 @@ func (s *MemoryStore) MarkSubscriptionRenewed(ctx context.Context, stripeSubscri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if eventID == "" {
+		eventID = stripeSubscriptionID
+	}
 	for _, wallet := range s.wallets {
 		if wallet.StripeSubscriptionID == stripeSubscriptionID {
+			if walletHasIdempotencyKey(wallet, "stripe:"+eventID) {
+				return nil
+			}
 			wallet.ApplySubscriptionGrant(monthlyCredits, stripeSubscriptionID, periodEnd, "stripe:"+eventID)
 			s.appendAuditLocked("", "billing.subscription_renewed", "wallet", wallet.ID, "stripe invoice paid", map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID})
 			return nil
@@ -779,6 +793,44 @@ func (s *MemoryStore) UpdateSubscriptionStatus(ctx context.Context, stripeSubscr
 		}
 	}
 	return ErrNotFound
+}
+
+func (s *MemoryStore) RevokeSubscriptionCredits(ctx context.Context, stripeSubscriptionID string, eventID string) error {
+	if strings.TrimSpace(stripeSubscriptionID) == "" {
+		return ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if eventID == "" {
+		eventID = stripeSubscriptionID
+	}
+	for _, wallet := range s.wallets {
+		if wallet.StripeSubscriptionID == stripeSubscriptionID {
+			if walletHasIdempotencyKey(wallet, "stripe:"+eventID) {
+				return nil
+			}
+			revoked := wallet.RevokeSubscriptionCredits("subscription canceled/refunded — monthly credits revoked", "stripe:"+eventID)
+			for id, order := range s.orders {
+				if order.StripeSubscriptionID == stripeSubscriptionID && order.Type == "subscription" {
+					order.Status = "refunded"
+					s.orders[id] = order
+				}
+			}
+			s.appendAuditLocked("", "billing.subscription_revoked", "wallet", wallet.ID, "subscription canceled/refunded", map[string]any{"event_id": eventID, "stripe_subscription_id": stripeSubscriptionID, "revoked_credits": revoked})
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func walletHasIdempotencyKey(wallet *billing.Wallet, idempotencyKey string) bool {
+	for _, tx := range wallet.Transactions() {
+		if tx.IdempotencyKey == idempotencyKey {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *MemoryStore) RecordStripeEvent(ctx context.Context, eventID string, eventType string, payload []byte) (bool, error) {
