@@ -72,15 +72,7 @@ test.describe('client simulated user flows', () => {
     await expect.poll(() => requestWasMade(state, '/api/v1/documents/doc-upload/complete')).toBe(true)
   })
 
-  // FIXME(roadmap P0): the local-harness run-RESULT UI was redesigned — steps
-  // are now collapsed behind a 展开/收起步骤 toggle and summarized under "任务摘要"
-  // with a single 诊断 button; the per-artifact "查看 artifact" buttons, the
-  // "已收集 N 个来源" badge, and the inline "任务完成" status were removed or
-  // restructured. Workspace binding (native picker), permission approval and the
-  // final-text path are already updated below and pass. The result/artifact/
-  // diagnostics assertions still need re-speccing against the new UI, so this
-  // test is parked (fixme) to keep CI green rather than asserting on removed UI.
-  test.fixme('uses the paired Local Harness, approves permissions, and opens artifacts', async ({ page }) => {
+  test('uses the paired Local Harness, approves permissions, and opens diagnostics', async ({ page }) => {
     const state = await installClientMocks(page, { localHost: true })
 
     await page.goto(clientURL)
@@ -101,15 +93,16 @@ test.describe('client simulated user flows', () => {
     await page.getByRole('button', { name: '允许一次' }).click()
 
     await expect(page.getByText('本地执行完成')).toBeVisible()
-    // Run step details (status, sources, artifacts) are collapsed by default now.
-    await page.getByRole('button', { name: '展开步骤' }).click()
-    await expect(page.getByText('任务完成').first()).toBeVisible()
-    await expect(page.getByText('已收集 1 个来源').first()).toBeVisible()
+    // The redesigned agent-progress row no longer dumps raw sources/artifacts
+    // into the timeline (the per-artifact "查看 artifact" buttons + source-count
+    // badge + inline "任务完成" status were removed) — they live only in the
+    // diagnostics panel now. The timeline must stay free of raw source dumps.
     await expect(page.getByText('收集来源：Example Source')).toHaveCount(0)
     await expect(page.getByText('https://example.com/source')).toHaveCount(0)
-    await page.getByRole('button', { name: '查看 artifact' }).first().click()
-    await expect(page.getByText('Artifact: shell output')).toBeVisible()
-    await expect(page.getByText('artifact preview content')).toBeVisible()
+
+    // Diagnostics is the run-result escape hatch: expand the agent-progress row,
+    // then open the diagnostics panel via the single 诊断 entry.
+    await page.getByRole('button', { name: '展开步骤' }).click()
     await page.getByTitle('查看诊断 local-run').click()
     await expect(page.getByText('任务诊断：local-run')).toBeVisible()
     await expect(page.getByText('verification.completed')).toBeVisible()
