@@ -114,6 +114,13 @@ function ExternalDraftPlugin({
     }
     lastSerializedRef.current = draft
     editor.update(() => buildRootFromDraft(draft))
+    // When the draft is set externally to a non-empty value (e.g. a
+    // welcome-screen suggestion tile prefills it), move focus into the
+    // editor so the user can edit/send right away. buildRootFromDraft
+    // already places the caret at the end.
+    if (draft) {
+      editor.focus()
+    }
   }, [draft, editor, lastSerializedRef])
   return null
 }

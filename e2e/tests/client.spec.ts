@@ -22,6 +22,23 @@ test.describe('client simulated user flows', () => {
     expect(requestWasMade(state, '/api/v1/chat/completions')).toBe(false)
   })
 
+  test('welcome suggestion tiles prefill the composer', async ({ page }) => {
+    await installClientMocks(page)
+
+    await page.goto(clientURL)
+    await page.getByLabel('邮箱').fill('user@example.com')
+    await page.getByLabel('密码', { exact: true }).fill('secret123')
+    await page.getByRole('button', { name: '创建账号' }).click()
+
+    const composer = page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' })
+    await expect(composer).toBeVisible()
+    await expect(composer).toHaveText('') // starts empty (not a dead button)
+
+    // Clicking a suggestion tile drops a concrete, ready-to-send prompt in.
+    await page.getByRole('button', { name: /生成一张草地上的柯基小狗图片/ }).click()
+    await expect(composer).toHaveText(/生成一张草地上的柯基小狗图片/)
+  })
+
   test('asks an attached document through agent runs instead of the legacy document ask API', async ({ page }) => {
     const state = await installClientMocks(page)
 

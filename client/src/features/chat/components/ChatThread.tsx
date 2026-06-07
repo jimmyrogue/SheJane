@@ -16,6 +16,7 @@ export function ChatThread({
   onPreviewLocalFile,
   onPreviewCloudAttachment,
   onOpenAttachmentExternally,
+  onPickSuggestion,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
@@ -35,6 +36,9 @@ export function ChatThread({
    *  attachment chip — the escape hatch for non-previewable files
    *  + power users who'd rather open the file in their native app. */
   onOpenAttachmentExternally?: (ref: { documentId: string; name: string }) => void
+  /** Welcome-screen suggestion tiles: prefill the composer with a concrete
+   *  example prompt (the user edits/sends). Wired from App.tsx → setDraft. */
+  onPickSuggestion?: (prompt: string) => void
 }) {
   // Conversations bound to a project workspace carry the absolute path;
   // MessageBubble uses it to resolve relative office-file refs surfaced
@@ -93,19 +97,19 @@ export function ChatThread({
           <h1>{t('welcome.title')}</h1>
           <p>{t('welcome.subtitle')}</p>
           <div className="suggest-grid" aria-label={t('welcome.suggestions')}>
-            <button className="suggest-tile" type="button">
+            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.code'))}>
               <span className="tag tag-code"><IconCodeDots size={14} /> Code</span>
               <span className="text">{t('welcome.code')}</span>
             </button>
-            <button className="suggest-tile" type="button">
+            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.write'))}>
               <span className="tag tag-write"><IconWriting size={14} /> Write</span>
               <span className="text">{t('welcome.write')}</span>
             </button>
-            <button className="suggest-tile" type="button">
+            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.research'))}>
               <span className="tag tag-research"><IconSearch size={14} /> Research</span>
               <span className="text">{t('welcome.research')}</span>
             </button>
-            <button className="suggest-tile" type="button">
+            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.create'))}>
               <span className="tag tag-create"><IconPalette size={14} /> Create</span>
               <span className="text">{t('welcome.create')}</span>
             </button>
