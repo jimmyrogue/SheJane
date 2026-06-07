@@ -35,6 +35,11 @@ func NewPostgresStore(ctx context.Context, databaseURL string) (*PostgresStore, 
 	return &PostgresStore{db: db}, nil
 }
 
+// Ping verifies the database connection for the /readyz readiness probe.
+func (s *PostgresStore) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *PostgresStore) CreateUser(ctx context.Context, email string, passwordHash string, name string) (User, error) {
 	var user User
 	err := s.db.QueryRowContext(ctx, `

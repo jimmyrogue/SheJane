@@ -251,6 +251,11 @@ type AppSetting struct {
 }
 
 type Store interface {
+	// Ping reports whether the backing store is reachable. Used by the
+	// /readyz readiness probe so an unhealthy DB is visible to monitoring
+	// and orchestration instead of surfacing as opaque 500s.
+	Ping(ctx context.Context) error
+
 	CreateUser(ctx context.Context, email string, passwordHash string, name string) (User, error)
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)

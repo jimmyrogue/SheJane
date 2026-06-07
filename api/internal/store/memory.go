@@ -55,6 +55,9 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
+// Ping always succeeds — the in-memory store has no external dependency.
+func (s *MemoryStore) Ping(_ context.Context) error { return nil }
+
 func (s *MemoryStore) CreateUser(ctx context.Context, email string, passwordHash string, name string) (User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

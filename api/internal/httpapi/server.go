@@ -63,6 +63,8 @@ func NewServer(application *app.App) http.Handler {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("GET /healthz", s.healthz)
+	s.mux.HandleFunc("GET /readyz", s.readyz)
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.register)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	s.mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
@@ -133,18 +135,19 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if !s.allowRequest(w, r) {
-			return
-		}
-
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				slog.Error("request panic", "request_id", requestID, "error", recovered)
-				writeError(w, http.StatusInternalServerError, 50001, "服务暂时不可用")
+				writeError(rec, http.StatusInternalServerError, 50001, "服务暂时不可用")
 			}
-			slog.Info("request completed", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds())
+			slog.Info("request completed", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
 		}()
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKeyRequestID{}, requestID)))
+
+		if !s.allowRequest(rec, r) {
+			return
+		}
+		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), contextKeyRequestID{}, requestID)))
 	})
 }
 
@@ -169,8 +172,49 @@ func (s *Server) allowRequest(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// statusRecorder wraps http.ResponseWriter to capture the response status
+// for the access log. It re-exposes http.Flusher so SSE streaming (which
+// type-asserts the writer to Flusher) keeps working through the wrapper.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, apiResponse[map[string]string]{Code: 0, Message: "ok", Data: map[string]string{"status": "ok"}})
+}
+
+// healthz is a liveness probe: it answers 200 as long as the process can
+// serve HTTP. Used by the container healthcheck and the Caddy upstream
+// check — it must NOT depend on the DB, or a DB blip would take the
+// otherwise-healthy API out of rotation.
+func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, apiResponse[map[string]string]{Code: 0, Message: "ok", Data: map[string]string{"status": "ok"}})
+}
+
+// readyz is a readiness probe: it pings the database and returns 503 when
+// the store is unreachable, so a degraded backend is visible to monitoring
+// instead of surfacing only as opaque 500s on real traffic.
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.app.Store.Ping(ctx); err != nil {
+		slog.Error("readiness probe failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, 50301, "存储不可用")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]string]{Code: 0, Message: "ok", Data: map[string]string{"status": "ready"}})
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
