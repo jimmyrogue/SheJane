@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+
 	"github.com/coldflame/shejane/api/internal/app"
 	"github.com/coldflame/shejane/api/internal/billing"
 	"github.com/coldflame/shejane/api/internal/documents"
@@ -137,11 +139,28 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
+			panicked := false
 			if recovered := recover(); recovered != nil {
+				panicked = true
 				slog.Error("request panic", "request_id", requestID, "error", recovered)
+				if hub := sentry.GetHubFromContext(r.Context()); hub != nil {
+					hub.RecoverWithContext(r.Context(), recovered)
+				}
 				writeError(rec, http.StatusInternalServerError, 50001, "服务暂时不可用")
 			}
 			slog.Info("request completed", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
+			// Surface non-panic server errors (e.g. a DB failure returning 500)
+			// to Sentry too; panics are already captured above. No-op when
+			// Sentry is disabled (no request hub).
+			if !panicked && rec.status >= 500 {
+				if hub := sentry.GetHubFromContext(r.Context()); hub != nil {
+					hub.WithScope(func(scope *sentry.Scope) {
+						scope.SetTag("request_id", requestID)
+						scope.SetTag("http.path", r.URL.Path)
+						hub.CaptureMessage(fmt.Sprintf("HTTP %d %s %s", rec.status, r.Method, r.URL.Path))
+					})
+				}
+			}
 		}()
 
 		if !s.allowRequest(rec, r) {

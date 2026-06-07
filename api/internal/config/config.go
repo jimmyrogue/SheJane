@@ -30,6 +30,12 @@ type Config struct {
 	// keys are stored as plaintext and a warning is logged at startup.
 	ConfigEncryptionKey string
 
+	// Sentry error tracking + performance tracing. An empty DSN disables it
+	// entirely (no-op), so dev / CI run without Sentry.
+	SentryDSN              string
+	SentryEnvironment      string
+	SentryTracesSampleRate float64
+
 	FastProviderKind    string
 	FastProviderBaseURL string
 	FastProviderAPIKey  string
@@ -126,6 +132,8 @@ func Default() Config {
 		ClientBaseURL:                 "http://localhost:5173",
 		AdminBaseURL:                  "http://localhost:5174",
 		JWTSecret:                     "dev-change-me",
+		SentryEnvironment:             "production",
+		SentryTracesSampleRate:        0.1,
 		AccessTokenTTL:                15 * time.Minute,
 		RefreshTokenTTL:               30 * 24 * time.Hour,
 		DatabaseURL:                   "",
@@ -187,6 +195,9 @@ func Load() Config {
 	cfg.SignupCredits = getEnvInt64("SIGNUP_CREDITS", cfg.SignupCredits)
 	cfg.MockLLM = getEnvBool("MOCK_LLM", cfg.MockLLM)
 	cfg.ConfigEncryptionKey = getEnv("CONFIG_ENCRYPTION_KEY", cfg.ConfigEncryptionKey)
+	cfg.SentryDSN = getEnv("SENTRY_DSN", cfg.SentryDSN)
+	cfg.SentryEnvironment = getEnv("SENTRY_ENVIRONMENT", cfg.SentryEnvironment)
+	cfg.SentryTracesSampleRate = getEnvFloat("SENTRY_TRACES_SAMPLE_RATE", cfg.SentryTracesSampleRate)
 	cfg.FastProviderKind = getEnv("FAST_PROVIDER_KIND", cfg.FastProviderKind)
 	cfg.FastProviderBaseURL = getEnv("FAST_PROVIDER_BASE_URL", cfg.FastProviderBaseURL)
 	cfg.FastProviderAPIKey = getEnv("FAST_PROVIDER_API_KEY", cfg.FastProviderAPIKey)
@@ -242,6 +253,18 @@ func getEnv(key string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func getEnvBool(key string, fallback bool) bool {
