@@ -307,6 +307,23 @@ def _parse_pii_types(spec: str) -> list[str]:
     return out
 
 
+def _build_chat_model(settings: Settings, run_id: str, mode: str) -> Any:
+    """The agent's chat model — the real cloud-backed one, or a deterministic
+    network-free fake when settings.fake_llm is set (SSE contract test). Used
+    for the main model AND the selector/critic models so a faked run makes no
+    cloud calls at all."""
+    if settings.fake_llm:
+        from ..llm.fake import FakeBackendChatModel
+
+        return FakeBackendChatModel()
+    return BackendChatModel(
+        cloud_base_url=settings.cloud_base_url,
+        cloud_token=settings.cloud_token,
+        run_id=run_id,
+        mode=mode,
+    )
+
+
 async def build_agent(
     *,
     store: LocalStore,
@@ -386,12 +403,7 @@ async def build_agent(
     if not memory_enabled:
         tools = [t for t in tools if t.name != "memory.search"]
 
-    model = BackendChatModel(
-        cloud_base_url=settings.cloud_base_url,
-        cloud_token=settings.cloud_token,
-        run_id=run_id,
-        mode=mode,
-    )
+    model = _build_chat_model(settings, run_id, mode)
 
     # FilesystemBackend serves three deepagents subsystems at once:
     #   - FilesystemMiddleware tools (ls / read_file / write_file / edit_file)
@@ -430,12 +442,7 @@ async def build_agent(
     # BackendChatModel in "fast" mode so its cost flows through our
     # cloud accounting.
     if settings.tool_selector_max_tools > 0:
-        selector_model = BackendChatModel(
-            cloud_base_url=settings.cloud_base_url,
-            cloud_token=settings.cloud_token,
-            run_id=run_id,
-            mode="fast",
-        )
+        selector_model = _build_chat_model(settings, run_id, "fast")
         always_include = (
             ALWAYS_INCLUDE_TOOLS
             if memory_enabled
@@ -456,12 +463,7 @@ async def build_agent(
     if settings.tool_critic_mode.lower() in {"watch", "nudge", "block"}:
         from ..middleware.tool_critic import ToolResultCriticMiddleware
 
-        critic_model = BackendChatModel(
-            cloud_base_url=settings.cloud_base_url,
-            cloud_token=settings.cloud_token,
-            run_id=run_id,
-            mode="fast",
-        )
+        critic_model = _build_chat_model(settings, run_id, "fast")
         middleware.append(
             ToolResultCriticMiddleware(
                 critic_model=critic_model,

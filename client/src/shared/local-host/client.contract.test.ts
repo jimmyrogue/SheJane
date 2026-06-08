@@ -21,6 +21,7 @@ import {
   clearLocalCloudSession,
   createLocalRun,
   listLocalRuns,
+  streamLocalRun,
   authorizeLocalWorkspace,
   listAuthorizedWorkspaces,
   revokeLocalWorkspace,
@@ -103,6 +104,34 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
       const found = runs.find((r) => r.id === created.id)
       expect(found).toBeDefined()
       expect(found?.goal).toBe('list-me')
+    })
+  })
+
+  // -----------------------------------------------------------------
+  // SSE stream — the most drift-prone interface (invariant #3). The
+  // contract daemon runs with SHEJANE_FAKE_LLM=1 so a real run streams a
+  // deterministic reply with no cloud upstream. This exercises the client's
+  // OWN parser (streamLocalRun → parseAgentSSE) against the live wire.
+  // -----------------------------------------------------------------
+  describe('runs stream (fake LLM)', () => {
+    it('streams llm.delta + run.completed with envelope event_type/payload', async () => {
+      const created = await createLocalRun({ goal: 'contract stream' }, config)
+      const events: string[] = []
+      let text = ''
+      const result = await streamLocalRun(created.id, config, {
+        onEvent: (event) => events.push(event.event_type),
+        onDelta: (content) => {
+          text += content
+        },
+      })
+
+      // The client parsed real envelopes off the wire (event_type populated).
+      expect(events).toContain('run.started')
+      expect(events).toContain('run.completed')
+      expect(events.every((name) => typeof name === 'string' && name.length > 0)).toBe(true)
+      // Deterministic fake reply streamed through as content deltas.
+      expect(text).toContain('Fake daemon reply')
+      expect(result.completed).toBe(true)
     })
   })
 
