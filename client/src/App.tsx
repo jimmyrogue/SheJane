@@ -1,6 +1,17 @@
-import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
+import { IconLayoutSidebarLeftExpand, IconTrash } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
@@ -288,6 +299,7 @@ function AppContent() {
   const [attachedPreview, setAttachedPreview] = useState<string>()
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
   const [isUploading, setIsUploading] = useState(false)
   // 0..100 during an S3 PUT, undefined when idle. Fed by the XHR
   // upload progress listener in uploadDocument(); rendered as a
@@ -804,6 +816,115 @@ function AppContent() {
     } finally {
       setIsSending(false)
     }
+  }
+
+  /** Truncate the active conversation to before `userMessageID`, persist,
+   *  then start a fresh run with `text` via the conversation's path (local
+   *  harness when available, else cloud). Shared by regenerate (text = the
+   *  original user message) and edit-resend (text = the edited message).
+   *  Both run paths rebuild model context purely from the supplied history,
+   *  so a client-side truncate + fresh run is all that's needed — there is
+   *  no server-side transcript to mutate. Re-running re-bills credits. */
+  async function resendFromUserMessage(userMessageID: string, text: string, preferLocal: boolean) {
+    if (!activeID) {
+      return
+    }
+    const conversation = await localData.get(activeID)
+    if (!conversation) {
+      return
+    }
+    const index = conversation.messages.findIndex((message) => message.id === userMessageID)
+    if (index < 0) {
+      return
+    }
+    conversation.messages = conversation.messages.slice(0, index)
+    conversation.updatedAt = new Date().toISOString()
+    await localData.save(conversation)
+    await refreshConversations(activeID)
+
+    const renderContext = createConversationRenderContext()
+    setIsSending(true)
+    setNotice('')
+    try {
+      const canUseLocalHarness =
+        preferLocal && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
+      const next = canUseLocalHarness
+        ? await sendLocalHarnessMessage(text, renderContext, agentSettings)
+        : await chat.sendMessage({
+            conversationId: activeID,
+            content: parseSkillDraft(text).text,
+            mode,
+            scene: 'chat',
+            onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
+          })
+      await refreshConversationsAfterStream(next.id, renderContext)
+      setBalance(await api.balance())
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
+      await refreshConversations(activeID)
+    } finally {
+      setIsSending(false)
+    }
+  }
+
+  function handleRegenerateMessage(assistantMessageID: string) {
+    if (!activeConversation) {
+      return
+    }
+    const messages = activeConversation.messages
+    const assistantIndex = messages.findIndex((message) => message.id === assistantMessageID)
+    if (assistantIndex < 0) {
+      return
+    }
+    // The user turn that produced this reply is the nearest preceding user message.
+    let userIndex = -1
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userIndex = i
+        break
+      }
+    }
+    if (userIndex < 0) {
+      return
+    }
+    const userMessage = messages[userIndex]
+    const preferLocal = messages[assistantIndex].runOrigin !== 'cloud'
+    void resendFromUserMessage(userMessage.id, userMessage.content, preferLocal)
+  }
+
+  function handleEditResendMessage(userMessageID: string, newText: string) {
+    if (!activeConversation) {
+      return
+    }
+    const lastAssistant = [...activeConversation.messages].reverse().find((message) => message.role === 'assistant')
+    const preferLocal = lastAssistant ? lastAssistant.runOrigin !== 'cloud' : true
+    void resendFromUserMessage(userMessageID, newText, preferLocal)
+  }
+
+  async function handleDeleteMessage(messageID: string) {
+    if (!activeID) {
+      return
+    }
+    const conversation = await localData.get(activeID)
+    if (!conversation) {
+      return
+    }
+    const index = conversation.messages.findIndex((message) => message.id === messageID)
+    if (index < 0) {
+      return
+    }
+    const target = conversation.messages[index]
+    // Deleting a user message also drops its paired assistant reply (keeps
+    // turns coherent); deleting an assistant message drops just it.
+    const removeCount =
+      target.role === 'user' && conversation.messages[index + 1]?.role === 'assistant' ? 2 : 1
+    conversation.messages = [
+      ...conversation.messages.slice(0, index),
+      ...conversation.messages.slice(index + removeCount),
+    ]
+    conversation.updatedAt = new Date().toISOString()
+    await localData.save(conversation)
+    await refreshConversations(activeID)
   }
 
   async function sendLocalHarnessMessage(
@@ -1693,6 +1814,9 @@ function AppContent() {
               onPreviewCloudAttachment={openCloudOfficeDocument}
               onOpenAttachmentExternally={(ref) => void openAttachmentExternally(ref)}
               onPickSuggestion={setDraft}
+              onRegenerateMessage={handleRegenerateMessage}
+              onEditResendMessage={handleEditResendMessage}
+              onDeleteMessage={setPendingDeleteMessageID}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
@@ -1702,6 +1826,37 @@ function AppContent() {
               onClose={() => setActiveDocument(null)}
             />
             <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
+
+            <AlertDialog
+              open={Boolean(pendingDeleteMessageID)}
+              onOpenChange={(open) => !open && setPendingDeleteMessageID(undefined)}
+            >
+              <AlertDialogContent className="conversation-delete-dialog">
+                <AlertDialogHeader className="conversation-delete-header">
+                  <AlertDialogMedia className="conversation-delete-media">
+                    <IconTrash aria-hidden="true" />
+                  </AlertDialogMedia>
+                  <AlertDialogTitle>{t('message.deleteConfirmTitle')}</AlertDialogTitle>
+                  <AlertDialogDescription>{t('message.deleteConfirmBody')}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter className="conversation-delete-footer">
+                  <AlertDialogCancel variant="outline" autoFocus onClick={() => setPendingDeleteMessageID(undefined)}>
+                    <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    onClick={() => {
+                      if (pendingDeleteMessageID) {
+                        void handleDeleteMessage(pendingDeleteMessageID)
+                        setPendingDeleteMessageID(undefined)
+                      }
+                    }}
+                  >
+                    <span className="conversation-delete-button-label">{t('message.delete')}</span>
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
             <div className="composer-dock">
               <PendingApprovalBar

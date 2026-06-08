@@ -4371,6 +4371,80 @@ button:active {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
 }
 
+.message-meta-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.message-meta-action-danger:hover {
+  background: color-mix(in srgb, #d73a49 12%, transparent);
+  color: #d73a49;
+}
+
+/* Inline edit-and-resend a user message. */
+.message-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-edit-input {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: 0.5px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-sidebar-soft);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  font-family: inherit;
+}
+
+.message-edit-input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.message-edit-cancel,
+.message-edit-save {
+  border: 0.5px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+  padding: 4px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.message-edit-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.message-edit-cancel:hover {
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  color: var(--text-primary);
+}
+
+.message-edit-save {
+  background: var(--text-primary);
+  color: var(--bg-base, #fff);
+  border-color: transparent;
+}
+
+.message-edit-save:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Timestamp text — pushed slightly inside the row with horizontal
  * padding so it doesn't touch the adjacent icon. Tabular nums keeps
  * the digits from jittering as the relative time updates. */

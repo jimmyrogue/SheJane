@@ -17,6 +17,9 @@ export function ChatThread({
   onPreviewCloudAttachment,
   onOpenAttachmentExternally,
   onPickSuggestion,
+  onRegenerateMessage,
+  onEditResendMessage,
+  onDeleteMessage,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
@@ -39,11 +42,26 @@ export function ChatThread({
   /** Welcome-screen suggestion tiles: prefill the composer with a concrete
    *  example prompt (the user edits/sends). Wired from App.tsx → setDraft. */
   onPickSuggestion?: (prompt: string) => void
+  /** Re-run an assistant turn (drop it + everything after, re-issue the
+   *  originating user message). Wired from App.tsx. */
+  onRegenerateMessage?: (messageID: string) => void
+  /** Edit a user message and resend (truncate + fresh run). */
+  onEditResendMessage?: (messageID: string, newText: string) => void
+  /** Delete a message (user msg drops its paired reply too). */
+  onDeleteMessage?: (messageID: string) => void
 }) {
   // Conversations bound to a project workspace carry the absolute path;
   // MessageBubble uses it to resolve relative office-file refs surfaced
   // by the agent's fs.list / ls output.
   const workspaceRoot = conversation?.workspace?.path
+  const runActive =
+    conversation?.messages.some(
+      (message) =>
+        message.status === 'streaming' ||
+        message.status === 'pending' ||
+        message.status === 'waiting_permission' ||
+        message.status === 'waiting_input',
+    ) ?? false
   const { t } = useI18n()
   const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
   const messageCount = conversation?.messages.length ?? 0
@@ -76,6 +94,10 @@ export function ChatThread({
                 onPreviewLocalFile={onPreviewLocalFile}
                 onPreviewCloudAttachment={onPreviewCloudAttachment}
                 onOpenAttachmentExternally={onOpenAttachmentExternally}
+                onRegenerate={onRegenerateMessage}
+                onEditResend={onEditResendMessage}
+                onDelete={onDeleteMessage}
+                runActive={runActive}
               >
                 <AgentProgress
                   message={message}
