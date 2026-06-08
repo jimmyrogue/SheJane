@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The composer's document upload now goes through an XHR-based helper
@@ -474,6 +474,46 @@ describe('user client shell', () => {
 
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: '石间回复完成' }))
+    })
+  })
+
+  it('deletes a message pair after confirming in the dialog', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    mockFetch('user', { localRunStream })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('要删除的问题')
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('要删除的问题')).length).toBeGreaterThan(0)
+    act(() => {
+      localRunStream.emit({ id: 'del-1', event_type: 'llm.delta', payload: { content: '要删除的回答' } })
+      localRunStream.emit({ id: 'del-2', event_type: 'run.completed', payload: { final: '要删除的回答' } })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+    expect(await screen.findByText('要删除的回答')).toBeInTheDocument()
+
+    // Delete the user message (the first 删除 button) → confirm in the dialog.
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0])
+    const dialog = await screen.findByRole('alertdialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: '删除' }))
+
+    // The reply text lives only in the timeline (not the sidebar title), so
+    // its removal proves the pair was deleted.
+    await waitFor(() => {
+      expect(screen.queryByText('要删除的回答')).not.toBeInTheDocument()
     })
   })
 

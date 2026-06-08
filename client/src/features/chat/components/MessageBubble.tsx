@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconExternalLink, IconPencil, IconRefresh, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -23,11 +23,27 @@ export function MessageBubble({
   onPreviewLocalFile,
   onPreviewCloudAttachment,
   onOpenAttachmentExternally,
+  onRegenerate,
+  onEditResend,
+  onDelete,
+  runActive = false,
 }: {
   message: ChatMessage
   children?: React.ReactNode
   initialStreamText?: string
   onStreamTextCommit?: (messageID: string, displayedText: string) => void
+  /** Re-run an assistant turn: drops it (and everything after) and
+   *  re-issues the originating user message. Assistant messages only. */
+  onRegenerate?: (messageID: string) => void
+  /** Edit a user message and resend: drops it (and everything after) and
+   *  starts a fresh run with the edited text. User messages only. */
+  onEditResend?: (messageID: string, newText: string) => void
+  /** Delete a message. Deleting a user message also drops its paired
+   *  assistant reply; deleting an assistant message drops just it. */
+  onDelete?: (messageID: string) => void
+  /** True while a run is streaming for this conversation — disables the
+   *  retry/edit/delete actions so the user can't mutate mid-run. */
+  runActive?: boolean
   /** Absolute path of the active conversation's workspace, used to
    *  resolve relative office-file refs in agent text. Undefined for
    *  chats without a project. */
@@ -118,8 +134,29 @@ export function MessageBubble({
     })
   }
 
+  const [editing, setEditing] = useState(false)
+  const [editText, setEditText] = useState('')
+  const startEdit = () => {
+    setEditText(message.content)
+    setEditing(true)
+  }
+  const cancelEdit = () => setEditing(false)
+  const commitEdit = () => {
+    const next = editText.trim()
+    if (!next) {
+      return
+    }
+    setEditing(false)
+    onEditResend?.(message.id, next)
+  }
+
   const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
   const content = message.content || waitingText
+  // Action affordances appear on settled turns only (not mid-stream).
+  const settled = message.status === 'done' || message.status === 'error'
+  const canRegenerate = isAssistant && settled && Boolean(onRegenerate)
+  const canEdit = !isAssistant && Boolean(onEditResend)
+  const canDelete = settled && Boolean(onDelete)
   const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
   const messageTime = formatMessageTime(message.createdAt, locale, t)
 
@@ -130,7 +167,35 @@ export function MessageBubble({
           <ReasoningPill />
         ) : null}
         <div className="message-content">
-          {showStream ? (
+          {editing ? (
+            <div className="message-edit">
+              <textarea
+                className="message-edit-input"
+                value={editText}
+                autoFocus
+                rows={Math.min(10, Math.max(2, editText.split('\n').length))}
+                aria-label={t('message.edit')}
+                onChange={(event) => setEditText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault()
+                    commitEdit()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelEdit()
+                  }
+                }}
+              />
+              <div className="message-edit-actions">
+                <button type="button" className="message-edit-cancel" onClick={cancelEdit}>
+                  {t('message.editCancel')}
+                </button>
+                <button type="button" className="message-edit-save" onClick={commitEdit} disabled={!editText.trim()}>
+                  {t('message.editSave')}
+                </button>
+              </div>
+            </div>
+          ) : showStream ? (
             stream.text ? (
               <MarkdownContent
                 content={completePartialMarkdown(stream.text)}
@@ -184,6 +249,42 @@ export function MessageBubble({
               aria-label={copied ? t('message.copied') : t('message.copy')}
             >
               {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
+            </button>
+          ) : null}
+          {!editing && canRegenerate ? (
+            <button
+              type="button"
+              className="message-meta-action"
+              onClick={() => onRegenerate?.(message.id)}
+              disabled={runActive}
+              title={t('message.regenerate')}
+              aria-label={t('message.regenerate')}
+            >
+              <IconRefresh size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+          {!editing && canEdit ? (
+            <button
+              type="button"
+              className="message-meta-action"
+              onClick={startEdit}
+              disabled={runActive}
+              title={t('message.edit')}
+              aria-label={t('message.edit')}
+            >
+              <IconPencil size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+          {!editing && canDelete ? (
+            <button
+              type="button"
+              className="message-meta-action message-meta-action-danger"
+              onClick={() => onDelete?.(message.id)}
+              disabled={runActive}
+              title={t('message.delete')}
+              aria-label={t('message.delete')}
+            >
+              <IconTrash size={13} aria-hidden="true" />
             </button>
           ) : null}
           {isAssistant && message.runMode ? (

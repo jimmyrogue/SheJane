@@ -120,6 +120,76 @@ describe('MessageBubble meta', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '已复制代码' })).toBeInTheDocument())
   })
 
+  it('regenerates an assistant reply and offers no edit affordance', () => {
+    const onRegenerate = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble message={message()} onRegenerate={onRegenerate} onEditResend={vi.fn()} />
+      </I18nProvider>,
+    )
+    // Assistant messages get regenerate, not edit.
+    expect(screen.queryByRole('button', { name: '编辑并重发' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }))
+    expect(onRegenerate).toHaveBeenCalledWith('m1')
+  })
+
+  it('edits and resends a user message', () => {
+    const onEditResend = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'user', content: '原始问题' })} onEditResend={onEditResend} onRegenerate={vi.fn()} />
+      </I18nProvider>,
+    )
+    // User messages get edit, not regenerate.
+    expect(screen.queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑并重发' }))
+    const textarea = screen.getByLabelText('编辑并重发')
+    fireEvent.change(textarea, { target: { value: '修改后的问题' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存并重发' }))
+    expect(onEditResend).toHaveBeenCalledWith('m1', '修改后的问题')
+  })
+
+  it('cancels an edit without resending', () => {
+    const onEditResend = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'user', content: '原始问题' })} onEditResend={onEditResend} />
+      </I18nProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '编辑并重发' }))
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(onEditResend).not.toHaveBeenCalled()
+    // Back to view mode: the textarea is gone, the edit button is back.
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '编辑并重发' })).toBeInTheDocument()
+  })
+
+  it('requests deletion of a message', () => {
+    const onDelete = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble message={message()} onDelete={onDelete} />
+      </I18nProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: '删除' }))
+    expect(onDelete).toHaveBeenCalledWith('m1')
+  })
+
+  it('disables retry/edit/delete while a run is active', () => {
+    const onRegenerate = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble message={message()} onRegenerate={onRegenerate} onDelete={vi.fn()} runActive />
+      </I18nProvider>,
+    )
+    const regenerate = screen.getByRole('button', { name: '重新生成' })
+    expect(regenerate).toBeDisabled()
+    fireEvent.click(regenerate)
+    expect(onRegenerate).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '删除' })).toBeDisabled()
+  })
+
   it('keeps inline code as a plain chip with no copy button', () => {
     const { container } = render(
       <I18nProvider>
