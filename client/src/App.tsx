@@ -31,6 +31,7 @@ import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
+import { SpendHistoryDialog } from './features/billing/SpendHistoryDialog'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
@@ -269,6 +270,9 @@ export function App() {
 function AppContent() {
   const { t } = useI18n()
   const api = useMemo(() => new SheJaneAPI(), [])
+  // Stable reference so SpendHistoryDialog's fetch-on-open effect doesn't
+  // re-run on every parent render.
+  const fetchSpendHistory = useMemo(() => () => api.transactions(), [api])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   // Per-user IndexedDB so switching accounts in the same Electron window does
@@ -300,6 +304,7 @@ function AppContent() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
+  const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   // 0..100 during an S3 PUT, undefined when idle. Fed by the XHR
   // upload progress listener in uploadDocument(); rendered as a
@@ -1690,6 +1695,7 @@ function AppContent() {
               void authClient.logout().finally(() => setAuth(null))
             }}
             onRecharge={() => void startRecharge()}
+            onShowSpendHistory={() => setSpendHistoryOpen(true)}
             agentSettings={agentSettings}
             onAgentSettingsChange={(next) => {
               setAgentSettings(next)
@@ -1858,6 +1864,12 @@ function AppContent() {
               </AlertDialogContent>
             </AlertDialog>
 
+            <SpendHistoryDialog
+              open={spendHistoryOpen}
+              onOpenChange={setSpendHistoryOpen}
+              fetchTransactions={fetchSpendHistory}
+            />
+
             <div className="composer-dock">
               <PendingApprovalBar
                 approval={pendingApproval}
@@ -1985,6 +1997,28 @@ function appendLocalRunEvent(
     }
     return
   }
+  // Per-call usage streams as llm.usage; accumulate it onto the message so
+  // the usage chip updates live. Dedupe on event.id (re-stream replay).
+  // run.completed later overwrites with the authoritative turn total.
+  if (event.event_type === 'llm.usage') {
+    if (event.id && seenEventIDs.has(event.id)) {
+      return
+    }
+    if (event.id) {
+      seenEventIDs.add(event.id)
+    }
+    const payload = event.payload ?? {}
+    const input = Number(payload.input_tokens) || 0
+    const output = Number(payload.output_tokens) || 0
+    const credits = Number(payload.credits_cost) || 0
+    if (input > 0 || output > 0) {
+      message.tokens = (message.tokens ?? 0) + input + output
+    }
+    if (credits > 0) {
+      message.creditsCost = (message.creditsCost ?? 0) + credits
+    }
+    return
+  }
   const alreadySeen = Boolean(event.id && seenEventIDs.has(event.id))
   if (event.id) {
     seenEventIDs.add(event.id)
@@ -1993,8 +2027,13 @@ function appendLocalRunEvent(
     const payload = event.payload ?? {}
     const input = Number(payload.input_tokens) || 0
     const output = Number(payload.output_tokens) || 0
+    const credits = Number(payload.credits_cost) || 0
+    // Authoritative per-turn totals (sum of the turn's llm.usage events).
     if (input > 0 || output > 0) {
       message.tokens = input + output
+    }
+    if (credits > 0) {
+      message.creditsCost = credits
     }
   }
   if (event.event_type === 'mode.selected') {

@@ -11,6 +11,7 @@ import {
   IconPencil,
   IconPin,
   IconPlus,
+  IconReceipt2,
   IconSearch,
   IconServer,
   IconSettings,
@@ -111,6 +112,7 @@ export function ConversationSidebar({
   onCollapseSidebar,
   onLogout,
   onRecharge,
+  onShowSpendHistory,
   onOpenSkills,
   onOpenMcp,
   activeView = 'chat',
@@ -132,6 +134,7 @@ export function ConversationSidebar({
   onCollapseSidebar: () => void
   onLogout?: () => void
   onRecharge?: () => void
+  onShowSpendHistory?: () => void
   onOpenSkills?: () => void
   onOpenMcp?: () => void
   activeView?: 'chat' | 'skills' | 'mcp'
@@ -435,6 +438,16 @@ export function ConversationSidebar({
           >
             <IconCreditCard />
             <span>{t('sidebar.account.recharge')}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!onShowSpendHistory}
+            onSelect={(event) => {
+              event.preventDefault()
+              onShowSpendHistory?.()
+            }}
+          >
+            <IconReceipt2 />
+            <span>{t('sidebar.account.spendHistory')}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

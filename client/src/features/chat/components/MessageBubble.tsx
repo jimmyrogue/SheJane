@@ -157,6 +157,23 @@ export function MessageBubble({
   const canRegenerate = isAssistant && settled && Boolean(onRegenerate)
   const canEdit = !isAssistant && Boolean(onEditResend)
   const canDelete = settled && Boolean(onDelete)
+
+  // Per-turn usage chip: tokens · credits · tool-calls, shown on a settled
+  // assistant turn when any are known. Tokens/credits come from the run's
+  // llm.usage events (local) or the stream result (cloud); tool-calls from
+  // the timeline.
+  const toolCalls = (message.agentEvents ?? []).filter((event) => event.type === 'tool.completed').length
+  const usageParts: string[] = []
+  if (message.tokens) {
+    usageParts.push(t('agent.tokens', { count: formatTokenCount(message.tokens) }))
+  }
+  if (message.creditsCost) {
+    usageParts.push(t('agent.usageCredits', { count: String(message.creditsCost) }))
+  }
+  if (toolCalls > 0) {
+    usageParts.push(t('agent.usageTools', { count: String(toolCalls) }))
+  }
+  const showUsage = isAssistant && settled && usageParts.length > 0
   const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
   const messageTime = formatMessageTime(message.createdAt, locale, t)
 
@@ -317,11 +334,24 @@ export function MessageBubble({
               )
             })()
           ) : null}
+          {showUsage ? (
+            <span className="message-meta-usage" title={t('agent.usageTooltip')}>
+              {usageParts.join(' · ')}
+            </span>
+          ) : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
         </div>
       </div>
     </article>
   )
+}
+
+/** Compact token count for the usage chip: 1234 → "1.2k", 850 → "850". */
+function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) {
+    return `${(tokens / 1000).toFixed(1)}k`
+  }
+  return String(tokens)
 }
 
 /** Ephemeral "thinking…" pill shown above the assistant bubble ONLY

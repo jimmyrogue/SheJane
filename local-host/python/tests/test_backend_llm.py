@@ -86,6 +86,12 @@ def test_agenerate_text_only(monkeypatch) -> None:
     msg = result.generations[0].message
     assert msg.content == "Hello, world."
     assert result.generations[0].generation_info["finish_reason"] == "stop"
+    # _agenerate captures per-call usage onto the final message.
+    assert msg.additional_kwargs.get("usage") == {
+        "input_tokens": 5,
+        "output_tokens": 3,
+        "credits_cost": 1,
+    }
 
 
 def test_agenerate_with_tool_calls(monkeypatch) -> None:
@@ -134,8 +140,38 @@ def test_astream_yields_per_token(monkeypatch) -> None:
         return [c.message.content async for c in model._astream([HumanMessage(content="hi")])]
 
     chunks = asyncio.run(collect())
-    # tokens only — usage/done are filtered out without capture_meta
+    # tokens only — llm.done is filtered out without capture_meta (this stream
+    # has no llm.usage event; usage surfacing is covered separately below).
     assert chunks == ["a", "b", "c"]
+
+
+def test_astream_surfaces_usage(monkeypatch) -> None:
+    """astream surfaces llm.usage via additional_kwargs so it survives into
+    LangGraph messages mode and reaches the per-turn usage chip."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _stream_response(
+            [
+                ("llm.delta", '{"content_delta": "hi"}'),
+                ("llm.usage", '{"input_tokens": 7, "output_tokens": 4, "credits_cost": 2}'),
+                ("llm.done", '{"request_id": "req-u", "finish_reason": "stop"}'),
+            ]
+        )
+
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    model = _make_model_with_mock(handler)
+
+    async def collect():
+        return [c async for c in model._astream([HumanMessage(content="hi")])]
+
+    chunks = asyncio.run(collect())
+    usage_chunks = [c for c in chunks if c.message.additional_kwargs.get("usage")]
+    assert len(usage_chunks) == 1
+    assert usage_chunks[0].message.additional_kwargs["usage"] == {
+        "input_tokens": 7,
+        "output_tokens": 4,
+        "credits_cost": 2,
+    }
 
 
 def test_backend_4xx_raises(monkeypatch) -> None:

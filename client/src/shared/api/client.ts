@@ -76,6 +76,21 @@ export interface WalletBalance {
   status: string
 }
 
+/** One credit-ledger row, mirroring api/internal/billing.Transaction JSON.
+ *  Hand-written (Go-API type, not generated from the daemon openapi). */
+export interface WalletTransaction {
+  id: string
+  wallet_id: string
+  reservation_id?: string
+  type: string
+  amount: number
+  monthly_used_after: number
+  extra_balance_after: number
+  description: string
+  idempotency_key?: string
+  created_at: string
+}
+
 export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'failed' | 'deleted'
 
 export interface UserDocument {
@@ -217,6 +232,10 @@ export class SheJaneAPI implements ChatAPI {
 
   async balance(): Promise<WalletBalance> {
     return this.get<WalletBalance>('/api/v1/billing/balance')
+  }
+
+  async transactions(): Promise<WalletTransaction[]> {
+    return this.get<WalletTransaction[]>('/api/v1/billing/transactions')
   }
 
   async createSubscriptionCheckout(): Promise<{ checkout_url: string }> {
