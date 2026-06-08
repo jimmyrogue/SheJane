@@ -90,6 +90,22 @@ jobs:
   test:
     name: Tests (unit + race + build)
     runs-on: ubuntu-latest
+    # Postgres for the store dual-impl conformance cross-check. Image matches
+    # the dev/prod compose (pgvector/pg16) so migrations apply identically.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: shejane
+          POSTGRES_USER: shejane
+          POSTGRES_PASSWORD: shejane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shejane -d shejane"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -133,6 +149,18 @@ jobs:
 
       - name: Unit suites + race + build
         run: make client-test admin-test local-host-test test-race build
+
+      # Cross-check memory.go vs postgres.go via the store conformance suite.
+      # Migrations apply with the same psql loop as `make migrate`; the suite
+      # skips Postgres when TEST_DATABASE_URL is unset (so local runs stay
+      # DB-free), so this step is where the Postgres path actually runs.
+      - name: Store conformance (postgres cross-check)
+        env:
+          TEST_DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          for f in api/migrations/*.sql; do psql -v ON_ERROR_STOP=1 "$TEST_DATABASE_URL" -f "$f"; done
+          cd api && go test ./internal/store/ -run TestStoreConformance -v
 
   # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
   # client/ and admin/, so both need their deps installed (not just e2e/).
