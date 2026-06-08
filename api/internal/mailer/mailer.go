@@ -22,6 +22,8 @@ type Mailer interface {
 	// SendPasswordReset emails a reset link to `to`. Implementations must not
 	// reveal whether the address belongs to a real account.
 	SendPasswordReset(ctx context.Context, to string, resetURL string) error
+	// SendEmailVerification emails a verification link to `to`.
+	SendEmailVerification(ctx context.Context, to string, verifyURL string) error
 }
 
 // New returns a ResendMailer when apiKey + fromAddress are set, otherwise a
@@ -49,6 +51,11 @@ func (m *LogMailer) SendPasswordReset(_ context.Context, to string, resetURL str
 	return nil
 }
 
+func (m *LogMailer) SendEmailVerification(_ context.Context, to string, verifyURL string) error {
+	slog.Info("mailer(log): email verification", "to", to, "verify_url", verifyURL)
+	return nil
+}
+
 // ResendMailer sends via the Resend HTTP API.
 type ResendMailer struct {
 	apiKey      string
@@ -67,6 +74,17 @@ func (m *ResendMailer) SendPasswordReset(ctx context.Context, to string, resetUR
 			`<hr><p>我们收到了重置你石间密码的请求。<a href="%s">点此设置新密码</a>(链接很快过期)。`+
 			`若非本人操作,忽略本邮件即可。</p>`,
 		resetURL, resetURL,
+	)
+	return m.send(ctx, to, subject, html)
+}
+
+func (m *ResendMailer) SendEmailVerification(ctx context.Context, to string, verifyURL string) error {
+	subject := "Verify your SheJane email / 验证石间邮箱"
+	html := fmt.Sprintf(
+		`<p>Welcome to SheJane! Please confirm your email address.</p>`+
+			`<p><a href="%s">Click here to verify</a>. This link expires soon.</p>`+
+			`<hr><p>欢迎使用石间!请确认你的邮箱地址。<a href="%s">点此验证</a>(链接很快过期)。</p>`,
+		verifyURL, verifyURL,
 	)
 	return m.send(ctx, to, subject, html)
 }

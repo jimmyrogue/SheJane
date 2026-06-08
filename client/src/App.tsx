@@ -1,4 +1,4 @@
-import { IconLayoutSidebarLeftExpand, IconTrash } from '@tabler/icons-react'
+import { IconLayoutSidebarLeftExpand, IconTrash, IconX } from '@tabler/icons-react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import {
@@ -305,6 +305,8 @@ function AppContent() {
   const [isSending, setIsSending] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
+  const [emailBannerDismissed, setEmailBannerDismissed] = useState(false)
+  const [emailVerifySent, setEmailVerifySent] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   // 0..100 during an S3 PUT, undefined when idle. Fed by the XHR
   // upload progress listener in uploadDocument(); rendered as a
@@ -595,6 +597,31 @@ function AppContent() {
       })
       .catch(() => undefined)
   }, [api, authClient])
+
+  // One-shot: if the app was opened from an email verification link
+  // (CLIENT_BASE_URL/verify?token=…), confirm it. The endpoint is
+  // unauthenticated, so this works signed-in or out. On success we clear the
+  // banner optimistically + notify, then strip the token from the URL.
+  useEffect(() => {
+    const token = readVerifyTokenFromURL()
+    if (!token) {
+      return
+    }
+    void api
+      .confirmEmailVerification({ token })
+      .then(() => {
+        setAuth((current) =>
+          current ? { ...current, user: { ...current.user, email_verified: true } } : current,
+        )
+        setNotice(t('topbar.verifySuccess'))
+      })
+      .catch(() => setNotice(t('topbar.verifyFailed')))
+      .finally(() => {
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', window.location.pathname)
+        }
+      })
+  }, [api, t])
 
   useEffect(() => {
     const config = getDesktopLocalHostConfig()
@@ -1684,6 +1711,15 @@ function AppContent() {
     }
   }
 
+  async function resendVerificationEmail() {
+    try {
+      await api.requestEmailVerification()
+      setEmailVerifySent(true)
+    } catch {
+      setNotice(t('topbar.bannerEmailResendFailed'))
+    }
+  }
+
   return (
     <TooltipProvider>
       <main className={shellClassName}>
@@ -1822,6 +1858,30 @@ function AppContent() {
                 <span className="status-banner-text">{t('topbar.bannerCreditsEmpty')}</span>
                 <button type="button" className="status-banner-action" onClick={() => void startRecharge()}>
                   {t('sidebar.account.recharge')}
+                </button>
+              </div>
+            ) : null}
+            {/* Advisory (non-blocking) email-verification nudge. Only shown
+             *  when the server explicitly reports the email as unverified
+             *  (=== false, so older payloads without the field don't nag). */}
+            {auth.user.email_verified === false && !emailBannerDismissed ? (
+              <div className="status-banner status-banner-info" role="status">
+                <span className="status-banner-text">{t('topbar.bannerEmailUnverified')}</span>
+                <button
+                  type="button"
+                  className="status-banner-action"
+                  disabled={emailVerifySent}
+                  onClick={() => void resendVerificationEmail()}
+                >
+                  {emailVerifySent ? t('topbar.bannerEmailSent') : t('topbar.bannerEmailResend')}
+                </button>
+                <button
+                  type="button"
+                  className="status-banner-dismiss"
+                  aria-label={t('topbar.bannerDismiss')}
+                  onClick={() => setEmailBannerDismissed(true)}
+                >
+                  <IconX size={14} aria-hidden="true" />
                 </button>
               </div>
             ) : null}
@@ -2184,6 +2244,23 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
 
 function totalCredits(balance: WalletBalance): number {
   return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
+}
+
+/** Token from an email-verification link (CLIENT_BASE_URL/verify?token=…).
+ *  Gated on the /verify path so it never collides with the /reset?token= link
+ *  consumed by AuthScreen. */
+function readVerifyTokenFromURL(): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  try {
+    if (!window.location.pathname.includes('/verify')) {
+      return ''
+    }
+    return new URLSearchParams(window.location.search).get('token') ?? ''
+  } catch {
+    return ''
+  }
 }
 
 /** Fire a system notification when an assistant turn finishes. The

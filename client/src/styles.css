@@ -3988,8 +3988,36 @@ button:active {
   background: var(--accent-warning-bg);
   color: var(--accent-warning-text);
 }
+.status-banner-info {
+  background: var(--bg-sidebar-soft);
+  color: var(--text-secondary);
+}
 .status-banner-text {
   text-align: center;
+}
+/* Dismiss (×) for an advisory banner — muted, no border, hover darkens. */
+.status-banner-dismiss {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+.status-banner-dismiss:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.status-banner-action:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 /* Inline call-to-action inside a status banner (e.g. "充值" when credits
  * run out). Subtle outline pill in the banner's own palette; hover

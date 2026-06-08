@@ -21,9 +21,11 @@ import (
 )
 
 type captureMailer struct {
-	calls   int
-	lastTo  string
-	lastURL string
+	calls         int
+	lastTo        string
+	lastURL       string
+	verifyCalls   int
+	lastVerifyURL string
 }
 
 func (m *captureMailer) SendPasswordReset(_ context.Context, to string, resetURL string) error {
@@ -31,6 +33,72 @@ func (m *captureMailer) SendPasswordReset(_ context.Context, to string, resetURL
 	m.lastTo = to
 	m.lastURL = resetURL
 	return nil
+}
+
+func (m *captureMailer) SendEmailVerification(_ context.Context, _ string, verifyURL string) error {
+	m.verifyCalls++
+	m.lastVerifyURL = verifyURL
+	return nil
+}
+
+func TestEmailVerificationFlow(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 10_000
+	memory := store.NewMemoryStore()
+	mail := &captureMailer{}
+	server := NewServer(app.New(cfg, memory, app.WithMailer(mail)))
+
+	token := registerAndTokenWithEmail(t, server, "verify-me@example.com")
+
+	// Registration sent a verification email and the new user is unverified.
+	if mail.verifyCalls != 1 {
+		t.Fatalf("expected 1 verification email on register, got %d", mail.verifyCalls)
+	}
+	if currentUser(t, server, token).EmailVerified {
+		t.Fatal("new user should start unverified")
+	}
+
+	idx := strings.Index(mail.lastVerifyURL, "token=")
+	if idx < 0 {
+		t.Fatalf("verify url missing token: %q", mail.lastVerifyURL)
+	}
+	verifyToken := mail.lastVerifyURL[idx+len("token="):]
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Confirm flips the flag.
+	if rec := post("/api/v1/auth/email/verify-confirm", `{"token":"`+verifyToken+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("verify-confirm = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !currentUser(t, server, token).EmailVerified {
+		t.Fatal("user should be verified after confirm")
+	}
+
+	// Single-use: a second confirm fails.
+	if rec := post("/api/v1/auth/email/verify-confirm", `{"token":"`+verifyToken+`"}`); rec.Code == http.StatusOK {
+		t.Fatal("verify token must be single-use")
+	}
+
+	// Authenticated resend: no-op (already verified) but still 200.
+	resend := httptest.NewRequest(http.MethodPost, "/api/v1/auth/email/verify-request", strings.NewReader(`{}`))
+	resend.Header.Set("Authorization", "Bearer "+token)
+	resend.Header.Set("Content-Type", "application/json")
+	resendRec := httptest.NewRecorder()
+	server.ServeHTTP(resendRec, resend)
+	if resendRec.Code != http.StatusOK {
+		t.Fatalf("verify-request (already verified) = %d, want 200", resendRec.Code)
+	}
+	if mail.verifyCalls != 1 {
+		t.Fatalf("resend for an already-verified user must not send; verifyCalls = %d", mail.verifyCalls)
+	}
 }
 
 func TestPasswordResetFlow(t *testing.T) {

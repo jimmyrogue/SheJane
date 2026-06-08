@@ -219,6 +219,11 @@ func (a *App) Register(ctx context.Context, email string, password string, name 
 	if err := a.Store.GrantSignupCredits(ctx, user.ID, a.Config.SignupCredits); err != nil {
 		return AuthResult{}, err
 	}
+	// Best-effort: a verification email failure must NOT fail registration
+	// (verification is advisory). The user can resend later from the banner.
+	if err := a.RequestEmailVerification(ctx, user); err != nil {
+		log.Printf("app: initial email verification send failed for user %s: %v", user.ID, err)
+	}
 	return a.issueAuth(ctx, user)
 }
 
@@ -308,6 +313,38 @@ func (a *App) ConfirmPasswordReset(ctx context.Context, token string, newPasswor
 		}
 		// Transient failure — the transaction rolled back, so the token is
 		// still valid and the user can retry. Surface as a server error.
+		return err
+	}
+	return nil
+}
+
+// RequestEmailVerification emails a verification link. No-op for an
+// already-verified user. Called at registration (best-effort) and from the
+// authenticated resend endpoint. Returns the error so the resend endpoint can
+// surface a real send failure; the registration caller ignores it.
+func (a *App) RequestEmailVerification(ctx context.Context, user store.User) error {
+	if user.EmailVerified || !validEmail(user.Email) {
+		return nil
+	}
+	token := randomToken("verify")
+	expiresAt := time.Now().UTC().Add(a.Config.EmailVerificationTokenTTL)
+	if err := a.Store.SaveEmailVerificationToken(ctx, token, user.ID, expiresAt); err != nil {
+		return err
+	}
+	verifyURL := strings.TrimRight(a.Config.ClientBaseURL, "/") + "/verify?token=" + token
+	return a.Mailer.SendEmailVerification(ctx, user.Email, verifyURL)
+}
+
+// ConfirmEmailVerification consumes a verify token (single-use, expiring) and
+// flips the owning user's email_verified flag.
+func (a *App) ConfirmEmailVerification(ctx context.Context, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("%w: a token is required", ErrValidation)
+	}
+	if _, err := a.Store.VerifyEmailWithToken(ctx, token); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return ErrUnauthorized
+		}
 		return err
 	}
 	return nil

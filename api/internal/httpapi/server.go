@@ -73,6 +73,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
 	s.mux.HandleFunc("POST /api/v1/auth/password/reset-request", s.passwordResetRequest)
 	s.mux.HandleFunc("POST /api/v1/auth/password/reset-confirm", s.passwordResetConfirm)
+	s.mux.HandleFunc("POST /api/v1/auth/email/verify-request", s.requireAuth(s.emailVerifyRequest))
+	s.mux.HandleFunc("POST /api/v1/auth/email/verify-confirm", s.emailVerifyConfirm)
 	s.mux.HandleFunc("GET /api/v1/user/me", s.requireAuth(s.me))
 	s.mux.HandleFunc("GET /api/v1/billing/balance", s.requireAuth(s.balance))
 	s.mux.HandleFunc("GET /api/v1/billing/subscription", s.requireAuth(s.subscription))
@@ -348,6 +350,38 @@ func (s *Server) passwordResetConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"reset": true}})
+}
+
+// emailVerifyRequest (re)sends a verification email to the authenticated user.
+// No-op + 200 if already verified.
+func (s *Server) emailVerifyRequest(w http.ResponseWriter, r *http.Request, user store.User) {
+	if err := s.app.RequestEmailVerification(r.Context(), user); err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "发送验证邮件失败，请稍后重试")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"sent": true}})
+}
+
+func (s *Server) emailVerifyConfirm(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	err := s.app.ConfirmEmailVerification(r.Context(), body.Token)
+	if err != nil {
+		switch {
+		case errors.Is(err, app.ErrValidation):
+			writeError(w, http.StatusBadRequest, 40201, "缺少验证令牌")
+		case errors.Is(err, app.ErrUnauthorized):
+			writeError(w, http.StatusBadRequest, 40002, "验证链接无效或已过期")
+		default:
+			writeError(w, http.StatusInternalServerError, 50001, "验证失败，请稍后重试")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"verified": true}})
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request, user store.User) {

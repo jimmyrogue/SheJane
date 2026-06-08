@@ -62,6 +62,7 @@ export interface AuthPayload {
     name: string
     role: string
     status: string
+    email_verified?: boolean
   }
 }
 
@@ -239,6 +240,16 @@ export class SheJaneAPI implements ChatAPI {
 
   async confirmPasswordReset(input: { token: string; password: string }): Promise<void> {
     await this.post('/api/v1/auth/password/reset-confirm', input, false)
+  }
+
+  // Resend the verification email to the signed-in user (auth required).
+  async requestEmailVerification(): Promise<void> {
+    await this.post('/api/v1/auth/email/verify-request', {}, true)
+  }
+
+  // Confirm a verification token (unauthenticated — link opens on the web).
+  async confirmEmailVerification(input: { token: string }): Promise<void> {
+    await this.post('/api/v1/auth/email/verify-confirm', input, false)
   }
 
   async balance(): Promise<WalletBalance> {

@@ -633,7 +633,7 @@ make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需
 - `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库（任一缺失会让结账走 dev 假成功路径）。
 - Stripe webhook endpoint 已订阅事件列表，Dashboard 中最近一次投递为 2xx。
-- 忘记密码邮件:`RESEND_API_KEY` + `MAIL_FROM_ADDRESS`(Resend 已验证的发件域名)已配置;否则 API 只把重置链接打到日志、不真正发信。重置链接指向 `CLIENT_BASE_URL`(网页端 `/reset?token=`)。
+- 忘记密码 + 邮箱验证邮件:`RESEND_API_KEY` + `MAIL_FROM_ADDRESS`(Resend 已验证的发件域名)已配置;否则 API 只把链接打到日志、不真正发信。重置链接指向 `CLIENT_BASE_URL/reset?token=`,验证链接指向 `CLIENT_BASE_URL/verify?token=`(都在网页端落地)。邮箱验证为 advisory(横幅提示,不拦登录);迁移会把已有用户回填为已验证。
 - 数据库备份方案已就位：`make deploy-backup` 能跑通且产物已拷到异地（持久卷不是备份）。
 - `make ci` 通过；本地或预发环境按需跑过 `RUN_EXTERNAL_SMOKE=1 make smoke-external`。
 - 管理员只能通过 `ADMIN_EMAILS` 创建/提权，生产后台域名只开放给可信运营人员。

@@ -19,13 +19,14 @@ type Config struct {
 	// link instead of sending (dev/test). MailFromAddress must be a
 	// Resend-verified sender for real delivery. Reset links are built from
 	// ClientBaseURL. PasswordResetTokenTTL bounds how long a link is valid.
-	ResendAPIKey          string
-	MailFromAddress       string
-	MailFromName          string
-	PasswordResetTokenTTL time.Duration
-	CookieSecure          bool
-	DatabaseURL           string
-	AdminEmails           []string
+	ResendAPIKey              string
+	MailFromAddress           string
+	MailFromName              string
+	PasswordResetTokenTTL     time.Duration
+	EmailVerificationTokenTTL time.Duration
+	CookieSecure              bool
+	DatabaseURL               string
+	AdminEmails               []string
 
 	MonthlyCredits int64
 	// SignupCredits is the one-time gift (in credits) granted to a brand-new
@@ -148,6 +149,7 @@ func Default() Config {
 		MailFromAddress:               "",
 		MailFromName:                  "SheJane",
 		PasswordResetTokenTTL:         time.Hour,
+		EmailVerificationTokenTTL:     24 * time.Hour,
 		DatabaseURL:                   "",
 		AdminEmails:                   nil,
 		MonthlyCredits:                0,

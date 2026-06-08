@@ -15,13 +15,14 @@ var (
 )
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	Email         string    `json:"email"`
+	PasswordHash  string    `json:"-"`
+	Name          string    `json:"name"`
+	Role          string    `json:"role"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	EmailVerified bool      `json:"email_verified"`
 }
 
 type RefreshToken struct {
@@ -274,6 +275,13 @@ type Store interface {
 	// reset can never half-succeed and leave a compromised session live.
 	// Returns the owning user id; errors if the token is missing/expired/used.
 	ResetPasswordWithToken(ctx context.Context, token string, passwordHash string) (string, error)
+
+	// SaveEmailVerificationToken records a new verify token (stored hashed).
+	SaveEmailVerificationToken(ctx context.Context, token string, userID string, expiresAt time.Time) error
+	// VerifyEmailWithToken ATOMICALLY consumes a verify token (single-use,
+	// expiring) and marks the owning user's email verified. Returns the user
+	// id; errors if the token is missing/expired/used.
+	VerifyEmailWithToken(ctx context.Context, token string) (string, error)
 
 	EnsureWallet(ctx context.Context, userID string, monthlyCredits int64) (*billing.Wallet, error)
 	// GrantSignupCredits adds a one-time gift to the user's extra_credits_balance.

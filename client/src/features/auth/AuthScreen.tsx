@@ -313,6 +313,11 @@ function readResetToken(): string {
     return ''
   }
   try {
+    // Gate on the /reset path so an email-verification link (/verify?token=)
+    // doesn't get mistaken for a password-reset token.
+    if (!window.location.pathname.includes('/reset')) {
+      return ''
+    }
     return new URLSearchParams(window.location.search).get('token') ?? ''
   } catch {
     return ''

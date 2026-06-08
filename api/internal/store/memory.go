@@ -22,6 +22,7 @@ type MemoryStore struct {
 	usersByEmail    map[string]User
 	refresh         map[string]RefreshToken
 	resetTokens     map[string]RefreshToken // RevokedAt doubles as used_at
+	verifyTokens    map[string]RefreshToken // RevokedAt doubles as used_at
 	wallets         map[string]*billing.Wallet
 	llmCalls        map[string]LLMCallRecord
 	toolCalls       map[string]ExternalToolCallRecord
@@ -42,6 +43,7 @@ func NewMemoryStore() *MemoryStore {
 		usersByEmail:    make(map[string]User),
 		refresh:         make(map[string]RefreshToken),
 		resetTokens:     make(map[string]RefreshToken),
+		verifyTokens:    make(map[string]RefreshToken),
 		wallets:         make(map[string]*billing.Wallet),
 		llmCalls:        make(map[string]LLMCallRecord),
 		toolCalls:       make(map[string]ExternalToolCallRecord),
@@ -195,6 +197,35 @@ func (s *MemoryStore) ResetPasswordWithToken(ctx context.Context, token string, 
 			s.refresh[tok] = session
 		}
 	}
+	return user.ID, nil
+}
+
+func (s *MemoryStore) SaveEmailVerificationToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.verifyTokens[token] = RefreshToken{Token: token, UserID: userID, ExpiresAt: expiresAt}
+	return nil
+}
+
+func (s *MemoryStore) VerifyEmailWithToken(ctx context.Context, token string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.verifyTokens[token]
+	if !ok || entry.RevokedAt != nil || time.Now().After(entry.ExpiresAt) {
+		return "", ErrNotFound
+	}
+	user, ok := s.usersByID[entry.UserID]
+	if !ok {
+		return "", ErrNotFound
+	}
+	now := time.Now().UTC()
+	entry.RevokedAt = &now // mark used (single-use)
+	s.verifyTokens[token] = entry
+	user.EmailVerified = true
+	s.usersByID[user.ID] = user
+	s.usersByEmail[user.Email] = user
 	return user.ID, nil
 }
 
