@@ -2209,6 +2209,32 @@ select {
   font-weight: 500;
 }
 
+/* Success / info message (e.g. reset link sent, password reset). */
+.auth-info {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: oklch(0.96 0.03 150);
+  border: 1px solid oklch(0.86 0.06 150);
+  color: oklch(0.4 0.09 150);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Inline text link (e.g. "Forgot?" next to the password label). */
+.auth-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent, oklch(0.55 0.16 255));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
 .segmented,
 .auth-tabs {
   display: inline-grid;

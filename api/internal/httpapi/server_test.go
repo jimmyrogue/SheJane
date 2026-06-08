@@ -20,6 +20,84 @@ import (
 	"github.com/coldflame/shejane/api/internal/store"
 )
 
+type captureMailer struct {
+	calls   int
+	lastTo  string
+	lastURL string
+}
+
+func (m *captureMailer) SendPasswordReset(_ context.Context, to string, resetURL string) error {
+	m.calls++
+	m.lastTo = to
+	m.lastURL = resetURL
+	return nil
+}
+
+func TestPasswordResetFlow(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 10_000
+	memory := store.NewMemoryStore()
+	mail := &captureMailer{}
+	server := NewServer(app.New(cfg, memory, app.WithMailer(mail)))
+
+	registerAndTokenWithEmail(t, server, "reset-me@example.com")
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Reset request for the real email → 200 + one email with a link.
+	if rec := post("/api/v1/auth/password/reset-request", `{"email":"reset-me@example.com"}`); rec.Code != http.StatusOK {
+		t.Fatalf("reset-request = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if mail.calls != 1 {
+		t.Fatalf("expected 1 reset email, got %d", mail.calls)
+	}
+
+	// Unknown email ALSO returns 200 but sends no email (no user enumeration).
+	if rec := post("/api/v1/auth/password/reset-request", `{"email":"nobody@example.com"}`); rec.Code != http.StatusOK {
+		t.Fatalf("reset-request (unknown) = %d, want 200 (no enumeration)", rec.Code)
+	}
+	if mail.calls != 1 {
+		t.Fatalf("unknown email must not send an email; calls = %d", mail.calls)
+	}
+
+	idx := strings.Index(mail.lastURL, "token=")
+	if idx < 0 {
+		t.Fatalf("reset url missing token: %q", mail.lastURL)
+	}
+	resetToken := mail.lastURL[idx+len("token="):]
+
+	// Too-short password is rejected.
+	if rec := post("/api/v1/auth/password/reset-confirm", `{"token":"`+resetToken+`","password":"short"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("short password = %d, want 400", rec.Code)
+	}
+
+	// Confirm with a valid new password.
+	if rec := post("/api/v1/auth/password/reset-confirm", `{"token":"`+resetToken+`","password":"newpassword123"}`); rec.Code != http.StatusOK {
+		t.Fatalf("reset-confirm = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// Old password no longer works; the new one does.
+	if rec := post("/api/v1/auth/login", `{"email":"reset-me@example.com","password":"secret123"}`); rec.Code == http.StatusOK {
+		t.Fatal("old password should no longer authenticate")
+	}
+	if rec := post("/api/v1/auth/login", `{"email":"reset-me@example.com","password":"newpassword123"}`); rec.Code != http.StatusOK {
+		t.Fatalf("new password login = %d, want 200", rec.Code)
+	}
+
+	// The token is single-use: a second confirm fails.
+	if rec := post("/api/v1/auth/password/reset-confirm", `{"token":"`+resetToken+`","password":"yetanother123"}`); rec.Code == http.StatusOK {
+		t.Fatal("reset token must be single-use")
+	}
+}
+
 func TestRegisterLoginAndMe(t *testing.T) {
 	server := newTestServer(t)
 

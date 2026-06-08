@@ -230,6 +230,17 @@ export class SheJaneAPI implements ChatAPI {
     this.accessToken = ''
   }
 
+  // Password reset is unauthenticated (no access token / refresh cookie), so
+  // it doesn't go through the Electron auth bridge — a direct POST is fine on
+  // both web and desktop.
+  async requestPasswordReset(input: { email: string }): Promise<void> {
+    await this.post('/api/v1/auth/password/reset-request', input, false)
+  }
+
+  async confirmPasswordReset(input: { token: string; password: string }): Promise<void> {
+    await this.post('/api/v1/auth/password/reset-confirm', input, false)
+  }
+
   async balance(): Promise<WalletBalance> {
     return this.get<WalletBalance>('/api/v1/billing/balance')
   }

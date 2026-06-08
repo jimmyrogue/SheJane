@@ -110,6 +110,54 @@ func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, token string) er
 	return err
 }
 
+func (s *PostgresStore) RevokeUserRefreshTokens(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID)
+	return err
+}
+
+func (s *PostgresStore) UpdateUserPassword(ctx context.Context, userID string, passwordHash string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash=$2, updated_at=NOW() WHERE id=$1`, userID, passwordHash)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) SavePasswordResetToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO password_reset_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)`, hashToken(token), userID, expiresAt)
+	return err
+}
+
+func (s *PostgresStore) UsePasswordResetToken(ctx context.Context, token string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer rollback(tx)
+
+	var userID string
+	var expiresAt time.Time
+	var usedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT user_id::text, expires_at, used_at FROM password_reset_tokens WHERE token=$1 FOR UPDATE`, hashToken(token)).Scan(&userID, &expiresAt, &usedAt)
+	if err != nil {
+		return "", mapNotFound(err)
+	}
+	if usedAt.Valid || time.Now().UTC().After(expiresAt) {
+		return "", ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE password_reset_tokens SET used_at=NOW() WHERE token=$1`, hashToken(token)); err != nil {
+		return "", err
+	}
+	return userID, tx.Commit()
+}
+
 func (s *PostgresStore) EnsureWallet(ctx context.Context, userID string, monthlyCredits int64) (*billing.Wallet, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

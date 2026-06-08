@@ -1602,7 +1602,14 @@ function AppContent() {
   }
 
   if (!auth) {
-    return <AuthScreen onAuthed={handleAuth} authClient={authClient} />
+    return (
+      <AuthScreen
+        onAuthed={handleAuth}
+        authClient={authClient}
+        onRequestPasswordReset={(email) => api.requestPasswordReset({ email })}
+        onConfirmPasswordReset={(token, password) => api.confirmPasswordReset({ token, password })}
+      />
+    )
   }
 
   const shellClassName = window.shejaneDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
