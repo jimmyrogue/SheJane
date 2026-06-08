@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -348,8 +349,13 @@ func cloneReservation(reservation *Reservation) *Reservation {
 	return &copy
 }
 
+// idSeq disambiguates IDs minted within the same nanosecond. Without it,
+// concurrent Reserve calls on one wallet could collide on the timestamp and
+// produce duplicate reservation IDs (found by the concurrency tests).
+var idSeq atomic.Uint64
+
 func newID(prefix string) string {
-	return fmt.Sprintf("%s_%d", prefix, time.Now().UTC().UnixNano())
+	return fmt.Sprintf("%s_%d_%d", prefix, time.Now().UTC().UnixNano(), idSeq.Add(1))
 }
 
 func minInt64(a int64, b int64) int64 {
