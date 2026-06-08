@@ -278,6 +278,23 @@ func (s *MemoryStore) WalletByUser(ctx context.Context, userID string) (*billing
 	return wallet, nil
 }
 
+func (s *MemoryStore) WalletTransactions(ctx context.Context, userID string) ([]billing.Transaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	wallet, ok := s.wallets[userID]
+	if !ok {
+		return []billing.Transaction{}, nil
+	}
+	// wallet.Transactions() is oldest-first; reverse to newest-first to match
+	// the Postgres ORDER BY created_at DESC.
+	txs := wallet.Transactions()
+	for i, j := 0, len(txs)-1; i < j; i, j = i+1, j-1 {
+		txs[i], txs[j] = txs[j], txs[i]
+	}
+	return txs, nil
+}
+
 func (s *MemoryStore) ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error) {
 	wallet, err := s.EnsureWallet(ctx, userID, monthlyCredits)
 	if err != nil {
