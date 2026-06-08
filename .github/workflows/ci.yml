@@ -246,6 +246,7 @@ jobs:
           SHEJANE_LOCAL_HOST_PORT=17371 \
           SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
           SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
+          SHEJANE_FAKE_LLM=1 \
           PYTHONUNBUFFERED=1 \
           nohup uv run python -m local_host \
             > /tmp/contract/daemon.log 2>&1 &
