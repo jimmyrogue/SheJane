@@ -45,8 +45,8 @@ func (s *PostgresStore) CreateUser(ctx context.Context, email string, passwordHa
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO users (email, password_hash, name)
 		VALUES ($1, $2, $3)
-		RETURNING id::text, email, password_hash, name, role, status, created_at
-	`, normalizeEmail(email), passwordHash, name).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.Role, &user.Status, &user.CreatedAt)
+		RETURNING id::text, email, password_hash, name, role, status, created_at, email_verified
+	`, normalizeEmail(email), passwordHash, name).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.Role, &user.Status, &user.CreatedAt, &user.EmailVerified)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return User{}, ErrAlreadyExists
@@ -57,11 +57,11 @@ func (s *PostgresStore) CreateUser(ctx context.Context, email string, passwordHa
 }
 
 func (s *PostgresStore) UserByEmail(ctx context.Context, email string) (User, error) {
-	return s.userByQuery(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at FROM users WHERE email=$1`, normalizeEmail(email))
+	return s.userByQuery(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at, email_verified FROM users WHERE email=$1`, normalizeEmail(email))
 }
 
 func (s *PostgresStore) UserByID(ctx context.Context, id string) (User, error) {
-	return s.userByQuery(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at FROM users WHERE id=$1`, id)
+	return s.userByQuery(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at, email_verified FROM users WHERE id=$1`, id)
 }
 
 func (s *PostgresStore) UpdateUserRole(ctx context.Context, userID string, role string) (User, error) {
@@ -69,7 +69,7 @@ func (s *PostgresStore) UpdateUserRole(ctx context.Context, userID string, role 
 		UPDATE users
 		SET role=$2, updated_at=NOW()
 		WHERE id=$1
-		RETURNING id::text, email, password_hash, name, role, status, created_at
+		RETURNING id::text, email, password_hash, name, role, status, created_at, email_verified
 	`, userID, role))
 }
 
@@ -98,7 +98,7 @@ func (s *PostgresStore) UseRefreshToken(ctx context.Context, token string) (User
 	if _, err := tx.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=NOW() WHERE token=$1`, hashToken(token)); err != nil {
 		return User{}, err
 	}
-	user, err := scanUser(tx.QueryRowContext(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at FROM users WHERE id=$1`, userID))
+	user, err := scanUser(tx.QueryRowContext(ctx, `SELECT id::text, email, password_hash, name, role, status, created_at, email_verified FROM users WHERE id=$1`, userID))
 	if err != nil {
 		return User{}, err
 	}
@@ -148,6 +148,37 @@ func (s *PostgresStore) ResetPasswordWithToken(ctx context.Context, token string
 	// rolls back the password change + token consumption (no half-reset that
 	// leaves a compromised session live).
 	if _, err := tx.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+		return "", err
+	}
+	return userID, tx.Commit()
+}
+
+func (s *PostgresStore) SaveEmailVerificationToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)`, hashToken(token), userID, expiresAt)
+	return err
+}
+
+func (s *PostgresStore) VerifyEmailWithToken(ctx context.Context, token string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer rollback(tx)
+
+	var userID string
+	var expiresAt time.Time
+	var usedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT user_id::text, expires_at, used_at FROM email_verification_tokens WHERE token=$1 FOR UPDATE`, hashToken(token)).Scan(&userID, &expiresAt, &usedAt)
+	if err != nil {
+		return "", mapNotFound(err)
+	}
+	if usedAt.Valid || time.Now().UTC().After(expiresAt) {
+		return "", ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE email_verification_tokens SET used_at=NOW() WHERE token=$1`, hashToken(token)); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET email_verified=true, updated_at=NOW() WHERE id=$1`, userID); err != nil {
 		return "", err
 	}
 	return userID, tx.Commit()
@@ -1107,7 +1138,7 @@ func (s *PostgresStore) AdminOverview(ctx context.Context) (AdminOverview, error
 func (s *PostgresStore) AdminUsers(ctx context.Context, opts AdminListOptions) ([]AdminUserSummary, error) {
 	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id::text, email, password_hash, name, role, status, created_at
+		SELECT id::text, email, password_hash, name, role, status, created_at, email_verified
 		FROM users
 		WHERE ($1='' OR email ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%')
 			AND ($2='' OR status=$2)
@@ -1186,7 +1217,7 @@ func (s *PostgresStore) UpdateUserStatus(ctx context.Context, actorUserID string
 		UPDATE users
 		SET status=$2, updated_at=NOW()
 		WHERE id=$1
-		RETURNING id::text, email, password_hash, name, role, status, created_at
+		RETURNING id::text, email, password_hash, name, role, status, created_at, email_verified
 	`, userID, status))
 	if err != nil {
 		return User{}, err
@@ -1594,7 +1625,7 @@ type rowScanner interface {
 
 func scanUser(row rowScanner) (User, error) {
 	var user User
-	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.Role, &user.Status, &user.CreatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.Name, &user.Role, &user.Status, &user.CreatedAt, &user.EmailVerified)
 	if err != nil {
 		return User{}, mapNotFound(err)
 	}

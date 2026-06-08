@@ -517,6 +517,42 @@ describe('user client shell', () => {
     })
   })
 
+  it('shows the email-verification banner and resends on click', async () => {
+    const calls = mockFetch('user', { emailVerified: false })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    expect(await screen.findByText('邮箱尚未验证,请查收验证邮件')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重新发送' }))
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith('/api/v1/auth/email/verify-request'))).toBe(true),
+    )
+  })
+
+  it('hides the email-verification banner for a verified user', async () => {
+    mockFetch('user', { emailVerified: true })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    expect(screen.queryByText('邮箱尚未验证,请查收验证邮件')).not.toBeInTheDocument()
+  })
+
   // SKIPPED: relies on the removed topbar "更多" menu / "当前本地状态" host-status
   // panel. Permission-approve flow itself still works; re-target the preamble
   // pending product confirmation on where local status now surfaces.
@@ -962,6 +998,7 @@ function mockFetch(
     localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
     agentStream?: DeferredAgentStream
     localRunStream?: DeferredAgentStream
+    emailVerified?: boolean
   } = {},
 ) {
   const calls: Array<{ url: string; init?: RequestInit }> = []
@@ -1178,9 +1215,16 @@ function mockFetch(
             name: role,
             role,
             status: 'active',
+            email_verified: options.emailVerified ?? true,
           },
         },
       })
+    }
+    if (url.endsWith('/api/v1/auth/email/verify-request')) {
+      return jsonResponse({ code: 0, message: 'ok', data: { sent: true } })
+    }
+    if (url.endsWith('/api/v1/auth/email/verify-confirm')) {
+      return jsonResponse({ code: 0, message: 'ok', data: { verified: true } })
     }
     if (url.endsWith('/api/v1/billing/balance')) {
       return jsonResponse({ code: 0, message: 'ok', data: balance })
