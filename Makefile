@@ -23,6 +23,7 @@
 	release deploy deploy-pull deploy-down deploy-logs migrate \
 	backup deploy-backup deploy-restore backup-cron-install \
 	smoke-local-host smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external \
+	eval \
 	logs-api logs-local-host logs-client logs-llm-errors logs-dev
 
 # docker compose invocation for the production stack (pulls prebuilt
@@ -194,6 +195,9 @@ smoke-docker-local: ## Full Docker stack smoke on disposable ports (MOCK_LLM=tru
 
 smoke-real-llm: ## Real LLM provider smoke (needs MOCK_LLM=false + a real key)
 	./scripts/smoke-real-llm.sh
+
+eval: ## Run the agent eval suite vs a RUNNING daemon (needs MOCK_LLM=false + SHEJANE_EVAL_TOKEN)
+	cd local-host/python && uv run python -m local_host.eval
 
 smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify subscription lifecycle
 	./scripts/smoke-stripe-webhook.sh
