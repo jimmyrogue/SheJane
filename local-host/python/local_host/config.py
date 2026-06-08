@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     )
     cloud_token: str = Field(default="", alias="SHEJANE_CLOUD_TOKEN")
 
+    # When set, the agent uses a deterministic in-process fake LLM instead of
+    # the cloud gateway — no network, no key. Used by the SSE contract test to
+    # exercise the real run/stream pipeline (event names + envelope) without a
+    # live upstream. NEVER enable in production.
+    fake_llm: bool = Field(default=False, alias="SHEJANE_FAKE_LLM")
+
     # Agent runtime knobs
     max_model_calls: int = 20
     max_tool_retries: int = 2
