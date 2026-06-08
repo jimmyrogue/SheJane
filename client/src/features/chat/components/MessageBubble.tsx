@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
 import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
+import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
@@ -297,11 +298,48 @@ function MarkdownContent({
         h5: ({ children }) => <h5>{renderChildren(children)}</h5>,
         h6: ({ children }) => <h6>{renderChildren(children)}</h6>,
         blockquote: ({ children }) => <blockquote>{renderChildren(children)}</blockquote>,
+        // Fenced code blocks get syntax highlighting + a per-block copy
+        // button (CodeBlock). Inline code keeps the plain chip styling.
+        // react-markdown v9 dropped the `inline` prop, so detect a block by
+        // a `language-*` class or a multi-line body.
+        code: ({ node: _node, className, children, ...rest }) => {
+          const text = childrenToText(children)
+          const match = /language-(\w+)/.exec(className || '')
+          if (match || text.includes('\n')) {
+            return <CodeBlock language={match?.[1]} code={text.replace(/\n$/, '')} />
+          }
+          return (
+            <code className={className} {...rest}>
+              {children}
+            </code>
+          )
+        },
+        // CodeBlock supplies its own <pre>; unwrap react-markdown's so we
+        // don't nest <pre><div><pre>.
+        pre: ({ children }) => <>{children}</>,
       }}
     >
       {content}
     </ReactMarkdown>
   )
+}
+
+/** Flatten a react-markdown children tree to its raw text — used to recover
+ *  the verbatim source of a fenced code block for highlighting + copy. */
+function childrenToText(node: React.ReactNode): string {
+  if (node == null || node === false || node === true) {
+    return ''
+  }
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node)
+  }
+  if (Array.isArray(node)) {
+    return node.map(childrenToText).join('')
+  }
+  if (typeof node === 'object' && 'props' in node) {
+    return childrenToText((node as { props?: { children?: React.ReactNode } }).props?.children)
+  }
+  return ''
 }
 
 /** Element types we deliberately don't crack open. `a` and `button`

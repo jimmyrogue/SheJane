@@ -4424,6 +4424,122 @@ button:active {
   color: var(--text-primary);
 }
 
+/* ── Fenced code blocks (CodeBlock.tsx): boxed wrapper with a header bar
+   (language label + per-block copy button) over a highlighted <pre>. ── */
+.message .message-content .code-block {
+  margin: 8px 0;
+  border: 0.5px solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sidebar-soft);
+  overflow: hidden;
+}
+
+.message .message-content .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px 3px 10px;
+  border-bottom: 0.5px solid var(--border-hairline);
+  background: var(--bg-sidebar);
+}
+
+.code-block-lang {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+.code-block-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.code-block-copy:hover,
+.code-block-copy:focus-visible {
+  background: var(--bg-sidebar-soft);
+  color: var(--text-primary);
+}
+
+/* The wrapper owns the box; neutralize the generic .message-content pre box. */
+.message .message-content .code-block .code-block-pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+/* highlight.js — compact GitHub-light token theme. The app is light-only,
+   so a single light palette is intentional. Token spans win over the
+   inherited `pre code` color via their own (inheritance-beating) rules. */
+.message .message-content .hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #6a737d;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #d73a49;
+}
+.hljs-string,
+.hljs-attr,
+.hljs-meta .hljs-string,
+.hljs-addition {
+  color: #032f62;
+}
+.hljs-number,
+.hljs-meta,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-symbol,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type {
+  color: #005cc5;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-name {
+  color: #6f42c1;
+}
+.hljs-attribute,
+.hljs-bullet {
+  color: #e36209;
+}
+.hljs-tag {
+  color: #22863a;
+}
+.hljs-deletion {
+  color: #b31d28;
+  background: #ffeef0;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
 /* The base rule applies white-space: pre-wrap to p/ul/ol; hast keeps the
    newline text nodes between block children (e.g. between <li>s), and
    pre-wrap renders them as stray blank lines. remark-breaks already turns

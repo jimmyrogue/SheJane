@@ -90,6 +90,47 @@ describe('MessageBubble meta', () => {
     expect(writeText).toHaveBeenCalledWith('杭州天气怎么样')
   })
 
+  it('syntax-highlights a fenced code block', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', content: '```python\nprint("hi")\n```' })} />
+      </I18nProvider>,
+    )
+    const block = container.querySelector('.code-block')
+    expect(block).toBeInTheDocument()
+    // highlight.js tokenized the body into colored spans.
+    expect(container.querySelector('pre.code-block-pre code.hljs')).toBeInTheDocument()
+    expect(container.querySelector('.code-block .hljs-string')).toBeInTheDocument()
+  })
+
+  it("copies only the raw code from a block's own copy button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', content: '说明:\n```js\nconst a = 1\n```' })} />
+      </I18nProvider>,
+    )
+
+    // The block copy button has its own accessible name, distinct from the
+    // message-level "复制" button (so the two never collide).
+    fireEvent.click(screen.getByRole('button', { name: '复制代码' }))
+    expect(writeText).toHaveBeenCalledWith('const a = 1')
+    await waitFor(() => expect(screen.getByRole('button', { name: '已复制代码' })).toBeInTheDocument())
+  })
+
+  it('keeps inline code as a plain chip with no copy button', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble message={message({ role: 'assistant', content: '用 `npm install` 安装' })} />
+      </I18nProvider>,
+    )
+    expect(container.querySelector('.code-block')).not.toBeInTheDocument()
+    expect(container.querySelector('code')?.textContent).toBe('npm install')
+    expect(screen.queryByRole('button', { name: '复制代码' })).not.toBeInTheDocument()
+  })
+
   it('omits the copy action when there is no content', () => {
     render(
       <I18nProvider>
