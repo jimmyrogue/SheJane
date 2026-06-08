@@ -30,7 +30,7 @@ jobs:
       # The daemon's native wheels are platform-specific, so the freeze MUST run
       # on Windows. Pin Python to match requires-python.
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 

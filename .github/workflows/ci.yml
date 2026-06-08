@@ -24,7 +24,7 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -125,7 +125,7 @@ jobs:
             admin/package-lock.json
 
       - name: Setup Python (local-host daemon)
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -222,7 +222,7 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
