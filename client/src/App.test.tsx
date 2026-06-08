@@ -216,61 +216,6 @@ describe('user client shell', () => {
     expect(localStorage.getItem('shejane.locale')).toBe('zh')
   })
 
-  // SKIPPED: the global topbar "更多" menu (language switch, host status,
-  // import/export) was removed in the sidebar/topbar redesign. Re-target to the
-  // account menu / per-conversation row menu pending product confirmation.
-  it.skip('localizes the sidebar navigation labels in Chinese and English', async () => {
-    mockFetch('user')
-
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
-    fireEvent.click(screen.getByText('创建账号'))
-
-    await awaitSignedIn()
-    expect(screen.getAllByText('工作区').length).toBeGreaterThan(0)
-    // The top tab button and the section header both render '对话' /
-    // '项目' (intentional — same word for the create button and the
-    // group it produces), so assert presence via getAllByText.
-    expect(screen.getAllByText('对话').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('工具').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('项目').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('历史')).toBeInTheDocument()
-    expect(screen.queryByText('WORKSPACE')).not.toBeInTheDocument()
-
-    openMoreMenu(await screen.findByTitle('更多'))
-    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
-
-    expect(screen.getByText('WORKSPACE')).toBeInTheDocument()
-    expect(screen.getAllByText('Chats').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Tools')).toBeInTheDocument()
-    expect(screen.getAllByText('Projects').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('History')).toBeInTheDocument()
-  })
-
-  // SKIPPED: the attachment Dialog (showing "当前对话附件" header and
-  // the list of uploaded documents) was removed in feat/client-ui in
-  // favour of an OS file picker that opens immediately on click. Only
-  // the upload affordance remains in the Composer — historical document
-  // re-attach is no longer surfaced here.
-  it.skip('keeps documents inside the unified chat composer instead of a separate workspace', async () => {
-    mockFetch('user')
-
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
-    fireEvent.click(screen.getByText('创建账号'))
-
-    await awaitSignedIn()
-
-    expect(screen.queryByText('文档阅读')).not.toBeInTheDocument()
-    expect(screen.queryByText('附件资料')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /附件/ }))
-    expect(await screen.findByText('当前对话附件')).toBeInTheDocument()
-    expect(screen.getByLabelText('上传附件')).toBeInTheDocument()
-    expect(screen.getByText('roadmap.pdf')).toBeInTheDocument()
-  })
-
   it('uploads a document from the composer and attaches it to the next message', async () => {
     const calls = mockFetch('user')
 
@@ -553,81 +498,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('邮箱尚未验证,请查收验证邮件')).not.toBeInTheDocument()
   })
 
-  // SKIPPED: relies on the removed topbar "更多" menu / "当前本地状态" host-status
-  // panel. Permission-approve flow itself still works; re-target the preamble
-  // pending product confirmation on where local status now surfaces.
-  it.skip('uses the paired local harness for workspace tasks and can approve permission requests', async () => {
-    const calls = mockFetch('user')
-    const createObjectURL = vi.fn(() => 'blob:current-diagnostics')
-    const revokeObjectURL = vi.fn()
-    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
-    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-    window.shejaneDesktop = {
-      platform: 'darwin',
-      localHost: {
-        baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
-      },
-    }
-
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
-    fireEvent.click(screen.getByText('创建账号'))
-
-    await awaitSignedIn()
-    openMoreMenu(await screen.findByTitle('更多'))
-    expect(await screen.findByText('当前本地状态')).toBeInTheDocument()
-    expect(screen.getByText(/本地服务已连接/)).toBeInTheDocument()
-    expect(screen.queryByText('Fast agent')).not.toBeInTheDocument()
-    expect(screen.queryByText('Local Harness')).not.toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' })
-    await bindWorkspace('/tmp/shejane-workspace')
-    typeComposer('运行本地检查')
-    fireEvent.click(screen.getByText('发送'))
-
-    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByText('本会话始终允许'))
-
-    expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
-    expect((await screen.findAllByText('任务完成')).length).toBeGreaterThan(0)
-    expect((await screen.findAllByText('已收集 1 个来源')).length).toBeGreaterThan(0)
-    expect((await screen.findAllByText('生成 1 个 Artifact')).length).toBeGreaterThan(0)
-    expect(screen.queryByText('收集来源：Example Source')).not.toBeInTheDocument()
-    expect(screen.queryByText('https://example.com/source')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('查看诊断 local-run'))
-    expect(await screen.findByText('任务诊断：local-run')).toBeInTheDocument()
-    expect(screen.getByText('状态 completed')).toBeInTheDocument()
-    expect(screen.getByText('事件 3')).toBeInTheDocument()
-    expect(screen.getByText('权限 1')).toBeInTheDocument()
-    expect(screen.getByText('Artifact 1')).toBeInTheDocument()
-    expect(screen.getByText(/最新检查点：checkpoint-local/)).toBeInTheDocument()
-    expect(screen.getByText('source.collected')).toBeInTheDocument()
-    expect(screen.getByText('verification.completed')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('导出当前诊断'))
-    expect(await screen.findByText('诊断已导出：local-run')).toBeInTheDocument()
-    expect(createObjectURL).toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:current-diagnostics')
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toBe(true)
-    expect(calls.some((call) =>
-      call.url === 'http://127.0.0.1:17371/local/v1/runs'
-      && call.init?.method === 'POST'
-      && call.init.body === JSON.stringify({ goal: '运行本地检查', workspace_path: '/tmp/shejane-workspace' }),
-    )).toBe(true)
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/diagnostics')).toBe(true)
-    expect(calls.some((call) =>
-      call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell'
-      && call.init?.method === 'POST'
-      && call.init.body === JSON.stringify({ decision: 'approve', scope: 'run' }),
-    )).toBe(true)
-    expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
-  })
-
-  // SKIPPED: asserts the removed topbar "更多" menu host-status panel. The
-  // session-sync POST itself is still exercised; re-target pending product
-  // confirmation on where local status now surfaces.
-  it.skip('syncs the cloud login session into the paired Local Harness and shows local status in the topbar menu', async () => {
+  it('syncs the cloud login session into the paired Local Harness', async () => {
     const calls = mockFetch('user')
     window.shejaneDesktop = {
       platform: 'darwin',
@@ -639,10 +510,12 @@ describe('user client shell', () => {
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
+    // The renderer pushes the cloud session (base URL + access token) to the
+    // paired daemon so its gateway-billed tools can call the cloud.
     await waitFor(() => {
       expect(
         calls.some(
@@ -653,48 +526,9 @@ describe('user client shell', () => {
         ),
       ).toBe(true)
     })
-
-    openMoreMenu(await screen.findByTitle('更多'))
-    expect(await screen.findByText('当前本地状态')).toBeInTheDocument()
-    expect(screen.getByText(/本地服务已连接/)).toBeInTheDocument()
   })
 
-  // SKIPPED: not a label fix — the local-harness artifact pipeline no longer
-  // surfaces an agent timeline / "查看 artifact" action in this flow after the
-  // local-run UI redesign (same drift class as the topbar tests). Rewrite
-  // against the new local-run timeline pending product confirmation.
-  it.skip('previews local artifacts from the agent timeline', async () => {
-    mockFetch('user')
-    window.shejaneDesktop = {
-      platform: 'darwin',
-      localHost: {
-        baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
-      },
-    }
-
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
-    fireEvent.click(screen.getByText('创建账号'))
-
-    await awaitSignedIn()
-    await bindWorkspace('/tmp/shejane-workspace')
-    typeComposer('读取大文件')
-    fireEvent.click(screen.getByText('发送'))
-
-    const artifactButtons = await screen.findAllByText('查看 artifact')
-    fireEvent.click(artifactButtons[0])
-
-    expect(await screen.findByText('Artifact: shell output')).toBeInTheDocument()
-    expect(screen.getByText('artifact preview content')).toBeInTheDocument()
-  })
-
-  // SKIPPED: Composer workspace UI entry was removed in feat/client-ui.
-  // The daemon endpoints (POST /local/v1/workspaces, diagnose, picker)
-  // and conversation.workspace storage field are still wired — re-enable
-  // this test if/when the workspace picker UI returns.
-  it.skip('authorizes a picked Electron workspace before creating local runs', async () => {
+  it('binds a picked Electron workspace and sends its path with local runs', async () => {
     const calls = mockFetch('user')
     window.shejaneDesktop = {
       platform: 'darwin',
@@ -707,60 +541,25 @@ describe('user client shell', () => {
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    fireEvent.click(await readyWorkspaceButton())
-    fireEvent.click(await screen.findByText('选择文件夹'))
-
-    expect(await screen.findByLabelText('当前对话工作区路径')).toHaveValue('/tmp/picked-workspace')
-    fireEvent.click(screen.getByText('授权并绑定'))
-    expect(await screen.findByText('本地项目：picked-workspace')).toBeInTheDocument()
+    // Bind a workspace via the project picker (native folder chooser stubbed).
+    fireEvent.click(await screen.findByRole('button', { name: '添加项目' }))
+    expect((await screen.findAllByText('picked-workspace')).length).toBeGreaterThan(0)
     typeComposer('检查这个项目')
     fireEvent.click(screen.getByText('发送'))
 
-    expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
+    // The workspace was authorized with the daemon, and its path rides along
+    // with the run that the bound conversation starts.
     expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces' && call.init?.method === 'POST')).toBe(true)
     await waitFor(() => {
-      expect(
-        calls
-          .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
-          .map((call) => JSON.parse(call.init?.body as string)),
-      ).toContainEqual(expect.objectContaining({ goal: '检查这个项目', workspace_path: '/tmp/picked-workspace' }))
+      const bodies = calls
+        .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+        .map((call) => JSON.parse(call.init?.body as string))
+      expect(bodies).toContainEqual(expect.objectContaining({ goal: '检查这个项目', workspace_path: '/tmp/picked-workspace' }))
     })
-  })
-
-  // SKIPPED: same reason as the picked-workspace test — Composer
-  // workspace dialog removed in feat/client-ui.
-  it.skip('keeps workspace authorization in the composer dialog instead of the sidebar', async () => {
-    const calls = mockFetch('user', {
-      workspaces: [{ id: 'workspace-1', path: '/tmp/project', label: 'project' }],
-    })
-    window.shejaneDesktop = {
-      platform: 'darwin',
-      localHost: {
-        baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
-      },
-    }
-
-    render(<App />)
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
-    fireEvent.click(screen.getByText('创建账号'))
-
-    await awaitSignedIn()
-    expect(screen.queryByText('本地工作区')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('本地工作区路径')).not.toBeInTheDocument()
-    expect(screen.queryByText('授权当前路径')).not.toBeInTheDocument()
-    fireEvent.click(await readyWorkspaceButton())
-    fireEvent.change(await screen.findByLabelText('当前对话工作区路径'), { target: { value: '/tmp/project' } })
-    fireEvent.click(screen.getByText('诊断路径'))
-    expect(await screen.findByText('路径已授权：project')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('授权并绑定'))
-    expect(await screen.findByText('本地项目：project')).toBeInTheDocument()
-    expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/workspaces/diagnose' && call.init?.method === 'POST')).toBe(true)
   })
 
   it('hides recent local runs from the sidebar', async () => {
@@ -794,10 +593,7 @@ describe('user client shell', () => {
     expect(screen.queryByText('Resume workspace scan')).not.toBeInTheDocument()
   })
 
-  // SKIPPED: the global topbar "更多" menu was removed; import/export now live
-  // in the per-conversation row menu ("更多 {title}"). Rewrite against the new
-  // location pending product confirmation.
-  it.skip('moves import and export into each conversation more menu', async () => {
+  it('exposes import and export in each conversation more menu', async () => {
     mockFetch('user')
     const createObjectURL = vi.fn(() => 'blob:conversation-export')
     const revokeObjectURL = vi.fn()
@@ -807,30 +603,16 @@ describe('user client shell', () => {
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    expect(screen.queryByText('导出此对话')).not.toBeInTheDocument()
-    expect(screen.queryByText('导入聊天数据')).not.toBeInTheDocument()
-
     typeComposer('你好')
     fireEvent.click(screen.getByText('发送'))
 
-    await screen.findByTitle('更多 你好')
-    openMoreMenu(screen.getByTitle('更多'))
-    expect(await screen.findByText('导出当前对话')).toBeInTheDocument()
-    expect(screen.getByText('当前本地状态')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('导出当前对话'))
-    await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:conversation-export')
-    const exportToast = await screen.findByText('已导出对话：你好')
-    expect(exportToast.closest('[data-sonner-toast]')).toBeTruthy()
-    expect(document.querySelector('.notice')).toBeNull()
-    createObjectURL.mockClear()
-    revokeObjectURL.mockClear()
-
-    openMoreMenu(screen.getByTitle('更多 你好'))
+    // Import/export live in the per-conversation row menu ("更多 {title}"),
+    // not a global topbar menu (which was removed).
+    openMoreMenu(await screen.findByTitle('更多 你好'))
     expect(await screen.findByText('导出此对话')).toBeInTheDocument()
     expect(screen.getByText('导入聊天数据')).toBeInTheDocument()
     fireEvent.click(screen.getByText('导出此对话'))
@@ -839,55 +621,51 @@ describe('user client shell', () => {
     expect(await screen.findByText('已导出对话：你好')).toBeInTheDocument()
   })
 
-  // SKIPPED: drives the workspace via the Composer dialog, which was
-  // removed in feat/client-ui. The underlying per-conversation
-  // workspace persistence remains untouched.
-  it.skip('stores workspace references per conversation', async () => {
-    const calls = mockFetch('user', {
-      workspaces: [{ id: 'workspace-one', path: '/tmp/one', label: 'one' }],
-    })
+  it('stores workspace references per conversation', async () => {
+    const selectWorkspaceDirectory = vi
+      .fn()
+      .mockResolvedValueOnce('/tmp/one')
+      .mockResolvedValueOnce('/tmp/two')
+    const calls = mockFetch('user')
     window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
       },
+      selectWorkspaceDirectory,
     }
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
 
     await awaitSignedIn()
-    await bindWorkspace('/tmp/one')
+    // First conversation bound to /tmp/one.
+    fireEvent.click(await screen.findByRole('button', { name: '添加项目' }))
+    expect((await screen.findAllByText('one')).length).toBeGreaterThan(0)
     typeComposer('第一个任务')
     fireEvent.click(screen.getByText('发送'))
     expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
 
+    // New conversation, bound to a different workspace /tmp/two.
     fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
-    await waitFor(() => expect(screen.queryByText('本地项目：one')).not.toBeInTheDocument())
-    await bindWorkspace('/tmp/two')
+    fireEvent.click(await screen.findByRole('button', { name: '添加项目' }))
+    expect((await screen.findAllByText('two')).length).toBeGreaterThan(0)
     typeComposer('第二个任务')
     fireEvent.click(screen.getByText('发送'))
 
+    // Each conversation's run carried its OWN workspace path.
     await waitFor(() => {
       const bodies = calls
         .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
         .map((call) => JSON.parse(call.init?.body as string))
-      expect(bodies).toHaveLength(2)
       expect(bodies).toContainEqual(expect.objectContaining({ goal: '第一个任务', workspace_path: '/tmp/one' }))
       expect(bodies).toContainEqual(expect.objectContaining({ goal: '第二个任务', workspace_path: '/tmp/two' }))
     })
   })
 })
-
-async function readyWorkspaceButton(): Promise<HTMLElement> {
-  await waitFor(() => {
-    expect(screen.getByRole('button', { name: '工作区' })).not.toBeDisabled()
-  })
-  return screen.getByRole('button', { name: '工作区' })
-}
 
 function typeComposer(value: string) {
   const element = document.querySelector('[data-lexical-editor="true"]') as unknown as {
@@ -911,14 +689,6 @@ function typeComposer(value: string) {
       { discrete: true },
     )
   })
-}
-
-async function bindWorkspace(path: string) {
-  const label = path.split('/').filter(Boolean).at(-1) ?? path
-  fireEvent.click(await readyWorkspaceButton())
-  fireEvent.change(await screen.findByLabelText('当前对话工作区路径'), { target: { value: path } })
-  fireEvent.click(screen.getByText('授权并绑定'))
-  expect(await screen.findByText(`本地项目：${label}`)).toBeInTheDocument()
 }
 
 function openMoreMenu(trigger: HTMLElement) {
