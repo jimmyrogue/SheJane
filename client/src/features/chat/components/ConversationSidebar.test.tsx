@@ -396,6 +396,64 @@ describe('ConversationSidebar', () => {
     const skillsItem = screen.getByRole('button', { name: '技能' })
     expect(skillsItem.className).toContain('active')
   })
+
+  describe('search', () => {
+    function conversationWithBody(id: string, title: string, body: string): Conversation {
+      return emptyConversation(id, title, {
+        messages: [
+          { id: `${id}-u`, role: 'user', content: '问题', createdAt: '2026-05-14T00:00:00Z', status: 'done' },
+          { id: `${id}-a`, role: 'assistant', content: body, createdAt: '2026-05-14T00:00:01Z', status: 'done' },
+        ],
+      })
+    }
+
+    it('toggles the search input open and closed', () => {
+      renderSidebar([emptyConversation('a', '行程安排')])
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+      expect(screen.getByRole('searchbox')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    })
+
+    it('filters rows by a title substring', () => {
+      renderSidebar([emptyConversation('a', '行程安排'), emptyConversation('b', '报销流程')])
+      fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: '报销' } })
+
+      expect(screen.getByRole('button', { name: '报销流程' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '行程安排' })).not.toBeInTheDocument()
+    })
+
+    it('surfaces a conversation that matches only in a message body and shows a snippet', () => {
+      renderSidebar([
+        conversationWithBody('a', '行程安排', '推荐去普吉岛玩三天,海滩很美'),
+        emptyConversation('b', '报销流程'),
+      ])
+      fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: '普吉岛' } })
+
+      // The title does NOT contain the query, but the body does — it must still appear.
+      expect(screen.getByRole('button', { name: '行程安排' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '报销流程' })).not.toBeInTheDocument()
+      // And the matched term is surfaced in a snippet <mark>.
+      const mark = screen.getByText('普吉岛', { selector: 'mark' })
+      expect(mark).toBeInTheDocument()
+    })
+
+    it('clears the query with the clear button', () => {
+      renderSidebar([emptyConversation('a', '行程安排'), emptyConversation('b', '报销流程')])
+      fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+      fireEvent.change(screen.getByRole('searchbox'), { target: { value: '报销' } })
+      expect(screen.queryByRole('button', { name: '行程安排' })).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+      expect(screen.getByRole('button', { name: '行程安排' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '报销流程' })).toBeInTheDocument()
+    })
+  })
 })
 
 function openConversationActions(title: string) {

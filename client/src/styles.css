@@ -414,6 +414,36 @@ a {
   font-weight: 500;
 }
 
+/* Search body-match snippet: a second muted line under the title shown only
+ * while searching when the match is in a message body. The row grows, so pin
+ * the absolutely-positioned time/more controls to the first line. */
+.conversation-row.has-snippet {
+  min-height: 42px;
+  padding-bottom: 4px;
+}
+
+.conversation-row.has-snippet .conversation-time,
+.conversation-row.has-snippet .conversation-more {
+  top: 13px;
+}
+
+.conversation-row-snippet {
+  margin-top: 1px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-row-snippet mark {
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .conversation-more {
   width: 30px;
   opacity: 0.62;
