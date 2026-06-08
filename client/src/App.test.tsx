@@ -408,6 +408,75 @@ describe('user client shell', () => {
     expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
   })
 
+  it('fires a desktop notification when a local run fails', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    mockFetch('user', { localRunStream })
+    const notify = vi.fn(async () => true)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      notify,
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('运行本地检查')
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('运行本地检查')).length).toBeGreaterThan(0)
+
+    act(() => {
+      localRunStream.emit({ id: 'fail-event-1', event_type: 'run.failed', payload: { message: '工具调用超时' } })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    await waitFor(() => {
+      expect(notify).toHaveBeenCalledWith({ title: '石间任务失败', body: '工具调用超时' })
+    })
+  })
+
+  it('fires the completion notification on a successful local run', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    mockFetch('user', { localRunStream })
+    const notify = vi.fn(async () => true)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      notify,
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('运行本地检查')
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('运行本地检查')).length).toBeGreaterThan(0)
+
+    act(() => {
+      localRunStream.emit({ id: 'ok-event-1', event_type: 'llm.delta', payload: { content: '完成了' } })
+      localRunStream.emit({ id: 'ok-event-2', event_type: 'run.completed', payload: { final: '完成了' } })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    await waitFor(() => {
+      expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: '石间回复完成' }))
+    })
+  })
+
   // SKIPPED: relies on the removed topbar "更多" menu / "当前本地状态" host-status
   // panel. Permission-approve flow itself still works; re-target the preamble
   // pending product confirmation on where local status now surfaces.

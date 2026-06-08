@@ -449,6 +449,8 @@ const zh = {
   'agent.thinking': '正在思考',
   'notify.agentCompleted.title': '石间回复完成',
   'notify.agentCompleted.empty': '助手已完成本轮回复',
+  'notify.agentFailed.title': '石间任务失败',
+  'notify.agentFailed.empty': '助手未能完成本轮任务',
   'agent.thinkingPaused': '暂停',
   'agent.tokens': '{count} tokens',
 
@@ -1042,6 +1044,8 @@ const en: Record<TranslationKey, string> = {
   'agent.thinking': 'Thinking',
   'notify.agentCompleted.title': 'SheJane finished replying',
   'notify.agentCompleted.empty': 'The assistant has finished this turn',
+  'notify.agentFailed.title': 'SheJane run failed',
+  'notify.agentFailed.empty': 'The assistant could not finish this run',
   'agent.thinkingPaused': 'Paused',
   'agent.tokens': '{count} tokens',
 

@@ -945,14 +945,19 @@ function AppContent() {
       scheduleConversationRender(conversation, context)
       // OS-level notification when the user has switched away — the
       // main process suppresses it if the window is still focused, so
-      // we can call unconditionally on every completion.
+      // we can call unconditionally on every terminal state.
       if (assistantMessage.status === 'done') {
         notifyAgentCompleted(assistantMessage, t)
+      } else if (assistantMessage.status === 'error') {
+        notifyAgentFailed(assistantMessage, t)
       }
     } catch (error) {
       assistantMessage.status = 'error'
       assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
       scheduleConversationRender(conversation, context)
+      // A network/HTTP drop (vs an in-band run.failed event) lands here —
+      // still notify so a blurred window learns the run died.
+      notifyAgentFailed(assistantMessage, t)
       throw error
     } finally {
       conversation.updatedAt = new Date().toISOString()
@@ -1987,6 +1992,24 @@ function notifyAgentCompleted(message: ChatMessage, t: Translator): void {
   void bridge.notify({
     title: t('notify.agentCompleted.title'),
     body: body || t('notify.agentCompleted.empty'),
+  })
+}
+
+/** Fire a system notification when an assistant turn FAILS. Mirrors
+ *  notifyAgentCompleted (main suppresses it while focused). The body
+ *  prefers the run.failed event's message, falling back to the bubble
+ *  content (set to the error message on a network/HTTP drop). */
+function notifyAgentFailed(message: ChatMessage, t: Translator): void {
+  const bridge = window.shejaneDesktop
+  if (!bridge?.notify) {
+    return
+  }
+  const failureEvent = [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')
+  const raw = (failureEvent?.label || message.content || '').trim().replace(/\s+/g, ' ')
+  const body = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw
+  void bridge.notify({
+    title: t('notify.agentFailed.title'),
+    body: body || t('notify.agentFailed.empty'),
   })
 }
 
