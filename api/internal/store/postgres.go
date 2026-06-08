@@ -250,6 +250,18 @@ func (s *PostgresStore) WalletByUser(ctx context.Context, userID string) (*billi
 	return wallet, tx.Commit()
 }
 
+func (s *PostgresStore) WalletTransactions(ctx context.Context, userID string) ([]billing.Transaction, error) {
+	var walletID string
+	err := s.db.QueryRowContext(ctx, `SELECT id::text FROM wallets WHERE user_id=$1`, userID).Scan(&walletID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []billing.Transaction{}, nil
+		}
+		return nil, err
+	}
+	return s.walletTransactionsByWallet(ctx, walletID, 200)
+}
+
 func (s *PostgresStore) ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

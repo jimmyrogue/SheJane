@@ -288,6 +288,10 @@ type Store interface {
 	// Idempotent (no-op if already granted for this user).
 	GrantSignupCredits(ctx context.Context, userID string, amount int64) error
 	WalletByUser(ctx context.Context, userID string) (*billing.Wallet, error)
+	// WalletTransactions returns the user's ledger entries, newest-first.
+	// (WalletByUser does NOT hydrate the wallet's transaction slice on the
+	// Postgres path — callers needing the ledger must use this.)
+	WalletTransactions(ctx context.Context, userID string) ([]billing.Transaction, error)
 	ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error)
 	SettleUsage(ctx context.Context, userID string, reservationID string, actualCredits int64) error
 	ReleaseUsage(ctx context.Context, userID string, reservationID string) error

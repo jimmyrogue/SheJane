@@ -253,8 +253,14 @@ func conformSubscription(t *testing.T, s Store) {
 	if snap.MonthlyCreditLimit != 9000 {
 		t.Errorf("monthly limit after paid = %d, want 9000", snap.MonthlyCreditLimit)
 	}
+	// Use WalletTransactions (the cross-impl ledger accessor) — wallet.Transactions()
+	// is only hydrated on the memory store.
+	txs, err := s.WalletTransactions(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("WalletTransactions: %v", err)
+	}
 	grants := 0
-	for _, tx := range w.Transactions() {
+	for _, tx := range txs {
 		if tx.Type == "subscription_grant" {
 			grants++
 		}

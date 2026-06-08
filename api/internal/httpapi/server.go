@@ -425,12 +425,15 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request, user store.User) 
 }
 
 func (s *Server) transactions(w http.ResponseWriter, r *http.Request, user store.User) {
-	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
+	// Use the dedicated ledger query — wallet.Transactions() is only hydrated
+	// on the memory store, so EnsureWallet(...).Transactions() returned empty
+	// on Postgres (prod).
+	txs, err := s.app.Store.WalletTransactions(r.Context(), user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, 50001, "读取账本失败")
 		return
 	}
-	writeJSON(w, http.StatusOK, apiResponse[[]billing.Transaction]{Code: 0, Message: "ok", Data: wallet.Transactions()})
+	writeJSON(w, http.StatusOK, apiResponse[[]billing.Transaction]{Code: 0, Message: "ok", Data: txs})
 }
 
 func (s *Server) subscriptionCheckout(w http.ResponseWriter, r *http.Request, user store.User) {
