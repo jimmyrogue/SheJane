@@ -11,12 +11,14 @@ import {
   IconPencil,
   IconPin,
   IconPlus,
+  IconSearch,
   IconServer,
   IconSettings,
   IconTrash,
   IconTool,
   IconUpload,
   IconWorld,
+  IconX,
 } from '@tabler/icons-react'
 import {
   AlertDialog,
@@ -177,7 +179,9 @@ export function ConversationSidebar({
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   const normalizedQuery = searchQuery.trim().toLowerCase()
   const matchesQuery = (conversation: Conversation) =>
-    !normalizedQuery || conversation.title.toLowerCase().includes(normalizedQuery)
+    !normalizedQuery ||
+    conversation.title.toLowerCase().includes(normalizedQuery) ||
+    conversation.messages.some((message) => message.content.toLowerCase().includes(normalizedQuery))
   const pinnedConversations = conversations.filter((conversation) => conversation.pinned && matchesQuery(conversation))
   // Single unified list — projects (workspace-bound conversations) and casual
   // chats live together, sorted by updatedAt desc (handled upstream by
@@ -221,8 +225,16 @@ export function ConversationSidebar({
   }
 
   function renderConversationRow(conversation: Conversation) {
+    const snippet = normalizedQuery ? bodyMatchSnippet(conversation, normalizedQuery) : null
+    const rowClass = [
+      'conversation-row',
+      conversation.id === activeID ? 'active' : '',
+      snippet ? 'has-snippet' : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
     return (
-      <div className={conversation.id === activeID ? 'conversation-row active' : 'conversation-row'} key={conversation.id}>
+      <div className={rowClass} key={conversation.id}>
         <Button
           className="conversation"
           variant="ghost"
@@ -282,6 +294,13 @@ export function ConversationSidebar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {snippet ? (
+          <div className="conversation-row-snippet" title={t('sidebar.searchSnippetMatch')}>
+            {snippet.before}
+            <mark>{snippet.match}</mark>
+            {snippet.after}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -293,13 +312,52 @@ export function ConversationSidebar({
           <button className="sidebar-window-control-button" type="button" title={t('app.collapseSidebar')} aria-label={t('app.collapseSidebar')} onClick={onCollapseSidebar}>
             <IconLayoutSidebarLeftCollapse aria-hidden="true" />
           </button>
-          {/* Search toggle button + the expandable search input panel
-           * are hidden for now per product feedback. The underlying
-           * state (searchOpen / searchQuery / filter logic) is kept
-           * intact so the feature can be re-enabled by restoring just
-           * the JSX. See git history for the original implementation. */}
+          <button
+            className={searchOpen ? 'sidebar-window-control-button active' : 'sidebar-window-control-button'}
+            type="button"
+            title={t('app.search')}
+            aria-label={t('app.search')}
+            aria-pressed={searchOpen}
+            onClick={toggleSearch}
+          >
+            <IconSearch aria-hidden="true" />
+          </button>
         </div>
       </div>
+
+      {searchOpen ? (
+        <div className="sidebar-search">
+          <IconSearch className="sidebar-search-icon" size={14} aria-hidden="true" />
+          <Input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                toggleSearch()
+              }
+            }}
+            placeholder={t('sidebar.searchPlaceholder')}
+            aria-label={t('app.search')}
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              className="sidebar-search-clear"
+              title={t('sidebar.searchClear')}
+              aria-label={t('sidebar.searchClear')}
+              onClick={() => {
+                setSearchQuery('')
+                searchInputRef.current?.focus()
+              }}
+            >
+              <IconX size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="sidebar-section">
         <button
@@ -864,6 +922,36 @@ function ConversationStatusIndicator({ status }: { status: ConversationSidebarSt
     return <span className="conversation-status-slot conversation-status-attention" role="status" aria-label={t('sidebar.status.needsAttention')} />
   }
   return <span className="conversation-status-slot" aria-hidden="true" />
+}
+
+// When a conversation matches the search only on a message body (not its
+// title), surface a short snippet around the first match so the user can see
+// WHY it surfaced. Returns null when the title already matches (no snippet
+// needed) or nothing matches. The match part preserves the original casing.
+function bodyMatchSnippet(
+  conversation: Conversation,
+  query: string,
+): { before: string; match: string; after: string } | null {
+  if (!query) {
+    return null
+  }
+  if (conversation.title.toLowerCase().includes(query)) {
+    return null
+  }
+  for (const message of conversation.messages) {
+    const content = message.content ?? ''
+    const index = content.toLowerCase().indexOf(query)
+    if (index < 0) {
+      continue
+    }
+    const start = Math.max(0, index - 24)
+    const end = Math.min(content.length, index + query.length + 48)
+    const before = (start > 0 ? '…' : '') + content.slice(start, index).replace(/\s+/g, ' ')
+    const match = content.slice(index, index + query.length)
+    const after = content.slice(index + query.length, end).replace(/\s+/g, ' ') + (end < content.length ? '…' : '')
+    return { before, match, after }
+  }
+  return null
 }
 
 function conversationSidebarStatus(conversation: Conversation, isActive: boolean, seenVersion?: string): ConversationSidebarStatus | null {
