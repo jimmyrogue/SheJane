@@ -288,26 +288,27 @@ func (a *App) RequestPasswordReset(ctx context.Context, email string) error {
 	return nil
 }
 
-// ConfirmPasswordReset consumes a reset token (single-use, expiring), sets the
-// new password, and revokes all of the user's refresh tokens so every existing
-// session is forced to re-login.
+// ConfirmPasswordReset atomically consumes a reset token (single-use,
+// expiring), sets the new password, and revokes all of the user's refresh
+// tokens so every existing session is forced to re-login. The store does all
+// three in one transaction: a failure rolls everything back, so a reset can
+// never half-succeed and leave a compromised session live.
 func (a *App) ConfirmPasswordReset(ctx context.Context, token string, newPassword string) error {
 	if strings.TrimSpace(token) == "" || len(newPassword) < 8 {
 		return fmt.Errorf("%w: a valid token and an 8+ character password are required", ErrValidation)
-	}
-	userID, err := a.Store.UsePasswordResetToken(ctx, token)
-	if err != nil {
-		return ErrUnauthorized
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	if err := a.Store.UpdateUserPassword(ctx, userID, string(hash)); err != nil {
+	if _, err := a.Store.ResetPasswordWithToken(ctx, token, string(hash)); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Missing / expired / already-used token.
+			return ErrUnauthorized
+		}
+		// Transient failure — the transaction rolled back, so the token is
+		// still valid and the user can retry. Surface as a server error.
 		return err
-	}
-	if err := a.Store.RevokeUserRefreshTokens(ctx, userID); err != nil {
-		log.Printf("app: revoke refresh tokens after reset failed: %v", err)
 	}
 	return nil
 }

@@ -110,32 +110,12 @@ func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, token string) er
 	return err
 }
 
-func (s *PostgresStore) RevokeUserRefreshTokens(ctx context.Context, userID string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID)
-	return err
-}
-
-func (s *PostgresStore) UpdateUserPassword(ctx context.Context, userID string, passwordHash string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash=$2, updated_at=NOW() WHERE id=$1`, userID, passwordHash)
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 func (s *PostgresStore) SavePasswordResetToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO password_reset_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)`, hashToken(token), userID, expiresAt)
 	return err
 }
 
-func (s *PostgresStore) UsePasswordResetToken(ctx context.Context, token string) (string, error) {
+func (s *PostgresStore) ResetPasswordWithToken(ctx context.Context, token string, passwordHash string) (string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -153,6 +133,21 @@ func (s *PostgresStore) UsePasswordResetToken(ctx context.Context, token string)
 		return "", ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE password_reset_tokens SET used_at=NOW() WHERE token=$1`, hashToken(token)); err != nil {
+		return "", err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=$2, updated_at=NOW() WHERE id=$1`, userID, passwordHash)
+	if err != nil {
+		return "", err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return "", err
+	} else if affected == 0 {
+		return "", ErrNotFound
+	}
+	// Force re-login everywhere — in the SAME transaction, so a failure here
+	// rolls back the password change + token consumption (no half-reset that
+	// leaves a compromised session live).
+	if _, err := tx.ExecContext(ctx, `UPDATE refresh_tokens SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
 		return "", err
 	}
 	return userID, tx.Commit()

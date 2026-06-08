@@ -335,12 +335,16 @@ func (s *Server) passwordResetConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.app.ConfirmPasswordReset(r.Context(), body.Token, body.Password)
 	if err != nil {
-		if errors.Is(err, app.ErrValidation) {
+		switch {
+		case errors.Is(err, app.ErrValidation):
 			writeError(w, http.StatusBadRequest, 40201, "密码至少需要 8 位")
-			return
+		case errors.Is(err, app.ErrUnauthorized):
+			// Missing / expired / already-used token.
+			writeError(w, http.StatusBadRequest, 40002, "重置链接无效或已过期")
+		default:
+			// Transient failure — the reset rolled back, the link is still valid.
+			writeError(w, http.StatusInternalServerError, 50001, "重置失败，请稍后重试")
 		}
-		// Invalid / expired / used token.
-		writeError(w, http.StatusBadRequest, 40002, "重置链接无效或已过期")
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"reset": true}})

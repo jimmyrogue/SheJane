@@ -914,6 +914,13 @@ function AppContent() {
     if (!conversation) {
       return
     }
+    // Don't mutate a conversation with an in-flight run: the streaming send
+    // holds its own conversation snapshot and would re-save (un-delete) on
+    // completion. The delete button is already disabled while runActive; this
+    // guards the case where the confirm dialog was opened before a run began.
+    if (conversation.messages.some((message) => message.status === 'streaming' || message.status === 'pending')) {
+      return
+    }
     const index = conversation.messages.findIndex((message) => message.id === messageID)
     if (index < 0) {
       return

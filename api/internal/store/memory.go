@@ -159,34 +159,6 @@ func (s *MemoryStore) RevokeRefreshToken(ctx context.Context, token string) erro
 	return nil
 }
 
-func (s *MemoryStore) RevokeUserRefreshTokens(ctx context.Context, userID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now().UTC()
-	for token, session := range s.refresh {
-		if session.UserID == userID && session.RevokedAt == nil {
-			session.RevokedAt = &now
-			s.refresh[token] = session
-		}
-	}
-	return nil
-}
-
-func (s *MemoryStore) UpdateUserPassword(ctx context.Context, userID string, passwordHash string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	user, ok := s.usersByID[userID]
-	if !ok {
-		return ErrNotFound
-	}
-	user.PasswordHash = passwordHash
-	s.usersByID[user.ID] = user
-	s.usersByEmail[user.Email] = user
-	return nil
-}
-
 func (s *MemoryStore) SavePasswordResetToken(ctx context.Context, token string, userID string, expiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,18 +167,35 @@ func (s *MemoryStore) SavePasswordResetToken(ctx context.Context, token string, 
 	return nil
 }
 
-func (s *MemoryStore) UsePasswordResetToken(ctx context.Context, token string) (string, error) {
+func (s *MemoryStore) ResetPasswordWithToken(ctx context.Context, token string, passwordHash string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// All mutations happen under the single store mutex, so there's no
+	// partially-applied state visible to other goroutines (the in-memory
+	// analogue of the Postgres transaction).
 	entry, ok := s.resetTokens[token]
 	if !ok || entry.RevokedAt != nil || time.Now().After(entry.ExpiresAt) {
+		return "", ErrNotFound
+	}
+	user, ok := s.usersByID[entry.UserID]
+	if !ok {
 		return "", ErrNotFound
 	}
 	now := time.Now().UTC()
 	entry.RevokedAt = &now // mark used (single-use)
 	s.resetTokens[token] = entry
-	return entry.UserID, nil
+	user.PasswordHash = passwordHash
+	s.usersByID[user.ID] = user
+	s.usersByEmail[user.Email] = user
+	// Force re-login everywhere.
+	for tok, session := range s.refresh {
+		if session.UserID == user.ID && session.RevokedAt == nil {
+			session.RevokedAt = &now
+			s.refresh[tok] = session
+		}
+	}
+	return user.ID, nil
 }
 
 func (s *MemoryStore) GrantSignupCredits(ctx context.Context, userID string, amount int64) error {
