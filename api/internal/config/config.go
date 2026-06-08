@@ -15,9 +15,17 @@ type Config struct {
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	CookieSecure    bool
-	DatabaseURL     string
-	AdminEmails     []string
+	// Password-reset email. ResendAPIKey empty → a LogMailer logs the reset
+	// link instead of sending (dev/test). MailFromAddress must be a
+	// Resend-verified sender for real delivery. Reset links are built from
+	// ClientBaseURL. PasswordResetTokenTTL bounds how long a link is valid.
+	ResendAPIKey          string
+	MailFromAddress       string
+	MailFromName          string
+	PasswordResetTokenTTL time.Duration
+	CookieSecure          bool
+	DatabaseURL           string
+	AdminEmails           []string
 
 	MonthlyCredits int64
 	// SignupCredits is the one-time gift (in credits) granted to a brand-new
@@ -136,6 +144,10 @@ func Default() Config {
 		SentryTracesSampleRate:        0.1,
 		AccessTokenTTL:                15 * time.Minute,
 		RefreshTokenTTL:               30 * 24 * time.Hour,
+		ResendAPIKey:                  "",
+		MailFromAddress:               "",
+		MailFromName:                  "SheJane",
+		PasswordResetTokenTTL:         time.Hour,
 		DatabaseURL:                   "",
 		AdminEmails:                   nil,
 		MonthlyCredits:                0,
@@ -188,6 +200,9 @@ func Load() Config {
 	cfg.ClientBaseURL = getEnv("CLIENT_BASE_URL", cfg.ClientBaseURL)
 	cfg.AdminBaseURL = getEnv("ADMIN_BASE_URL", cfg.AdminBaseURL)
 	cfg.JWTSecret = getEnv("JWT_SECRET", cfg.JWTSecret)
+	cfg.ResendAPIKey = getEnv("RESEND_API_KEY", cfg.ResendAPIKey)
+	cfg.MailFromAddress = getEnv("MAIL_FROM_ADDRESS", cfg.MailFromAddress)
+	cfg.MailFromName = getEnv("MAIL_FROM_NAME", cfg.MailFromName)
 	cfg.CookieSecure = getEnvBool("COOKIE_SECURE", cfg.CookieSecure)
 	cfg.DatabaseURL = getEnv("DATABASE_URL", cfg.DatabaseURL)
 	cfg.AdminEmails = getEnvList("ADMIN_EMAILS", cfg.AdminEmails)

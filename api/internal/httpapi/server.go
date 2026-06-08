@@ -71,6 +71,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	s.mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	s.mux.HandleFunc("POST /api/v1/auth/password/reset-request", s.passwordResetRequest)
+	s.mux.HandleFunc("POST /api/v1/auth/password/reset-confirm", s.passwordResetConfirm)
 	s.mux.HandleFunc("GET /api/v1/user/me", s.requireAuth(s.me))
 	s.mux.HandleFunc("GET /api/v1/billing/balance", s.requireAuth(s.balance))
 	s.mux.HandleFunc("GET /api/v1/billing/subscription", s.requireAuth(s.subscription))
@@ -304,6 +306,44 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.app.Config.CookieSecure,
 	})
 	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"logged_out": true}})
+}
+
+// passwordResetRequest ALWAYS returns 200 (no user enumeration): the response
+// is identical whether or not the email belongs to an account.
+func (s *Server) passwordResetRequest(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email string `json:"email"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if err := s.app.RequestPasswordReset(r.Context(), body.Email); err != nil {
+		// Only a malformed email reaches here; everything else is swallowed.
+		writeError(w, http.StatusBadRequest, 40201, "请输入有效的邮箱")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"sent": true}})
+}
+
+func (s *Server) passwordResetConfirm(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	err := s.app.ConfirmPasswordReset(r.Context(), body.Token, body.Password)
+	if err != nil {
+		if errors.Is(err, app.ErrValidation) {
+			writeError(w, http.StatusBadRequest, 40201, "密码至少需要 8 位")
+			return
+		}
+		// Invalid / expired / used token.
+		writeError(w, http.StatusBadRequest, 40002, "重置链接无效或已过期")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]bool]{Code: 0, Message: "ok", Data: map[string]bool{"reset": true}})
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request, user store.User) {

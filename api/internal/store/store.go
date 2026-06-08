@@ -260,10 +260,20 @@ type Store interface {
 	UserByEmail(ctx context.Context, email string) (User, error)
 	UserByID(ctx context.Context, id string) (User, error)
 	UpdateUserRole(ctx context.Context, userID string, role string) (User, error)
+	UpdateUserPassword(ctx context.Context, userID string, passwordHash string) error
 
 	SaveRefreshToken(ctx context.Context, token string, userID string, expiresAt time.Time) error
 	UseRefreshToken(ctx context.Context, token string) (User, error)
 	RevokeRefreshToken(ctx context.Context, token string) error
+	// RevokeUserRefreshTokens revokes ALL of a user's refresh tokens — used
+	// after a password reset to force re-login on every device.
+	RevokeUserRefreshTokens(ctx context.Context, userID string) error
+
+	// Password reset tokens (stored hashed, single-use). SavePasswordResetToken
+	// records a new token; UsePasswordResetToken consumes it and returns the
+	// owning user id, erroring if missing / expired / already used.
+	SavePasswordResetToken(ctx context.Context, token string, userID string, expiresAt time.Time) error
+	UsePasswordResetToken(ctx context.Context, token string) (string, error)
 
 	EnsureWallet(ctx context.Context, userID string, monthlyCredits int64) (*billing.Wallet, error)
 	// GrantSignupCredits adds a one-time gift to the user's extra_credits_balance.

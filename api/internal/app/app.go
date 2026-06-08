@@ -18,6 +18,7 @@ import (
 	"github.com/coldflame/shejane/api/internal/documents"
 	"github.com/coldflame/shejane/api/internal/e2b"
 	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/mailer"
 	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
@@ -40,6 +41,9 @@ type App struct {
 	// before dereferencing — an unconfigured E2B reports a "tool not
 	// configured" envelope to the daemon instead of panicking.
 	E2BSessions *e2b.SessionManager
+	// Mailer sends transactional email (password reset). A LogMailer when
+	// RESEND_API_KEY is unset (dev/test logs the link).
+	Mailer mailer.Mailer
 }
 
 type AuthResult struct {
@@ -60,6 +64,15 @@ type Option func(*appOptions)
 type appOptions struct {
 	documentStorage documents.ObjectStorage
 	e2bOptions      *e2b.Options
+	mailer          mailer.Mailer
+}
+
+// WithMailer overrides the email sender. Tests inject a capturing/log mailer
+// so the reset flow is exercisable without real delivery.
+func WithMailer(m mailer.Mailer) Option {
+	return func(options *appOptions) {
+		options.mailer = m
+	}
 }
 
 // WithE2BOptions overrides the E2B client construction options. Used
@@ -162,6 +175,11 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 		cfg.DocumentReaperBatchSize,
 	)
 
+	mail := options.mailer
+	if mail == nil {
+		mail = mailer.New(cfg.ResendAPIKey, cfg.MailFromAddress, cfg.MailFromName)
+	}
+
 	return &App{
 		Config:      cfg,
 		Store:       st,
@@ -169,6 +187,7 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 		Registry:    registry,
 		Documents:   documentService,
 		E2BSessions: e2bSessions,
+		Mailer:      mail,
 	}
 }
 
@@ -241,6 +260,56 @@ func (a *App) Logout(ctx context.Context, refreshToken string) error {
 		return nil
 	}
 	return a.Store.RevokeRefreshToken(ctx, refreshToken)
+}
+
+// RequestPasswordReset emails a reset link if the address belongs to a real
+// account. To avoid user enumeration it ALWAYS reports success — a caller
+// (and an attacker) can't tell whether the email exists. Mailer failures are
+// logged, not surfaced, for the same reason.
+func (a *App) RequestPasswordReset(ctx context.Context, email string) error {
+	if !validEmail(email) {
+		return fmt.Errorf("%w: a valid email is required", ErrValidation)
+	}
+	user, err := a.Store.UserByEmail(ctx, email)
+	if err != nil {
+		// Unknown email — silently succeed (no enumeration).
+		return nil
+	}
+	token := randomToken("reset")
+	expiresAt := time.Now().UTC().Add(a.Config.PasswordResetTokenTTL)
+	if err := a.Store.SavePasswordResetToken(ctx, token, user.ID, expiresAt); err != nil {
+		log.Printf("app: save password reset token failed: %v", err)
+		return nil
+	}
+	resetURL := strings.TrimRight(a.Config.ClientBaseURL, "/") + "/reset?token=" + token
+	if err := a.Mailer.SendPasswordReset(ctx, user.Email, resetURL); err != nil {
+		log.Printf("app: send password reset email failed: %v", err)
+	}
+	return nil
+}
+
+// ConfirmPasswordReset consumes a reset token (single-use, expiring), sets the
+// new password, and revokes all of the user's refresh tokens so every existing
+// session is forced to re-login.
+func (a *App) ConfirmPasswordReset(ctx context.Context, token string, newPassword string) error {
+	if strings.TrimSpace(token) == "" || len(newPassword) < 8 {
+		return fmt.Errorf("%w: a valid token and an 8+ character password are required", ErrValidation)
+	}
+	userID, err := a.Store.UsePasswordResetToken(ctx, token)
+	if err != nil {
+		return ErrUnauthorized
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if err := a.Store.UpdateUserPassword(ctx, userID, string(hash)); err != nil {
+		return err
+	}
+	if err := a.Store.RevokeUserRefreshTokens(ctx, userID); err != nil {
+		log.Printf("app: revoke refresh tokens after reset failed: %v", err)
+	}
+	return nil
 }
 
 func (a *App) Authenticate(ctx context.Context, token string) (store.User, error) {
