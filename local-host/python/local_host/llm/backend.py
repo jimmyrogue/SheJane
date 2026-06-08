@@ -382,9 +382,14 @@ def _event_to_chunk(
         return ChatGenerationChunk(message=msg)
 
     if event == "llm.usage":
-        if not capture_meta:
-            return None
-        msg = AIMessageChunk(content="")
+        # Emit usage on BOTH the streaming and non-streaming paths.
+        #   • additional_kwargs — survives LangGraph's `messages`-mode
+        #     re-emission of AIMessageChunk, so event_translator can turn it
+        #     into a wire-level `llm.usage` event for the per-turn usage chip.
+        #   • generation_info — read by _agenerate (non-streaming path).
+        # generation_info does NOT survive into messages mode (only
+        # additional_kwargs does), which is why usage must ride in both.
+        msg = AIMessageChunk(content="", additional_kwargs={"usage": data})
         return ChatGenerationChunk(
             message=msg,
             generation_info={"usage": data},

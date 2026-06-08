@@ -445,6 +445,12 @@ class RunCoordinator:
                 await self.store.update_run_status(run_id, "running")
                 await self._enqueue(queue, run_id, "run.started", {"goal": goal})
 
+            # Per-turn usage accumulator. A single turn can make several
+            # internal LLM calls (multi-step tool runs), each emitting one
+            # llm.usage event; sum them so run.completed carries the turn
+            # total for the client's usage chip.
+            usage_totals = {"input_tokens": 0, "output_tokens": 0, "credits_cost": 0}
+
             # Auto-approve loop. We may iterate multiple times if the
             # run hits successive HITL gates and every gated tool has
             # an in-run `scope=run` grant. Each iteration drains one
@@ -460,20 +466,27 @@ class RunCoordinator:
                     stream_mode=["updates", "messages", "custom"],
                 ):
                     for translated in translate(kind, payload):
-                        await self._enqueue(
-                            queue,
-                            run_id,
-                            translated["event"],
+                        data = (
                             translated["data"]
                             if isinstance(translated["data"], dict)
-                            else {"value": translated["data"]},
+                            else {"value": translated["data"]}
                         )
+                        if translated["event"] == "llm.usage":
+                            usage_totals["input_tokens"] += int(data.get("input_tokens", 0) or 0)
+                            usage_totals["output_tokens"] += int(data.get("output_tokens", 0) or 0)
+                            usage_totals["credits_cost"] += int(data.get("credits_cost", 0) or 0)
+                        await self._enqueue(queue, run_id, translated["event"], data)
 
                 snapshot = await agent.aget_state(config)
                 if not snapshot.next:
                     await self.store.update_run_status(run_id, "completed")
                     final_text = _extract_final_text(snapshot.values)
-                    await self._enqueue(queue, run_id, "run.completed", {"final_text": final_text})
+                    await self._enqueue(
+                        queue,
+                        run_id,
+                        "run.completed",
+                        {"final_text": final_text, **usage_totals},
+                    )
                     break
 
                 # Gather interrupts from BOTH places LangGraph stores them:

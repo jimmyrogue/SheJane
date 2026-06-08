@@ -190,6 +190,31 @@ describe('MessageBubble meta', () => {
     expect(screen.getByRole('button', { name: '删除' })).toBeDisabled()
   })
 
+  it('shows a per-turn usage chip on a settled assistant turn', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            tokens: 1234,
+            creditsCost: 3,
+            agentEvents: [{ type: 'tool.completed', label: 'ran' }],
+          })}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByText('1.2k tokens · 3 积分 · 1 次工具')).toBeInTheDocument()
+  })
+
+  it('omits the usage chip when there is no usage data', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble message={message()} />
+      </I18nProvider>,
+    )
+    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/积分/)).not.toBeInTheDocument()
+  })
+
   it('keeps inline code as a plain chip with no copy button', () => {
     const { container } = render(
       <I18nProvider>

@@ -4460,6 +4460,97 @@ button:active {
   cursor: default;
 }
 
+/* Per-turn usage chip (tokens · credits · tool calls). Informational. */
+.message-meta-usage {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  line-height: 1;
+  cursor: default;
+  white-space: nowrap;
+}
+
+/* ── Spend-history dialog ── */
+.spend-history-dialog {
+  max-width: 480px;
+}
+
+.spend-history-empty {
+  padding: 20px 4px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.spend-history-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+.spend-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 2px;
+  border-bottom: 0.5px solid var(--border-hairline);
+}
+
+.spend-history-row:last-child {
+  border-bottom: 0;
+}
+
+.spend-history-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spend-history-type {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.spend-history-desc {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spend-history-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.spend-history-amount {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spend-history-amount.negative {
+  color: #d73a49;
+}
+
+.spend-history-amount.positive {
+  color: #22863a;
+}
+
+.spend-history-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 
 .message .message-content p,
 .message .message-content ul,

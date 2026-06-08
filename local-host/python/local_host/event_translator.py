@@ -86,6 +86,22 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
         if reasoning:
             out.append({"event": "llm.reasoning", "data": {"content": reasoning}})
 
+        usage = chunk.additional_kwargs.get("usage")
+        if isinstance(usage, dict):
+            # Per-LLM-call usage from the Go gateway (input/output tokens +
+            # credits). runs.py sums these across a turn onto run.completed;
+            # the client renders a per-turn usage chip.
+            out.append(
+                {
+                    "event": "llm.usage",
+                    "data": {
+                        "input_tokens": usage.get("input_tokens", 0),
+                        "output_tokens": usage.get("output_tokens", 0),
+                        "credits_cost": usage.get("credits_cost", 0),
+                    },
+                }
+            )
+
         for tc in chunk.tool_call_chunks or []:
             tool_name = tc.get("name")
             # Surface task() spawns (deepagents SubAgentMiddleware) as a

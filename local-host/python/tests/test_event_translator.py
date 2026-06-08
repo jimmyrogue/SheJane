@@ -24,6 +24,17 @@ def test_messages_mode_emits_reasoning_separately() -> None:
     assert "llm.reasoning" in names
 
 
+def test_messages_mode_emits_usage() -> None:
+    chunk = AIMessageChunk(
+        content="",
+        additional_kwargs={"usage": {"input_tokens": 12, "output_tokens": 8, "credits_cost": 3}},
+    )
+    events = translate("messages", (chunk, {}))
+    usage = [e for e in events if e["event"] == "llm.usage"]
+    assert len(usage) == 1
+    assert usage[0]["data"] == {"input_tokens": 12, "output_tokens": 8, "credits_cost": 3}
+
+
 def test_messages_mode_emits_tool_call_chunks() -> None:
     chunk = AIMessageChunk(
         content="",
