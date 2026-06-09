@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/coldflame/shejane/api/internal/config"
 )
 
 func TestRateLimiterBurstThenDeny(t *testing.T) {
@@ -63,5 +65,51 @@ func TestAuthEndpointRateLimited(t *testing.T) {
 	}
 	if last != http.StatusTooManyRequests {
 		t.Fatalf("after exceeding the auth rate limit, status = %d, want 429", last)
+	}
+}
+
+// The spend-heavy agent endpoints carry a tighter, dedicated per-user ceiling
+// (agentSpendLimiter) on top of the general per-user limit. Once it's exhausted
+// the next call is rejected with 429 BEFORE the handler runs — this is the
+// server-side backstop for the browser-driven tool loop, whose client-side
+// maxSteps cap can't be trusted. The limit is shared across the spend
+// endpoints, so spreading calls across them doesn't bypass it.
+func TestAgentSpendEndpointsRateLimitedPerUser(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AgentSpendRateLimitPerMinute = 3 // tiny burst so the test is fast + deterministic
+	})
+	token := registerAndToken(t, server)
+
+	call := func(path, body string) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Drain the 3-token bucket across DIFFERENT spend endpoints to prove the
+	// ceiling is shared, not per-endpoint. Bodies can be invalid — the limiter
+	// runs before the handler, so the only status we care about is 429-or-not.
+	_ = call("/api/v1/agent/tools/execute", `{"tool":"web.search","arguments":{"query":"x"}}`)
+	_ = call("/api/v1/agent/llm/stream", `{"messages":[{"role":"user","content":"hi"}]}`)
+	_ = call("/api/v1/images/generations", `{"prompt":"a cat"}`)
+
+	// 4th spend call (any endpoint) must be throttled.
+	if code := call("/api/v1/agent/tools/execute", `{"tool":"web.search","arguments":{"query":"x"}}`); code != http.StatusTooManyRequests {
+		t.Fatalf("4th spend call status = %d, want 429 (shared per-user spend limit)", code)
+	}
+
+	// A different user has an independent bucket and is not throttled.
+	otherToken := registerAndTokenWithEmail(t, server, "other-spender@example.com")
+	otherReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tools/execute",
+		strings.NewReader(`{"tool":"web.search","arguments":{"query":"x"}}`))
+	otherReq.Header.Set("Authorization", "Bearer "+otherToken)
+	otherReq.Header.Set("Content-Type", "application/json")
+	otherRec := httptest.NewRecorder()
+	server.ServeHTTP(otherRec, otherReq)
+	if otherRec.Code == http.StatusTooManyRequests {
+		t.Fatal("a different user must have an independent spend bucket")
 	}
 }

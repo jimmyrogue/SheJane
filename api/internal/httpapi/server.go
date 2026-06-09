@@ -38,6 +38,13 @@ type Server struct {
 	authLimiter    *rateLimiter
 	webhookLimiter *rateLimiter
 	userLimiter    *rateLimiter
+	// agentSpendLimiter is a TIGHTER per-user ceiling layered on top of
+	// userLimiter, applied only to the spend-heavy agent endpoints (LLM +
+	// tool execute). The web build drives these straight from the browser, so
+	// the client-side maxSteps cap is untrusted; this bounds a runaway/tampered
+	// client server-side regardless. Blast radius is the user's own credits, so
+	// it's a backstop, not a fence — sized for legit multi-step runs.
+	agentSpendLimiter *rateLimiter
 }
 
 type apiResponse[T any] struct {
@@ -52,12 +59,17 @@ type authPayload struct {
 }
 
 func NewServer(application *app.App) http.Handler {
+	agentSpendPerMinute := application.Config.AgentSpendRateLimitPerMinute
+	if agentSpendPerMinute <= 0 {
+		agentSpendPerMinute = 120 // safe default if unset/misconfigured
+	}
 	server := &Server{
-		app:            application,
-		mux:            http.NewServeMux(),
-		authLimiter:    newRateLimiter(30),  // per-IP brute-force guard on /auth/*
-		webhookLimiter: newRateLimiter(120), // per-IP flood guard on the Stripe webhook
-		userLimiter:    newRateLimiter(600), // per-user abuse ceiling on authed endpoints
+		app:               application,
+		mux:               http.NewServeMux(),
+		authLimiter:       newRateLimiter(30),  // per-IP brute-force guard on /auth/*
+		webhookLimiter:    newRateLimiter(120), // per-IP flood guard on the Stripe webhook
+		userLimiter:       newRateLimiter(600), // per-user abuse ceiling on authed endpoints
+		agentSpendLimiter: newRateLimiter(agentSpendPerMinute),
 	}
 	server.routes()
 	return server.withMiddleware(server.mux)
@@ -88,12 +100,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/agent/runs/{id}/events", s.requireAuth(s.agentRunEvents))
 	s.mux.HandleFunc("GET /api/v1/agent/runs/{id}/stream", s.requireAuth(s.agentRunStream))
 	s.mux.HandleFunc("POST /api/v1/agent/runs/{id}/cancel", s.requireAuth(s.agentRunCancel))
-	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.agentLLMGateway))
-	s.mux.HandleFunc("POST /api/v1/agent/llm/stream", s.requireAuth(s.agentLLMStream))
+	// Spend-heavy endpoints (LLM + tool execute + image gen) carry a tighter,
+	// shared per-user ceiling on top of requireAuth's general limit — the web
+	// build drives these directly from the browser, so the client-side loop cap
+	// is untrusted (see rateLimitUser / agentSpendLimiter).
+	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMGateway)))
+	s.mux.HandleFunc("POST /api/v1/agent/llm/stream", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMStream)))
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
-	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.agentToolExecute))
-	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.imagesGenerations))
-	s.mux.HandleFunc("POST /api/v1/images/edits", s.requireAuth(s.imagesEdits))
+	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentToolExecute)))
+	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.imagesGenerations)))
+	s.mux.HandleFunc("POST /api/v1/images/edits", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.imagesEdits)))
 	s.mux.HandleFunc("POST /api/v1/agent/tool-events", s.requireAuth(s.agentToolEvents))
 	s.mux.HandleFunc("POST /api/v1/documents/uploads", s.requireAuth(s.documentUpload))
 	s.mux.HandleFunc("POST /api/v1/documents/{id}/complete", s.requireAuth(s.documentComplete))
@@ -1551,6 +1567,23 @@ func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, store
 		}
 		if !s.userLimiter.allow(user.ID) {
 			writeError(w, http.StatusTooManyRequests, 42900, "请求过于频繁，请稍后再试")
+			return
+		}
+		next(w, r, user)
+	}
+}
+
+// rateLimitUser wraps an authenticated handler with an extra per-user token
+// bucket, in addition to the general userLimiter applied by requireAuth. Used
+// to put a tighter ceiling on the spend-heavy agent endpoints. Compose as
+// s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, handler)).
+func (s *Server) rateLimitUser(
+	limiter *rateLimiter,
+	next func(http.ResponseWriter, *http.Request, store.User),
+) func(http.ResponseWriter, *http.Request, store.User) {
+	return func(w http.ResponseWriter, r *http.Request, user store.User) {
+		if !limiter.allow(user.ID) {
+			writeError(w, http.StatusTooManyRequests, 42901, "请求过于频繁，请稍后再试")
 			return
 		}
 		next(w, r, user)
