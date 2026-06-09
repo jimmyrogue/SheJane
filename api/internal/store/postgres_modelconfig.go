@@ -9,7 +9,8 @@ import (
 const modelConfigColumns = `id::text, slot, capability, provider_kind, display_name, base_url,
 	model_name, api_key_encrypted, credit_multiplier::double precision,
 	price_per_call_cny::double precision, enabled,
-	COALESCE(params, '{}'::jsonb)::text, created_at, updated_at, COALESCE(updated_by::text, '')`
+	COALESCE(params, '{}'::jsonb)::text, created_at, updated_at, COALESCE(updated_by::text, ''),
+	COALESCE(description, ''), COALESCE(priority, 0)`
 
 func scanModelConfig(scanner interface{ Scan(...any) error }) (ModelConfig, error) {
 	var cfg ModelConfig
@@ -19,6 +20,7 @@ func scanModelConfig(scanner interface{ Scan(...any) error }) (ModelConfig, erro
 		&cfg.ModelName, &cfg.APIKeyEncrypted, &cfg.CreditMultiplier,
 		&cfg.PricePerCallCNY, &cfg.Enabled,
 		&paramsRaw, &cfg.CreatedAt, &cfg.UpdatedAt, &cfg.UpdatedBy,
+		&cfg.Description, &cfg.Priority,
 	); err != nil {
 		return ModelConfig{}, err
 	}
@@ -109,22 +111,25 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			INSERT INTO model_configs
 				(slot, capability, provider_kind, display_name, base_url, model_name,
-				 api_key_encrypted, credit_multiplier, price_per_call_cny, enabled, params, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NULLIF($12,'')::uuid)
+				 api_key_encrypted, credit_multiplier, price_per_call_cny, enabled, params, updated_by,
+				 description, priority)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NULLIF($12,'')::uuid, $13, $14)
 			RETURNING `+modelConfigColumns+`
 		`, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL, cfg.ModelName,
-			cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID))
+			cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID,
+			cfg.Description, cfg.Priority))
 	} else {
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			UPDATE model_configs SET
 				slot=$2, capability=$3, provider_kind=$4, display_name=$5, base_url=$6,
 				model_name=$7, api_key_encrypted=$8, credit_multiplier=$9, price_per_call_cny=$10,
-				enabled=$11, params=$12, updated_at=NOW(), updated_by=NULLIF($13,'')::uuid
+				enabled=$11, params=$12, updated_at=NOW(), updated_by=NULLIF($13,'')::uuid,
+				description=$14, priority=$15
 			WHERE id=$1
 			RETURNING `+modelConfigColumns+`
 		`, cfg.ID, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL,
 			cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.PricePerCallCNY,
-			cfg.Enabled, encodeParams(cfg.Params), actorUserID))
+			cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description, cfg.Priority))
 	}
 	if err != nil {
 		return ModelConfig{}, mapNotFound(err)
