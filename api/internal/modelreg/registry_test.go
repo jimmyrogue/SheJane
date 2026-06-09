@@ -23,11 +23,11 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 	}
 
 	fastP, fastModel, fastMult, ok := reg.Resolve(llm.ModeFast)
-	if !ok || fastP.Name() != "deepseek-fast" || fastModel != cfg.FastModel || fastMult != 0.1 {
+	if !ok || fastP.Name() != "快速" || fastModel != cfg.FastModel || fastMult != 0.1 {
 		t.Fatalf("fast resolve = (%v,%q,%v,%v) want fast cost ratio 0.1", fastP, fastModel, fastMult, ok)
 	}
 	deepP, deepModel, deepMult, ok := reg.Resolve(llm.ModeDeep)
-	if !ok || deepP.Name() != "claude-deep" || deepModel != cfg.DeepModel || deepMult != 1 {
+	if !ok || deepP.Name() != "深度" || deepModel != cfg.DeepModel || deepMult != 1 {
 		t.Fatalf("deep resolve = (%v,%q,%v,%v) want deep cost ratio 1", deepP, deepModel, deepMult, ok)
 	}
 
