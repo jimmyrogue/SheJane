@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -355,7 +356,9 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 			return llm.NewUnconfiguredProvider(name, "anthropic API key missing")
 		}
 		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
-		return llm.NewAnthropicProvider(apiKey, version)
+		// BaseURL supports proxy/gateway deployments; params.max_tokens caps the
+		// response (0 → provider default). Both are per-row admin knobs.
+		return llm.NewAnthropicProviderWithConfig(apiKey, version, cfg.BaseURL, intParam(cfg.Params, "max_tokens", 0))
 	default:
 		if apiKey == "" || cfg.BaseURL == "" {
 			return llm.NewUnconfiguredProvider(name, "missing API key or base URL")
@@ -389,6 +392,29 @@ func stringParam(params map[string]any, key string, fallback string) string {
 	}
 	if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
 		return v
+	}
+	return fallback
+}
+
+// intParam reads an integer param. JSON numbers decode as float64; admin input
+// may also arrive as a string. Non-positive / unparseable → fallback.
+func intParam(params map[string]any, key string, fallback int) int {
+	if params == nil {
+		return fallback
+	}
+	switch v := params[key].(type) {
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }

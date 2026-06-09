@@ -207,9 +207,11 @@ func (s *Server) runAgentLLMStream(
 			return nil, completion.InputTokens, completion.OutputTokens, finish
 		}
 		// Provider does not implement CompleteWithTools — fall through to
-		// pure-text streaming. Tools are silently dropped; the caller will
-		// see no llm.tool_call events. Acceptable Phase 1 behaviour for
-		// providers like Anthropic that only stream text.
+		// pure-text streaming (no llm.tool_call events). Every built-in kind
+		// (openai-compatible / deepseek / anthropic / mock) implements it and
+		// the admin catalog validation rejects tool-incapable chat models, so
+		// this branch is unreachable today; it stays as a safety net for
+		// future provider kinds added without tool support.
 	}
 
 	chunks, errs := provider.Stream(ctx, request, model)

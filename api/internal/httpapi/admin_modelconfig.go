@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/coldflame/shejane/api/internal/llm"
 	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
@@ -129,12 +130,26 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		writeError(w, http.StatusBadRequest, 40201, "slot 与 provider_kind 必填")
 		return store.ModelConfig{}, false
 	}
+	// Reject unknown kinds outright (typo guard — an unrecognized kind would
+	// silently run as openai-compatible).
+	kind := llm.NormalizeProviderKind(providerKind)
+	if kind == "" {
+		writeError(w, http.StatusBadRequest, 40201, "未知的 provider_kind（支持 deepseek-v4 / openai-compatible / anthropic / mock）")
+		return store.ModelConfig{}, false
+	}
 	capability := strings.TrimSpace(input.Capability)
 	if capability == "" {
 		capability = existing.Capability
 	}
 	if capability == "" {
 		capability = "chat"
+	}
+	// The chat catalog only admits tool-capable models (design decision #3) —
+	// a model that silently drops tool calls would degrade the agent to plain
+	// chat with no error.
+	if capability == modelreg.CapabilityChat && !llm.KindSupportsToolCalls(kind) {
+		writeError(w, http.StatusBadRequest, 40201, "该 provider_kind 不支持工具调用，无法加入聊天模型目录")
+		return store.ModelConfig{}, false
 	}
 	multiplier := input.CreditMultiplier
 	if multiplier <= 0 {
@@ -158,10 +173,15 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		apiKeyEncrypted = s.app.Registry.Cipher().Encrypt(input.APIKey)
 	}
 	return store.ModelConfig{
-		Slot:             slot,
-		Capability:       capability,
-		ProviderKind:     providerKind,
-		DisplayName:      strings.TrimSpace(input.DisplayName),
+		Slot:         slot,
+		Capability:   capability,
+		ProviderKind: providerKind,
+		DisplayName:  strings.TrimSpace(input.DisplayName),
+		// Catalog fields aren't admin-input yet (Phase 4) — carry the existing
+		// values through so a PATCH doesn't silently wipe seeded
+		// description/priority.
+		Description:      existing.Description,
+		Priority:         existing.Priority,
 		BaseURL:          strings.TrimSpace(input.BaseURL),
 		ModelName:        strings.TrimSpace(input.ModelName),
 		APIKeyEncrypted:  apiKeyEncrypted,
