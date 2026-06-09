@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,16 @@ func SlotForMode(mode llm.Mode) string {
 	return SlotChatFast
 }
 
+// ChatModelInfo is the user-facing catalog entry for a selectable chat model.
+// No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
+// GET /api/v1/models and fed to the Auto router as candidate context.
+type ChatModelInfo struct {
+	ID          string `json:"id"` // == slot (stable model id)
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Priority    int    `json:"priority"`
+}
+
 type resolved struct {
 	provider   llm.Provider
 	model      string
@@ -76,6 +87,7 @@ type Registry struct {
 	mu                sync.RWMutex
 	bySlot            map[string]resolved
 	bySlotImg         map[string]imageResolved
+	chatCatalog       []ChatModelInfo // enabled chat models, priority desc (cache)
 	markup            float64
 	currencyPerCredit float64
 	// Admin-tunable per-call cost levers (billing.levers row), refreshed on
@@ -184,6 +196,43 @@ func (r *Registry) Resolve(mode llm.Mode) (llm.Provider, string, float64, bool) 
 	return res.provider, res.model, res.multiplier, true
 }
 
+// ResolveModel returns the provider/model/multiplier for a catalog model id
+// (== slot). ok is false when no enabled config has that id (caller falls back
+// to DefaultChatModelID). This is the flat-catalog replacement for Resolve(mode).
+func (r *Registry) ResolveModel(modelID string) (llm.Provider, string, float64, bool) {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	res, ok := r.bySlot[modelID]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, "", 1, false
+	}
+	return res.provider, res.model, res.multiplier, true
+}
+
+// ListChatModels returns the user-facing catalog (enabled chat models, highest
+// priority first). Safe copy; no secrets.
+func (r *Registry) ListChatModels() []ChatModelInfo {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]ChatModelInfo, len(r.chatCatalog))
+	copy(out, r.chatCatalog)
+	return out
+}
+
+// DefaultChatModelID is the highest-priority enabled chat model id — used when
+// a request omits a model or names an unknown one. Empty if the catalog is empty.
+func (r *Registry) DefaultChatModelID() string {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.chatCatalog) == 0 {
+		return ""
+	}
+	return r.chatCatalog[0].ID
+}
+
 func (r *Registry) refreshIfStale(ctx context.Context) {
 	r.mu.RLock()
 	fresh := !r.loadedAt.IsZero() && time.Since(r.loadedAt) < cacheTTL
@@ -215,6 +264,7 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 	}
 	next := map[string]resolved{}
 	nextImg := map[string]imageResolved{}
+	catalog := make([]ChatModelInfo, 0)
 	for _, cfg := range configs {
 		if !cfg.Enabled {
 			continue
@@ -232,9 +282,28 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			model:      cfg.ModelName,
 			multiplier: normalizeMultiplier(cfg.CreditMultiplier),
 		}
+		label := cfg.DisplayName
+		if strings.TrimSpace(label) == "" {
+			label = cfg.Slot
+		}
+		catalog = append(catalog, ChatModelInfo{
+			ID:          cfg.Slot,
+			Label:       label,
+			Description: cfg.Description,
+			Priority:    cfg.Priority,
+		})
 	}
+	// Highest priority first; stable id tiebreak. Drives the picker order,
+	// Auto-router preference, and DefaultChatModelID.
+	sort.Slice(catalog, func(i, j int) bool {
+		if catalog[i].Priority != catalog[j].Priority {
+			return catalog[i].Priority > catalog[j].Priority
+		}
+		return catalog[i].ID < catalog[j].ID
+	})
 	r.bySlot = next
 	r.bySlotImg = nextImg
+	r.chatCatalog = catalog
 	r.stamp = stamp
 	r.loadedAt = time.Now()
 }

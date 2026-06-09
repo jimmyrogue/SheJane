@@ -22,6 +22,7 @@ import (
 	"github.com/coldflame/shejane/api/internal/billing"
 	"github.com/coldflame/shejane/api/internal/documents"
 	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
 
@@ -106,6 +107,7 @@ func (s *Server) routes() {
 	// is untrusted (see rateLimitUser / agentSpendLimiter).
 	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMGateway)))
 	s.mux.HandleFunc("POST /api/v1/agent/llm/stream", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMStream)))
+	s.mux.HandleFunc("GET /api/v1/models", s.requireAuth(s.listModels))
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
 	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentToolExecute)))
 	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.imagesGenerations)))
@@ -411,6 +413,20 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request, user store.User
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[billing.WalletSnapshot]{Code: 0, Message: "ok", Data: wallet.Snapshot()})
+}
+
+// listModels returns the user-facing chat model catalog (enabled, priority
+// desc). The client picker + the Auto router consume it. No secrets.
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request, _ store.User) {
+	models := s.app.Registry.ListChatModels()
+	if models == nil {
+		models = []modelreg.ChatModelInfo{}
+	}
+	writeJSON(w, http.StatusOK, apiResponse[modelsPayload]{Code: 0, Message: "ok", Data: modelsPayload{Models: models}})
+}
+
+type modelsPayload struct {
+	Models []modelreg.ChatModelInfo `json:"models"`
 }
 
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request, user store.User) {

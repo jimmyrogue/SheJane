@@ -154,6 +154,54 @@ func TestResolveHotReloadsAfterInvalidate(t *testing.T) {
 	}
 }
 
+func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	reg := New(st, config.Default())
+
+	// Three enabled chat models with distinct priorities + ids (== slots).
+	for _, m := range []store.ModelConfig{
+		{Slot: "chat.lowpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Low", Priority: 10, Enabled: true},
+		{Slot: "chat.toppri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Top", Description: "首选", Priority: 99, Enabled: true},
+		{Slot: "chat.midpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Mid", Priority: 50, Enabled: true},
+		{Slot: "chat.disabled", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Off", Priority: 100, Enabled: false},
+	} {
+		if _, err := st.UpsertModelConfig(ctx, "admin", m); err != nil {
+			t.Fatalf("upsert %s: %v", m.Slot, err)
+		}
+	}
+	reg.Invalidate()
+
+	catalog := reg.ListChatModels()
+	if len(catalog) != 3 {
+		t.Fatalf("catalog len = %d, want 3 (disabled excluded)", len(catalog))
+	}
+	gotOrder := []string{catalog[0].ID, catalog[1].ID, catalog[2].ID}
+	wantOrder := []string{"chat.toppri", "chat.midpri", "chat.lowpri"}
+	for i := range wantOrder {
+		if gotOrder[i] != wantOrder[i] {
+			t.Fatalf("catalog order = %v, want %v (priority desc)", gotOrder, wantOrder)
+		}
+	}
+	if catalog[0].Label != "Top" || catalog[0].Description != "首选" {
+		t.Fatalf("top entry = %+v, want Label=Top Description=首选", catalog[0])
+	}
+
+	if def := reg.DefaultChatModelID(); def != "chat.toppri" {
+		t.Fatalf("DefaultChatModelID = %q, want chat.toppri (highest priority)", def)
+	}
+
+	if _, _, _, ok := reg.ResolveModel("chat.midpri"); !ok {
+		t.Fatal("ResolveModel(chat.midpri) should resolve")
+	}
+	if _, _, _, ok := reg.ResolveModel("chat.disabled"); ok {
+		t.Fatal("ResolveModel(chat.disabled) must NOT resolve (disabled)")
+	}
+	if _, _, _, ok := reg.ResolveModel("chat.unknown"); ok {
+		t.Fatal("ResolveModel(unknown) must NOT resolve")
+	}
+}
+
 func TestSeedFromRealEnvEncryptsKeysAndPicksProviders(t *testing.T) {
 	cfg := config.Default()
 	cfg.MockLLM = false
