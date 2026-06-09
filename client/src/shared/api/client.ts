@@ -1,5 +1,13 @@
-import { parseSSEBuffer, type AgentRunEvent } from './sse'
+import { parseSSEBuffer, parseLLMStreamBuffer, type AgentRunEvent } from './sse'
 import { streamAgentSSE } from '../streaming/streamTransport'
+import {
+  runCloudAgentLoop,
+  type CloudAgentLoopDeps,
+  type CloudLLMMessage,
+  type CloudLLMTurn,
+  type CloudToolDefinition,
+  type CloudToolResult,
+} from '../cloudAgentLoop'
 import type { ChatMode, PdfDocumentMetadata } from '../local-data/types'
 
 export interface StreamChatRequest {
@@ -25,6 +33,24 @@ export interface StreamChatResult {
 export interface ChatAPI {
   createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun>
   streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult>
+  /** Web-only: drive the client-orchestrated cloud tool loop (image gen /
+   *  web search) over the existing Go LLM + tool-gateway endpoints. */
+  runCloudToolLoop(input: CloudToolLoopRequest, handlers: StreamHandlers, signal?: AbortSignal): Promise<StreamChatResult>
+}
+
+export interface CloudToolLoopRequest {
+  runId: string
+  goal: string
+  mode: ChatMode
+  history: AgentHistoryMessage[]
+  tools: CloudToolDefinition[]
+}
+
+/** Per-tool configuration as reported by GET /agent/tool-capabilities. */
+export interface ToolCapability {
+  configured: boolean
+  provider: string
+  credits_cost: number
 }
 
 export interface AgentAttachment {
@@ -421,6 +447,166 @@ export class SheJaneAPI implements ChatAPI {
       inputTokens: 0,
       outputTokens: 0,
       creditsCost: 0,
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Cloud tool loop (web build) — low-level transports + the orchestrator.
+  // These drive the SAME Go endpoints the daemon uses; see cloudAgentLoop.ts.
+  // ---------------------------------------------------------------------
+
+  /** GET /agent/tool-capabilities → which cloud tools are configured. */
+  async agentToolCapabilities(): Promise<Record<string, ToolCapability>> {
+    const data = await this.get<{ tools: Record<string, ToolCapability> }>('/api/v1/agent/tool-capabilities')
+    return data.tools ?? {}
+  }
+
+  /** POST /agent/llm/stream — one model turn. Streams content via onDelta and
+   *  returns the turn (content + tool_calls + usage). Parses NAMED llm.* SSE. */
+  async streamAgentLLM(
+    body: { runId: string; mode: ChatMode; messages: CloudLLMMessage[]; tools: CloudToolDefinition[] },
+    handlers: { onDelta: (delta: string) => void },
+    signal?: AbortSignal,
+  ): Promise<CloudLLMTurn> {
+    const response = await this.authedFetch(
+      '/api/v1/agent/llm/stream',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          run_id: body.runId,
+          mode: toCloudMode(body.mode),
+          messages: body.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            toolCallId: m.toolCallId,
+            name: m.name,
+            toolCalls: m.toolCalls,
+          })),
+          tools: body.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+          })),
+        }),
+        signal,
+      },
+      true,
+    )
+    if (!response.ok || !response.body) {
+      throw new Error(await errorMessage(response))
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let content = ''
+    let reasoning = ''
+    const toolCalls: CloudLLMTurn['toolCalls'] = []
+    let finishReason = ''
+    let requestId = response.headers.get('X-Request-ID') ?? ''
+    let inputTokens = 0
+    let outputTokens = 0
+    let creditsCost = 0
+    let done = false
+
+    while (!done) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+      const result = await reader.read()
+      done = result.done
+      buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !done })
+      const parsed = parseLLMStreamBuffer(buffer)
+      buffer = parsed.rest
+      for (const event of parsed.events) {
+        if (event.type === 'delta') {
+          if (event.contentDelta) {
+            content += event.contentDelta
+            handlers.onDelta(event.contentDelta)
+          }
+          reasoning += event.reasoningDelta
+        } else if (event.type === 'tool_call') {
+          toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments })
+        } else if (event.type === 'usage') {
+          inputTokens = event.inputTokens
+          outputTokens = event.outputTokens
+          creditsCost = event.creditsCost
+        } else if (event.type === 'done') {
+          requestId = event.requestId || requestId
+          finishReason = event.finishReason
+        } else if (event.type === 'error') {
+          throw new Error(event.message || '模型调用失败')
+        }
+      }
+    }
+
+    return { content, reasoning, toolCalls, finishReason, requestId, inputTokens, outputTokens, creditsCost }
+  }
+
+  /** POST /agent/tools/execute — run one billed, idempotent tool. Returns the
+   *  structured result even on a tool-level failure (ok:false) so the loop can
+   *  feed it back to the model; only hard credit failures (402) throw. */
+  async executeAgentTool(req: {
+    runId: string
+    toolCallId: string
+    tool: string
+    arguments: Record<string, unknown>
+    idempotencyKey: string
+  }): Promise<CloudToolResult> {
+    const response = await this.authedFetch(
+      '/api/v1/agent/tools/execute',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          run_id: req.runId,
+          tool_call_id: req.toolCallId,
+          tool: req.tool,
+          arguments: req.arguments,
+          idempotency_key: req.idempotencyKey,
+        }),
+      },
+      true,
+    )
+    let body: APIResponse<CloudToolResult> | undefined
+    try {
+      body = (await response.json()) as APIResponse<CloudToolResult>
+    } catch {
+      body = undefined
+    }
+    if (response.status === 402) {
+      throw new Error(body?.message || '额度不足，请升级或充值')
+    }
+    if (body?.data) {
+      return body.data
+    }
+    return { ok: false, content: body?.message || `工具调用失败 (HTTP ${response.status})`, errorCode: 'tool_execute_failed' }
+  }
+
+  async runCloudToolLoop(
+    input: CloudToolLoopRequest,
+    handlers: StreamHandlers,
+    signal?: AbortSignal,
+  ): Promise<StreamChatResult> {
+    const messages: CloudLLMMessage[] = [
+      ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
+      { role: 'user', content: input.goal },
+    ]
+    const deps: CloudAgentLoopDeps = {
+      streamLLM: (body, loopHandlers, loopSignal) => this.streamAgentLLM(body, loopHandlers, loopSignal),
+      executeTool: (req) => this.executeAgentTool(req),
+    }
+    const result = await runCloudAgentLoop(deps, {
+      runId: input.runId,
+      mode: input.mode,
+      messages,
+      tools: input.tools,
+      onDelta: handlers.onDelta,
+      onEvent: handlers.onEvent,
+      signal,
+    })
+    return {
+      requestId: result.requestId,
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      creditsCost: result.creditsCost,
     }
   }
 

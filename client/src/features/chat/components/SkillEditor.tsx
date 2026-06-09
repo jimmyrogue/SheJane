@@ -50,6 +50,10 @@ export interface SkillEditorProps {
   /** Optional — when omitted (probe not yet ready) the MCP group is
    *  hidden from the slash menu instead of crashing. */
   listMcpServers?: () => Promise<McpServerInfo[]>
+  /** When false (web build, no daemon) the slash-command menu — functions,
+   *  skills, MCP, all daemon-executed — is disabled entirely. The editor
+   *  still works as a plain text input. Defaults to true. */
+  commandsEnabled?: boolean
   placeholder: string
 }
 
@@ -456,6 +460,7 @@ export function SkillEditor({
   onSend,
   listSkills,
   listMcpServers,
+  commandsEnabled = true,
   placeholder,
 }: SkillEditorProps) {
   const draftRef = useRef(draft)
@@ -498,11 +503,14 @@ export function SkillEditor({
       />
       <HistoryPlugin />
       <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
-      <SkillTypeaheadPlugin
-        listSkills={listSkills}
-        listMcpServers={listMcpServers}
-        menuOpenRef={menuOpenRef}
-      />
+      {/* Slash menu (functions/skills/MCP) is daemon-only — omit on web. */}
+      {commandsEnabled ? (
+        <SkillTypeaheadPlugin
+          listSkills={listSkills}
+          listMcpServers={listMcpServers}
+          menuOpenRef={menuOpenRef}
+        />
+      ) : null}
       <SubmitPlugin onSend={onSend} menuOpenRef={menuOpenRef} />
       <SkillDeletePlugin />
       <ExternalDraftPlugin draft={draft} lastSerializedRef={lastSerializedRef} />

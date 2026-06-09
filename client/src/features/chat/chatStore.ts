@@ -1,4 +1,5 @@
-import type { ChatAPI } from '../../shared/api/client'
+import type { ChatAPI, StreamChatResult } from '../../shared/api/client'
+import type { CloudToolDefinition } from '../../shared/cloudAgentLoop'
 import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
@@ -32,6 +33,10 @@ interface SendMessageInput {
      *  the chip falls back to filename-extension sniffing. */
     contentType?: string
   }
+  /** Web build only: when non-empty, run the client-orchestrated cloud tool
+   *  loop (image gen / web search) instead of the single-completion cloud run.
+   *  These are the tool definitions advertised to the model. */
+  cloudTools?: CloudToolDefinition[]
   onConversationUpdate?: (conversation: Conversation) => void
 }
 
@@ -89,19 +94,6 @@ export function createChatStore(deps: ChatStoreDeps) {
       input.onConversationUpdate?.(cloneConversation(conversation))
 
       try {
-        const run = await deps.api.createAgentRun({
-          goal: text,
-          mode: input.mode,
-          clientConversationId: conversation.id,
-          clientMessageId: userMessage.id,
-          attachments: input.document
-            ? [{ type: 'document', document_id: input.document.id, name: input.document.name }]
-            : [],
-          history: deriveAgentHistory(priorMessages),
-        })
-        assistantMessage.runId = run.id
-        assistantMessage.runOrigin = 'cloud'
-        input.onConversationUpdate?.(cloneConversation(conversation))
         const streamHandlers = {
           onDelta: (delta: string) => {
             assistantMessage.content += delta
@@ -115,7 +107,42 @@ export function createChatStore(deps: ChatStoreDeps) {
             }
           },
         }
-        const result = await deps.api.streamAgentRun(run.id, streamHandlers)
+        let result: StreamChatResult
+        if (input.cloudTools && input.cloudTools.length > 0) {
+          // Web tool loop: the browser drives /agent/llm/stream + /tools/execute.
+          // No server-side AgentRun record (billing still flows through both
+          // endpoints' ledger writes); use a client-generated run id so the
+          // tool gateway's idempotency key is stable across retries.
+          const runId = createLocalID('run')
+          assistantMessage.runId = runId
+          assistantMessage.runOrigin = 'cloud'
+          input.onConversationUpdate?.(cloneConversation(conversation))
+          result = await deps.api.runCloudToolLoop(
+            {
+              runId,
+              goal: text,
+              mode: input.mode,
+              history: deriveAgentHistory(priorMessages),
+              tools: input.cloudTools,
+            },
+            streamHandlers,
+          )
+        } else {
+          const run = await deps.api.createAgentRun({
+            goal: text,
+            mode: input.mode,
+            clientConversationId: conversation.id,
+            clientMessageId: userMessage.id,
+            attachments: input.document
+              ? [{ type: 'document', document_id: input.document.id, name: input.document.name }]
+              : [],
+            history: deriveAgentHistory(priorMessages),
+          })
+          assistantMessage.runId = run.id
+          assistantMessage.runOrigin = 'cloud'
+          input.onConversationUpdate?.(cloneConversation(conversation))
+          result = await deps.api.streamAgentRun(run.id, streamHandlers)
+        }
         assistantMessage.status = 'done'
         assistantMessage.requestId = result.requestId
         assistantMessage.creditsCost = result.creditsCost
