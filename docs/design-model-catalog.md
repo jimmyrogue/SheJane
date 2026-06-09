@@ -78,10 +78,10 @@
 
 ## 分阶段落地
 
-1. **后端目录 + 接口 + router**:加列 + 迁移;`Resolve(id)` + `ListChatModels` + `DefaultChatModelID`;`GET /api/v1/models`;router 去 fast/deep;云端解析 `auto`;计费 rekey。store 双实现 lockstep + conformance。
+1. **后端目录 + 接口 + router**(✅ 已完成):加列 + 迁移 013;`ResolveModel(id)` + `ListChatModels` + `DefaultChatModelID`;`GET /api/v1/models`;router `SelectModel`/`MultiplierForModel`;计费 rekey 成 model_id;Go 各 handler `mode`→`model`(strict-decode 硬 break 旧字段);seed 改成带 label/description/priority 的目录行;daemon `backend.py` 转发 `model` 给云端。`auto` 暂解析为默认模型(highest-priority);任务感知分类器留作后续。store 双实现 lockstep + conformance。
 2. **provider 工具正解**:Anthropic `CompleteWithTools` + 每模型校验 + 2048 修复。
-3. **客户端**:`ModeSelector` 动态化 + schema 改 `model` + SSE `model.selected` + 持久化 v2。
-4. **admin + 收尾**:admin UI 加 label/description/priority/default 字段 + 工具能力校验;删 `Mode` 类型 / `auto_router.py` 旧分类 / 死代码。
+3. **客户端 + 客户端契约**:`ModeSelector` 动态化(拉 `/api/v1/models`)+ `ChatMode` union + SSE `model.selected` + 持久化 v2;**daemon `CreateRunRequest.mode`→`model` + `make schemas`** + 客户端 `createLocalRun`/`createAgentRun`/web loop 发 `model`(这几项与客户端选择器耦合,放在一起做,避免中途回归)。
+4. **admin + 收尾**:admin UI 加 label/description/priority 字段 + 工具能力校验;删 `Mode` 类型 / `auto_router.py` 旧 fast/deep 分类 / 死代码;`auto` 升级为云端任务感知分类器。
 
 ## 关键不变量(实施时必须守)
 - store `memory*.go` + `postgres*.go` 双实现 lockstep(+ conformance 测试)。
