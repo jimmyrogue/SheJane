@@ -81,6 +81,8 @@ export function Composer({
   onModeChange,
   projectName,
   onSelectProject,
+  isDesktop = true,
+  slashCommandsEnabled = true,
 }: {
   draft: string
   onDraftChange: (value: string) => void
@@ -130,6 +132,13 @@ export function Composer({
    *  chat's project. Only invoked when `projectName` is undefined; the
    *  locked-chip click is a no-op (disabled). */
   onSelectProject?: () => void
+  /** Electron build flag. The web build has no daemon, so the workspace/
+   *  project picker is hidden when false. */
+  isDesktop?: boolean
+  /** Whether the slash-command menu (functions/skills/MCP) is offered. On
+   *  desktop always true; on web true only when a cloud tool (image gen) is
+   *  configured, since skills/MCP are daemon-only and absent there anyway. */
+  slashCommandsEnabled?: boolean
 }) {
   const { t } = useI18n()
 
@@ -344,6 +353,7 @@ export function Composer({
           onSend={onSend}
           listSkills={listSkills}
           listMcpServers={listMcpServers}
+          commandsEnabled={slashCommandsEnabled}
           placeholder={t('composer.placeholder')}
         />
         {/* Send / Stop button: sits in the bottom-right corner of the
@@ -391,7 +401,8 @@ export function Composer({
             <IconPaperclip size={16} aria-hidden="true" />
           )}
         </button>
-        {projectName ? (
+        {/* Workspace/project binding is a local-daemon concept — hidden on web. */}
+        {!isDesktop ? null : projectName ? (
           // Locked chip — once bound, project can't be changed without
           // starting a new chat (the daemon already has the workspace
           // path attached to this conversation's run state).

@@ -113,6 +113,7 @@ export function ConversationSidebar({
   onLogout,
   onRecharge,
   onShowSpendHistory,
+  isDesktop = true,
   onOpenSkills,
   onOpenMcp,
   activeView = 'chat',
@@ -135,6 +136,9 @@ export function ConversationSidebar({
   onLogout?: () => void
   onRecharge?: () => void
   onShowSpendHistory?: () => void
+  /** Electron build flag. The web build has no local daemon, so skills/MCP
+   *  (and their Agent-settings toggles) are hidden when false. */
+  isDesktop?: boolean
   onOpenSkills?: () => void
   onOpenMcp?: () => void
   activeView?: 'chat' | 'skills' | 'mcp'
@@ -375,25 +379,28 @@ export function ConversationSidebar({
         </button>
       </div>
 
-      <div className="sidebar-section">
-        <div className="sidebar-section-label">{t('sidebar.section.tools')}</div>
-        <button
-          className={`sidebar-item${activeView === 'skills' ? ' active' : ''}`}
-          type="button"
-          onClick={() => onOpenSkills?.()}
-        >
-          <IconTool size={14} />
-          <span>{t('sidebar.skills')}</span>
-        </button>
-        <button
-          className={`sidebar-item${activeView === 'mcp' ? ' active' : ''}`}
-          type="button"
-          onClick={() => onOpenMcp?.()}
-        >
-          <IconServer size={14} />
-          <span>{t('sidebar.mcp')}</span>
-        </button>
-      </div>
+      {/* Skills + MCP run only in the local daemon — hidden on the web build. */}
+      {isDesktop ? (
+        <div className="sidebar-section">
+          <div className="sidebar-section-label">{t('sidebar.section.tools')}</div>
+          <button
+            className={`sidebar-item${activeView === 'skills' ? ' active' : ''}`}
+            type="button"
+            onClick={() => onOpenSkills?.()}
+          >
+            <IconTool size={14} />
+            <span>{t('sidebar.skills')}</span>
+          </button>
+          <button
+            className={`sidebar-item${activeView === 'mcp' ? ' active' : ''}`}
+            type="button"
+            onClick={() => onOpenMcp?.()}
+          >
+            <IconServer size={14} />
+            <span>{t('sidebar.mcp')}</span>
+          </button>
+        </div>
+      ) : null}
 
       {pinnedConversations.length ? (
         <div className="sidebar-section pinned-conversation-list">
@@ -449,16 +456,22 @@ export function ConversationSidebar({
             <IconReceipt2 />
             <span>{t('sidebar.account.spendHistory')}</span>
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setSettingsOpen(true)
-            }}
-          >
-            <IconAdjustmentsHorizontal />
-            <span>{t('sidebar.account.agentSettings')}</span>
-          </DropdownMenuItem>
+          {/* Agent settings (memory / skills / MCP / advanced run params) are
+           *  all local-daemon config — the whole entry is hidden on web. */}
+          {isDesktop ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault()
+                  setSettingsOpen(true)
+                }}
+              >
+                <IconAdjustmentsHorizontal />
+                <span>{t('sidebar.account.agentSettings')}</span>
+              </DropdownMenuItem>
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(event) => {
@@ -515,36 +528,41 @@ export function ConversationSidebar({
                   }
                 />
               </AdvSettingRow>
-              <AdvSettingRow
-                label={t('sidebar.agentSettings.skills.label')}
-                hint={t('sidebar.agentSettings.skills.hint')}
-              >
-                <Switch
-                  checked={skillsEnabled}
-                  aria-label={t('sidebar.agentSettings.skills.label')}
-                  onCheckedChange={(checked) =>
-                    onAgentSettingsChange?.({
-                      ...currentAgentSettings,
-                      skills: checked ? 'on' : 'off',
-                    })
-                  }
-                />
-              </AdvSettingRow>
-              <AdvSettingRow
-                label={t('sidebar.agentSettings.mcp.label')}
-                hint={t('sidebar.agentSettings.mcp.hint')}
-              >
-                <Switch
-                  checked={mcpEnabled}
-                  aria-label={t('sidebar.agentSettings.mcp.label')}
-                  onCheckedChange={(checked) =>
-                    onAgentSettingsChange?.({
-                      ...currentAgentSettings,
-                      mcp: checked ? 'on' : 'off',
-                    })
-                  }
-                />
-              </AdvSettingRow>
+              {/* Skills + MCP toggles only matter for the local daemon. */}
+              {isDesktop ? (
+                <>
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.skills.label')}
+                    hint={t('sidebar.agentSettings.skills.hint')}
+                  >
+                    <Switch
+                      checked={skillsEnabled}
+                      aria-label={t('sidebar.agentSettings.skills.label')}
+                      onCheckedChange={(checked) =>
+                        onAgentSettingsChange?.({
+                          ...currentAgentSettings,
+                          skills: checked ? 'on' : 'off',
+                        })
+                      }
+                    />
+                  </AdvSettingRow>
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.mcp.label')}
+                    hint={t('sidebar.agentSettings.mcp.hint')}
+                  >
+                    <Switch
+                      checked={mcpEnabled}
+                      aria-label={t('sidebar.agentSettings.mcp.label')}
+                      onCheckedChange={(checked) =>
+                        onAgentSettingsChange?.({
+                          ...currentAgentSettings,
+                          mcp: checked ? 'on' : 'off',
+                        })
+                      }
+                    />
+                  </AdvSettingRow>
+                </>
+              ) : null}
             <Collapsible className="agent-settings-advanced">
               <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 bg-transparent px-4 py-3 text-left text-sm font-semibold text-[var(--text-primary)] outline-none transition-colors hover:bg-black/[0.02] focus-visible:bg-black/[0.03]">
                 <span>{t('sidebar.agentSettings.advanced.title')}</span>

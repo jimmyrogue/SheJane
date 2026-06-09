@@ -23,6 +23,7 @@ import {
 import { createAuthClient } from './shared/api/authClient'
 import { uploadWithProgress } from './shared/api/uploadWithProgress'
 import { createChatStore, timelineItem } from './features/chat/chatStore'
+import { webToolsFromCapabilities, type CloudToolDefinition } from './shared/cloudAgentLoop'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
@@ -321,6 +322,10 @@ function AppContent() {
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  // Web build only: cloud tools (image gen / web search) the model may call
+  // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
+  // and until capabilities are fetched / when none are configured.
+  const [webTools, setWebTools] = useState<CloudToolDefinition[]>([])
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
@@ -442,6 +447,28 @@ function AppContent() {
       duration: 3200,
     })
   }
+
+  // Web build only: discover which cloud tools are configured so the client
+  // tool loop advertises only working ones. Desktop owns tools via the daemon,
+  // so it skips this entirely.
+  useEffect(() => {
+    if (window.shejaneDesktop || !auth?.access_token) {
+      setWebTools([])
+      return
+    }
+    let cancelled = false
+    void api
+      .agentToolCapabilities()
+      .then((caps) => {
+        if (!cancelled) setWebTools(webToolsFromCapabilities(caps))
+      })
+      .catch(() => {
+        if (!cancelled) setWebTools([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, auth?.access_token])
 
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
@@ -829,6 +856,9 @@ function AppContent() {
                   contentType: attachedDocument.content_type,
                 }
               : undefined,
+            // Web build: drive the client tool loop (image gen / web search)
+            // for plain prompts. Document Q&A keeps the single-completion path.
+            cloudTools: attachedDocument ? undefined : webTools,
             onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
           })
       await refreshConversationsAfterStream(conversation.id, renderContext)
@@ -887,6 +917,7 @@ function AppContent() {
             content: parseSkillDraft(text).text,
             mode,
             scene: 'chat',
+            cloudTools: webTools,
             onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
           })
       await refreshConversationsAfterStream(next.id, renderContext)
@@ -1646,7 +1677,11 @@ function AppContent() {
     )
   }
 
-  const shellClassName = window.shejaneDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
+  // Desktop = the Electron build (preload injects window.shejaneDesktop). The
+  // web build (app.shejane.com) has NO local daemon, so the whole local-agent
+  // surface — skills, MCP, workspace — can never work there and must be hidden.
+  const isDesktop = !!window.shejaneDesktop
+  const shellClassName = isDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
 
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
@@ -1738,6 +1773,7 @@ function AppContent() {
             onRenameConversation={(conversationID, title) => void renameConversation(conversationID, title)}
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
+            isDesktop={isDesktop}
             onOpenSkills={() => setMainView('skills')}
             onOpenMcp={() => setMainView('mcp')}
             activeView={mainView}
@@ -1841,15 +1877,21 @@ function AppContent() {
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
               </div>
-              <div className="topbar-status">
-                <span
-                  className={`topbar-daemon-dot${localHost?.online ? ' is-online' : ' is-offline'}`}
-                  title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
-                  aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
-                />
-              </div>
+              {/* Daemon status dot is meaningless on web (no daemon ever). */}
+              {isDesktop ? (
+                <div className="topbar-status">
+                  <span
+                    className={`topbar-daemon-dot${localHost?.online ? ' is-online' : ' is-offline'}`}
+                    title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                    aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                  />
+                </div>
+              ) : null}
             </header>
-            {!localHost?.online ? (
+            {/* Offline banner only on desktop — on web the daemon is never
+             *  expected, so it would show permanently. Credits-empty banner
+             *  still applies to web (cloud chat bills credits too). */}
+            {isDesktop && !localHost?.online ? (
               <div className="status-banner status-banner-warning" role="status">
                 <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>
               </div>
@@ -2002,6 +2044,8 @@ function AppContent() {
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
+              isDesktop={isDesktop}
+              slashCommandsEnabled={isDesktop || webTools.some((tool) => tool.name === 'image.generate')}
               />
             </div>
           </section>

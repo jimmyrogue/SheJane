@@ -24,6 +24,9 @@ describe('chat store', () => {
         handlers.onDelta('，第二段')
         return { requestId: 'req-1', inputTokens: 8, outputTokens: 12, creditsCost: 20 }
       },
+      runCloudToolLoop: async () => {
+        throw new Error('runCloudToolLoop not used in this test')
+      },
     }
     const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
 
@@ -61,6 +64,9 @@ describe('chat store', () => {
         handlers.onDelta('总结')
         return { requestId: 'req-doc-1', inputTokens: 10, outputTokens: 8, creditsCost: 18 }
       },
+      runCloudToolLoop: async () => {
+        throw new Error('runCloudToolLoop not used in this test')
+      },
     }
     const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
 
@@ -86,6 +92,47 @@ describe('chat store', () => {
       requestId: 'req-doc-1',
       runId: 'run-doc-1',
     })
+    expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
+  })
+
+  it('routes to the cloud tool loop (not the single-completion run) when cloudTools are provided', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-toolloop')
+    let createCalled = false
+    const api: ChatAPI = {
+      createAgentRun: async () => {
+        createCalled = true
+        return { id: 'should-not-run', status: 'queued', mode: 'fast' }
+      },
+      streamAgentRun: async () => ({ requestId: '', inputTokens: 0, outputTokens: 0, creditsCost: 0 }),
+      runCloudToolLoop: async (input, handlers) => {
+        expect(input.goal).toBe('画一只猫')
+        expect(input.tools.map((t) => t.name)).toEqual(['image.generate'])
+        expect(input.runId).toMatch(/^run_/)
+        handlers.onEvent?.({ event_type: 'tool.completed', payload: { tool: 'image.generate' } })
+        handlers.onDelta('好的，这是图片')
+        handlers.onDelta('\n\n![image.generate](https://cdn.example.com/cat.png)\n')
+        return { requestId: 'req-loop', inputTokens: 5, outputTokens: 9, creditsCost: 12 }
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({
+      content: '画一只猫',
+      mode: 'fast',
+      scene: 'chat',
+      cloudTools: [
+        { name: 'image.generate', description: 'gen', inputSchema: { type: 'object' } },
+      ],
+    })
+
+    expect(createCalled).toBe(false)
+    expect(conversation.messages[1]).toMatchObject({
+      role: 'assistant',
+      status: 'done',
+      requestId: 'req-loop',
+      runOrigin: 'cloud',
+    })
+    expect(conversation.messages[1].content).toContain('![image.generate](https://cdn.example.com/cat.png)')
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
   })
 

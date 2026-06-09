@@ -83,6 +83,43 @@ describe('ConversationSidebar', () => {
     expect(screen.getAllByTitle('更多 我的项目')).toHaveLength(1)
   })
 
+  it('hides skills/MCP and Agent settings on the web build (no local daemon)', async () => {
+    // The web build (window.shejaneDesktop undefined → isDesktop=false) can't
+    // run skills/MCP/local-agent config, so the whole 工具 nav section and the
+    // Agent-settings menu entry must not render.
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          userEmail="test@example.com"
+          isDesktop={false}
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          onOpenSkills={vi.fn()}
+          onOpenMcp={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    // 工具 nav section (技能 + MCP) is gone on web.
+    expect(screen.queryByText('工具')).not.toBeInTheDocument()
+    expect(screen.queryByText('技能')).not.toBeInTheDocument()
+    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+
+    // Agent settings entry is gone from the account menu on web.
+    const trigger = screen.getByRole('button', { name: '设置' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    expect(await screen.findByText('退出登录')).toBeInTheDocument() // menu opened
+    expect(screen.queryByText('Agent 设置')).not.toBeInTheDocument()
+  })
+
   it('exposes row actions for pinning, renaming, and deleting', async () => {
     const handlers = {
       onTogglePinConversation: vi.fn(),
