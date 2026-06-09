@@ -87,7 +87,7 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || \
             gh release create "$tag" --draft --title "$tag" \
-              --notes "Automated desktop build for $tag. Unsigned (Windows SmartScreen cold-start applies)."
+              --notes "Automated desktop build for $tag. Requires Windows 10 or later (64-bit only). Unsigned (Windows SmartScreen cold-start applies)."
           gh release upload "$tag" release/*.exe release/latest.yml --clobber
 
       - name: Upload installer artifact (manual builds)

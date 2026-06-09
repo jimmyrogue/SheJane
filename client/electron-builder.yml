@@ -59,6 +59,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  # Refuse to install on < Windows 10 with a clear message. The app runs on
+  # Electron 33 (requires Win10+); without this, Win7/8.1 users hit a cryptic
+  # shortcut-creation error and a silently non-launching app. See build/installer.nsh.
+  include: build/installer.nsh
 
 # Auto-update feed (electron-updater): published installers + latest*.yml land
 # on GitHub Releases; the installed app checks here on launch. electron-builder

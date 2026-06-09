@@ -46,6 +46,11 @@ dist/
 **/dist/
 build/
 **/build/
+# Exception: electron-builder's build-resources dir holds the NSIS installer
+# customization (committed source, not a build artifact). Re-include just that file.
+!client/build/
+client/build/*
+!client/build/installer.nsh
 .vite/
 **/.vite/
 .turbo/
