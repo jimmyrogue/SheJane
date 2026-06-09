@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS local_runs (
     history_json TEXT NOT NULL DEFAULT '[]',
     parent_run_id TEXT,
     settings_json TEXT NOT NULL DEFAULT '{}',
+    -- Resolved tier (fast|deep) once known, else the requested mode. Persisted
+    -- so a HITL resume AFTER a daemon restart keeps the user's chosen tier
+    -- instead of silently downgrading to fast. Added late, hence the additive
+    -- migration in _ensure_columns() for DBs created before this column.
+    mode TEXT NOT NULL DEFAULT 'fast',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT
@@ -123,8 +128,21 @@ class LocalStore:
         conn = await aiosqlite.connect(str(db_path))
         conn.row_factory = aiosqlite.Row
         await conn.executescript(SCHEMA)
+        await cls._ensure_columns(conn)
         await conn.commit()
         return cls(db_path, conn)
+
+    @staticmethod
+    async def _ensure_columns(conn: aiosqlite.Connection) -> None:
+        """Additive migrations for DBs created before a column existed.
+        `CREATE TABLE IF NOT EXISTS` never alters an existing table, so a new
+        column has to be added explicitly. SQLite ADD COLUMN is cheap + safe."""
+        cursor = await conn.execute("PRAGMA table_info(local_runs)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "mode" not in columns:
+            await conn.execute(
+                "ALTER TABLE local_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'fast'"
+            )
 
     async def close(self) -> None:
         await self._conn.close()
@@ -189,6 +207,7 @@ class LocalStore:
         workspace_path: str | None,
         parent_run_id: str | None = None,
         settings: dict[str, Any] | None = None,
+        mode: str = "fast",
     ) -> dict[str, Any]:
         run = {
             "id": _new_id("run"),
@@ -198,6 +217,7 @@ class LocalStore:
             "history_json": "[]",
             "parent_run_id": parent_run_id,
             "settings_json": json.dumps(settings or {}, ensure_ascii=False),
+            "mode": mode,
             "created_at": _now(),
             "updated_at": _now(),
             "completed_at": None,
@@ -205,14 +225,42 @@ class LocalStore:
         await self._conn.execute(
             "INSERT INTO local_runs "
             "(id, goal, workspace_path, status, history_json, parent_run_id, "
-            " settings_json, created_at, updated_at, completed_at) "
+            " settings_json, mode, created_at, updated_at, completed_at) "
             "VALUES (:id, :goal, :workspace_path, :status, :history_json, "
-            "        :parent_run_id, :settings_json, :created_at, "
+            "        :parent_run_id, :settings_json, :mode, :created_at, "
             "        :updated_at, :completed_at)",
             run,
         )
         await self._conn.commit()
         return run
+
+    async def update_run_mode(self, run_id: str, mode: str) -> None:
+        """Persist the RESOLVED tier (fast|deep) once classification settles,
+        so a resume after restart continues at the right tier."""
+        await self._conn.execute(
+            "UPDATE local_runs SET mode = ?, updated_at = ? WHERE id = ?",
+            (mode, _now(), run_id),
+        )
+        await self._conn.commit()
+
+    async def list_active_runs(self) -> list[dict[str, Any]]:
+        """Runs not in a terminal state — used at boot to recover orphans left
+        behind by a daemon restart (queued/running are dead and must be failed;
+        waiting_permission is resumable from the checkpointer)."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_runs WHERE status IN ('queued', 'running', 'waiting_permission')"
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def grants_for_run(self, run_id: str) -> list[str]:
+        """Tool names approved with scope='run' for this run — lets the
+        auto-approve loop rehydrate scope=run grants after a restart."""
+        cursor = await self._conn.execute(
+            "SELECT DISTINCT tool_name FROM local_permissions "
+            "WHERE run_id = ? AND scope = 'run' AND status = 'approved'",
+            (run_id,),
+        )
+        return [row[0] for row in await cursor.fetchall()]
 
     async def get_run(self, run_id: str) -> dict[str, Any] | None:
         cursor = await self._conn.execute("SELECT * FROM local_runs WHERE id = ?", (run_id,))

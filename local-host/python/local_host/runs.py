@@ -169,6 +169,9 @@ class RunCoordinator:
         self._workspaces: dict[str, str | None] = {}
         self._histories: dict[str, list[dict[str, str]]] = {}
         self._settings_overrides: dict[str, dict[str, Any]] = {}
+        # Resolved tier per run (fast|deep|…). Mirrors local_runs.mode; lets a
+        # resume after restart continue at the user's chosen tier.
+        self._modes: dict[str, str] = {}
         # Per-run "scope=run" approvals. When the user clicks "Always
         # allow for this run" on an approval card, the tool name is
         # cached here so future HITL interrupts for the same tool in
@@ -229,6 +232,7 @@ class RunCoordinator:
             workspace_path=workspace_path,
             parent_run_id=parent_run_id,
             settings=settings,
+            mode=mode,
         )
         run_id = run["id"]
         queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=2048)
@@ -237,6 +241,7 @@ class RunCoordinator:
         self._workspaces[run_id] = workspace_path
         self._histories[run_id] = list(history or [])
         self._settings_overrides[run_id] = dict(settings or {})
+        self._modes[run_id] = mode
 
         task = asyncio.create_task(
             self._drive_run(
@@ -247,6 +252,70 @@ class RunCoordinator:
         )
         self._tasks[run_id] = task
         return run
+
+    async def _hydrate_run_state(self, run_id: str) -> bool:
+        """Repopulate the in-memory per-run caches from the DB when they're
+        missing — the path after a daemon restart, where `resume_run` runs
+        against empty dicts. Without this, a HITL resume rebuilds the agent
+        with no workspace, default settings, and fast tier (a silently
+        degraded sandbox). Idempotent: a no-op when the run is already cached
+        in this process. Returns False if the run row doesn't exist."""
+        if run_id in self._goals:
+            return True
+        run = await self.store.get_run(run_id)
+        if run is None:
+            return False
+        self._goals[run_id] = run.get("goal") or ""
+        self._workspaces[run_id] = run.get("workspace_path")
+        self._modes[run_id] = run.get("mode") or "fast"
+        try:
+            self._histories[run_id] = json.loads(run.get("history_json") or "[]")
+        except (TypeError, ValueError):
+            self._histories[run_id] = []
+        try:
+            self._settings_overrides[run_id] = json.loads(run.get("settings_json") or "{}")
+        except (TypeError, ValueError):
+            self._settings_overrides[run_id] = {}
+        grants = await self.store.grants_for_run(run_id)
+        if grants:
+            self._run_grants[run_id] = set(grants)
+        return True
+
+    async def recover_orphans(self) -> None:
+        """At boot, reconcile runs left non-terminal by the previous process.
+        `make dev-electron` SIGKILLs the daemon, so this is a routine path:
+        - queued / running: the driving asyncio task died with the process and
+          can't be re-attached — mark them failed so they don't sit `running`
+          forever and the client shows a terminal state.
+        - waiting_permission: paused at a checkpointed interrupt — leave it;
+          `resume_run` rehydrates state from the DB when the user decides."""
+        try:
+            active = await self.store.list_active_runs()
+        except Exception:
+            log.exception("recover_orphans: failed to list active runs")
+            return
+        failed = 0
+        kept = 0
+        for run in active:
+            status = run.get("status")
+            run_id = run.get("id")
+            if not run_id:
+                continue
+            if status in ("queued", "running"):
+                try:
+                    await self.store.update_run_status(run_id, "failed", completed_at=None)
+                    failed += 1
+                except Exception:
+                    log.exception("recover_orphans: failed to fail run %s", run_id)
+            elif status == "waiting_permission":
+                kept += 1
+        if failed or kept:
+            log.info(
+                "recover_orphans: %d orphaned run(s) marked failed, "
+                "%d waiting_permission run(s) left resumable",
+                failed,
+                kept,
+            )
 
     async def resume_run(
         self,
@@ -260,6 +329,11 @@ class RunCoordinator:
             # already running — caller should cancel + resume, but for
             # MVP we just refuse double-resume.
             return False
+        # Rehydrate per-run state from the DB so a resume after a daemon
+        # restart keeps the original workspace / settings / tier instead of
+        # silently degrading. Unknown run id → refuse.
+        if not await self._hydrate_run_state(run_id):
+            return False
         if run_id not in self._queues:
             # We may be resuming after a daemon restart — recreate the queue.
             self._queues[run_id] = asyncio.Queue(maxsize=2048)
@@ -267,7 +341,7 @@ class RunCoordinator:
             self._drive_run(
                 run_id=run_id,
                 resume_payload=decision,
-                mode="fast",
+                mode=self._modes.get(run_id, "fast"),
             )
         )
         self._tasks[run_id] = task
@@ -359,6 +433,17 @@ class RunCoordinator:
                 # resume path — auto already resolved on the original run;
                 # default to fast on resume (the agent already has state).
                 resolved_mode = "fast"
+
+            # Persist the RESOLVED tier on a fresh run (the row stored the
+            # requested mode at create, e.g. "auto"/"pro"). A later resume —
+            # possibly after a daemon restart — then reads back fast|deep and
+            # continues at the right tier instead of downgrading to fast.
+            self._modes[run_id] = resolved_mode
+            if resume_payload is None:
+                try:
+                    await self.store.update_run_mode(run_id, resolved_mode)
+                except Exception:
+                    log.warning("failed to persist resolved mode for run %s", run_id)
 
             # Build the message list early so we can hand the truncation
             # numbers (turn_count, dropped_history_count) to ContextBuilder
