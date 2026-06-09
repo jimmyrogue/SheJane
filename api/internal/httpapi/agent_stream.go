@@ -43,7 +43,9 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	}
 	messages := agentBodyMessages(body)
 	tools := agentBodyTools(body)
-	mode := llm.NormalizeMode(body.Mode)
+	// Resolve the requested model (id / "auto" / "") to a live provider + the
+	// concrete catalog model id used for billing + records.
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
 	// Prepend the agent_local scene prompt (Layer 0+10 of the prompt
 	// stack: identity + safety). Daemon-side ContextBuilder owns
 	// Layer 20+ (developer instructions, memory, runtime context),
@@ -53,21 +55,20 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	// override the user-facing identity / safety contract.
 	messages = llm.InjectScenePrompt("agent_local", messages)
 	request := llm.ChatRequest{
-		Model:    string(mode),
+		Model:    modelID,
 		Stream:   true,
 		Scene:    "agent_local",
 		Messages: messages,
 		Tools:    tools,
 	}
 
-	provider, model := s.app.Router.Select(mode)
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 	estimatedCredits := s.app.EstimateCredits(request)
 
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
-		Mode:      string(mode),
+		Mode:      modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -83,7 +84,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 		UserID:        user.ID,
 		WalletID:      reservation.WalletID,
 		ReservationID: reservation.ID,
-		Mode:          string(mode),
+		Mode:          modelID,
 		Scene:         "agent_local",
 		Model:         model,
 		Provider:      provider.Name(),
@@ -124,7 +125,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 		inputTokens = llm.EstimateTokens(request.Messages)
 	}
 
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		message := "额度结算失败"
@@ -253,8 +254,10 @@ func writeLLMSSEEvent(w io.Writer, event string, payload map[string]any) error {
 // agentLLMStream. Kept identical so the Python sidecar can switch transports
 // without touching its request builder.
 type agentLLMBody struct {
-	RunID    string `json:"run_id"`
-	Mode     string `json:"mode"`
+	RunID string `json:"run_id"`
+	// Model is the catalog model id, or "auto"/"" for the default. (Replaces
+	// the old fast/deep "mode" — the daemon now forwards the user's model.)
+	Model    string `json:"model"`
 	Messages []struct {
 		Role                  string `json:"role"`
 		Content               string `json:"content"`

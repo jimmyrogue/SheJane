@@ -645,7 +645,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user st
 func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body struct {
 		Goal                 string                  `json:"goal"`
-		Mode                 string                  `json:"mode"`
+		Model                string                  `json:"model"`
 		ClientConversationID string                  `json:"client_conversation_id"`
 		ClientMessageID      string                  `json:"client_message_id"`
 		Attachments          []store.AgentAttachment `json:"attachments"`
@@ -659,7 +659,13 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		writeError(w, http.StatusBadRequest, 40201, "任务不能为空")
 		return
 	}
-	mode := llm.NormalizeMode(body.Mode)
+	// Store the requested model id verbatim ("auto"/""/id). Resolution to a
+	// concrete provider happens at execution via Router.SelectModel; AgentRun.Mode
+	// now carries the model id (the column is reused, not renamed).
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		model = "auto"
+	}
 	history := sanitizeAgentHistory(body.History)
 	now := time.Now().UTC()
 	run := store.AgentRun{
@@ -667,7 +673,7 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		UserID:               user.ID,
 		Origin:               "cloud",
 		Status:               "queued",
-		Mode:                 string(mode),
+		Mode:                 model,
 		Goal:                 body.Goal,
 		GoalSummary:          summarizeAgentGoal(body.Goal, len(body.Attachments)),
 		ClientConversationID: strings.TrimSpace(body.ClientConversationID),
@@ -740,7 +746,7 @@ func (s *Server) agentRunCancel(w http.ResponseWriter, r *http.Request, user sto
 func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body struct {
 		RunID    string `json:"run_id"`
-		Mode     string `json:"mode"`
+		Model    string `json:"model"`
 		Messages []struct {
 			Role                  string `json:"role"`
 			Content               string `json:"content"`
@@ -806,21 +812,20 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 			InputSchema: tool.InputSchema,
 		})
 	}
-	mode := llm.NormalizeMode(body.Mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
 	request := llm.ChatRequest{
-		Model:    string(mode),
+		Model:    modelID,
 		Stream:   false,
 		Scene:    "agent_local",
 		Messages: messages,
 		Tools:    tools,
 	}
-	provider, model := s.app.Router.Select(mode)
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 	estimatedCredits := s.app.EstimateCredits(request)
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
-		Mode:      string(mode),
+		Mode:      modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -835,7 +840,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		UserID:        user.ID,
 		WalletID:      reservation.WalletID,
 		ReservationID: reservation.ID,
-		Mode:          string(mode),
+		Mode:          modelID,
 		Scene:         "agent_local",
 		Model:         model,
 		Provider:      provider.Name(),
@@ -859,7 +864,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		inputTokens = llm.EstimateTokens(request.Messages)
 	}
 	outputTokens := completion.OutputTokens
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Settle failed (e.g. actual > estimate and the overage exceeds
 		// the balance): the reservation is still Reserved, so release it
@@ -1031,9 +1036,8 @@ func (s *Server) loadAgentDocumentContext(ctx context.Context, w io.Writer, user
 }
 
 func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.User, run store.AgentRun, body llm.ChatRequest) {
-	mode := llm.NormalizeMode(body.Model)
-	body.Model = string(mode)
-	provider, model := s.app.Router.Select(mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
+	body.Model = modelID
 	requestID := requestIDFromContext(ctx, s.app.NewRequestID())
 	estimatedCredits := s.app.EstimateCredits(body)
 	reservation, err := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
@@ -1041,7 +1045,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		RequestID:            requestID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -1061,7 +1065,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		ReservationID:        reservation.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 		Scene:                "agent",
 		Model:                model,
 		Provider:             provider.Name(),
@@ -1074,7 +1078,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	_ = s.appendAgentEvent(ctx, w, run.ID, "llm.started", map[string]any{"request_id": requestID, "provider": provider.Name(), "model": model, "mode": string(mode)})
+	_ = s.appendAgentEvent(ctx, w, run.ID, "llm.started", map[string]any{"request_id": requestID, "provider": provider.Name(), "model": model, "mode": modelID})
 	chunks, errs := provider.Stream(ctx, body, model)
 	inputTokens := llm.EstimateTokens(body.Messages)
 	outputTokens := 0
@@ -1097,7 +1101,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.
@@ -1249,9 +1253,8 @@ func (s *Server) documentAsk(w http.ResponseWriter, r *http.Request, user store.
 }
 
 func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user store.User, body llm.ChatRequest) {
-	mode := llm.NormalizeMode(body.Model)
-	body.Model = string(mode)
-	provider, model := s.app.Router.Select(mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
+	body.Model = modelID
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 
 	estimatedCredits := s.app.EstimateCredits(body)
@@ -1260,7 +1263,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		RequestID:            requestID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -1278,7 +1281,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		ReservationID:        reservation.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 		Scene:                body.Scene,
 		Model:                model,
 		Provider:             provider.Name(),
@@ -1320,7 +1323,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.
