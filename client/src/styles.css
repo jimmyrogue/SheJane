@@ -756,6 +756,9 @@ select {
 
 .chat-surface,
 .document-surface {
+  /* Fill the remaining column height below topbar/banners; min-height:0 lets
+   * the inner .messages scroll instead of overflowing the flex item. */
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   padding: clamp(18px, 4vw, 40px) clamp(14px, 5vw, 64px);
@@ -1882,9 +1885,8 @@ select {
 .view-transition {
   /* Block-level grid item: occupies the .app-shell's second column
    * exactly the same way the bare `.workspace` / SkillsView used to.
-   * Explicit height: 100% + min-height: 0 lets nested grid children
-   * (notably .workspace's `grid-template-rows: auto minmax(0, 1fr)
-   * auto auto`) still resolve their middle row. */
+   * Explicit height: 100% + min-height: 0 lets the nested .workspace
+   * flex column resolve its flexible .chat-surface row. */
   height: 100%;
   min-height: 0;
   display: flex;
@@ -3884,11 +3886,18 @@ button:active {
 }
 
 .workspace {
-  display: grid;
+  /* Flex column (not a positional grid): topbar + any number of status
+   * banners sit at their natural height, and .chat-surface takes the rest.
+   * The old `grid-template-rows: auto minmax(0,1fr) auto auto` assumed a
+   * FIXED child order — the moment an offline/credits/email banner was
+   * inserted as the 2nd child, the banner (not the chat) landed in the 1fr
+   * row and ballooned to fill the viewport. Flex + per-child flex-basis is
+   * resilient to however many banners are showing. */
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
   overflow: hidden;
   background: var(--bg-surface);
 }
@@ -3902,6 +3911,7 @@ button:active {
    * margin-left:auto", so a long title can't push the status off the
    * edge and a short title still hugs the left. */
   display: flex;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 45px;
   align-items: center;
@@ -3975,6 +3985,7 @@ button:active {
  * exhausted, etc). Single-line, soft warning palette, dismisses
  * itself when the underlying condition clears (no close button). */
 .status-banner {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
