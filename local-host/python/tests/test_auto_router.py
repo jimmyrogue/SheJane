@@ -115,8 +115,9 @@ async def test_classify_mode_deep_path(monkeypatch) -> None:
     assert reason == "complex multi-step task"
     # Goal must reach the classifier so it can decide on actual content.
     assert b"Refactor" in captured["body"]
-    # And the classifier itself runs in fast mode (cheaper).
-    assert b'"mode":"fast"' in captured["body"]
+    # And the classifier itself runs in fast mode (cheaper). The cloud LLM
+    # endpoint now takes the routing value under the "model" key.
+    assert b'"model":"fast"' in captured["body"]
 
 
 @pytest.mark.asyncio

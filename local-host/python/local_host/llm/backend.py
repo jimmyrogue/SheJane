@@ -234,7 +234,11 @@ class BackendChatModel(BaseChatModel):
     ) -> dict[str, Any]:
         body = {
             "run_id": kwargs.get("run_id", self.run_id),
-            "mode": kwargs.get("mode", self.mode),
+            # The cloud LLM endpoint now routes by model id (flat catalog). We
+            # forward the daemon's current tier value here; the cloud maps an
+            # unknown id (incl. legacy "fast"/"deep"/"auto") to the default
+            # model. Real per-model selection arrives with the client picker.
+            "model": kwargs.get("mode", self.mode),
             "messages": [_message_to_dict(m) for m in messages],
             "tools": list(self.bound_tools),
         }
