@@ -100,6 +100,14 @@ type Config struct {
 	TavilySearchCredits int64
 	ToolGatewayTimeout  time.Duration
 
+	// AgentSpendRateLimitPerMinute is a tighter, dedicated per-user ceiling on
+	// the spend-heavy agent endpoints (LLM + tool execute), layered ON TOP of
+	// the general per-user limit. The web build drives these directly from the
+	// browser (client-orchestrated tool loop), so the client-side step cap can't
+	// be trusted; this bounds a runaway/tampered client server-side. Sized for
+	// legit multi-step agent runs (desktop daemon), tight enough to stop a spin.
+	AgentSpendRateLimitPerMinute int
+
 	// E2B (cloud microVM sandbox) — used by code.execute tool.
 	// E2BAPIKey empty disables code.execute entirely (the gateway
 	// returns a "tool not configured" envelope so the agent gracefully
@@ -183,6 +191,7 @@ func Default() Config {
 		TavilyBaseURL:                 "https://api.tavily.com",
 		TavilySearchCredits:           20,
 		ToolGatewayTimeout:            15 * time.Second,
+		AgentSpendRateLimitPerMinute:  120,
 
 		E2BAPIKey:                       "",
 		E2BBaseURL:                      "https://api.e2b.dev",
@@ -240,6 +249,7 @@ func Load() Config {
 	cfg.DocumentReaperIntervalMinutes = getEnvInt("DOCUMENT_REAPER_INTERVAL_MINUTES", cfg.DocumentReaperIntervalMinutes)
 	cfg.DocumentReaperBatchSize = getEnvInt("DOCUMENT_REAPER_BATCH_SIZE", cfg.DocumentReaperBatchSize)
 	cfg.AgentRunTTLHours = getEnvInt("AGENT_RUN_TTL_HOURS", cfg.AgentRunTTLHours)
+	cfg.AgentSpendRateLimitPerMinute = getEnvInt("AGENT_SPEND_RATE_LIMIT_PER_MINUTE", cfg.AgentSpendRateLimitPerMinute)
 	cfg.TavilyAPIKey = getEnv("TAVILY_API_KEY", cfg.TavilyAPIKey)
 	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)
 	cfg.TavilySearchCredits = getEnvInt64("TAVILY_SEARCH_CREDITS", cfg.TavilySearchCredits)
