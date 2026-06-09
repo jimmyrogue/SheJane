@@ -158,6 +158,11 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
+    # Reconcile runs the previous process left non-terminal (the daemon is
+    # SIGKILLed on every `make dev-electron` restart): fail dead queued/running
+    # runs, leave waiting_permission runs resumable. Without this they sit
+    # `running` forever and the client never sees a terminal state.
+    await coordinator.recover_orphans()
     # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
     # GET response so the client can show "paired Xs ago".
     app.state.cloud_session_updated_at = None
