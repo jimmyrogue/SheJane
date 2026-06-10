@@ -9,7 +9,7 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
-import { ModeSelector } from './ModeSelector'
+import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import { fileIconFor } from '@/shared/files/fileIcons'
@@ -78,6 +78,7 @@ export function Composer({
   listSkills,
   listMcpServers,
   mode,
+  models = [],
   onModeChange,
   projectName,
   onSelectProject,
@@ -122,6 +123,8 @@ export function Composer({
    *  daemon is online. */
   listMcpServers?: () => Promise<McpServerInfo[]>
   mode: ChatMode
+  /** Catalog models for the picker (Auto is always offered on top). */
+  models?: ModelOption[]
   onModeChange: (mode: ChatMode) => void
   /** Project (workspace) currently bound to this chat. When undefined,
    *  the toolbar shows an "add project" button that opens the directory
@@ -426,7 +429,7 @@ export function Composer({
             <IconFolderPlus size={16} aria-hidden="true" />
           </button>
         )}
-        <ModeSelector mode={mode} onChange={onModeChange} disabled={isSending} />
+        <ModeSelector mode={mode} models={models} onChange={onModeChange} disabled={isSending} />
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests
             and screen readers can find it. */}

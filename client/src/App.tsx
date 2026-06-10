@@ -17,6 +17,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   SheJaneAPI,
   type AuthPayload,
+  type ChatModelInfo,
   type UserDocument,
   type WalletBalance,
 } from './shared/api/client'
@@ -90,7 +91,9 @@ const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 // `codeExec: 'off'` from v6 storage so legacy users don't end up
 // silently disabled.
 const agentSettingsStorageKey = 'shejane.agentSettings.v7'
-const chatModeStorageKey = 'shejane.chatMode.v1'
+// v2: the stored value is now 'auto' OR a catalog model id (was the fast/pro
+// enum). The catalog fetch reconciles a stale id back to 'auto'.
+const chatModeStorageKey = 'shejane.chatMode.v2'
 const defaultAgentSettings: Required<AgentSettings> = {
   memory: 'on',
   skills: 'on',
@@ -240,8 +243,10 @@ function readChatMode(): ChatMode {
     return defaultChatMode
   }
   try {
-    const raw = window.localStorage.getItem(chatModeStorageKey)
-    if (raw === 'fast' || raw === 'pro' || raw === 'auto') {
+    const raw = window.localStorage.getItem(chatModeStorageKey)?.trim()
+    // Any non-empty value ('auto' or a model id) is accepted here; the catalog
+    // fetch reconciles an id that's no longer in the catalog back to 'auto'.
+    if (raw) {
       return raw
     }
   } catch {
@@ -326,6 +331,9 @@ function AppContent() {
   // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
   // and until capabilities are fetched / when none are configured.
   const [webTools, setWebTools] = useState<CloudToolDefinition[]>([])
+  // The chat model catalog (GET /api/v1/models), feeding the composer picker.
+  // 'auto' is always offered on top of these.
+  const [models, setModels] = useState<ChatModelInfo[]>([])
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
@@ -464,6 +472,35 @@ function AppContent() {
       })
       .catch(() => {
         if (!cancelled) setWebTools([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, auth?.access_token])
+
+  // Fetch the chat model catalog for the composer picker (both builds — models
+  // apply to local + cloud runs). If the persisted selection is no longer in
+  // the catalog, fall back to 'auto'.
+  useEffect(() => {
+    if (!auth?.access_token) {
+      setModels([])
+      return
+    }
+    let cancelled = false
+    void api
+      .listModels()
+      .then((catalog) => {
+        if (cancelled) return
+        setModels(catalog)
+        setMode((current) => {
+          if (current === 'auto' || catalog.some((m) => m.id === current)) return current
+          const next: ChatMode = 'auto'
+          writeChatMode(next)
+          return next
+        })
+      })
+      .catch(() => {
+        if (!cancelled) setModels([])
       })
     return () => {
       cancelled = true
@@ -2041,6 +2078,7 @@ function AppContent() {
                   : undefined
               }
               mode={mode}
+              models={models}
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
@@ -2154,11 +2192,15 @@ function appendLocalRunEvent(
       message.creditsCost = credits
     }
   }
-  if (event.event_type === 'mode.selected') {
+  // model.selected: when an "auto" run is resolved to a concrete model the
+  // cloud emits this so the UI can badge "Auto → <label>". (Not emitted yet —
+  // auto currently resolves silently to the default model; the task-aware
+  // classifier + event land with Phase 4. Handler is wired so it lights up
+  // automatically when the event ships.)
+  if (event.event_type === 'model.selected') {
     const payload = event.payload ?? {}
-    const resolved = payload.resolved_mode === 'pro' ? 'pro' : 'fast'
     message.runMode = {
-      resolved,
+      resolved: String(payload.label ?? payload.resolved_model_id ?? ''),
       reason: String(payload.reason ?? ''),
     }
   }
