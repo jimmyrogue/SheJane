@@ -22,12 +22,12 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 		t.Fatalf("seeded configs = %d, want 2", len(configs))
 	}
 
-	fastP, fastModel, fastMult, ok := reg.Resolve(llm.ModeFast)
-	if !ok || fastP.Name() != "deepseek-fast" || fastModel != cfg.FastModel || fastMult != 0.1 {
+	fastP, fastModel, fastMult, ok := reg.ResolveModel(SlotChatFast)
+	if !ok || fastP.Name() != "快速" || fastModel != cfg.FastModel || fastMult != 0.1 {
 		t.Fatalf("fast resolve = (%v,%q,%v,%v) want fast cost ratio 0.1", fastP, fastModel, fastMult, ok)
 	}
-	deepP, deepModel, deepMult, ok := reg.Resolve(llm.ModeDeep)
-	if !ok || deepP.Name() != "claude-deep" || deepModel != cfg.DeepModel || deepMult != 1 {
+	deepP, deepModel, deepMult, ok := reg.ResolveModel(SlotChatDeep)
+	if !ok || deepP.Name() != "深度" || deepModel != cfg.DeepModel || deepMult != 1 {
 		t.Fatalf("deep resolve = (%v,%q,%v,%v) want deep cost ratio 1", deepP, deepModel, deepMult, ok)
 	}
 
@@ -148,9 +148,57 @@ func TestResolveHotReloadsAfterInvalidate(t *testing.T) {
 	}
 
 	reg.Invalidate()
-	_, model, mult, ok := reg.Resolve(llm.ModeFast)
+	_, model, mult, ok := reg.ResolveModel(SlotChatFast)
 	if !ok || model != "rotated-model" || mult != 0.5 {
 		t.Fatalf("after invalidate resolve = (%q,%v,%v), want rotated-model/0.5", model, mult, ok)
+	}
+}
+
+func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	reg := New(st, config.Default())
+
+	// Three enabled chat models with distinct priorities + ids (== slots).
+	for _, m := range []store.ModelConfig{
+		{Slot: "chat.lowpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Low", Priority: 10, Enabled: true},
+		{Slot: "chat.toppri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Top", Description: "首选", Priority: 99, Enabled: true},
+		{Slot: "chat.midpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Mid", Priority: 50, Enabled: true},
+		{Slot: "chat.disabled", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Off", Priority: 100, Enabled: false},
+	} {
+		if _, err := st.UpsertModelConfig(ctx, "admin", m); err != nil {
+			t.Fatalf("upsert %s: %v", m.Slot, err)
+		}
+	}
+	reg.Invalidate()
+
+	catalog := reg.ListChatModels()
+	if len(catalog) != 3 {
+		t.Fatalf("catalog len = %d, want 3 (disabled excluded)", len(catalog))
+	}
+	gotOrder := []string{catalog[0].ID, catalog[1].ID, catalog[2].ID}
+	wantOrder := []string{"chat.toppri", "chat.midpri", "chat.lowpri"}
+	for i := range wantOrder {
+		if gotOrder[i] != wantOrder[i] {
+			t.Fatalf("catalog order = %v, want %v (priority desc)", gotOrder, wantOrder)
+		}
+	}
+	if catalog[0].Label != "Top" || catalog[0].Description != "首选" {
+		t.Fatalf("top entry = %+v, want Label=Top Description=首选", catalog[0])
+	}
+
+	if def := reg.DefaultChatModelID(); def != "chat.toppri" {
+		t.Fatalf("DefaultChatModelID = %q, want chat.toppri (highest priority)", def)
+	}
+
+	if _, _, _, ok := reg.ResolveModel("chat.midpri"); !ok {
+		t.Fatal("ResolveModel(chat.midpri) should resolve")
+	}
+	if _, _, _, ok := reg.ResolveModel("chat.disabled"); ok {
+		t.Fatal("ResolveModel(chat.disabled) must NOT resolve (disabled)")
+	}
+	if _, _, _, ok := reg.ResolveModel("chat.unknown"); ok {
+		t.Fatal("ResolveModel(unknown) must NOT resolve")
 	}
 }
 
@@ -178,11 +226,11 @@ func TestSeedFromRealEnvEncryptsKeysAndPicksProviders(t *testing.T) {
 		}
 	}
 
-	fastP, _, _, ok := reg.Resolve(llm.ModeFast)
+	fastP, _, _, ok := reg.ResolveModel(SlotChatFast)
 	if !ok || llm.KindOfProvider(fastP) == llm.ProviderKindMock {
 		t.Fatalf("fast provider should be a real openai-compatible provider, got %v", llm.KindOfProvider(fastP))
 	}
-	deepP, _, _, ok := reg.Resolve(llm.ModeDeep)
+	deepP, _, _, ok := reg.ResolveModel(SlotChatDeep)
 	if !ok || llm.KindOfProvider(deepP) != llm.ProviderKindAnthropic {
 		t.Fatalf("deep provider kind = %v, want anthropic", llm.KindOfProvider(deepP))
 	}

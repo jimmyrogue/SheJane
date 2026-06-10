@@ -1,4 +1,4 @@
-import { IconBolt, IconCheck, IconChevronDown, IconSparkles, IconStars } from '@tabler/icons-react'
+import { IconCheck, IconChevronDown, IconSparkles } from '@tabler/icons-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,32 +8,52 @@ import {
 import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
 
+/** One selectable catalog model (subset of the API's model info). */
+export interface ModelOption {
+  id: string
+  label: string
+  description?: string
+}
+
 /**
- * Composer-attached model picker. Three options, one always-visible:
- *   Auto — daemon's classifier picks fast or pro at run start
- *   Fast — cheaper / lower-latency tier (good for simple tasks)
- *   Pro  — higher-quality tier (better at multi-step reasoning)
+ * Composer-attached model picker. "Auto" is always offered (the Go LLM router
+ * picks the default / highest-priority model — a task-aware classifier is a
+ * later upgrade); below it sit the enabled catalog models fetched from
+ * GET /api/v1/models. The selected value is `'auto'` or a concrete model id.
  *
- * The concrete model each tier maps to is decided by the Go LLM router
- * (api/internal/modelreg/) at runtime, not here — so this UI must NOT
- * name specific providers or model versions. The auto-router picks
- * between "fast" and "deep" mode strings; the cloud resolves those.
- *
- * Auto is the default so the user doesn't have to think about cost on
- * every send. The actual model the auto-router resolves to is surfaced
- * on the response message via a small "Auto → Pro" badge.
+ * On the web build with no models configured, only Auto shows. The concrete
+ * provider/model mapping lives in the Go registry, never here.
  */
 export function ModeSelector({
   mode,
+  models,
   onChange,
   disabled = false,
 }: {
   mode: ChatMode
+  models: ModelOption[]
   onChange: (next: ChatMode) => void
   disabled?: boolean
 }) {
   const { t } = useI18n()
-  const current = MODE_META[mode]
+  const autoLabel = t('composer.mode.auto')
+  const selectedLabel = mode === 'auto' ? autoLabel : (models.find((m) => m.id === mode)?.label ?? autoLabel)
+
+  const renderItem = (value: ChatMode, label: string, hint?: string) => (
+    <DropdownMenuItem
+      key={value}
+      className={`composer-mode-item${value === mode ? ' is-active' : ''}`}
+      onSelect={() => onChange(value)}
+    >
+      <div className="composer-mode-item-text">
+        <span className="composer-mode-item-label">{label}</span>
+        {hint ? <span className="composer-mode-item-hint">{hint}</span> : null}
+      </div>
+      {value === mode ? (
+        <IconCheck size={14} aria-hidden="true" className="composer-mode-item-check" />
+      ) : null}
+    </DropdownMenuItem>
+  )
 
   return (
     <DropdownMenu>
@@ -42,57 +62,17 @@ export function ModeSelector({
           type="button"
           className="composer-mode-trigger"
           aria-label={t('composer.mode.menuLabel')}
-          title={t(current.hintKey)}
           disabled={disabled}
         >
-          <current.Icon size={14} aria-hidden="true" />
-          <span className="composer-mode-trigger-label">{t(current.labelKey)}</span>
+          <IconSparkles size={14} aria-hidden="true" />
+          <span className="composer-mode-trigger-label">{selectedLabel}</span>
           <IconChevronDown size={12} aria-hidden="true" className="composer-mode-trigger-chevron" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        // `align="end"` anchors the popup's RIGHT edge to the trigger's
-        // right edge — the popup extends to the LEFT from there. The
-        // earlier `align="start"` parked the popup's left edge at the
-        // trigger's left edge, so the dropdown sat partly under the
-        // chevron and extended rightward, which felt cramped.
-        align="end"
-        // Slight right-side overhang so the popup doesn't perfectly
-        // line up with the trigger edge — a tiny tail past the right
-        // edge gives a clearer parent-child relationship.
-        alignOffset={4}
-        sideOffset={8}
-        className="composer-mode-menu"
-      >
-        {(['auto', 'fast', 'pro'] as const).map((value) => {
-          const meta = MODE_META[value]
-          const isActive = value === mode
-          return (
-            <DropdownMenuItem
-              key={value}
-              className={`composer-mode-item${isActive ? ' is-active' : ''}`}
-              onSelect={() => onChange(value)}
-            >
-              {/* No leading icon — keeps the menu narrow. Active state
-               *  is signalled by a trailing check on the right, matching
-               *  the macOS / Claude-style picker convention. */}
-              <div className="composer-mode-item-text">
-                <span className="composer-mode-item-label">{t(meta.labelKey)}</span>
-                <span className="composer-mode-item-hint">{t(meta.hintKey)}</span>
-              </div>
-              {isActive ? (
-                <IconCheck size={14} aria-hidden="true" className="composer-mode-item-check" />
-              ) : null}
-            </DropdownMenuItem>
-          )
-        })}
+      <DropdownMenuContent align="end" alignOffset={4} sideOffset={8} className="composer-mode-menu">
+        {renderItem('auto', autoLabel, t('composer.mode.autoHint'))}
+        {models.map((m) => renderItem(m.id, m.label, m.description))}
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
-
-const MODE_META = {
-  auto: { Icon: IconSparkles, labelKey: 'composer.mode.auto', hintKey: 'composer.mode.autoHint' },
-  fast: { Icon: IconBolt, labelKey: 'composer.mode.fast', hintKey: 'composer.mode.fastHint' },
-  pro: { Icon: IconStars, labelKey: 'composer.mode.pro', hintKey: 'composer.mode.proHint' },
-} as const

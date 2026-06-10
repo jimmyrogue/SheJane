@@ -70,7 +70,59 @@ func TestStoreConformance(t *testing.T) {
 			t.Run("email verification", func(t *testing.T) { conformEmailVerification(t, f.newStore(t)) })
 			t.Run("signup credits idempotent", func(t *testing.T) { conformSignupCredits(t, f.newStore(t)) })
 			t.Run("subscription lifecycle", func(t *testing.T) { conformSubscription(t, f.newStore(t)) })
+			t.Run("model catalog fields", func(t *testing.T) { conformModelCatalog(t, f.newStore(t)) })
 		})
+	}
+}
+
+// conformModelCatalog locks the flat-catalog columns (description, priority)
+// round-tripping identically through both store impls — the dual-impl drift
+// guard for the model-catalog refactor.
+func conformModelCatalog(t *testing.T, s Store) {
+	ctx := context.Background()
+	saved, err := s.UpsertModelConfig(ctx, "", ModelConfig{
+		Slot:             "chat.deepseek-v4",
+		Capability:       "chat",
+		ProviderKind:     "deepseek-v4",
+		DisplayName:      "DeepSeek V4",
+		Description:      "通用快速模型",
+		ModelName:        "deepseek-v4",
+		CreditMultiplier: 1,
+		Priority:         50,
+		Enabled:          true,
+	})
+	if err != nil {
+		t.Fatalf("UpsertModelConfig: %v", err)
+	}
+	if saved.Description != "通用快速模型" || saved.Priority != 50 {
+		t.Fatalf("upsert returned description=%q priority=%d, want 通用快速模型/50", saved.Description, saved.Priority)
+	}
+
+	got, err := s.GetModelConfig(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("GetModelConfig: %v", err)
+	}
+	if got.Description != "通用快速模型" || got.Priority != 50 {
+		t.Fatalf("get returned description=%q priority=%d, want 通用快速模型/50", got.Description, got.Priority)
+	}
+
+	// Update priority/description and confirm persistence.
+	got.Priority = 10
+	got.Description = "降级"
+	if _, err := s.UpsertModelConfig(ctx, "", got); err != nil {
+		t.Fatalf("UpsertModelConfig (update): %v", err)
+	}
+	reloaded, err := s.GetModelConfig(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("GetModelConfig (reload): %v", err)
+	}
+	if reloaded.Priority != 10 || reloaded.Description != "降级" {
+		t.Fatalf("reloaded description=%q priority=%d, want 降级/10", reloaded.Description, reloaded.Priority)
+	}
+
+	list, err := s.ListModelConfigs(ctx, "chat")
+	if err != nil || len(list) == 0 {
+		t.Fatalf("ListModelConfigs: %v (len=%d)", err, len(list))
 	}
 }
 

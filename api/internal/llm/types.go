@@ -2,13 +2,6 @@ package llm
 
 import "context"
 
-type Mode string
-
-const (
-	ModeFast Mode = "fast"
-	ModeDeep Mode = "deep"
-)
-
 type Message struct {
 	Role             string     `json:"role"`
 	Content          string     `json:"content"`

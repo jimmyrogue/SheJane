@@ -318,7 +318,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await coordinator.start_run(
             goal=goal,
             workspace_path=body.workspace_path,
-            mode=body.mode,
+            # The daemon's internal `mode` plumbing now carries the model id
+            # (or "auto"); resolution happens cloud-side.
+            mode=body.model,
             history=body.history or [],
             parent_run_id=body.parent_run_id,
             settings=body.settings,

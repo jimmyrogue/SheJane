@@ -464,7 +464,7 @@ func TestDocumentAskRejectsForeignAndExpiredDocuments(t *testing.T) {
 func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 	server := newTestServer(t)
 
-	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs", strings.NewReader(`{"goal":"hello","mode":"fast"}`))
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs", strings.NewReader(`{"goal":"hello","model":"chat.fast"}`))
 	unauth.Header.Set("Content-Type", "application/json")
 	unauthRecorder := httptest.NewRecorder()
 	server.ServeHTTP(unauthRecorder, unauth)
@@ -474,8 +474,8 @@ func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 
 	token := registerAndToken(t, server)
 	before := billingBalance(t, server, token)
-	run := createAgentRun(t, server, token, `{"goal":"总结今天的计划","mode":"fast","client_conversation_id":"conv-agent","client_message_id":"msg-agent"}`)
-	if run.Status != "queued" || run.Mode != "fast" || run.ID == "" {
+	run := createAgentRun(t, server, token, `{"goal":"总结今天的计划","model":"chat.fast","client_conversation_id":"conv-agent","client_message_id":"msg-agent"}`)
+	if run.Status != "queued" || run.Mode != "chat.fast" || run.ID == "" {
 		t.Fatalf("agent run = %#v", run)
 	}
 
@@ -512,10 +512,48 @@ func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 	}
 }
 
+// Auto resolution: POST /models/resolve returns a concrete model (default
+// when the classifier output is unusable), and an "auto" agent run emits a
+// model.selected event before the LLM turn so the client can badge it.
+func TestAutoModelResolveEndpointAndRunEvent(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndToken(t, server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/models/resolve", strings.NewReader(`{"goal":"帮我写周报"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resolved apiResponse[resolvedModelPayload]
+	if err := json.Unmarshal(rec.Body.Bytes(), &resolved); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	// Mock classifier output is unusable → default = highest-priority chat.fast.
+	if resolved.Data.ModelID != "chat.fast" || resolved.Data.Label != "快速" {
+		t.Fatalf("resolved = %+v, want chat.fast/快速", resolved.Data)
+	}
+
+	// An "auto" cloud run resolves once and surfaces model.selected.
+	run := createAgentRun(t, server, token, `{"goal":"帮我写周报","model":"auto"}`)
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	body := streamRecorder.Body.String()
+	for _, want := range []string{`model.selected`, `"resolved_model_id":"chat.fast"`, `"label":"快速"`, "run.completed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("auto run stream missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	server := newTestServer(t)
 
-	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(`{"mode":"fast","messages":[{"role":"user","content":"hello"}]}`))
+	unauth := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(`{"model":"chat.fast","messages":[{"role":"user","content":"hello"}]}`))
 	unauth.Header.Set("Content-Type", "application/json")
 	unauthRecorder := httptest.NewRecorder()
 	server.ServeHTTP(unauthRecorder, unauth)
@@ -525,7 +563,7 @@ func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 
 	token := registerAndToken(t, server)
 	before := billingBalance(t, server, token)
-	body := `{"run_id":"local-run-1","mode":"fast","messages":[{"role":"user","content":"hello from local harness"}],"tools":[{"name":"time.now","description":"time","inputSchema":{"type":"object"},"isReadOnly":true,"isDestructive":false,"isConcurrencySafe":true,"maxResultSize":4096,"permissionPolicy":"allow"}]}`
+	body := `{"run_id":"local-run-1","model":"chat.fast","messages":[{"role":"user","content":"hello from local harness"}],"tools":[{"name":"time.now","description":"time","inputSchema":{"type":"object"},"isReadOnly":true,"isDestructive":false,"isConcurrencySafe":true,"maxResultSize":4096,"permissionPolicy":"allow"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -729,7 +767,7 @@ func TestAgentLLMGatewayReturnsPaymentRequiredWhenSettlementExceedsBalance(t *te
 	server := NewServer(service)
 
 	token := registerAndToken(t, server)
-	body := `{"run_id":"local-run-1","mode":"fast","messages":[{"role":"user","content":"hello"}],"tools":[]}`
+	body := `{"run_id":"local-run-1","model":"chat.fast","messages":[{"role":"user","content":"hello"}],"tools":[]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -779,7 +817,7 @@ func TestAgentRunWithDocumentAttachmentEmitsDocumentToolEvents(t *testing.T) {
 	}
 	completeDocument(t, server, token, upload.Document.ID)
 
-	run := createAgentRun(t, server, token, `{"goal":"这份文档最大的风险是什么？","mode":"fast","attachments":[{"type":"document","document_id":"`+upload.Document.ID+`","name":"brief.docx"}]}`)
+	run := createAgentRun(t, server, token, `{"goal":"这份文档最大的风险是什么？","model":"chat.fast","attachments":[{"type":"document","document_id":"`+upload.Document.ID+`","name":"brief.docx"}]}`)
 	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
 	stream.Header.Set("Authorization", "Bearer "+token)
 	streamRecorder := httptest.NewRecorder()
@@ -798,7 +836,7 @@ func TestAgentRunWithDocumentAttachmentEmitsDocumentToolEvents(t *testing.T) {
 func TestAgentRunCanBeCanceledBeforeStream(t *testing.T) {
 	server := newTestServer(t)
 	token := registerAndToken(t, server)
-	run := createAgentRun(t, server, token, `{"goal":"稍后再做","mode":"fast"}`)
+	run := createAgentRun(t, server, token, `{"goal":"稍后再做","model":"chat.fast"}`)
 
 	cancel := httptest.NewRequest(http.MethodPost, "/api/v1/agent/runs/"+run.ID+"/cancel", nil)
 	cancel.Header.Set("Authorization", "Bearer "+token)
@@ -829,7 +867,7 @@ func TestAdminCanObserveAgentRunsReadOnly(t *testing.T) {
 	})
 	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
 	userToken := registerAndTokenWithEmail(t, server, "agent-user@example.com")
-	run := createAgentRun(t, server, userToken, `{"goal":"给我一个摘要，但不要在后台暴露完整正文","mode":"fast"}`)
+	run := createAgentRun(t, server, userToken, `{"goal":"给我一个摘要，但不要在后台暴露完整正文","model":"chat.fast"}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/agent-runs", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken)

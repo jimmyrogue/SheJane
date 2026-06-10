@@ -1,7 +1,6 @@
 """Custom middleware for phases not covered by built-ins:
 
   P1 input_guard         — InputGuardMiddleware
-  P2 routing (fast/deep) — FastDeepRouterMiddleware
   P4 reflection          — ReflectMiddleware
   P6 memory writeback    — MemoryWritebackMiddleware
   P9 output guard        — OutputGuardMiddleware
@@ -15,10 +14,8 @@ from .memory_writeback import MemoryWritebackMiddleware
 from .output_guard import OutputGuardMiddleware
 from .plan_first import PlanFirstMiddleware
 from .reflect import ReflectMiddleware
-from .router import FastDeepRouterMiddleware
 
 __all__ = [
-    "FastDeepRouterMiddleware",
     "InputGuardMiddleware",
     "MemoryWritebackMiddleware",
     "OutputGuardMiddleware",

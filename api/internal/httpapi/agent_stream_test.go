@@ -11,7 +11,7 @@ import (
 func TestAgentLLMStreamRequiresAuth(t *testing.T) {
 	server := newTestServer(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(`{"mode":"fast","messages":[{"role":"user","content":"hi"}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(`{"model":"chat.fast","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, req)
@@ -24,7 +24,7 @@ func TestAgentLLMStreamRejectsEmptyMessages(t *testing.T) {
 	server := newTestServer(t)
 	token := registerAndToken(t, server)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(`{"mode":"fast","messages":[]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(`{"model":"chat.fast","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestAgentLLMStreamEmitsDeltaUsageAndDoneAndSettlesCredits(t *testing.T) {
 	token := registerAndToken(t, server)
 	before := billingBalance(t, server, token)
 
-	body := `{"run_id":"local-run-stream-1","mode":"fast","messages":[{"role":"user","content":"hello stream"}]}`
+	body := `{"run_id":"local-run-stream-1","model":"chat.fast","messages":[{"role":"user","content":"hello stream"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")

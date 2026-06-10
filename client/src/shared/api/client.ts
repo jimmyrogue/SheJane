@@ -166,15 +166,13 @@ interface APIResponse<T> {
   data: T
 }
 
-/** The cloud LLM router only knows `fast` and `deep`. The UI exposes
- *  `auto` / `fast` / `pro`. The cloud chat endpoints have no auto
- *  classifier of their own, so `auto` degrades to `fast` here (the
- *  classifier lives in the local daemon — when the user is on the
- *  cloud fallback path, we'd rather charge them less). `pro` maps to
- *  the cheaper internal name `deep`. */
-function toCloudMode(mode: ChatMode): 'fast' | 'deep' {
-  if (mode === 'pro') return 'deep'
-  return 'fast'
+/** One selectable chat model from GET /api/v1/models (the user-facing
+ *  catalog; no provider/key details). */
+export interface ChatModelInfo {
+  id: string
+  label: string
+  description?: string
+  priority: number
 }
 
 export class SheJaneAPI implements ChatAPI {
@@ -342,7 +340,7 @@ export class SheJaneAPI implements ChatAPI {
     const response = await this.authedFetch('/api/v1/chat/completions', {
       method: 'POST',
       body: JSON.stringify({
-        model: toCloudMode(request.mode),
+        model: request.mode || 'auto',
         stream: true,
         scene: request.scene,
         client_conversation_id: request.clientConversationId,
@@ -382,7 +380,7 @@ export class SheJaneAPI implements ChatAPI {
   async createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun> {
     return this.post<AgentRun>('/api/v1/agent/runs', {
       goal: request.goal,
-      mode: toCloudMode(request.mode),
+      model: request.mode || 'auto',
       client_conversation_id: request.clientConversationId,
       client_message_id: request.clientMessageId,
       attachments: request.attachments,
@@ -417,7 +415,7 @@ export class SheJaneAPI implements ChatAPI {
     const response = await this.authedFetch(`/api/v1/documents/${documentID}/ask`, {
       method: 'POST',
       body: JSON.stringify({
-        model: toCloudMode(request.mode),
+        model: request.mode || 'auto',
         question: request.question,
       }),
     }, true)
@@ -455,6 +453,13 @@ export class SheJaneAPI implements ChatAPI {
   // These drive the SAME Go endpoints the daemon uses; see cloudAgentLoop.ts.
   // ---------------------------------------------------------------------
 
+  /** GET /api/v1/models → the user-facing chat model catalog (enabled,
+   *  priority desc). Feeds the composer model picker. */
+  async listModels(): Promise<ChatModelInfo[]> {
+    const data = await this.get<{ models: ChatModelInfo[] }>('/api/v1/models')
+    return data.models ?? []
+  }
+
   /** GET /agent/tool-capabilities → which cloud tools are configured. */
   async agentToolCapabilities(): Promise<Record<string, ToolCapability>> {
     const data = await this.get<{ tools: Record<string, ToolCapability> }>('/api/v1/agent/tool-capabilities')
@@ -474,7 +479,7 @@ export class SheJaneAPI implements ChatAPI {
         method: 'POST',
         body: JSON.stringify({
           run_id: body.runId,
-          mode: toCloudMode(body.mode),
+          model: body.mode || 'auto',
           messages: body.messages.map((m) => ({
             role: m.role,
             content: m.content,
@@ -589,13 +594,44 @@ export class SheJaneAPI implements ChatAPI {
       ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
       { role: 'user', content: input.goal },
     ]
+    // "Auto" resolves ONCE before the loop (the cloud's task-aware
+    // classifier), so every turn of this run uses the same concrete model.
+    // The synthetic model.selected event feeds the same handler pipeline the
+    // daemon path uses, lighting up the "Auto → <label>" badge. Resolution
+    // failure is non-fatal: stay on "auto" and the LLM endpoint maps it to
+    // the default model per turn.
+    let model = input.mode
+    if (!model || model === 'auto') {
+      try {
+        const resolved = await this.post<{ model_id: string; label: string; reason: string }>(
+          '/api/v1/models/resolve',
+          { goal: input.goal },
+          true,
+        )
+        if (resolved.model_id) {
+          model = resolved.model_id
+          handlers.onEvent?.({
+            event_type: 'model.selected',
+            run_id: input.runId,
+            payload: {
+              requested_model: 'auto',
+              resolved_model_id: resolved.model_id,
+              label: resolved.label,
+              reason: resolved.reason,
+            },
+          })
+        }
+      } catch {
+        // Keep 'auto'; the cloud resolves it to the default model per turn.
+      }
+    }
     const deps: CloudAgentLoopDeps = {
       streamLLM: (body, loopHandlers, loopSignal) => this.streamAgentLLM(body, loopHandlers, loopSignal),
       executeTool: (req) => this.executeAgentTool(req),
     }
     const result = await runCloudAgentLoop(deps, {
       runId: input.runId,
-      mode: input.mode,
+      mode: model,
       messages,
       tools: input.tools,
       onDelta: handlers.onDelta,

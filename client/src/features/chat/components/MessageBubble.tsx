@@ -308,11 +308,7 @@ export function MessageBubble({
             (() => {
               const badge = (
                 <span className="message-meta-mode">
-                  {t('composer.mode.autoBadge', {
-                    resolved: t(
-                      message.runMode.resolved === 'pro' ? 'composer.mode.pro' : 'composer.mode.fast',
-                    ),
-                  })}
+                  {t('composer.mode.autoBadge', { resolved: message.runMode.resolved })}
                 </span>
               )
               // Wrap in a real Radix tooltip ONLY when the auto router

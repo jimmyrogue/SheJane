@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,12 +50,14 @@ const (
 	maxMarkupFactor     = 3.0
 )
 
-// SlotForMode maps a chat routing mode to its model_configs slot.
-func SlotForMode(mode llm.Mode) string {
-	if mode == llm.ModeDeep {
-		return SlotChatDeep
-	}
-	return SlotChatFast
+// ChatModelInfo is the user-facing catalog entry for a selectable chat model.
+// No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
+// GET /api/v1/models and fed to the Auto router as candidate context.
+type ChatModelInfo struct {
+	ID          string `json:"id"` // == slot (stable model id)
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Priority    int    `json:"priority"`
 }
 
 type resolved struct {
@@ -76,6 +80,7 @@ type Registry struct {
 	mu                sync.RWMutex
 	bySlot            map[string]resolved
 	bySlotImg         map[string]imageResolved
+	chatCatalog       []ChatModelInfo // enabled chat models, priority desc (cache)
 	markup            float64
 	currencyPerCredit float64
 	// Admin-tunable per-call cost levers (billing.levers row), refreshed on
@@ -170,18 +175,41 @@ func (r *Registry) Invalidate() {
 	r.mu.Unlock()
 }
 
-// Resolve returns the provider/model/multiplier for a chat mode. ok is false
-// when no enabled config exists for the slot (caller should fall back).
-func (r *Registry) Resolve(mode llm.Mode) (llm.Provider, string, float64, bool) {
-	slot := SlotForMode(mode)
+// ResolveModel returns the provider/model/multiplier for a catalog model id
+// (== slot). ok is false when no enabled config has that id (caller falls back
+// to DefaultChatModelID).
+func (r *Registry) ResolveModel(modelID string) (llm.Provider, string, float64, bool) {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()
-	res, ok := r.bySlot[slot]
+	res, ok := r.bySlot[modelID]
 	r.mu.RUnlock()
 	if !ok {
 		return nil, "", 1, false
 	}
 	return res.provider, res.model, res.multiplier, true
+}
+
+// ListChatModels returns the user-facing catalog (enabled chat models, highest
+// priority first). Safe copy; no secrets.
+func (r *Registry) ListChatModels() []ChatModelInfo {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]ChatModelInfo, len(r.chatCatalog))
+	copy(out, r.chatCatalog)
+	return out
+}
+
+// DefaultChatModelID is the highest-priority enabled chat model id — used when
+// a request omits a model or names an unknown one. Empty if the catalog is empty.
+func (r *Registry) DefaultChatModelID() string {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.chatCatalog) == 0 {
+		return ""
+	}
+	return r.chatCatalog[0].ID
 }
 
 func (r *Registry) refreshIfStale(ctx context.Context) {
@@ -215,6 +243,7 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 	}
 	next := map[string]resolved{}
 	nextImg := map[string]imageResolved{}
+	catalog := make([]ChatModelInfo, 0)
 	for _, cfg := range configs {
 		if !cfg.Enabled {
 			continue
@@ -232,9 +261,28 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			model:      cfg.ModelName,
 			multiplier: normalizeMultiplier(cfg.CreditMultiplier),
 		}
+		label := cfg.DisplayName
+		if strings.TrimSpace(label) == "" {
+			label = cfg.Slot
+		}
+		catalog = append(catalog, ChatModelInfo{
+			ID:          cfg.Slot,
+			Label:       label,
+			Description: cfg.Description,
+			Priority:    cfg.Priority,
+		})
 	}
+	// Highest priority first; stable id tiebreak. Drives the picker order,
+	// Auto-router preference, and DefaultChatModelID.
+	sort.Slice(catalog, func(i, j int) bool {
+		if catalog[i].Priority != catalog[j].Priority {
+			return catalog[i].Priority > catalog[j].Priority
+		}
+		return catalog[i].ID < catalog[j].ID
+	})
 	r.bySlot = next
 	r.bySlotImg = nextImg
+	r.chatCatalog = catalog
 	r.stamp = stamp
 	r.loadedAt = time.Now()
 }
@@ -286,7 +334,9 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 			return llm.NewUnconfiguredProvider(name, "anthropic API key missing")
 		}
 		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
-		return llm.NewAnthropicProvider(apiKey, version)
+		// BaseURL supports proxy/gateway deployments; params.max_tokens caps the
+		// response (0 → provider default). Both are per-row admin knobs.
+		return llm.NewAnthropicProviderWithConfig(apiKey, version, cfg.BaseURL, intParam(cfg.Params, "max_tokens", 0))
 	default:
 		if apiKey == "" || cfg.BaseURL == "" {
 			return llm.NewUnconfiguredProvider(name, "missing API key or base URL")
@@ -320,6 +370,29 @@ func stringParam(params map[string]any, key string, fallback string) string {
 	}
 	if v, ok := params[key].(string); ok && strings.TrimSpace(v) != "" {
 		return v
+	}
+	return fallback
+}
+
+// intParam reads an integer param. JSON numbers decode as float64; admin input
+// may also arrive as a string. Non-positive / unparseable → fallback.
+func intParam(params map[string]any, key string, fallback int) int {
+	if params == nil {
+		return fallback
+	}
+	switch v := params[key].(type) {
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
 	}
 	return fallback
 }

@@ -51,6 +51,20 @@ func ProfileForProviderKind(kind ProviderKind) ProviderProfile {
 	}
 }
 
+// KindSupportsToolCalls reports whether a provider kind can do tool-calling
+// turns (implements CompleteWithTools). The model catalog only admits
+// tool-capable chat models (design decision: no tool-incapable rows), so the
+// admin write path validates against this. All four built-in kinds qualify
+// today; the guard exists for future kinds added without tool support.
+func KindSupportsToolCalls(kind ProviderKind) bool {
+	switch kind {
+	case ProviderKindDeepSeekV4, ProviderKindOpenAICompatible, ProviderKindAnthropic, ProviderKindMock:
+		return true
+	default:
+		return false
+	}
+}
+
 func NormalizeProviderKind(kind string) ProviderKind {
 	switch ProviderKind(strings.ToLower(strings.TrimSpace(kind))) {
 	case ProviderKindDeepSeekV4:

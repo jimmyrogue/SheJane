@@ -33,10 +33,10 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
-from .agent.auto_router import classify_mode
 from .agent.builder import build_agent
 from .config import Settings, get_settings
 from .event_translator import translate
+from .llm.resolve import resolve_auto_model
 from .observability import build_callbacks
 from .store.sqlite import LocalStore
 
@@ -397,53 +397,46 @@ class RunCoordinator:
         goal = self._goals.get(run_id, "")
 
         try:
-            # Resolve the public-facing mode (auto/fast/pro) into the
-            # internal fast/deep value the rest of the stack expects.
-            #
-            # auto: ask a cheap fast-model classifier; emit mode.selected
-            #       so the UI can show "Auto → Pro · <reason>".
-            # pro:  wire alias for "deep"; the daemon always sends "deep"
-            #       to the cloud LLM router, which is what picks the
-            #       actual provider/model for each tier.
-            # fast / deep: pass through unchanged.
-            resolved_mode = mode
-            resolved_reason = ""
             settings = get_settings()
-            if mode == "auto" and resume_payload is None:
-                resolved_mode, resolved_reason = await classify_mode(
-                    goal=goal,
-                    history=self._histories.get(run_id, []),
+            # The cloud owns model resolution (flat catalog). The daemon
+            # forwards the user's selection; "pro" stays a wire alias for the
+            # legacy "deep" tier for any old caller.
+            resolved_model = "deep" if mode == "pro" else mode
+
+            # "Auto": ask the cloud's task-aware classifier ONCE per run which
+            # catalog model fits this goal, and surface model.selected so the
+            # UI badges "Auto → <label> · reason". On any failure we stay on
+            # "auto" — the cloud LLM endpoint maps that to the default model
+            # per turn, so the run still works (just without the badge).
+            if resume_payload is None and resolved_model in ("auto", ""):
+                picked = await resolve_auto_model(
+                    goal,
                     cloud_base_url=settings.cloud_base_url,
                     cloud_token=settings.cloud_token,
                     run_id=run_id,
                 )
-                await self._enqueue(
-                    queue,
-                    run_id,
-                    "mode.selected",
-                    {
-                        "requested_mode": "auto",
-                        "resolved_mode": "pro" if resolved_mode == "deep" else "fast",
-                        "reason": resolved_reason,
-                    },
-                )
-            elif mode == "pro":
-                resolved_mode = "deep"
-            elif mode == "auto":
-                # resume path — auto already resolved on the original run;
-                # default to fast on resume (the agent already has state).
-                resolved_mode = "fast"
+                if picked:
+                    resolved_model = picked["model_id"]
+                    await self._enqueue(
+                        queue,
+                        run_id,
+                        "model.selected",
+                        {
+                            "requested_model": "auto",
+                            "resolved_model_id": picked["model_id"],
+                            "label": picked["label"],
+                            "reason": picked["reason"],
+                        },
+                    )
 
-            # Persist the RESOLVED tier on a fresh run (the row stored the
-            # requested mode at create, e.g. "auto"/"pro"). A later resume —
-            # possibly after a daemon restart — then reads back fast|deep and
-            # continues at the right tier instead of downgrading to fast.
-            self._modes[run_id] = resolved_mode
+            # Persist the resolved value so a resume (incl. after a daemon
+            # restart) continues with the same model instead of a default.
+            self._modes[run_id] = resolved_model
             if resume_payload is None:
                 try:
-                    await self.store.update_run_mode(run_id, resolved_mode)
+                    await self.store.update_run_mode(run_id, resolved_model)
                 except Exception:
-                    log.warning("failed to persist resolved mode for run %s", run_id)
+                    log.warning("failed to persist model for run %s", run_id)
 
             # Build the message list early so we can hand the truncation
             # numbers (turn_count, dropped_history_count) to ContextBuilder
@@ -498,7 +491,7 @@ class RunCoordinator:
                 agent_store=self.agent_store,
                 workspace_root=workspace_path,
                 run_id=run_id,
-                mode=resolved_mode,
+                mode=resolved_model,
                 task_goal=goal,
                 turn_count=turn_count,
                 dropped_history_count=dropped_history_count,

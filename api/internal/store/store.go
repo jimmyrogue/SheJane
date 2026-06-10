@@ -227,21 +227,28 @@ type AuditLog struct {
 // APIKeyEncrypted holds ciphertext (or plaintext when no CONFIG_ENCRYPTION_KEY
 // is set); it is never serialized to API clients.
 type ModelConfig struct {
-	ID               string         `json:"id"`
-	Slot             string         `json:"slot"`
-	Capability       string         `json:"capability"`
-	ProviderKind     string         `json:"provider_kind"`
-	DisplayName      string         `json:"display_name"`
-	BaseURL          string         `json:"base_url"`
-	ModelName        string         `json:"model_name"`
-	APIKeyEncrypted  string         `json:"-"`
-	CreditMultiplier float64        `json:"credit_multiplier"`
-	PricePerCallCNY  float64        `json:"price_per_call_cny"`
-	Enabled          bool           `json:"enabled"`
-	Params           map[string]any `json:"params"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	UpdatedBy        string         `json:"updated_by,omitempty"`
+	ID           string `json:"id"`
+	Slot         string `json:"slot"`
+	Capability   string `json:"capability"`
+	ProviderKind string `json:"provider_kind"`
+	DisplayName  string `json:"display_name"`
+	// Description: user-facing blurb shown in the model-picker tooltip and fed
+	// to the Auto router as a "what this model is good for" hint.
+	Description      string  `json:"description,omitempty"`
+	BaseURL          string  `json:"base_url"`
+	ModelName        string  `json:"model_name"`
+	APIKeyEncrypted  string  `json:"-"`
+	CreditMultiplier float64 `json:"credit_multiplier"`
+	PricePerCallCNY  float64 `json:"price_per_call_cny"`
+	Enabled          bool    `json:"enabled"`
+	// Priority orders the catalog (higher first), breaks Auto-router ties, and
+	// selects the default model (highest-priority enabled chat row) when none
+	// or an unknown model is requested. Admin-configured.
+	Priority  int            `json:"priority"`
+	Params    map[string]any `json:"params"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	UpdatedBy string         `json:"updated_by,omitempty"`
 }
 
 // AppSetting is a generic global key/value knob (value is raw JSON text).

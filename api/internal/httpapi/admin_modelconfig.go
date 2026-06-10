@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/coldflame/shejane/api/internal/llm"
 	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
@@ -19,6 +20,8 @@ type adminModelConfigView struct {
 	Capability       string         `json:"capability"`
 	ProviderKind     string         `json:"provider_kind"`
 	DisplayName      string         `json:"display_name"`
+	Description      string         `json:"description"`
+	Priority         int            `json:"priority"`
 	BaseURL          string         `json:"base_url"`
 	ModelName        string         `json:"model_name"`
 	CreditMultiplier float64        `json:"credit_multiplier"`
@@ -39,6 +42,8 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 		Capability:       c.Capability,
 		ProviderKind:     c.ProviderKind,
 		DisplayName:      c.DisplayName,
+		Description:      c.Description,
+		Priority:         c.Priority,
 		BaseURL:          c.BaseURL,
 		ModelName:        c.ModelName,
 		CreditMultiplier: c.CreditMultiplier,
@@ -50,10 +55,14 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 }
 
 type modelConfigInput struct {
-	Slot             string         `json:"slot"`
-	Capability       string         `json:"capability"`
-	ProviderKind     string         `json:"provider_kind"`
-	DisplayName      string         `json:"display_name"`
+	Slot         string `json:"slot"`
+	Capability   string `json:"capability"`
+	ProviderKind string `json:"provider_kind"`
+	DisplayName  string `json:"display_name"`
+	// Description / Priority are pointers so a partial PATCH that omits them
+	// preserves the stored value (rather than zeroing the seeded catalog data).
+	Description      *string        `json:"description"`
+	Priority         *int           `json:"priority"`
 	BaseURL          string         `json:"base_url"`
 	ModelName        string         `json:"model_name"`
 	CreditMultiplier float64        `json:"credit_multiplier"`
@@ -129,12 +138,26 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		writeError(w, http.StatusBadRequest, 40201, "slot 与 provider_kind 必填")
 		return store.ModelConfig{}, false
 	}
+	// Reject unknown kinds outright (typo guard — an unrecognized kind would
+	// silently run as openai-compatible).
+	kind := llm.NormalizeProviderKind(providerKind)
+	if kind == "" {
+		writeError(w, http.StatusBadRequest, 40201, "未知的 provider_kind（支持 deepseek-v4 / openai-compatible / anthropic / mock）")
+		return store.ModelConfig{}, false
+	}
 	capability := strings.TrimSpace(input.Capability)
 	if capability == "" {
 		capability = existing.Capability
 	}
 	if capability == "" {
 		capability = "chat"
+	}
+	// The chat catalog only admits tool-capable models (design decision #3) —
+	// a model that silently drops tool calls would degrade the agent to plain
+	// chat with no error.
+	if capability == modelreg.CapabilityChat && !llm.KindSupportsToolCalls(kind) {
+		writeError(w, http.StatusBadRequest, 40201, "该 provider_kind 不支持工具调用，无法加入聊天模型目录")
+		return store.ModelConfig{}, false
 	}
 	multiplier := input.CreditMultiplier
 	if multiplier <= 0 {
@@ -157,11 +180,22 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 	if strings.TrimSpace(input.APIKey) != "" {
 		apiKeyEncrypted = s.app.Registry.Cipher().Encrypt(input.APIKey)
 	}
+	// Catalog fields: a partial PATCH (pointer nil) preserves the stored value.
+	description := existing.Description
+	if input.Description != nil {
+		description = strings.TrimSpace(*input.Description)
+	}
+	priority := existing.Priority
+	if input.Priority != nil {
+		priority = *input.Priority
+	}
 	return store.ModelConfig{
 		Slot:             slot,
 		Capability:       capability,
 		ProviderKind:     providerKind,
 		DisplayName:      strings.TrimSpace(input.DisplayName),
+		Description:      description,
+		Priority:         priority,
 		BaseURL:          strings.TrimSpace(input.BaseURL),
 		ModelName:        strings.TrimSpace(input.ModelName),
 		APIKeyEncrypted:  apiKeyEncrypted,

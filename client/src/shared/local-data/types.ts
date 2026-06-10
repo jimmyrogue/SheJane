@@ -1,10 +1,9 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
-/** User-visible model mode picked in the composer. The daemon resolves
- *  'auto' via an LLM classifier (see local_host/agent/auto_router.py).
- *  'pro' is the UI label for the cheaper internal "deep" wire value —
- *  the Go LLM router still speaks fast/deep, so the daemon translates
- *  pro→deep before calling the cloud. */
-export type ChatMode = 'auto' | 'fast' | 'pro'
+/** The model the user picked in the composer: the sentinel `'auto'` (the Go
+ *  LLM router resolves it to the default / highest-priority model) or a
+ *  concrete catalog model id from GET /api/v1/models. The `string & {}` keeps
+ *  `'auto'` autocompletion while allowing any model id. */
+export type ChatMode = 'auto' | (string & {})
 export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
 
 export interface AgentQuestionChoice {
@@ -110,7 +109,8 @@ export interface ChatMessage {
    *  the auto-router decided. Absent when the user picked fast/pro
    *  manually (no need to repeat what's in the composer). */
   runMode?: {
-    resolved: 'fast' | 'pro'
+    /** The concrete model id the cloud resolved an "auto" run to. */
+    resolved: string
     reason: string
   }
 }

@@ -119,7 +119,7 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 	if err := registry.EnsureSeed(context.Background()); err != nil {
 		log.Printf("app: model config seed failed (falling back to env config): %v", err)
 	}
-	router.SetResolver(registry.Resolve)
+	router.SetModelResolver(registry.ResolveModel, registry.DefaultChatModelID)
 
 	// E2B is optional: empty API key disables code.execute entirely
 	// (no panic, the gateway returns a "tool not configured" envelope).
@@ -377,20 +377,22 @@ func (a *App) markupFactor() float64 {
 	return a.Registry.Markup()
 }
 
+// EstimateCredits estimates the up-front reservation. request.Model carries the
+// resolved catalog model id (set by the entrypoint via Router.SelectModel), so
+// the multiplier is the per-model ratio × global markup.
 func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
 	tokens := llm.EstimateTokens(request.Messages)
-	mode := llm.NormalizeMode(request.Model)
-	credits := applyMultiplier(int64(tokens), a.Router.MultiplierFor(mode)*a.markupFactor())
+	credits := applyMultiplier(int64(tokens), a.Router.MultiplierForModel(request.Model)*a.markupFactor())
 	if credits < 300 {
 		return 300
 	}
 	return credits
 }
 
-// UsageCredits converts settled token usage to credits using the per-model
-// cost ratio for the mode times the global markup, minimum 1 credit.
-func (a *App) UsageCredits(mode llm.Mode, totalTokens int) int64 {
-	credits := applyMultiplier(int64(totalTokens), a.Router.MultiplierFor(mode)*a.markupFactor())
+// UsageCredits converts settled token usage to credits using the per-model cost
+// ratio (by model id) times the global markup, minimum 1 credit.
+func (a *App) UsageCredits(modelID string, totalTokens int) int64 {
+	credits := applyMultiplier(int64(totalTokens), a.Router.MultiplierForModel(modelID)*a.markupFactor())
 	if credits < 1 {
 		return 1
 	}

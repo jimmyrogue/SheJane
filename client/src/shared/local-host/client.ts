@@ -173,9 +173,9 @@ export async function createLocalRun(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
     parentRunId?: string
     settings?: AgentSettings
-    /** UI mode the user picked. Daemon resolves 'auto' via classifier,
-     *  treats 'pro' as alias for internal 'deep'. Omitted → daemon
-     *  default ('auto'). */
+    /** The model the user picked: 'auto' or a catalog model id. The daemon
+     *  forwards it to the cloud, which resolves 'auto'/unknown → default.
+     *  Omitted → daemon default ('auto'). */
     mode?: ChatMode
   },
   config: LocalHostConfig,
@@ -224,7 +224,7 @@ export async function createLocalRun(
       history: input.history ?? [],
       parent_run_id: input.parentRunId || undefined,
       settings,
-      mode: input.mode,
+      model: input.mode,
     }),
   })
   return decodeLocalResponse<LocalRun>(response)

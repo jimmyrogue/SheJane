@@ -22,6 +22,7 @@ import (
 	"github.com/coldflame/shejane/api/internal/billing"
 	"github.com/coldflame/shejane/api/internal/documents"
 	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
 
@@ -106,6 +107,10 @@ func (s *Server) routes() {
 	// is untrusted (see rateLimitUser / agentSpendLimiter).
 	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMGateway)))
 	s.mux.HandleFunc("POST /api/v1/agent/llm/stream", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMStream)))
+	s.mux.HandleFunc("GET /api/v1/models", s.requireAuth(s.listModels))
+	// Resolve "auto" → a concrete model id (one classifier turn). Unbilled but
+	// platform-paid, so it sits behind the spend limiter like the LLM routes.
+	s.mux.HandleFunc("POST /api/v1/models/resolve", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.resolveModel)))
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
 	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentToolExecute)))
 	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.imagesGenerations)))
@@ -413,6 +418,49 @@ func (s *Server) balance(w http.ResponseWriter, r *http.Request, user store.User
 	writeJSON(w, http.StatusOK, apiResponse[billing.WalletSnapshot]{Code: 0, Message: "ok", Data: wallet.Snapshot()})
 }
 
+// listModels returns the user-facing chat model catalog (enabled, priority
+// desc). The client picker + the Auto router consume it. No secrets.
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request, _ store.User) {
+	models := s.app.Registry.ListChatModels()
+	if models == nil {
+		models = []modelreg.ChatModelInfo{}
+	}
+	writeJSON(w, http.StatusOK, apiResponse[modelsPayload]{Code: 0, Message: "ok", Data: modelsPayload{Models: models}})
+}
+
+type modelsPayload struct {
+	Models []modelreg.ChatModelInfo `json:"models"`
+}
+
+// resolveModel runs the Auto classifier once for a goal and returns the
+// concrete model to use. The daemon calls this at run start; the web tool
+// loop calls it before its first turn. Always succeeds with SOME model when
+// the catalog is non-empty (classifier failures degrade to the default).
+func (s *Server) resolveModel(w http.ResponseWriter, r *http.Request, _ store.User) {
+	var body struct {
+		Goal string `json:"goal"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	resolved, reason := s.app.ResolveAutoModel(r.Context(), body.Goal)
+	if resolved.ID == "" {
+		writeError(w, http.StatusServiceUnavailable, 50301, "模型目录为空，无法解析 Auto")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[resolvedModelPayload]{Code: 0, Message: "ok", Data: resolvedModelPayload{
+		ModelID: resolved.ID,
+		Label:   resolved.Label,
+		Reason:  reason,
+	}})
+}
+
+type resolvedModelPayload struct {
+	ModelID string `json:"model_id"`
+	Label   string `json:"label"`
+	Reason  string `json:"reason"`
+}
+
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request, user store.User) {
 	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
 	if err != nil {
@@ -629,7 +677,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request, user st
 func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body struct {
 		Goal                 string                  `json:"goal"`
-		Mode                 string                  `json:"mode"`
+		Model                string                  `json:"model"`
 		ClientConversationID string                  `json:"client_conversation_id"`
 		ClientMessageID      string                  `json:"client_message_id"`
 		Attachments          []store.AgentAttachment `json:"attachments"`
@@ -643,7 +691,13 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		writeError(w, http.StatusBadRequest, 40201, "任务不能为空")
 		return
 	}
-	mode := llm.NormalizeMode(body.Mode)
+	// Store the requested model id verbatim ("auto"/""/id). Resolution to a
+	// concrete provider happens at execution via Router.SelectModel; AgentRun.Mode
+	// now carries the model id (the column is reused, not renamed).
+	model := strings.TrimSpace(body.Model)
+	if model == "" {
+		model = "auto"
+	}
 	history := sanitizeAgentHistory(body.History)
 	now := time.Now().UTC()
 	run := store.AgentRun{
@@ -651,7 +705,7 @@ func (s *Server) agentCreateRun(w http.ResponseWriter, r *http.Request, user sto
 		UserID:               user.ID,
 		Origin:               "cloud",
 		Status:               "queued",
-		Mode:                 string(mode),
+		Mode:                 model,
 		Goal:                 body.Goal,
 		GoalSummary:          summarizeAgentGoal(body.Goal, len(body.Attachments)),
 		ClientConversationID: strings.TrimSpace(body.ClientConversationID),
@@ -724,7 +778,7 @@ func (s *Server) agentRunCancel(w http.ResponseWriter, r *http.Request, user sto
 func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body struct {
 		RunID    string `json:"run_id"`
-		Mode     string `json:"mode"`
+		Model    string `json:"model"`
 		Messages []struct {
 			Role                  string `json:"role"`
 			Content               string `json:"content"`
@@ -790,21 +844,20 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 			InputSchema: tool.InputSchema,
 		})
 	}
-	mode := llm.NormalizeMode(body.Mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
 	request := llm.ChatRequest{
-		Model:    string(mode),
+		Model:    modelID,
 		Stream:   false,
 		Scene:    "agent_local",
 		Messages: messages,
 		Tools:    tools,
 	}
-	provider, model := s.app.Router.Select(mode)
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 	estimatedCredits := s.app.EstimateCredits(request)
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
-		Mode:      string(mode),
+		Mode:      modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -819,7 +872,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		UserID:        user.ID,
 		WalletID:      reservation.WalletID,
 		ReservationID: reservation.ID,
-		Mode:          string(mode),
+		Mode:          modelID,
 		Scene:         "agent_local",
 		Model:         model,
 		Provider:      provider.Name(),
@@ -843,7 +896,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		inputTokens = llm.EstimateTokens(request.Messages)
 	}
 	outputTokens := completion.OutputTokens
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Settle failed (e.g. actual > estimate and the overage exceeds
 		// the balance): the reservation is still Reserved, so release it
@@ -973,8 +1026,24 @@ func (s *Server) executeAgentRun(w io.Writer, r *http.Request, user store.User, 
 		_ = s.appendAgentEvent(ctx, w, run.ID, "skill.selected", map[string]any{"skill": "direct-answer", "reason": "no_tool_required"})
 	}
 
+	// "Auto" resolves ONCE per run via the task-aware classifier (unbilled,
+	// degrades to the default model on any failure) and is surfaced as a
+	// model.selected event so the client can badge "Auto → <label> · reason".
+	model := run.Mode
+	if model == "" || model == "auto" {
+		if resolved, reason := s.app.ResolveAutoModel(ctx, run.Goal); resolved.ID != "" {
+			model = resolved.ID
+			_ = s.appendAgentEvent(ctx, w, run.ID, "model.selected", map[string]any{
+				"requested_model":   "auto",
+				"resolved_model_id": resolved.ID,
+				"label":             resolved.Label,
+				"reason":            reason,
+			})
+		}
+	}
+
 	request := llm.ChatRequest{
-		Model:                run.Mode,
+		Model:                model,
 		Stream:               true,
 		Scene:                "agent",
 		ClientConversationID: run.ClientConversationID,
@@ -1015,9 +1084,8 @@ func (s *Server) loadAgentDocumentContext(ctx context.Context, w io.Writer, user
 }
 
 func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.User, run store.AgentRun, body llm.ChatRequest) {
-	mode := llm.NormalizeMode(body.Model)
-	body.Model = string(mode)
-	provider, model := s.app.Router.Select(mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
+	body.Model = modelID
 	requestID := requestIDFromContext(ctx, s.app.NewRequestID())
 	estimatedCredits := s.app.EstimateCredits(body)
 	reservation, err := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
@@ -1025,7 +1093,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		RequestID:            requestID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -1045,7 +1113,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		ReservationID:        reservation.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 		Scene:                "agent",
 		Model:                model,
 		Provider:             provider.Name(),
@@ -1058,7 +1126,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	_ = s.appendAgentEvent(ctx, w, run.ID, "llm.started", map[string]any{"request_id": requestID, "provider": provider.Name(), "model": model, "mode": string(mode)})
+	_ = s.appendAgentEvent(ctx, w, run.ID, "llm.started", map[string]any{"request_id": requestID, "provider": provider.Name(), "model": model, "mode": modelID})
 	chunks, errs := provider.Stream(ctx, body, model)
 	inputTokens := llm.EstimateTokens(body.Messages)
 	outputTokens := 0
@@ -1081,7 +1149,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.
@@ -1233,9 +1301,8 @@ func (s *Server) documentAsk(w http.ResponseWriter, r *http.Request, user store.
 }
 
 func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user store.User, body llm.ChatRequest) {
-	mode := llm.NormalizeMode(body.Model)
-	body.Model = string(mode)
-	provider, model := s.app.Router.Select(mode)
+	provider, model, modelID := s.app.Router.SelectModel(body.Model)
+	body.Model = modelID
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
 
 	estimatedCredits := s.app.EstimateCredits(body)
@@ -1244,7 +1311,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		RequestID:            requestID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 	})
 	if err != nil {
 		if billing.IsInsufficientCredits(err) {
@@ -1262,7 +1329,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		ReservationID:        reservation.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
-		Mode:                 string(mode),
+		Mode:                 modelID,
 		Scene:                body.Scene,
 		Model:                model,
 		Provider:             provider.Name(),
@@ -1304,7 +1371,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(mode, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.
@@ -1465,28 +1532,28 @@ type adminProviderStatus struct {
 }
 
 func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user store.User) {
-	fastProvider, fastModel := s.app.Router.Select(llm.ModeFast)
-	deepProvider, deepModel := s.app.Router.Select(llm.ModeDeep)
-	deepKind := llm.KindOfProvider(deepProvider)
-	statuses := []adminProviderStatus{
-		{
-			Mode:             string(llm.ModeFast),
-			Provider:         fastProvider.Name(),
-			Kind:             string(llm.KindOfProvider(fastProvider)),
-			BaseURL:          s.app.Config.FastProviderBaseURL,
-			Model:            fastModel,
-			Mock:             s.app.Config.MockLLM || s.app.Config.FastProviderAPIKey == "",
-			APIKeyConfigured: s.app.Config.FastProviderAPIKey != "",
-		},
-		{
-			Mode:             string(llm.ModeDeep),
-			Provider:         deepProvider.Name(),
-			Kind:             string(deepKind),
-			BaseURL:          deepProviderBaseURL(deepKind == llm.ProviderKindAnthropic, s.app.Config.DeepProviderBaseURL),
-			Model:            deepModel,
-			Mock:             s.app.Config.MockLLM || (s.app.Config.AnthropicAPIKey == "" && s.app.Config.DeepProviderAPIKey == ""),
-			APIKeyConfigured: s.app.Config.AnthropicAPIKey != "" || s.app.Config.DeepProviderAPIKey != "",
-		},
+	// One status row per enabled model in the catalog (flat catalog — no more
+	// fixed fast/deep tiers). `Mode` carries the model id (slot).
+	configs, err := s.app.Store.ListModelConfigs(r.Context(), "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取模型配置失败")
+		return
+	}
+	statuses := make([]adminProviderStatus, 0, len(configs))
+	for _, cfg := range configs {
+		if !cfg.Enabled {
+			continue
+		}
+		kind := llm.NormalizeProviderKind(cfg.ProviderKind)
+		statuses = append(statuses, adminProviderStatus{
+			Mode:             cfg.Slot,
+			Provider:         cfg.DisplayName,
+			Kind:             string(kind),
+			BaseURL:          cfg.BaseURL,
+			Model:            cfg.ModelName,
+			Mock:             kind == llm.ProviderKindMock,
+			APIKeyConfigured: strings.TrimSpace(cfg.APIKeyEncrypted) != "",
+		})
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]adminProviderStatus]{Code: 0, Message: "ok", Data: statuses})
 }
