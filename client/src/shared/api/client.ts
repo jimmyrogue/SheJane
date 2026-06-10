@@ -594,13 +594,44 @@ export class SheJaneAPI implements ChatAPI {
       ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
       { role: 'user', content: input.goal },
     ]
+    // "Auto" resolves ONCE before the loop (the cloud's task-aware
+    // classifier), so every turn of this run uses the same concrete model.
+    // The synthetic model.selected event feeds the same handler pipeline the
+    // daemon path uses, lighting up the "Auto → <label>" badge. Resolution
+    // failure is non-fatal: stay on "auto" and the LLM endpoint maps it to
+    // the default model per turn.
+    let model = input.mode
+    if (!model || model === 'auto') {
+      try {
+        const resolved = await this.post<{ model_id: string; label: string; reason: string }>(
+          '/api/v1/models/resolve',
+          { goal: input.goal },
+          true,
+        )
+        if (resolved.model_id) {
+          model = resolved.model_id
+          handlers.onEvent?.({
+            event_type: 'model.selected',
+            run_id: input.runId,
+            payload: {
+              requested_model: 'auto',
+              resolved_model_id: resolved.model_id,
+              label: resolved.label,
+              reason: resolved.reason,
+            },
+          })
+        }
+      } catch {
+        // Keep 'auto'; the cloud resolves it to the default model per turn.
+      }
+    }
     const deps: CloudAgentLoopDeps = {
       streamLLM: (body, loopHandlers, loopSignal) => this.streamAgentLLM(body, loopHandlers, loopSignal),
       executeTool: (req) => this.executeAgentTool(req),
     }
     const result = await runCloudAgentLoop(deps, {
       runId: input.runId,
-      mode: input.mode,
+      mode: model,
       messages,
       tools: input.tools,
       onDelta: handlers.onDelta,

@@ -95,6 +95,31 @@ describe('chat store', () => {
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
   })
 
+  it('model.selected sets the Auto badge (runMode) from label + reason', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-modelsel')
+    const api: ChatAPI = {
+      createAgentRun: async () => ({ id: 'run-auto', status: 'queued', mode: 'auto' }),
+      streamAgentRun: async (_runID, handlers) => {
+        // The cloud run executor resolves "auto" once and emits this before
+        // the LLM turn.
+        handlers.onEvent?.({
+          event_type: 'model.selected',
+          payload: { requested_model: 'auto', resolved_model_id: 'chat.deep', label: '深度', reason: '需要推理' },
+        })
+        handlers.onDelta('好的')
+        return { requestId: 'req-a', inputTokens: 1, outputTokens: 2, creditsCost: 3 }
+      },
+      runCloudToolLoop: async () => {
+        throw new Error('not used')
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({ content: '分析一下', mode: 'auto', scene: 'chat' })
+
+    expect(conversation.messages[1].runMode).toEqual({ resolved: '深度', reason: '需要推理' })
+  })
+
   it('routes to the cloud tool loop (not the single-completion run) when cloudTools are provided', async () => {
     const localData = new LocalConversationStore('shejane-chat-test-toolloop')
     let createCalled = false

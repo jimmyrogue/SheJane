@@ -100,6 +100,16 @@ export function createChatStore(deps: ChatStoreDeps) {
             input.onConversationUpdate?.(cloneConversation(conversation))
           },
           onEvent: (event: AgentRunEvent) => {
+            // "Auto → <label>" badge: emitted once per run by the cloud run
+            // executor, or synthesized by the web tool loop after resolving.
+            if (event.event_type === 'model.selected') {
+              const payload = event.payload ?? {}
+              assistantMessage.runMode = {
+                resolved: String(payload.label ?? payload.resolved_model_id ?? ''),
+                reason: String(payload.reason ?? ''),
+              }
+              input.onConversationUpdate?.(cloneConversation(conversation))
+            }
             const item = timelineItem(event, t)
             if (item) {
               assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), item]
