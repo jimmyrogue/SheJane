@@ -36,6 +36,7 @@ from langgraph.types import Command
 from .agent.builder import build_agent
 from .config import Settings, get_settings
 from .event_translator import translate
+from .llm.resolve import resolve_auto_model
 from .observability import build_callbacks
 from .store.sqlite import LocalStore
 
@@ -397,16 +398,38 @@ class RunCoordinator:
 
         try:
             settings = get_settings()
-            # The cloud LLM endpoint now owns model resolution (flat catalog):
-            # it maps "auto" / "" / an unknown id to the default model. So the
-            # daemon FORWARDS the user's selection verbatim — no local fast/deep
-            # classifier (it used to make an extra billed LLM call here, now
-            # redundant). "pro" stays a wire alias for the legacy "deep" tier
-            # for any old caller; everything else (a model id, or "auto") passes
-            # straight through to the cloud.
+            # The cloud owns model resolution (flat catalog). The daemon
+            # forwards the user's selection; "pro" stays a wire alias for the
+            # legacy "deep" tier for any old caller.
             resolved_model = "deep" if mode == "pro" else mode
 
-            # Persist the forwarded value so a resume (incl. after a daemon
+            # "Auto": ask the cloud's task-aware classifier ONCE per run which
+            # catalog model fits this goal, and surface model.selected so the
+            # UI badges "Auto → <label> · reason". On any failure we stay on
+            # "auto" — the cloud LLM endpoint maps that to the default model
+            # per turn, so the run still works (just without the badge).
+            if resume_payload is None and resolved_model in ("auto", ""):
+                picked = await resolve_auto_model(
+                    goal,
+                    cloud_base_url=settings.cloud_base_url,
+                    cloud_token=settings.cloud_token,
+                    run_id=run_id,
+                )
+                if picked:
+                    resolved_model = picked["model_id"]
+                    await self._enqueue(
+                        queue,
+                        run_id,
+                        "model.selected",
+                        {
+                            "requested_model": "auto",
+                            "resolved_model_id": picked["model_id"],
+                            "label": picked["label"],
+                            "reason": picked["reason"],
+                        },
+                    )
+
+            # Persist the resolved value so a resume (incl. after a daemon
             # restart) continues with the same model instead of a default.
             self._modes[run_id] = resolved_model
             if resume_payload is None:

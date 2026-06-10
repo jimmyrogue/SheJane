@@ -24,3 +24,23 @@ def _disable_mcp_disk_scan_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     SHEJANE_LOCAL_MCP_SERVERS is consulted.
     """
     monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "off")
+
+
+@pytest.fixture(autouse=True)
+def _disable_cloud_auto_resolve_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No-op the cloud Auto-model resolution in every test.
+
+    Runs created with model="auto" (the schema default) fire one POST to
+    {cloud}/api/v1/models/resolve at run start. Tests patch httpx at the
+    module-global boundary (`local_host.llm.backend.httpx.AsyncClient` IS
+    the shared httpx module), so that extra request would land in their
+    sequence-scripted fake transports and shift the scripts. Returning None
+    keeps the run on "auto" (the cloud maps it to the default model per
+    turn). Tests that exercise resolution re-patch this themselves (see
+    test_model_resolve.py).
+    """
+
+    async def _noop(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("local_host.runs.resolve_auto_model", _noop)
