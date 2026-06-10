@@ -398,6 +398,15 @@ class RunCoordinator:
 
         try:
             settings = get_settings()
+            # Mark the run as started FIRST — before model resolution and the
+            # (slow) agent build. The client treats run.started as "the daemon
+            # accepted this run"; emitting it late opened a window where a
+            # quick cancel produced a stream with run.canceled but no
+            # run.started (flaked test_cancel_midflight on slow CI runners).
+            if resume_payload is None:
+                await self.store.update_run_status(run_id, "running")
+                await self._enqueue(queue, run_id, "run.started", {"goal": goal})
+
             # The cloud owns model resolution (flat catalog). The daemon
             # forwards the user's selection; "pro" stays a wire alias for the
             # legacy "deep" tier for any old caller.
@@ -520,8 +529,8 @@ class RunCoordinator:
                         len(kept_messages),
                         dropped_history_count,
                     )
-                await self.store.update_run_status(run_id, "running")
-                await self._enqueue(queue, run_id, "run.started", {"goal": goal})
+                # run.started + the "running" status were already emitted at
+                # the top of the try block (before resolution/agent build).
 
             # Per-turn usage accumulator. A single turn can make several
             # internal LLM calls (multi-step tool runs), each emitting one
