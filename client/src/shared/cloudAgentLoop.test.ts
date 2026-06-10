@@ -86,6 +86,81 @@ describe('runCloudAgentLoop', () => {
     expect(result.hitStepCap).toBe(false)
   })
 
+  it('does not duplicate generated images when the final model reply already includes them', async () => {
+    const imageURL = 'https://cdn.example.com/cat.png'
+    const streamLLM = vi
+      .fn()
+      .mockResolvedValueOnce(
+        turn({
+          content: '我来画一只猫',
+          toolCalls: [{ id: 'c1', name: 'image.generate', arguments: { prompt: 'a cat' } }],
+          finishReason: 'tool_calls',
+        }),
+      )
+      .mockImplementationOnce(async (_body, handlers: { onDelta: (delta: string) => void }) => {
+        handlers.onDelta(`画好了\n\n![cat](${imageURL})`)
+        return turn({ content: `画好了\n\n![cat](${imageURL})`, finishReason: 'stop' })
+      })
+
+    const executeTool = vi.fn().mockResolvedValue({
+      ok: true,
+      content: '已生成 1 张图片',
+      data: { images: [{ url: imageURL }] },
+    } satisfies CloudToolResult)
+    const deltas: string[] = []
+
+    await runCloudAgentLoop(
+      { streamLLM, executeTool },
+      {
+        runId: 'run-x',
+        mode: 'fast',
+        messages: [{ role: 'user', content: '画一只猫' }],
+        tools: [WEB_TOOL_DEFINITIONS['image.generate']],
+        onDelta: (d) => deltas.push(d),
+      },
+    )
+
+    expect(countOccurrences(deltas.join(''), imageURL)).toBe(1)
+  })
+
+  it('appends generated images after the final text when the model omits them', async () => {
+    const imageURL = 'https://cdn.example.com/cat.png'
+    const streamLLM = vi
+      .fn()
+      .mockResolvedValueOnce(
+        turn({
+          toolCalls: [{ id: 'c1', name: 'image.generate', arguments: { prompt: 'a cat' } }],
+          finishReason: 'tool_calls',
+        }),
+      )
+      .mockImplementationOnce(async (_body, handlers: { onDelta: (delta: string) => void }) => {
+        handlers.onDelta('画好了')
+        return turn({ content: '画好了', finishReason: 'stop' })
+      })
+
+    const executeTool = vi.fn().mockResolvedValue({
+      ok: true,
+      content: '已生成 1 张图片',
+      data: { images: [{ url: imageURL }] },
+    } satisfies CloudToolResult)
+    const deltas: string[] = []
+
+    await runCloudAgentLoop(
+      { streamLLM, executeTool },
+      {
+        runId: 'run-x',
+        mode: 'fast',
+        messages: [{ role: 'user', content: '画一只猫' }],
+        tools: [WEB_TOOL_DEFINITIONS['image.generate']],
+        onDelta: (d) => deltas.push(d),
+      },
+    )
+
+    const output = deltas.join('')
+    expect(countOccurrences(output, imageURL)).toBe(1)
+    expect(output.indexOf('画好了')).toBeLessThan(output.indexOf(`![image.generate](${imageURL})`))
+  })
+
   it('runs multiple tool calls in one turn concurrently', async () => {
     const streamLLM = vi
       .fn()
@@ -181,6 +256,10 @@ describe('webToolsFromCapabilities', () => {
     expect(webToolsFromCapabilities({})).toEqual([])
   })
 })
+
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1
+}
 
 describe('imageUrlsFromResult', () => {
   it('extracts image urls from a tool result', () => {

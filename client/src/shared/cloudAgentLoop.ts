@@ -114,6 +114,7 @@ export async function runCloudAgentLoop(
   let inputTokens = 0
   let outputTokens = 0
   let requestId = ''
+  const pendingGeneratedImageURLs: string[] = []
 
   for (let step = 0; step < maxSteps; step += 1) {
     throwIfAborted(params.signal)
@@ -128,6 +129,7 @@ export async function runCloudAgentLoop(
     requestId = turn.requestId || requestId
 
     if (turn.toolCalls.length === 0) {
+      appendMissingGeneratedImages(params.onDelta, pendingGeneratedImageURLs, turn.content)
       return { requestId, creditsCost, inputTokens, outputTokens, steps: step + 1, hitStepCap: false }
     }
 
@@ -153,11 +155,7 @@ export async function runCloudAgentLoop(
     )
 
     for (const { call, result } of results) {
-      // Inline any generated images so they render in the bubble immediately,
-      // even before the model's closing message references them.
-      for (const url of imageUrlsFromResult(result)) {
-        params.onDelta(`\n\n![${call.name}](${url})\n`)
-      }
+      appendUnique(pendingGeneratedImageURLs, imageUrlsFromResult(result))
       messages.push({
         role: 'tool',
         toolCallId: call.id,
@@ -169,6 +167,7 @@ export async function runCloudAgentLoop(
 
   // Ran out of steps with tools still pending. Caller decides how to surface;
   // we return hitStepCap so it can append a note.
+  appendMissingGeneratedImages(params.onDelta, pendingGeneratedImageURLs, '')
   return { requestId, creditsCost, inputTokens, outputTokens, steps: maxSteps, hitStepCap: true }
 }
 
@@ -184,6 +183,26 @@ export function imageUrlsFromResult(result: CloudToolResult): string[] {
     }
   }
   return urls
+}
+
+function appendMissingGeneratedImages(
+  onDelta: (delta: string) => void,
+  imageURLs: string[],
+  finalContent: string,
+): void {
+  for (const url of imageURLs) {
+    if (!finalContent.includes(url)) {
+      onDelta(`\n\n![image.generate](${url})\n`)
+    }
+  }
+}
+
+function appendUnique(target: string[], values: string[]): void {
+  for (const value of values) {
+    if (!target.includes(value)) {
+      target.push(value)
+    }
+  }
 }
 
 function toolRequestedEvent(
