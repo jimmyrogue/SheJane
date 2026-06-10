@@ -22,11 +22,11 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 		t.Fatalf("seeded configs = %d, want 2", len(configs))
 	}
 
-	fastP, fastModel, fastMult, ok := reg.Resolve(llm.ModeFast)
+	fastP, fastModel, fastMult, ok := reg.ResolveModel(SlotChatFast)
 	if !ok || fastP.Name() != "快速" || fastModel != cfg.FastModel || fastMult != 0.1 {
 		t.Fatalf("fast resolve = (%v,%q,%v,%v) want fast cost ratio 0.1", fastP, fastModel, fastMult, ok)
 	}
-	deepP, deepModel, deepMult, ok := reg.Resolve(llm.ModeDeep)
+	deepP, deepModel, deepMult, ok := reg.ResolveModel(SlotChatDeep)
 	if !ok || deepP.Name() != "深度" || deepModel != cfg.DeepModel || deepMult != 1 {
 		t.Fatalf("deep resolve = (%v,%q,%v,%v) want deep cost ratio 1", deepP, deepModel, deepMult, ok)
 	}
@@ -148,7 +148,7 @@ func TestResolveHotReloadsAfterInvalidate(t *testing.T) {
 	}
 
 	reg.Invalidate()
-	_, model, mult, ok := reg.Resolve(llm.ModeFast)
+	_, model, mult, ok := reg.ResolveModel(SlotChatFast)
 	if !ok || model != "rotated-model" || mult != 0.5 {
 		t.Fatalf("after invalidate resolve = (%q,%v,%v), want rotated-model/0.5", model, mult, ok)
 	}
@@ -226,11 +226,11 @@ func TestSeedFromRealEnvEncryptsKeysAndPicksProviders(t *testing.T) {
 		}
 	}
 
-	fastP, _, _, ok := reg.Resolve(llm.ModeFast)
+	fastP, _, _, ok := reg.ResolveModel(SlotChatFast)
 	if !ok || llm.KindOfProvider(fastP) == llm.ProviderKindMock {
 		t.Fatalf("fast provider should be a real openai-compatible provider, got %v", llm.KindOfProvider(fastP))
 	}
-	deepP, _, _, ok := reg.Resolve(llm.ModeDeep)
+	deepP, _, _, ok := reg.ResolveModel(SlotChatDeep)
 	if !ok || llm.KindOfProvider(deepP) != llm.ProviderKindAnthropic {
 		t.Fatalf("deep provider kind = %v, want anthropic", llm.KindOfProvider(deepP))
 	}

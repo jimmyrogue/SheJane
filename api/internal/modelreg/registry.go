@@ -50,14 +50,6 @@ const (
 	maxMarkupFactor     = 3.0
 )
 
-// SlotForMode maps a chat routing mode to its model_configs slot.
-func SlotForMode(mode llm.Mode) string {
-	if mode == llm.ModeDeep {
-		return SlotChatDeep
-	}
-	return SlotChatFast
-}
-
 // ChatModelInfo is the user-facing catalog entry for a selectable chat model.
 // No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
 // GET /api/v1/models and fed to the Auto router as candidate context.
@@ -183,23 +175,9 @@ func (r *Registry) Invalidate() {
 	r.mu.Unlock()
 }
 
-// Resolve returns the provider/model/multiplier for a chat mode. ok is false
-// when no enabled config exists for the slot (caller should fall back).
-func (r *Registry) Resolve(mode llm.Mode) (llm.Provider, string, float64, bool) {
-	slot := SlotForMode(mode)
-	r.refreshIfStale(context.Background())
-	r.mu.RLock()
-	res, ok := r.bySlot[slot]
-	r.mu.RUnlock()
-	if !ok {
-		return nil, "", 1, false
-	}
-	return res.provider, res.model, res.multiplier, true
-}
-
 // ResolveModel returns the provider/model/multiplier for a catalog model id
 // (== slot). ok is false when no enabled config has that id (caller falls back
-// to DefaultChatModelID). This is the flat-catalog replacement for Resolve(mode).
+// to DefaultChatModelID).
 func (r *Registry) ResolveModel(modelID string) (llm.Provider, string, float64, bool) {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()

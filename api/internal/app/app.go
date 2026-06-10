@@ -119,7 +119,6 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 	if err := registry.EnsureSeed(context.Background()); err != nil {
 		log.Printf("app: model config seed failed (falling back to env config): %v", err)
 	}
-	router.SetResolver(registry.Resolve)
 	router.SetModelResolver(registry.ResolveModel, registry.DefaultChatModelID)
 
 	// E2B is optional: empty API key disables code.execute entirely

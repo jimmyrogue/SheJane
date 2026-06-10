@@ -1,23 +1,18 @@
 package llm
 
-// ResolveFunc resolves a routing mode to a live provider/model/credit
-// multiplier. ok is false when no dynamic config exists (use static fallback).
-//
-// Deprecated: the flat model catalog routes by model id via ModelResolveFunc /
-// SelectModel. Kept only until the Mode type is removed (Phase 4).
-type ResolveFunc func(mode Mode) (provider Provider, model string, multiplier float64, ok bool)
-
 // ModelResolveFunc resolves a catalog model id (== slot) to a live
 // provider/model/credit multiplier. ok is false when the id is not an enabled
 // catalog model (caller falls back to the default model id).
 type ModelResolveFunc func(modelID string) (provider Provider, model string, multiplier float64, ok bool)
 
 type Router struct {
+	// fast/fastModel are the static fallback used by SelectModel when the
+	// catalog resolver can't resolve a model (e.g. an empty catalog). deep/
+	// deepModel are seeded by the constructors but no longer routed to.
 	fast           Provider
 	deep           Provider
 	fastModel      string
 	deepModel      string
-	resolve        ResolveFunc
 	resolveModel   ModelResolveFunc
 	defaultModelID func() string
 }
@@ -40,12 +35,6 @@ func NewRouterWithModels(fast Provider, fastModel string, deep Provider, deepMod
 		router.deepModel = deepModel
 	}
 	return router
-}
-
-// SetResolver installs a dynamic resolver (e.g. DB-backed model registry).
-// When set and it resolves a mode, it overrides the static providers.
-func (r *Router) SetResolver(fn ResolveFunc) {
-	r.resolve = fn
 }
 
 // SetModelResolver installs the flat-catalog resolver + default-model selector
@@ -101,48 +90,6 @@ func (r *Router) MultiplierForModel(modelID string) float64 {
 		}
 	}
 	return 1
-}
-
-func (r *Router) Select(mode Mode) (Provider, string) {
-	if r.resolve != nil {
-		if provider, model, _, ok := r.resolve(mode); ok {
-			return provider, model
-		}
-	}
-	switch mode {
-	case ModeDeep:
-		return r.deep, r.deepModel
-	case ModeFast:
-		return r.fast, r.fastModel
-	default:
-		return r.fast, r.fastModel
-	}
-}
-
-// MultiplierFor returns the per-model credit multiplier for a mode. Without a
-// resolver it preserves the legacy behavior (deep = 2x, everything else 1x).
-func (r *Router) MultiplierFor(mode Mode) float64 {
-	if r.resolve != nil {
-		if _, _, multiplier, ok := r.resolve(mode); ok {
-			if multiplier > 0 {
-				return multiplier
-			}
-			return 1
-		}
-	}
-	if mode == ModeDeep {
-		return 2
-	}
-	return 1
-}
-
-func NormalizeMode(model string) Mode {
-	switch Mode(model) {
-	case ModeDeep:
-		return ModeDeep
-	default:
-		return ModeFast
-	}
 }
 
 func InjectScenePrompt(scene string, messages []Message) []Message {

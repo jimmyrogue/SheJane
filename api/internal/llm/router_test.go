@@ -5,29 +5,50 @@ import (
 	"testing"
 )
 
-func TestRouterSelectsProviderByMode(t *testing.T) {
+func TestSelectModelFallsBackToStaticFastWithoutCatalog(t *testing.T) {
+	// With no model resolver installed (empty catalog), SelectModel falls back
+	// to the static fast provider for any requested model — the safety net.
 	fast := NewMockProvider("deepseek-fast", "fast reply")
 	deep := NewMockProvider("claude-deep", "deep reply")
 	router := NewRouter(fast, deep)
 
-	tests := []struct {
-		mode      Mode
-		wantName  string
-		wantModel string
-	}{
-		{ModeFast, "deepseek-fast", "deepseek-v4-flash"},
-		{ModeDeep, "claude-deep", "claude-3-5-sonnet-latest"},
-		{"", "deepseek-fast", "deepseek-v4-flash"},
-		{"unknown", "deepseek-fast", "deepseek-v4-flash"},
-	}
-
-	for _, tt := range tests {
-		provider, model := router.Select(tt.mode)
-		if provider.Name() != tt.wantName {
-			t.Fatalf("Select(%q) provider = %q, want %q", tt.mode, provider.Name(), tt.wantName)
+	for _, requested := range []string{"auto", "", "chat.deepseek-v4", "unknown"} {
+		provider, model, id := router.SelectModel(requested)
+		if provider.Name() != "deepseek-fast" || model != "deepseek-v4-flash" {
+			t.Fatalf("SelectModel(%q) = (%q,%q), want static fast fallback", requested, provider.Name(), model)
 		}
-		if model != tt.wantModel {
-			t.Fatalf("Select(%q) model = %q, want %q", tt.mode, model, tt.wantModel)
+		if id != requested {
+			t.Fatalf("SelectModel(%q) id = %q, want passthrough %q (no resolver)", requested, id, requested)
+		}
+	}
+}
+
+func TestSelectModelUsesResolverAndDefault(t *testing.T) {
+	fast := NewMockProvider("static-fast", "")
+	router := NewRouter(fast, fast)
+	deepseek := NewMockProvider("deepseek", "")
+	claude := NewMockProvider("claude", "")
+	catalog := map[string]Provider{"chat.deepseek": deepseek, "chat.claude": claude}
+	router.SetModelResolver(
+		func(id string) (Provider, string, float64, bool) {
+			p, ok := catalog[id]
+			if !ok {
+				return nil, "", 1, false
+			}
+			return p, id + "-model", 1, true
+		},
+		func() string { return "chat.deepseek" }, // default
+	)
+
+	// A concrete id resolves to its provider.
+	if p, _, id := router.SelectModel("chat.claude"); p.Name() != "claude" || id != "chat.claude" {
+		t.Fatalf("SelectModel(chat.claude) = (%q,%q), want claude", p.Name(), id)
+	}
+	// "auto" / unknown resolve to the default model.
+	for _, requested := range []string{"auto", "", "chat.removed"} {
+		p, _, id := router.SelectModel(requested)
+		if p.Name() != "deepseek" || id != "chat.deepseek" {
+			t.Fatalf("SelectModel(%q) = (%q,%q), want default chat.deepseek", requested, p.Name(), id)
 		}
 	}
 }
