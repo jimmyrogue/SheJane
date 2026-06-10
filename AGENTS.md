@@ -8,14 +8,15 @@ For the full architecture, the critical invariants, and "where things live", rea
 
 SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
 
-- `api/` — Go API: auth, wallet/credit ledger, LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
+- `api/` — Go API: auth, wallet/credit ledger, model catalog + LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron/React user app; local-first chat history.
 - `admin/` — standalone React/Vite admin app (shadcn/ui).
 - `api/migrations/` — sequential, idempotent PostgreSQL migrations.
 - `docs/operations.md` — operator runbook.
+- `docs/roadmap.md` — current priorities and intentionally deferred work.
 
-See CLAUDE.md for the request flow, the SSE protocol, and the four non-negotiable invariants.
+See CLAUDE.md for the request flow, the SSE protocol, and the critical invariants.
 
 ## Commands
 
@@ -54,8 +55,8 @@ make smoke-stripe-webhook
 ## Environment And Secrets
 
 - Never print or commit real secrets from `.env`.
-- Safe to mention variable names: `JWT_SECRET`, `FAST_PROVIDER_API_KEY`, `ANTHROPIC_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `ADMIN_EMAILS`.
-- Provider and Stripe keys are environment/deployment secrets only. Do not add UI for editing or revealing them.
+- Safe to mention variable names: `JWT_SECRET`, `CONFIG_ENCRYPTION_KEY`, `FAST_PROVIDER_API_KEY`, `DEEP_PROVIDER_API_KEY`, `ANTHROPIC_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `ADMIN_EMAILS`.
+- Provider keys may be entered through the admin model-config form or seeded from `.env` on first empty-db boot. They must never be printed, returned from APIs, or committed. The admin UI may show only whether a key is configured. Stripe keys remain environment/deployment secrets only.
 - `ADMIN_EMAILS` promotes matching users to `role=admin` on register/login/refresh. Removing an email from env does not auto-demote existing admins.
 - Local default ports:
   - User web: `http://localhost:5173`
@@ -78,6 +79,16 @@ make smoke-stripe-webhook
   - use `wallet_transactions.idempotency_key` with `stripe:<event_id>` for grants.
 - Do not add manual order mutation endpoints in the admin API unless the phase explicitly asks for it.
 - Disabled users must not be able to login, refresh, or use old bearer tokens.
+
+## Model Catalog Rules
+
+- User-facing model selection is `Auto` plus enabled chat models from `GET /api/v1/models`.
+- The stable model ID is stored in `model_configs.slot` for compatibility, but UI/docs should call it "model ID".
+- Chat model IDs are admin-defined strings such as `gpt-4o`, `claude-sonnet`, `deepseek-v4`, or legacy `chat.fast`; they must not be `auto`, blank, contain whitespace, or exceed the current `VARCHAR(40)` database limit.
+- `Auto` is reserved. The Go API resolves it once per run through `POST /api/v1/models/resolve` and emits `model.selected`.
+- Do not reintroduce fast/deep UX or daemon-side model classifiers. `chat.fast` and `chat.deep` are seed IDs, not fixed product tiers.
+- Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
+- Keep model catalog behavior behind `api/internal/modelreg.Registry` and store changes behind `api/internal/store.Store`; memory and Postgres implementations must stay in lockstep.
 
 ## Stripe Billing Notes
 
@@ -121,8 +132,9 @@ Admin UI expectations:
 
 - Use existing shadcn primitives under `admin/src/components/ui/`.
 - Keep feature areas as real tabs/sections: overview, users, usage, orders, models, audit.
-- Orders, providers, and audit logs are read-only.
+- Orders, provider status, and audit logs are read-only.
 - Admin write forms must require a reason where backend requires one.
+- The model config form uses a free-text "model ID" for chat models. Do not restore a fixed `chat.fast` / `chat.deep` dropdown. For image capability, keep the ID fixed to `image.default`.
 
 Client UI expectations:
 
@@ -145,6 +157,7 @@ Add or update tests when touching:
 - wallet balances or ledger logic
 - Stripe webhook behavior
 - admin permissions, admin writes, or admin read views
+- model catalog validation, Auto resolution, or model picker behavior
 - local-first data import/export
 - SSE parsing or chat store behavior
 

@@ -111,6 +111,7 @@ e2e/             Playwright 端到端测试
 - **[docs/run-loop.md](./docs/run-loop.md)** —— 一次 agent run 从 POST 到终态(中间件、HITL、SSE 事件)。
 - **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** —— 客户端 ↔ daemon 的 SSE 线格式。
 - **[docs/operations.md](./docs/operations.md)** —— 部署 + 运维手册。
+- **[docs/roadmap.md](./docs/roadmap.md)** —— 当前优先级和暂缓事项。
 - **[spec.md](./spec.md)** —— 本地 agent harness 规格。
 
 ## 测试

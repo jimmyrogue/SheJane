@@ -1,8 +1,8 @@
 # SheJane Local Agent Harness Spec
 
 **Version:** v0.2
-**Updated:** 2026-05-12
-**Status:** Phase 2 replacement direction
+**Updated:** 2026-06-10
+**Status:** Local Agent Harness product direction; current execution priorities live in `docs/roadmap.md`
 
 ## 1. Direction
 
@@ -46,7 +46,7 @@ New product shape:
 - Automatic skill/tool selection.
 - Explicit permission only when the harness wants to touch sensitive local capabilities.
 
-The product may still expose simple controls like fast/deep quality, budget, or risk policy, but it should not ask non-technical users to reason in terms of prompt templates, scenes, tools, or agent modes.
+The product may expose simple controls such as `Auto` model selection, a concrete model picked from the backend catalog, budget, or risk policy, but it should not ask non-technical users to reason in terms of prompt templates, scenes, tools, or agent modes.
 
 ## 4. Architecture
 
@@ -54,7 +54,7 @@ The product may still expose simple controls like fast/deep quality, budget, or 
 flowchart TB
     User["User"]
     Client["Client UI\nWeb / Electron"]
-    Harness["Local Agent Harness\nNode/TypeScript daemon"]
+    Harness["Local Agent Harness\nPython · FastAPI · LangGraph"]
     Supervisor["Supervisor\nSMAppService / Windows Service"]
     Worker["User Worker\nfiles / shell / MCP / browser"]
     SQLite["Local SQLite\nruns / events / checkpoints / artifacts / memory"]
@@ -88,7 +88,7 @@ flowchart TB
 
 ### 4.2 Local Agent Harness
 
-The harness is daemon-first and Node/TypeScript based.
+The harness is daemon-first and Python/LangGraph based.
 
 Core process split:
 
@@ -115,6 +115,7 @@ Cloud responsibilities:
 - Auth, user profile, refresh sessions, admin role.
 - Wallet, subscriptions, Stripe orders, credit reservation/settlement.
 - LLM provider routing and provider key protection.
+- Model catalog: enabled chat models, `Auto` resolution, provider configuration, and credit multipliers.
 - S3 document upload/extraction when cloud document processing is needed.
 - Admin dashboard, audit logs, run summaries, LLM usage, and tool failure summaries.
 - Cloud Agent Run fallback for Web and compatibility.
@@ -226,6 +227,8 @@ Pairing:
 ### 7.2 Cloud API
 
 - `POST /api/v1/agent/llm`: Local harness calls controlled model gateway; cloud reserves/settles credits and keeps provider keys private.
+- `GET /api/v1/models`: user-facing enabled chat model catalog.
+- `POST /api/v1/models/resolve`: resolves `model="auto"` to a concrete catalog model id once per run.
 - `POST /api/v1/agent/tool-events`: Local harness reports redacted tool summaries, failures, and audit events.
 - Existing `/api/v1/agent/runs/*`: retained as Web fallback and run-summary compatibility.
 - Existing documents API: becomes Cloud Document Service callable by the composer/harness, not a separate long-term product mode.

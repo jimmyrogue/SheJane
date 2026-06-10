@@ -4,15 +4,15 @@ Updated: 2026-05-17
 
 ## 当前管理边界
 
-Phase 1.7 提供独立管理后台和账单生命周期加固。Phase 2 起产品方向调整为 Local Agent Harness，长期采用 Local Agent Harness + Cloud Control Plane。普通用户 client 与 admin web 分开构建、分开部署：
+SheJane 长期采用 Local Agent Harness + Cloud Control Plane。普通用户 client 与 admin web 分开构建、分开部署：
 
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
 - 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
-- 模型/provider（Phase 4 起改为动态）：后台「模型配置」页可**新增/编辑/启停/删除** provider、模型、成本倍率、生图每次金额，并设置全局计费参数（加价系数 + 基准每 token 成本）；保存即时生效，**不再依赖 `.env` 重启**。API key 加密存储（`CONFIG_ENCRYPTION_KEY`）且永不回显，仅显示「key 已配置」。`.env` 的 provider 变量仅作**首次空库的种子**。
+- 模型/provider：后台「模型配置」页可**新增/编辑/启停/删除** chat 模型、provider、成本倍率、生图每次金额，并设置全局计费参数（加价系数 + 基准每 token 成本）；保存即时生效，**不再依赖 `.env` 重启**。API key 加密存储（`CONFIG_ENCRYPTION_KEY`）且永不回显，仅显示「key 已配置」。`.env` 的 provider 变量仅作**首次空库的种子**。
 - 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
 - Local Agent Harness：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；Local Harness 负责 12 个 harness 组件、本地工具、文件、终端、浏览器、IDE、本地 MCP、checkpoint 和 artifact。
-- Agent Run：Phase 2.2 起普通聊天和附件问答会创建短期 `agent_runs` / `agent_events`。后台只展示摘要、状态和错误，不展示完整用户输入或文档正文。
+- Agent Run：普通聊天和附件问答会创建短期 `agent_runs` / `agent_events`。后台只展示摘要、状态和错误，不展示完整用户输入或文档正文。
 
 ## 本地启动
 
@@ -56,7 +56,7 @@ docker compose up -d --build api
 - 禁用用户会让旧 access token 也无法继续访问受保护接口。
 - 管理员不能在后台禁用自己的账号。
 
-## 模型配置（Phase 4：动态、后台可改）
+## 模型配置（后台模型目录）
 
 模型 provider / 模型名 / API key / 成本倍率不再从 `.env` 读取并需要重启。`.env` 的 `FAST_PROVIDER_*` / `DEEP_PROVIDER_*` / `ANTHROPIC_API_KEY` 等变量**只在首次空库启动时作为种子**写入 `model_configs` 表；之后一切以后台「模型配置」页为准，保存即时生效（同进程立即、其它实例 ≤30s 收敛）。
 
@@ -197,7 +197,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 
 ## Local Agent Harness 运维边界
 
-Phase 2 的目标不是让云端代替本地执行所有工具。运维上按两个平面理解：
+SheJane 的目标不是让云端代替本地执行所有工具。运维上按两个平面理解：
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。

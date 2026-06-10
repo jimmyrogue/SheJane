@@ -1,8 +1,8 @@
 # Run Loop —— 当前能力实现态
 
 > **范围**：`local-host/python/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
-> **关联**：[migration-langgraph.md](migration-langgraph.md) · [architecture-local-host.md](architecture-local-host.md) · [client-sse-protocol.md](client-sse-protocol.md)
-> **状态**：截至 `refactor/infrastructure` 分支 head（189 测试全过 — Python 单元 + 客户端 + bash smoke）
+> **关联**：[client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
+> **状态**：当前实现态。历史 Node→Python 迁移背景见 [migration-langgraph.md](migration-langgraph.md)，不要把那份迁移计划当成当前架构入口。
 
 ---
 
@@ -10,7 +10,7 @@
 
 ```
 ╔════════════════════════════════════════════════════════════════════════════════════════════╗
-║                  🔁  RUN LOOP  —  当前能力实现态（189 测试全验证）                            ║
+║                         RUN LOOP — 当前能力实现态                                          ║
 ╚════════════════════════════════════════════════════════════════════════════════════════════╝
 
   ┌─ 1. 入口与状态机 ────────────────────────────────────────────────────────────────┐
@@ -18,7 +18,7 @@
   │  POST /local/v1/runs                                                              │
   │       │                                                                          │
   │       ▼                                                                          │
-  │  RunCoordinator.start_run(goal, workspace_path, mode)                            │
+  │  RunCoordinator.start_run(goal, workspace_path, model)                           │
   │       ├─ store.create_run(...)              state = queued                       │
   │       ├─ asyncio.Queue 分配（事件流）                                             │
   │       └─ asyncio.create_task(_drive_run)    state = running                      │
@@ -49,7 +49,7 @@
   │     ├─ HumanInTheLoopMiddleware interrupt_on = {write_file, execute, …}           │
   │     ├─ checkpointer = AsyncSqliteSaver           ← thread_id = run_id              │
   │     ├─ agent_store  = AsyncSqliteStore           ← P6 memory writeback ✅ fix      │
-  │     └─ model = BackendChatModel(mode)            ← 走 Go 后端 SSE                 │
+  │     └─ model = BackendChatModel(model)           ← 走 Go 后端 SSE                 │
   │                                                                                   │
   │   ┌─ agent.astream(stream_mode=["updates","messages","custom"]) ─────────────┐    │
   │   │                                                                          │    │
@@ -88,7 +88,6 @@
   │     │  • SummarizationMiddleware             │  上下文压缩                       │     │
   │     │  • PatchToolCallsMiddleware            │  orphan tool_call 自愈            │     │
   │     │  • InputGuardMiddleware (P1)           │  注入/越狱启发式                  │     │
-  │     │  • FastDeepRouterMiddleware (P2)       │  fast/deep 路由                   │     │
   │     │  • PIIMiddleware × N (opt-in)          ┘  ✅ cap 5  email/credit/ip 脱敏   │     │
   │     │                                                                          │     │
   │     │ MemoryMiddleware                          AGENTS.md → system prompt        │     │
@@ -226,7 +225,7 @@
 
 ---
 
-## 能力清单（189 测试覆盖）
+## 能力清单（测试覆盖）
 
 ### e2e 直接验证（`tests/test_e2e_capabilities.py`）
 

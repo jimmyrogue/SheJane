@@ -115,6 +115,7 @@ e2e/             Playwright end-to-end tests
 - **[docs/run-loop.md](./docs/run-loop.md)** — one agent run from POST to terminal (middleware, HITL, SSE events).
 - **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** — the client ↔ daemon SSE wire format.
 - **[docs/operations.md](./docs/operations.md)** — deployment + operations runbook.
+- **[docs/roadmap.md](./docs/roadmap.md)** — current priorities and deferred work.
 - **[spec.md](./spec.md)** — the local agent harness specification.
 
 ## Testing

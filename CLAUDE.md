@@ -31,11 +31,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 └─────────────────────────────────┘         └──────────────────────┘
 ```
 
-There's also an admin panel (`admin/`) — separate Vite/React app for model registry, credit-rate tuning, audit logs.
+There's also an admin panel (`admin/`) — separate Vite/React app for the model catalog, credit-rate tuning, audit logs, and user/account operations.
 
 The most important architectural file to read first: **[docs/run-loop.md](docs/run-loop.md)** has the complete flow of one agent run from `POST /local/v1/runs` to terminal state, including the LangGraph middleware stack, the auto-approve loop for `scope=run` permission grants, and how SSE events flow back to the client.
 
-**Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook — it carries the detailed backend/billing/frontend rules (store dual-impl, wallet-ledger discipline, Stripe webhook idempotency, admin read-only surfaces, the supported subscription lifecycle). [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. The product spec is [spec.md](spec.md).
+**Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook — it carries the detailed backend/billing/frontend rules (store dual-impl, wallet-ledger discipline, Stripe webhook idempotency, admin surfaces, the supported subscription lifecycle). [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. Current priorities live in [docs/roadmap.md](docs/roadmap.md). The product spec is [spec.md](spec.md).
 
 ## Critical invariants
 
@@ -50,6 +50,8 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `SHEJANE_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
 
 5. **`.env` audit is honest.** Every key in `.env` corresponds to a real `os.getenv` / `getEnvInt` / pydantic alias somewhere in the code. Don't add dead keys; don't read undocumented keys. See `.env.example` for the schema with section comments.
+
+6. **Model selection is a catalog, not fast/deep tiers.** Client requests send `model: "auto"` or a concrete catalog model id. `Auto` is resolved by the Go API against enabled chat models and emits `model.selected`; the daemon and web loop must not reintroduce their own fast/deep classifiers. The stable model id is still stored in `model_configs.slot` for migration safety, but docs and UI call it "model ID". Image models are not shown in the chat picker; the current image resolver only supports `image.default`.
 
 ## Common commands
 
@@ -129,10 +131,11 @@ make logs-dev                # snapshot of all of the above
 |---|---|
 | One run from POST to terminal — middleware order, HITL, scope=run, SSE events | `docs/run-loop.md` |
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
-| Why we moved Node → Python and what was deferred to which phase | `docs/migration-langgraph.md` |
-| Pre-Phase-5'+ Node daemon architecture (historical) | `docs/architecture-local-host.md` |
 | Production deployment / migrations | `docs/operations.md` |
-| Daemon code | `local-host/python/local_host/` — `server.py` router, `runs.py` run loop, `agent/builder.py` wires the middleware stack, `agent/auto_router.py` picks fast/deep tier for "Auto" runs, `agent/subagents.py` defines deepagents subagents (invoked via the injected `task` tool), `middleware/` is the input-guard/plan-first/router/reflect/tool-critic/output-guard/memory-writeback stack, `tools/` has the `@tool` functions, `store/sqlite.py` is the local checkpoint + KV store |
+| Current priorities | `docs/roadmap.md` |
+| Historical Node → Python migration background | `docs/migration-langgraph.md` |
+| Model catalog / provider routing | `api/internal/modelreg/`, `api/internal/llm/router.go`, `api/internal/app/model_resolver.go`, `api/internal/httpapi/admin_modelconfig.go`, `admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
+| Daemon code | `local-host/python/local_host/` — `server.py` router, `runs.py` run loop, `llm/resolve.py` asks the Go API to resolve Auto once per run, `agent/builder.py` wires the middleware stack, `agent/subagents.py` defines deepagents subagents (invoked via the injected `task` tool), `middleware/` is the input-guard/plan-first/reflect/tool-critic/output-guard/memory-writeback stack, `tools/` has the `@tool` functions, `store/sqlite.py` is the local checkpoint + KV store |
 | API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |
 | Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Admin panel | `admin/` — separate Vite app; model configs, credit rate, audit logs |
@@ -203,3 +206,4 @@ If anything's wrong, `make doctor` is the first stop. The output tells you wheth
 - Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.
+- Don't add new user-visible `fast` / `deep` model branches. Keep model selection as `auto` plus catalog model IDs from `GET /api/v1/models`.

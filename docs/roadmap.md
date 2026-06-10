@@ -1,143 +1,88 @@
-# SheJane 路线图 / Roadmap
+# SheJane Roadmap
 
-> 来源:2026-06-07 一次多智能体缺口分析(6 个子系统通读 + 3 个架构研究 + 综合)。
-> 说明:每条都附了代码证据/缘由。标 ⚠️ 的"高影响"判断**动手前请各自再核实一遍**(分析基于静态通读,个别结论可能略有出入)。
-> 用法:按"优先级分期"自上而下做;每完成一项把 `- [ ]` 勾成 `- [x]`。
+> 更新日期：2026-06-10
+>
+> 这份文档只保留当前还需要执行或持续守住的事项。已完成的大段历史不再放在路线图里，避免把过期阶段当成待办。
 
----
+## 当前事实
 
-## 进度快照(更新于 2026-06-07)
+- 旧 P0/P1/P2 主线已经完成：CI 修复、充值入口、欢迎页磁贴、安全与计费护栏、监控探针、自动备份、Stripe webhook 原子化、P2 体验功能和质量测试都已落地。
+- 模型选择已经切到 **Auto + 后台模型目录**。用户端始终有 `Auto`，下面显示后台启用的 chat 模型。管理员用「模型 ID + 显示名 + provider_kind + key + base_url + model_name」配置模型；数据库字段仍叫 `slot`，只是历史字段名。
+- `chat.fast` / `chat.deep` 仍作为种子模型 ID 保留，保证老配置可用；它们不再代表固定的产品层级。新的 chat 模型 ID 可以是 `gpt-4o`、`claude-sonnet`、`deepseek-v4` 等。
+- `Auto` 由 Go API 统一解析：`POST /api/v1/models/resolve` 在 run 开始时从 enabled chat 模型里选一个，并发出 `model.selected`。daemon、本地 run、web cloud tool loop 都只传 `model="auto"` 或具体模型 ID。
+- image 模型不进入聊天选择器。当前 resolver 只支持 `image.default`，后台也只允许 image capability 使用这个模型 ID。
+- 平台付费 provider key 仍只在 Go API 侧使用。后台模型配置可以写入 provider key，但 key 加密存储且不回显；daemon 不读取这些 key。
+- 文档入口收敛为 `CLAUDE.md`、`AGENTS.md`、`docs/run-loop.md`、`docs/client-sse-protocol.md`、`docs/operations.md`、本路线图。旧 status 快照、旧模型目录设计稿、旧 Node 架构图和 Phase 0 spike 报告已删除。
 
-- **P0 修绿 CI** ✅
-- **P1** 6/6 ✅:充值入口 ✅、欢迎页磁贴 ✅、安全三连(限流/SSRF/Mock计费)✅、监控(Sentry + 探针,metrics 用 Sentry 顶替)✅、自动异地备份 ✅、Stripe webhook 原子化 + 退款/争议扣回 ✅。**P1 全部完成,下一步进 P2。**
-- **P2 功能/体验** 6/6 ✅:消息级操作、会话搜索(含搜正文)、忘记密码(Resend)、代码高亮、桌面通知、每轮用量透明 + 消费历史。
-- **P2 质量/测试** 5/5 ✅:eval 评测套件、账本并发竞态测试、store 双实现一致性(+CI postgres)、SSE 流式契约(daemon fake-LLM)、App.test 解封(0 skip)。**P2 全部完成。**
-- **顺带完成的 P3**:`/readyz` 真就绪探针(+ Caddy 路由)✅、api 容器健康检查 ✅。
-- **本次新增运维待办(不在下表)**:🔒 轮换泄露的 AWS key、📦 发布 v0.1.4 桌面 Release、🖼 tu-zi 令牌分组改到支持图片的分组。
-- **本次已修**:S3 桶名 + IAM 权限(文档上传一并恢复)。
+## P0：先保证发布和 web loop 可控
 
----
+| 状态 | 任务 | 为什么优先 |
+|---|---|---|
+| [ ] | **发布标签与 main 对齐**：远端 `v0.1.6` tag 仍在 `000486a`，未包含 `3ec14c7` 生图重复回复修复和 `1ff449d` 可配置模型目录。决定是重打 `v0.1.6`，还是发 `v0.1.7`。 | 否则 GHCR 镜像、桌面草稿 Release 和服务器部署会拿到旧提交，刚修好的模型目录和生图重复回复修复都不会进包。 |
+| [ ] | 服务器部署后验证：`make deploy`，然后检查用户端模型选择器、Auto badge、admin 模型配置、图片生成、web search。 | 当前改动跨 client/admin/api/daemon，必须用真实部署路径确认 wire contract。 |
+| [ ] | web 工具循环可中断：Stop 按钮需要能 abort `runCloudToolLoop`。 | 现在 Stop 主要认 local run，web 上长循环停不下来，用户只能关页面。 |
+| [ ] | web 循环恢复兜底：打开会话时把无主 `streaming` 消息标记失败。 | 浏览器标签页关闭后没有 daemon 恢复，IndexedDB 会留下永久 streaming 消息。 |
+| [ ] | `hitStepCap` 给用户提示。 | web loop 撞 5 步上限时现在用户无感知，看起来像模型突然停了。 |
 
-## 0. 一句话总体评估
+## P1：成本与契约
 
-**引擎(Harness)非常成熟,产品功能和运维才是真正的短板。**
-Agent 运行循环、工具注册、人工审批(HITL)、检查点恢复、流式、密钥隔离都是行业级;
-但 **① 用户侧没有充值入口(直接挡收入)、② 线上零监控告警、③ CI 在 main 上是红的、④ 没有 agent 质量评测(eval)** —— 这四件比任何引擎深度优化都紧迫。
+| 状态 | 任务 | 为什么 |
+|---|---|---|
+| [ ] | prompt caching 全链路梳理。 | daemon 已有 Anthropic cache_control 能力，但 web/cloud loop 仍可能每轮重发全量 history，成本会被放大。 |
+| [ ] | token 估算改进。 | `len/4` 没算工具定义、参数和 reasoning，工具密集轮会系统性少计费。 |
+| [ ] | web / daemon 工具 schema 单一来源。 | `WEB_TOOL_DEFINITIONS` 仍是手抄 daemon 工具 schema，长期一定漂移。 |
+| [ ] | run 级链路追踪。 | daemon 到 API 的每轮调用现在是独立 request_id，排查一个 run 的完整路径不够顺。 |
+| [ ] | 真 HTTP 契约测试覆盖 web cloud tool loop。 | 现在主要靠单测 fake，最容易漏 wire shape 和 SSE 细节。 |
 
----
+## P2：生产运维硬化
 
-## 1. 优先级分期执行计划(按步骤做)
+| 状态 | 任务 | 为什么 |
+|---|---|---|
+| [ ] | Go API 换带超时的 `http.Server` 并支持优雅关闭。 | 裸 `ListenAndServe` 在部署重启时容易丢在途请求。 |
+| [ ] | 安全响应头：HSTS、CSP、X-Frame-Options、X-Content-Type-Options。 | 现在 Caddy 和 Go 都没有统一设置，生产 Web 面暴露不够硬。 |
+| [ ] | 生产弱默认密钥 fail-fast。 | `JWT_SECRET`、`CONFIG_ENCRYPTION_KEY` 等只 WARN 不够，生产误配会拖到运行时才爆。 |
+| [ ] | 数据库迁移版本表。 | 现在迁移偏全量重放和幂等 SQL，缺少明确版本状态和回滚边界。 |
+| [ ] | 镜像签名、SBOM、漏洞扫描。 | 对外发布和服务器部署需要可追踪供应链。 |
+| [ ] | 修 nightly external smoke 配置。 | `STRIPE_WEBHOOK_SECRET` 等 secret 缺失会让金丝雀自己红。 |
 
-### P0 — 立即,解锁后续一切
-- [x] **修绿 main 的 CI**(质量 · 高 · S)✅
-  - 延迟 p50 测试改成"打印基准/opt-in",不要硬断言(共享 runner 上计时断言天生 flaky)
-  - 8 个 e2e 选择器漂移:`getByLabel('密码')` → `#auth-password`/role;admin 从 tab 定位改 sidebar
-  - 理由:**红 CI 让后续所有改动失去回归保护**,必须先修。
+## P3：产品体验
 
-### P1 — 生产硬伤 + 收入(可并行,公网部署的底线)
-- [x] ✅ **接通充值入口**(功能 · 高 · M)—— `createSubscriptionCheckout` 后端已就绪,**零 UI 调用方**;余额耗尽提示"请充值"却没有任何按钮。
-- [x] ✅ **修欢迎页 4 个死磁贴**(功能 · 高 · S)—— 磁贴改成具体示例(写脚本/发邮件/搜AI新闻/生成小狗图),点击预填输入框 + 聚焦。
-- [x] ✅ **安全/计费三连**(后端 · 高 · M,一批做):
-  - [x] 全站限流(auth 防爆破 / 计费端点防成本放大 / webhook 防洪)
-  - [x] 修"空 LLM key 静默回退 Mock 仍计费"(改为报错→释放预留,不计费;billing-reviewer PASS)
-  - [x] 图片网关出站抓取加 SSRF 防护(scheme 限定 + 私网/环回拒连 + 防 DNS 重绑定)
-- [x] ✅ **上线监控/告警/日志聚合**(运维 · 高 · L)—— Sentry(错误+性能,覆盖 metrics)+ `/healthz`/`/readyz` 探针 + 日志带状态码;Prometheus 暂略。
-- [x] ✅ **数据安全兜底**(运维 · 高 · M+S):
-  - [x] 把仓库工作区里的 `backup-*.sql.gz` 移走(已移出仓库)
-  - [x] 自动备份 + 自动异地拷贝(scripts/backup-db.sh → 本地+S3,cron 每日;恢复演练仍需定期手动做)
-- [x] ✅ **Stripe webhook 改原子事务 + 处理退款/争议**(后端 · 高 · M)—— 加账本级幂等护栏(`stripe:<eventID>` 已入账则 no-op),堵住"已发积分但 mark 失败→重试重发"窗口;`subscription.deleted`/`charge.refunded`/`charge.dispute.created` 触发扣回**未用完的当月订阅额度**(按量充值积分保留,方案 A);postgres/memory 锁步,过 billing-flow-reviewer + `-race`。退款若 Stripe 侧未连带取消订阅,无法从 charge 反查订阅 → 记日志待人工(在 Stripe 取消订阅即触发 deleted 扣回)。
+| 状态 | 任务 | 为什么 |
+|---|---|---|
+| [ ] | 跨设备会话同步方案。 | 现在聊天只在 IndexedDB，本地优先没问题，但 web/桌面互不可见。 |
+| [ ] | web 文档问答与工具组合策略。 | 带附件和带工具的路径还没有统一的产品约束，容易出现能力互斥或用户困惑。 |
+| [ ] | client 对 429 做专门处理。 | 服务端 spend 限流已经有了，前端需要 retry-after 和清晰提示。 |
+| [ ] | 多文件附件。 | 当前附件模型偏单文档，复杂资料任务会被卡住。 |
+| [ ] | Artifact 面板升级。 | 现在预览能力够用但不够像成品：代码高亮、HTML/SVG/Markdown 渲染、复制和下载还可增强。 |
+| [ ] | MCP / Skills 在 UI 内增删改。 | 现在主要是浏览和开关，复杂配置仍要手改文件。 |
+| [ ] | 键盘快捷键与帮助面板。 | 长时间使用时，聚焦输入、切会话、停止、搜索这些操作应该更快。 |
+| [ ] | Electron 主进程中文串接入 i18n。 | 英文用户仍可能看到中文系统弹窗。 |
 
-### P2 — 产品体验 + 质量护城河
-功能/体验:**6/6 全部完成 ✅**
-- [x] ✅ 消息级操作:重试/重新生成、编辑重发、删除(纯客户端:截断+按原路径重跑,带确认弹窗)
-- [x] ✅ 会话搜索(恢复被注释的入口 + 搜正文 + 命中片段高亮)
-- [x] ✅ 忘记密码/重置(Resend 发信 + LogMailer 兜底;不可枚举、单次有效原子重置、重置后吊销全部刷新令牌)+ **邮箱验证**(注册即发验证信;`email_verified` 列贯穿所有 user scan;老用户回填为已验证;前端 advisory 横幅 + 重发 + `/verify?token=` 落地确认。**仅提示不拦登录**)。
-- [x] ✅ 代码块语法高亮 + 单块复制(highlight.js 核心 + 精选语言,light-only 主题)
-- [x] ✅ 桌面通知(补上失败路径 run.failed)
-- [x] ✅ 每轮用量透明(daemon 把 llm.usage 流出来 + 时间线用量 chip + 消费历史面板)
+## P4：Agent 引擎深度
 
-质量/测试:
-- [x] ✅ **建 eval 评测套件**(引擎 · 高 · L)—— `local_host/eval/`:黄金轨迹用例 + 启发式判分(答案子串/工具选择/步数预算,确定性、零 LLM 成本)+ 可插拔 LLM-judge(评 correctness/tool_choice/efficiency)。`make eval` 对运行中的 daemon 跑(需 MOCK_LLM=false);harness 逻辑有 12 个 hermetic 单测。**真·夜跑需把 daemon+真 key 拉起来(daemon 非部署服务),作为后续接 CI**。
-- [x] ✅ 加真正并发的账本竞态测试(`internal/billing/wallet_concurrency_test.go`,16-32 goroutine 并发 Reserve/Settle/Release)—— 断言守恒、释放全额复原、绝不超卖、余额不为负。`make test-race` 不再空跑。
-- [x] ✅ store 双实现一致性测试(`internal/store/conformance_test.go`)—— 同一组断言跑 memory + postgres(用户/刷新令牌/密码重置/邮箱验证/注册积分幂等/订阅生命周期)。postgres 用 `TEST_DATABASE_URL` 闸门(本地无 DB 时跳过,`go test ./...` 仍绿);CI test job 起了 pgvector service + 跑迁移 + 设 `TEST_DATABASE_URL` 真跑交叉校验。
-- [x] ✅ SSE 流式端到端契约测试 —— 新增 daemon fake-LLM 模式(`SHEJANE_FAKE_LLM`,`FakeBackendChatModel`,确定性、零网络);daemon 侧 hermetic 测试 `test_sse_contract.py`(信封 6 字段 + 事件名 + `[DONE]` + seq 单调);并解封 client↔daemon 契约里被搁置的 SSE 测试(`test-contract.sh` 用 fake-LLM 起真 daemon,客户端 `streamLocalRun` 真解析)。
-- [x] ✅ 处理 9 个 skip 的 `App.test.tsx` 流程测试 —— 4 个重定向到当前 UI(会话登录态同步、项目工作区路径随 run 下发、按会话独立工作区、导入/导出进会话行菜单),5 个删除(断言已移除的 topbar/Composer 旧 UI,且行为已被 e2e 覆盖)。App.test 现 0 skip。
+| 状态 | 任务 | 为什么 |
+|---|---|---|
+| [ ] | 上下文管理调优，化解 40 轮硬截断和 deepagents 压缩器的重复处理。 | 长任务可能在压缩前就丢关键上下文。 |
+| [ ] | 长期记忆升级：语义检索、LLM 事实抽取、namespace 隔离。 | 现在更像 append-only 记录和子串匹配，召回质量有限。 |
+| [ ] | 验证回环。 | critic / tool-critic 能评分，但低分不会自动触发有上限的重做。 |
+| [ ] | 错误分类和退避策略。 | 瞬时错误、用户可修错误、致命错误需要不同处理和文案。 |
+| [ ] | browser.task 接通或下架。 | 如果仍是 stub，就不要继续广告给模型。 |
 
-### P3 — 引擎深度 + 锦上添花
-引擎:
-- [ ] 调优上下文管理 + 化解"双重压缩"(runs.py 40 轮硬截断跑在 deepagents 压缩器之前,会丢上下文;阈值全用库默认)(高 · M)
-- [ ] 长期记忆升级:语义检索(SqliteIndexConfig)+ LLM 事实抽取 + 命名空间隔离(中 · M)
-- [ ] 补运行上限:显式 `recursion_limit` + 每轮挂钟超时 + 全局工具调用上限(中 · M)
-- [ ] 守护进程重启后持久化运行态(`_run_grants`/`_goals`/`_histories`,重启会丢 scope=run 授权/目标)(中 · M)
-- [ ] HITL 恢复保留原始 mode(现 resume 硬编码 `fast`,pro/deep 审批后被静默降级)(中 · S)
-- [ ] 向客户端 SSE 暴露成本/积分(`event_translator` 加 `llm.usage` case + 每轮累计)(中 · S)
-- [ ] 删除或接通 `FastDeepRouterMiddleware`(每次跑但结果从不回灌模型,死代码)(低 · S)
-- [ ] 错误分类策略(瞬时/可恢复/用户可修/未知 + 退避)(低 · M)
-- [ ] 让验证变成回环(critic 触发有上限的重做)+ 扩充子 Agent 角色(低 · M)
+## 用户侧操作
 
-功能/UI:
-- [ ] 多文件附件(`attachedDocumentID` 现为标量,只能传一个)(中 · M)
-- [ ] MCP/Skills 在 UI 内增删改(现只能浏览/开关,要手改配置文件)(中 · L)
-- [ ] 应用内更新 UX(版本号 + "有更新"横幅 + 重启安装)(中 · M)
-- [ ] Artifact 面板升级(语法高亮/复制/按类型渲染 HTML/SVG/markdown,现纯 `<pre>`)(中 · M)
-- [ ] "回到底部"按钮 + 长列表虚拟化(低 · M)
-- [ ] 补键盘快捷键(聚焦输入/切会话/停止/设置/搜索)+ 快捷键帮助(低 · S)
-- [ ] Electron 主进程硬编码中文串接入 i18n(英文用户看到中文弹窗)(低 · S)
+| 状态 | 任务 | 备注 |
+|---|---|---|
+| [ ] | 轮换泄露过的 AWS key。 | 这是账号侧操作，代码无法代做。 |
+| [ ] | tu-zi 图像令牌分组改到支持图片的分组。 | 后台账号侧配置。 |
+| [ ] | GitHub Release 草稿 review / publish。 | 先处理发布标签与 main 对齐，再发布。 |
 
-后端/运维:
-- [x] ✅ `/readyz` 真就绪探针(ping DB)+ `/healthz` 存活 + Caddy 路由(中 · S)
-- [ ] main.go 换带超时的 `http.Server` + 优雅关闭(现裸 `ListenAndServe`,部署丢在途请求)(中 · S)
-- [ ] 安全响应头(HSTS/CSP/X-Frame/X-Content-Type;Caddy 和 Go 都没设)(中 · S)
-- [ ] 生产弱默认密钥 fail-fast(`JWT_SECRET`/`CONFIG_ENCRYPTION_KEY` 现仅 WARN)(中 · S)
-- [ ] 迁移引入版本表(golang-migrate/goose),告别全量重放(中 · M)
-- [ ] 镜像签名 + SBOM + 漏洞扫描(cosign + trivy)(中 · M)
-- [ ] compose healthcheck:**api 已加** ✅;client/admin/caddy 还没(中 · S)
-- [ ] 修每晚红的 external-smoke(`STRIPE_WEBHOOK_SECRET` 未配,金丝雀自己坏了)(中 · S)
-- [ ] ci.yml 加 concurrency group(同 PR 重叠推送会跑两遍)(低 · S)
+## 暂缓项
 
----
-
-## 2. "12 个组件"对照表
-
-权威分类逐项对照(回答"理论上 12 个组件我们缺哪些"):
-
-| # | 组件 | 状态 | 一句话缺口 |
-|---|------|------|-----------|
-| 1 | 编排/执行循环 | ✅ 完整 | LangGraph+deepagents 完整循环,文档齐全,强项 |
-| 2 | 工具与工具注册 | ✅ 完整 | `@tool` 注册表完善,平台付费工具正确走网关 |
-| 3 | 提示词构建/系统提示 | ✅ 完整 | 分层提示栈清晰(context_builder.py),云/端各管自己那层 |
-| 4 | 上下文管理 | 🟡 部分 | 压缩/裁剪用**库默认阈值**;和 runs.py 40 轮硬截断**重复处理**,可能丢上下文 |
-| 5 | 输出解析 | ✅ 完整 | 走 LangChain 原生 tool-calling,够用 |
-| 6 | 记忆与检索 | 🟡 部分 | 长期记忆只存{目标,答案}原始对,**子串匹配无语义检索**,单一全局命名空间 |
-| 7 | 状态管理/检查点 | ✅ 完整 | AsyncSqliteSaver 每步检查点,可暂停/恢复/崩溃恢复 |
-| 8 | 错误处理 | 🟡 部分 | 有重试,但**无显式错误分类**,恢复是隐式的 |
-| 9 | 护栏与安全(权限) | ✅ 完整 | 输入/输出护栏 + HITL + SSRF + 密钥云端隔离,标杆级 |
-| 10 | 验证/自我纠错 | 🟡 部分 | reflect/tool-critic/verify 都有,但**只评分不回环**,差也不重做 |
-| 11 | 子 Agent 编排 | ✅ 完整* | 有 task 委派 + fast/deep 路由;但只有 researcher/writer 两个写死角色,无动态编排 |
-| 12 | 可观测与评测接口 | 🟡 部分 | 可观测很强;**评测几乎为空**——无黄金轨迹、无回归 eval、无 LLM-judge |
-
-**结论:12 个没有一个完全缺失(无 ❌)。** 真正薄弱的 5 个(🟡):上下文调优(4)、长期记忆(6)、错误分类(8)、验证回环(10)、**评测(12)**。其中 **12 号"评测"是相对权威分类的最大单一缺口**,两份独立研究都列为"最高杠杆"。
-
----
-
-## 3. 暂缓 / 不值得做(已记录,有意为之)
-
-| 事项 | 处置 | 理由 |
-|------|------|------|
-| mac 签名公证(Phase 4) | 暂缓 | 需 Apple 账号($99/年)、双 arch DMG、notarization 全有或全无,成本高且非阻塞 |
-| 图片 tu-zi 令牌分组 | 待办(账号侧) | 已知项:tu-zi 后台把令牌换到支持图片的分组 + 确认模型名 |
-| CI 延迟抖动测试(p50) | 降级保留 | 改成打印基准/opt-in,不要硬断言 |
-| browser-use / playwright 打包 | 暂缓 | 已决定 v1 不打包进桌面版,按需可选 |
-| 暗黑模式 | 暂缓 | styles.css 明确"intentionally LIGHT-ONLY",是有意决定 |
-| 移动端 App | 暂缓 | 本地 harness 跑在用户机器上,全移动端是大工程;先用桌面通知补异步 |
-| 会话分享/协作 | 先决策 | 本地优先隐私模型天然排斥分享链接;要么 opt-in 单条导出,要么在 spec.md 写明"不做" |
-| 订单退款/取消 admin 动作 | 暂缓 | 当前刻意只读,符合 AGENTS.md |
-| 细粒度 admin RBAC | 暂缓 | 1-2 人运维时单一 admin 角色够用 |
-| 结构化输出 / DeltaChannel / 时间旅行回溯 | 暂缓 | 引擎层锦上添花,现有 defensive JSON 解析够用 |
-
----
-
-## 4. 节奏建议
-
-**先把 CI 修绿(P0)→ 再并行推"充值入口 + 安全三连 + 监控/备份"(P1)这批生产硬伤 → eval 套件(P2)作为贯穿后续的质量护城河。**
-引擎层的上下文调优、语义记忆、验证回环(P3)都值得做,但都排在"产品能赚钱、线上不裸奔、改动有回归保护"之后。
+| 事项 | 处置 |
+|---|---|
+| macOS 签名公证 | 暂缓。需要 Apple Developer 账号和完整 notarization 流程，非当前阻塞。 |
+| Windows 代码签名 | 暂缓。未签名会受 SmartScreen 影响，但可等分发链路稳定后处理。 |
+| 移动端 App | 暂缓。本地 harness 跑在用户机器上，全移动端是另一条产品线。 |
+| 会话分享/协作 | 先做产品决策。本地优先隐私模型天然不适合默认分享链接。 |
+| 订单退款/取消 admin 动作 | 暂缓。当前 admin 订单保持只读，符合运维边界。 |
+| 细粒度 admin RBAC | 暂缓。当前单一 admin 角色足够早期运营。 |

@@ -1,15 +1,18 @@
-# Pure-Python LangGraph 迁移方案（已完成）
+# Pure-Python LangGraph 迁移记录（历史）
 
 > **状态（截至 2026-05-21）**：Phase 0–7' 全部落地，纯 Python daemon
 > 取代原 Node `local-host/src/`（删除 18,910 行 TS）。Agent 跑在
 > `langchain.agents.create_agent` + 15 个 middleware 上，含 subagent
 > （deepagents）+ structlog 可观测性。详见尾部"完成度汇总"。
+>
+> 这是一份历史迁移记录，不是当前架构入口。当前 run lifecycle 见
+> [run-loop.md](run-loop.md)，SSE 协议见 [client-sse-protocol.md](client-sse-protocol.md)。
 
 ---
 
 
 **分支**: `refactor/infrastructure`
-**关联**: [架构起点](architecture-local-host.md) · [Phase 0 spike 报告](spike-phase0-langgraph.md) · [`~/.claude/plans/langgraph-local-memoized-abelson.md`](原方案，已被本文取代)
+**关联**: [当前 run loop](run-loop.md) · [SSE 协议](client-sse-protocol.md)
 **日期**: 2026-05-21（在 commit `d944b25` Phase 1 完成后）
 
 ---
@@ -283,7 +286,7 @@ curl -N -X POST http://127.0.0.1:17371/v1/runs \
 
 | 已完成 | 在新方案中的处理 |
 |---|---|
-| `docs/architecture-local-host.md`（起点架构图） | 保留作为对比基线，Phase 5' 后追加一份"目标态架构" |
+| 起点架构图 / Phase 0 spike 文档 | 已删除。当前架构以 `docs/run-loop.md` 为准，迁移背景保留在本文。 |
 | `local-host/python-spike/`（Phase 0 spike） | **保留作为参考**，直到 Phase 7' 删除（最关键的 RPC / IPC 模式不再需要，但 LangGraph 用法验证仍有价值） |
 | `local-host/src/agent-spike/`（Node 侧 spike） | **Phase 5' 删除**（Node 端整体退役） |
 | `api/internal/httpapi/agent_stream.go` + 测试（Phase 1） | **完全保留**——Python 通过 `BackendChatModel` 直连此端点 |
