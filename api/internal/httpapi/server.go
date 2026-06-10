@@ -1484,28 +1484,28 @@ type adminProviderStatus struct {
 }
 
 func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user store.User) {
-	fastProvider, fastModel := s.app.Router.Select(llm.ModeFast)
-	deepProvider, deepModel := s.app.Router.Select(llm.ModeDeep)
-	deepKind := llm.KindOfProvider(deepProvider)
-	statuses := []adminProviderStatus{
-		{
-			Mode:             string(llm.ModeFast),
-			Provider:         fastProvider.Name(),
-			Kind:             string(llm.KindOfProvider(fastProvider)),
-			BaseURL:          s.app.Config.FastProviderBaseURL,
-			Model:            fastModel,
-			Mock:             s.app.Config.MockLLM || s.app.Config.FastProviderAPIKey == "",
-			APIKeyConfigured: s.app.Config.FastProviderAPIKey != "",
-		},
-		{
-			Mode:             string(llm.ModeDeep),
-			Provider:         deepProvider.Name(),
-			Kind:             string(deepKind),
-			BaseURL:          deepProviderBaseURL(deepKind == llm.ProviderKindAnthropic, s.app.Config.DeepProviderBaseURL),
-			Model:            deepModel,
-			Mock:             s.app.Config.MockLLM || (s.app.Config.AnthropicAPIKey == "" && s.app.Config.DeepProviderAPIKey == ""),
-			APIKeyConfigured: s.app.Config.AnthropicAPIKey != "" || s.app.Config.DeepProviderAPIKey != "",
-		},
+	// One status row per enabled model in the catalog (flat catalog — no more
+	// fixed fast/deep tiers). `Mode` carries the model id (slot).
+	configs, err := s.app.Store.ListModelConfigs(r.Context(), "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取模型配置失败")
+		return
+	}
+	statuses := make([]adminProviderStatus, 0, len(configs))
+	for _, cfg := range configs {
+		if !cfg.Enabled {
+			continue
+		}
+		kind := llm.NormalizeProviderKind(cfg.ProviderKind)
+		statuses = append(statuses, adminProviderStatus{
+			Mode:             cfg.Slot,
+			Provider:         cfg.DisplayName,
+			Kind:             string(kind),
+			BaseURL:          cfg.BaseURL,
+			Model:            cfg.ModelName,
+			Mock:             kind == llm.ProviderKindMock,
+			APIKeyConfigured: strings.TrimSpace(cfg.APIKeyEncrypted) != "",
+		})
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]adminProviderStatus]{Code: 0, Message: "ok", Data: statuses})
 }

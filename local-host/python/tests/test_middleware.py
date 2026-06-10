@@ -58,46 +58,9 @@ def test_input_guard_clean_message_returns_none(monkeypatch: Any) -> None:
 # --- router ---
 
 
-def test_router_short_chat_picks_fast() -> None:
-    from local_host.middleware.router import FastDeepRouterMiddleware
-
-    mw = FastDeepRouterMiddleware()
-    state = {"messages": [HumanMessage(content="hi")]}
-    result = mw.before_model(state, runtime=None)
-    assert result == {"mode_route": "fast"}
-
-
-def test_router_long_user_input_picks_deep() -> None:
-    from local_host.middleware.router import FastDeepRouterMiddleware
-
-    mw = FastDeepRouterMiddleware(deep_user_length_threshold=20)
-    state = {"messages": [HumanMessage(content="a" * 25)]}
-    result = mw.before_model(state, runtime=None)
-    assert result["mode_route"] == "deep"
-
-
-def test_router_many_tool_calls_picks_deep() -> None:
-    from local_host.middleware.router import FastDeepRouterMiddleware
-
-    mw = FastDeepRouterMiddleware(deep_tool_count_threshold=2)
-    state = {
-        "messages": [
-            HumanMessage(content="hi"),
-            ToolMessage(content="r1", tool_call_id="c1"),
-            ToolMessage(content="r2", tool_call_id="c2"),
-            ToolMessage(content="r3", tool_call_id="c3"),
-        ]
-    }
-    result = mw.before_model(state, runtime=None)
-    assert result["mode_route"] == "deep"
-
-
-def test_router_does_not_re_decide() -> None:
-    from local_host.middleware.router import FastDeepRouterMiddleware
-
-    mw = FastDeepRouterMiddleware()
-    state = {"messages": [HumanMessage(content="hi")], "mode_route": "deep"}
-    assert mw.before_model(state, runtime=None) is None
+# --- routing: the fast/deep classifier was removed with the flat model
+# --- catalog (cloud resolves the model now), so there's no router middleware
+# --- to unit-test here.
 
 
 # --- skill injection: handled by deepagents.SkillsMiddleware now, ---

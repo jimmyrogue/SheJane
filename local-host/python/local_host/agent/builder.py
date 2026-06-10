@@ -57,7 +57,6 @@ from langgraph.store.sqlite.aio import AsyncSqliteStore
 from ..config import Settings, get_settings
 from ..llm.backend import BackendChatModel
 from ..middleware import (
-    FastDeepRouterMiddleware,
     InputGuardMiddleware,
     MemoryWritebackMiddleware,
     OutputGuardMiddleware,
@@ -201,7 +200,7 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
     """Our middleware that deepagents doesn't auto-add.
 
     Order:
-      InputGuard → FastDeepRouter → ToolCallLimit → ToolRetry →
+      InputGuard → ToolCallLimit → ToolRetry →
       ModelRetry → ModelFallback (optional) → ModelCallLimit →
       ContextEditing → OutputGuard → Reflect → MemoryWriteback
 
@@ -215,7 +214,6 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
     """
     middleware: list[AgentMiddleware] = [
         InputGuardMiddleware(mode=settings.input_guard_mode),  # P1
-        FastDeepRouterMiddleware(),  # P2
         # Plan & Execute mode (off | always | auto; auto-skips trivial
         # tasks). Sourced from settings so the Advanced agent-settings
         # panel can override the SHEJANE_PLAN_FIRST env default per-run.

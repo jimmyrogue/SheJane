@@ -78,11 +78,11 @@ def test_messages_mode_emits_tool_completed_for_tool_message() -> None:
 
 
 def test_updates_mode_emits_per_node_graph_node_event() -> None:
-    payload = {"router": {"mode_route": "fast"}}
+    payload = {"input_guard": {"flagged": False}}
     events = translate("updates", payload)
     assert len(events) == 1
     assert events[0]["event"] == "graph.node"
-    assert events[0]["data"]["node"] == "router"
+    assert events[0]["data"]["node"] == "input_guard"
 
 
 def test_updates_mode_does_not_double_emit_tool_completed() -> None:
