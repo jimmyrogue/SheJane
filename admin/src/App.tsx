@@ -1079,19 +1079,7 @@ const CAPABILITY_OPTIONS = [
   { value: 'image', label: '生图 (image)' },
 ] as const
 
-// A slot is the logical role the backend routes to. Exactly one enabled model
-// per slot is live. Valid slots depend on the capability.
-const SLOT_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
-  chat: [
-    { value: 'chat.fast', label: 'chat.fast · 快速对话模型' },
-    { value: 'chat.deep', label: 'chat.deep · 深度对话模型' },
-  ],
-  image: [{ value: 'image.default', label: 'image.default · 默认生图模型' }],
-}
-
-function slotOptionsFor(capability: string) {
-  return SLOT_OPTIONS[capability] ?? SLOT_OPTIONS.chat
-}
+const IMAGE_DEFAULT_MODEL_ID = 'image.default'
 
 const SELECT_CLASS =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
@@ -1204,8 +1192,9 @@ function ModelConfigCard({
 
   async function submitForm() {
     const multiplier = Number(form.credit_multiplier)
-    if (!form.slot.trim() || !form.provider_kind.trim()) {
-      onNotice('slot 与 provider_kind 必填')
+    const modelID = form.capability === 'image' ? IMAGE_DEFAULT_MODEL_ID : form.slot.trim()
+    if (!modelID || !form.provider_kind.trim()) {
+      onNotice('模型 ID 与 provider_kind 必填')
       return
     }
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
@@ -1213,7 +1202,7 @@ function ModelConfigCard({
       return
     }
     const payload: ModelConfigInput = {
-      slot: form.slot.trim(),
+      slot: modelID,
       capability: form.capability.trim() || 'chat',
       provider_kind: form.provider_kind,
       display_name: form.display_name.trim(),
@@ -1328,7 +1317,7 @@ function ModelConfigCard({
         <CardHeader className="flex flex-row items-start justify-between gap-2">
           <div>
             <CardTitle>模型配置</CardTitle>
-            <CardDescription>动态管理 provider / 模型 / 计费倍率，保存后即时生效，不再依赖 .env。API key 加密存储且不回显。</CardDescription>
+            <CardDescription>动态管理用户端模型目录、provider / 模型 / 计费倍率，保存后即时生效，不再依赖 .env。API key 加密存储且不回显。</CardDescription>
           </div>
           <Button size="sm" onClick={openCreate}>
             <Plus className="size-4" />
@@ -1339,7 +1328,7 @@ function ModelConfigCard({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>槽位 / 能力</TableHead>
+                <TableHead>模型 ID / 能力</TableHead>
                 <TableHead>Provider / Model</TableHead>
                 <TableHead>成本倍率</TableHead>
                 <TableHead>每次金额</TableHead>
@@ -1508,8 +1497,11 @@ function ModelConfigCard({
                   value={form.capability}
                   onChange={(e) => {
                     const capability = e.target.value
-                    const slots = slotOptionsFor(capability)
-                    const slot = slots.some((option) => option.value === form.slot) ? form.slot : slots[0].value
+                    const slot = capability === 'image'
+                      ? IMAGE_DEFAULT_MODEL_ID
+                      : form.capability === 'image' && form.slot === IMAGE_DEFAULT_MODEL_ID
+                        ? ''
+                        : form.slot
                     setForm({ ...form, capability, slot })
                   }}
                 >
@@ -1521,24 +1513,22 @@ function ModelConfigCard({
                 </select>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="mc-slot">槽位 slot</Label>
-                <select
-                  id="mc-slot"
-                  className={SELECT_CLASS}
-                  value={form.slot}
-                  onChange={(e) => setForm({ ...form, slot: e.target.value })}
-                >
-                  {!form.slot ? <option value="">请选择槽位</option> : null}
-                  {slotOptionsFor(form.capability).map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <Label htmlFor="mc-slot">模型 ID</Label>
+                {form.capability === 'image' ? (
+                  <Input id="mc-slot" value={IMAGE_DEFAULT_MODEL_ID} disabled />
+                ) : (
+                  <Input
+                    id="mc-slot"
+                    value={form.slot}
+                    onChange={(e) => setForm({ ...form, slot: e.target.value })}
+                    placeholder="gpt-4o / claude-sonnet / deepseek-v4"
+                    maxLength={40}
+                  />
+                )}
               </div>
             </div>
             <p className="-mt-1 text-xs text-muted-foreground">
-              槽位 = 该模型担任的角色，后端按角色路由请求；同一槽位只有一个「启用」的模型生效（如 chat.fast 收快速对话、chat.deep 收深度对话、image.default 收生图）。
+              模型 ID 是用户请求里保存和发送的稳定标识；显示名才是用户在选择器里看到的名称。chat 模型可自由命名，生图当前固定为 image.default。
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
@@ -1611,7 +1601,7 @@ function ModelConfigCard({
                 checked={form.enabled}
                 onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
               />
-              启用（同一槽位仅一个启用配置生效）
+              启用（chat 模型会进入用户端目录与 Auto 候选；生图只使用 image.default）
             </label>
           </div>
           <div className="flex justify-end gap-2">

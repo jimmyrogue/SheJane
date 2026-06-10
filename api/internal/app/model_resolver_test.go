@@ -11,8 +11,8 @@ import (
 
 func TestParseAutoResolveOutput(t *testing.T) {
 	candidates := []modelreg.ChatModelInfo{
-		{ID: "chat.fast", Label: "快速"},
-		{ID: "chat.deep", Label: "深度"},
+		{ID: "gpt-4o", Label: "GPT-4o"},
+		{ID: "claude-sonnet", Label: "Claude Sonnet"},
 	}
 	cases := []struct {
 		name       string
@@ -20,10 +20,10 @@ func TestParseAutoResolveOutput(t *testing.T) {
 		wantID     string
 		wantReason string
 	}{
-		{"strict json", `{"model":"chat.deep","reason":"复杂推理"}`, "chat.deep", "复杂推理"},
-		{"json wrapped in prose", "选择如下:\n{\"model\":\"chat.fast\",\"reason\":\"简单问答\"} 完毕", "chat.fast", "简单问答"},
-		{"json with unknown id falls through to scan", `{"model":"chat.nope","reason":"x"} 但其实 chat.deep 更合适`, "chat.deep", ""},
-		{"bare id no json", "我选 chat.deep", "chat.deep", ""},
+		{"strict json", `{"model":"claude-sonnet","reason":"复杂推理"}`, "claude-sonnet", "复杂推理"},
+		{"json wrapped in prose", "选择如下:\n{\"model\":\"gpt-4o\",\"reason\":\"简单问答\"} 完毕", "gpt-4o", "简单问答"},
+		{"json with unknown id falls through to scan", `{"model":"chat.nope","reason":"x"} 但其实 claude-sonnet 更合适`, "claude-sonnet", ""},
+		{"bare id no json", "我选 claude-sonnet", "claude-sonnet", ""},
 		{"garbage", "今天天气不错", "", ""},
 	}
 	for _, tc := range cases {
@@ -33,6 +33,61 @@ func TestParseAutoResolveOutput(t *testing.T) {
 				t.Fatalf("parse(%q) = (%q,%q), want (%q,%q)", tc.content, id, reason, tc.wantID, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestResolveAutoModelCanChooseArbitraryCatalogID(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	st := store.NewMemoryStore()
+	application := New(cfg, st)
+
+	for _, c := range []store.ModelConfig{
+		{
+			Slot:             "gpt-4o",
+			Capability:       modelreg.CapabilityChat,
+			ProviderKind:     "mock",
+			DisplayName:      "GPT-4o",
+			Description:      "通用强模型",
+			ModelName:        "gpt-4o",
+			CreditMultiplier: 2,
+			Priority:         110,
+			Enabled:          true,
+			Params:           map[string]any{"mock_reply": `{"model":"claude-sonnet","reason":"长文更稳"}`},
+		},
+		{
+			Slot:             "claude-sonnet",
+			Capability:       modelreg.CapabilityChat,
+			ProviderKind:     "mock",
+			DisplayName:      "Claude Sonnet",
+			Description:      "复杂推理和长文",
+			ModelName:        "claude-sonnet",
+			CreditMultiplier: 2,
+			Priority:         105,
+			Enabled:          true,
+		},
+		{
+			Slot:             "deepseek-v4",
+			Capability:       modelreg.CapabilityChat,
+			ProviderKind:     "mock",
+			DisplayName:      "DeepSeek",
+			Description:      "速度快、成本低",
+			ModelName:        "deepseek-v4",
+			CreditMultiplier: 1,
+			Priority:         80,
+			Enabled:          true,
+		},
+	} {
+		if _, err := st.UpsertModelConfig(ctx, "admin", c); err != nil {
+			t.Fatalf("upsert %s: %v", c.Slot, err)
+		}
+	}
+	application.Registry.Invalidate()
+
+	resolved, reason := application.ResolveAutoModel(ctx, "请写一份包含策略推演的长报告")
+	if resolved.ID != "claude-sonnet" || resolved.Label != "Claude Sonnet" || reason != "长文更稳" {
+		t.Fatalf("resolved = (%q,%q,%q), want (claude-sonnet,Claude Sonnet,长文更稳)", resolved.ID, resolved.Label, reason)
 	}
 }
 

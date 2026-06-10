@@ -1,8 +1,9 @@
 package llm
 
-// ModelResolveFunc resolves a catalog model id (== slot) to a live
-// provider/model/credit multiplier. ok is false when the id is not an enabled
-// catalog model (caller falls back to the default model id).
+// ModelResolveFunc resolves a catalog model id to a live provider/model/credit
+// multiplier. The id is persisted in the legacy model_configs.slot column. ok
+// is false when the id is not an enabled catalog model (caller falls back to
+// the default model id).
 type ModelResolveFunc func(modelID string) (provider Provider, model string, multiplier float64, ok bool)
 
 type Router struct {
@@ -45,13 +46,11 @@ func (r *Router) SetModelResolver(resolve ModelResolveFunc, defaultID func() str
 	r.defaultModelID = defaultID
 }
 
-// resolveModelID maps a requested model field to a concrete catalog id:
-// a valid catalog id passes through; "auto" / "" / an unknown id fall back to
-// the default (highest-priority enabled) model.
-//
-// NOTE: "auto" currently resolves to the default model (highest priority). A
-// task-aware classifier that picks among catalog candidates is a follow-up;
-// the resolution point is centralized here so that upgrade is local.
+// resolveModelID maps a requested model field to a concrete catalog id for
+// low-level chat calls: a valid catalog id passes through; "auto" / "" / an
+// unknown id fall back to the default (highest-priority enabled) model. Higher
+// level run endpoints resolve "auto" once with the task-aware Auto resolver
+// before they call into this router.
 func (r *Router) resolveModelID(modelID string) string {
 	if modelID != "" && modelID != "auto" && r.resolveModel != nil {
 		if _, _, _, ok := r.resolveModel(modelID); ok {

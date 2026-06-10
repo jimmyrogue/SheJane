@@ -124,6 +124,42 @@ describe('admin web app', () => {
     expect(screen.queryByRole('button', { name: /取消|重试|删除/ })).not.toBeInTheDocument()
   })
 
+  it('creates chat models with an arbitrary model id instead of fixed fast/deep slots', async () => {
+    const calls = mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('运营概览')
+
+    selectAdminTab('模型')
+    fireEvent.click(await screen.findByText('新增模型'))
+
+    const modelID = await screen.findByLabelText('模型 ID')
+    expect(screen.queryByText('chat.fast · 快速对话模型')).not.toBeInTheDocument()
+    expect(screen.queryByText('chat.deep · 深度对话模型')).not.toBeInTheDocument()
+
+    fireEvent.change(modelID, { target: { value: 'gpt-4o' } })
+    fireEvent.change(screen.getByLabelText('显示名（用户在模型选择器里看到的标签）'), { target: { value: 'GPT-4o' } })
+    fireEvent.change(screen.getByLabelText('描述（选择器 tooltip + Auto 路由提示，仅 chat 模型）'), { target: { value: '通用强模型' } })
+    fireEvent.change(screen.getByLabelText('优先级（数字越大越靠前；最高的为默认模型）'), { target: { value: '80' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.openai.com/v1' } })
+    fireEvent.change(screen.getByLabelText('模型名'), { target: { value: 'gpt-4o' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(await screen.findByText('模型配置已保存并即时生效')).toBeInTheDocument()
+    const createCall = calls.find((call) => call.url.endsWith('/api/v1/admin/model-configs') && call.init?.method === 'POST')
+    expect(createCall).toBeTruthy()
+    expect(JSON.parse(String(createCall?.init?.body))).toMatchObject({
+      slot: 'gpt-4o',
+      capability: 'chat',
+      display_name: 'GPT-4o',
+      model_name: 'gpt-4o',
+    })
+  })
+
   it('blocks non-admin users from loading admin data', async () => {
     const calls = mockFetch('user')
 

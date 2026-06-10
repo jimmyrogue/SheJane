@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/coldflame/shejane/api/internal/llm"
 	"github.com/coldflame/shejane/api/internal/modelreg"
@@ -11,6 +13,7 @@ import (
 )
 
 const creditRateSettingKey = modelreg.BillingSettingsKey
+const modelConfigIDMaxLen = 40
 
 // adminModelConfigView is the API shape for a model config. It deliberately
 // omits the encrypted API key and only reports whether one is configured.
@@ -134,8 +137,18 @@ func (s *Server) adminUpdateModelConfig(w http.ResponseWriter, r *http.Request, 
 func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelConfigInput, existing store.ModelConfig) (store.ModelConfig, bool) {
 	slot := strings.TrimSpace(input.Slot)
 	providerKind := strings.TrimSpace(input.ProviderKind)
+	capability := strings.TrimSpace(input.Capability)
+	if capability == "" {
+		capability = existing.Capability
+	}
+	if capability == "" {
+		capability = "chat"
+	}
 	if slot == "" || providerKind == "" {
-		writeError(w, http.StatusBadRequest, 40201, "slot 与 provider_kind 必填")
+		writeError(w, http.StatusBadRequest, 40201, "模型 ID 与 provider_kind 必填")
+		return store.ModelConfig{}, false
+	}
+	if !validateModelConfigID(w, slot, capability) {
 		return store.ModelConfig{}, false
 	}
 	// Reject unknown kinds outright (typo guard — an unrecognized kind would
@@ -144,13 +157,6 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 	if kind == "" {
 		writeError(w, http.StatusBadRequest, 40201, "未知的 provider_kind（支持 deepseek-v4 / openai-compatible / anthropic / mock）")
 		return store.ModelConfig{}, false
-	}
-	capability := strings.TrimSpace(input.Capability)
-	if capability == "" {
-		capability = existing.Capability
-	}
-	if capability == "" {
-		capability = "chat"
 	}
 	// The chat catalog only admits tool-capable models (design decision #3) —
 	// a model that silently drops tool calls would degrade the agent to plain
@@ -204,6 +210,34 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		Enabled:          enabled,
 		Params:           params,
 	}, true
+}
+
+func validateModelConfigID(w http.ResponseWriter, modelID string, capability string) bool {
+	switch capability {
+	case modelreg.CapabilityChat:
+		if strings.EqualFold(modelID, "auto") {
+			writeError(w, http.StatusBadRequest, 40201, "auto 是系统保留模型 ID，不能作为后台模型 ID")
+			return false
+		}
+		if strings.ContainsFunc(modelID, unicode.IsSpace) {
+			writeError(w, http.StatusBadRequest, 40201, "模型 ID 不能包含空白字符")
+			return false
+		}
+		if utf8.RuneCountInString(modelID) > modelConfigIDMaxLen {
+			writeError(w, http.StatusBadRequest, 40201, "模型 ID 不能超过 40 个字符")
+			return false
+		}
+		return true
+	case modelreg.CapabilityImage:
+		if modelID != modelreg.SlotImageDefault {
+			writeError(w, http.StatusBadRequest, 40201, "生图模型 ID 固定为 image.default")
+			return false
+		}
+		return true
+	default:
+		writeError(w, http.StatusBadRequest, 40201, "未知 capability（支持 chat / image）")
+		return false
+	}
 }
 
 func (s *Server) adminToggleModelConfig(w http.ResponseWriter, r *http.Request, user store.User) {

@@ -16,10 +16,10 @@ export interface ModelOption {
 }
 
 /**
- * Composer-attached model picker. "Auto" is always offered (the Go LLM router
- * picks the default / highest-priority model — a task-aware classifier is a
- * later upgrade); below it sit the enabled catalog models fetched from
- * GET /api/v1/models. The selected value is `'auto'` or a concrete model id.
+ * Composer-attached model picker. "Auto" is always offered and asks the
+ * backend resolver to choose among enabled chat models; below it sit the
+ * enabled catalog models fetched from GET /api/v1/models. The selected value
+ * is `'auto'` or a concrete model id.
  *
  * On the web build with no models configured, only Auto shows. The concrete
  * provider/model mapping lives in the Go registry, never here.

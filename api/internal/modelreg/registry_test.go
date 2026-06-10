@@ -159,11 +159,11 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 	st := store.NewMemoryStore()
 	reg := New(st, config.Default())
 
-	// Three enabled chat models with distinct priorities + ids (== slots).
+	// Three enabled chat models with distinct priorities + arbitrary catalog ids.
 	for _, m := range []store.ModelConfig{
-		{Slot: "chat.lowpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Low", Priority: 10, Enabled: true},
-		{Slot: "chat.toppri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Top", Description: "首选", Priority: 99, Enabled: true},
-		{Slot: "chat.midpri", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Mid", Priority: 50, Enabled: true},
+		{Slot: "deepseek-v4", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "DeepSeek", Priority: 10, Enabled: true},
+		{Slot: "gpt-4o", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "GPT-4o", Description: "首选", Priority: 99, Enabled: true},
+		{Slot: "claude-sonnet", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Claude Sonnet", Priority: 50, Enabled: true},
 		{Slot: "chat.disabled", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Off", Priority: 100, Enabled: false},
 	} {
 		if _, err := st.UpsertModelConfig(ctx, "admin", m); err != nil {
@@ -177,22 +177,22 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 		t.Fatalf("catalog len = %d, want 3 (disabled excluded)", len(catalog))
 	}
 	gotOrder := []string{catalog[0].ID, catalog[1].ID, catalog[2].ID}
-	wantOrder := []string{"chat.toppri", "chat.midpri", "chat.lowpri"}
+	wantOrder := []string{"gpt-4o", "claude-sonnet", "deepseek-v4"}
 	for i := range wantOrder {
 		if gotOrder[i] != wantOrder[i] {
 			t.Fatalf("catalog order = %v, want %v (priority desc)", gotOrder, wantOrder)
 		}
 	}
-	if catalog[0].Label != "Top" || catalog[0].Description != "首选" {
-		t.Fatalf("top entry = %+v, want Label=Top Description=首选", catalog[0])
+	if catalog[0].Label != "GPT-4o" || catalog[0].Description != "首选" {
+		t.Fatalf("top entry = %+v, want Label=GPT-4o Description=首选", catalog[0])
 	}
 
-	if def := reg.DefaultChatModelID(); def != "chat.toppri" {
-		t.Fatalf("DefaultChatModelID = %q, want chat.toppri (highest priority)", def)
+	if def := reg.DefaultChatModelID(); def != "gpt-4o" {
+		t.Fatalf("DefaultChatModelID = %q, want gpt-4o (highest priority)", def)
 	}
 
-	if _, _, _, ok := reg.ResolveModel("chat.midpri"); !ok {
-		t.Fatal("ResolveModel(chat.midpri) should resolve")
+	if _, _, _, ok := reg.ResolveModel("claude-sonnet"); !ok {
+		t.Fatal("ResolveModel(claude-sonnet) should resolve")
 	}
 	if _, _, _, ok := reg.ResolveModel("chat.disabled"); ok {
 		t.Fatal("ResolveModel(chat.disabled) must NOT resolve (disabled)")

@@ -54,7 +54,7 @@ const (
 // No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
 // GET /api/v1/models and fed to the Auto router as candidate context.
 type ChatModelInfo struct {
-	ID          string `json:"id"` // == slot (stable model id)
+	ID          string `json:"id"` // stable model id; persisted in legacy slot column
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 	Priority    int    `json:"priority"`
@@ -175,9 +175,9 @@ func (r *Registry) Invalidate() {
 	r.mu.Unlock()
 }
 
-// ResolveModel returns the provider/model/multiplier for a catalog model id
-// (== slot). ok is false when no enabled config has that id (caller falls back
-// to DefaultChatModelID).
+// ResolveModel returns the provider/model/multiplier for a catalog model id.
+// The id is persisted in the legacy model_configs.slot column. ok is false
+// when no enabled config has that id (caller falls back to DefaultChatModelID).
 func (r *Registry) ResolveModel(modelID string) (llm.Provider, string, float64, bool) {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()

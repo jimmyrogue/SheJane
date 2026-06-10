@@ -1533,7 +1533,7 @@ type adminProviderStatus struct {
 
 func (s *Server) adminProviders(w http.ResponseWriter, r *http.Request, user store.User) {
 	// One status row per enabled model in the catalog (flat catalog — no more
-	// fixed fast/deep tiers). `Mode` carries the model id (slot).
+	// fixed fast/deep tiers). `Mode` carries the stable model id.
 	configs, err := s.app.Store.ListModelConfigs(r.Context(), "")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, 50001, "读取模型配置失败")

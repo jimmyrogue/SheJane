@@ -70,10 +70,12 @@ CONFIG_ENCRYPTION_KEY=任意足够强的口令（用于 AES-GCM 加密落库的 
 
 **在后台配置（推荐路径）**：admin → 模型配置 →
 
-- 槽位（下拉）：`chat.fast`（快速对话）、`chat.deep`（深度对话）、`image.default`（生图）。每个槽位同一时刻只有一个「启用」的配置生效。
-- 每行：provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）、成本倍率，生图行另填「每次金额」。
+- **模型 ID**：chat 模型可自由填写稳定 ID，例如 `gpt-4o`、`claude-sonnet`、`deepseek-v4`、`chat.fast`。`auto` 是系统保留值，不能作为后台模型 ID；当前 DB 字段仍叫 `slot`，这是历史字段名，产品语义按「模型 ID」理解。
+- **显示名 / 描述 / 优先级**：显示名是用户端模型选择器看到的名称；描述会显示在选择器里并作为 Auto 路由提示；优先级越大越靠前，也是默认模型和 Auto 不确定时的兜底顺序。
+- **Provider 配置**：每行填写 provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）、成本倍率。AWS 或其它渠道先通过兼容网关按 `key + base_url + model_name` 接入。
+- **生图配置**：image capability 当前固定模型 ID 为 `image.default`，不会出现在用户端聊天模型选择器；生图行另填「每次金额」。
 - 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(成本倍率 0.1)、`chat.deep`=deepseek-v4-pro(1.0)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
-- 种子条件是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把某槽位的**全部模型行删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
+- 种子条件是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把**全部模型配置删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
 
 真实模型 smoke 仍可用：
 
@@ -90,7 +92,7 @@ make smoke-real-llm
 生图：credits/张 = ceil(每次金额 ÷ 基准每 token 成本 × 全局加价系数)，× 张数
 ```
 
-- **成本倍率**（每模型）= 该模型相对 **DeepSeek-V4-Pro** 的纯成本比，不含利润。`chat.deep`=Pro=基准=**1.0**；`chat.fast`=Flash≈**0.1**（约为 Pro 的 1/10）；更贵的模型按真实价填 Nx。
+- **成本倍率**（每模型）= 该模型相对 **DeepSeek-V4-Pro** 的纯成本比，不含利润。种子里的 `chat.deep`=Pro=基准=**1.0**；`chat.fast`=Flash≈**0.1**（约为 Pro 的 1/10）；更贵的模型按真实价填 Nx。
 - **全局加价系数**（计费参数卡片，存 `app_settings`，默认 **1.15 = 全线加价 15%**，限 1.0–3.0）= 产品固定毛利旋钮，改一个数全线生效。注意 1.15 是「加价 15%」，对应毛利率 ≈ 13%（0.15/1.15）。
 - **基准每 token 成本**（¥/token，默认 `0.00002` ≈ ¥20/1M）= 「1 credit ≈ 1 个 DeepSeek-Pro token 成本」的锚点，**仅生图等按次金额模型换算用**；文本计费不需要它。建议按 **Pro 原价**（非 2.5 折促销价）锚定，促销到期不亏。
 - 生图作为 **Agent 工具 `image.generate`** 经 Cloud Tool Gateway 计费（复用 `external_tool_call_records` reserve/settle/release，幂等），也提供 `POST /api/v1/images/generations` REST 入口。未配置基准成本时生图直接拒绝（`image_billing_not_configured`），不会乱扣。
@@ -596,7 +598,7 @@ make deploy
 
 > **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
 >
-> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐槽位改。`CONFIG_ENCRYPTION_KEY` 未设则 provider key **明文**落库（仅启动告警）。
+> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐模型配置改。`CONFIG_ENCRYPTION_KEY` 未设则 provider key **明文**落库（仅启动告警）。
 > - **（开计费时）`STRIPE_PRICE_ID` / `STRIPE_SECRET_KEY` 不能留空** —— 否则结账走 dev 假成功路径（伪造 `dev_` 会话、不扣款、不发 webhook、不发放 credits），前端却显示「订阅成功」。不开计费可忽略。
 > - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 
@@ -629,7 +631,7 @@ make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需
 上线前至少确认：
 
 - `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`MOCK_LLM=false`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名（与浏览器 Origin 精确一致、无尾斜杠）。
-- `CONFIG_ENCRYPTION_KEY` 已设（32B hex），且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐槽位改）。
+- `CONFIG_ENCRYPTION_KEY` 已设（32B hex），且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐模型配置改）。
 - `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库（任一缺失会让结账走 dev 假成功路径）。
 - Stripe webhook endpoint 已订阅事件列表，Dashboard 中最近一次投递为 2xx。

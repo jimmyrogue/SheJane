@@ -123,3 +123,83 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 		t.Fatalf("after PATCH priority=%d description=%q — seeded catalog fields were wiped", reloaded.Priority, reloaded.Description)
 	}
 }
+
+func TestAdminModelConfigModelIDValidation(t *testing.T) {
+	server, _ := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	token := registerAndTokenWithEmail(t, server, "admin@example.com")
+
+	post := func(payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(payload))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		return rec
+	}
+
+	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid arbitrary chat model id status = %d, want 200; body = %s", valid.Code, valid.Body.String())
+	}
+	var validBody apiResponse[adminModelConfigView]
+	if err := json.Unmarshal(valid.Body.Bytes(), &validBody); err != nil {
+		t.Fatalf("decode valid response: %v", err)
+	}
+	if validBody.Data.Slot != "gpt-4o" || validBody.Data.DisplayName != "GPT-4o" {
+		t.Fatalf("saved model config = %+v, want slot gpt-4o + label GPT-4o", validBody.Data)
+	}
+	modelsReq := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
+	modelsReq.Header.Set("Authorization", "Bearer "+token)
+	modelsRec := httptest.NewRecorder()
+	server.ServeHTTP(modelsRec, modelsReq)
+	if modelsRec.Code != http.StatusOK {
+		t.Fatalf("list models status = %d body = %s", modelsRec.Code, modelsRec.Body.String())
+	}
+	var modelsBody apiResponse[modelsPayload]
+	if err := json.Unmarshal(modelsRec.Body.Bytes(), &modelsBody); err != nil {
+		t.Fatalf("decode models: %v", err)
+	}
+	found := false
+	for _, model := range modelsBody.Data.Models {
+		if model.ID == "gpt-4o" && model.Label == "GPT-4o" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("GET /models missing gpt-4o/GPT-4o; body = %s", modelsRec.Body.String())
+	}
+
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "auto is reserved",
+			payload: `{"slot":"auto","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
+		},
+		{
+			name:    "blank model id",
+			payload: `{"slot":"   ","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
+		},
+		{
+			name:    "model id cannot contain whitespace",
+			payload: `{"slot":"gpt 4o","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
+		},
+		{
+			name:    "model id cannot exceed database limit",
+			payload: `{"slot":"12345678901234567890123456789012345678901","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
+		},
+		{
+			name:    "image slot is fixed",
+			payload: `{"slot":"image.alt","capability":"image","provider_kind":"openai-compatible","base_url":"https://api.example.com/v1","model_name":"gpt-image-1","api_key":"sk-test","price_per_call_cny":0.1,"credit_multiplier":1}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := post(tc.payload); rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

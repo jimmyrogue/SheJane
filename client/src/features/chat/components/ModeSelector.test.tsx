@@ -4,8 +4,9 @@ import { I18nProvider } from '@/shared/i18n/i18n'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
-  { id: 'chat.fast', label: '快速', description: '速度快、成本低' },
-  { id: 'chat.deep', label: '深度', description: '推理更强' },
+  { id: 'gpt-4o', label: 'GPT-4o', description: '通用强模型' },
+  { id: 'claude-sonnet', label: 'Claude Sonnet', description: '复杂推理和长文' },
+  { id: 'deepseek-v4', label: 'DeepSeek', description: '速度快、成本低' },
 ]
 
 function renderSelector(mode: string, onChange = vi.fn()) {
@@ -26,8 +27,8 @@ describe('ModeSelector (catalog-driven)', () => {
   })
 
   it('shows the selected model label on the trigger', () => {
-    renderSelector('chat.deep')
-    expect(screen.getByRole('button')).toHaveTextContent('深度')
+    renderSelector('claude-sonnet')
+    expect(screen.getByRole('button')).toHaveTextContent('Claude Sonnet')
   })
 
   it('lists Auto plus every catalog model and selects one', async () => {
@@ -37,17 +38,18 @@ describe('ModeSelector (catalog-driven)', () => {
     const trigger = screen.getByRole('button')
     trigger.focus()
     fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    // Auto + the two models all render as options.
-    expect(await screen.findByText('快速')).toBeInTheDocument()
-    expect(screen.getByText('深度')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('深度'))
-    expect(onChange).toHaveBeenCalledWith('chat.deep')
+    // Auto + all backend-provided catalog models render as options.
+    expect(await screen.findByText('GPT-4o')).toBeInTheDocument()
+    expect(screen.getByText('Claude Sonnet')).toBeInTheDocument()
+    expect(screen.getByText('DeepSeek')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('GPT-4o'))
+    expect(onChange).toHaveBeenCalledWith('gpt-4o')
   })
 
   it('falls back to the Auto label when the selected id is not in the catalog', () => {
     // A persisted model id that has since been removed from the catalog —
     // the trigger degrades to Auto rather than showing a blank/stale id.
-    renderSelector('chat.removed')
+    renderSelector('legacy-chat-model')
     expect(screen.getByRole('button')).toHaveTextContent('Auto')
   })
 })
