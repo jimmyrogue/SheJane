@@ -512,6 +512,44 @@ func TestAgentRunRequiresAuthAndStreamsPersistedEvents(t *testing.T) {
 	}
 }
 
+// Auto resolution: POST /models/resolve returns a concrete model (default
+// when the classifier output is unusable), and an "auto" agent run emits a
+// model.selected event before the LLM turn so the client can badge it.
+func TestAutoModelResolveEndpointAndRunEvent(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndToken(t, server)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/models/resolve", strings.NewReader(`{"goal":"帮我写周报"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resolve status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resolved apiResponse[resolvedModelPayload]
+	if err := json.Unmarshal(rec.Body.Bytes(), &resolved); err != nil {
+		t.Fatalf("decode resolve: %v", err)
+	}
+	// Mock classifier output is unusable → default = highest-priority chat.fast.
+	if resolved.Data.ModelID != "chat.fast" || resolved.Data.Label != "快速" {
+		t.Fatalf("resolved = %+v, want chat.fast/快速", resolved.Data)
+	}
+
+	// An "auto" cloud run resolves once and surfaces model.selected.
+	run := createAgentRun(t, server, token, `{"goal":"帮我写周报","model":"auto"}`)
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	body := streamRecorder.Body.String()
+	for _, want := range []string{`model.selected`, `"resolved_model_id":"chat.fast"`, `"label":"快速"`, "run.completed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("auto run stream missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	server := newTestServer(t)
 

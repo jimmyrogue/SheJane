@@ -108,6 +108,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/agent/llm", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMGateway)))
 	s.mux.HandleFunc("POST /api/v1/agent/llm/stream", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentLLMStream)))
 	s.mux.HandleFunc("GET /api/v1/models", s.requireAuth(s.listModels))
+	// Resolve "auto" → a concrete model id (one classifier turn). Unbilled but
+	// platform-paid, so it sits behind the spend limiter like the LLM routes.
+	s.mux.HandleFunc("POST /api/v1/models/resolve", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.resolveModel)))
 	s.mux.HandleFunc("GET /api/v1/agent/tool-capabilities", s.requireAuth(s.agentToolCapabilities))
 	s.mux.HandleFunc("POST /api/v1/agent/tools/execute", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.agentToolExecute)))
 	s.mux.HandleFunc("POST /api/v1/images/generations", s.requireAuth(s.rateLimitUser(s.agentSpendLimiter, s.imagesGenerations)))
@@ -427,6 +430,35 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request, _ store.User
 
 type modelsPayload struct {
 	Models []modelreg.ChatModelInfo `json:"models"`
+}
+
+// resolveModel runs the Auto classifier once for a goal and returns the
+// concrete model to use. The daemon calls this at run start; the web tool
+// loop calls it before its first turn. Always succeeds with SOME model when
+// the catalog is non-empty (classifier failures degrade to the default).
+func (s *Server) resolveModel(w http.ResponseWriter, r *http.Request, _ store.User) {
+	var body struct {
+		Goal string `json:"goal"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	resolved, reason := s.app.ResolveAutoModel(r.Context(), body.Goal)
+	if resolved.ID == "" {
+		writeError(w, http.StatusServiceUnavailable, 50301, "模型目录为空，无法解析 Auto")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[resolvedModelPayload]{Code: 0, Message: "ok", Data: resolvedModelPayload{
+		ModelID: resolved.ID,
+		Label:   resolved.Label,
+		Reason:  reason,
+	}})
+}
+
+type resolvedModelPayload struct {
+	ModelID string `json:"model_id"`
+	Label   string `json:"label"`
+	Reason  string `json:"reason"`
 }
 
 func (s *Server) subscription(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -994,8 +1026,24 @@ func (s *Server) executeAgentRun(w io.Writer, r *http.Request, user store.User, 
 		_ = s.appendAgentEvent(ctx, w, run.ID, "skill.selected", map[string]any{"skill": "direct-answer", "reason": "no_tool_required"})
 	}
 
+	// "Auto" resolves ONCE per run via the task-aware classifier (unbilled,
+	// degrades to the default model on any failure) and is surfaced as a
+	// model.selected event so the client can badge "Auto → <label> · reason".
+	model := run.Mode
+	if model == "" || model == "auto" {
+		if resolved, reason := s.app.ResolveAutoModel(ctx, run.Goal); resolved.ID != "" {
+			model = resolved.ID
+			_ = s.appendAgentEvent(ctx, w, run.ID, "model.selected", map[string]any{
+				"requested_model":   "auto",
+				"resolved_model_id": resolved.ID,
+				"label":             resolved.Label,
+				"reason":            reason,
+			})
+		}
+	}
+
 	request := llm.ChatRequest{
-		Model:                run.Mode,
+		Model:                model,
 		Stream:               true,
 		Scene:                "agent",
 		ClientConversationID: run.ClientConversationID,
