@@ -535,11 +535,10 @@ export interface components {
                 [key: string]: string;
             }[] | null;
             /**
-             * Mode
-             * @default fast
-             * @enum {string}
+             * Model
+             * @default auto
              */
-            mode: "auto" | "fast" | "pro" | "deep";
+            model: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /** Settings */

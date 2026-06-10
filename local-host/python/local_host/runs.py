@@ -33,7 +33,6 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
-from .agent.auto_router import classify_mode
 from .agent.builder import build_agent
 from .config import Settings, get_settings
 from .event_translator import translate
@@ -397,53 +396,24 @@ class RunCoordinator:
         goal = self._goals.get(run_id, "")
 
         try:
-            # Resolve the public-facing mode (auto/fast/pro) into the
-            # internal fast/deep value the rest of the stack expects.
-            #
-            # auto: ask a cheap fast-model classifier; emit mode.selected
-            #       so the UI can show "Auto → Pro · <reason>".
-            # pro:  wire alias for "deep"; the daemon always sends "deep"
-            #       to the cloud LLM router, which is what picks the
-            #       actual provider/model for each tier.
-            # fast / deep: pass through unchanged.
-            resolved_mode = mode
-            resolved_reason = ""
             settings = get_settings()
-            if mode == "auto" and resume_payload is None:
-                resolved_mode, resolved_reason = await classify_mode(
-                    goal=goal,
-                    history=self._histories.get(run_id, []),
-                    cloud_base_url=settings.cloud_base_url,
-                    cloud_token=settings.cloud_token,
-                    run_id=run_id,
-                )
-                await self._enqueue(
-                    queue,
-                    run_id,
-                    "mode.selected",
-                    {
-                        "requested_mode": "auto",
-                        "resolved_mode": "pro" if resolved_mode == "deep" else "fast",
-                        "reason": resolved_reason,
-                    },
-                )
-            elif mode == "pro":
-                resolved_mode = "deep"
-            elif mode == "auto":
-                # resume path — auto already resolved on the original run;
-                # default to fast on resume (the agent already has state).
-                resolved_mode = "fast"
+            # The cloud LLM endpoint now owns model resolution (flat catalog):
+            # it maps "auto" / "" / an unknown id to the default model. So the
+            # daemon FORWARDS the user's selection verbatim — no local fast/deep
+            # classifier (it used to make an extra billed LLM call here, now
+            # redundant). "pro" stays a wire alias for the legacy "deep" tier
+            # for any old caller; everything else (a model id, or "auto") passes
+            # straight through to the cloud.
+            resolved_model = "deep" if mode == "pro" else mode
 
-            # Persist the RESOLVED tier on a fresh run (the row stored the
-            # requested mode at create, e.g. "auto"/"pro"). A later resume —
-            # possibly after a daemon restart — then reads back fast|deep and
-            # continues at the right tier instead of downgrading to fast.
-            self._modes[run_id] = resolved_mode
+            # Persist the forwarded value so a resume (incl. after a daemon
+            # restart) continues with the same model instead of a default.
+            self._modes[run_id] = resolved_model
             if resume_payload is None:
                 try:
-                    await self.store.update_run_mode(run_id, resolved_mode)
+                    await self.store.update_run_mode(run_id, resolved_model)
                 except Exception:
-                    log.warning("failed to persist resolved mode for run %s", run_id)
+                    log.warning("failed to persist model for run %s", run_id)
 
             # Build the message list early so we can hand the truncation
             # numbers (turn_count, dropped_history_count) to ContextBuilder
@@ -498,7 +468,7 @@ class RunCoordinator:
                 agent_store=self.agent_store,
                 workspace_root=workspace_path,
                 run_id=run_id,
-                mode=resolved_mode,
+                mode=resolved_model,
                 task_goal=goal,
                 turn_count=turn_count,
                 dropped_history_count=dropped_history_count,

@@ -76,15 +76,9 @@
             ],
             "title": "History"
           },
-          "mode": {
-            "default": "fast",
-            "enum": [
-              "auto",
-              "fast",
-              "pro",
-              "deep"
-            ],
-            "title": "Mode",
+          "model": {
+            "default": "auto",
+            "title": "Model",
             "type": "string"
           },
           "parent_run_id": {

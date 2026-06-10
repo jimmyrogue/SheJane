@@ -15,7 +15,7 @@ Wire protocol
 We send a POST with:
     {
       "run_id":  str,
-      "mode":    "fast" | "deep",
+      "model":    str,    # catalog model id or "auto" (resolved cloud-side)
       "messages": [...]   # role/content/toolCalls/toolCallId
       "tools":    [...]   # name/description/inputSchema
     }
@@ -37,7 +37,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 from langchain_core.callbacks import (
@@ -60,15 +60,16 @@ from pydantic import Field
 
 log = logging.getLogger("local_host.llm.backend")
 
-Mode = Literal["fast", "deep"]
-
 
 class BackendChatModel(BaseChatModel):
     """ChatModel that talks to our cloud backend gateway."""
 
     cloud_base_url: str = Field(default="http://127.0.0.1:8080")
     cloud_token: str = Field(default="")
-    mode: Mode = Field(default="fast")
+    # The model selection forwarded to the cloud LLM endpoint: a catalog model
+    # id or "auto" (resolved cloud-side). Was a fast/deep Literal; now a free
+    # string so any catalog id passes through.
+    mode: str = Field(default="auto")
     run_id: str = Field(default="agent_local")
     request_timeout_s: float = Field(default=120.0)
 
