@@ -136,6 +136,8 @@ export interface AdminModelConfig {
   capability: string
   provider_kind: string
   display_name: string
+  description: string
+  priority: number
   base_url: string
   model_name: string
   credit_multiplier: number
@@ -151,6 +153,8 @@ export interface ModelConfigInput {
   capability: string
   provider_kind: string
   display_name: string
+  description?: string
+  priority?: number
   base_url: string
   model_name: string
   credit_multiplier: number

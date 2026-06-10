@@ -1101,6 +1101,8 @@ interface ModelConfigForm {
   capability: string
   provider_kind: string
   display_name: string
+  description: string
+  priority: string
   base_url: string
   model_name: string
   credit_multiplier: string
@@ -1115,6 +1117,8 @@ function emptyModelForm(): ModelConfigForm {
     capability: 'chat',
     provider_kind: 'openai-compatible',
     display_name: '',
+    description: '',
+    priority: '0',
     base_url: '',
     model_name: '',
     credit_multiplier: '1',
@@ -1186,6 +1190,8 @@ function ModelConfigCard({
       capability: cfg.capability,
       provider_kind: cfg.provider_kind,
       display_name: cfg.display_name,
+      description: cfg.description ?? '',
+      priority: String(cfg.priority ?? 0),
       base_url: cfg.base_url,
       model_name: cfg.model_name,
       credit_multiplier: String(cfg.credit_multiplier),
@@ -1211,6 +1217,8 @@ function ModelConfigCard({
       capability: form.capability.trim() || 'chat',
       provider_kind: form.provider_kind,
       display_name: form.display_name.trim(),
+      description: form.description.trim(),
+      priority: Math.trunc(Number(form.priority)) || 0,
       base_url: form.base_url.trim(),
       model_name: form.model_name.trim(),
       credit_multiplier: multiplier,
@@ -1568,8 +1576,16 @@ function ModelConfigCard({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="mc-name">显示名 / Provider Name</Label>
-              <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="deepseek-fast" />
+              <Label htmlFor="mc-name">显示名（用户在模型选择器里看到的标签）</Label>
+              <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="快速 / DeepSeek V4 / Claude" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-desc">描述（选择器 tooltip + Auto 路由提示，仅 chat 模型）</Label>
+              <Input id="mc-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="速度快、成本低,适合日常任务" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="mc-priority">优先级（数字越大越靠前；最高的为默认模型）</Label>
+              <Input id="mc-priority" type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} placeholder="100" />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="mc-base">Base URL</Label>
