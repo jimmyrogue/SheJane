@@ -39,7 +39,9 @@ import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
 import { MCPView } from './features/mcp/MCPView'
+import { SettingsView } from './features/settings/SettingsView'
 import { SkillsView } from './features/skills/SkillsView'
+import { TodayView } from './features/today/TodayView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
 import type { AgentRunEvent } from './shared/api/sse'
@@ -359,7 +361,7 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'settings' | 'today'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   // Web build only: cloud tools (image gen / web search) the model may call
   // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
@@ -2255,8 +2257,6 @@ function AppContent() {
           <ConversationSidebar
             conversations={conversations}
             activeID={activeID}
-            balance={balance}
-            userEmail={auth.user.email}
             onNewConversation={startNewConversation}
             onSelectConversation={selectConversation}
             onExportConversation={(conversationID) => void exportConversationData(conversationID)}
@@ -2266,39 +2266,11 @@ function AppContent() {
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
             isDesktop={isDesktop}
+            onOpenToday={() => setMainView('today')}
             onOpenSkills={() => setMainView('skills')}
             onOpenMcp={() => setMainView('mcp')}
+            onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
-            onLogout={() => {
-              void authClient.logout().finally(() => setAuth(null))
-            }}
-            onRecharge={() => void startRecharge()}
-            onShowSpendHistory={() => setSpendHistoryOpen(true)}
-            agentSettings={agentSettings}
-            onAgentSettingsChange={(next) => {
-              setAgentSettings(next)
-              writeAgentSettings(next)
-            }}
-            onClearMemory={
-              localHostConfig
-                ? async () => {
-                    try {
-                      const result = await clearLocalMemory(localHostConfig)
-                      toast.success(
-                        t('app.notice.memoryCleared', { count: result.deleted_count }),
-                        { id: appNoticeToastID },
-                      )
-                      return result.deleted_count
-                    } catch (error) {
-                      const message = error instanceof Error ? error.message : String(error)
-                      toast.error(t('app.notice.memoryClearFailed', { message }), {
-                        id: appNoticeToastID,
-                      })
-                      throw error
-                    }
-                  }
-                : undefined
-            }
           />
 
           <div
@@ -2351,6 +2323,47 @@ function AppContent() {
                   void bridge.openFileWithDefaultApp(path)
                 }
               }}
+            />
+          ) : mainView === 'today' ? (
+            <TodayView
+              onQuoteToChat={(text) => {
+                setDraft((current) => (current ? `${current}\n${text}` : text))
+                setMainView('chat')
+              }}
+            />
+          ) : mainView === 'settings' ? (
+            <SettingsView
+              isDesktop={isDesktop}
+              userEmail={auth.user.email}
+              balance={balance}
+              agentSettings={agentSettings}
+              onAgentSettingsChange={(next) => {
+                setAgentSettings(next)
+                writeAgentSettings(next)
+              }}
+              onRecharge={() => void startRecharge()}
+              onShowSpendHistory={() => setSpendHistoryOpen(true)}
+              onLogout={() => {
+                void authClient.logout().finally(() => setAuth(null))
+              }}
+              onImportLocalData={(file) => void importLocalData(file)}
+              onClearMemory={
+                localHostConfig
+                  ? async () => {
+                      try {
+                        const result = await clearLocalMemory(localHostConfig)
+                        toast.success(t('app.notice.memoryCleared', { count: result.deleted_count }), {
+                          id: appNoticeToastID,
+                        })
+                        return result.deleted_count
+                      } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error)
+                        toast.error(t('app.notice.memoryClearFailed', { message }), { id: appNoticeToastID })
+                        throw error
+                      }
+                    }
+                  : undefined
+              }
             />
           ) : (
           <section className="workspace">
@@ -2541,6 +2554,7 @@ function AppContent() {
               isDesktop={isDesktop}
               slashCommandsEnabled={isDesktop || webTools.some((tool) => tool.name === 'image.generate')}
               />
+              <p className="composer-disclaimer">{t('composer.disclaimer')}</p>
             </div>
           </section>
           )}

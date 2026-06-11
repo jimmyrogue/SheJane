@@ -337,7 +337,7 @@ describe('user client shell', () => {
 
     expect((await screen.findAllByText('旧任务')).length).toBeGreaterThan(0)
     fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
-    expect(await screen.findByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
 
     act(() => {
       agentStream.emit({ event_type: 'llm.delta', payload: { content: '旧回答' } })
@@ -346,7 +346,7 @@ describe('user client shell', () => {
     })
     await settleStreamRender()
 
-    expect(screen.getByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(screen.getByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
     expect(screen.queryByText('旧回答')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '旧任务' }))
@@ -383,7 +383,7 @@ describe('user client shell', () => {
     expect((await screen.findAllByText('等待批准：运行命令')).length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getAllByRole('button', { name: '新对话' })[0])
-    expect(await screen.findByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
 
     act(() => {
       localRunStream.emit({ id: 'local-event-2', event_type: 'llm.delta', payload: { content: '本地执行完成' } })
@@ -392,7 +392,7 @@ describe('user client shell', () => {
     })
     await settleStreamRender()
 
-    expect(screen.getByText('把复杂的工作，简单做完')).toBeInTheDocument()
+    expect(screen.getByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
     expect(screen.queryByText('本地执行完成')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '运行本地检查' }))
@@ -1199,9 +1199,7 @@ describe('user client shell', () => {
 	  await clickFailureAction('刷新会话')
 	  expect(await screen.findByText('刷新本地云端会话失败')).toBeInTheDocument()
 
-	  const accountMenuTrigger = screen.getByRole('button', { name: '设置' })
-	  accountMenuTrigger.focus()
-	  fireEvent.keyDown(accountMenuTrigger, { key: 'Enter', code: 'Enter' })
+	  await openAccountMenu()
 	  fireEvent.click(await screen.findByText('退出登录'))
 	  await screen.findByText('创建你的账号')
 	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
@@ -1864,10 +1862,11 @@ async function awaitSignedIn(): Promise<HTMLElement> {
   return screen.findByRole('button', { name: '设置' })
 }
 
+// Account/billing/agent settings now live on the full 设置 page (the old
+// account dropdown is gone). Clicking 设置 navigates there.
 async function openAccountMenu(): Promise<void> {
   const trigger = await awaitSignedIn()
-  trigger.focus()
-  fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+  fireEvent.click(trigger)
 }
 
 async function selectConversationForTest(title: string, readyText: string): Promise<void> {

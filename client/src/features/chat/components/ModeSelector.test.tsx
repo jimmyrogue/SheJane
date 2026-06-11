@@ -23,7 +23,7 @@ describe('ModeSelector (catalog-driven)', () => {
 
   it('shows the Auto label on the trigger when mode is auto', () => {
     renderSelector('auto')
-    expect(screen.getByRole('button')).toHaveTextContent('Auto')
+    expect(screen.getByRole('button')).toHaveTextContent('自动')
   })
 
   it('shows the selected model label on the trigger', () => {
@@ -50,6 +50,6 @@ describe('ModeSelector (catalog-driven)', () => {
     // A persisted model id that has since been removed from the catalog —
     // the trigger degrades to Auto rather than showing a blank/stale id.
     renderSelector('legacy-chat-model')
-    expect(screen.getByRole('button')).toHaveTextContent('Auto')
+    expect(screen.getByRole('button')).toHaveTextContent('自动')
   })
 })

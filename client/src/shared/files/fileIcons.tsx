@@ -1,18 +1,15 @@
 /**
- * Typed file-icon helper used by every attachment chip in the app
+ * Typed file helper used by every attachment chip in the app
  * (composer attachment chip, message-bubble attachment chip, doc
- * preview header). Centralizes the extension/MIME → icon + color
+ * preview header). Centralizes the extension/MIME → kind + glyph
  * mapping so adding new file types only needs one edit here.
  *
- * Icons come from @tabler/icons-react. Color names map onto CSS
- * custom properties defined in styles.css under the
- * `--file-icon-color-*` family — that way dark mode + theme tweaks
- * land in one place instead of being burned into the icon JSX.
+ * Visual rule from the SheJane v4 design: file/attachment types use
+ * a single-color typographic glyph, not colorful app-brand icons.
  *
  * Fallback: any extension we don't explicitly recognize gets the
- * generic IconFile in muted gray. Better than `IconPaperclip` which
- * was the old placeholder — paperclip reads as "I have an
- * attachment" not "this is a file."
+ * generic "文" mark in muted ink. Better than `IconPaperclip` which
+ * reads as "I have an attachment" not "this is a file."
  */
 import {
   IconFile,
@@ -29,11 +26,20 @@ export type FileIconKind = 'pdf' | 'word' | 'excel' | 'powerpoint' | 'image' | '
 
 export interface FileIconDescriptor {
   Icon: ComponentType<IconProps>
-  /** CSS class suffix; pairs with `.file-icon-*` rules in styles.css
-   *  to color the icon. Kept as a string (not a hex) so theme + dark
-   *  mode can override centrally. */
+  /** Compatibility key for previewability and existing CSS hooks. */
   colorKey: FileIconKind
+  /** SheJane's single-color typographic mark for this kind. */
+  glyph: string
+  /** Human-readable type label. */
+  label: string
 }
+
+const descriptor = (Icon: ComponentType<IconProps>, colorKey: FileIconKind, glyph: string, label: string): FileIconDescriptor => ({
+  Icon,
+  colorKey,
+  glyph,
+  label,
+})
 
 /**
  * Pick the icon + color for a file based on its filename and MIME.
@@ -47,11 +53,11 @@ export function fileIconFor(filename: string, contentType?: string): FileIconDes
   const mime = (contentType || '').toLowerCase().split(';')[0].trim()
 
   // Extension-first matching.
-  if (name.endsWith('.pdf')) return { Icon: IconFileTypePdf, colorKey: 'pdf' }
-  if (name.endsWith('.docx') || name.endsWith('.doc')) return { Icon: IconFileTypeDocx, colorKey: 'word' }
+  if (name.endsWith('.pdf')) return descriptor(IconFileTypePdf, 'pdf', '文', 'PDF')
+  if (name.endsWith('.docx') || name.endsWith('.doc')) return descriptor(IconFileTypeDocx, 'word', '文', 'Document')
   if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv'))
-    return { Icon: IconFileTypeXls, colorKey: 'excel' }
-  if (name.endsWith('.pptx') || name.endsWith('.ppt')) return { Icon: IconFileTypePpt, colorKey: 'powerpoint' }
+    return descriptor(IconFileTypeXls, 'excel', '表', 'Spreadsheet')
+  if (name.endsWith('.pptx') || name.endsWith('.ppt')) return descriptor(IconFileTypePpt, 'powerpoint', '演', 'Presentation')
   if (
     name.endsWith('.png') ||
     name.endsWith('.jpg') ||
@@ -61,26 +67,26 @@ export function fileIconFor(filename: string, contentType?: string): FileIconDes
     name.endsWith('.bmp') ||
     name.endsWith('.svg')
   )
-    return { Icon: IconPhoto, colorKey: 'image' }
+    return descriptor(IconPhoto, 'image', '图', 'Image')
 
   // MIME fallback for renames / quirky uploads.
-  if (mime === 'application/pdf') return { Icon: IconFileTypePdf, colorKey: 'pdf' }
+  if (mime === 'application/pdf') return descriptor(IconFileTypePdf, 'pdf', '文', 'PDF')
   if (mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || mime === 'application/msword')
-    return { Icon: IconFileTypeDocx, colorKey: 'word' }
+    return descriptor(IconFileTypeDocx, 'word', '文', 'Document')
   if (
     mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
     mime === 'application/vnd.ms-excel' ||
     mime === 'text/csv'
   )
-    return { Icon: IconFileTypeXls, colorKey: 'excel' }
+    return descriptor(IconFileTypeXls, 'excel', '表', 'Spreadsheet')
   if (
     mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
     mime === 'application/vnd.ms-powerpoint'
   )
-    return { Icon: IconFileTypePpt, colorKey: 'powerpoint' }
-  if (mime.startsWith('image/')) return { Icon: IconPhoto, colorKey: 'image' }
+    return descriptor(IconFileTypePpt, 'powerpoint', '演', 'Presentation')
+  if (mime.startsWith('image/')) return descriptor(IconPhoto, 'image', '图', 'Image')
 
-  return { Icon: IconFile, colorKey: 'other' }
+  return descriptor(IconFile, 'other', '文', 'File')
 }
 
 /**

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { Conversation, MessageStatus } from '@/shared/local-data/types'
@@ -61,39 +61,42 @@ describe('ConversationSidebar', () => {
       emptyConversation('project-chat', '我的项目', { project: { name: '我的项目' } }),
     ])
 
-    // Section labels in document order: 工具 (skills + MCP nav group),
-    // 已固定 (when there are pins), 对话 (the unified list — projects
-    // and casual chats share that one list, sorted by recency).
-    // 新对话 sits alone in its own unlabeled section above 工具.
+    // Section labels in document order: 已固定 (when there are pins),
+    // 对话 (the unified list — projects and casual chats share that one
+    // list, sorted by recency). The v4 shell moves skills/connections to
+    // the footer island instead of a labeled top nav section.
     const sectionLabels = Array.from(container.querySelectorAll('.sidebar-section-label')) as HTMLElement[]
     const labelTexts = sectionLabels.map((el) => el.textContent?.trim())
-    expect(labelTexts).toEqual(['工具', '已固定', '对话'])
+    expect(labelTexts).toEqual(['已固定', '对话'])
 
     const pinnedConversation = screen.getByRole('button', { name: '固定对话' })
     const recentConversation = screen.getByRole('button', { name: '普通对话' })
     const projectConversation = screen.getByRole('button', { name: '我的项目' })
 
-    // 工具 → 已固定 label → pinned row → 对话 label → both unpinned rows.
-    // sectionLabels[0] is 工具 (skills+MCP nav), [1] is 已固定, [2] is 对话.
-    expect(sectionLabels[1].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(pinnedConversation.compareDocumentPosition(sectionLabels[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[2].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(sectionLabels[2].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 已固定 label → pinned row → 对话 label → both unpinned rows.
+    expect(sectionLabels[0].compareDocumentPosition(pinnedConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(pinnedConversation.compareDocumentPosition(sectionLabels[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    expect(screen.getByRole('button', { name: '今日 · 待办' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '连接' })).toBeInTheDocument()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 普通对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 我的项目')).toHaveLength(1)
   })
 
-  it('hides skills/MCP and Agent settings on the web build (no local daemon)', async () => {
+  it('hides the skills/MCP footer nav on the web build (no local daemon)', () => {
     // The web build (window.shejaneDesktop undefined → isDesktop=false) can't
-    // run skills/MCP/local-agent config, so the whole 工具 nav section and the
-    // Agent-settings menu entry must not render.
+    // run skills/connections, so those footer actions must not render. 设置
+    // stays (it now navigates to the full settings page).
+    const onOpenSettings = vi.fn()
     render(
       <I18nProvider>
         <ConversationSidebar
           conversations={[]}
-          userEmail="test@example.com"
           isDesktop={false}
           onNewConversation={vi.fn()}
           onSelectConversation={vi.fn()}
@@ -105,21 +108,19 @@ describe('ConversationSidebar', () => {
           onCollapseSidebar={vi.fn()}
           onOpenSkills={vi.fn()}
           onOpenMcp={vi.fn()}
+          onOpenSettings={onOpenSettings}
         />
       </I18nProvider>,
     )
 
-    // 工具 nav section (技能 + MCP) is gone on web.
+    // Local-daemon footer actions (技能 + 连接) are gone on web.
     expect(screen.queryByText('工具')).not.toBeInTheDocument()
     expect(screen.queryByText('技能')).not.toBeInTheDocument()
-    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
+    expect(screen.queryByText('连接')).not.toBeInTheDocument()
 
-    // Agent settings entry is gone from the account menu on web.
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    expect(await screen.findByText('退出登录')).toBeInTheDocument() // menu opened
-    expect(screen.queryByText('Agent 设置')).not.toBeInTheDocument()
+    // 设置 is now a plain nav button (no dropdown) that navigates to the page.
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
   })
 
   it('exposes row actions for pinning, renaming, and deleting', async () => {
@@ -156,259 +157,6 @@ describe('ConversationSidebar', () => {
     expect(handlers.onDeleteConversation).toHaveBeenCalledWith('target-chat')
   })
 
-  it('shows only the extra-credits line in the account menu (monthly quota line is hidden)', async () => {
-    // Product moved away from a monthly subscription. The
-    // `monthly_credit_limit` / `monthly_remaining` values still come
-    // back from the API, but we no longer surface them — only the
-    // pay-as-you-go `extra_credits_balance` is shown.
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          balance={{
-            id: 'w1',
-            plan_code: 'free',
-            monthly_credit_limit: 1000,
-            monthly_credits_used: 200,
-            monthly_remaining: 800,
-            extra_credits_balance: 50,
-            period_end: '',
-            status: 'active',
-          }}
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-        />
-      </I18nProvider>,
-    )
-
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    // Extra balance shows; the monthly line is gone, both for finite
-    // quotas ("本月余额 X/Y") and the unlimited variant ("本月额度不限量").
-    expect(await screen.findByText('剩余Token数 50')).toBeInTheDocument()
-    expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
-  })
-
-  it('AccountBalance renders nothing when there are no extra credits', async () => {
-    // The component now early-returns null when `extra_credits_balance` is 0.
-    // Previously it would always show a "本月余额 / 不限量" line — that's
-    // gone now, so an empty wallet should render no balance UI at all.
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          balance={{
-            id: 'w1',
-            plan_code: 'free',
-            monthly_credit_limit: 0,
-            monthly_credits_used: 0,
-            monthly_remaining: 0,
-            extra_credits_balance: 0,
-            period_end: '',
-            status: 'active',
-          }}
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-        />
-      </I18nProvider>,
-    )
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    // Menu opens (logout button present) but no balance lines render.
-    expect(await screen.findByText('退出登录')).toBeInTheDocument()
-    expect(screen.queryByText(/剩余Token数/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
-  })
-
-  it('toggles the memory agent setting from the account menu dialog', async () => {
-    const onAgentSettingsChange = vi.fn()
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
-          onAgentSettingsChange={onAgentSettingsChange}
-        />
-      </I18nProvider>,
-    )
-
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByText('Agent 设置'))
-
-    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    const memorySwitch = within(dialog).getByRole('switch', { name: '记忆' })
-    expect(memorySwitch).toHaveAttribute('aria-checked', 'false')
-    fireEvent.click(memorySwitch)
-    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} })
-  })
-
-  it('toggles the skills agent setting from the account menu dialog', async () => {
-    const onAgentSettingsChange = vi.fn()
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'off', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
-          onAgentSettingsChange={onAgentSettingsChange}
-        />
-      </I18nProvider>,
-    )
-
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByText('Agent 设置'))
-
-    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    const skillsSwitch = within(dialog).getByRole('switch', { name: '技能' })
-    expect(skillsSwitch).toHaveAttribute('aria-checked', 'false')
-    fireEvent.click(skillsSwitch)
-    expect(onAgentSettingsChange).toHaveBeenCalledWith({ memory: 'off', skills: 'on', mcp: 'off', mcpDisabled: [], advanced: {} })
-  })
-
-  it('opens the skills view when the skills nav item is clicked', () => {
-    const onOpenSkills = vi.fn()
-    renderSidebar([], undefined, { onOpenSkills })
-    fireEvent.click(screen.getByText('技能'))
-    expect(onOpenSkills).toHaveBeenCalledTimes(1)
-  })
-
-  it('hides the 清空记忆 row entirely when onClearMemory is not provided', async () => {
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
-          onAgentSettingsChange={vi.fn()}
-        />
-      </I18nProvider>,
-    )
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByText('Agent 设置'))
-    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    expect(within(dialog).queryByText('清空记忆')).not.toBeInTheDocument()
-  })
-
-  it('opens the confirmation alert and calls onClearMemory only on confirm', async () => {
-    const onClearMemory = vi.fn(async () => 7)
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
-          onAgentSettingsChange={vi.fn()}
-          onClearMemory={onClearMemory}
-        />
-      </I18nProvider>,
-    )
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByText('Agent 设置'))
-    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-
-    // The destructive action is gated behind a separate confirmation —
-    // the bare 清空 button must NOT call the handler directly.
-    fireEvent.click(within(dialog).getByRole('button', { name: '清空' }))
-    expect(onClearMemory).not.toHaveBeenCalled()
-
-    const confirmAlert = await screen.findByRole('alertdialog')
-    expect(within(confirmAlert).getByText('清空所有记忆？')).toBeInTheDocument()
-    fireEvent.click(within(confirmAlert).getByRole('button', { name: '确认清空' }))
-    await waitFor(() => expect(onClearMemory).toHaveBeenCalledTimes(1))
-  })
-
-  it('does not call onClearMemory when the confirmation is cancelled', async () => {
-    const onClearMemory = vi.fn(async () => 0)
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          userEmail="test@example.com"
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          agentSettings={{ memory: 'on', skills: 'off', mcp: 'off', mcpDisabled: [], advanced: {} }}
-          onAgentSettingsChange={vi.fn()}
-          onClearMemory={onClearMemory}
-        />
-      </I18nProvider>,
-    )
-    const trigger = screen.getByRole('button', { name: '设置' })
-    trigger.focus()
-    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
-    fireEvent.click(await screen.findByText('Agent 设置'))
-    const dialog = await screen.findByRole('dialog', { name: 'Agent 设置' })
-    fireEvent.click(within(dialog).getByRole('button', { name: '清空' }))
-
-    const confirmAlert = await screen.findByRole('alertdialog')
-    fireEvent.click(within(confirmAlert).getByRole('button', { name: '取消' }))
-    expect(onClearMemory).not.toHaveBeenCalled()
-  })
-
   it('marks the Skills nav as active when activeView is "skills"', () => {
     // After the redesign the only persistent workspace nav item is
     // Skills (the "对话" / "项目" buttons are gone — switching back to
@@ -418,7 +166,6 @@ describe('ConversationSidebar', () => {
       <I18nProvider>
         <ConversationSidebar
           conversations={[]}
-          userEmail="test@example.com"
           onNewConversation={vi.fn()}
           onSelectConversation={vi.fn()}
           onExportConversation={vi.fn()}
@@ -519,7 +266,6 @@ function sidebarElement(
       <ConversationSidebar
         conversations={conversations}
         activeID={activeID}
-        userEmail="test@example.com"
         onNewConversation={vi.fn()}
         onSelectConversation={vi.fn()}
         onExportConversation={vi.fn()}

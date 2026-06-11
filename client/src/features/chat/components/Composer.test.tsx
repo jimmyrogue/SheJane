@@ -57,7 +57,7 @@ describe('Composer (Lexical skill editor)', () => {
   it('renders the editor with a placeholder when empty', () => {
     render(<Harness />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
-    expect(screen.getByText('描述你的问题、任务，或让石间阅读附件')).toBeInTheDocument()
+    expect(screen.getByText('交给石间——描述任务，或拖入文件')).toBeInTheDocument()
   })
 
   it('renders an inline skill pill for a draft that contains a skill token', async () => {

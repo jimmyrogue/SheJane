@@ -57,11 +57,15 @@ function createWindow() {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hidden',
-          trafficLightPosition: { x: 14, y: 14 },
+          // The sidebar is a floating card at 12px margin with a 14px corner
+          // radius; default {14,14} lands the lights on that rounded corner.
+          // Shift right so they sit on the card's flat top edge, clear of the
+          // curve, and a touch down to center in the window-controls row.
+          trafficLightPosition: { x: 26, y: 17 },
         }
       : {}),
     icon: appIconPath,
-    backgroundColor: '#FAFAF9',
+    backgroundColor: '#FAF9F6',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

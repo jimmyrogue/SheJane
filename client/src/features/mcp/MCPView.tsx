@@ -144,7 +144,7 @@ export function MCPView({
 
   return (
     <section className="workspace">
-      <header className="topbar">
+      <header className="topbar topbar-page">
         <div className="chat-toolbar-title">
           <span>{t('mcp.title')}</span>
         </div>

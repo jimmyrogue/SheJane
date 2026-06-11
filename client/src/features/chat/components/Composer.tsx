@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  IconCornerDownLeft,
+  IconArrowUp,
   IconFolder,
   IconFolderPlus,
   IconLoader2,
@@ -272,19 +272,17 @@ export function Composer({
                 <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
               ) : (
                 (() => {
-                  // Typed icon: red PDF, blue DOCX, green XLSX, etc.
-                  // — much more scannable than the old generic file
-                  // glyph when the chip is showing as a 56px square.
-                  const { Icon, colorKey } = fileIconFor(
+                  const { colorKey, glyph, label } = fileIconFor(
                     attachedDocument.original_name,
                     attachedDocument.content_type,
                   )
                   return (
                     <div
                       className={`attachment-thumb-placeholder file-icon-${colorKey}`}
-                      aria-hidden="true"
+                      role="img"
+                      aria-label={label}
                     >
-                      <Icon size={28} />
+                      {glyph}
                     </div>
                   )
                 })()
@@ -353,36 +351,10 @@ export function Composer({
           commandsEnabled={slashCommandsEnabled}
           placeholder={t('composer.placeholder')}
         />
-        {/* Send / Stop button: sits in the bottom-right corner of the
-         *  input frame so it follows the editor as the textarea grows.
-         *  The editor reserves matching padding-right so typed text
-         *  doesn't slide under the button. */}
-        {canStop ? (
-          <button
-            type="button"
-            className="composer-send composer-send-stop"
-            aria-label={t('composer.stop')}
-            title={t('composer.stop')}
-            onClick={onStop}
-          >
-            <IconPlayerStopFilled size={14} aria-hidden="true" />
-            <span className="sr-only">{t('composer.stop')}</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="composer-send"
-            aria-label={t('composer.send')}
-            disabled={isSending || !draft.trim()}
-            title={t('composer.kbdHint')}
-            onClick={onSend}
-          >
-            <IconCornerDownLeft size={16} aria-hidden="true" />
-            <span className="sr-only">{t('composer.send')}</span>
-          </button>
-        )}
       </div>
-      {/* Tools row below the input — borderless, hover-darken icons. */}
+      {/* Tools row below the input — borderless, hover-darken icons; the
+       *  send / stop button sits at the trailing edge of this row (next to
+       *  the model selector), matching the v4 prototype's input bar. */}
       <div className="composer-toolbar">
         <button
           type="button"
@@ -424,6 +396,30 @@ export function Composer({
           </button>
         )}
         <ModeSelector mode={mode} models={models} onChange={onModeChange} disabled={isSending} />
+        {canStop ? (
+          <button
+            type="button"
+            className="composer-send composer-send-stop"
+            aria-label={t('composer.stop')}
+            title={t('composer.stop')}
+            onClick={onStop}
+          >
+            <IconPlayerStopFilled size={14} aria-hidden="true" />
+            <span className="sr-only">{t('composer.stop')}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="composer-send"
+            aria-label={t('composer.send')}
+            disabled={isSending || !draft.trim()}
+            title={t('composer.kbdHint')}
+            onClick={onSend}
+          >
+            <IconArrowUp size={16} aria-hidden="true" />
+            <span className="sr-only">{t('composer.send')}</span>
+          </button>
+        )}
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests
             and screen readers can find it. */}

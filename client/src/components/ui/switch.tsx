@@ -11,12 +11,13 @@ function Switch({
     <SwitchPrimitive.Root
       data-slot="switch"
       className={cn(
-        // Track. Coral when on to match the rest of the app's toggles;
-        // a soft gray when off. 36×20 with a 16px thumb.
+        // Track. INK when on (the v4 design reserves seal/coral for the brand
+        // mark, "running" state, and urgent to-dos — a plain on/off toggle is
+        // none of those); line-strong gray when off. 36×20 with a 16px thumb.
         "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors outline-none",
-        "focus-visible:ring-2 focus-visible:ring-[var(--accent-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]",
+        "focus-visible:ring-2 focus-visible:ring-[var(--sj-ink)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "data-[state=checked]:bg-[var(--accent-danger)] data-[state=unchecked]:bg-black/15",
+        "data-[state=checked]:bg-[var(--sj-ink)] data-[state=unchecked]:bg-[var(--sj-line-strong)]",
         className
       )}
       {...props}

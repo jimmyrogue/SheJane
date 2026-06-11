@@ -138,6 +138,7 @@ make logs-dev                # snapshot of all of the above
 | Daemon code | `local-host/python/local_host/` — `server.py` router, `runs.py` run loop, `llm/resolve.py` asks the Go API to resolve Auto once per run, `agent/builder.py` wires the middleware stack, `agent/subagents.py` defines deepagents subagents (invoked via the injected `task` tool), `middleware/` is the input-guard/plan-first/reflect/tool-critic/output-guard/memory-writeback stack, `tools/` has the `@tool` functions, `store/sqlite.py` is the local checkpoint + KV store |
 | API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |
 | Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
+| Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
 | Admin panel | `admin/` — separate Vite app; model configs, credit rate, audit logs |
 | Contract tests (real HTTP, not MockTransport) | `client/src/shared/local-host/client.contract.test.ts` |
 

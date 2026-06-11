@@ -66,6 +66,17 @@ export function ChatThread({
         message.status === 'waiting_input',
     ) ?? false
   const { t } = useI18n()
+  // Time-of-day greeting for the empty state — quiet and personal, matching
+  // the v4 prototype ("下午好。") rather than a marketing headline.
+  const hour = new Date().getHours()
+  const greetingKey =
+    hour < 6
+      ? 'welcome.greeting.night'
+      : hour < 12
+        ? 'welcome.greeting.morning'
+        : hour < 18
+          ? 'welcome.greeting.afternoon'
+          : 'welcome.greeting.evening'
   const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
   const messageCount = conversation?.messages.length ?? 0
   const lastMessageContent = conversation?.messages.at(-1)?.content ?? ''
@@ -86,8 +97,14 @@ export function ChatThread({
     <section className="chat-surface">
       {conversation?.messages.length ? (
         <div className="messages" ref={scrollRef}>
-          {conversation.messages.map((message) => (
+          {conversation.messages.map((message, index) => (
             <Fragment key={message.id}>
+              {/* Stone-dot divider between a user turn and the assistant's
+                  reply — the brand's signature separator (三颗渐变小石点),
+                  echoing the rich-text <hr>. Only between user → assistant. */}
+              {message.role === 'assistant' && conversation.messages[index - 1]?.role === 'user' ? (
+                <StoneDots />
+              ) : null}
               <AnsweredQuestions message={message} />
               <MessageBubble
                 message={message}
@@ -120,7 +137,7 @@ export function ChatThread({
           <div className="logo" aria-hidden="true">
             <img src={appLogoURL} alt="" />
           </div>
-          <h1>{t('welcome.title')}</h1>
+          <h1>{t(greetingKey)}</h1>
           <p>{t('welcome.subtitle')}</p>
           <div className="suggest-grid" aria-label={t('welcome.suggestions')}>
             <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.code'))}>
@@ -143,5 +160,17 @@ export function ChatThread({
         </div>
       )}
     </section>
+  )
+}
+
+/** The brand's signature turn separator: three small graduated "stones"
+ *  (3 / 4.5 / 3 px) centered on the chat column. Decorative only. */
+function StoneDots() {
+  return (
+    <div className="stone-dots" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </div>
   )
 }

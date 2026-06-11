@@ -29,8 +29,8 @@ interface Props {
 
 const WIDTH_STORAGE_KEY = 'shejane.docPreview.width'
 const ZOOM_STORAGE_KEY = 'shejane.docPreview.zoom'
-const DEFAULT_WIDTH = 760
-const MIN_WIDTH = 420
+const DEFAULT_WIDTH = 360
+const MIN_WIDTH = 320
 const MAX_WIDTH_VW = 95 // % of viewport
 const DEFAULT_ZOOM = 1
 const MIN_ZOOM = 0.5

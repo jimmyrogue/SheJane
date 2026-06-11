@@ -692,10 +692,7 @@ function AttachmentChip({
 }) {
   const { t } = useI18n()
   const kind = useMemo(() => previewableKindFromAttachment(contentType, name), [contentType, name])
-  // Typed icon (colored) per file type — replaces the old generic
-  // paperclip. Centralized in fileIconFor so the composer chip and
-  // this chip stay visually consistent.
-  const { Icon, colorKey } = useMemo(() => fileIconFor(name, contentType), [name, contentType])
+  const { colorKey, glyph } = useMemo(() => fileIconFor(name, contentType), [name, contentType])
   const previewable = Boolean(kind && onPreviewCloudAttachment)
   // External-open (download) button shows ONLY for files we can't
   // preview in-app. Previewable files (pdf/docx/xlsx) move the
@@ -708,7 +705,7 @@ function AttachmentChip({
   const chipBody = (
     <>
       <span className={`message-attachment-icon file-icon-${colorKey}`} aria-hidden="true">
-        <Icon size={16} />
+        {glyph}
       </span>
       <span className="message-attachment-name">{name}</span>
     </>

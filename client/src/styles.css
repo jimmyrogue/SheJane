@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 
 /*
  * ICON LIBRARY CONVENTION: this project uses @tabler/icons-react, NOT lucide.
@@ -22,30 +21,54 @@
 
 :root {
   color-scheme: light;
-  --bg-app: #FAFAF9;
-  --bg-sidebar: #F4F3F0;
-  --bg-sidebar-soft: #F8F7F4;
-  --bg-surface: #FFFFFF;
-  --bg-canvas: #EFEDE8;
-  --overlay: rgba(44, 44, 42, 0.35);
-  --text-primary: #2C2C2A;
-  --text-secondary: #5F5E5A;
-  --text-tertiary: #A8A6A0;
-  --border-hairline: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.16);
-  --accent-success: #8FA682;
-  --accent-success-bg: #E8EDE4;
-  --accent-success-text: #4F6342;
-  --accent-warning: #C99A6B;
-  --accent-warning-bg: #FBF1E2;
-  --accent-warning-text: #8B6A47;
-  --accent-danger: #B8716C;
-  --accent-danger-bg: #FBF0EF;
-  --accent-danger-border: #E3A8A4;
-  --accent-danger-text: #8B3E3A;
+  --sj-paper: #FAF9F6;
+  --sj-paper-raised: #FFFFFF;
+  --sj-paper-sunken: #F3F1EC;
+  --sj-paper-wash: #EFEDE7;
+  --sj-ink: #2B2A28;
+  --sj-ink-soft: #6F6B63;
+  --sj-ink-faint: #A8A39A;
+  --sj-ink-ghost: #C9C5BC;
+  --sj-line: #E8E5DE;
+  --sj-line-strong: #D9D5CC;
+  --sj-seal: #B3532F;
+  --sj-moss: #5E7A6E;
+  --sj-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Source Han Sans SC", "Helvetica Neue", sans-serif;
+  --sj-font-serif: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --sj-font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  --sj-r-s: 6px;
+  --sj-r-m: 10px;
+  --sj-r-l: 14px;
+  --sj-shadow-1: 0 1px 2px rgba(43, 42, 40, 0.04);
+  --sj-shadow-2: 0 2px 8px rgba(43, 42, 40, 0.06), 0 1px 2px rgba(43, 42, 40, 0.04);
+  --sj-shadow-3: 0 8px 28px rgba(43, 42, 40, 0.10), 0 2px 6px rgba(43, 42, 40, 0.05);
+  --bg-app: var(--sj-paper);
+  --bg-sidebar: var(--sj-paper-sunken);
+  --bg-sidebar-soft: var(--sj-paper-wash);
+  --bg-surface: var(--sj-paper-raised);
+  --bg-canvas: var(--sj-paper);
+  --bg-elevated: var(--sj-paper-raised);
+  --surface-1: var(--sj-paper-raised);
+  --surface-2: color-mix(in srgb, var(--sj-ink) 7%, transparent);
+  --overlay: rgba(43, 42, 40, 0.35);
+  --text-primary: var(--sj-ink);
+  --text-secondary: var(--sj-ink-soft);
+  --text-tertiary: var(--sj-ink-faint);
+  --border-hairline: var(--sj-line);
+  --border-strong: var(--sj-line-strong);
+  --accent-success: var(--sj-moss);
+  --accent-success-bg: color-mix(in srgb, var(--sj-moss) 12%, var(--sj-paper-raised));
+  --accent-success-text: var(--sj-moss);
+  --accent-warning: #8A6D3B;
+  --accent-warning-bg: #F4EBDD;
+  --accent-warning-text: #7A5D30;
+  --accent-danger: var(--sj-seal);
+  --accent-danger-bg: color-mix(in srgb, var(--sj-seal) 10%, var(--sj-paper-raised));
+  --accent-danger-border: color-mix(in srgb, var(--sj-seal) 34%, var(--sj-paper-raised));
+  --accent-danger-text: #8F3E27;
   --accent-info: #4A6B8A;
-  --avatar-bg: #C9B8A2;
-  --avatar-text: #3D2F1F;
+  --avatar-bg: var(--sj-paper-wash);
+  --avatar-text: var(--sj-ink);
   --background: var(--bg-app);
   --foreground: var(--text-primary);
   --card: var(--bg-surface);
@@ -69,7 +92,7 @@
   --chart-3: var(--accent-success);
   --chart-4: var(--accent-warning);
   --chart-5: var(--accent-info);
-  --radius: 0.75rem;
+  --radius: 0.625rem;
   --sidebar: var(--bg-sidebar);
   --sidebar-foreground: var(--text-primary);
   --sidebar-primary: var(--text-primary);
@@ -81,12 +104,12 @@
   --user-bubble: var(--bg-surface);
   --user-bubble-border: var(--border-hairline);
   --shadow-xs: none;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 12px 36px -12px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.06);
+  --shadow-sm: var(--sj-shadow-1);
+  --shadow-md: var(--sj-shadow-2);
   --focus-ring: 0 0 0 2px color-mix(in srgb, var(--ring) 50%, transparent);
   color: var(--foreground);
   background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", "PingFang SC", sans-serif;
+  font-family: var(--sj-font-sans);
   font-size: 13px;
   line-height: 1.65;
   letter-spacing: 0;
@@ -97,7 +120,7 @@
 @theme inline {
   --color-overlay: var(--overlay);
   --font-heading: var(--font-sans);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", "PingFang SC", sans-serif;
+  --font-sans: var(--sj-font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -142,7 +165,10 @@
 svg.tabler-icon {
   display: block;
   flex-shrink: 0;
-  stroke-width: 1.75;
+  /* The v4 design tokens call for delicate 1.5px line icons; Tabler's
+     default 2px (and our previous 1.75) read heavier than the paper-and-ink
+     thesis wants. */
+  stroke-width: 1.5;
 }
 
 button svg.tabler-icon,
@@ -998,19 +1024,15 @@ select {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  color: white;
+  color: var(--sj-ink-soft);
+  background: var(--sj-paper-sunken);
+  box-shadow: inset 0 0 0 0.5px var(--sj-line);
 }
 
-.doc-preview-icon-word {
-  background: linear-gradient(135deg, #2b579a 0%, #1e3a6a 100%);
-}
-
-.doc-preview-icon-excel {
-  background: linear-gradient(135deg, #217346 0%, #14542f 100%);
-}
-
+.doc-preview-icon-word,
+.doc-preview-icon-excel,
 .doc-preview-icon-powerpoint {
-  background: linear-gradient(135deg, #d24726 0%, #8c2c12 100%);
+  background: var(--sj-paper-sunken);
 }
 
 /* ── PPTX outline view ─────────────────────────────────────────────
@@ -1944,7 +1966,7 @@ select {
   align-items: center;
   justify-content: flex-start;
   padding: 4px 0;
-  color: var(--accent-warning);
+  color: var(--sj-seal);
 }
 
 .thinking-pulse {
@@ -2551,7 +2573,7 @@ select {
   border-radius: 10px;
   /* Elevated white card (not a flat muted pill) so the attachment
    * reads as a tidy, secondary object beneath the message text —
-   * the red type-icon carries the emphasis, the card itself stays
+   * the small type glyph carries the file kind, the card itself stays
    * quiet. */
   background: var(--bg-elevated, #ffffff);
   border: 1px solid var(--border-hairline, rgba(0, 0, 0, 0.08));
@@ -2574,10 +2596,18 @@ select {
 }
 
 .message-attachment-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--sj-paper-sunken);
+  color: var(--sj-ink-soft);
+  font-family: var(--sj-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .message-attachment-name {
@@ -2610,18 +2640,19 @@ select {
   color: var(--text-primary);
 }
 
-/* Typed file-icon color palette. Used by:
+/* Attachment glyph compatibility hooks. Used by:
  *   - .message-attachment-icon (chat-bubble chip)
  *   - .attachment-thumb-placeholder.file-icon-* (composer chip)
- *   - DocPreviewPanel header `.doc-preview-icon-*` (existing)
- * Single source of truth so a future color tweak only edits one
- * block. Each color is the Tabler-style brand tone for that type. */
-.file-icon-pdf { color: #DC2626; }       /* red — PDF */
-.file-icon-word { color: #2563EB; }      /* blue — DOCX */
-.file-icon-excel { color: #16A34A; }     /* green — XLSX */
-.file-icon-powerpoint { color: #EA580C; } /* orange — PPTX */
-.file-icon-image { color: #7C3AED; }     /* purple — image */
-.file-icon-other { color: var(--text-tertiary); } /* gray fallback */
+ * These classes intentionally resolve to one muted ink color; file
+ * type is expressed through the glyph text, not app-brand colors. */
+.file-icon-pdf,
+.file-icon-word,
+.file-icon-excel,
+.file-icon-powerpoint,
+.file-icon-image,
+.file-icon-other {
+  color: var(--sj-ink-soft);
+}
 
 .message-attachments .chat-image {
   max-width: min(320px, 100%);
@@ -3189,6 +3220,53 @@ button:active {
 
 .sidebar-search-clear:hover {
   color: var(--text-primary);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 2px 8px;
+  padding: 8px;
+  border-radius: var(--sj-r-l);
+}
+
+.sidebar-brand-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border-radius: var(--sj-r-m);
+  background: var(--sj-paper);
+  box-shadow: var(--sj-shadow-1), inset 0 0 0 0.5px var(--sj-line);
+}
+
+.sidebar-brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar-brand-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  color: var(--sj-ink);
+  line-height: 1.2;
+}
+
+.sidebar-brand-copy strong {
+  font-family: var(--sj-font-serif);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.sidebar-brand-copy small {
+  color: var(--sj-ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.24em;
 }
 
 [data-icon="inline-start"] {
@@ -3973,8 +4051,8 @@ button:active {
   flex: 0 0 auto;
 }
 .topbar-daemon-dot.is-online {
-  background: #4ea05a;
-  box-shadow: 0 0 0 2px rgba(78, 160, 90, 0.18);
+  background: var(--sj-moss);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sj-moss) 18%, transparent);
 }
 .topbar-daemon-dot.is-offline {
   background: var(--accent-danger);
@@ -4182,7 +4260,7 @@ button:active {
 .chat-surface {
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-surface);
+  background: var(--sj-paper-raised);
   /* No padding at all — .messages owns its own horizontal padding and
    * the top/bottom fades (.chat-surface::before + .composer::before)
    * overlay actual content. Letting .messages span edge-to-edge lets
@@ -4205,7 +4283,7 @@ button:active {
   height: 32px;
   pointer-events: none;
   z-index: 1;
-  background: linear-gradient(to bottom, var(--bg-surface, #FFFFFF), transparent);
+  background: linear-gradient(to bottom, var(--sj-paper-raised), transparent);
 }
 
 .messages {
@@ -4296,8 +4374,8 @@ button:active {
 .message.user .message-content {
   display: inline-block;
   max-width: 100%;
-  border-radius: var(--radius-lg);
-  background: var(--bg-sidebar);
+  border-radius: var(--sj-r-l);
+  background: var(--sj-paper-sunken);
   color: var(--text-primary);
   padding: 9px 13px;
 }
@@ -5208,7 +5286,7 @@ button.agent-progress-summary:focus-visible {
   right: 0;
   height: 32px;
   pointer-events: none;
-  background: linear-gradient(to top, var(--bg-surface, #FFFFFF), transparent);
+  background: linear-gradient(to top, var(--sj-paper-raised), transparent);
 }
 
 .composer > .composer-input,
@@ -5239,7 +5317,7 @@ button.agent-progress-summary:focus-visible {
 }
 
 /* Expiry caption — small, muted, single-line. Allowed to grow past
- * the 56px chip width: at 11px Inter the English variants
+ * the 56px chip width: at 11px system text the English variants
  * ("Expires in 7 days", ~95px) need the room or they'd truncate to
  * "Expires in 7 d…". The parent .composer-chips is flex-wrap:wrap,
  * so multi-chip layouts wrap to a new row instead of clipping. */
@@ -5252,7 +5330,7 @@ button.agent-progress-summary:focus-visible {
 
 /* Compact thumbnail tile shown above the composer for the attached
  * document. Images use their data: URL as the tile background; other
- * file types fall back to a generic file icon on a tinted background.
+ * file types use the SheJane single-color glyph language.
  * Filename / size / status are intentionally hidden — file name lives
  * on the `title` attribute (browser tooltip on long hover), the remove
  * button only appears on hover/focus. */
@@ -5279,11 +5357,12 @@ button.agent-progress-summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Default color when no typed file-icon-* class is applied
-   * (legacy callers / unknown file types). Typed icons override
-   * via the .file-icon-* class set on the same element. */
-  color: var(--text-tertiary);
-  background: var(--surface-2, rgba(120, 120, 130, 0.06));
+  color: var(--sj-ink-soft);
+  background: var(--sj-paper-sunken);
+  font-family: var(--sj-font-mono);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 .attachment-thumb-overlay {
   position: absolute;
@@ -5361,9 +5440,10 @@ button.agent-progress-summary:focus-visible {
  * send button so typed text never slides under it. */
 .composer-input {
   position: relative;
-  border: 0.5px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: #FFFFFF;
+  border: 0.5px solid var(--sj-line-strong);
+  border-radius: var(--sj-r-l);
+  background: var(--sj-paper-raised);
+  box-shadow: var(--sj-shadow-1);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -5424,7 +5504,7 @@ button.agent-progress-summary:focus-visible {
   transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 .composer-send:hover:not(:disabled) {
-  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  background: var(--sj-paper-wash);
   color: var(--text-primary);
 }
 .composer-send:focus-visible {
@@ -5480,7 +5560,7 @@ button.agent-progress-summary:focus-visible {
   transition: background 120ms ease, color 120ms ease;
 }
 .composer-tool:hover:not(:disabled) {
-  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+  background: var(--sj-paper-wash);
   color: var(--text-primary);
 }
 .composer-tool:focus-visible {
@@ -5794,15 +5874,15 @@ button.agent-progress-summary:focus-visible {
 
 .logo {
   display: flex;
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 12px;
-  border: 0.5px solid var(--border-hairline);
-  background: #FFF8F1;
-  box-shadow: 0 10px 26px -18px rgb(147 88 41 / 52%);
+  border-radius: var(--sj-r-l);
+  border: 0.5px solid var(--sj-line);
+  background: var(--sj-paper);
+  box-shadow: var(--sj-shadow-2);
 }
 
 .logo img,
@@ -5810,7 +5890,7 @@ button.agent-progress-summary:focus-visible {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -5840,12 +5920,13 @@ button.agent-progress-summary:focus-visible {
 .suggest-tile {
   display: grid;
   gap: 4px;
-  border: 0.5px solid var(--border-hairline);
-  border-radius: var(--radius-md);
-  background: #FFFFFF;
+  border: 0.5px solid var(--sj-line);
+  border-radius: var(--sj-r-m);
+  background: var(--sj-paper-raised);
   color: var(--text-primary);
   padding: 10px 12px;
   text-align: left;
+  box-shadow: var(--sj-shadow-1);
 }
 
 .suggest-tile .tag {
@@ -5863,19 +5944,19 @@ button.agent-progress-summary:focus-visible {
 }
 
 .tag-code {
-  color: var(--accent-success-text);
+  color: var(--text-secondary);
 }
 
 .tag-write {
-  color: var(--accent-warning-text);
+  color: var(--text-secondary);
 }
 
 .tag-research {
-  color: var(--accent-info);
+  color: var(--text-secondary);
 }
 
 .tag-create {
-  color: var(--accent-danger-text);
+  color: var(--text-secondary);
 }
 
 .auth-page {
@@ -5937,7 +6018,7 @@ button.agent-progress-summary:focus-visible {
   justify-content: center;
   gap: 20px;
   border-right: 0.5px solid var(--border-hairline);
-  background: var(--bg-sidebar);
+  background: var(--sj-paper-sunken);
   padding: clamp(40px, 6vw, 72px) clamp(34px, 5vw, 64px);
 }
 
@@ -5947,27 +6028,29 @@ button.agent-progress-summary:focus-visible {
   align-items: center;
   gap: 18px;
   color: var(--text-primary);
+  font-family: var(--sj-font-serif);
   font-size: 30px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.14em;
 }
 
 .auth-wordmark-mark {
   display: grid;
-  width: 76px;
-  height: 76px;
+  width: 84px;
+  height: 84px;
   overflow: hidden;
   place-items: center;
-  border-radius: 20px;
-  border: 0.5px solid var(--border-hairline);
-  background: #FFF8F1;
+  border-radius: 18px;
+  border: 0.5px solid var(--sj-line);
+  background: var(--sj-paper);
+  box-shadow: var(--sj-shadow-2);
 }
 
 .auth-form-panel {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  background: #FFFFFF;
+  background: var(--sj-paper-raised);
   padding: clamp(44px, 6vw, 72px) clamp(36px, 5vw, 64px) clamp(34px, 4vw, 48px);
 }
 
@@ -6362,6 +6445,12 @@ select {
     padding: 24px 20px;
   }
 
+  .auth-form-wrap {
+    width: min(100%, calc(100vw - 40px));
+    max-width: 360px;
+    margin-inline: 0;
+  }
+
   .auth-mode-link {
     justify-content: flex-start;
   }
@@ -6381,6 +6470,46 @@ select {
   .message.user .message-bubble-inner,
   .message.assistant .message-bubble-inner {
     max-width: calc(100vw - 72px);
+  }
+
+  .app-window-shell,
+  .app-shell,
+  .sidebar,
+  .workspace,
+  .composer-dock,
+  .chat-surface,
+  .messages,
+  .empty-state.welcome-body {
+    width: 100%;
+    max-width: 100vw;
+    min-width: 0;
+  }
+
+  .sidebar {
+    position: relative;
+  }
+
+  .chat-surface {
+    padding: 16px 10px;
+  }
+
+  .empty-state.welcome-body {
+    padding: 32px 20px 112px;
+  }
+
+  .empty-state.welcome-body h1,
+  .empty-state.welcome-body p,
+  .suggest-grid {
+    max-width: 100%;
+  }
+
+  .suggest-grid {
+    width: 100%;
+  }
+
+  .composer {
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
   }
 
   .composer-toolbar,
@@ -6559,20 +6688,11 @@ select {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
-  color: var(--text-secondary);
-}
-
-/* Tint the icon per source so the user gets a fast visual cue even when
- * the section header scrolls out of view. */
-.skill-card[data-source='shejane'] .skill-card-icon {
-  background: color-mix(in srgb, var(--accent-warning) 22%, transparent);
-  color: var(--accent-warning-text);
-}
-
-.skill-card[data-source='claude'] .skill-card-icon {
-  background: color-mix(in srgb, var(--accent-info) 22%, transparent);
-  color: var(--accent-info);
+  /* Monochrome glyph square (paper-and-ink). The v4 design forbids colored
+     icons; provenance is conveyed by the section header, not a tint. */
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-soft, #6F6B63);
+  box-shadow: inset 0 0 0 0.5px var(--sj-line, #E8E5DE);
 }
 
 .skill-card-text {
@@ -6659,8 +6779,10 @@ select {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: rgba(99, 102, 241, 0.12);
-  color: rgb(99, 102, 241);
+  /* Monochrome — no indigo. Paper-and-ink only (design rule). */
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-soft, #6F6B63);
+  box-shadow: inset 0 0 0 0.5px var(--sj-line, #E8E5DE);
 }
 
 .mcp-row-body {
@@ -6689,8 +6811,10 @@ select {
   letter-spacing: 0.02em;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(99, 102, 241, 0.1);
-  color: rgb(99, 102, 241);
+  /* Monochrome technical token — mono font, sunken paper, no indigo. */
+  font-family: var(--sj-font-mono);
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-faint, #A8A39A);
 }
 
 .mcp-row-meta {
@@ -6903,4 +7027,1143 @@ select {
   background: white;
   border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.06));
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* === SheJane v4 shell fidelity ==========================================
+   Keep these overrides together: the v4 prototype is built from floating
+   islands on a paper field, not from a framed app window with a white chat
+   pane. */
+:root {
+  --sj-v4-sidebar-width: 204px;
+  --sj-v4-chat-column: 700px;
+  --sj-v4-composer-width: 560px;
+}
+
+.app-window-shell,
+.electron-window-shell {
+  height: 100dvh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--sj-paper, #FAF9F6);
+  box-shadow: none;
+}
+
+.app-shell {
+  grid-template-columns: clamp(190px, var(--sidebar-width, var(--sj-v4-sidebar-width)), 236px) minmax(0, 1fr);
+  background: var(--sj-paper, #FAF9F6);
+}
+
+.sidebar-resize-handle {
+  left: clamp(190px, var(--sidebar-width, var(--sj-v4-sidebar-width)), 236px);
+  width: 8px;
+}
+
+.sidebar-resize-handle::after {
+  opacity: 0;
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.sidebar-resize-handle[data-resizing="true"]::after {
+  opacity: 1;
+  background: var(--sj-line-strong, #D9D5CC);
+  box-shadow: none;
+}
+
+.sidebar {
+  position: relative;
+  top: auto;
+  align-self: start;
+  height: calc(100dvh - 24px);
+  margin: 12px 0 12px 12px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: var(--sj-r-l, 14px);
+  background: var(--sj-paper-raised, #FFFFFF);
+  /* "Barely visible" per the delivery doc: the sidebar is a common
+     floating surface (shadow-1), not an elevated/hover one (shadow-2). */
+  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
+  color: var(--sj-ink, #2B2A28);
+  padding: 8px 10px 10px;
+}
+
+.electron-window-shell .sidebar {
+  padding-top: 8px;
+}
+
+.sidebar-window-controls {
+  min-height: 18px;
+  padding: 0 2px;
+}
+
+.electron-window-shell .sidebar-window-controls {
+  min-height: 34px;
+  padding-left: 78px;
+}
+
+.sidebar-window-actions {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.sidebar:hover .sidebar-window-actions,
+.sidebar:focus-within .sidebar-window-actions {
+  opacity: 1;
+}
+
+.sidebar-brand {
+  margin: 2px 0 12px;
+  padding: 2px 4px;
+  gap: 8px;
+}
+
+.sidebar-brand-mark {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-brand-copy strong {
+  font-family: var(--sj-font-sans);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.sidebar-brand-copy small {
+  font-size: 8px;
+  letter-spacing: 0.32em;
+}
+
+.sidebar-section {
+  gap: 4px;
+}
+
+.sidebar-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 6px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sidebar-section-label::after {
+  content: "";
+  height: 1px;
+  min-width: 12px;
+  flex: 1 1 auto;
+  background: var(--sj-line, #E8E5DE);
+}
+
+.sidebar-item,
+.conversation-row {
+  border-radius: 8px;
+}
+
+.sidebar-item {
+  min-height: 30px;
+  border-color: transparent;
+  color: var(--sj-ink, #2B2A28);
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.sidebar-item svg,
+.sidebar-settings-trigger svg,
+.conversation-row-menu [data-slot="dropdown-menu-item"] svg {
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.sidebar-item:first-child {
+  position: relative;
+  justify-content: center;
+  border-color: var(--sj-line, #E8E5DE);
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-1, 0 4px 12px rgba(38, 37, 34, 0.06));
+}
+
+.sidebar-item:first-child .sidebar-item-hint {
+  position: absolute;
+  right: 18px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 10px;
+}
+
+.sidebar-today-item {
+  margin-top: 6px;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+}
+
+.sidebar-today-item:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.sidebar-today-badge,
+.sidebar-item .sidebar-today-badge {
+  min-width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--sj-seal, #B3532F);
+  color: #FFFFFF;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.sidebar-item:hover:not(.active),
+.conversation-row:hover {
+  border-color: transparent;
+  background: var(--sj-paper-sunken, #F3F1EC);
+  box-shadow: none;
+}
+
+.sidebar-item.active,
+.conversation-row.active {
+  border-color: transparent;
+  background: var(--sj-paper-sunken, #F3F1EC);
+  box-shadow: none;
+}
+
+.conversation-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  gap: 2px;
+  padding-bottom: 8px;
+}
+
+.conversation-row {
+  min-height: 26px;
+}
+
+.conversation {
+  min-height: 26px;
+  padding: 0 54px 0 8px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+}
+
+.conversation-row.active .conversation,
+.conversation-row:hover .conversation {
+  color: var(--sj-ink, #2B2A28);
+}
+
+.conversation-time {
+  right: 9px;
+  color: var(--sj-ink-ghost, #C9C5BC);
+  font-size: 10px;
+}
+
+.conversation-status-slot {
+  right: 42px;
+}
+
+.conversation-more {
+  right: 3px;
+}
+
+.sidebar-empty {
+  padding: 8px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 12px;
+}
+
+/* Day-bucket sub-labels (今天 / 昨天 / 更早) inside the "对话" list — the
+   v4 prototype groups conversations by recency. Quieter than the section
+   label (no hairline rule); a deliberately different class from
+   .sidebar-section-label so the section-label set stays just 已固定 / 对话. */
+.sidebar-time-group-label {
+  padding: 0 8px;
+  margin: 12px 0 3px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+/* First bucket sits right under the "对话" header — tighten its top gap. */
+.sidebar-section-label + .sidebar-time-group-label {
+  margin-top: 2px;
+}
+
+.sidebar-footer {
+  display: grid;
+  gap: 2px;
+  margin-top: auto;
+  border-top: 0.5px solid var(--sj-line, #E8E5DE);
+  padding-top: 8px;
+}
+
+/* The footer's own border-top is the single divider; the base rule's
+   per-item hairline drew a line between every 技能/连接/设置 row, which the
+   v4 footer doesn't want. */
+.sidebar-settings-trigger::before {
+  display: none;
+}
+
+.sidebar-footer-nav {
+  display: grid;
+  gap: 2px;
+}
+
+.sidebar-settings-trigger {
+  min-height: 28px;
+  border-radius: 8px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+}
+
+.sidebar-settings-trigger:hover,
+.sidebar-settings-trigger.active {
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink, #2B2A28);
+}
+
+.workspace {
+  position: relative;
+  background: var(--sj-paper, #FAF9F6);
+}
+
+.topbar {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 0;
+  left: 0;
+  /* v4: the conversation title sits centered at the very top with a small
+     status dot beside it, floating over the paper (no bar, no border). */
+  justify-content: center;
+  min-height: 44px;
+  border-bottom: 0;
+  background: transparent;
+  padding: 15px 28px 0;
+  pointer-events: none;
+}
+
+.topbar > * {
+  pointer-events: auto;
+}
+
+.chat-toolbar-title {
+  flex: 0 0 auto;
+  opacity: 1;
+  color: var(--sj-ink, #2B2A28);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Status dot sits immediately after the centered title, not pinned to the
+   far edge. */
+.topbar-status {
+  margin-left: 0;
+}
+
+.topbar-daemon-dot {
+  width: 6px;
+  height: 6px;
+}
+
+/* When the sidebar is collapsed the expand control floats at the left edge
+   so it doesn't ride into the centered title. */
+.topbar .topbar-expand-button {
+  position: absolute;
+  left: 24px;
+  top: 12px;
+}
+
+/* 技能 / 连接 / 设置 share the prototype's PageShell header: an in-flow
+   (not floating) centered title with a bottom hairline, content below it.
+   Distinct from the chat header, which floats over the paper with no rule. */
+.topbar-page {
+  position: relative;
+  justify-content: center;
+  min-height: 0;
+  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+  padding: 30px 28px 15px;
+  pointer-events: auto;
+}
+
+.topbar-page .chat-toolbar-title {
+  flex: 0 0 auto;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Header actions (refresh) pin to the trailing edge instead of riding the
+   centered title. */
+.topbar-page .skills-topbar-actions {
+  position: absolute;
+  right: 24px;
+  bottom: 12px;
+}
+
+/* Guarantee the page body owns the scroll under the in-flow header. */
+.workspace > .skills-scroll {
+  flex: 1 1 auto;
+}
+
+/* ── 设置 page (PageShell body) ─────────────────────────────────────────
+   Grouped rows in a centered 760 column, matching the prototype SjpSetRow
+   (label flex:1, value/control right, bottom hairline) + SjpGroupLabel. */
+.settings-content {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 28px 64px;
+}
+
+.settings-group + .settings-group {
+  margin-top: 4px;
+}
+
+.settings-group-label {
+  padding: 0 4px;
+  margin: 20px 0 4px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.settings-group:first-child .settings-group-label {
+  margin-top: 6px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 4px;
+  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+}
+
+.settings-row-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row-label {
+  color: var(--sj-ink, #2B2A28);
+  font-size: 13.5px;
+}
+
+.settings-row-hint {
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-row-control {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Whole-row tappable action (语言 / 充值 / 导入 / 退出登录). Resets the button
+   chrome so it reads as a row, with a hover wash and a trailing chevron. */
+button.settings-action {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+button.settings-action:hover {
+  background: var(--sj-paper-wash, #EFEDE7);
+}
+
+button.settings-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.settings-row-chevron {
+  flex: none;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+/* ── 今日 · 待办 view (mock) ────────────────────────────────────────────
+   Priority-grouped digest: seal = 现在回, ink = 今天内, line = 可放一放,
+   ringed = 只需知道. Priority is carried by ink depth, never red/yellow/green. */
+.today-content {
+  width: min(660px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 40px 0 32px;
+}
+
+.today-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.today-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--sj-ink, #2B2A28);
+}
+
+.today-date {
+  font-size: 13px;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.today-source {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.today-lead {
+  margin: 8px 0 26px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.today-group {
+  margin-bottom: 20px;
+}
+
+.today-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.today-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.today-dot-now {
+  background: var(--sj-seal, #B3532F);
+}
+.today-dot-today {
+  background: var(--sj-ink, #2B2A28);
+}
+.today-dot-later {
+  background: var(--sj-line-strong, #D9D5CC);
+}
+.today-dot-fyi {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--sj-line-strong, #D9D5CC);
+}
+
+.today-group-name {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--sj-ink, #2B2A28);
+}
+
+.today-group-count {
+  font-size: 11px;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.today-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--sj-line, #E8E5DE);
+  transition: opacity 200ms ease;
+}
+.today-row.is-done {
+  opacity: 0.48;
+}
+
+.today-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border: 1.5px solid var(--sj-line-strong, #D9D5CC);
+  border-radius: 50%;
+  background: transparent;
+  color: #FAF9F6;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.today-check.is-done {
+  border-color: transparent;
+  background: var(--sj-moss, #5E7A6E);
+}
+
+.today-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.today-row-text {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--sj-ink, #2B2A28);
+}
+.today-row.is-done .today-row-text {
+  text-decoration: line-through;
+}
+
+.today-row-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.today-row-source {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Action chip + quote chip share the bordered paper-pill look. */
+.today-row-quote,
+.today-row-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+  padding: 3px 9px;
+  border: 1px solid var(--sj-line, #E8E5DE);
+  border-radius: 6px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.today-row-quote {
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, border-color 150ms ease;
+}
+.today-row:hover .today-row-quote,
+.today-row-quote:focus-visible {
+  opacity: 1;
+}
+.today-row-quote:hover {
+  border-color: var(--sj-line-strong, #D9D5CC);
+}
+
+.today-footnote {
+  margin-top: 26px;
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-align: center;
+  color: var(--sj-ink-ghost, #C9C5BC);
+}
+
+/* Bottom adjust box — same floating island language as the chat composer. */
+.today-dock {
+  flex-shrink: 0;
+  padding: 10px 24px 18px;
+}
+
+.today-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(660px, 100%);
+  margin: 0 auto;
+  padding: 10px 10px 10px 14px;
+  border: 0.5px solid var(--sj-line-strong, #D9D5CC);
+  border-radius: 14px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-2, 0 2px 8px rgba(43, 42, 40, 0.06));
+}
+
+.today-composer-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  max-height: 120px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--sj-ink, #2B2A28);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.today-composer-input::placeholder {
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.today-composer-send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--sj-ink, #2B2A28);
+  color: var(--sj-paper, #FAF9F6);
+  cursor: pointer;
+}
+.today-composer-send:disabled {
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-faint, #A8A39A);
+  cursor: default;
+}
+
+.today-composer-hint {
+  width: min(660px, 100%);
+  margin: 9px auto 0;
+  font-size: 11px;
+  text-align: center;
+  color: var(--sj-ink-ghost, #C9C5BC);
+}
+
+.settings-row-value {
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-danger,
+.settings-danger:hover {
+  color: var(--accent-danger-text, #8F3E27);
+}
+
+/* 高级 disclosure inside the 智能体 group. */
+.settings-advanced-trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 13px 4px;
+  border: 0;
+  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+  background: transparent;
+  color: var(--sj-ink, #2B2A28);
+  font-size: 13.5px;
+  text-align: left;
+  outline: none;
+}
+
+.settings-advanced-desc {
+  margin: 0;
+  padding: 10px 4px 2px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-advanced-sub {
+  padding: 14px 4px 2px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.status-banner {
+  margin: 10px auto 0;
+  width: min(560px, calc(100% - 48px));
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 10px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-1, 0 4px 12px rgba(38, 37, 34, 0.06));
+}
+
+.chat-surface {
+  background: var(--sj-paper, #FAF9F6);
+  padding: 0;
+}
+
+.chat-surface::before {
+  height: 54px;
+  background: linear-gradient(to bottom, var(--sj-paper, #FAF9F6) 18%, transparent);
+}
+
+.messages {
+  max-width: none;
+  margin: 0;
+  /* 20px is the spacing the user settled on in the v4 prototype Tweaks
+     (msg gap 20 / column 700). */
+  gap: 20px;
+  /* Bottom buffer trimmed from 76px: the composer fade is now a thin 22px
+     strip, so the last bubble only needs a little slack to clear it. This
+     pulls the conversation down toward the composer, leaving a small gap
+     instead of a large empty band. */
+  padding: 56px 22px 40px;
+  scrollbar-gutter: stable;
+}
+
+/* Stone-dot turn separator (用户 → 助手). Centered on the chat column,
+   three graduated dots in the hairline-strong ink. Sits in the normal
+   message flow so the 20px gap frames it above and below. */
+.stone-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  max-width: var(--sj-v4-chat-column, 700px);
+  margin: 0 auto;
+  padding: 2px 0;
+}
+
+.stone-dots span {
+  border-radius: 50%;
+  background: var(--sj-line-strong, #D9D5CC);
+}
+
+.stone-dots span:nth-child(1),
+.stone-dots span:nth-child(3) {
+  width: 3px;
+  height: 3px;
+}
+
+.stone-dots span:nth-child(2) {
+  width: 4.5px;
+  height: 4.5px;
+}
+
+.message,
+.thinking-indicator {
+  max-width: var(--sj-v4-chat-column);
+}
+
+.message .message-content {
+  color: var(--sj-ink, #2B2A28);
+  font-size: 14px;
+  line-height: 1.76;
+}
+
+.message.assistant .message-content {
+  letter-spacing: 0;
+}
+
+.message.user .message-content {
+  max-width: min(520px, 78%);
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  /* Prototype v4 bubble: asymmetric tail (bottom-right notch), not a
+     uniform pill. The 4px corner sits on the trailing edge nearest the
+     column gutter. */
+  border-radius: 14px 14px 4px 14px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
+  padding: 10px 14px;
+}
+
+.message .message-content h1,
+.message .message-content h2,
+.message .message-content h3 {
+  font-family: var(--sj-font-sans);
+  letter-spacing: 0;
+}
+
+.message .message-content h2 {
+  font-size: 1.18em;
+}
+
+.message .message-content table {
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
+}
+
+.message .message-content th,
+.message .message-content td {
+  border-color: var(--sj-line, #E8E5DE);
+}
+
+.message .message-content thead th {
+  background: var(--sj-paper-sunken, #F3F1EC);
+}
+
+.message .message-content blockquote {
+  border-left-color: var(--sj-line-strong, #D9D5CC);
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.message .message-content code {
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.agent-progress.tool-card {
+  max-width: 100%;
+  margin-top: 18px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  padding: 8px 12px;
+  box-shadow: var(--sj-shadow-1, 0 4px 12px rgba(38, 37, 34, 0.06));
+}
+
+.agent-progress-summary {
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.empty-state {
+  place-content: center;
+  min-height: 100%;
+  padding: 56px 24px 120px;
+}
+
+.empty-state .logo {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 18px;
+}
+
+.empty-state h1 {
+  color: var(--sj-ink, #2B2A28);
+  font-size: 22px;
+  line-height: 1.28;
+}
+
+.empty-state p {
+  max-width: 430px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 13px;
+}
+
+.suggest-grid {
+  max-width: 620px;
+  margin-top: 24px;
+}
+
+.suggest-tile {
+  border-color: var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-1, 0 4px 12px rgba(38, 37, 34, 0.06));
+}
+
+.composer-dock {
+  flex: 0 0 auto;
+  background: transparent;
+  padding: 0 0 4px;
+}
+
+.composer-dock .approval-bar,
+.composer-dock .question-bar {
+  max-width: var(--sj-v4-composer-width);
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 10px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-2, 0 12px 30px rgba(38, 37, 34, 0.10));
+}
+
+.composer {
+  width: min(var(--sj-v4-composer-width), calc(100% - 48px));
+  max-width: var(--sj-v4-composer-width);
+  margin: 0 auto 6px;
+  border: 0.5px solid var(--sj-line-strong, #D9D5CC);
+  border-radius: 10px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-2, 0 12px 30px rgba(38, 37, 34, 0.10));
+}
+
+/* Quiet caption under the composer island (prototype v4): a single faint
+   line, centered on the composer column, sitting outside the island. */
+.composer-disclaimer {
+  margin: 0 auto;
+  padding: 0 0 12px;
+  width: min(var(--sj-v4-composer-width), calc(100% - 48px));
+  color: var(--sj-ink-ghost, #C9C5BC);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.composer::before {
+  /* Match the composer island's own width instead of bleeding 24px past
+     each edge — the overhang read as a too-wide band over the messages. */
+  left: 0;
+  right: 0;
+  /* Thin strip so the fade hugs the composer instead of riding high up
+     into the conversation content. */
+  height: 22px;
+  /* Lift the fade just clear of the composer's top border so it leaves a
+     small gap between the message content and the island. With `bottom: 100%`
+     the solid-paper bottom of this gradient lands on the island's 0.5px top
+     border and paints over it (the border reads as "cut off"). The gap it
+     leaves is plain paper anyway, so nudging it up restores the border. */
+  bottom: calc(100% + 4px);
+  background: linear-gradient(to top, var(--sj-paper, #FAF9F6), transparent);
+}
+
+.composer-input {
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer textarea,
+.composer-editor {
+  min-height: 44px;
+  /* Send button moved to the toolbar row, so the editor no longer reserves
+     right padding for it. */
+  padding: 11px 14px 8px 14px;
+  color: var(--sj-ink, #2B2A28);
+  font-size: 13px;
+}
+
+.composer-editor-ph {
+  top: 11px;
+  left: 14px;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.composer-send {
+  /* v4: lives inline in the bottom toolbar row (next to the model
+     selector), not floating in the text area. */
+  position: static;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+/* Prototype v4: the send button fills with ink the moment there's text
+   to send (i.e. when it's no longer :disabled). Empty/disabled stays the
+   quiet sunken chip above. The stop button keeps the quiet chip too —
+   only the primary "send" action gets the ink fill. */
+.composer-send:not(.composer-send-stop):not(:disabled) {
+  background: var(--sj-ink, #2B2A28);
+  color: var(--sj-paper, #FAF9F6);
+}
+
+.composer-send:not(.composer-send-stop):not(:disabled):hover {
+  background: color-mix(in srgb, var(--sj-ink, #2B2A28) 86%, transparent);
+  color: var(--sj-paper, #FAF9F6);
+}
+
+.composer-send-stop:hover:not(:disabled) {
+  background: var(--sj-paper-wash, #EFEDE7);
+  color: var(--sj-ink, #2B2A28);
+}
+
+.composer-toolbar {
+  padding: 0 10px 8px;
+}
+
+.composer-tool,
+.composer-mode-trigger {
+  height: 26px;
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.composer-tool {
+  width: 26px;
+}
+
+.composer-mode-trigger {
+  width: 78px;
+  margin-left: auto;
+}
+
+.attachment-thumb {
+  border-color: var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
+}
+
+[data-slot="sheet-content"].doc-preview-panel,
+[data-slot="sheet-content"].artifact-preview {
+  top: 12px !important;
+  right: 12px !important;
+  bottom: 12px !important;
+  height: auto !important;
+  border: 0.5px solid var(--sj-line, #E8E5DE) !important;
+  border-radius: var(--sj-r-l, 14px) !important;
+  background: var(--sj-paper-raised, #FFFFFF) !important;
+  box-shadow: var(--sj-shadow-2, 0 12px 30px rgba(38, 37, 34, 0.10)) !important;
+}
+
+[data-slot="sheet-content"].artifact-preview {
+  width: min(360px, calc(100vw - 24px)) !important;
+  max-width: min(360px, calc(100vw - 24px)) !important;
+}
+
+.doc-preview-panel [data-slot='sheet-header'],
+.artifact-preview [data-slot='sheet-header'] {
+  padding: 14px 44px 8px 16px;
+}
+
+.doc-preview-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.doc-preview-title {
+  font-size: 13px;
+}
+
+.doc-preview-subtitle {
+  font-size: 11px;
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .sidebar-resize-handle {
+    display: none;
+  }
+
+  .topbar {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .chat-toolbar-title {
+    opacity: 0.62;
+  }
+
+  .messages {
+    padding-inline: 16px;
+  }
+
+  .composer {
+    width: min(560px, calc(100% - 28px));
+    margin-bottom: 12px;
+  }
 }

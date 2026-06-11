@@ -104,7 +104,7 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
 
   return (
     <section className="workspace">
-      <header className="topbar">
+      <header className="topbar topbar-page">
         <div className="chat-toolbar-title">
           <span>{t('skills.title')}</span>
         </div>

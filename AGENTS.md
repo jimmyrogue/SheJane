@@ -142,6 +142,7 @@ Client UI expectations:
 - Chat history remains local-first.
 - Backend stores usage metadata and billing data, not full chat body history.
 - Keep import/export behavior intact.
+- Follow the SheJane visual system in `docs/ui/shejane-design-system.md`: warm paper + ink, seal red only for brand/running/critical states, moss only for online/success, and single-color typographic attachment glyphs instead of colorful file icons.
 
 ## Testing Expectations
 

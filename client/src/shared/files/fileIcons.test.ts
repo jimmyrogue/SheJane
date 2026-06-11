@@ -10,12 +10,14 @@ describe('fileIconFor', () => {
   it('returns the word descriptor for .docx and .doc names', () => {
     expect(fileIconFor('report.docx').colorKey).toBe('word')
     expect(fileIconFor('legacy.doc').colorKey).toBe('word')
+    expect(fileIconFor('report.docx').glyph).toBe('文')
   })
 
   it('returns the excel descriptor for .xlsx / .xls / .csv', () => {
     expect(fileIconFor('budget.xlsx').colorKey).toBe('excel')
     expect(fileIconFor('legacy.xls').colorKey).toBe('excel')
     expect(fileIconFor('users.csv').colorKey).toBe('excel')
+    expect(fileIconFor('budget.xlsx').glyph).toBe('表')
   })
 
   it('returns the powerpoint descriptor for .pptx / .ppt', () => {
