@@ -7810,6 +7810,25 @@ button.settings-action:focus-visible {
   background: linear-gradient(to bottom, var(--sj-paper, #FAF9F6) 18%, transparent);
 }
 
+/* Bottom fade — symmetric counterpart to .chat-surface::before, spanning the
+   FULL chat width. The fade used to live on .composer::before, but that caps
+   it at the composer island's width — and the message column (700px) is wider
+   than the island (560px), so a line scrolling under it faded mid-line and
+   stayed dark on both flanks. Anchoring it here covers the whole line
+   uniformly; the solid-paper bottom edge doubles as the small gap between
+   content and the composer island. */
+.chat-surface::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  pointer-events: none;
+  z-index: 1;
+  background: linear-gradient(to top, var(--sj-paper, #FAF9F6) 22%, transparent);
+}
+
 .messages {
   max-width: none;
   margin: 0;
@@ -8005,20 +8024,10 @@ button.settings-action:focus-visible {
 }
 
 .composer::before {
-  /* Match the composer island's own width instead of bleeding 24px past
-     each edge — the overhang read as a too-wide band over the messages. */
-  left: 0;
-  right: 0;
-  /* Thin strip so the fade hugs the composer instead of riding high up
-     into the conversation content. */
-  height: 22px;
-  /* Lift the fade just clear of the composer's top border so it leaves a
-     small gap between the message content and the island. With `bottom: 100%`
-     the solid-paper bottom of this gradient lands on the island's 0.5px top
-     border and paints over it (the border reads as "cut off"). The gap it
-     leaves is plain paper anyway, so nudging it up restores the border. */
-  bottom: calc(100% + 4px);
-  background: linear-gradient(to top, var(--sj-paper, #FAF9F6), transparent);
+  /* The bottom fade moved to .chat-surface::after: pinned to the island,
+     this pseudo could never span the (wider) message column, so scrolling
+     lines faded mid-line and stayed dark on the flanks. */
+  display: none;
 }
 
 .composer-input {
