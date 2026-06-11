@@ -12,15 +12,6 @@ dependencies = [
     "langchain-mcp-adapters>=0.2.0",
     # Subagents via deepagents (SubAgentMiddleware)
     "deepagents>=0.2.0",
-    # LangChain wrappers for fallback model chains (init_chat_model).
-    # NB: the bare `openai` SDK and `langchain-tavily` are intentionally
-    # ABSENT — image.* and web.search both proxy through the cloud
-    # Tool Gateway (Go API holds the OpenAI/Tavily keys). browser-use
-    # is the only remaining direct LLM consumer in the daemon and it
-    # gets its langchain client via the `browser_llm` arg in
-    # `agent/builder.py`.
-    "langchain-anthropic>=0.4.0",
-    "langchain-openai>=0.4.0",
     # HTTP layer
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -45,12 +36,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # Agentic browser (the browser.task tool). DELIBERATELY OPTIONAL and NOT in the
-# desktop bundle: the feature is currently a stub (browser_llm is None in
-# agent/builder.py until the browser sub-agent is wired), and playwright +
-# Chromium would add hundreds of MB plus extra code-signing surface. The daemon
-# import-guards browser-use (tools/browser.py), so without this extra the
-# browser.task tool returns a "not installed" envelope and the daemon boots
-# fine. Install for dev work on the feature: `uv sync --extra browser`.
+# desktop bundle: the feature is not model-visible while browser_llm is None
+# in agent/builder.py, and playwright + Chromium would add hundreds of MB plus
+# extra code-signing surface. Install for dev work on the feature:
+# `uv sync --extra browser`.
 browser = [
     "browser-use>=0.7.0",
     "playwright>=1.50.0",

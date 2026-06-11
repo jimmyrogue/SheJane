@@ -109,6 +109,74 @@ def test_build_agent_with_workspace_includes_shell_middleware(tmp_path: Path, mo
     assert isinstance(names, list)
 
 
+def test_custom_middleware_includes_bounded_completion_guards(tmp_path: Path) -> None:
+    from local_host.agent.builder import _custom_middleware
+
+    settings = reset_settings_for_tests(
+        data_dir=tmp_path,
+        SHEJANE_LOCAL_VERIFY_REPAIR_MAX=2,
+    )
+
+    middleware = _custom_middleware(settings)
+    verification = [
+        item for item in middleware if type(item).__name__ == "VerificationLoopMiddleware"
+    ]
+    progress = [
+        item for item in middleware if type(item).__name__ == "ProgressLedgerGuardMiddleware"
+    ]
+
+    assert len(verification) == 1
+    assert verification[0].max_attempts == 2
+    assert len(progress) == 1
+    assert progress[0].max_attempts == 1
+
+
+def test_custom_middleware_uses_separate_model_retry_budget(tmp_path: Path) -> None:
+    from local_host.agent.builder import _custom_middleware
+
+    settings = reset_settings_for_tests(
+        data_dir=tmp_path,
+        max_tool_retries=4,
+        max_model_retries=1,
+    )
+
+    middleware = _custom_middleware(settings)
+    tool_retry = [item for item in middleware if type(item).__name__ == "ToolRetryMiddleware"]
+    tool_result_retry = [
+        item for item in middleware if type(item).__name__ == "ToolResultRetryMiddleware"
+    ]
+    model_retry = [item for item in middleware if type(item).__name__ == "ModelRetryMiddleware"]
+
+    assert len(tool_retry) == 1
+    assert tool_retry[0].max_retries == 4
+    assert len(tool_result_retry) == 1
+    assert tool_result_retry[0].max_retries == 4
+    assert len(model_retry) == 1
+    assert model_retry[0].max_retries == 1
+    assert model_retry[0].on_failure == "error"
+    assert callable(model_retry[0].retry_on)
+
+    from local_host.llm.backend import BackendLLMError
+
+    assert model_retry[0].retry_on(BackendLLMError("rate limited", retryable=True)) is True
+    assert model_retry[0].retry_on(BackendLLMError("bad key", retryable=False)) is False
+    assert (
+        model_retry[0].retry_on(
+            BackendLLMError("HTTP 429: insufficient credits", code="insufficient_credits")
+        )
+        is False
+    )
+    assert (
+        model_retry[0].retry_on(
+            BackendLLMError("HTTP 429: missing API key", code="missing_api_key")
+        )
+        is False
+    )
+    assert model_retry[0].retry_on(BackendLLMError("provider timed out", code="timeout")) is True
+    assert model_retry[0].retry_on(TimeoutError("request timed out")) is True
+    assert model_retry[0].retry_on(ValueError("bug")) is False
+
+
 def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeypatch) -> None:
     """The compiled agent should drive a complete invoke against a mocked
     SSE backend, returning a final assistant message.

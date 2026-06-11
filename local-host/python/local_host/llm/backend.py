@@ -61,6 +61,67 @@ from pydantic import Field
 log = logging.getLogger("local_host.llm.backend")
 
 
+class BackendLLMError(RuntimeError):
+    """Structured error emitted by the cloud LLM gateway."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        request_id: str | None = None,
+        provider: str | None = None,
+        recoverable: bool | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.request_id = request_id
+        self.provider = provider
+        self.recoverable = recoverable
+        self.retryable = retryable
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> BackendLLMError:
+        message = _first_string(payload.get("message"), payload.get("error"), payload.get("detail"))
+        code = _first_string(
+            payload.get("code"), payload.get("error_code"), payload.get("errorCode")
+        )
+        return cls(
+            message or code or "backend LLM error",
+            code=code,
+            request_id=_first_string(payload.get("request_id"), payload.get("requestId")),
+            provider=_first_string(payload.get("provider")),
+            recoverable=payload.get("recoverable")
+            if isinstance(payload.get("recoverable"), bool)
+            else None,
+            retryable=payload.get("retryable")
+            if isinstance(payload.get("retryable"), bool)
+            else None,
+        )
+
+    def to_event_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": self.message,
+            "error": self.message,
+            "type": type(self).__name__,
+            "source": "model_gateway",
+        }
+        if self.code:
+            payload["code"] = self.code
+            payload["error_code"] = self.code
+        if self.request_id:
+            payload["request_id"] = self.request_id
+        if self.provider:
+            payload["provider"] = self.provider
+        if self.recoverable is not None:
+            payload["recoverable"] = self.recoverable
+        if self.retryable is not None:
+            payload["retryable"] = self.retryable
+        return payload
+
+
 class BackendChatModel(BaseChatModel):
     """ChatModel that talks to our cloud backend gateway."""
 
@@ -267,6 +328,8 @@ class BackendChatModel(BaseChatModel):
                     )
 
                 async for event, data in _parse_sse_stream(resp):
+                    if event == "llm.error":
+                        raise BackendLLMError.from_payload(data)
                     chunk = _event_to_chunk(event, data, capture_meta)
                     if chunk is not None:
                         yield chunk
@@ -325,6 +388,13 @@ def _stringify(content: Any) -> str:
                 parts.append(str(part))
         return "".join(parts)
     return str(content)
+
+
+def _first_string(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 # --- SSE stream parser ---

@@ -50,10 +50,19 @@ from .api_schemas import (
 )
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
+from .failure_policy import classify_failure_payload
+from .progress_ledger import (
+    latest_feature_ledger as _latest_feature_ledger,
+)
+from .progress_ledger import (
+    progress_ledger_state as _progress_ledger_state,
+)
 from .runs import RunCoordinator
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.server")
+
+_HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
 
 
 def _list_skill_files() -> list[dict[str, str]]:
@@ -324,6 +333,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             history=body.history or [],
             parent_run_id=body.parent_run_id,
             settings=body.settings,
+            metadata=body.metadata,
         )
 
     @app.get("/local/v1/runs/{run_id}", response_model=LocalRun)
@@ -394,9 +404,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         Translates the client's `{decision, scope}` body into the
         `{"decisions": [{"type": "approve"|"reject", ...}]}` shape
-        that `HumanInTheLoopMiddleware` expects on resume (the
-        middleware does `interrupt(...)["decisions"]` and KeyError's
-        on anything else).
+        that `HumanInTheLoopMiddleware` expects on resume. One LangGraph
+        interrupt can contain multiple HITL action requests, so the run
+        resumes only after every permission in the current pause batch is
+        resolved, preserving the original `permission.required` order.
 
         When `scope=run`, the coordinator caches the tool name so the
         auto-approve loop in `_drive_run` skips re-prompting on
@@ -413,19 +424,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status="approved" if decision_text == "approve" else "denied",
             scope=str(scope),
         )
-        # Build the HITL decision list. The middleware expects N
-        # decisions for N interrupted tool calls (one HITLRequest can
-        # bundle several). For now we assume one tool call per
-        # interrupt — the common case. Multi-tool batches would need
-        # the client to collect all approvals before posting.
-        hitl_decision: dict[str, Any]
-        if decision_text == "approve":
-            hitl_decision = {"type": "approve"}
-        else:
-            hitl_decision = {
-                "type": "reject",
-                "message": "Tool execution denied by user.",
-            }
         coordinator: RunCoordinator = app.state.coordinator
         # If the user picked "Always allow for this run", cache the
         # tool name in the coordinator so the auto-approve loop in
@@ -434,13 +432,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # turn and the user has to click approve repeatedly.
         if decision_text == "approve" and scope == "run":
             coordinator.grant_tool_scope(record["run_id"], record["tool_name"])
-        resume_payload = {"decisions": [hitl_decision]}
-        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         # Emit `permission.resolved` onto the run's SSE queue so the
         # client's `hasPendingPermission` check (App.tsx:1339) clears
         # the in-flight approval card. Without this the card stays
-        # rendered after the user clicks approve, even though the run
-        # has already moved on.
+        # rendered after the user clicks approve. Emit before deciding
+        # whether to resume because batched HITL pauses may still be
+        # waiting on sibling permission cards.
         await coordinator.emit_for_run(
             record["run_id"],
             "permission.resolved",
@@ -452,6 +449,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "scope": str(scope),
             },
         )
+        permissions = await store.list_permissions_for_run(record["run_id"])
+        raw_events = await store.events_since(record["run_id"], after_seq=0)
+        batch = _current_permission_batch(raw_events, permissions, permission_id)
+        if any(item.get("status") == "pending" for item in batch):
+            ok = False
+        else:
+            resume_payload = {"decisions": [_hitl_decision_for_permission(item) for item in batch]}
+            ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         return {
             "permission_id": permission_id,
             "resolved": True,
@@ -478,7 +483,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # user.ask reads `answers` directly (see tools/user.py) — pass
         # both shapes for maximum compatibility.
         resume_payload = {"answers": answers, "question_id": question_id}
-        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         # Mirror the permission flow: emit `question.answered` onto the
         # run's stream so the client's `hasPendingQuestion` check
         # (App.tsx:1352) clears the answer prompt UI.
@@ -490,6 +494,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "answers": answers,
             },
         )
+        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
         return {
             "question_id": question_id,
             "answered": True,
@@ -617,9 +622,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def run_diagnostics(run_id: str) -> dict[str, Any]:
         """Return the full `LocalRunDiagnostics` payload.
 
-        Shape (per TS interface `client/src/shared/local-host/client.ts:63-100`):
+        Shape (per TS interface `client/src/shared/local-host/client.ts`):
             { schema_version: 1, exported_at, local_host_version?,
-              run, events, permissions, artifacts, latest_checkpoint }
+              run, events, permissions, artifacts, latest_checkpoint, handoff }
 
         Phase 5'+ used to return only `{run, events}`, so the
         `DiagnosticsPanel` rendered NaN counts (permissions.length on
@@ -643,6 +648,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
         permissions = await store.list_permissions_for_run(run_id)
         artifacts = await store.list_artifacts_for_run(run_id)
+        latest_checkpoint = await _latest_checkpoint_summary(app.state.checkpointer, run_id)
+        reflection = await _latest_checkpoint_reflection(app.state.checkpointer, run_id)
         return {
             "schema_version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
@@ -651,7 +658,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "events": events,
             "permissions": permissions,
             "artifacts": artifacts,
-            "latest_checkpoint": None,  # TODO Block 5: pull from AsyncSqliteSaver
+            "latest_checkpoint": latest_checkpoint,
+            "handoff": _build_diagnostics_handoff(run, events, permissions, artifacts),
+            "feature_ledger": _latest_feature_ledger(artifacts),
+            "reflection": reflection,
         }
 
     @app.post(
@@ -761,18 +771,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/local/v1/memory", response_model=ClearMemoryResponse)
     async def clear_memory() -> dict[str, Any]:
-        """Wipe every note from the long-term memory namespace.
+        """Wipe every note from all long-term memory namespaces.
 
         Backs the "清空记忆 / Clear memory" button in the agent settings
-        dialog. Walks ("notes", "global") in pages of 200 (matches the
-        BaseStore default search limit ceiling for SQLite stores) and
-        deletes each key. Returns the total count so the UI can render
-        an accurate "cleared N memories" toast.
+        dialog. Walks every ("notes", ...) namespace in pages of 200
+        (matches the BaseStore default search limit ceiling for SQLite stores)
+        and deletes each key. Returns the total count so the UI can render an
+        accurate "cleared N memories" toast.
 
         Idempotent: calling it on an empty store returns
         `deleted_count: 0` without error.
         """
-        from .middleware.memory_writeback import NAMESPACE
+        from .middleware.memory_writeback import NAMESPACE, NOTES_NAMESPACE_PREFIX
 
         agent_store = getattr(app.state, "agent_store", None)
         if agent_store is None:
@@ -783,18 +793,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Loop until a page comes back smaller than `limit` so we don't
         # over-fetch on a single-item store.
         page_size = 200
-        while True:
-            items = await agent_store.asearch(NAMESPACE, limit=page_size)
-            if not items:
-                break
-            for item in items:
-                try:
-                    await agent_store.adelete(NAMESPACE, item.key)
-                    deleted += 1
-                except Exception as exc:
-                    log.warning("memory delete failed key=%s: %s", item.key, exc)
-            if len(items) < page_size:
-                break
+        namespaces = [NAMESPACE]
+        if hasattr(agent_store, "alist_namespaces"):
+            namespaces = []
+            offset = 0
+            while True:
+                page = await agent_store.alist_namespaces(
+                    prefix=NOTES_NAMESPACE_PREFIX,
+                    limit=page_size,
+                    offset=offset,
+                )
+                if not page:
+                    break
+                namespaces.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += len(page)
+        for namespace in namespaces:
+            while True:
+                items = await agent_store.asearch(namespace, limit=page_size)
+                if not items:
+                    break
+                for item in items:
+                    try:
+                        await agent_store.adelete(namespace, item.key)
+                        deleted += 1
+                    except Exception as exc:
+                        log.warning(
+                            "memory delete failed namespace=%s key=%s: %s", namespace, item.key, exc
+                        )
+                if len(items) < page_size:
+                    break
         return {"cleared": True, "deleted_count": deleted}
 
     @app.get("/local/v1/mcp-servers", response_model=McpServerCatalog)
@@ -870,6 +899,385 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"skills": _list_skill_files(), "roots": roots}
 
     return app
+
+
+def _current_permission_batch(
+    raw_events: list[dict[str, Any]],
+    permissions: list[dict[str, Any]],
+    fallback_permission_id: str,
+) -> list[dict[str, Any]]:
+    """Return permission rows for the currently paused HITL batch.
+
+    deepagents/LangGraph can bundle several tool approvals into one interrupt
+    and expects one ordered `decisions` list on resume. We derive the batch from
+    `permission.required` events emitted since the latest run start/resume
+    boundary; if old rows or a sparse event log confuse that lookup, fall back
+    to the single permission the user just resolved.
+    """
+    permission_by_id = {
+        permission_id: permission
+        for permission in permissions
+        if (permission_id := str(permission.get("id") or ""))
+    }
+    batch_ids = _current_permission_batch_ids(raw_events)
+    if fallback_permission_id not in batch_ids:
+        batch_ids = [fallback_permission_id]
+
+    batch: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for permission_id in batch_ids:
+        if permission_id in seen:
+            continue
+        record = permission_by_id.get(permission_id)
+        if record is None:
+            continue
+        seen.add(permission_id)
+        batch.append(record)
+    fallback = permission_by_id.get(fallback_permission_id)
+    if not batch and fallback is not None:
+        return [fallback]
+    return batch
+
+
+def _current_permission_batch_ids(raw_events: list[dict[str, Any]]) -> list[str]:
+    boundary_index = -1
+    for index, event in enumerate(raw_events):
+        if event.get("event_type") in {"run.started", "run.resumed"}:
+            boundary_index = index
+
+    request_ids: list[str] = []
+    seen: set[str] = set()
+    for event in raw_events[boundary_index + 1 :]:
+        if event.get("event_type") != "permission.required":
+            continue
+        payload = _event_payload(event)
+        request_id = _first_string(payload.get("request_id"), payload.get("id"))
+        if request_id is None or request_id in seen:
+            continue
+        seen.add(request_id)
+        request_ids.append(request_id)
+    return request_ids
+
+
+def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    payload_json = event.get("payload_json")
+    if isinstance(payload_json, str):
+        try:
+            parsed = json.loads(payload_json)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _hitl_decision_for_permission(permission: dict[str, Any]) -> dict[str, str]:
+    if permission.get("status") == "approved":
+        return {"type": "approve"}
+    return {"type": "reject", "message": "Tool execution denied by user."}
+
+
+def _build_diagnostics_handoff(
+    run: dict[str, Any],
+    events: list[dict[str, Any]],
+    permissions: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    status = str(run.get("status") or "unknown")
+    event_count = len(events)
+    artifact_count = len(artifacts)
+    pending_permissions = [p for p in permissions if p.get("status") == "pending"]
+    recent_event_types = [str(e.get("event_type") or "") for e in events[-8:]]
+    recent_event_types = [e for e in recent_event_types if e]
+    ledger_state, ledger_message = _progress_ledger_state(events, artifacts)
+    verification = _latest_task_verification(events)
+    failure = _latest_failure_classification(events, run_status=status, verification=verification)
+
+    blockers: list[str] = []
+    if pending_permissions:
+        names = sorted({str(p.get("tool_name") or "tool") for p in pending_permissions})
+        blockers.append(f"Waiting for permission: {', '.join(names)}")
+
+    if failure:
+        blockers.append(_failure_blocker(failure))
+    if verification and verification["status"] == "failed":
+        blockers.append(f"Latest task.verify failed: {verification.get('reason') or 'unknown'}")
+
+    if status == "completed":
+        headline = f"Run completed with {event_count} events and {artifact_count} artifacts."
+        next_actions = ["Review the final answer and any listed artifacts."]
+    elif status == "waiting_permission" or pending_permissions:
+        headline = f"Run is waiting on {len(pending_permissions)} permission request(s)."
+        next_actions = ["Approve or deny pending permission requests to continue the run."]
+    elif status == "waiting_input":
+        headline = "Run is waiting for user input."
+        next_actions = ["Answer the pending question to continue the run."]
+    elif status in {"queued", "running"}:
+        headline = f"Run is {status} with {event_count} persisted events."
+        next_actions = ["Reconnect to the stream or wait for the run to reach a terminal state."]
+    elif status == "failed":
+        headline = f"Run failed after {event_count} events."
+        next_actions = ["Inspect blockers and recent failed events before retrying."]
+    elif status == "canceled":
+        headline = f"Run was canceled after {event_count} events."
+        next_actions = ["Start a new run if the goal still needs work."]
+    else:
+        headline = f"Run status is {status} with {event_count} events."
+        next_actions = ["Inspect recent events before resuming work."]
+
+    if status in _HANDOFF_STATUSES and ledger_state != "fresh":
+        if ledger_message:
+            blockers.append(ledger_message)
+        if ledger_state == "missing":
+            next_actions.append(
+                "Call task.progress with current acceptance criteria, decisions, risks, and next actions."
+            )
+        elif ledger_state == "stale":
+            next_actions.append("Refresh task.progress before handing off or resuming this run.")
+
+    if failure and failure["suggested_action"] not in next_actions:
+        next_actions.append(failure["suggested_action"])
+    if verification and verification["status"] == "failed":
+        action = "Fix the failing verification, then rerun task.verify before final handoff."
+        if action not in next_actions:
+            next_actions.append(action)
+
+    return {
+        "status": status,
+        "headline": headline,
+        "next_actions": next_actions,
+        "blockers": blockers,
+        "recent_event_types": recent_event_types,
+        "ledger_state": ledger_state,
+        "ledger_message": ledger_message,
+        "failure": failure,
+        "verification": verification,
+    }
+
+
+async def _latest_checkpoint_summary(checkpointer: Any, run_id: str) -> dict[str, Any] | None:
+    if checkpointer is None or not hasattr(checkpointer, "alist"):
+        return None
+    config = {"configurable": {"thread_id": run_id}}
+    try:
+        async for item in checkpointer.alist(config, limit=1):
+            checkpoint = getattr(item, "checkpoint", None)
+            metadata = getattr(item, "metadata", None)
+            item_config = getattr(item, "config", None)
+            if not isinstance(checkpoint, dict):
+                checkpoint = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if not isinstance(item_config, dict):
+                item_config = {}
+            configurable = item_config.get("configurable")
+            if not isinstance(configurable, dict):
+                configurable = {}
+
+            checkpoint_id = _first_string(checkpoint.get("id"), configurable.get("checkpoint_id"))
+            if not checkpoint_id:
+                return None
+            step = _int_or_none(metadata.get("step"))
+            reason = _first_string(metadata.get("source"), metadata.get("reason"), "checkpoint")
+            return {
+                "id": checkpoint_id,
+                "run_id": _first_string(configurable.get("thread_id"), run_id),
+                "step": step if step is not None else 0,
+                "reason": reason or "checkpoint",
+                "messages_count": _checkpoint_messages_count(checkpoint),
+                "created_at": _first_string(checkpoint.get("ts"), metadata.get("created_at")),
+            }
+    except Exception as exc:
+        log.warning("latest checkpoint summary failed run_id=%s: %s", run_id, exc)
+    return None
+
+
+async def _latest_checkpoint_reflection(checkpointer: Any, run_id: str) -> dict[str, Any] | None:
+    if checkpointer is None or not hasattr(checkpointer, "alist"):
+        return None
+    config = {"configurable": {"thread_id": run_id}}
+    try:
+        async for item in checkpointer.alist(config, limit=1):
+            checkpoint = getattr(item, "checkpoint", None)
+            if not isinstance(checkpoint, dict):
+                return None
+            channel_values = checkpoint.get("channel_values")
+            if not isinstance(channel_values, dict):
+                return None
+            return _diagnostics_reflection(channel_values.get("reflection"))
+    except Exception as exc:
+        log.warning("latest checkpoint reflection failed run_id=%s: %s", run_id, exc)
+    return None
+
+
+def _checkpoint_messages_count(checkpoint: dict[str, Any]) -> int:
+    channel_values = checkpoint.get("channel_values")
+    if not isinstance(channel_values, dict):
+        return 0
+    messages = channel_values.get("messages")
+    if isinstance(messages, list):
+        return len(messages)
+    return 0
+
+
+def _diagnostics_reflection(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in ("ai_messages", "tool_results", "final_answer_chars"):
+        parsed = _int_or_none(value.get(key))
+        if parsed is not None:
+            out[key] = parsed
+    critic = _diagnostics_reflection_critic(value.get("critic"))
+    if critic:
+        out["critic"] = critic
+    return out or None
+
+
+def _diagnostics_reflection_critic(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in ("coverage", "clarity", "grounding"):
+        parsed = _int_or_none(value.get(key))
+        if parsed is not None:
+            out[key] = parsed
+    notes = value.get("notes")
+    if isinstance(notes, list):
+        compact_notes = [
+            note.strip()[:300] for note in notes[:3] if isinstance(note, str) and note.strip()
+        ]
+        if compact_notes:
+            out["notes"] = compact_notes
+    raw = _first_string(value.get("raw"))
+    if raw:
+        out["raw"] = raw[:1000]
+    return out or None
+
+
+def _latest_failure_classification(
+    events: list[dict[str, Any]],
+    *,
+    run_status: str | None = None,
+    verification: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if run_status == "completed" and (not verification or verification.get("status") != "failed"):
+        return None
+    for event in reversed(events):
+        event_type = event.get("event_type")
+        if event_type not in {"run.failed", "tool.failed"}:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        if (
+            event_type == "tool.failed"
+            and _is_task_verify_payload(payload)
+            and verification
+            and verification.get("status") == "passed"
+        ):
+            continue
+        return classify_failure_payload(str(event_type), payload)
+    return None
+
+
+def _latest_task_verification(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        event_type = event.get("event_type")
+        if event_type not in {"tool.completed", "tool.failed"}:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict) or not _is_task_verify_payload(payload):
+            continue
+        parsed = _parse_tool_content(payload.get("content"))
+        if not isinstance(parsed, dict):
+            parsed = {}
+        status = (
+            "passed" if event_type == "tool.completed" and _truthy(parsed.get("ok")) else "failed"
+        )
+        return {
+            "status": status,
+            "reason": _verification_reason(parsed),
+            "pass_count": _int_or_none(parsed.get("pass_count")),
+            "fail_count": _int_or_none(parsed.get("fail_count")),
+            "source_event_type": str(event_type),
+        }
+    return None
+
+
+def _is_task_verify_payload(payload: dict[str, Any]) -> bool:
+    return str(payload.get("tool") or payload.get("name") or "") == "task.verify"
+
+
+def _parse_tool_content(content: Any) -> Any:
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _verification_reason(payload: dict[str, Any]) -> str | None:
+    results = payload.get("results")
+    if isinstance(results, list):
+        failed_details: list[str] = []
+        passed_details: list[str] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            detail = item.get("detail")
+            if not isinstance(detail, str) or not detail.strip():
+                continue
+            if _truthy(item.get("ok")):
+                passed_details.append(detail.strip())
+            else:
+                failed_details.append(detail.strip())
+        if failed_details:
+            return failed_details[0]
+        if passed_details:
+            return passed_details[0]
+    error = payload.get("error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    return None
+
+
+def _failure_blocker(failure: dict[str, Any]) -> str:
+    code = failure.get("code")
+    label = f"{failure.get('category')}: {code}" if code else str(failure.get("category"))
+    tool = failure.get("tool")
+    if tool:
+        return f"{tool}: {label}"
+    return label
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "ok", "passed"}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_string(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 app = create_app()

@@ -68,6 +68,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     body.RunID,
 		Mode:      modelID,
 	})
 	if err != nil {
@@ -84,6 +85,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 		UserID:        user.ID,
 		WalletID:      reservation.WalletID,
 		ReservationID: reservation.ID,
+		RunID:         body.RunID,
 		Mode:          modelID,
 		Scene:         "agent_local",
 		Model:         model,
@@ -122,7 +124,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	}
 
 	if inputTokens < 1 {
-		inputTokens = llm.EstimateTokens(request.Messages)
+		inputTokens = llm.EstimateRequestTokens(request)
 	}
 
 	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)

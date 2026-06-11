@@ -58,7 +58,11 @@ export function AuthScreen({
     setIsSubmitting(true)
     try {
       if (isForgot) {
-        await onRequestPasswordReset?.(email)
+        if (!onRequestPasswordReset) {
+          setError(t('auth.error.unavailable', { feature: t('auth.forgot.heading') }))
+          return
+        }
+        await onRequestPasswordReset(email)
         setInfo(t('auth.forgot.sent'))
         return
       }
@@ -67,7 +71,11 @@ export function AuthScreen({
           setError(t('auth.reset.invalidToken'))
           return
         }
-        await onConfirmPasswordReset?.(resetToken, password)
+        if (!onConfirmPasswordReset) {
+          setError(t('auth.error.unavailable', { feature: t('auth.forgot.heading') }))
+          return
+        }
+        await onConfirmPasswordReset(resetToken, password)
         setInfo(t('auth.reset.success'))
         setMode('login')
         return

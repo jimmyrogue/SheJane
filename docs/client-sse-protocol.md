@@ -50,10 +50,18 @@ interface AgentRunEvent {
 |---|---|---|
 | `run.started` | run 进入 `running` 状态 | `goal` |
 | `run.resumed` | resume_run 后第一个 frame | `payload`（resume 时传入的 dict） |
-| `run.waiting` | 卡在 HITL interrupt（**通常伴随 `permission.required` 或 `question.asked`**，UI 优先听后者） | `next`, `interrupts` |
+| `run.waiting` | 卡在 HITL interrupt（**通常伴随 `permission.required` 或 `question.asked`**，UI 优先听后者） | `next`, `interrupts`, `handoff` |
 | `run.completed` | 终态 completed | `final_text` |
-| `run.failed` | 终态 failed | `error`, `type` |
+| `run.failed` | 终态 failed | `error`, `type`, `category?`, `recoverable?`, `retryable?`, `action_kind?`, `suggested_action?` |
 | `run.canceled` | 终态 canceled | _(空)_ |
+| `repair.workflow` | 用户触发的 repair run 进入/结束/失败/被上限拒绝/取消 | `status`, `attempt`, `max_attempts`, `source_run_id?`, `source_message_id?`, `failure_category?`, `reason?` |
+
+`run.waiting.handoff` 是暂停点的轻量交接快照，包含
+`ledger_state`（`not_required` / `fresh` / `missing` / `stale`）、
+`ledger_message` 和最新 `feature_ledger` 摘要。它不包含 artifact 正文或
+checkpoint messages。`permission.required` / `question.asked` / `run.waiting`
+这类被动等待信号不会单独让 ledger 变脏；真正的工具结果、权限决策、
+run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 
 ### LLM 流
 
@@ -69,7 +77,7 @@ interface AgentRunEvent {
 | event_type | 触发时机 | payload |
 |---|---|---|
 | `tool.completed` | 一次工具调用完成 | `tool_call_id, name, tool, content, status: "ok"` |
-| `tool.failed` | 工具完成但 ToolMessage.status == "error" | `tool_call_id, name, tool, content, status: "error"` |
+| `tool.failed` | 工具完成但 `ToolMessage.status == "error"`，或工具结果 envelope 明确 `ok:false` | `tool_call_id, name, tool, content, status: "error", error_code?, recoverable?, retryable?` |
 | `subagent.spawned` | deepagents `task` 子代理被派遣 | `id, args_delta, index` |
 | `subagent.completed` | 子代理完成 | `tool_call_id, name, content` |
 
@@ -77,11 +85,11 @@ interface AgentRunEvent {
 
 | event_type | 触发时机 | payload |
 |---|---|---|
-| `permission.required` | HITL middleware 拦到一个 destructive 工具 | `request_id, tool, tool_name, arguments, description` |
-| `permission.resolved` | `POST /local/v1/permissions/:id` 成功后立刻发 | `request_id, tool, tool_name, decision, scope` |
+| `permission.required` | HITL middleware 拦到一个 destructive 工具；同一 pause 可连续多条 | `request_id, tool, tool_name, arguments, description` |
+| `permission.resolved` | `POST /local/v1/permissions/:id` 成功后持久化，并在恢复流中先于 `run.resumed` 出现 | `request_id, tool, tool_name, decision, scope` |
 | `permission.auto_approved` | 同 run 内之前授权过 `scope=run`，本次跳过提示 | `tool, tool_name, arguments` |
 | `question.asked` | `user.ask` 工具触发 interrupt | `request_id, questions: [{question, options, id}]` |
-| `question.answered` | `POST /local/v1/questions/:id` 成功后 | `request_id, answers` |
+| `question.answered` | `POST /local/v1/questions/:id` 成功后持久化，并在恢复流中先于 `run.resumed` 出现 | `request_id, answers` |
 
 ### 中间件 / 框架内部
 
@@ -167,7 +175,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 | `POST /local/v1/runs` | `{goal, history?, settings?, ...}` | 创建后开 stream → `run.started` |
 | `GET /local/v1/runs/:id/stream` | — | （本协议） |
 | `POST /local/v1/runs/:id/cancel` | _(空)_ | 当前 stream 收到 `run.canceled` |
-| `POST /local/v1/permissions/:id` | `{decision: "approve"\|"deny", scope?: "once"\|"run"}` | `permission.resolved` + `run.resumed` |
+| `POST /local/v1/permissions/:id` | `{decision: "approve"\|"deny", scope?: "once"\|"run"}` | `permission.resolved`；同批权限全部 resolved 后才有 `run.resumed` |
 | `POST /local/v1/questions/:id` | `{answers: {<question_id>: [text]}}` | `question.answered` + `run.resumed` |
 | `POST /local/v1/session` | `{cloud_base_url, access_token}` | _(无 SSE)_ — 设置 daemon 的云端会话 |
 
@@ -179,11 +187,11 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
    → run.started
    → llm.reasoning / llm.delta...
    → permission.required {request_id: P, tool: "write_file", args: {...}}
-   → run.waiting
+   → run.waiting {handoff: {ledger_state, ledger_message, feature_ledger}}
    → [DONE]   ← stream 暂时关闭
 
 [user clicks Approve "always"] → POST /permissions/P {decision: "approve", scope: "run"}
-   (daemon: grant_tool_scope, resume_run)
+   (daemon: persist permission.resolved, grant_tool_scope, resume_run)
    GET /runs/R/stream  ← 客户端重新订阅
    → permission.resolved {request_id: P, decision: "approve", scope: "run"}
    → run.resumed
@@ -192,6 +200,13 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
    → run.completed
    → [DONE]
 ```
+
+如果一个 HITL pause 同时包含多个 `action_requests`，daemon 会在同一个
+`run.waiting` 前发多条 `permission.required`。每次 `POST /permissions/:id`
+只 resolve 对应的一张卡；只要当前批次还有 `pending` permission，响应为
+`resumed:false`，不会发 `run.resumed`。最后一个同批权限 resolved 后，
+daemon 按 `permission.required` 出现顺序构造
+`{"decisions": [...]}` 并 resume。
 
 后续 turn 再触发同一个 tool 时：
 
@@ -208,6 +223,6 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 
 1. **加性兼容**：新增 event_type 不破坏老客户端。Switch 用 fall-through default 忽略未知 type。
 2. **窄 schema**：不暴露 LangGraph 内部类（`AIMessageChunk` / `StateGraph` / ...）；payload 字段都是普通 JSON 标量 + 字典。
-3. **Persist + stream 同源**：每条 SSE 事件同时写 `local_events` 表，重连可重放完整序列（含 `[DONE]` sentinel）。
-4. **失败可观测**：`run.failed` 一定带 `error` + `type`；`tool.failed` 一定带 `content` + `status="error"`。
-5. **HITL 双轨**：`run.waiting` 是兜底（curl 友好），`permission.required` / `question.asked` 是窄信号 — UI 永远听窄的。
+3. **Persist + stream 同源**：每条业务 SSE 事件同时写 `local_events` 表，重连可重放完整事件序列；`[DONE]` 是传输层结束标记，不写库。
+4. **失败可观测**：`run.failed` 一定带 `error` + `type`，并尽量附带 `category` / `recoverable` / `retryable` / `action_kind` / `suggested_action`，让事件流消费者无需再请求 diagnostics 也能先判断是重试、用户处理、修复、运维处理还是继续排查；客户端普通失败文案会保留原始错误并追加本地化的短策略标签；`tool.failed` 一定带 `content` + `status="error"`，结构化工具 envelope 失败还会尽量带 `error_code` / `recoverable` / `retryable`；用户触发的 repair run 另有 `repair.workflow`，避免 UI 把修复尝试误读成普通 retry 或裸露内部事件名。
+5. **HITL 双轨**：`run.waiting` 是兜底（curl 友好），`permission.required` / `question.asked` 是窄信号 — UI 永远听窄的；同一 pause 批次内的多张 permission 卡必须全部 resolved 后才 resume。

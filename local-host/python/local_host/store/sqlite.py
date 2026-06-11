@@ -6,7 +6,7 @@ in `agent.db` via AsyncSqliteSaver, not here.
 
 Tables in this file:
 - `local_workspaces`  — authorized filesystem roots
-- `local_runs`        — run metadata (status, goal, parent, settings)
+- `local_runs`        — run metadata (status, goal, parent, settings, metadata)
 - `local_events`      — append-only event log (one row per emit)
 - `local_permissions` — pending / resolved permission requests
 - `local_questions`   — pending / answered user questions
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS local_runs (
     history_json TEXT NOT NULL DEFAULT '[]',
     parent_run_id TEXT,
     settings_json TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     -- Resolved tier (fast|deep) once known, else the requested mode. Persisted
     -- so a HITL resume AFTER a daemon restart keeps the user's chosen tier
     -- instead of silently downgrading to fast. Added late, hence the additive
@@ -143,6 +144,10 @@ class LocalStore:
             await conn.execute(
                 "ALTER TABLE local_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'fast'"
             )
+        if "metadata_json" not in columns:
+            await conn.execute(
+                "ALTER TABLE local_runs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     async def close(self) -> None:
         await self._conn.close()
@@ -207,6 +212,7 @@ class LocalStore:
         workspace_path: str | None,
         parent_run_id: str | None = None,
         settings: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         mode: str = "fast",
     ) -> dict[str, Any]:
         run = {
@@ -217,6 +223,7 @@ class LocalStore:
             "history_json": "[]",
             "parent_run_id": parent_run_id,
             "settings_json": json.dumps(settings or {}, ensure_ascii=False),
+            "metadata_json": json.dumps(metadata or {}, ensure_ascii=False, default=str),
             "mode": mode,
             "created_at": _now(),
             "updated_at": _now(),
@@ -225,9 +232,9 @@ class LocalStore:
         await self._conn.execute(
             "INSERT INTO local_runs "
             "(id, goal, workspace_path, status, history_json, parent_run_id, "
-            " settings_json, mode, created_at, updated_at, completed_at) "
+            " settings_json, metadata_json, mode, created_at, updated_at, completed_at) "
             "VALUES (:id, :goal, :workspace_path, :status, :history_json, "
-            "        :parent_run_id, :settings_json, :mode, :created_at, "
+            "        :parent_run_id, :settings_json, :metadata_json, :mode, :created_at, "
             "        :updated_at, :completed_at)",
             run,
         )
@@ -246,9 +253,10 @@ class LocalStore:
     async def list_active_runs(self) -> list[dict[str, Any]]:
         """Runs not in a terminal state — used at boot to recover orphans left
         behind by a daemon restart (queued/running are dead and must be failed;
-        waiting_permission is resumable from the checkpointer)."""
+        waiting_permission/waiting_input are resumable from the checkpointer)."""
         cursor = await self._conn.execute(
-            "SELECT * FROM local_runs WHERE status IN ('queued', 'running', 'waiting_permission')"
+            "SELECT * FROM local_runs WHERE status IN "
+            "('queued', 'running', 'waiting_permission', 'waiting_input')"
         )
         return [dict(row) for row in await cursor.fetchall()]
 
@@ -281,6 +289,7 @@ class LocalStore:
             """
             SELECT r.id, r.goal, r.status, r.workspace_path,
                    r.created_at, r.updated_at, r.completed_at,
+                   r.metadata_json,
                    (SELECT COUNT(*) FROM local_events e
                       WHERE e.run_id = r.id) AS events_count
               FROM local_runs r

@@ -6,8 +6,8 @@ key lives in the API's env, never in the daemon's. The daemon's
 `tool="web.search"` and unwraps the `apiResponse<agentToolExecuteResult>`
 envelope. We pin:
 
-  1. Outbound HTTP shape matches `tool_gateway.go:executeTavilySearch`
-     (camelCase `maxResults` arg, `query` arg, idempotency key, run_id
+  1. Outbound HTTP shape matches the shared cloud tool schema artifact
+     (`max_results` arg, `query` arg, idempotency key, run_id
      for billing attribution).
   2. Successful response unwraps `data` from the API envelope.
   3. Unpaired daemon returns a recoverable tool error instead of
@@ -110,10 +110,10 @@ async def test_web_search_proxies_to_cloud_gateway(monkeypatch, settings_with_se
     assert body["tool"] == "web.search"
     assert body["run_id"] == "run_abc"
     assert body["tool_call_id"] == "call_1"
-    # Arguments shape mirrors what `executeTavilySearch` reads:
-    # `arguments.query` + `arguments.maxResults` (camelCase).
+    # Arguments shape mirrors the shared model-facing schema:
+    # `arguments.query` + `arguments.max_results`.
     assert body["arguments"]["query"] == "what is langgraph"
-    assert body["arguments"]["maxResults"] == 5
+    assert body["arguments"]["max_results"] == 5
     assert body["idempotency_key"] == "call_1"
 
     # Unwrapped result — top-level `ok` + structured `data.results`.
@@ -135,9 +135,9 @@ async def test_web_search_clamps_max_results(monkeypatch, settings_with_session)
 
     recorded = _patch_httpx(monkeypatch, handler)
     await web_module._invoke_web_search(query="x", max_results=99, run_id="r", tool_call_id="c1")
-    assert json.loads(recorded[0].content)["arguments"]["maxResults"] == 10
+    assert json.loads(recorded[0].content)["arguments"]["max_results"] == 10
     await web_module._invoke_web_search(query="x", max_results=0, run_id="r", tool_call_id="c2")
-    assert json.loads(recorded[1].content)["arguments"]["maxResults"] == 1
+    assert json.loads(recorded[1].content)["arguments"]["max_results"] == 1
 
 
 @pytest.mark.asyncio
@@ -177,6 +177,119 @@ async def test_web_search_gateway_error_surfaces(monkeypatch, settings_with_sess
     )
     assert result["ok"] is False
     assert result["errorCode"] == "web_search_disabled"
+
+
+@pytest.mark.asyncio
+async def test_web_search_retries_transient_gateway_transport_error(
+    monkeypatch, settings_with_session
+) -> None:
+    attempts = 0
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", no_sleep)
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(
+            200,
+            json={"code": 0, "message": "ok", "data": {"ok": True, "content": "retried ok"}},
+        )
+
+    recorded = _patch_httpx(monkeypatch, handler)
+    result = await web_module._invoke_web_search(
+        query="retry me",
+        max_results=5,
+        run_id="run_retry",
+        tool_call_id="call_retry",
+    )
+
+    assert result["ok"] is True
+    assert result["content"] == "retried ok"
+    assert len(recorded) == 2
+    bodies = [json.loads(req.content) for req in recorded]
+    assert {body["tool_call_id"] for body in bodies} == {"call_retry"}
+    assert {body["idempotency_key"] for body in bodies} == {"call_retry"}
+
+
+@pytest.mark.asyncio
+async def test_web_search_retries_unstructured_transient_gateway_response(
+    monkeypatch, settings_with_session
+) -> None:
+    attempts = 0
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", no_sleep)
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, text="service warming up")
+        return httpx.Response(
+            200,
+            json={"code": 0, "message": "ok", "data": {"ok": True, "content": "http retried ok"}},
+        )
+
+    recorded = _patch_httpx(monkeypatch, handler)
+    result = await web_module._invoke_web_search(
+        query="retry http",
+        max_results=5,
+        run_id="run_http_retry",
+        tool_call_id="call_http_retry",
+    )
+
+    assert result["ok"] is True
+    assert result["content"] == "http retried ok"
+    assert len(recorded) == 2
+    bodies = [json.loads(req.content) for req in recorded]
+    assert {body["tool_call_id"] for body in bodies} == {"call_http_retry"}
+    assert {body["idempotency_key"] for body in bodies} == {"call_http_retry"}
+
+
+@pytest.mark.asyncio
+async def test_web_search_does_not_retry_structured_provider_failure(
+    monkeypatch, settings_with_session
+) -> None:
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(gateway_module.asyncio, "sleep", no_sleep)
+
+    def handler(_req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502,
+            json={
+                "code": 50203,
+                "message": "tool provider failed",
+                "data": {
+                    "ok": False,
+                    "content": "Tavily search returned HTTP 502.",
+                    "errorCode": "web_search_failed",
+                    "recoverable": True,
+                    "data": {"source": "cloud_tool_gateway"},
+                },
+            },
+        )
+
+    recorded = _patch_httpx(monkeypatch, handler)
+    result = await web_module._invoke_web_search(
+        query="provider failure",
+        max_results=5,
+        run_id="run_provider_failure",
+        tool_call_id="call_provider_failure",
+    )
+
+    assert result["ok"] is False
+    assert result["errorCode"] == "web_search_failed"
+    assert result["retryable"] is False
+    assert len(recorded) == 1
 
 
 @pytest.mark.asyncio

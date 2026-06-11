@@ -150,7 +150,11 @@ export function MessageBubble({
     onEditResend?.(message.id, next)
   }
 
-  const waitingText = message.status === 'waiting_permission' ? t('message.waitingPermission') : ''
+  const waitingText = message.status === 'waiting_permission'
+    ? t('message.waitingPermission')
+    : message.status === 'waiting_input'
+      ? t('message.waitingInput')
+      : ''
   const content = message.content || waitingText
   // Action affordances appear on settled turns only (not mid-stream).
   const settled = message.status === 'done' || message.status === 'error'

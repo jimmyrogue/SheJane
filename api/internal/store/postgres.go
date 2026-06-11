@@ -306,11 +306,11 @@ func (s *PostgresStore) ReserveUsage(ctx context.Context, userID string, monthly
 	}
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO usage_reservations (
-			wallet_id, user_id, organization_id, client_conversation_id, client_message_id,
+			wallet_id, user_id, organization_id, run_id, client_conversation_id, client_message_id,
 			request_id, mode, estimated_credits, reserved_monthly_credits, reserved_extra_credits
-		) VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10)
+		) VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id::text, created_at
-	`, wallet.ID, userID, meta.OrganizationID, meta.ClientConversationID, meta.ClientMessageID, meta.RequestID, meta.Mode, estimatedCredits, monthlyReserved, extraReserved).
+	`, wallet.ID, userID, meta.OrganizationID, nullableString(meta.RunID), meta.ClientConversationID, meta.ClientMessageID, meta.RequestID, meta.Mode, estimatedCredits, monthlyReserved, extraReserved).
 		Scan(&reservation.ID, &reservation.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -332,10 +332,10 @@ func (s *PostgresStore) ReleaseUsage(ctx context.Context, userID string, reserva
 func (s *PostgresStore) CreateLLMCall(ctx context.Context, record LLMCallRecord) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO llm_call_records (
-			request_id, user_id, wallet_id, reservation_id, client_conversation_id, client_message_id,
+			request_id, user_id, wallet_id, reservation_id, run_id, client_conversation_id, client_message_id,
 			mode, scene, model, provider, input_tokens, output_tokens, credits_cost, status, started_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-	`, record.RequestID, record.UserID, record.WalletID, record.ReservationID, record.ClientConversationID, record.ClientMessageID, record.Mode, record.Scene, record.Model, record.Provider, record.InputTokens, record.OutputTokens, record.CreditsCost, record.Status, nonZeroTime(record.StartedAt))
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+	`, record.RequestID, record.UserID, record.WalletID, record.ReservationID, nullableString(record.RunID), record.ClientConversationID, record.ClientMessageID, record.Mode, record.Scene, record.Model, record.Provider, record.InputTokens, record.OutputTokens, record.CreditsCost, record.Status, nonZeroTime(record.StartedAt))
 	return err
 }
 
@@ -351,7 +351,7 @@ func (s *PostgresStore) FinishLLMCall(ctx context.Context, requestID string, sta
 func (s *PostgresStore) LLMCallsByUser(ctx context.Context, userID string) ([]LLMCallRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT request_id, user_id::text, wallet_id::text, COALESCE(reservation_id::text, ''),
-			COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), mode, COALESCE(scene,''),
+			COALESCE(run_id,''), COALESCE(client_conversation_id,''), COALESCE(client_message_id,''), mode, COALESCE(scene,''),
 			COALESCE(model,''), COALESCE(provider,''), input_tokens, output_tokens, credits_cost, status,
 			COALESCE(error_code,''), COALESCE(error_message,''), started_at, COALESCE(finished_at, '0001-01-01'::timestamptz)
 		FROM llm_call_records
@@ -367,7 +367,7 @@ func (s *PostgresStore) LLMCallsByUser(ctx context.Context, userID string) ([]LL
 	records := make([]LLMCallRecord, 0)
 	for rows.Next() {
 		var record LLMCallRecord
-		if err := rows.Scan(&record.RequestID, &record.UserID, &record.WalletID, &record.ReservationID, &record.ClientConversationID, &record.ClientMessageID, &record.Mode, &record.Scene, &record.Model, &record.Provider, &record.InputTokens, &record.OutputTokens, &record.CreditsCost, &record.Status, &record.ErrorCode, &record.ErrorMessage, &record.StartedAt, &record.FinishedAt); err != nil {
+		if err := rows.Scan(&record.RequestID, &record.UserID, &record.WalletID, &record.ReservationID, &record.RunID, &record.ClientConversationID, &record.ClientMessageID, &record.Mode, &record.Scene, &record.Model, &record.Provider, &record.InputTokens, &record.OutputTokens, &record.CreditsCost, &record.Status, &record.ErrorCode, &record.ErrorMessage, &record.StartedAt, &record.FinishedAt); err != nil {
 			return nil, err
 		}
 		records = append(records, record)
@@ -1283,7 +1283,7 @@ func (s *PostgresStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions
 	limit, offset := normalizeLimitOffset(opts.Limit, opts.Offset)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.request_id, c.user_id::text, c.wallet_id::text, COALESCE(c.reservation_id::text, ''),
-			COALESCE(c.client_conversation_id,''), COALESCE(c.client_message_id,''), c.mode, COALESCE(c.scene,''),
+			COALESCE(c.run_id,''), COALESCE(c.client_conversation_id,''), COALESCE(c.client_message_id,''), c.mode, COALESCE(c.scene,''),
 			COALESCE(c.model,''), COALESCE(c.provider,''), c.input_tokens, c.output_tokens, c.credits_cost, c.status,
 			COALESCE(c.error_code,''), COALESCE(c.error_message,''), c.started_at, COALESCE(c.finished_at, '0001-01-01'::timestamptz),
 			u.email
@@ -1291,9 +1291,10 @@ func (s *PostgresStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions
 		JOIN users u ON u.id = c.user_id
 		WHERE ($1='' OR c.user_id::text=$1)
 			AND ($2='' OR c.status=$2)
+			AND ($3='' OR COALESCE(c.run_id,'')=$3)
 		ORDER BY c.started_at DESC
-		LIMIT $3 OFFSET $4
-	`, opts.UserID, opts.Status, limit, offset)
+		LIMIT $4 OFFSET $5
+	`, opts.UserID, opts.Status, opts.RunID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1302,7 +1303,7 @@ func (s *PostgresStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions
 	records := make([]AdminLLMCallRecord, 0)
 	for rows.Next() {
 		var item AdminLLMCallRecord
-		if err := rows.Scan(&item.RequestID, &item.UserID, &item.WalletID, &item.ReservationID, &item.ClientConversationID, &item.ClientMessageID, &item.Mode, &item.Scene, &item.Model, &item.Provider, &item.InputTokens, &item.OutputTokens, &item.CreditsCost, &item.Status, &item.ErrorCode, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt, &item.UserEmail); err != nil {
+		if err := rows.Scan(&item.RequestID, &item.UserID, &item.WalletID, &item.ReservationID, &item.RunID, &item.ClientConversationID, &item.ClientMessageID, &item.Mode, &item.Scene, &item.Model, &item.Provider, &item.InputTokens, &item.OutputTokens, &item.CreditsCost, &item.Status, &item.ErrorCode, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt, &item.UserEmail); err != nil {
 			return nil, err
 		}
 		records = append(records, item)
@@ -1322,9 +1323,10 @@ func (s *PostgresStore) AdminExternalToolCalls(ctx context.Context, opts AdminLi
 		JOIN users u ON u.id = c.user_id
 		WHERE ($1='' OR c.user_id::text=$1)
 			AND ($2='' OR c.status=$2)
+			AND ($3='' OR COALESCE(c.run_id,'')=$3)
 		ORDER BY c.started_at DESC
-		LIMIT $3 OFFSET $4
-	`, opts.UserID, opts.Status, limit, offset)
+		LIMIT $4 OFFSET $5
+	`, opts.UserID, opts.Status, opts.RunID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -1408,6 +1410,56 @@ func (s *PostgresStore) AdminAgentRuns(ctx context.Context, opts AdminListOption
 		runs = append(runs, item)
 	}
 	return runs, rows.Err()
+}
+
+func (s *PostgresStore) AdminAgentRunByID(ctx context.Context, runID string) (AdminAgentRun, error) {
+	var item AdminAgentRun
+	var attachmentsText string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT r.id::text, r.user_id::text, r.origin, r.status, r.mode, r.goal, r.goal_summary,
+			COALESCE(r.client_conversation_id,''), COALESCE(r.client_message_id,''), r.attachments::text,
+			COALESCE(r.error_code,''), COALESCE(r.error_message,''), r.expires_at, r.created_at, r.updated_at,
+			u.email
+		FROM agent_runs r
+		JOIN users u ON u.id = r.user_id
+		WHERE r.id=$1
+	`, runID).Scan(&item.ID, &item.UserID, &item.Origin, &item.Status, &item.Mode, &item.Goal, &item.GoalSummary, &item.ClientConversationID, &item.ClientMessageID, &attachmentsText, &item.ErrorCode, &item.ErrorMessage, &item.ExpiresAt, &item.CreatedAt, &item.UpdatedAt, &item.UserEmail)
+	if err != nil {
+		return AdminAgentRun{}, mapNotFound(err)
+	}
+	if err := json.Unmarshal([]byte(attachmentsText), &item.Attachments); err != nil {
+		return AdminAgentRun{}, err
+	}
+	return item, nil
+}
+
+func (s *PostgresStore) AdminWalletTransactionsByRun(ctx context.Context, runID string, limit int) ([]billing.Transaction, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tx.id::text, tx.wallet_id::text, COALESCE(tx.reservation_id::text, ''), tx.type, tx.amount,
+			tx.monthly_used_after, tx.extra_balance_after, COALESCE(tx.description, ''), COALESCE(tx.idempotency_key, ''), tx.created_at
+		FROM wallet_transactions tx
+		JOIN usage_reservations r ON r.id = tx.reservation_id
+		WHERE r.run_id=$1
+		ORDER BY tx.created_at DESC
+		LIMIT $2
+	`, runID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	transactions := make([]billing.Transaction, 0)
+	for rows.Next() {
+		var tx billing.Transaction
+		if err := rows.Scan(&tx.ID, &tx.WalletID, &tx.ReservationID, &tx.Type, &tx.Amount, &tx.MonthlyUsedAfter, &tx.ExtraBalanceAfter, &tx.Description, &tx.IdempotencyKey, &tx.CreatedAt); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, tx)
+	}
+	return transactions, rows.Err()
 }
 
 func (s *PostgresStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {

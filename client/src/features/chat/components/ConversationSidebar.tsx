@@ -587,6 +587,7 @@ export function ConversationSidebar({
                       type="number"
                       inputMode="numeric"
                       min={1}
+                      max={100}
                       className="h-8 w-16 text-right tabular-nums"
                       aria-label={t('sidebar.agentSettings.advanced.maxModelCalls.label')}
                       placeholder="20"
@@ -601,6 +602,50 @@ export function ConversationSidebar({
                   </AdvSettingRow>
 
                   <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.maxHistoryTurns.label')}
+                    hint={t('sidebar.agentSettings.advanced.maxHistoryTurns.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={200}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.maxHistoryTurns.label')}
+                      placeholder="40"
+                      value={adv.maxHistoryTurns ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          maxHistoryTurns: e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
+                    label={t('sidebar.agentSettings.advanced.maxModelRetries.label')}
+                    hint={t('sidebar.agentSettings.advanced.maxModelRetries.hint')}
+                  >
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={5}
+                      className="h-8 w-16 text-right tabular-nums"
+                      aria-label={t('sidebar.agentSettings.advanced.maxModelRetries.label')}
+                      placeholder="2"
+                      value={adv.maxModelRetries ?? ''}
+                      onChange={(e) => {
+                        const n = Number(e.target.value)
+                        setAdv({
+                          maxModelRetries: e.target.value === '' || !Number.isFinite(n) ? undefined : n,
+                        })
+                      }}
+                    />
+                  </AdvSettingRow>
+
+                  <AdvSettingRow
                     label={t('sidebar.agentSettings.advanced.maxToolRetries.label')}
                     hint={t('sidebar.agentSettings.advanced.maxToolRetries.hint')}
                   >
@@ -608,6 +653,7 @@ export function ConversationSidebar({
                       type="number"
                       inputMode="numeric"
                       min={0}
+                      max={5}
                       className="h-8 w-16 text-right tabular-nums"
                       aria-label={t('sidebar.agentSettings.advanced.maxToolRetries.label')}
                       placeholder="2"
@@ -629,6 +675,7 @@ export function ConversationSidebar({
                       type="number"
                       inputMode="numeric"
                       min={1}
+                      max={20}
                       className="h-8 w-16 text-right tabular-nums"
                       aria-label={t('sidebar.agentSettings.advanced.researchSearchLimit.label')}
                       placeholder="3"
@@ -651,6 +698,7 @@ export function ConversationSidebar({
                       type="number"
                       inputMode="numeric"
                       min={0}
+                      max={50}
                       className="h-8 w-16 text-right tabular-nums"
                       aria-label={t('sidebar.agentSettings.advanced.toolSelectorMax.label')}
                       placeholder="0"
@@ -994,7 +1042,7 @@ function conversationSidebarStatus(conversation: Conversation, isActive: boolean
     return 'running'
   }
   const currentVersion = conversationSidebarVersion(conversation)
-  if (!isActive && currentVersion !== seenVersion && (latestAssistant.status === 'done' || latestAssistant.status === 'waiting_permission')) {
+  if (!isActive && currentVersion !== seenVersion && (latestAssistant.status === 'done' || latestAssistant.status === 'waiting_permission' || latestAssistant.status === 'waiting_input' || latestAssistant.status === 'error')) {
     return 'needs_attention'
   }
   return null

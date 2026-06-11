@@ -66,7 +66,7 @@ export function Composer({
   draft,
   onDraftChange,
   isSending,
-  hasActiveLocalRun = false,
+  hasActiveRun = false,
   attachedDocument,
   attachedPreview,
   isUploading,
@@ -88,17 +88,14 @@ export function Composer({
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
-  /** True when a local-harness run is still alive on the daemon, even
-   *  if the client's `sendMessage()` promise has already resolved.
-   *  Specifically: a run paused at a HITL `permission.required` or
-   *  `question.requested` boundary is conceptually in flight — the
-   *  user must still be able to cancel it — but `isSending` flips
-   *  back to false the moment the SSE stream blocks. Driving the
-   *  stop button off `isSending || hasActiveLocalRun` keeps the
-   *  button visible during those pauses. App.tsx derives the bool
-   *  from the active conversation's most recent assistant message
-   *  status (streaming / waiting_permission / waiting_input). */
-  hasActiveLocalRun?: boolean
+  /** True when an agent run is still cancelable even if the current
+   *  `sendMessage()` promise has already resolved. Local runs can pause
+   *  at HITL `permission.required` or `question.requested` boundaries;
+   *  web cloud tool loops are cancelable while streaming through the
+   *  browser-held AbortController. Driving the stop button off
+   *  `isSending || hasActiveRun` keeps the button visible in both
+   *  cases. */
+  hasActiveRun?: boolean
   attachedDocument?: UserDocument
   /** Inline data: URL for image previews. Non-image documents leave
    *  this undefined and we fall back to a file-icon tile. */
@@ -115,7 +112,7 @@ export function Composer({
   onDetachDocument: () => void
   onSend: () => void
   /** Cancel the in-flight run. Shown as a "stop" button in place of
-   *  "send" while `isSending` OR `hasActiveLocalRun` is true. */
+   *  "send" while `isSending` OR `hasActiveRun` is true. */
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
   /** Optional — when omitted the MCP slash group hides instead of
@@ -148,13 +145,10 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerRef = useRef<HTMLElement | null>(null)
   // Stop is offered while the send promise is still awaiting (covers
-  // the brief window before the SSE stream has produced its first
-  // message) OR while the active local run is still alive on the
-  // daemon (covers HITL pauses where the SSE stream has blocked but
-  // the run can still be cancelled). Without the second clause the
-  // button reverts to "send" the moment a permission card appears,
-  // stranding users with no way to abort.
-  const canStop = (isSending || hasActiveLocalRun) && Boolean(onStop)
+  // the brief window before the stream has produced its first message)
+  // OR while a run is still cancelable outside that promise (local HITL
+  // pauses, or a web cloud tool loop with an active AbortController).
+  const canStop = (isSending || hasActiveRun) && Boolean(onStop)
   const [isDragging, setIsDragging] = useState(false)
   const dragDepthRef = useRef(0)
 

@@ -92,6 +92,8 @@ make smoke-real-llm
 生图：credits/张 = ceil(每次金额 ÷ 基准每 token 成本 × 全局加价系数)，× 张数
 ```
 
+- 文本调用的预留估算会计入完整 request 形状：message content、reasoning、tool call 参数、工具 name / description / inputSchema。真实结算仍优先使用 provider 返回的 token usage；provider 未返回 usage 时才使用本地估算 fallback。
+- Anthropic provider 会在 Go 模型网关内为长 request 自动加顶层 `cache_control={"type":"ephemeral"}`，利用 Claude prompt caching 复用 `tools` / `system` / `messages` 的稳定前缀。Local daemon 不写 provider-specific cache 标记，也不需要旧版 beta header；真命中率只能通过真实 Anthropic usage 字段验证。
 - **成本倍率**（每模型）= 该模型相对 **DeepSeek-V4-Pro** 的纯成本比，不含利润。种子里的 `chat.deep`=Pro=基准=**1.0**；`chat.fast`=Flash≈**0.1**（约为 Pro 的 1/10）；更贵的模型按真实价填 Nx。
 - **全局加价系数**（计费参数卡片，存 `app_settings`，默认 **1.15 = 全线加价 15%**，限 1.0–3.0）= 产品固定毛利旋钮，改一个数全线生效。注意 1.15 是「加价 15%」，对应毛利率 ≈ 13%（0.15/1.15）。
 - **基准每 token 成本**（¥/token，默认 `0.00002` ≈ ¥20/1M）= 「1 credit ≈ 1 个 DeepSeek-Pro token 成本」的锚点，**仅生图等按次金额模型换算用**；文本计费不需要它。建议按 **Pro 原价**（非 2.5 折促销价）锚定，促销到期不亏。
@@ -201,18 +203,17 @@ SheJane 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **Phase 2.3-2.22 本地 daemon / harness**：`local-host/` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token；Phase 2.13 起普通 client 可以选择、授权、诊断和撤销工作区，创建/恢复本地 run、导出脱敏诊断、批准/拒绝权限并按需读取 artifact；Phase 2.14 起 Electron 登录成功后会自动把云端 access token 注入 Local Host 内存 session，退出登录时清理 session；Phase 2.15 起 Local Host 暴露通用办公 Agent 基础原语 `fs.*`、`open.*`、`clipboard.*` 和 `task.verify`，并保留旧 `file.*` 兼容工具；Phase 2.17 起 Local Host 默认用 Playwright 托管 Chromium 支持 `browser.search/open/read/verify/snapshot/screenshot/click/type/scroll/close`，并继续支持 `environment.observe` 本地环境观察；Phase 2.18 起浏览器观察会标记页面质量、收集 usable 来源并阻止同一 run 内第三次重复搜索/打开；Phase 2.20 起普通 client 可直接从当前消息 timeline 打开本地 run 诊断面板并导出脱敏 JSON；Phase 2.21 起研究策略会排除搜索结果页来源并达到来源/搜索预算后阻止继续浏览；Phase 2.22 起 Tavily 等平台付费搜索只走 Cloud Tool Gateway，Local Host 不保存第三方 API key；Local Host 可在 allowlist 和权限批准后调用配置好的本地 stdio MCP server，可并行执行连续的并发安全读类工具，并会把模型网关异常转成 durable `run.failed`。
-- **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、浏览器、IDE、MCP 结果默认留在本机。
-- **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单，不应提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
+- **本地 Python daemon / harness**：`local-host/python` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`POST /local/v1/questions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token。当前 agent loop 由 Python/FastAPI + LangGraph/deepagents 运行，事件与 checkpoint 存在本地 SQLite。
+- **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、IDE、MCP 结果默认留在本机。`web.search`、`image.*`、`pdf.inspect`、`code.execute` 等平台付费或云资源工具通过 Cloud Tool Gateway 代理，provider key 不进入 Local Host。`browser.task` 是未来浏览器自动化入口；未安装 `browser-use` 且未配置 browser LLM 时不会暴露给模型。
+- **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单；`GET /api/v1/admin/agent-runs/{id}/trace` 会按单个 run 聚合 run 摘要、事件、LLM 调用、Tool Gateway 调用和该 run 相关钱包流水，仍不提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
 
 本地开发 Local Harness：
 
 ```bash
-cd local-host
-npm install
-npm run browser:install
-SHEJANE_LOCAL_HOST_TOKEN=dev-local-token npm run dev
+cd local-host/python
+SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
+uv run shejane-local-host
 ```
 
 Electron client 连接本地 Host：
@@ -227,14 +228,14 @@ npm run electron
 连接云端模型网关：
 
 ```bash
-cd local-host
+cd local-host/python
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
-SHEJANE_CLOUD_ACCESS_TOKEN=用户 access token \
-npm run dev
+SHEJANE_CLOUD_TOKEN=用户 access token \
+uv run shejane-local-host
 ```
 
-上面的 `SHEJANE_CLOUD_ACCESS_TOKEN` 只用于无 UI 调试或 smoke。Electron 手动测试推荐走正常登录流程：
+上面的 `SHEJANE_CLOUD_TOKEN` 只用于无 UI 调试或 smoke。Electron 手动测试推荐走正常登录流程：
 
 ```bash
 make dev-electron
@@ -244,21 +245,27 @@ make dev-electron
 
 登录成功后，client 会调用 `POST /local/v1/session` 注入短期云端 session。Local Host 不会把 access token 写入 SQLite、diagnostics 或 API 响应；`GET /local/v1/session` 只返回是否已连接、cloud base URL 和更新时间。
 
-托管浏览器环境变量：
+本地 harness 常用环境变量：
 
 ```dotenv
-SHEJANE_LOCAL_MAX_STEPS=
-SHEJANE_LOCAL_STEP_WARNING_INTERVAL=20
-SHEJANE_BROWSER_ENGINE=playwright
-SHEJANE_BROWSER_HEADLESS=true
-SHEJANE_BROWSER_TIMEOUT_MS=15000
-SHEJANE_BROWSER_SEARCH_URL=https://cn.bing.com/search?q={query}
-SHEJANE_ALLOW_PROXY_FAKE_IPS=true
+SHEJANE_LOCAL_HOST_TOKEN=dev-local-token
+SHEJANE_CLOUD_BASE_URL=http://localhost:8080
+SHEJANE_CLOUD_TOKEN=
+SHEJANE_LOCAL_MAX_MODEL_CALLS=20
+SHEJANE_LOCAL_MAX_HISTORY_TURNS=40
+SHEJANE_LOCAL_MAX_MODEL_RETRIES=2
+SHEJANE_LOCAL_MAX_TOOL_RETRIES=2
+SHEJANE_LOCAL_INPUT_GUARD=observe
+SHEJANE_PLAN_FIRST=off
+SHEJANE_LOCAL_TOOL_SELECTOR_MAX=0
+SHEJANE_LOCAL_TOOL_CRITIC=off
+SHEJANE_LOCAL_VERIFY_REPAIR_MAX=1
+SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX=3
+SHEJANE_LOCAL_CRITIC=false
+SHEJANE_LOCAL_BROWSER_HEADLESS=true
 ```
 
-`SHEJANE_LOCAL_MAX_STEPS` 是可选硬安全阀。默认留空，表示不按工具轮数硬停止，Local Harness 会像 Claude Code 风格的交互式 loop 一样持续运行直到模型给出无工具最终答案、用户取消、权限暂停、额度/模型错误或显式配置的硬上限触发。设置为正整数时，达到上限会再发起一次不带工具的 finalization 调用，让模型基于已收集证据给出阶段性答案。`SHEJANE_LOCAL_STEP_WARNING_INTERVAL` 只发出软提醒和系统提示，不会停止 run；设为 `0` 可关闭。
-默认 `headless=true`，避免 Electron 手动测试时额外弹出浏览器窗口；需要观察真实 Chromium 时可临时设为 `false`。
-`SHEJANE_ALLOW_PROXY_FAKE_IPS=true` 用于兼容 Clash、Surge 等本地代理/TUN 的 fake-ip DNS（常见为 `198.18.0.0/15`）。如果部署在不使用本地代理的服务器环境，可以设为 `false`，让 SSRF guard 继续拦截该保留网段。
+`SHEJANE_LOCAL_VERIFY_REPAIR_MAX` 控制验证回环：当 `task.verify` 明确返回 `ok=false` 且模型准备结束时，daemon 会最多跳回模型这几次，让模型修复后重新验证。设为 `0` 可关闭，超过 `3` 会被夹到 `3`，避免无限循环。`SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 控制用户点击“尝试修复”后创建的 repair run attempt 上限，默认 `3`，夹在 `0–5`；超过上限的 `metadata.intent=repair` run 会 fail-fast，发出 `repair.workflow(status=rejected)` 和结构化 `run.failed`，不会再调用模型。合法 repair run 会把 source run/message、attempt、原失败分类写进 `<state>`，并发出 `repair.workflow` started/completed/failed/canceled 事件；client 会按失败 `{conversation_id, assistant_message_id}` 给“尝试修复”和 quota checkout 创建请求加 in-flight guard，连续点击同一个修复或充值按钮不会创建重复 repair run 或多个 checkout session。`SHEJANE_LOCAL_BROWSER_HEADLESS` 只在未来 `browser.task` 真实接线时生效；当前未配置 browser LLM 时该工具不会出现在 `/local/v1/tools` 或 agent toolset 中。Local Host 的 step/model 上限由 `SHEJANE_LOCAL_MAX_MODEL_CALLS`（默认 20）和客户端 Advanced 设置控制，夹在 1–100 之间；新 run 带入的历史消息数由 `SHEJANE_LOCAL_MAX_HISTORY_TURNS` 控制，默认 40，夹在 1–200 之间，超出时 `<state>` 会提示省略了多少早期消息并附带确定性早期历史摘要；client 自己因消息数/字符预算省略更早对话时，也会在 omission marker 中附带短摘要，且该 marker 在 daemon 二次截断时会被保留为压缩锚点，不会被当成普通最旧消息吃掉。两端摘要都会保留开头/结尾摘录，并优先纳入中段包含“决定、必须、记住、decision、must、remember”等关键约束的 turn；这仍是无 LLM 的确定性摘要。模型网关失败重试由 `SHEJANE_LOCAL_MAX_MODEL_RETRIES` 控制，默认 2，夹在 0–5 之间，和诊断面板共用 `failure_policy` 分类：只重试 transient 或 unknown 且云端显式标记 `retryable:true` 的模型错误，quota/auth/configuration/workspace/validation/fatal 不会仅因响应里出现 `429` 或误带 `retryable:true` 就被自动重试；重试耗尽后会保留结构化 `run.failed`，不会伪装成普通 assistant 回答。工具失败重试由 `SHEJANE_LOCAL_MAX_TOOL_RETRIES` 控制，默认 2，夹在 0–5 之间，客户端 Advanced 面板也可以覆盖。`SHEJANE_LOCAL_RESEARCH_SEARCH_LIMIT` 默认 3，夹在 1–20 之间；`SHEJANE_LOCAL_TOOL_SELECTOR_MAX` 默认 0，夹在 0–50 之间，0 表示关闭。web build 的云端工具循环另有独立的 5-step cap，并且当前发送中的 web loop 可以通过 Stop 按钮中断。浏览器标签页关闭或刷新后留下的 client-generated web tool-loop `run_...` orphan `streaming` 消息，会在会话加载/刷新时自动收束为失败；server-backed cloud run 和 local run 不会被这条兜底清理。
 
 本地开发日志：
 
@@ -279,29 +286,23 @@ SHEJANE_LOCAL_HOST_DEBUG=1 make dev-electron
 make logs-local-host
 ```
 
-`make dev-electron` 默认会用 `SHEJANE_LOCAL_HOST_DEBUG=1` 启动 Local Host，并把日志写到 `.dev-logs/local-host.log`。日志会输出 `tool.requested`、`tool.failed`、`verification.completed`、`run.budget_warning`、`run.failed` 等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页能力时重点看：
+`make dev-electron` 默认会启动 Local Host 并把日志写到 `.tmp/dev/local-host.log`。日志会输出模型调用、工具调用、权限暂停、run 失败和 checkpoint 恢复等关键事件；工具参数中的 `query`、`text`、`content`、token、secret 和 API key 会被脱敏。排查网页/研究能力时重点看：
 
 - `cloud_session_required`：本地 `web.search` 需要登录后的 Cloud Tool Gateway session；Electron 正常登录后会自动注入。
-- `web_search_disabled`：Cloud API 未配置 Tavily，`web.search` 不会暴露给模型；托管浏览器搜索 `browser.search` 仍可作为 fallback。
-- `browser_page_required`：模型在未打开托管浏览器页面时调用了 read/snapshot/screenshot/scroll。
-- `browser_open_failed` / `browser_search_failed`：通常是 Chromium 未安装、目标被 URL guard 拦截、DNS/网络失败或 Playwright 启动失败。
-- `browser_http_error`：页面成功打开但 HTTP 状态是 4xx/5xx，例如搜索到的旧 API 已经 404；这是可恢复错误，模型应换来源或基于已有证据说明限制。
-- `browser_empty` / `browser_login_required` / `browser_captcha_like`：页面打开了，但没有可用正文、要求登录或疑似验证码；模型应换来源或说明限制。
-- `browser_duplicate_observation`：同一 run 内第三次重复相同搜索 query 或 URL open 被拦截；模型应换关键词、换来源或总结已有证据。
-- `research_enough_sources`：已收集足够的可用非搜索页来源；模型应停止继续搜索/打开网页，直接基于已有来源回答。
-- `research_search_budget_exhausted` / `research_navigation_budget_exhausted`：当前 run 已达到搜索或候选来源打开预算；模型应收束回答或说明仍缺少的证据。
-- `run.output_guardrail`：最终回答声称已打开/读取/核实来源，但事件流里没有足够 `source.collected` 或最近 `browser.verify` 失败；Harness 会要求模型继续取证或明确说明限制。
-- `browser_navigation_blocked`：点击后跳转到了被禁止的 localhost、私网或非 HTTP(S) 目标。
-- `run.budget_warning`：`reason=long_running` 表示 run 已进入较长循环但仍会继续；`reason=max_steps_reached` 表示显式配置的 `SHEJANE_LOCAL_MAX_STEPS` 已触发，Harness 正在要求模型停止调用工具并基于已收集观察输出最终答案。
-- `ssrf_blocked ... resolved_ips=198.18.x.x`：本机代理 fake-ip 被拦截；保持 `SHEJANE_ALLOW_PROXY_FAKE_IPS=true` 并重启 Local Host。
+- `web_search_disabled` 或网关返回未配置：Cloud API 未配置 Tavily，`web.search` 会返回可恢复错误。
+- `ssrf_blocked` / `web_fetch_blocked`：`web.fetch` 解析到 localhost、私网、链路本地、多播或保留地址，被 SSRF guard 拦截。
+- `gateway_unreachable` / `gateway_transient_response`：Local Host 调 Cloud Tool Gateway 的 transport 层失败，或网关/反向代理返回非 JSON 的瞬态 HTTP 响应（429/500/502/503/504）。daemon 会按 `SHEJANE_LOCAL_MAX_TOOL_RETRIES` / `max_tool_retries` 通过统一 `failure_policy.build_retry_decision` 做有界指数退避重试，复用同一个 `tool_call_id` / idempotency key，避免瞬时网络抖动直接失败或重复扣费。Cloud Tool Gateway 返回结构化 tool result envelope 时默认不重试，因为它可能已经代表一次 provider 调用和账本/审计记录；如果该结构化失败显式带 `retryable:true`，并且工具在 retry allowlist 中、共享 failure policy 也判定为 transient/可重试，`ToolResultRetryMiddleware` 才会按同一工具重试预算重试。用户动作、配置、账单、工作区、参数校验或实现类错误即使误带 `retryable:true` 也不会被工具结果重试。没有显式 `retryable` 字段时，Local Host 会默认补 `retryable:false`。
+- `llm.error`：云端模型网关返回的模型错误。Local Host 会把 `message`、`code` / `error_code`、`request_id`、`provider`、`recoverable`、`retryable` 和 `action_kind` 保留到 `run.failed` 和 `handoff.failure`；`action_kind` 会把它进一步标成 `retry`、`user_action`、`repair`、`operator_action` 或 `inspect`；模型重试同样通过 `failure_policy.build_retry_decision` 判定，所以错误显式 `retryable:false` 或字段冲突为 `recoverable:false` + `retryable:true` 时 daemon 不会重复调用模型；如果用户/配置/账单/工作区/参数/实现类错误误带 `retryable:true`，共享 failure policy 仍会保持非自动重试。
+- `tool.failed`：看 `payload.tool`、`payload.content` 和 Local Host 日志里的异常类型，区分云 session、网关、路径、权限和模型错误；如果工具结果 envelope 明确返回 `ok:false`，Local Host 会按失败事件处理并保留 `error_code`、`recoverable`、`retryable`；白名单工具的 `{ok:false,retryable:true}` envelope 只有在共享 failure policy 判定可重试时，才会在进入最终事件/诊断前先做有界重试，仍失败才作为 `tool.failed` 暴露。诊断面板会把最近失败归类为 `transient`、`auth`、`quota`、`permission`、`configuration`、`workspace`、`validation`、`fatal` 或 `unknown`，并显示 `action_kind` 对应的本地化策略标签。`task.verify` 的最新机器可读结果另见 `handoff.verification`：如果后续验证已经通过，较早的 `task.verify` 失败不会继续作为当前 failure/blocker。
+- `run.failed`：durable 终态。重启 daemon 后旧 `running` run 会被标记 failed，`waiting_permission` 和 `waiting_input` run 会保留为可 resume；`handoff.failure` 会给出最近失败的 `recoverable`、`retryable`、`action_kind` 和 suggested action。`retry` 类失败会在 runtime budget 内自动退避重试；`user_action` / `repair` / `operator_action` 类失败会 fail-fast 并留给 diagnostics / UI 引导，当前还不会在用户完成登录、充值、配置或授权后自动重跑。
 
-Phase 2.19-2.20 Electron 手动 smoke：
+Electron 手动 smoke：
 
 1. 运行 `make dev-electron` 并用普通用户登录。
 2. 授权一个无敏感内容的本地测试工作区。
-3. 让 Agent 搜索一个公开网页问题，要求它收集来源并在回答前验证页面证据。
-4. 确认 timeline 出现 `搜索网页`、`阅读网页正文`、`验证网页`、`收集来源` 和最终回答。
-5. 点击当前消息 timeline 的“诊断”，确认诊断面板只显示 run 状态、事件/权限/artifact 计数、最新 checkpoint 摘要和最近来源/验证/错误事件。
+3. 让 Agent 读写该工作区里的测试文件，确认写入动作触发权限卡，批准后继续运行。
+4. 让 Agent 搜索一个公开网页问题，确认 `web.search` 经 Cloud Tool Gateway 计费并返回来源摘要；如果 Tavily 未配置，应看到可恢复工具错误而不是 daemon 直连第三方。
+5. 点击当前消息 timeline 的“诊断”，确认诊断面板显示 run 状态、事件/权限/artifact 计数、交接摘要、最新 checkpoint 摘要和最近错误事件。
 6. 点击“导出当前诊断”，确认下载的 JSON 不包含 artifact 正文或完整 checkpoint messages。
 
 启用 Phase 2.22 云端工具网关搜索和本地 MCP：
@@ -317,46 +318,35 @@ SHEJANE_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read
 SHEJANE_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}'
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态向 `/api/v1/agent/tool-capabilities` 查询能力，并通过 `/api/v1/agent/tools/execute` 执行和扣费。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。Cloud API 配置 Tavily 后，Local Harness 会优先引导模型用 `web.search` 做快速搜索发现，再用 `browser.open` / `browser.read` 打开和阅读真实来源；只有云端搜索不可用、不足够或需要操作搜索结果页时才回退到 `browser.search`。`mcp.call` 必须同时满足三层条件：模型请求的 `server.tool` 命中 `SHEJANE_MCP_ALLOWLIST`、本地用户批准 `permission.required`、`SHEJANE_MCP_SERVERS_JSON` 中存在对应 server 配置。MCP server 通过 stdio JSON-RPC 启动，Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态调用 `/api/v1/agent/tools/execute` 执行和扣费。`GET /api/v1/agent/tool-capabilities` 是 web build 的云端工具发现来源：它返回 configured/provider/cost，也返回 LLM-facing `description` 和 `inputSchema`，所以 browser web loop 不再维护自己的工具 schema。Cloud gateway 工具的模型可见 schema 来源是 `api/internal/httpapi/cloud_tool_schemas.json`；Go API embed 这份 artifact，Local Host contract test 校验 Python BaseTool schema 覆盖同一字段。`web.search` 的模型可见参数名是 `max_results`，Go gateway 仍兼容旧 `maxResults`。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。MCP server 通过 stdio / HTTP / SSE 配置接入；Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 研究策略预算可用环境变量微调：
 
-- `SHEJANE_RESEARCH_MAX_SEARCHES`：默认 `3`，超过后 `browser.search` 返回可恢复阻断。
-- `SHEJANE_RESEARCH_MAX_SOURCE_NAVIGATIONS`：默认 `5`，超过后 `browser.open` / `web.fetch` 返回可恢复阻断。
-- `SHEJANE_RESEARCH_TARGET_SOURCES`：默认 `2`，收集到足够非搜索页来源后阻止继续搜索/打开，要求模型基于已有证据回答。
-- 调试时可运行 `make logs-local-host`，启动日志不应出现 `tavily_configured` 或任何 provider key；如果需要确认云端搜索是否可用，先登录 Electron，再看模型是否收到 `web.search` 工具，或用 admin 的“工具调用”页查看 `web.search` 记录。
+- `SHEJANE_LOCAL_RESEARCH_SEARCH_LIMIT`：默认 `3`，夹在 `1`–`20` 之间，由 `ToolCallLimitMiddleware(tool_name="web.search")` 限制同一 run 内搜索次数。
+- 调试时可运行 `make logs-local-host`，启动日志不应出现任何 provider key；如果需要确认云端搜索是否可用，先登录 Electron，再看模型是否收到 `web.search` 工具，或用 admin 的“工具调用”页查看 `web.search` 记录。
 
-Phase 2.15 通用工具原语：
+当前本地工具面：
 
-- `fs.list`、`fs.read`、`fs.search`：只读工具，只能访问已授权 workspace 内路径。
-- `fs.write`：写入 UTF-8 文本文件，只能写授权 workspace 内路径，每次都需要用户批准。
+- deepagents filesystem：`ls`、`read_file`、`write_file`、`edit_file`、`glob`、`grep` 和 `execute` 绑定到已授权 workspace 或默认 scratch 目录；`write_file`、`edit_file`、`execute` 每次都需要用户批准。`GET /local/v1/tools` 会列出这些当前运行时名称；`fs.*` 仍只是未来 primitive 规范里的目标词汇。
+- `workspace.open`：授权一个本地工作区给后续 run 使用。
+- `web.fetch`：只读 HTTP(S) 抓取，带 SSRF guard。
+- `web.search`：通过 Cloud Tool Gateway 调 Tavily；daemon 不保存 Tavily key。
+- `image.generate` / `image.edit`、`pdf.inspect`、`code.execute`：通过 Cloud Tool Gateway 调云端资源或沙箱；daemon 不保存 provider key。
 - `open.url`：用用户系统默认浏览器打开 `http` / `https` URL，每次都需要用户批准；不支持 `file://` 等本地协议，也不用于 Agent 网页研究取证。
 - `open.file`：用系统默认应用打开授权 workspace 内文件，每次都需要用户批准。
 - `clipboard.read`、`clipboard.write`：只处理纯文本，每次都需要用户批准。
-- `task.verify`：用于验证文件存在、文件包含文本、URL 格式和布尔断言。
-
-旧 `file.read`、`file.search`、`file.write` 仍保留，用于兼容已有 run 和测试；新模型提示会优先引导使用 `fs.*`。
-
-Phase 2.17-2.20 Playwright 托管浏览器：
-
-- `browser.search`：使用 `SHEJANE_BROWSER_SEARCH_URL` 在 Playwright 托管 Chromium 中打开搜索结果页，每次都需要用户批准。
-- `browser.open`：在 Local Host 自己管理的 Playwright Chromium 中打开 `http` / `https` URL，每次都需要用户批准；请求前会做 DNS 校验并阻止 localhost、私网、链路本地、多播和保留地址。研究任务应使用 `browser.open` + `browser.read` 收集来源，而不是 `open.url`。
-- `browser.read`：读取当前托管页面的标题、URL、meta 描述、正文和关键链接；长正文保存为 artifact，模型上下文只拿到来源元数据和 artifact 引用。
-- `browser.verify`：验证当前托管页面是否包含期望文本、是否处于 usable 状态；验证失败是可恢复 observation，可按需保存页面截图 artifact。
-- `browser.snapshot`：读取托管页面的标题、URL、可见文本、主要链接、表单、按钮和可交互元素 refs；只观察 Local Host 自己管理的页面，不读取用户已有 Chrome/Safari 标签。
-- `browser.screenshot`：截取当前托管页面 PNG，并保存为本地 artifact；模型上下文只拿到 artifact id 和摘要，不直接塞 base64。
-- `browser.click`、`browser.type`：按 snapshot 中的 `ref` 点击或输入，每次都需要用户批准；密码和一次性验证码输入会被阻止。
-- `browser.scroll`：滚动当前托管页面并返回新的 snapshot，默认允许。
-- `browser.close`：关闭当前托管浏览器 page/context/browser。
+- `task.verify`：用于验证文件存在、文件包含文本、URL 格式和布尔断言。失败结果会触发有上限的验证回环，让模型先修复再尝试最终回答。
+- `task.progress`：用于维护长任务进展账本，记录摘要、验收标准、关键决策、涉及文件、验证命令、未解决风险和下一步；写入本地 `progress_ledger` artifact，诊断面板展示最新一条，并在交接摘要里标记账本是 `not_required` / `fresh` / `missing` / `stale`。
 - `environment.observe`：读取基础本地环境元数据，例如平台、前台应用和窗口标题；每次都需要用户批准，不采集屏幕截图。
-- 事件流会额外出现 `browser.observed`、`source.collected`、`environment.observed`、`ui.action.requested` 和 `ui.action.completed`，client 会显示为“观察网页”“收集来源”“观察环境”“请求操作”等普通用户文案。
-- 当前消息 timeline 的“诊断”按钮会读取 `GET /local/v1/runs/{id}/diagnostics`，只展示状态、计数、最新 checkpoint 摘要和最近来源/验证/错误事件；不会展示 artifact 正文或完整 checkpoint messages。
-- 浏览器观察会返回 `observation_status=usable|empty|http_error|blocked|login_required|captcha_like`；只有 usable 且不是搜索结果页的 `browser.read` / `browser.snapshot` 页面会进入 `source.collected`。页面头部普通“登录/注册”导航不会单独导致 `login_required`，只有显式要求登录、密码/登录表单或登录后查看类页面才会被判为登录页。
-- 研究任务中如果模型误调用 `open.url`，Local Harness 会返回 `research_external_open_blocked`，不会请求权限，也不会打开用户系统浏览器。
-- 研究任务中如果模型误用 `shell.run` 执行 `curl` / `wget` / URL 抓取，Local Harness 会返回 `research_shell_network_blocked`，要求改用 `web.search` / `web.fetch` 或 `browser.open` / `browser.read`。
-- 同一 run 内第三次重复相同搜索 query 或打开相同 URL 会被拦截为可恢复 observation，避免模型在同一来源上绕圈。
-- 默认使用 headless Chromium；调试时可设 `SHEJANE_BROWSER_HEADLESS=false`。首次使用前运行 `cd local-host && npm run browser:install` 安装 Chromium。
-- CloakBrowser 只作为未来可选 engine 预留，不进入默认依赖，也不打包 binary。
+- `memory.search`、`user.ask`、office read/write 工具和 MCP 工具按 run 设置接入。`memory.search` 只查询当前 workspace 的记忆 namespace；没有 workspace 的 run 使用 legacy global namespace。每个完成的 run 会写一条 `kind=run_note` 的短摘要；只有用户明确说 `remember...` / `记住...` 时才额外写 `kind=user_fact`，不会从普通对话或 assistant 回答里猜事实。完全相同的显式 `user_fact` 已存在时会跳过重复写入；语义相近但文本不同的事实仍不会自动合并。搜索结果会优先返回显式 `user_fact`，再返回自动 `run_note`，同类内部按 `updated_at` / `created_at` 较新优先。
+
+浏览器自动化当前边界：
+
+- `browser.task` 保留为未来 `browser-use` 接入口，但默认不暴露给模型。只有安装 `uv sync --extra browser` 并在 `build_agent` 传入真实 browser LLM 后，registry 才会把它加入 agent toolset。
+- 当前消息 timeline 的“诊断”按钮会读取 `GET /local/v1/runs/{id}/diagnostics`，只展示状态、计数、交接摘要、最新失败分类、最新 `task.verify` 结果、最新进展账本、账本新鲜度、最新 checkpoint 摘要和最近来源/验证/错误事件；不会展示普通 artifact 正文或完整 checkpoint messages。
+- 研究任务不应使用 `open.url` 作为取证路径；它会打开用户系统默认浏览器，适合用户可见跳转，不适合模型读取来源。取证应走 `web.search` / `web.fetch`。
+- 研究任务中如果模型误用 shell/`execute` 执行 `curl` / `wget` / URL 抓取，应改用 `web.search` / `web.fetch`，这样 SSRF guard、工具预算和计费链路都在可控路径内。
+- 未来若恢复 granular browser primitives（`browser.open/read/verify/snapshot/...`），需要先补 tool registry、权限策略、SSE timeline、诊断脱敏和测试覆盖，再写入本手册。
 - 本阶段不做提交订单、支付、发帖、发送邮件、读取用户现有浏览器标签页、Chrome extension/native messaging、屏幕 OCR 或系统设置修改。
 
 测试本地 health：
@@ -370,9 +360,9 @@ curl -H "Authorization: Bearer dev-local-token" http://127.0.0.1:17371/local/v1/
 
 - daemon 只应监听 `127.0.0.1`，不要绑定公网网卡。
 - `SHEJANE_LOCAL_HOST_TOKEN` 是本机 pairing 材料，不应写入仓库、日志或云端后台。
-- Phase 2.22 已实现 `time.now`、授权 workspace 内 `fs.list` / `fs.read` / `fs.search` / `fs.write`、旧 `file.*` 兼容工具、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、Playwright 托管 `browser.search` / `browser.open` / `browser.read` / `browser.verify` / `browser.snapshot` / `browser.screenshot` / `browser.click` / `browser.type` / `browser.scroll` / `browser.close`、`source.collected` 来源展示、重复浏览保护、研究策略预算、`environment.observe`、`shell.run` 权限确认、云端 `/api/v1/agent/llm` 扣费入口、云端 `/api/v1/agent/tools/execute` 非 LLM 工具扣费入口、长工具输出 artifact、checkpoint resume、上下文压缩、基础本地 memory、规则验证事件、`web.fetch`、Cloud Tool Gateway 计费版 `web.search`、MCP allowlist + stdio runtime adapter、并发安全工具批处理、模型失败 durable handling，以及 client/admin 侧工作区选择/授权/诊断/撤销、本地项目引用、最近 run 恢复、当前 run 诊断面板、脱敏诊断导出、权限批准/拒绝、artifact 预览、验证结果展示和 admin 工具调用只读观察。
+- 当前已实现 `time.now`、`environment.observe`、`open.url` / `open.file`、`clipboard.read` / `clipboard.write`、`task.verify`、`task.progress`、结束前进展账本刷新 guard、`workspace.open`、deepagents filesystem/shell 工具、office read/write、`web.fetch`、Cloud Tool Gateway 计费版 `web.search` / `image.*` / `pdf.inspect` / `code.execute`、MCP adapter、checkpoint resume、上下文压缩、按 workspace namespace 隔离的基础本地 memory、规则验证、权限批准/拒绝、artifact 预览、当前 run 诊断面板、脱敏诊断导出、模型失败 durable handling，以及 admin 工具调用只读观察。`browser.task` 和 granular browser primitives 仍是后续工作，未配置时不会暴露给模型。
 - Local Host 会拒绝未授权的 `workspace_path`，因此本地文件和 shell 工具必须先经 `POST /local/v1/workspaces` 授权工作区。
-- 诊断导出默认不包含 artifact 正文或完整 checkpoint messages；仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制、桌面 OCR 或 LLM-as-judge 视觉裁判。
+- 诊断导出默认不包含普通 artifact 正文或完整 checkpoint messages；`handoff` 是从 run 状态、事件类型、权限和 artifact metadata 派生的交接摘要，并包含 `ledger_state` / `ledger_message` 来提示进展账本不需要、已更新、缺失或陈旧；`run.waiting` 也会携带同样的轻量 handoff snapshot，方便只看事件流时判断暂停点是否适合交接；`handoff.failure` 是当前仍需要动作的 `run.failed` / `tool.failed` 结构化分类，包含 `action_kind` 策略提示；completed run 中已经被后续成功事件恢复的普通工具失败不会继续作为当前 failure/blocker，但原始事件仍保留在事件列表和 recent event types 里；`handoff.verification` 是最新 `task.verify` 机器可读结果，后续通过会覆盖早先失败；`feature_ledger` 是最新 `task.progress` 进展账本的结构化摘要；`reflection` 是最新 checkpoint 里的轻量反思摘要，只包含消息/工具计数、最终回答长度和可选 critic 分数/notes/raw，不包含 checkpoint messages。仍未实现诊断包导入/回放、IDE 控制、屏幕/app 控制、桌面 OCR 或 LLM-as-judge 视觉裁判。
 
 ## 自动化测试与 Smoke
 
@@ -439,6 +429,7 @@ docker compose exec postgres psql -U shejane -d shejane
 select count(*) as users from users;
 
 select
+  run_id,
   request_id,
   provider,
   model,
@@ -450,6 +441,19 @@ select
   finished_at
 from llm_call_records
 order by started_at desc
+limit 10;
+
+select
+  run_id,
+  request_id,
+  status,
+  estimated_credits,
+  actual_credits,
+  created_at,
+  settled_at
+from usage_reservations
+where run_id is not null
+order by created_at desc
 limit 10;
 
 select
@@ -505,6 +509,21 @@ select
 from agent_events
 order by created_at desc
 limit 30;
+
+select
+  run_id,
+  tool_call_id,
+  tool,
+  provider,
+  status,
+  credits_cost,
+  error_code,
+  started_at,
+  finished_at
+from external_tool_call_records
+where run_id is not null
+order by started_at desc
+limit 20;
 
 select
   po.id,
@@ -580,8 +599,8 @@ make release VERSION=v0.1.0
 
 ```bash
 # 1. 准备 .env（见 .env.example 的 “M. Deployment” 段）。至少改：
-#    JWT_SECRET（强随机）、CONFIG_ENCRYPTION_KEY（32B hex，加密落库的
-#    provider key；不设则明文存库）、POSTGRES_PASSWORD（别留默认 shejane）、
+#    JWT_SECRET（强随机）、CONFIG_ENCRYPTION_KEY（强随机 passphrase，加密落库的
+#    provider key；不设则生产 API 直接启动失败）、POSTGRES_PASSWORD（别留默认 shejane）、
 #    MOCK_LLM=false、COOKIE_SECURE=true、
 #    CLIENT_BASE_URL / ADMIN_BASE_URL（真实 https 域名）、
 #    APP_DOMAIN / ADMIN_DOMAIN、IMAGE_TAG（钉到发布版本，别留 latest），
@@ -594,11 +613,13 @@ cp .env.example .env
 make deploy
 ```
 
-`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。
+`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。生产 compose 会给 API 注入 `SHEJANE_ENV=production`，因此 `JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 若为空、过短或仍是常见占位值，API 会 fail-fast 而不是带着弱配置启动。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。Caddy 会给 client/admin 静态站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy；Go API 也会直接返回 API 侧安全头，避免绕过 Caddy 时裸奔。API 进程使用显式 `http.Server`：`ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`IdleTimeout=120s`，收到 SIGINT/SIGTERM 时最多等待 10s graceful shutdown；`WriteTimeout` 保持 0，避免长 SSE / streaming 响应被服务器定时切断。
+
+迁移由 API 镜像内置的 `/app/shejane-migrate` 执行，SQL 文件随同一 API 镜像发布在 `/app/migrations`。runner 会先创建 `schema_migrations`，再按文件版本顺序执行未应用版本；已应用且 checksum 一致的版本会跳过，checksum 与数据库记录不一致会 fail-fast，避免“改旧迁移文件后静默漂移”。首次升级到版本表 runner 的已有数据库会重放一次当前 idempotent 迁移并补齐版本记录，之后只执行新增迁移。`make migrate` 和 CI Postgres conformance 也使用同一个 runner。
 
 > **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
 >
-> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐模型配置改。`CONFIG_ENCRYPTION_KEY` 未设则 provider key **明文**落库（仅启动告警）。
+> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 provider key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐模型配置改。生产环境中 `CONFIG_ENCRYPTION_KEY` 未设或仍是弱占位值会让 API 启动失败；开发环境仍允许明文以便本地调试。
 > - **（开计费时）`STRIPE_PRICE_ID` / `STRIPE_SECRET_KEY` 不能留空** —— 否则结账走 dev 假成功路径（伪造 `dev_` 会话、不扣款、不发 webhook、不发放 credits），前端却显示「订阅成功」。不开计费可忽略。
 > - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 
@@ -624,14 +645,14 @@ make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需
 
 上线必做：服务器装 AWS CLI（Amazon Linux：`dnf install -y awscli`）并确认 `.env` 有 `S3_BUCKET` + `AWS_*` → `make backup` 手跑一次验证本地产物 + S3 对象都出现 → `make backup-cron-install` 装上每日定时 → **定期做恢复演练**（把某个 `.sql.gz` 拉到临时机 `make deploy-restore` 验证能还原，没演练过的备份不算数）。
 
-> ⚠️ 旧的「导出到当前目录」已改为写仓库外。注意迁移是**只进不退**、每次 `up` 全量重跑且无版本表，因此镜像回滚 **不会** 回滚数据库；破坏性 schema 变更只能从备份恢复，切勿用 `down -v` 当恢复手段。
+> ⚠️ 旧的「导出到当前目录」已改为写仓库外。迁移已有 `schema_migrations` 版本表，不会在每次 `up` 反复执行已成功版本；但迁移仍然是**只进不退**，镜像回滚 **不会** 回滚数据库。破坏性 schema 变更只能从备份恢复，切勿用 `down -v` 当恢复手段。
 
 ## 生产上线检查
 
 上线前至少确认：
 
 - `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`MOCK_LLM=false`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名（与浏览器 Origin 精确一致、无尾斜杠）。
-- `CONFIG_ENCRYPTION_KEY` 已设（32B hex），且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐模型配置改）。
+- `CONFIG_ENCRYPTION_KEY` 已设为强随机 passphrase，且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐模型配置改）。
 - `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
 - `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库（任一缺失会让结账走 dev 假成功路径）。
 - Stripe webhook endpoint 已订阅事件列表，Dashboard 中最近一次投递为 2xx。

@@ -119,6 +119,7 @@ class LocalRun(BaseModel):
     history_json: str = "[]"
     parent_run_id: str | None = None
     settings_json: str = "{}"
+    metadata_json: str = "{}"
     events_count: int | None = None
 
 
@@ -140,6 +141,7 @@ class CreateRunRequest(BaseModel):
     history: list[dict[str, str]] | None = None
     parent_run_id: str | None = None
     settings: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +301,96 @@ class LatestCheckpoint(BaseModel):
     created_at: str | None = None
 
 
+class DiagnosticsFailure(BaseModel):
+    """Structured classification for the latest failed run/tool event."""
+
+    category: Literal[
+        "transient",
+        "auth",
+        "quota",
+        "permission",
+        "configuration",
+        "workspace",
+        "validation",
+        "fatal",
+        "unknown",
+    ]
+    recoverable: bool
+    retryable: bool
+    action_kind: Literal["retry", "user_action", "repair", "operator_action", "inspect"]
+    code: str | None = None
+    message: str
+    source_event_type: str
+    tool: str | None = None
+    suggested_action: str
+
+
+class DiagnosticsVerification(BaseModel):
+    """Latest machine-readable task.verify result, if any."""
+
+    status: Literal["passed", "failed"]
+    reason: str | None = None
+    pass_count: int | None = None
+    fail_count: int | None = None
+    source_event_type: str
+
+
+class DiagnosticsReflectionCritic(BaseModel):
+    """Compact final-answer critic output, if reflection ran."""
+
+    coverage: int | None = None
+    clarity: int | None = None
+    grounding: int | None = None
+    notes: list[str] = Field(default_factory=list)
+    raw: str | None = None
+
+
+class DiagnosticsReflection(BaseModel):
+    """Safe reflection summary from the latest checkpoint.
+
+    This deliberately excludes checkpoint messages and raw tool output.
+    """
+
+    ai_messages: int | None = None
+    tool_results: int | None = None
+    final_answer_chars: int | None = None
+    critic: DiagnosticsReflectionCritic | None = None
+
+
+class DiagnosticsHandoff(BaseModel):
+    """Compact handoff summary for long-running or resumed work.
+
+    This is derived from redacted run metadata and event types. It deliberately
+    does not include full checkpoint messages, artifact bodies, or raw tool
+    output.
+    """
+
+    status: str
+    headline: str
+    next_actions: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    recent_event_types: list[str] = Field(default_factory=list)
+    ledger_state: Literal["not_required", "missing", "fresh", "stale"] = "not_required"
+    ledger_message: str | None = None
+    failure: DiagnosticsFailure | None = None
+    verification: DiagnosticsVerification | None = None
+
+
+class FeatureLedger(BaseModel):
+    """Latest durable progress ledger entry for the run."""
+
+    summary: str
+    status: str
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    files_touched: list[str] = Field(default_factory=list)
+    validation_commands: list[str] = Field(default_factory=list)
+    unresolved_risks: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    artifact_id: str | None = None
+    created_at: str | None = None
+
+
 class LocalRunDiagnostics(BaseModel):
     schema_version: Literal[1] = 1
     exported_at: str
@@ -308,6 +400,9 @@ class LocalRunDiagnostics(BaseModel):
     permissions: list[DiagnosticsPermission]
     artifacts: list[DiagnosticsArtifact]
     latest_checkpoint: LatestCheckpoint | None = None
+    handoff: DiagnosticsHandoff
+    feature_ledger: FeatureLedger | None = None
+    reflection: DiagnosticsReflection | None = None
 
 
 # ---------------------------------------------------------------------------

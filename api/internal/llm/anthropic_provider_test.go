@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -136,6 +137,43 @@ func TestAnthropicCompleteWithToolsPlainAnswerMapsEndTurn(t *testing.T) {
 	}
 }
 
+func TestAnthropicCompleteWithToolsEnablesPromptCachingForLongRequests(t *testing.T) {
+	var captured map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"content": [{"type":"text","text":"答案。"}],
+			"stop_reason":"end_turn",
+			"usage":{"input_tokens":1200,"output_tokens":3}
+		}`))
+	}))
+	defer fake.Close()
+
+	provider := NewAnthropicProviderWithConfig("sk-test", "", fake.URL, 0)
+	_, err := provider.CompleteWithTools(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "system", Content: strings.Repeat("static instructions ", 260)},
+			{Role: "user", Content: "你好"},
+		},
+		Tools: []ToolDefinition{{
+			Name:        "web.search",
+			Description: strings.Repeat("Searches the web. ", 80),
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	}, "claude-sonnet-test")
+	if err != nil {
+		t.Fatalf("CompleteWithTools: %v", err)
+	}
+
+	cacheControl, ok := captured["cache_control"].(map[string]any)
+	if !ok || cacheControl["type"] != "ephemeral" {
+		t.Fatalf("cache_control = %#v, want ephemeral prompt caching", captured["cache_control"])
+	}
+}
+
 // The streaming path must surface Anthropic's up-front input_tokens
 // (message_start) so billing settles on real usage, use the configured
 // max_tokens, and map stop_reason on the way out.
@@ -184,6 +222,40 @@ func TestAnthropicStreamReportsInputTokensAndMaxTokens(t *testing.T) {
 	}
 	if text != "你好" || outputTokens != 5 || finish != "stop" {
 		t.Errorf("stream result = (%q,%d,%q), want (你好,5,stop)", text, outputTokens, finish)
+	}
+}
+
+func TestAnthropicStreamEnablesPromptCachingForLongRequests(t *testing.T) {
+	var captured map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(
+			"event: message_start\n" +
+				`data: {"type":"message_start","message":{"usage":{"input_tokens":1200}}}` + "\n\n" +
+				"event: message_delta\n" +
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}` + "\n\n"))
+	}))
+	defer fake.Close()
+
+	provider := NewAnthropicProviderWithConfig("sk-test", "", fake.URL, 0)
+	chunks, errs := provider.Stream(context.Background(), ChatRequest{
+		Messages: []Message{
+			{Role: "system", Content: strings.Repeat("static instructions ", 260)},
+			{Role: "user", Content: "你好"},
+		},
+	}, "claude-sonnet-test")
+	for range chunks {
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	cacheControl, ok := captured["cache_control"].(map[string]any)
+	if !ok || cacheControl["type"] != "ephemeral" {
+		t.Fatalf("cache_control = %#v, want ephemeral prompt caching", captured["cache_control"])
 	}
 }
 

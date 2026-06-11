@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +35,13 @@ def test_configure_logging_is_idempotent() -> None:
     configure_logging(json_output=True)  # second call should be safe
     log = structlog.get_logger("test")
     log.info("hello")  # must not raise
+
+
+def test_pytest_disables_external_langsmith_tracing_by_default() -> None:
+    assert os.environ.get("LANGSMITH_TRACING") == "false"
+    assert os.environ.get("LANGCHAIN_TRACING_V2") == "false"
+    assert "LANGSMITH_API_KEY" not in os.environ
+    assert "LANGCHAIN_API_KEY" not in os.environ
 
 
 def test_is_disabled_respects_env(monkeypatch: Any) -> None:

@@ -381,7 +381,7 @@ func (a *App) markupFactor() float64 {
 // resolved catalog model id (set by the entrypoint via Router.SelectModel), so
 // the multiplier is the per-model ratio × global markup.
 func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
-	tokens := llm.EstimateTokens(request.Messages)
+	tokens := llm.EstimateRequestTokens(request)
 	credits := applyMultiplier(int64(tokens), a.Router.MultiplierForModel(request.Model)*a.markupFactor())
 	if credits < 300 {
 		return 300

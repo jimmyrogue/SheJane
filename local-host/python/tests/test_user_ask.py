@@ -294,6 +294,8 @@ def test_user_ask_in_parallel_tool_call_batch_still_pauses(monkeypatch) -> None:
         "run.waiting had empty interrupts despite user.ask in parallel batch — "
         f"the parallel-tool-call regression has returned. payload: {waiting!r}"
     )
+    assert waiting.get("handoff", {}).get("ledger_state") == "missing"
+    assert "Progress ledger missing" in str(waiting.get("handoff", {}).get("ledger_message"))
 
     # And the question itself must reach the client via question.asked.
     assert "question.asked" in names, (
@@ -353,12 +355,19 @@ def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None
             headers={"Authorization": "Bearer tok"},
         ) as resp:
             body = resp.read().decode("utf-8")
+        run_response = client.get(
+            f"/local/v1/runs/{run_id}",
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert run_response.status_code == 200
+        run_status = run_response.json()["status"]
 
     events = _parse_sse(body)
     names = [e[0] for e in events]
     assert "run.waiting" in names, f"user.ask should pause the run with run.waiting. got: {names}"
 
     waiting = next(e[1] for e in events if e[0] == "run.waiting")
+    assert waiting.get("handoff", {}).get("ledger_state") == "not_required"
     interrupts = waiting.get("interrupts", [])
     assert interrupts, "run.waiting should carry interrupt details"
     payload = interrupts[0].get("value", {})
@@ -367,6 +376,7 @@ def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None
     assert "question" in serialized.lower()
     assert "React" in serialized
     assert "Vue" in serialized
+    assert run_status == "waiting_input"
 
 
 # --- resume returns the answer to the tool ---
@@ -433,6 +443,9 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
     # Stream after resume should contain at least run.resumed signal
     events2 = _parse_sse(body2)
     names2 = [e[0] for e in events2]
+    assert "question.answered" in names2
+    if "run.resumed" in names2:
+        assert names2.index("question.answered") < names2.index("run.resumed")
     assert "run.resumed" in names2 or "run.completed" in names2, (
         f"expected run.resumed or run.completed after question resume. got: {names2}"
     )

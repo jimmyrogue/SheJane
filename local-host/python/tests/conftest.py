@@ -8,6 +8,10 @@ and (b) leaks environment-specific config into otherwise hermetic
 tests. Tests that DO want to exercise discovery (test_mcp.py) opt
 back in explicitly by setting SHEJANE_LOCAL_MCP_DISCOVERY=on inside
 the test body.
+
+We also disable LangSmith/LangChain external tracing. Agent tests create many
+LangGraph runs; inheriting a developer shell's LANGSMITH_* credentials turns
+unit tests into networked trace ingestion and can produce rate-limit noise.
 """
 
 from __future__ import annotations
@@ -24,6 +28,15 @@ def _disable_mcp_disk_scan_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     SHEJANE_LOCAL_MCP_SERVERS is consulted.
     """
     monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "off")
+
+
+@pytest.fixture(autouse=True)
+def _disable_external_tracing_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep pytest hermetic even when the parent shell has LangSmith enabled."""
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
 
 
 @pytest.fixture(autouse=True)

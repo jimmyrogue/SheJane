@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/coldflame/shejane/api/internal/app"
@@ -18,6 +19,34 @@ func TestHealthzAlwaysOK(t *testing.T) {
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/healthz = %d, want 200", rec.Code)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	server := newTestServer(t)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	expected := map[string]string{
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Frame-Options":           "DENY",
+		"X-Content-Type-Options":    "nosniff",
+		"Referrer-Policy":           "no-referrer",
+		"Permissions-Policy":        "camera=(), geolocation=(), microphone=()",
+	}
+	for header, want := range expected {
+		if got := rec.Header().Get(header); got != want {
+			t.Fatalf("%s = %q, want %q", header, got, want)
+		}
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("Content-Security-Policy is empty")
+	}
+	for _, part := range []string{"default-src 'none'", "frame-ancestors 'none'", "base-uri 'none'"} {
+		if !strings.Contains(csp, part) {
+			t.Fatalf("Content-Security-Policy = %q, want it to contain %q", csp, part)
+		}
 	}
 }
 

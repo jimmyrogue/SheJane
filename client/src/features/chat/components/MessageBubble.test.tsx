@@ -236,6 +236,16 @@ describe('MessageBubble meta', () => {
     expect(screen.getByText('刚刚')).toBeInTheDocument()
   })
 
+  it('shows the input pause copy when the agent is waiting for a user answer', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble message={message({ content: '', status: 'waiting_input' })} />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('等待你的回答。')).toBeInTheDocument()
+  })
+
   it('renders recognized office filenames as preview buttons that fire with the resolved absolute path', () => {
     const onPreviewLocalFile = vi.fn()
     render(

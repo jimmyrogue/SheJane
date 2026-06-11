@@ -6,8 +6,8 @@ verifies one wired-up capability:
 
   1. HumanInTheLoopMiddleware  — destructive tool triggers `run.waiting`
   2. SubAgentMiddleware        — `task` tool call surfaces `subagent.spawned`
-  3. AnthropicPromptCaching    — middleware adds `cache_control` to messages
-  4. ModelFallbackMiddleware   — registered when env supplies fallback list
+  3. PromptCaching             — Go Anthropic gateway adds `cache_control`
+  4. Local direct fallback     — ignored even when stale env supplies models
   5. PIIMiddleware             — email in user goal is `[REDACTED_EMAIL]`-replaced
                                   before the LLM sees it
   6. MemoryMiddleware          — AGENTS.md content lands in the outgoing
@@ -431,15 +431,15 @@ def test_capability_2_subagent_task_surfaces_spawned_event(monkeypatch) -> None:
     )
 
 
-# ---- capability 3: Anthropic prompt caching adds cache_control ----
+# ---- capability 3: prompt caching stays in the cloud gateway ----
 
 
-def test_capability_3_anthropic_caching_marks_messages_with_cache_control(
+def test_capability_3_prompt_caching_is_gateway_owned(
     monkeypatch,
 ) -> None:
-    """The middleware mutates outgoing messages so the Anthropic API caches
-    long prompt prefixes. Since our backend's contract is to **forward**
-    messages onward, we can detect the marker on the outgoing wire."""
+    """The daemon should keep provider-specific prompt caching out of its wire
+    contract. The Go Anthropic gateway adds top-level cache_control for long
+    requests so local and web/cloud loops share one caching policy."""
     handler = RecordingHandler(
         scripts=[
             [
@@ -451,45 +451,32 @@ def test_capability_3_anthropic_caching_marks_messages_with_cache_control(
     with _make_client(monkeypatch, handler) as client:
         _post_run_and_stream(client, "say ok")
 
-    # AnthropicPromptCachingMiddleware is configured with
-    # unsupported_model_behavior='ignore' and our BackendChatModel reports
-    # its `_llm_type` as 'shejane-backend' (not anthropic), so the
-    # middleware SKIPS adding cache_control. The test instead asserts the
-    # middleware is wired by inspecting the runtime: at least one request
-    # went out (proving the agent ran) AND no error was raised.
     assert len(handler.requests) >= 1
-    # NOTE: in production against a real Anthropic model the middleware
-    # adds {"cache_control": {"type": "ephemeral"}} to long messages.
-    # Verifying *cache hit* requires real Anthropic credentials; we skip
-    # that path here.
+    assert "cache_control" not in json.dumps(handler.requests)
 
 
-# ---- capability 4: ModelFallback wired when env supplies fallbacks ----
+# ---- capability 4: local direct ModelFallback is disabled ----
 
 
-def test_capability_4_modelfallback_parsed_from_env(monkeypatch) -> None:
-    """We can't easily instantiate the fallback in unit-test scope —
-    `ModelFallbackMiddleware(*models)` actually constructs the vendor
-    SDK clients (which need API keys). So we test the wiring path:
-    `_parse_fallback_models` correctly splits the env, and the
-    builder's conditional would feed it to ModelFallbackMiddleware.
-    A separate live-credentials test would be needed to verify the
-    fallback truly fires under primary-failure conditions."""
+def test_capability_4_local_direct_modelfallback_ignored(monkeypatch, caplog) -> None:
+    """Local Host must not instantiate vendor fallback clients.
+
+    Provider fallback belongs in the Go model gateway/catalog so provider keys
+    and credit accounting stay in the cloud control plane. A stale
+    SHEJANE_LOCAL_FALLBACK_MODELS value should be tolerated for compatibility,
+    but ignored.
+    """
     monkeypatch.setenv(
         "SHEJANE_LOCAL_FALLBACK_MODELS",
         "anthropic:claude-haiku-4,openai:gpt-4o-mini",
     )
-    from local_host.agent.builder import _parse_fallback_models
+    from local_host.agent.builder import _custom_middleware
     from local_host.config import Settings
 
     s = Settings()
-    parsed = _parse_fallback_models(s.fallback_models)
-    assert parsed == ["anthropic:claude-haiku-4", "openai:gpt-4o-mini"]
-
-    # Empty env should yield empty list (middleware path skipped).
-    monkeypatch.delenv("SHEJANE_LOCAL_FALLBACK_MODELS", raising=False)
-    s2 = Settings()
-    assert _parse_fallback_models(s2.fallback_models) == []
+    middleware = _custom_middleware(s)
+    assert not any(type(item).__name__ == "ModelFallbackMiddleware" for item in middleware)
+    assert "SHEJANE_LOCAL_FALLBACK_MODELS is ignored" in caplog.text
 
 
 # ---- capability 5: PII redaction on user input ----

@@ -60,6 +60,7 @@ export interface AdminLLMCall {
   request_id: string
   user_id: string
   user_email?: string
+  run_id?: string
   mode: string
   scene: string
   model: string
@@ -194,6 +195,23 @@ export interface AdminAgentRun {
   expires_at: string
   created_at: string
   updated_at: string
+}
+
+export interface AdminAgentEvent {
+  id: string
+  run_id: string
+  seq: number
+  event_type: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface AdminAgentRunTrace {
+  run: AdminAgentRun
+  events: AdminAgentEvent[]
+  llm_calls: AdminLLMCall[]
+  tool_calls: AdminToolCall[]
+  wallet_transactions: AdminWalletTransaction[]
 }
 
 interface APIResponse<T> {
@@ -342,6 +360,10 @@ export class AdminAPI {
 
   async adminAgentRuns(): Promise<AdminAgentRun[]> {
     return this.get<AdminAgentRun[]>('/api/v1/admin/agent-runs')
+  }
+
+  async adminAgentRunTrace(id: string): Promise<AdminAgentRunTrace> {
+    return this.get<AdminAgentRunTrace>(`/api/v1/admin/agent-runs/${encodeURIComponent(id)}/trace`)
   }
 
   async adminModelConfigs(capability = ''): Promise<AdminModelConfig[]> {

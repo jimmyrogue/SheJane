@@ -1,8 +1,9 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { createChatStore, timelineItem, toolDetail } from './chatStore'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createChatStore, recoverOrphanCloudStreamingConversations, timelineItem, toolDetail } from './chatStore'
 import { LocalConversationStore } from '../../shared/local-data/localConversations'
-import type { ChatAPI } from '../../shared/api/client'
+import { APIError, type ChatAPI } from '../../shared/api/client'
+import type { Conversation } from '../../shared/local-data/types'
 
 describe('chat store', () => {
   beforeEach(() => {
@@ -120,6 +121,33 @@ describe('chat store', () => {
     expect(conversation.messages[1].runMode).toEqual({ resolved: '深度', reason: '需要推理' })
   })
 
+  it('shows a specific rate-limit message with retry-after guidance', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-rate-limit')
+    const api: ChatAPI = {
+      createAgentRun: async () => {
+        throw new APIError('请求过于频繁', { status: 429, retryAfterSeconds: 30 })
+      },
+      streamAgentRun: async () => {
+        throw new Error('streamAgentRun not used')
+      },
+      runCloudToolLoop: async () => {
+        throw new Error('runCloudToolLoop not used')
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    await expect(
+      chat.sendMessage({ content: '帮我总结', mode: 'fast', scene: 'chat' }),
+    ).rejects.toThrow('请求过于频繁')
+
+    const stored = (await localData.list())[0]
+    expect(stored.messages[1]).toMatchObject({
+      role: 'assistant',
+      status: 'error',
+      content: '请求太频繁，请在30秒后再试。',
+    })
+  })
+
   it('routes to the cloud tool loop (not the single-completion run) when cloudTools are provided', async () => {
     const localData = new LocalConversationStore('shejane-chat-test-toolloop')
     let createCalled = false
@@ -161,6 +189,154 @@ describe('chat store', () => {
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
   })
 
+  it('can abort an in-flight cloud tool loop and settle the assistant message as canceled', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-toolloop-cancel')
+    let observedRunId = ''
+    let observedSignal: AbortSignal | undefined
+    let updatedConversationID = ''
+    let sawStreamingCloudRun = false
+    const api: ChatAPI = {
+      createAgentRun: async () => {
+        throw new Error('createAgentRun not used')
+      },
+      streamAgentRun: async () => {
+        throw new Error('streamAgentRun not used')
+      },
+      runCloudToolLoop: async (input, _handlers, signal) => {
+        observedRunId = input.runId
+        observedSignal = signal
+        return await new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          )
+        })
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const pending = chat.sendMessage({
+      content: '画一张图',
+      mode: 'fast',
+      scene: 'chat',
+      cloudTools: [{ name: 'image.generate', description: 'gen', inputSchema: { type: 'object' } }],
+      onConversationUpdate: (conversation) => {
+        updatedConversationID = conversation.id
+        const assistant = conversation.messages.at(-1)
+        if (assistant?.runOrigin === 'cloud' && assistant.status === 'streaming' && assistant.runId) {
+          sawStreamingCloudRun = true
+        }
+      },
+    })
+
+    await vi.waitFor(() => expect(observedRunId).toMatch(/^run_/))
+    expect(sawStreamingCloudRun).toBe(true)
+
+    const canceled = await chat.cancelCloudToolLoop(observedRunId)
+    expect(canceled).toBe(true)
+    await pending
+
+    expect(observedSignal?.aborted).toBe(true)
+    const stored = await localData.get(updatedConversationID)
+    const assistant = stored?.messages.at(-1)
+    expect(assistant).toMatchObject({
+      role: 'assistant',
+      status: 'done',
+      runId: observedRunId,
+      runOrigin: 'cloud',
+    })
+    expect(assistant?.agentEvents?.at(-1)).toMatchObject({ type: 'run.canceled' })
+  })
+
+  it('recovers orphaned web cloud tool-loop messages without touching recoverable runs', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-orphan-cloud-loop')
+    const orphan: Conversation = {
+      id: 'conv-orphan',
+      title: '画一张图',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:00.000Z',
+      messages: [
+        { id: 'msg-user', role: 'user', content: '画一张图', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'streaming',
+          runId: 'run_web_loop',
+          runOrigin: 'cloud',
+        },
+      ],
+    }
+    const serverCloudRun: Conversation = {
+      id: 'conv-cloud-server',
+      title: '普通云端 run',
+      archived: false,
+      createdAt: '2026-05-09T00:00:00.000Z',
+      updatedAt: '2026-05-09T00:00:00.000Z',
+      messages: [
+        {
+          id: 'msg-server-cloud',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-09T00:00:01.000Z',
+          status: 'streaming',
+          runId: '11111111-1111-4111-8111-111111111111',
+          runOrigin: 'cloud',
+        },
+      ],
+    }
+    const localRun: Conversation = {
+      id: 'conv-local',
+      title: '本地 run',
+      archived: false,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      messages: [
+        {
+          id: 'msg-local',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-08T00:00:01.000Z',
+          status: 'streaming',
+          runId: 'local-run-1',
+          runOrigin: 'local',
+        },
+      ],
+    }
+    await localData.save(orphan)
+    await localData.save(serverCloudRun)
+    await localData.save(localRun)
+
+    const recovered = await recoverOrphanCloudStreamingConversations(localData)
+
+    const recoveredOrphan = recovered.find((conversation) => conversation.id === 'conv-orphan')
+    const orphanAssistant = recoveredOrphan?.messages.at(-1)
+    expect(orphanAssistant).toMatchObject({
+      status: 'error',
+      content: '这次云端工具循环在浏览器刷新或关闭后中断，无法继续。请重新发送。',
+    })
+    expect(orphanAssistant?.agentEvents?.at(-1)).toMatchObject({
+      type: 'run.failed',
+      label: '这次云端工具循环在浏览器刷新或关闭后中断，无法继续。请重新发送。',
+    })
+    expect(recoveredOrphan?.updatedAt).toBe('2026-05-10T00:00:00.000Z')
+
+    expect(recovered.find((conversation) => conversation.id === 'conv-cloud-server')?.messages[0]).toMatchObject({
+      status: 'streaming',
+      runOrigin: 'cloud',
+    })
+    expect(recovered.find((conversation) => conversation.id === 'conv-local')?.messages[0]).toMatchObject({
+      status: 'streaming',
+      runOrigin: 'local',
+    })
+
+    const stored = await localData.get('conv-orphan')
+    expect(stored?.messages.at(-1)?.status).toBe('error')
+  })
+
   it('renders universal primitive tool events with user-facing action names', () => {
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-url', tool: 'open.url' } })).toMatchObject({
       label: '需要权限：用系统浏览器打开网页',
@@ -173,8 +349,60 @@ describe('chat store', () => {
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'fs.list' } })).toMatchObject({
       label: '调用工具：列出文件',
     })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'glob' } })).toMatchObject({
+      label: '调用工具：查找文件',
+    })
+    expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'grep' } })).toMatchObject({
+      label: '调用工具：搜索文件',
+    })
     expect(timelineItem({ event_type: 'verification.completed', payload: { tool: 'task.verify', status: 'passed' } })).toMatchObject({
       label: '验证通过：验证任务结果',
+    })
+  })
+
+  it('uses the daemon run.failed error text in the timeline', () => {
+    expect(timelineItem({ event_type: 'run.failed', payload: { error: 'missing API key', type: 'BackendLLMError' } })).toMatchObject({
+      label: 'missing API key',
+    })
+  })
+
+  it('adds the daemon failure policy hint to run.failed timeline labels', () => {
+    expect(
+      timelineItem({
+        event_type: 'run.failed',
+        payload: {
+          error: 'missing API key',
+          type: 'BackendLLMError',
+          category: 'configuration',
+          retryable: false,
+          action_kind: 'user_action',
+          suggested_action: 'Configure the missing key, then retry.',
+        },
+      }),
+    ).toMatchObject({
+      label: 'missing API key · 需要你处理',
+      failureCategory: 'configuration',
+      failureRetryable: false,
+      failureActionKind: 'user_action',
+      failureSuggestedAction: 'Configure the missing key, then retry.',
+    })
+  })
+
+  it('keeps run.waiting handoff ledger state for pause recovery context', () => {
+    expect(
+      timelineItem({
+        event_type: 'run.waiting',
+        payload: {
+          handoff: {
+            ledger_state: 'stale',
+            ledger_message: 'Progress ledger stale after tool.completed.',
+          },
+        },
+      }),
+    ).toMatchObject({
+      label: '任务已暂停',
+      handoffLedgerState: 'stale',
+      handoffLedgerMessage: 'Progress ledger stale after tool.completed.',
     })
   })
 
@@ -231,6 +459,36 @@ describe('chat store', () => {
     })
     expect(timelineItem({ event_type: 'run.budget_warning', payload: { reason: 'long_running', step: 20 } })).toMatchObject({
       label: '任务较长，仍在继续执行',
+    })
+  })
+
+  it('renders repair workflow events with user-facing labels and source metadata', () => {
+    expect(
+      timelineItem({
+        event_type: 'repair.workflow',
+        payload: {
+          status: 'started',
+          attempt: 2,
+          max_attempts: 3,
+          source_run_id: 'run-original',
+          source_message_id: 'msg-failed',
+        },
+      }),
+    ).toMatchObject({
+      label: '修复开始：第 2/3 次',
+      repairAttempt: 2,
+      repairSourceRunId: 'run-original',
+      repairSourceMessageId: 'msg-failed',
+    })
+
+    expect(
+      timelineItem({
+        event_type: 'repair.workflow',
+        payload: { status: 'rejected', attempt: 4, max_attempts: 3 },
+      }),
+    ).toMatchObject({
+      label: '修复已停止：第 4/3 次',
+      repairAttempt: 4,
     })
   })
 
@@ -348,9 +606,9 @@ describe('chat store', () => {
       expect(detail?.showWebIcon).toBeUndefined()
     })
 
-    it('read_file → basename + full path tooltip', () => {
+    it('read_file → basename + full path tooltip from deepagents file_path', () => {
       const detail = toolDetail(
-        { arguments: { path: '/Users/me/project/src/App.tsx' } },
+        { arguments: { file_path: '/Users/me/project/src/App.tsx' } },
         'read_file',
       )
       expect(detail).toEqual({

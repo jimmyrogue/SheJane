@@ -95,10 +95,11 @@ class ReflectMiddleware(AgentMiddleware):
         messages = state.get("messages") or []
         user_q: str | None = None
         final_a: str | None = None
-        for m in messages:
-            if getattr(m, "type", None) == "human" and user_q is None:
+        for m in reversed(messages):
+            if getattr(m, "type", None) == "human":
                 c = getattr(m, "content", "")
                 user_q = c if isinstance(c, str) else None
+                break
         for m in reversed(messages):
             if getattr(m, "type", None) == "ai":
                 c = getattr(m, "content", "")

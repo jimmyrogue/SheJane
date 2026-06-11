@@ -16,15 +16,14 @@ services:
       retries: 10
 
   migrate:
-    image: postgres:16-alpine
+    build:
+      context: ./api
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      PGPASSWORD: shejane
-    volumes:
-      - ./api/migrations:/migrations:ro
-    command: ["sh", "-c", "set -e; for file in /migrations/*.sql; do psql -v ON_ERROR_STOP=1 -h postgres -U shejane -d shejane -f \"$$file\"; done"]
+      DATABASE_URL: postgres://shejane:shejane@postgres:5432/shejane?sslmode=disable
+    command: ["/app/shejane-migrate"]
 
   api:
     build:

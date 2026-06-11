@@ -5,6 +5,7 @@ a live Go backend to exercise the SSE parsing + LangChain message glue.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterable
 
 import httpx
@@ -12,7 +13,7 @@ import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
-from local_host.llm.backend import BackendChatModel
+from local_host.llm.backend import BackendChatModel, BackendLLMError
 
 
 def _sse(events: Iterable[tuple[str, str]]) -> bytes:
@@ -183,6 +184,41 @@ def test_backend_4xx_raises(monkeypatch) -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         asyncio.run(model._agenerate([HumanMessage(content="x")]))
+
+
+def test_backend_llm_error_raises_structured_error(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _stream_response(
+            [
+                (
+                    "llm.error",
+                    json.dumps(
+                        {
+                            "request_id": "req-error",
+                            "message": "rate limit exceeded",
+                            "code": "rate_limit",
+                            "recoverable": True,
+                            "retryable": True,
+                            "provider": "anthropic",
+                        }
+                    ),
+                )
+            ]
+        )
+
+    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    model = _make_model_with_mock(handler)
+
+    with pytest.raises(BackendLLMError) as exc_info:
+        asyncio.run(model._agenerate([HumanMessage(content="x")]))
+
+    exc = exc_info.value
+    assert str(exc) == "rate limit exceeded"
+    assert exc.code == "rate_limit"
+    assert exc.request_id == "req-error"
+    assert exc.provider == "anthropic"
+    assert exc.recoverable is True
+    assert exc.retryable is True
 
 
 def test_bind_tools_serializes_correctly() -> None:

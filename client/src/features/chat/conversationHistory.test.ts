@@ -40,8 +40,21 @@ describe('deriveAgentHistory', () => {
     // 5 kept turns + 1 synthetic marker
     expect(history).toHaveLength(6)
     expect(history[0].role).toBe('user')
-    expect(history[0].content).toContain('已省略更早的 25 轮')
+    expect(history[0].content).toContain('已省略更早的 25 条消息')
+    expect(history[0].content).toContain('早期摘要')
+    expect(history[0].content).toContain('用户: m0')
+    expect(history[0].content).toContain('用户: m24')
     expect(history.slice(1).map((t) => t.content)).toEqual(['m25', 'm26', 'm27', 'm28', 'm29'])
+  })
+
+  it('keeps omitted middle decisions in the deterministic summary', () => {
+    const many = Array.from({ length: 14 }, (_, i) => msg({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }))
+    many[5] = msg({ role: 'user', content: '重要决定：所有 API 错误必须保留 request_id' })
+
+    const history = deriveAgentHistory(many, { maxMessages: 4 })
+
+    expect(history[0].content).toContain('重要决定')
+    expect(history[0].content).toContain('request_id')
   })
 
   it('drops oldest turns until within the char budget (with marker)', () => {
@@ -54,7 +67,7 @@ describe('deriveAgentHistory', () => {
       { maxChars: 150 },
     )
     expect(history).toHaveLength(2)
-    expect(history[0].content).toContain('已省略更早的 2 轮')
+    expect(history[0].content).toContain('已省略更早的 2 条消息')
     expect(history[1].content).toBe('C'.repeat(100))
   })
 
@@ -67,5 +80,19 @@ describe('deriveAgentHistory', () => {
       { role: 'user', content: '只有一轮' },
       { role: 'assistant', content: '回复' },
     ])
+  })
+
+  it('clamps maxMessages to at least one', () => {
+    const history = deriveAgentHistory(
+      [
+        msg({ role: 'user', content: '第一条' }),
+        msg({ role: 'assistant', content: '第二条' }),
+      ],
+      { maxMessages: -5 },
+    )
+
+    expect(history).toHaveLength(2)
+    expect(history[0].content).toContain('已省略更早的 1 条消息')
+    expect(history[1]).toEqual({ role: 'assistant', content: '第二条' })
   })
 })

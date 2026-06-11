@@ -24,8 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │ AsyncSqliteSaver (checkpoints)  │         │                      │
 │                                 │         │ The cloud API holds  │
 │ Tools either run locally        │         │ ALL platform-paid    │
-│ (filesystem, browser-use,       │         │ provider keys —      │
-│  workspace, memory) OR proxy    │         │ never the daemon.    │
+│ (filesystem, workspace,         │         │ provider keys —      │
+│  memory, optional MCP) OR proxy │         │ never the daemon.    │
 │ through cloud Tool Gateway      │         │                      │
 │ (image.*, web.search)           │         │                      │
 └─────────────────────────────────┘         └──────────────────────┘
@@ -150,7 +150,7 @@ make logs-dev                # snapshot of all of the above
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
 - New tool: add `@tool("name.action")` in `local-host/python/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
-- Gateway-billed tools today (proxy through `_gateway.py`, keys in the Go API only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), `code.execute` (E2B microVM, brokered by `api/internal/e2b`). Everything else runs locally in the daemon: `web.fetch` (SSRF-guarded), the fs/`workspace.*` toolkit, `memory.*`, `browser.task`, `office.*` read/write, MCP tools. `code.execute` is gated by the client's "Code Execution" toggle (`include_code_exec` in `build_tools`); the diagram's tool lists are illustrative, this bullet is the source of truth.
+- Gateway-billed tools today (proxy through `_gateway.py`, keys in the Go API only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), `code.execute` (E2B microVM, brokered by `api/internal/e2b`). Everything else runs locally in the daemon: `web.fetch` (SSRF-guarded), deepagents filesystem/shell tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `execute`), `workspace.open`, `memory.*`, `office.*` read/write, and MCP tools. `browser.task` is optional future browser automation: unless both `browser-use` and a browser-specific LLM binding are configured, it is not exposed to `/local/v1/tools` or the agent toolset. `code.execute` is gated by the client's "Code Execution" toggle (`include_code_exec` in `build_tools`); the diagram's tool lists are illustrative, this bullet is the source of truth.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
 ### Go (api/)

@@ -20,9 +20,11 @@ Optional integrations
   useful for benchmarking the cold-path overhead.
 
 The handler is intentionally lightweight: each event becomes one log line.
-For deep tracing (intermediate state, full prompts), set `LANGCHAIN_TRACING_V2`
-and use LangSmith — we don't ship LangSmith credentials, but the handler is
-additive so they coexist.
+For deep tracing (intermediate state, full prompts), set
+`LANGSMITH_TRACING=true` and use LangSmith — we don't ship LangSmith
+credentials, but the handler is additive so they coexist. The pytest suite
+forces LangSmith/LangChain tracing env vars off in `tests/conftest.py` so local
+verification stays hermetic.
 """
 
 from __future__ import annotations

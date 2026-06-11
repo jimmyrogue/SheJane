@@ -1,8 +1,8 @@
-import type { ChatAPI, StreamChatResult } from '../../shared/api/client'
+import { APIError, type ChatAPI, type StreamChatResult } from '../../shared/api/client'
 import type { CloudToolDefinition } from '../../shared/cloudAgentLoop'
 import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
-import { createTranslator, type Translator } from '../../shared/i18n/i18n'
+import { createTranslator, type TranslationKey, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
 import type {
   AgentQuestionItem,
@@ -43,6 +43,7 @@ interface SendMessageInput {
 export function createChatStore(deps: ChatStoreDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const t = deps.t ?? createTranslator('zh')
+  const cloudToolLoopControllers = new Map<string, AbortController>()
 
   return {
     async sendMessage(input: SendMessageInput): Promise<Conversation> {
@@ -93,6 +94,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       await deps.localData.save(conversation)
       input.onConversationUpdate?.(cloneConversation(conversation))
 
+      let cloudToolLoopRunId: string | undefined
       try {
         const streamHandlers = {
           onDelta: (delta: string) => {
@@ -124,6 +126,9 @@ export function createChatStore(deps: ChatStoreDeps) {
           // endpoints' ledger writes); use a client-generated run id so the
           // tool gateway's idempotency key is stable across retries.
           const runId = createLocalID('run')
+          const controller = new AbortController()
+          cloudToolLoopRunId = runId
+          cloudToolLoopControllers.set(runId, controller)
           assistantMessage.runId = runId
           assistantMessage.runOrigin = 'cloud'
           input.onConversationUpdate?.(cloneConversation(conversation))
@@ -136,6 +141,7 @@ export function createChatStore(deps: ChatStoreDeps) {
               tools: input.cloudTools,
             },
             streamHandlers,
+            controller.signal,
           )
         } else {
           const run = await deps.api.createAgentRun({
@@ -158,18 +164,126 @@ export function createChatStore(deps: ChatStoreDeps) {
         assistantMessage.creditsCost = result.creditsCost
         input.onConversationUpdate?.(cloneConversation(conversation))
       } catch (error) {
+        if (cloudToolLoopRunId && isAbortError(error)) {
+          assistantMessage.status = 'done'
+          const canceledItem = timelineItem(
+            { event_type: 'run.canceled', run_id: cloudToolLoopRunId, payload: {} },
+            t,
+          )
+          if (canceledItem) {
+            assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), canceledItem]
+          }
+          input.onConversationUpdate?.(cloneConversation(conversation))
+          return conversation
+        }
         assistantMessage.status = 'error'
-        assistantMessage.content = error instanceof Error ? error.message : t('chat.error.sendFailed')
+        assistantMessage.content = chatErrorMessage(error, t)
         input.onConversationUpdate?.(cloneConversation(conversation))
         throw error
       } finally {
+        if (cloudToolLoopRunId) {
+          cloudToolLoopControllers.delete(cloudToolLoopRunId)
+        }
         conversation.updatedAt = now()
         await deps.localData.save(conversation)
       }
 
       return conversation
     },
+    async cancelCloudToolLoop(runId: string): Promise<boolean> {
+      const controller = cloudToolLoopControllers.get(runId)
+      if (!controller || controller.signal.aborted) {
+        return false
+      }
+      controller.abort()
+      return true
+    },
   }
+}
+
+export async function recoverOrphanCloudStreamingConversations(
+  localData: LocalConversationStore,
+  options: { t?: Translator } = {},
+): Promise<Conversation[]> {
+  const t = options.t ?? createTranslator('zh')
+  const conversations = await localData.list()
+  const recovered: Conversation[] = []
+
+  for (const conversation of conversations) {
+    const next = cloneConversation(conversation)
+    if (recoverOrphanCloudStreamingMessages(next, t)) {
+      await localData.save(next)
+    }
+    recovered.push(next)
+  }
+
+  return recovered
+}
+
+function recoverOrphanCloudStreamingMessages(conversation: Conversation, t: Translator): boolean {
+  let changed = false
+  const message = t('chat.error.cloudRunInterrupted')
+
+  for (const item of conversation.messages) {
+    if (!isOrphanWebCloudToolLoopMessage(item)) {
+      continue
+    }
+    item.status = 'error'
+    if (!item.content.trim()) {
+      item.content = message
+    }
+    const failedItem = timelineItem(
+      {
+        event_type: 'run.failed',
+        run_id: item.runId,
+        payload: { message },
+      },
+      t,
+    )
+    if (failedItem) {
+      item.agentEvents = [...(item.agentEvents ?? []), failedItem]
+    }
+    changed = true
+  }
+
+  return changed
+}
+
+function isOrphanWebCloudToolLoopMessage(message: ChatMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    message.status === 'streaming' &&
+    message.runOrigin === 'cloud' &&
+    typeof message.runId === 'string' &&
+    message.runId.startsWith('run_')
+  )
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (error instanceof Error && /abort/i.test(error.name || error.message))
+  )
+}
+
+function chatErrorMessage(error: unknown, t: Translator): string {
+  if (error instanceof APIError && error.status === 429) {
+    const wait = formatRetryAfter(error.retryAfterSeconds, t)
+    return wait
+      ? t('chat.error.rateLimitedWithWait', { wait })
+      : t('chat.error.rateLimited')
+  }
+  return error instanceof Error ? error.message : t('chat.error.sendFailed')
+}
+
+function formatRetryAfter(seconds: number | undefined, t: Translator): string {
+  if (seconds === undefined || !Number.isFinite(seconds)) {
+    return ''
+  }
+  if (seconds < 60) {
+    return t('chat.retryAfter.seconds', { count: Math.max(0, Math.ceil(seconds)) })
+  }
+  return t('chat.retryAfter.minutes', { count: Math.ceil(seconds / 60) })
 }
 
 function cloneConversation(conversation: Conversation): Conversation {
@@ -361,6 +475,35 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
       const tool = stringValue(payload.tool)
       return { type: event.event_type, label: t('chat.timeline.uiCompleted', { tool: toolActionLabel(tool, t) }), eventId, artifactId: stringValue(payload.artifact_id) }
     }
+    case 'repair.workflow': {
+      const attempt = numberValue(payload.attempt)
+      const maxAttempts = numberValue(payload.max_attempts)
+      const status = repairWorkflowStatus(payload.status)
+      return {
+        type: event.event_type,
+        label: t(repairWorkflowLabelKey(status), {
+          attempt: attempt ? String(attempt) : '?',
+          max: maxAttempts ? String(maxAttempts) : '?',
+        }),
+        eventId,
+        repairWorkflowStatus: status,
+        repairAttempt: attempt || undefined,
+        repairSourceRunId: stringValue(payload.source_run_id) || undefined,
+        repairSourceMessageId: stringValue(payload.source_message_id) || undefined,
+      }
+    }
+    case 'run.waiting': {
+      const handoff = objectValue(payload.handoff)
+      const handoffLedgerState = handoffLedgerStateValue(handoff?.ledger_state)
+      const handoffLedgerMessage = stringValue(handoff?.ledger_message)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.runWaiting'),
+        eventId,
+        ...(handoffLedgerState ? { handoffLedgerState } : {}),
+        ...(handoffLedgerMessage ? { handoffLedgerMessage } : {}),
+      }
+    }
     case 'run.budget_warning': {
       const label = payload.reason === 'long_running' ? t('chat.timeline.budgetLong') : t('chat.timeline.budgetMax')
       return { type: event.event_type, label, eventId }
@@ -368,7 +511,7 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     case 'run.completed':
       return { type: event.event_type, label: t('chat.timeline.runCompleted'), eventId }
     case 'run.failed':
-      return { type: event.event_type, label: stringValue(payload.message) || t('chat.timeline.runFailed'), eventId }
+      return runFailedTimelineItem(event.event_type, payload, eventId, t)
     case 'run.canceled':
       return { type: event.event_type, label: t('chat.timeline.runCanceled'), eventId }
     default:
@@ -376,8 +519,118 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
   }
 }
 
+function runFailedTimelineItem(
+  type: string,
+  payload: Record<string, unknown>,
+  eventId: string | undefined,
+  t: Translator,
+): AgentTimelineItem {
+  const failureActionKind = knownFailureActionKind(payload.action_kind)
+  const failureCategory = stringValue(payload.category)
+  const failureSuggestedAction = stringValue(payload.suggested_action)
+  const rawRetryable = payload.retryable
+  const failureRetryable = typeof rawRetryable === 'boolean' ? rawRetryable : undefined
+  const baseLabel = stringValue(payload.message) || stringValue(payload.error) || t('chat.timeline.runFailed')
+  const policyLabel = failureActionKind ? t(failureActionKindKey(failureActionKind)) : ''
+  return {
+    type,
+    label: policyLabel ? `${baseLabel} · ${policyLabel}` : baseLabel,
+    eventId,
+    ...(failureCategory ? { failureCategory } : {}),
+    ...(failureRetryable !== undefined ? { failureRetryable } : {}),
+    ...(failureActionKind ? { failureActionKind } : {}),
+    ...(failureSuggestedAction ? { failureSuggestedAction } : {}),
+  }
+}
+
+function knownFailureActionKind(value: unknown): AgentTimelineItem['failureActionKind'] | undefined {
+  switch (value) {
+    case 'retry':
+    case 'user_action':
+    case 'repair':
+    case 'operator_action':
+    case 'inspect':
+      return value
+    default:
+      return undefined
+  }
+}
+
+function failureActionKindKey(actionKind: NonNullable<AgentTimelineItem['failureActionKind']>): TranslationKey {
+  switch (actionKind) {
+    case 'retry':
+      return 'diagnostics.failureActionKind.retry'
+    case 'user_action':
+      return 'diagnostics.failureActionKind.user_action'
+    case 'repair':
+      return 'diagnostics.failureActionKind.repair'
+    case 'operator_action':
+      return 'diagnostics.failureActionKind.operator_action'
+    case 'inspect':
+      return 'diagnostics.failureActionKind.inspect'
+  }
+}
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function handoffLedgerStateValue(value: unknown): AgentTimelineItem['handoffLedgerState'] | undefined {
+  switch (value) {
+    case 'not_required':
+    case 'missing':
+    case 'fresh':
+    case 'stale':
+      return value
+    default:
+      return undefined
+  }
+}
+
+function repairWorkflowStatus(value: unknown): NonNullable<AgentTimelineItem['repairWorkflowStatus']> {
+  switch (value) {
+    case 'completed':
+    case 'failed':
+    case 'rejected':
+    case 'canceled':
+      return value
+    default:
+      return 'started'
+  }
+}
+
+function repairWorkflowLabelKey(
+  status: NonNullable<AgentTimelineItem['repairWorkflowStatus']>,
+): Parameters<Translator>[0] {
+  switch (status) {
+    case 'completed':
+      return 'chat.timeline.repairCompleted'
+    case 'failed':
+      return 'chat.timeline.repairFailed'
+    case 'rejected':
+      return 'chat.timeline.repairRejected'
+    case 'canceled':
+      return 'chat.timeline.repairCanceled'
+    default:
+      return 'chat.timeline.repairStarted'
+  }
 }
 
 /** Extract base64-encoded image payloads from a code.execute tool
@@ -483,7 +736,7 @@ export function toolDetail(
   }
 
   // Filesystem tools — basename + full path tooltip.
-  const path = stringValue(args.path)
+  const path = stringValue(args.path) || stringValue(args.file_path)
   if (path) {
     const segments = path.split(/[\\/]/).filter(Boolean)
     const basename = segments[segments.length - 1] || path
@@ -640,6 +893,8 @@ function toolActionLabel(tool: string, t: Translator): string {
     write_file: t('chat.tool.write_file'),
     edit_file: t('chat.tool.edit_file'),
     ls: t('chat.tool.ls'),
+    glob: t('chat.tool.glob'),
+    grep: t('chat.tool.grep'),
     execute: t('chat.tool.execute'),
     'memory.search': t('chat.tool.memory.search'),
     'memory.write': t('chat.tool.memory.write'),

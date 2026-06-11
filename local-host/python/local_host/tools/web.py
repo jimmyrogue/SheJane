@@ -127,11 +127,11 @@ async def _invoke_web_search(
     ToolCall envelope just to exercise the proxy."""
     return await call_tool_gateway(
         "web.search",
-        # The Go handler reads `arguments.query` and `arguments.maxResults`
-        # (camelCase — see `executeTavilySearch` in tool_gateway.go:208).
+        # Shared model-facing schema uses `max_results`; the Go gateway also
+        # accepts legacy `maxResults` for older clients.
         # Clamp here to [1, 10] so a malformed call doesn't waste the
         # round-trip; the gateway also clamps.
-        {"query": query, "maxResults": max(1, min(int(max_results), 10))},
+        {"query": query, "max_results": max(1, min(int(max_results), 10))},
         run_id=run_id,
         tool_call_id=tool_call_id,
     )

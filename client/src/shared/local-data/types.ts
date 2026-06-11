@@ -38,6 +38,19 @@ export interface AgentTimelineItem {
   type: string
   label: string
   eventId?: string
+  handoffLedgerState?: 'not_required' | 'missing' | 'fresh' | 'stale'
+  handoffLedgerMessage?: string
+  failureCategory?: string
+  failureRetryable?: boolean
+  failureActionKind?: 'retry' | 'user_action' | 'repair' | 'operator_action' | 'inspect'
+  failureSuggestedAction?: string
+  retryAttempt?: number
+  retrySourceRunId?: string
+  retrySourceMessageId?: string
+  repairAttempt?: number
+  repairWorkflowStatus?: 'started' | 'completed' | 'failed' | 'rejected' | 'canceled'
+  repairSourceRunId?: string
+  repairSourceMessageId?: string
   tool?: string
   /** Daemon-assigned ID for the underlying LLM tool_call. Same value on
    *  the `tool.requested`, `tool.completed`, and `tool.failed` items of

@@ -2,6 +2,12 @@
 
 > 登录 / 注册 / 忘记密码三个页面的设计说明
 > 与主应用 UI 共享同一套 design tokens（见 `atlas-ui-spec.md`）
+>
+> **当前实现边界（2026-06）**：`client/src/features/auth/AuthScreen.tsx`
+> 和 Go API 只支持 email/password 注册登录、忘记密码、重置密码和邮箱验证。
+> 本文的 SSO/OAuth 段落是未来目标，不是当前可用能力；在后端 OAuth
+> 端点、Electron protocol callback 和 token 交换全部接好之前，不要渲染
+> 可点击或灰置的 Google / Apple / GitHub SSO 按钮。
 
 ---
 
@@ -10,7 +16,7 @@
 Auth 页面是用户接触产品的第一个界面，承担三个任务：
 
 1. **传递信任** — 用桌面级窗口质感（traffic light + hairline border）告诉用户这是一款认真的产品
-2. **降低摩擦** — SSO 优先 + 实时校验反馈，让"创建账户"在 30 秒内完成
+2. **降低摩擦** — 清晰的 email/password 流程 + 实时校验反馈，让"创建账户"在 30 秒内完成；SSO 是未来加速项
 3. **沿用主应用语言** — 同样的色彩、圆角、字号，让登录后过渡到主界面没有割裂感
 
 **核心原则**：Auth 页面不引入任何主应用之外的视觉元素。所有 design tokens 都来自主应用的 `:root` 变量。
@@ -24,7 +30,7 @@ Auth 页面是用户接触产品的第一个界面，承担三个任务：
 | 布局 | 双栏 1:1 | 双栏 1:1 | 单栏居中 |
 | 最小高度 | 580px | 620px | 520px |
 | 左侧内容 | 品牌叙事 + testimonial | 3 步引导 + 免费套餐 | 无 |
-| SSO 按钮密度 | 大按钮（垂直堆叠，全文字） | 紧凑（横向 3 等分） | 无 |
+| SSO 按钮密度 | 当前无；未来大按钮（垂直堆叠） | 当前无；未来紧凑（横向 3 等分） | 无 |
 | 表单字段 | Email + Password | Name + Email + Password | Email |
 | 主 CTA | "Sign in" | "Create account" | "Send reset link" |
 | 顶部右上链接 | "Create account" | "Sign in" | 无（用左上 back 链接） |
@@ -53,8 +59,8 @@ Auth 页面是用户接触产品的第一个界面，承担三个任务：
 │ │  [Sub copy]     │  ┌─ form (max-w 340) ─┐       │ │
 │ │  [Features]     │  │ [Title]            │       │ │
 │ │                 │  │ [Sub]              │       │ │
-│ │  [Testimonial   │  │ [SSO buttons]      │       │ │
-│ │   card]         │  │ [Divider]          │       │ │
+│ │  [Testimonial   │  │ [Future SSO]       │       │ │
+│ │   card]         │  │ [Email fields]      │       │ │
 │ │                 │  │ [Form fields]      │       │ │
 │ │                 │  │ [Submit button]    │       │ │
 │ │                 │  └────────────────────┘       │ │
@@ -106,7 +112,14 @@ Auth 页面是用户接触产品的第一个界面，承担三个任务：
 
 ## 4. 关键组件
 
-### 4.1 SSO 按钮
+### 4.1 SSO 按钮（未来 OAuth 能力）
+
+当前产品不要显示 SSO 按钮。只有在以下能力同时完成后，才可以启用本节：
+
+- Go API 有 OAuth start/callback/token-exchange 路由和账号绑定策略。
+- Electron 主进程已注册自定义协议，并能安全完成回调交接。
+- Web 客户端和桌面端都有失败、取消、重复邮箱绑定的错误状态。
+- 自动化测试覆盖 provider callback、state/nonce 校验和 token 存储边界。
 
 #### 大按钮变体（登录页）
 
@@ -138,7 +151,7 @@ Auth 页面是用户接触产品的第一个界面，承担三个任务：
 - Logo 尺寸：14×14px
 - 排列：3 列等分（grid-template-columns: 1fr 1fr 1fr）
 
-**为什么两种密度？** 登录页表单短，可以用大按钮强调；注册页表单长（4 个字段 + 强度反馈 + 条款），SSO 必须紧凑才不挤压主流程。
+**为什么两种密度？** 登录页表单短，可以用大按钮强调；注册页表单长（4 个字段 + 强度反馈 + 条款），未来 SSO 必须紧凑才不挤压主流程。
 
 ### 4.2 输入框（三种状态）
 
@@ -221,7 +234,7 @@ border: 0.5px solid var(--accent-success);
 
 ```
 ①  Create your account               ← 当前步：实心黑底白字
-   Email, Google, Apple, or GitHub.
+   Email now; Google, Apple, or GitHub after OAuth ships.
 
 ②  Pick your tools                    ← 未来步：白底灰字 + 0.5px 边
    Connect GitHub, Notion, Slack...
@@ -277,7 +290,7 @@ display: flex; gap: 10px; align-items: flex-start;
 | 登录主按钮 | Sign in | → 箭头 |
 | 注册主按钮 | Create account | → 箭头 |
 | 忘记密码 | Send reset link | 无 |
-| SSO | Continue with [Google/Apple/GitHub] | logo 前缀 |
+| 未来 SSO | Continue with [Google/Apple/GitHub] | logo 前缀；当前不渲染 |
 
 **禁用文案**：
 - ❌ "Get started for free!"（过度营销）
@@ -329,9 +342,9 @@ margin-top: 4px;
 
 按钮禁用时：`opacity: 0.6; cursor: not-allowed;`
 
-### 6.3 SSO OAuth 流程
+### 6.3 SSO OAuth 流程（未来）
 
-桌面 Electron app 的 OAuth 推荐流程：
+桌面 Electron app 的 OAuth 推荐流程；当前实现尚未接入：
 1. 用户点 "Continue with Google"
 2. 弹出系统浏览器（不在 app 内 webview），跳转 Google OAuth
 3. 回调到 `atlas://oauth/callback?code=...`（自定义协议）
@@ -349,7 +362,7 @@ margin-top: 4px;
 | 表单容器 | `<Form>` (react-hook-form 集成) | |
 | 输入框 | `<Input>` | 自定义左右 icon slot |
 | Label | `<Label>` | |
-| SSO 按钮 | `<Button variant="outline">` | |
+| SSO 按钮 | `<Button variant="outline">` | 未来 OAuth 能力；当前不渲染 |
 | 主 CTA | `<Button>` (default variant) | |
 | Checkbox | `<Checkbox>` | |
 | 密码强度条 | 自定义（4 个 `<div>`） | 或用 `<Progress>` × 4 |
@@ -457,7 +470,7 @@ const authWindow = new BrowserWindow({
 - 关闭 auth window
 - 打开主应用 window（默认尺寸 1280×800，可 resize）
 
-### 8.2 OAuth 自定义协议
+### 8.2 OAuth 自定义协议（未来）
 
 ```typescript
 // 注册自定义协议
@@ -494,11 +507,12 @@ const accessToken = safeStorage.decryptString(encrypted);
 ## 9. 可访问性（A11y）
 
 - 所有输入框关联 `<label for>` 或包裹在 `<label>` 内
-- SSO 按钮加 `aria-label="Continue with Google"`（图标按钮要明确）
+- 当前 Tab 顺序：邮箱 → 密码 → 记住我/条款 → 主 CTA → "Forgot?"
+- 未来 SSO 按钮加 `aria-label="Continue with Google"`（图标按钮要明确）
 - 密码可见性切换按钮加 `aria-label="Show password"` / `"Hide password"`
 - 错误信息用 `role="alert"` + `aria-live="polite"`
 - 主 CTA 在 loading 时设 `aria-busy="true"`
-- Tab 顺序：SSO 按钮组 → 邮箱 → 密码 → 记住我 → 主 CTA → "Forgot?"
+- 未来接入 SSO 后 Tab 顺序：SSO 按钮组 → 邮箱 → 密码 → 记住我 → 主 CTA → "Forgot?"
 
 ---
 

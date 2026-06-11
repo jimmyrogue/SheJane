@@ -51,6 +51,9 @@ export interface ToolCapability {
   configured: boolean
   provider: string
   credits_cost: number
+  requires_auth?: boolean
+  description?: string
+  inputSchema?: Record<string, unknown>
 }
 
 export interface AgentAttachment {
@@ -164,6 +167,19 @@ interface APIResponse<T> {
   code: number
   message: string
   data: T
+}
+
+export class APIError extends Error {
+  readonly status: number
+  readonly retryAfterSeconds?: number
+
+  constructor(message: string, options: { status: number; retryAfterSeconds?: number }) {
+    super(message)
+    this.name = 'APIError'
+    this.status = options.status
+    this.retryAfterSeconds = options.retryAfterSeconds
+    Object.setPrototypeOf(this, APIError.prototype)
+  }
 }
 
 /** One selectable chat model from GET /api/v1/models (the user-facing
@@ -349,7 +365,7 @@ export class SheJaneAPI implements ChatAPI {
       }),
     }, true)
     if (!response.ok || !response.body) {
-      throw new Error(await errorMessage(response))
+      throw await apiError(response)
     }
 
     const reader = response.body.getReader()
@@ -391,7 +407,7 @@ export class SheJaneAPI implements ChatAPI {
   async streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult> {
     const response = await this.authedFetch(`/api/v1/agent/runs/${encodeURIComponent(runID)}/stream`, { method: 'GET' }, true)
     if (!response.ok || !response.body) {
-      throw new Error(await errorMessage(response))
+      throw await apiError(response)
     }
 
     const result = await streamAgentSSE(response, {
@@ -420,7 +436,7 @@ export class SheJaneAPI implements ChatAPI {
       }),
     }, true)
     if (!response.ok || !response.body) {
-      throw new Error(await errorMessage(response))
+      throw await apiError(response)
     }
 
     const reader = response.body.getReader()
@@ -498,7 +514,7 @@ export class SheJaneAPI implements ChatAPI {
       true,
     )
     if (!response.ok || !response.body) {
-      throw new Error(await errorMessage(response))
+      throw await apiError(response)
     }
 
     const reader = response.body.getReader()
@@ -555,11 +571,12 @@ export class SheJaneAPI implements ChatAPI {
     tool: string
     arguments: Record<string, unknown>
     idempotencyKey: string
-  }): Promise<CloudToolResult> {
+  }, signal?: AbortSignal): Promise<CloudToolResult> {
     const response = await this.authedFetch(
       '/api/v1/agent/tools/execute',
       {
         method: 'POST',
+        signal,
         body: JSON.stringify({
           run_id: req.runId,
           tool_call_id: req.toolCallId,
@@ -627,7 +644,7 @@ export class SheJaneAPI implements ChatAPI {
     }
     const deps: CloudAgentLoopDeps = {
       streamLLM: (body, loopHandlers, loopSignal) => this.streamAgentLLM(body, loopHandlers, loopSignal),
-      executeTool: (req) => this.executeAgentTool(req),
+      executeTool: (req, loopSignal) => this.executeAgentTool(req, loopSignal),
     }
     const result = await runCloudAgentLoop(deps, {
       runId: input.runId,
@@ -638,6 +655,16 @@ export class SheJaneAPI implements ChatAPI {
       onEvent: handlers.onEvent,
       signal,
     })
+    if (result.hitStepCap) {
+      handlers.onEvent?.({
+        event_type: 'run.budget_warning',
+        run_id: input.runId,
+        payload: {
+          reason: 'max_steps_reached',
+          max_steps: result.steps,
+        },
+      })
+    }
     return {
       requestId: result.requestId,
       inputTokens: result.inputTokens,
@@ -669,13 +696,23 @@ export class SheJaneAPI implements ChatAPI {
 
 async function decodeResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(await errorMessage(response))
+    throw await apiError(response)
   }
   const body = (await response.json()) as APIResponse<T>
   if (body.code !== 0) {
-    throw new Error(body.message)
+    throw new APIError(body.message, {
+      status: response.status,
+      retryAfterSeconds: retryAfterSeconds(response.headers.get('Retry-After')),
+    })
   }
   return body.data
+}
+
+async function apiError(response: Response): Promise<APIError> {
+  return new APIError(await errorMessage(response), {
+    status: response.status,
+    retryAfterSeconds: retryAfterSeconds(response.headers.get('Retry-After')),
+  })
 }
 
 async function errorMessage(response: Response): Promise<string> {
@@ -685,4 +722,17 @@ async function errorMessage(response: Response): Promise<string> {
   } catch {
     return `HTTP ${response.status}`
   }
+}
+
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds)
+  }
+  const dateMs = Date.parse(value)
+  if (!Number.isFinite(dateMs)) {
+    return undefined
+  }
+  return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000))
 }

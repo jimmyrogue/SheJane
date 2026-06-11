@@ -124,6 +124,22 @@ describe('admin web app', () => {
     expect(screen.queryByRole('button', { name: /取消|重试|删除/ })).not.toBeInTheDocument()
   })
 
+  it('shows wallet transactions inside the run trace dialog', async () => {
+    mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('运营概览')
+
+    selectAdminTab('Agent')
+    fireEvent.click(await screen.findByRole('button', { name: '追踪' }))
+
+    expect(await screen.findByText('Run Trace')).toBeInTheDocument()
+    expect(await screen.findByText((content) => content.includes('usage_settle'))).toBeInTheDocument()
+  })
+
   it('creates chat models with an arbitrary model id instead of fixed fast/deep slots', async () => {
     const calls = mockFetch('admin')
 
@@ -340,6 +356,52 @@ function mockFetch(role: 'admin' | 'user') {
             updated_at: '2026-05-10T00:01:00Z',
           },
         ],
+      })
+    }
+    if (url.endsWith('/api/v1/admin/agent-runs/run_1/trace')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          run: {
+            id: 'run_1',
+            user_id: 'user-1',
+            user_email: 'user@example.com',
+            origin: 'cloud',
+            status: 'completed',
+            mode: 'fast',
+            goal_summary: '用户任务（18 字）',
+            expires_at: '2026-05-17T00:00:00Z',
+            created_at: '2026-05-10T00:00:00Z',
+            updated_at: '2026-05-10T00:01:00Z',
+          },
+          events: [
+            {
+              id: 'evt-1',
+              run_id: 'run_1',
+              seq: 1,
+              event_type: 'run.completed',
+              payload: {},
+              created_at: '2026-05-10T00:01:00Z',
+            },
+          ],
+          llm_calls: [],
+          tool_calls: [],
+          wallet_transactions: [
+            {
+              id: 'tx-1',
+              wallet_id: 'wallet-1',
+              reservation_id: 'res-1',
+              type: 'usage_settle',
+              amount: -8,
+              monthly_used_after: 8,
+              extra_balance_after: 0,
+              description: 'settled actual model usage',
+              idempotency_key: 'res-1:usage_settle',
+              created_at: '2026-05-10T00:01:00Z',
+            },
+          ],
+        },
       })
     }
     if (url.split('?')[0].endsWith('/api/v1/admin/audit-logs')) {

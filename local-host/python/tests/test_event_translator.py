@@ -77,6 +77,23 @@ def test_messages_mode_emits_tool_completed_for_tool_message() -> None:
     assert events[0]["data"]["content"] == "42"
 
 
+def test_messages_mode_treats_failed_tool_envelope_as_tool_failed() -> None:
+    tm = ToolMessage(
+        content='{"ok":false,"content":"gateway unreachable","errorCode":"gateway_unreachable","recoverable":true}',
+        tool_call_id="c1",
+        name="web.search",
+    )
+    events = translate("messages", (tm, {}))
+
+    assert events[0]["event"] == "tool.failed"
+    assert events[0]["data"]["tool_call_id"] == "c1"
+    assert events[0]["data"]["tool"] == "web.search"
+    assert events[0]["data"]["status"] == "error"
+    assert events[0]["data"]["error_code"] == "gateway_unreachable"
+    assert events[0]["data"]["recoverable"] is True
+    assert events[0]["data"]["retryable"] is True
+
+
 def test_updates_mode_emits_per_node_graph_node_event() -> None:
     payload = {"input_guard": {"flagged": False}}
     events = translate("updates", payload)

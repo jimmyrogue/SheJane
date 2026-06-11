@@ -87,13 +87,13 @@ export interface paths {
         post?: never;
         /**
          * Clear Memory
-         * @description Wipe every note from the long-term memory namespace.
+         * @description Wipe every note from all long-term memory namespaces.
          *
          *     Backs the "清空记忆 / Clear memory" button in the agent settings
-         *     dialog. Walks ("notes", "global") in pages of 200 (matches the
-         *     BaseStore default search limit ceiling for SQLite stores) and
-         *     deletes each key. Returns the total count so the UI can render
-         *     an accurate "cleared N memories" toast.
+         *     dialog. Walks every ("notes", ...) namespace in pages of 200
+         *     (matches the BaseStore default search limit ceiling for SQLite stores)
+         *     and deletes each key. Returns the total count so the UI can render an
+         *     accurate "cleared N memories" toast.
          *
          *     Idempotent: calling it on an empty store returns
          *     `deleted_count: 0` without error.
@@ -269,9 +269,9 @@ export interface paths {
          * Run Diagnostics
          * @description Return the full `LocalRunDiagnostics` payload.
          *
-         *     Shape (per TS interface `client/src/shared/local-host/client.ts:63-100`):
+         *     Shape (per TS interface `client/src/shared/local-host/client.ts`):
          *         { schema_version: 1, exported_at, local_host_version?,
-         *           run, events, permissions, artifacts, latest_checkpoint }
+         *           run, events, permissions, artifacts, latest_checkpoint, handoff }
          *
          *     Phase 5'+ used to return only `{run, events}`, so the
          *     `DiagnosticsPanel` rendered NaN counts (permissions.length on
@@ -534,6 +534,10 @@ export interface components {
             history?: {
                 [key: string]: string;
             }[] | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Model
              * @default auto
@@ -612,6 +616,66 @@ export interface components {
             /** Seq */
             seq: number;
         };
+        /**
+         * DiagnosticsFailure
+         * @description Structured classification for the latest failed run/tool event.
+         */
+        DiagnosticsFailure: {
+            /**
+             * Action Kind
+             * @enum {string}
+             */
+            action_kind: "retry" | "user_action" | "repair" | "operator_action" | "inspect";
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "transient" | "auth" | "quota" | "permission" | "configuration" | "workspace" | "validation" | "fatal" | "unknown";
+            /** Code */
+            code?: string | null;
+            /** Message */
+            message: string;
+            /** Recoverable */
+            recoverable: boolean;
+            /** Retryable */
+            retryable: boolean;
+            /** Source Event Type */
+            source_event_type: string;
+            /** Suggested Action */
+            suggested_action: string;
+            /** Tool */
+            tool?: string | null;
+        };
+        /**
+         * DiagnosticsHandoff
+         * @description Compact handoff summary for long-running or resumed work.
+         *
+         *     This is derived from redacted run metadata and event types. It deliberately
+         *     does not include full checkpoint messages, artifact bodies, or raw tool
+         *     output.
+         */
+        DiagnosticsHandoff: {
+            /** Blockers */
+            blockers?: string[];
+            failure?: components["schemas"]["DiagnosticsFailure"] | null;
+            /** Headline */
+            headline: string;
+            /** Ledger Message */
+            ledger_message?: string | null;
+            /**
+             * Ledger State
+             * @default not_required
+             * @enum {string}
+             */
+            ledger_state: "not_required" | "missing" | "fresh" | "stale";
+            /** Next Actions */
+            next_actions?: string[];
+            /** Recent Event Types */
+            recent_event_types?: string[];
+            /** Status */
+            status: string;
+            verification?: components["schemas"]["DiagnosticsVerification"] | null;
+        };
         /** DiagnosticsPermission */
         DiagnosticsPermission: {
             /** Arguments */
@@ -638,6 +702,82 @@ export interface components {
             tool_call_id?: string | null;
             /** Tool Name */
             tool_name: string;
+        };
+        /**
+         * DiagnosticsReflection
+         * @description Safe reflection summary from the latest checkpoint.
+         *
+         *     This deliberately excludes checkpoint messages and raw tool output.
+         */
+        DiagnosticsReflection: {
+            /** Ai Messages */
+            ai_messages?: number | null;
+            critic?: components["schemas"]["DiagnosticsReflectionCritic"] | null;
+            /** Final Answer Chars */
+            final_answer_chars?: number | null;
+            /** Tool Results */
+            tool_results?: number | null;
+        };
+        /**
+         * DiagnosticsReflectionCritic
+         * @description Compact final-answer critic output, if reflection ran.
+         */
+        DiagnosticsReflectionCritic: {
+            /** Clarity */
+            clarity?: number | null;
+            /** Coverage */
+            coverage?: number | null;
+            /** Grounding */
+            grounding?: number | null;
+            /** Notes */
+            notes?: string[];
+            /** Raw */
+            raw?: string | null;
+        };
+        /**
+         * DiagnosticsVerification
+         * @description Latest machine-readable task.verify result, if any.
+         */
+        DiagnosticsVerification: {
+            /** Fail Count */
+            fail_count?: number | null;
+            /** Pass Count */
+            pass_count?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /** Source Event Type */
+            source_event_type: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed";
+        };
+        /**
+         * FeatureLedger
+         * @description Latest durable progress ledger entry for the run.
+         */
+        FeatureLedger: {
+            /** Acceptance Criteria */
+            acceptance_criteria?: string[];
+            /** Artifact Id */
+            artifact_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Decisions */
+            decisions?: string[];
+            /** Files Touched */
+            files_touched?: string[];
+            /** Next Actions */
+            next_actions?: string[];
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+            /** Unresolved Risks */
+            unresolved_risks?: string[];
+            /** Validation Commands */
+            validation_commands?: string[];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -773,6 +913,11 @@ export interface components {
             history_json: string;
             /** Id */
             id: string;
+            /**
+             * Metadata Json
+             * @default {}
+             */
+            metadata_json: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
             /**
@@ -798,11 +943,14 @@ export interface components {
             events: components["schemas"]["DiagnosticsEvent"][];
             /** Exported At */
             exported_at: string;
+            feature_ledger?: components["schemas"]["FeatureLedger"] | null;
+            handoff: components["schemas"]["DiagnosticsHandoff"];
             latest_checkpoint?: components["schemas"]["LatestCheckpoint"] | null;
             /** Local Host Version */
             local_host_version?: string | null;
             /** Permissions */
             permissions: components["schemas"]["DiagnosticsPermission"][];
+            reflection?: components["schemas"]["DiagnosticsReflection"] | null;
             run: components["schemas"]["LocalRun"];
             /**
              * Schema Version

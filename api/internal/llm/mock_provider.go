@@ -40,7 +40,7 @@ func (p *MockProvider) CompleteWithTools(ctx context.Context, request ChatReques
 	return Completion{
 		Content:      text,
 		FinishReason: "stop",
-		InputTokens:  estimateMessagesTokens(request.Messages),
+		InputTokens:  EstimateRequestTokens(request),
 		OutputTokens: estimateTextTokens(text),
 	}, nil
 }
@@ -61,7 +61,7 @@ func (p *MockProvider) Stream(ctx context.Context, request ChatRequest, model st
 		case <-ctx.Done():
 			errs <- ctx.Err()
 			return
-		case chunks <- Chunk{Text: text, InputTokens: estimateMessagesTokens(request.Messages), OutputTokens: estimateTextTokens(text)}:
+		case chunks <- Chunk{Text: text, InputTokens: EstimateRequestTokens(request), OutputTokens: estimateTextTokens(text)}:
 		}
 	}()
 

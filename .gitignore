@@ -78,6 +78,7 @@ out/
 
 # Go build/test artifacts
 api/api
+api/migrate
 api/shejane-api
 *.test
 *.prof

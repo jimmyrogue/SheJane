@@ -3,11 +3,24 @@ import {
   runCloudAgentLoop,
   webToolsFromCapabilities,
   imageUrlsFromResult,
-  WEB_TOOL_DEFINITIONS,
   type CloudAgentLoopDeps,
   type CloudLLMTurn,
+  type CloudToolDefinition,
   type CloudToolResult,
 } from './cloudAgentLoop'
+
+const WEB_TOOL_FIXTURES: Record<string, CloudToolDefinition> = {
+  'web.search': {
+    name: 'web.search',
+    description: 'Search the public web.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  },
+  'image.generate': {
+    name: 'image.generate',
+    description: 'Generate an image.',
+    inputSchema: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] },
+  },
+}
 
 function turn(partial: Partial<CloudLLMTurn>): CloudLLMTurn {
   return {
@@ -51,7 +64,7 @@ describe('runCloudAgentLoop', () => {
       runId: 'run-x',
       mode: 'fast',
       messages: [{ role: 'user', content: '画一只猫' }],
-      tools: [WEB_TOOL_DEFINITIONS['image.generate']],
+      tools: [WEB_TOOL_FIXTURES['image.generate']],
       onDelta: (d) => deltas.push(d),
       onEvent: (e) => events.push(e.event_type),
     })
@@ -115,7 +128,7 @@ describe('runCloudAgentLoop', () => {
         runId: 'run-x',
         mode: 'fast',
         messages: [{ role: 'user', content: '画一只猫' }],
-        tools: [WEB_TOOL_DEFINITIONS['image.generate']],
+        tools: [WEB_TOOL_FIXTURES['image.generate']],
         onDelta: (d) => deltas.push(d),
       },
     )
@@ -151,7 +164,7 @@ describe('runCloudAgentLoop', () => {
         runId: 'run-x',
         mode: 'fast',
         messages: [{ role: 'user', content: '画一只猫' }],
-        tools: [WEB_TOOL_DEFINITIONS['image.generate']],
+        tools: [WEB_TOOL_FIXTURES['image.generate']],
         onDelta: (d) => deltas.push(d),
       },
     )
@@ -182,7 +195,7 @@ describe('runCloudAgentLoop', () => {
         runId: 'r',
         mode: 'fast',
         messages: [{ role: 'user', content: 'search two things' }],
-        tools: [WEB_TOOL_DEFINITIONS['web.search']],
+        tools: [WEB_TOOL_FIXTURES['web.search']],
         onDelta: () => {},
       },
     )
@@ -202,7 +215,7 @@ describe('runCloudAgentLoop', () => {
         runId: 'r',
         mode: 'fast',
         messages: [{ role: 'user', content: 'loop forever' }],
-        tools: [WEB_TOOL_DEFINITIONS['web.search']],
+        tools: [WEB_TOOL_FIXTURES['web.search']],
         maxSteps: 3,
         onDelta: () => {},
       },
@@ -232,22 +245,65 @@ describe('runCloudAgentLoop', () => {
     ).rejects.toThrow()
     expect(streamLLM).not.toHaveBeenCalled()
   })
+
+  it('passes the abort signal into tool execution and suppresses completion after cancel', async () => {
+    const streamLLM = vi.fn().mockResolvedValueOnce(
+      turn({
+        toolCalls: [{ id: 'c1', name: 'web.search', arguments: { query: 'x' } }],
+        finishReason: 'tool_calls',
+      }),
+    )
+    const controller = new AbortController()
+    const events: string[] = []
+    let toolSignal: AbortSignal | undefined
+    const executeTool = vi.fn(async (_req, signal?: AbortSignal) => {
+      toolSignal = signal
+      controller.abort()
+      return { ok: true, content: 'late result' } satisfies CloudToolResult
+    })
+
+    await expect(
+      runCloudAgentLoop(
+        { streamLLM, executeTool },
+        {
+          runId: 'r',
+          mode: 'fast',
+          messages: [{ role: 'user', content: 'search' }],
+          tools: [WEB_TOOL_FIXTURES['web.search']],
+          onDelta: () => {},
+          onEvent: (event) => events.push(event.event_type),
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toThrow()
+
+    expect(toolSignal).toBe(controller.signal)
+    expect(events).toEqual(['tool.requested'])
+  })
 })
 
 describe('webToolsFromCapabilities', () => {
   it('offers only configured tools, search before image', () => {
     const tools = webToolsFromCapabilities({
-      'web.search': { configured: true },
-      'image.generate': { configured: true },
+      'web.search': { configured: true, description: 'api search', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } },
+      'image.generate': { configured: true, description: 'api image', inputSchema: { type: 'object', required: ['prompt'] } },
       'code.execute': { configured: true },
     })
     expect(tools.map((t) => t.name)).toEqual(['web.search', 'image.generate'])
+    expect(tools[0]).toMatchObject({
+      description: 'api search',
+      inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+    })
+    expect(tools[1]).toMatchObject({
+      description: 'api image',
+      inputSchema: { type: 'object', required: ['prompt'] },
+    })
   })
 
   it('drops unconfigured tools', () => {
     const tools = webToolsFromCapabilities({
       'web.search': { configured: false },
-      'image.generate': { configured: true },
+      'image.generate': { configured: true, description: 'api image', inputSchema: { type: 'object' } },
     })
     expect(tools.map((t) => t.name)).toEqual(['image.generate'])
   })

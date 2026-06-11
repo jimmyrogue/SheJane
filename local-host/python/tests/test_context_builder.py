@@ -141,6 +141,53 @@ def test_runtime_context_locale_passed_through(tmp_path: Path) -> None:
     assert "用户语言偏好: zh" in result
 
 
+def test_state_layer_renders_repair_workflow_context(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(
+            repair_intent=True,
+            repair_attempt=2,
+            repair_max_attempts=3,
+            repair_source_run_id="run_original",
+            repair_source_message_id="msg_original",
+            repair_failure_category="validation",
+            repair_failure_action_kind="repair",
+        ),
+    )
+
+    assert "修复工作流" in result
+    assert "第 2/3 次" in result
+    assert "run_original" in result
+    assert "msg_original" in result
+    assert "validation / repair" in result
+    assert "修复后必须验证" in result
+
+
+def test_state_layer_renders_retry_workflow_context(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(
+            retry_intent=True,
+            retry_attempt=2,
+            retry_source_run_id="run_failed",
+            retry_source_message_id="msg_failed",
+            retry_failure_category="auth",
+            retry_failure_action_kind="user_action",
+        ),
+    )
+
+    assert "恢复重试" in result
+    assert "第 2 次" in result
+    assert "run_failed" in result
+    assert "msg_failed" in result
+    assert "auth / user_action" in result
+    assert "避免盲目重复" in result
+
+
 # ---- assembly + priority ordering ------------------------------------
 
 
@@ -313,6 +360,23 @@ def test_state_layer_mentions_dropped_history(tmp_path: Path) -> None:
     )
 
     assert "已省略本对话早期的 12 条消息" in result
+
+
+def test_state_layer_includes_dropped_history_summary(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "dev.md"
+    prompt_file.write_text("dev", encoding="utf-8")
+    builder = ContextBuilder(developer_prompt_path=prompt_file)
+    result = builder.build(
+        runtime=RuntimeContext(
+            mode="fast",
+            turn_count=41,
+            dropped_history_count=12,
+            dropped_history_summary="- 用户: 之前决定使用 SQLite checkpoint",
+        ),
+    )
+
+    assert "早期对话压缩摘要" in result
+    assert "之前决定使用 SQLite checkpoint" in result
 
 
 def test_state_layer_absent_when_no_state_fields(tmp_path: Path) -> None:

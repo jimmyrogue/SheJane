@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -8,6 +9,8 @@ import (
 )
 
 type Config struct {
+	Environment string
+
 	HTTPAddr        string
 	AppBaseURL      string
 	ClientBaseURL   string
@@ -144,6 +147,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
+		Environment:                   "development",
 		HTTPAddr:                      ":8080",
 		AppBaseURL:                    "http://localhost:8080",
 		ClientBaseURL:                 "http://localhost:5173",
@@ -206,6 +210,7 @@ func Default() Config {
 
 func Load() Config {
 	cfg := Default()
+	cfg.Environment = getEnv("SHEJANE_ENV", getEnv("APP_ENV", cfg.Environment))
 	cfg.HTTPAddr = getEnv("HTTP_ADDR", cfg.HTTPAddr)
 	cfg.AppBaseURL = getEnv("APP_BASE_URL", cfg.AppBaseURL)
 	cfg.ClientBaseURL = getEnv("CLIENT_BASE_URL", cfg.ClientBaseURL)
@@ -265,12 +270,63 @@ func Load() Config {
 	return cfg
 }
 
+func LoadStrict() (Config, error) {
+	cfg := Load()
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func (c Config) Validate() error {
+	if !c.IsProduction() {
+		return nil
+	}
+
+	var problems []string
+	if weakSecret(c.JWTSecret) {
+		problems = append(problems, "JWT_SECRET must be set to a strong non-placeholder value in production")
+	}
+	if weakSecret(c.ConfigEncryptionKey) {
+		problems = append(problems, "CONFIG_ENCRYPTION_KEY must be set to a strong non-placeholder value in production")
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("invalid production config: %s", strings.Join(problems, "; "))
+}
+
+func (c Config) IsProduction() bool {
+	env := strings.ToLower(strings.TrimSpace(c.Environment))
+	return env == "production" || env == "prod"
+}
+
 func (c Config) IsAdminEmail(email string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(email))
 	for _, candidate := range c.AdminEmails {
 		if normalized == strings.ToLower(strings.TrimSpace(candidate)) {
 			return true
 		}
+	}
+	return false
+}
+
+func weakSecret(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if len(normalized) < 32 {
+		return true
+	}
+	switch normalized {
+	case "dev-change-me",
+		"local-development-jwt-secret-change-me",
+		"replace-with-a-long-random-secret",
+		"change-me",
+		"changeme",
+		"secret",
+		"test-secret",
+		"shejane",
+		"password":
+		return true
 	}
 	return false
 }

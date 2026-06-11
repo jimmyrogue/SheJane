@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -16,7 +19,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.LoadStrict()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Error tracking + performance tracing. Disabled (no-op) when SENTRY_DSN
 	// is unset, so dev/CI are unaffected.
@@ -52,8 +58,44 @@ func main() {
 		handler = sentryhttp.New(sentryhttp.Options{Repanic: true}).Handle(handler)
 	}
 
-	log.Printf("SheJane API listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, handler); err != nil {
-		log.Fatal(err)
+	server := newHTTPServer(cfg, handler)
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("SheJane API listening on %s", cfg.HTTPAddr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		log.Printf("SheJane API shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Fatal(err)
+		}
+		if err := <-errCh; err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 }

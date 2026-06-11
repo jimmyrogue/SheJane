@@ -16,6 +16,9 @@ const (
 	// configure one. 8192 is supported by every Claude 3.5+ model; the old
 	// hardcoded 2048 truncated long agent answers mid-sentence.
 	defaultAnthropicMaxTokens = 8192
+	// Anthropic's prompt cache silently skips prompts below the model/platform
+	// threshold; 1024 is the lowest documented minimum for active Claude models.
+	anthropicPromptCacheMinEstimateTokens = 1024
 )
 
 type AnthropicProvider struct {
@@ -89,6 +92,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, mod
 		if system != "" {
 			payload["system"] = system
 		}
+		enableAnthropicPromptCaching(payload, request)
 		body, err := json.Marshal(payload)
 		if err != nil {
 			errs <- err
@@ -187,6 +191,7 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatR
 		payload["tools"] = tools
 		payload["tool_choice"] = map[string]any{"type": "auto"}
 	}
+	enableAnthropicPromptCaching(payload, request)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Completion{}, err
@@ -233,6 +238,13 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatR
 	}
 	completion.Content = text.String()
 	return completion, nil
+}
+
+func enableAnthropicPromptCaching(payload map[string]any, request ChatRequest) {
+	if EstimateRequestTokens(request) < anthropicPromptCacheMinEstimateTokens {
+		return
+	}
+	payload["cache_control"] = map[string]string{"type": "ephemeral"}
 }
 
 // anthropicMessages converts the neutral message history to Anthropic content

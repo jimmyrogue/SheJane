@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -34,22 +35,34 @@ from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
 from .agent.builder import build_agent
-from .config import Settings, get_settings
+from .config import Settings, clamp_run_budget, get_settings
 from .event_translator import translate
+from .failure_policy import classify_failure_payload
+from .llm.backend import BackendLLMError
 from .llm.resolve import resolve_auto_model
 from .observability import build_callbacks
+from .progress_ledger import build_handoff_snapshot
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.runs")
 
-# Max number of historical messages (user + assistant turns combined,
-# not counting the current user goal) we forward to the agent. Beyond
-# this we keep the last N and surface a "dropped X earlier messages"
-# notice via the ContextBuilder <state> layer so the model knows context
-# is incomplete instead of silently losing it. 40 ≈ 20 user/assistant
-# pairs, which covers most real conversations before we'd want LLM-based
-# summarization anyway.
-_MAX_HISTORY_TURNS = 40
+# Default max number of historical messages (user + assistant turns combined,
+# not counting the current user goal) we forward to the agent. Beyond this we
+# keep the last N and surface a "dropped X earlier messages" notice via the
+# ContextBuilder <state> layer so the model knows context is incomplete instead
+# of silently losing it. The effective value comes from Settings so deployments
+# and per-run Advanced settings can tune it without code changes.
+_DEFAULT_MAX_HISTORY_TURNS = 40
+_HISTORY_SUMMARY_MAX_ITEMS = 6
+_HISTORY_SUMMARY_HEAD_ITEMS = 2
+_HISTORY_SUMMARY_IMPORTANT_ITEMS = 2
+_HISTORY_SUMMARY_EXCERPT_CHARS = 180
+_HISTORY_SUMMARY_MAX_CHARS = 1400
+_IMPORTANT_HISTORY_RE = re.compile(
+    r"(重要|决定|约定|必须|不要|记住|remember|decision|decided|must|requirement|constraint|important)",
+    re.IGNORECASE,
+)
+_CLIENT_OMISSION_MARKER_PREFIX = "【上下文提示｜对话较长，已省略更早的 "
 
 
 def _merge_pii_types(base: str, extra: str) -> str:
@@ -94,6 +107,8 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
     # Integer knobs.
     for key, field in (
         ("max_model_calls", "max_model_calls"),
+        ("max_history_turns", "max_history_turns"),
+        ("max_model_retries", "max_model_retries"),
         ("max_tool_retries", "max_tool_retries"),
         ("research_search_limit", "research_search_limit"),
         ("tool_selector_max", "tool_selector_max_tools"),
@@ -102,9 +117,10 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
         if raw is None:
             continue
         try:
-            overrides[field] = int(raw)
+            value = int(raw)
         except (TypeError, ValueError):
-            pass
+            continue
+        overrides[field] = clamp_run_budget(field, value)
     # Boolean knobs (accept real bools or "on"/"true"/"1"/"yes").
     for key, field in (
         ("subagents", "enable_subagents"),
@@ -153,6 +169,85 @@ def _apply_advanced_overrides(base: Settings, run_settings: dict[str, Any]) -> S
     return base.model_copy(update=overrides) if overrides else base
 
 
+def _build_dropped_history_summary(messages: list[dict[str, str]]) -> str | None:
+    if not messages:
+        return None
+    selected = _select_history_summary_messages(messages)
+    lines: list[str] = []
+    for item in selected:
+        content = _compact_history_excerpt(item.get("content", ""))
+        if not content:
+            continue
+        role = "用户" if item.get("role") == "user" else "助手"
+        lines.append(f"- {role}: {content}")
+    if not lines:
+        return None
+    summary = "\n".join(lines)
+    if len(summary) > _HISTORY_SUMMARY_MAX_CHARS:
+        summary = summary[:_HISTORY_SUMMARY_MAX_CHARS].rstrip() + "..."
+    return summary
+
+
+def _truncate_history_for_run(
+    messages: list[dict[str, str]],
+    *,
+    max_history_turns: int,
+) -> tuple[list[dict[str, str]], int, list[dict[str, str]]]:
+    """Return (kept_messages, dropped_count, dropped_messages) for a new run.
+
+    The desktop client may already have replaced older local-first history with
+    a synthetic omission marker. When the daemon applies the same history cap,
+    preserve that marker as a compressed memory anchor and spend the remaining
+    budget on recent real turns; otherwise the two layers can erase the very
+    summary that made the client-side truncation honest.
+    """
+    max_items = max(1, int(max_history_turns))
+    if len(messages) <= max_items:
+        return messages, 0, []
+
+    if messages and _is_client_omission_marker(messages[0]):
+        recent_budget = max_items - 1
+        if recent_budget <= 0:
+            return [messages[0]], len(messages) - 1, messages[1:]
+        recent_start = len(messages) - recent_budget
+        dropped = messages[1:recent_start]
+        kept = [messages[0], *messages[recent_start:]]
+        return kept, len(dropped), dropped
+
+    dropped_count = len(messages) - max_items
+    return messages[-max_items:], dropped_count, messages[:dropped_count]
+
+
+def _is_client_omission_marker(message: dict[str, str]) -> bool:
+    return message.get("role") == "user" and str(message.get("content", "")).startswith(
+        _CLIENT_OMISSION_MARKER_PREFIX
+    )
+
+
+def _select_history_summary_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    if len(messages) <= _HISTORY_SUMMARY_MAX_ITEMS:
+        return messages
+    selected: set[int] = set(range(min(_HISTORY_SUMMARY_HEAD_ITEMS, len(messages))))
+    important_limit = _HISTORY_SUMMARY_HEAD_ITEMS + _HISTORY_SUMMARY_IMPORTANT_ITEMS
+    for index in range(_HISTORY_SUMMARY_HEAD_ITEMS, len(messages)):
+        if len(selected) >= important_limit:
+            break
+        if _IMPORTANT_HISTORY_RE.search(str(messages[index].get("content", ""))):
+            selected.add(index)
+    index = len(messages) - 1
+    while index >= 0 and len(selected) < _HISTORY_SUMMARY_MAX_ITEMS:
+        selected.add(index)
+        index -= 1
+    return [messages[index] for index in sorted(selected)]
+
+
+def _compact_history_excerpt(content: str) -> str:
+    value = " ".join(str(content).split())
+    if len(value) <= _HISTORY_SUMMARY_EXCERPT_CHARS:
+        return value
+    return value[:_HISTORY_SUMMARY_EXCERPT_CHARS].rstrip() + "..."
+
+
 class RunCoordinator:
     def __init__(
         self,
@@ -169,6 +264,7 @@ class RunCoordinator:
         self._workspaces: dict[str, str | None] = {}
         self._histories: dict[str, list[dict[str, str]]] = {}
         self._settings_overrides: dict[str, dict[str, Any]] = {}
+        self._run_metadata: dict[str, dict[str, Any]] = {}
         # Resolved tier per run (fast|deep|…). Mirrors local_runs.mode; lets a
         # resume after restart continue at the user's chosen tier.
         self._modes: dict[str, str] = {}
@@ -193,15 +289,20 @@ class RunCoordinator:
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
-        """Push a single envelope onto the run's live SSE queue.
+        """Persist an HTTP-originated event and mirror it to the live queue.
 
         Used by HTTP handlers to surface side-effects (`permission.resolved`,
         `question.answered`) that originate from the API surface rather
-        than the LangGraph stream itself. No-op if the run no longer has
-        a live queue (it completed or was never started).
+        than the LangGraph stream itself. If the stream already closed at a
+        waiting point, the event is still persisted so the resume stream can
+        replay it before `run.resumed`.
         """
         queue = self._queues.get(run_id)
         if queue is None:
+            try:
+                await self.store.append_event(run_id, event_type, payload)
+            except Exception as exc:
+                log.warning("event persist failed (%s): %s", event_type, exc)
             return
         await self._enqueue(queue, run_id, event_type, payload)
 
@@ -216,6 +317,7 @@ class RunCoordinator:
         history: list[dict[str, str]] | None = None,
         parent_run_id: str | None = None,
         settings: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Start a new agent run.
 
@@ -232,6 +334,7 @@ class RunCoordinator:
             workspace_path=workspace_path,
             parent_run_id=parent_run_id,
             settings=settings,
+            metadata=metadata,
             mode=mode,
         )
         run_id = run["id"]
@@ -241,6 +344,7 @@ class RunCoordinator:
         self._workspaces[run_id] = workspace_path
         self._histories[run_id] = list(history or [])
         self._settings_overrides[run_id] = dict(settings or {})
+        self._run_metadata[run_id] = dict(metadata or {})
         self._modes[run_id] = mode
 
         task = asyncio.create_task(
@@ -276,6 +380,10 @@ class RunCoordinator:
             self._settings_overrides[run_id] = json.loads(run.get("settings_json") or "{}")
         except (TypeError, ValueError):
             self._settings_overrides[run_id] = {}
+        try:
+            self._run_metadata[run_id] = json.loads(run.get("metadata_json") or "{}")
+        except (TypeError, ValueError):
+            self._run_metadata[run_id] = {}
         grants = await self.store.grants_for_run(run_id)
         if grants:
             self._run_grants[run_id] = set(grants)
@@ -287,8 +395,9 @@ class RunCoordinator:
         - queued / running: the driving asyncio task died with the process and
           can't be re-attached — mark them failed so they don't sit `running`
           forever and the client shows a terminal state.
-        - waiting_permission: paused at a checkpointed interrupt — leave it;
-          `resume_run` rehydrates state from the DB when the user decides."""
+        - waiting_permission / waiting_input: paused at a checkpointed
+          interrupt — leave it; `resume_run` rehydrates state from the DB when
+          the user decides."""
         try:
             active = await self.store.list_active_runs()
         except Exception:
@@ -307,12 +416,12 @@ class RunCoordinator:
                     failed += 1
                 except Exception:
                     log.exception("recover_orphans: failed to fail run %s", run_id)
-            elif status == "waiting_permission":
+            elif status in {"waiting_permission", "waiting_input"}:
                 kept += 1
         if failed or kept:
             log.info(
                 "recover_orphans: %d orphaned run(s) marked failed, "
-                "%d waiting_permission run(s) left resumable",
+                "%d waiting run(s) left resumable",
                 failed,
                 kept,
             )
@@ -335,8 +444,13 @@ class RunCoordinator:
         if not await self._hydrate_run_state(run_id):
             return False
         if run_id not in self._queues:
-            # We may be resuming after a daemon restart — recreate the queue.
-            self._queues[run_id] = asyncio.Queue(maxsize=2048)
+            # We may be resuming after a daemon restart or after the first
+            # waiting stream closed — recreate the queue and seed any
+            # persisted HTTP-side decision events so the next subscriber sees
+            # the user's click before `run.resumed`.
+            queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=2048)
+            self._queues[run_id] = queue
+            await self._replay_resume_side_effects(run_id, queue)
         task = asyncio.create_task(
             self._drive_run(
                 run_id=run_id,
@@ -346,6 +460,37 @@ class RunCoordinator:
         )
         self._tasks[run_id] = task
         return True
+
+    async def _replay_resume_side_effects(
+        self,
+        run_id: str,
+        queue: asyncio.Queue[Any],
+    ) -> None:
+        events = await self.store.events_since(run_id, after_seq=0)
+        boundary_index = -1
+        for index, event in enumerate(events):
+            if event.get("event_type") == "run.waiting":
+                boundary_index = index
+        for event in events[boundary_index + 1 :]:
+            event_type = str(event.get("event_type") or "")
+            if event_type not in {"permission.resolved", "question.answered"}:
+                continue
+            try:
+                payload = json.loads(event.get("payload_json") or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            envelope = {
+                "id": event["id"],
+                "run_id": event["run_id"],
+                "seq": event["seq"],
+                "event_type": event_type,
+                "payload": payload,
+                "created_at": event["created_at"],
+            }
+            try:
+                queue.put_nowait(envelope)
+            except asyncio.QueueFull:
+                log.warning("event queue full for %s; dropping replayed %s", run_id, event_type)
 
     async def cancel_run(self, run_id: str) -> bool:
         task = self._tasks.get(run_id)
@@ -395,6 +540,8 @@ class RunCoordinator:
         queue = self._queues[run_id]
         workspace_path = self._workspaces.get(run_id)
         goal = self._goals.get(run_id, "")
+        repair_context: dict[str, Any] | None = None
+        retry_context: dict[str, Any] | None = None
 
         try:
             settings = get_settings()
@@ -406,6 +553,38 @@ class RunCoordinator:
             if resume_payload is None:
                 await self.store.update_run_status(run_id, "running")
                 await self._enqueue(queue, run_id, "run.started", {"goal": goal})
+
+                repair_context = _repair_context_from_metadata(
+                    self._run_metadata.get(run_id) or {},
+                    max_attempts=settings.repair_workflow_max,
+                )
+                if repair_context is not None:
+                    if _repair_context_rejected(repair_context):
+                        await self.store.update_run_status(run_id, "failed")
+                        await self._enqueue(
+                            queue,
+                            run_id,
+                            "repair.workflow",
+                            _repair_workflow_payload(
+                                repair_context,
+                                status="rejected",
+                                reason="repair attempt limit exceeded",
+                            ),
+                        )
+                        await self._enqueue(
+                            queue,
+                            run_id,
+                            "run.failed",
+                            _repair_rejected_failure_payload(repair_context),
+                        )
+                        return
+                    await self._enqueue(
+                        queue,
+                        run_id,
+                        "repair.workflow",
+                        _repair_workflow_payload(repair_context, status="started"),
+                    )
+                retry_context = _retry_context_from_metadata(self._run_metadata.get(run_id) or {})
 
             # The cloud owns model resolution (flat catalog). The daemon
             # forwards the user's selection; "pro" stays a wire alias for the
@@ -447,6 +626,13 @@ class RunCoordinator:
                 except Exception:
                     log.warning("failed to persist model for run %s", run_id)
 
+            run_settings = self._settings_overrides.get(run_id) or {}
+            # Per-run effective settings = base daemon settings with any
+            # "Advanced" knobs the client sent folded on top. This must happen
+            # before history truncation because max_history_turns is one of
+            # those knobs.
+            effective_settings = _apply_advanced_overrides(settings, run_settings)
+
             # Build the message list early so we can hand the truncation
             # numbers (turn_count, dropped_history_count) to ContextBuilder
             # via build_agent. Resume runs reuse the agent's persisted
@@ -458,14 +644,17 @@ class RunCoordinator:
                 for item in history
                 if item.get("content")
             ]
-            dropped_history_count = max(0, len(full_messages) - _MAX_HISTORY_TURNS)
-            kept_messages = (
-                full_messages[-_MAX_HISTORY_TURNS:] if dropped_history_count else full_messages
+            max_history_turns = max(1, int(effective_settings.max_history_turns))
+            kept_messages, dropped_history_count, dropped_messages = _truncate_history_for_run(
+                full_messages,
+                max_history_turns=max_history_turns,
             )
-            # +1 for the current user goal that gets appended below.
-            turn_count = len(kept_messages) + 1
+            dropped_history_summary = _build_dropped_history_summary(dropped_messages)
+            # +1 for the current user goal that gets appended below. This is
+            # the original conversation depth, not the kept slice length; the
+            # state layer should tell the model how long the thread really is.
+            turn_count = len(full_messages) + 1
 
-            run_settings = self._settings_overrides.get(run_id) or {}
             # Defaults: memory + skills + mcp all ON. The client's
             # agent settings panel has them enabled by default; legacy
             # callers (curl, tests) that don't send any settings
@@ -491,9 +680,6 @@ class RunCoordinator:
             mcp_disabled_servers: set[str] = {
                 str(name) for name in raw_disabled if isinstance(name, str)
             }
-            # Per-run effective settings = base daemon settings with any
-            # "Advanced" knobs the client sent folded on top.
-            effective_settings = _apply_advanced_overrides(settings, run_settings)
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -504,12 +690,15 @@ class RunCoordinator:
                 task_goal=goal,
                 turn_count=turn_count,
                 dropped_history_count=dropped_history_count,
+                dropped_history_summary=dropped_history_summary,
                 memory_enabled=memory_enabled,
                 skills_enabled=skills_enabled,
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
                 code_exec_enabled=code_exec_enabled,
                 settings=effective_settings,
+                repair_context=repair_context,
+                retry_context=retry_context,
             )
             config = {
                 "configurable": {"thread_id": run_id},
@@ -568,6 +757,13 @@ class RunCoordinator:
                 if not snapshot.next:
                     await self.store.update_run_status(run_id, "completed")
                     final_text = _extract_final_text(snapshot.values)
+                    if repair_context is not None:
+                        await self._enqueue(
+                            queue,
+                            run_id,
+                            "repair.workflow",
+                            _repair_workflow_payload(repair_context, status="completed"),
+                        )
                     await self._enqueue(
                         queue,
                         run_id,
@@ -629,7 +825,9 @@ class RunCoordinator:
                     continue
 
                 # Surface to user.
-                await self.store.update_run_status(run_id, "waiting_permission")
+                await self.store.update_run_status(
+                    run_id, _waiting_status_for_interrupts(interrupts)
+                )
                 for snap_interrupt in interrupts:
                     await self._handle_interrupt(queue, run_id, snap_interrupt)
                 await self._enqueue(
@@ -642,22 +840,44 @@ class RunCoordinator:
                             {"value": getattr(i, "value", None), "id": getattr(i, "id", None)}
                             for i in interrupts
                         ],
+                        "handoff": await self._build_waiting_handoff(run_id),
                     },
                 )
                 break
 
         except asyncio.CancelledError:
             await self.store.update_run_status(run_id, "canceled")
+            if repair_context is not None:
+                await self._enqueue(
+                    queue,
+                    run_id,
+                    "repair.workflow",
+                    _repair_workflow_payload(repair_context, status="canceled"),
+                )
             await self._enqueue(queue, run_id, "run.canceled", {})
             raise
         except Exception as exc:
             log.exception("run %s failed", run_id)
             await self.store.update_run_status(run_id, "failed")
+            failure_payload = _run_failed_payload(exc)
+            if isinstance(exc, BackendLLMError):
+                await self._enqueue(queue, run_id, "llm.error", failure_payload)
+            if repair_context is not None:
+                await self._enqueue(
+                    queue,
+                    run_id,
+                    "repair.workflow",
+                    _repair_workflow_payload(
+                        repair_context,
+                        status="failed",
+                        reason=str(failure_payload.get("error") or exc),
+                    ),
+                )
             await self._enqueue(
                 queue,
                 run_id,
                 "run.failed",
-                {"error": str(exc), "type": type(exc).__name__},
+                failure_payload,
             )
         finally:
             await queue.put(None)  # stream sentinel
@@ -712,6 +932,27 @@ class RunCoordinator:
             "payload": {"decisions": [{"type": "approve"} for _ in all_actions]},
             "actions": all_actions,
         }
+
+    async def _build_waiting_handoff(self, run_id: str) -> dict[str, Any]:
+        raw_events = await self.store.events_since(run_id, after_seq=0)
+        events: list[dict[str, Any]] = []
+        for event in raw_events:
+            try:
+                payload = json.loads(event.get("payload_json") or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            events.append(
+                {
+                    "id": event.get("id"),
+                    "run_id": event.get("run_id"),
+                    "seq": event.get("seq"),
+                    "event_type": event.get("event_type"),
+                    "payload": payload,
+                    "created_at": event.get("created_at"),
+                }
+            )
+        artifacts = await self.store.list_artifacts_for_run(run_id)
+        return build_handoff_snapshot(events, artifacts)
 
     async def _handle_interrupt(
         self,
@@ -870,6 +1111,115 @@ def _serialize_payload(payload: Any) -> dict[str, Any]:
             return json.loads(json.dumps(payload, default=str))
         except Exception:
             return {"repr": str(payload)}
+
+
+def _repair_context_from_metadata(
+    metadata: dict[str, Any],
+    *,
+    max_attempts: int,
+) -> dict[str, Any] | None:
+    if str(metadata.get("intent", "")).strip().lower() != "repair":
+        return None
+    return {
+        "attempt": _positive_int(metadata.get("attempt"), default=1),
+        "max_attempts": max(0, int(max_attempts)),
+        "source_run_id": _non_empty_str(metadata.get("source_run_id")),
+        "source_message_id": _non_empty_str(metadata.get("source_message_id")),
+        "failure_category": _non_empty_str(metadata.get("failure_category")),
+        "failure_action_kind": _non_empty_str(metadata.get("failure_action_kind")),
+    }
+
+
+def _retry_context_from_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    if str(metadata.get("intent", "")).strip().lower() != "retry":
+        return None
+    return {
+        "attempt": _positive_int(metadata.get("attempt"), default=1),
+        "source_run_id": _non_empty_str(metadata.get("source_run_id")),
+        "source_message_id": _non_empty_str(metadata.get("source_message_id")),
+        "failure_category": _non_empty_str(metadata.get("failure_category")),
+        "failure_action_kind": _non_empty_str(metadata.get("failure_action_kind")),
+    }
+
+
+def _repair_context_rejected(context: dict[str, Any]) -> bool:
+    max_attempts = int(context.get("max_attempts") or 0)
+    attempt = int(context.get("attempt") or 1)
+    return max_attempts <= 0 or attempt > max_attempts
+
+
+def _repair_workflow_payload(
+    context: dict[str, Any],
+    *,
+    status: str,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "status": status,
+        "attempt": int(context.get("attempt") or 1),
+        "max_attempts": int(context.get("max_attempts") or 0),
+        "source_run_id": context.get("source_run_id"),
+        "source_message_id": context.get("source_message_id"),
+        "failure_category": context.get("failure_category"),
+        "failure_action_kind": context.get("failure_action_kind"),
+        "reason": reason,
+    }
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _repair_rejected_failure_payload(context: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "error": "repair attempt limit exceeded",
+        "type": "RepairWorkflowRejected",
+        "category": "validation",
+        "recoverable": True,
+        "retryable": False,
+        "action_kind": "repair",
+        "suggested_action": (
+            "Review the previous repair attempts and adjust the task or inputs before retrying."
+        ),
+        "attempt": int(context.get("attempt") or 1),
+        "max_attempts": int(context.get("max_attempts") or 0),
+    }
+
+
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _non_empty_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _run_failed_payload(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, BackendLLMError):
+        payload = exc.to_event_payload()
+    else:
+        payload = {"error": str(exc), "type": type(exc).__name__}
+    classification = classify_failure_payload("run.failed", payload)
+    for key in ("category", "recoverable", "retryable", "action_kind", "suggested_action"):
+        payload.setdefault(key, classification[key])
+    if classification.get("code"):
+        payload.setdefault("error_code", classification["code"])
+    return payload
+
+
+def _waiting_status_for_interrupts(interrupts: list[Any]) -> str:
+    if interrupts and all(_is_question_interrupt(item) for item in interrupts):
+        return "waiting_input"
+    return "waiting_permission"
+
+
+def _is_question_interrupt(interrupt: Any) -> bool:
+    value = getattr(interrupt, "value", None)
+    return isinstance(value, dict) and value.get("kind") == "question"
 
 
 def _extract_final_text(state_values: Any) -> str:

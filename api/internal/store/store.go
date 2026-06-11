@@ -37,6 +37,7 @@ type LLMCallRecord struct {
 	UserID               string    `json:"user_id"`
 	WalletID             string    `json:"wallet_id"`
 	ReservationID        string    `json:"reservation_id"`
+	RunID                string    `json:"run_id,omitempty"`
 	ClientConversationID string    `json:"client_conversation_id"`
 	ClientMessageID      string    `json:"client_message_id"`
 	Mode                 string    `json:"mode"`
@@ -165,6 +166,7 @@ type AdminListOptions struct {
 	Query  string
 	UserID string
 	Status string
+	RunID  string
 	Limit  int
 	Offset int
 }
@@ -374,6 +376,8 @@ type Store interface {
 	AdminExternalToolCalls(ctx context.Context, opts AdminListOptions) ([]AdminExternalToolCallRecord, error)
 	AdminPaymentOrders(ctx context.Context, opts AdminListOptions) ([]AdminPaymentOrder, error)
 	AdminAgentRuns(ctx context.Context, opts AdminListOptions) ([]AdminAgentRun, error)
+	AdminAgentRunByID(ctx context.Context, runID string) (AdminAgentRun, error)
+	AdminWalletTransactionsByRun(ctx context.Context, runID string, limit int) ([]billing.Transaction, error)
 	AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error)
 
 	CountModelConfigs(ctx context.Context) (int64, error)

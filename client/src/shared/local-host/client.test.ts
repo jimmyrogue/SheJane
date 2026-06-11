@@ -145,6 +145,51 @@ describe('desktop local host client', () => {
     )
   })
 
+  it('carries run metadata in the run-create payload', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-repair',
+          goal: 'Fix the failed task',
+          status: 'queued',
+          created_at: '2026-05-16T00:00:00Z',
+          updated_at: '2026-05-16T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await createLocalRun(
+      {
+        goal: 'Fix the failed task',
+        metadata: {
+          intent: 'repair',
+          source_run_id: 'run-original',
+          source_message_id: 'msg-original',
+          attempt: 1,
+        },
+      },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs',
+      expect.objectContaining({
+        body: JSON.stringify({
+          goal: 'Fix the failed task',
+          history: [],
+          metadata: {
+            intent: 'repair',
+            source_run_id: 'run-original',
+            source_message_id: 'msg-original',
+            attempt: 1,
+          },
+        }),
+      }),
+    )
+  })
+
   it('maps advanced agent settings to snake_case wire keys', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -165,6 +210,9 @@ describe('desktop local host client', () => {
         settings: {
           advanced: {
             maxModelCalls: 50,
+            maxHistoryTurns: 12,
+            maxModelRetries: 1,
+            maxToolRetries: 4,
             researchSearchLimit: 8,
             subagents: false,
             browserHeadless: false,
@@ -182,6 +230,9 @@ describe('desktop local host client', () => {
     const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
     expect(sent.settings).toEqual({
       max_model_calls: 50,
+      max_history_turns: 12,
+      max_model_retries: 1,
+      max_tool_retries: 4,
       research_search_limit: 8,
       subagents: false,
       browser_headless: false,
@@ -473,6 +524,25 @@ describe('desktop local host client', () => {
             permissions: [],
             artifacts: [],
             latest_checkpoint: null,
+            handoff: {
+              status: 'running',
+              headline: 'Run is running with 0 persisted events.',
+              next_actions: ['Reconnect to the stream or wait for the run to reach a terminal state.'],
+              blockers: [],
+              recent_event_types: [],
+              ledger_state: 'fresh',
+              ledger_message: null,
+            },
+            feature_ledger: {
+              summary: 'Wire diagnostics',
+              status: 'in_progress',
+              acceptance_criteria: ['diagnostics exposes latest ledger'],
+              decisions: [],
+              files_touched: [],
+              validation_commands: [],
+              unresolved_risks: [],
+              next_actions: ['run tests'],
+            },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         ),
@@ -484,6 +554,8 @@ describe('desktop local host client', () => {
     await expect(getLocalRunDiagnostics('run-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toMatchObject({
       schema_version: 1,
       run: { id: 'run-1' },
+      handoff: { status: 'running' },
+      feature_ledger: { summary: 'Wire diagnostics' },
     })
     expect(fetcher).toHaveBeenNthCalledWith(
       1,

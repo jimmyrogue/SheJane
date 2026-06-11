@@ -108,3 +108,16 @@ def make_browser_tool(llm: Any = None, *, headless: bool = True) -> BaseTool:
         }
 
     return browser_task
+
+
+def make_browser_tool_if_configured(llm: Any = None, *, headless: bool = True) -> BaseTool | None:
+    """Return `browser.task` only when it can actually execute.
+
+    `make_browser_tool()` intentionally still returns an unavailable stub for
+    direct smoke tests and future diagnostics. The agent-facing registry should
+    not advertise that stub to the model, because a discoverable-but-dead tool
+    invites wasted tool loops and confusing permission prompts.
+    """
+    if llm is None or not _browser_use_available():
+        return None
+    return make_browser_tool(llm=llm, headless=headless)

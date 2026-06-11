@@ -1,21 +1,28 @@
 import { useState } from 'react'
-import { IconChevronDown, IconDownload, IconWorld } from '@tabler/icons-react'
+import { IconCreditCard, IconFolderPlus, IconRefresh, IconReload, IconStethoscope, IconChevronDown, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { AgentTimelineItem, AgentToolDetail, ChatMessage } from '@/shared/local-data/types'
 
 type ProgressTone = 'working' | 'permission' | 'done' | 'failed' | 'idle'
+export type AgentFailureAction = 'retry' | 'repair' | 'recharge' | 'refresh_session' | 'workspace' | 'diagnostics'
 
 interface PendingPermission {
   requestID: string
   tool: string
 }
 
+interface FailureActionCTA {
+  action: AgentFailureAction
+  label: string
+}
+
 interface AgentProgressState {
   tone: ProgressTone
   label: string
   detail?: string
+  failureAction?: FailureActionCTA
   pendingPermission?: PendingPermission
   sourcesCount: number
   artifactsCount: number
@@ -26,6 +33,7 @@ interface AgentProgressState {
 export function AgentProgress({
   message,
   onOpenDiagnostics,
+  onFailureAction,
 }: {
   message: ChatMessage
   /** Kept in the prop signature for backwards compatibility with the
@@ -34,6 +42,7 @@ export function AgentProgress({
    *  expanded view was too noisy and they only wanted diagnostics). */
   onOpenArtifact?: (artifactID: string) => void
   onOpenDiagnostics?: (runID: string) => void
+  onFailureAction?: (action: AgentFailureAction, message: ChatMessage) => void
 }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
@@ -55,7 +64,9 @@ export function AgentProgress({
   // While the run is active: the current action + its concrete target
   // ("正在打开 weather.com"). Once finished: an aggregated tally of what was
   // done ("读取 3 个文件 · 运行 2 条命令"). Never success/failure or step count.
-  const headline = summaryHeadline(events, message, t)
+  const headline = progress.tone === 'failed'
+    ? { label: progress.label }
+    : summaryHeadline(events, message, t)
   // Prefer the rich `toolDetail` shape when present (set by
   // chatStore.timelineItem when the daemon's tool.requested event
   // surfaces real args). Fall back to the legacy `target` string for
@@ -161,6 +172,24 @@ export function AgentProgress({
         </ul>
       ) : null}
 
+      {progress.detail ? (
+        <p className="agent-progress-detail">{progress.detail}</p>
+      ) : null}
+
+      {progress.failureAction && onFailureAction ? (
+        <div className="agent-progress-actions">
+          <Button
+            className="agent-progress-action"
+            size="sm"
+            variant="outline"
+            onClick={() => onFailureAction(progress.failureAction!.action, message)}
+          >
+            {failureActionIcon(progress.failureAction.action)}
+            {progress.failureAction.label}
+          </Button>
+        </div>
+      ) : null}
+
       {/* Expanded body intentionally contains ONLY the diagnostics
        *  button. The old per-event step list (graph.node /
        *  llm.tool_call_chunk / run.started …) was internal-machinery
@@ -199,6 +228,9 @@ const OPERATION_TYPES = new Set([
   'verification.completed',
   'ui.action.requested',
   'ui.action.completed',
+  'repair.workflow',
+  'run.waiting',
+  'run.failed',
 ])
 
 const ACTIVITY_TYPES = new Set([
@@ -210,6 +242,9 @@ const ACTIVITY_TYPES = new Set([
   'verification.completed',
   'ui.action.requested',
   'ui.action.completed',
+  'repair.workflow',
+  'run.waiting',
+  'run.failed',
 ])
 
 const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
@@ -409,6 +444,19 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
     return null
   }
 
+  const handoffWarning = latestHandoffWarningEvent(events)
+  if (handoffWarning && ACTIVE_RUN_STATUSES.has(message.status)) {
+    return {
+      tone: 'working',
+      label: activeLabel(handoffWarning, t),
+      detail: activeDetail(handoffWarning, sourcesCount, t),
+      sourcesCount,
+      artifactsCount: artifacts.length,
+      latestArtifactID,
+      diagnosticsRunID,
+    }
+  }
+
   if (pendingPermission) {
     return {
       tone: 'permission',
@@ -427,7 +475,9 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
     return {
       tone: 'failed',
       label: latestFailure?.label || message.content || t('agent.failed'),
-      detail: sourcesCount || artifacts.length ? t('agent.failedDetail') : undefined,
+      detail: failureGuidance(latestFailure, t)
+        || (sourcesCount || artifacts.length ? t('agent.failedDetail') : undefined),
+      failureAction: failureActionCTA(latestFailure, t),
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
@@ -478,6 +528,103 @@ function findPendingPermission(events: AgentTimelineItem[], t: Translator): Pend
   return undefined
 }
 
+function failureGuidance(
+  event: AgentTimelineItem | undefined,
+  t: Translator,
+): string | undefined {
+  if (!event) {
+    return undefined
+  }
+  if (event.failureCategory) {
+    const localized = t(failureCategoryActionKey(event.failureCategory))
+    if (localized) {
+      return localized
+    }
+  }
+  if (event.failureActionKind === 'operator_action') {
+    return t('diagnostics.failureAction.fatal')
+  }
+  if (event.failureActionKind === 'repair') {
+    return t('diagnostics.failureAction.validation')
+  }
+  if (event.failureActionKind === 'retry') {
+    return t('diagnostics.failureAction.transient')
+  }
+  if (event.failureActionKind === 'inspect') {
+    return t('diagnostics.failureAction.unknown')
+  }
+  return event.failureSuggestedAction
+}
+
+function failureActionCTA(
+  event: AgentTimelineItem | undefined,
+  t: Translator,
+): FailureActionCTA | undefined {
+  if (!event) {
+    return undefined
+  }
+  if (event.failureActionKind === 'retry') {
+    return { action: 'retry', label: t('agent.failureAction.retry') }
+  }
+  if (event.failureActionKind === 'repair') {
+    return { action: 'repair', label: t('agent.failureAction.repair') }
+  }
+  switch (event.failureCategory) {
+    case 'quota':
+      return { action: 'recharge', label: t('agent.failureAction.recharge') }
+    case 'auth':
+      return { action: 'refresh_session', label: t('agent.failureAction.refreshSession') }
+    case 'workspace':
+      return { action: 'workspace', label: t('agent.failureAction.chooseWorkspace') }
+    case 'configuration':
+    case 'fatal':
+    case 'unknown':
+      return { action: 'diagnostics', label: t('agent.failureAction.openDiagnostics') }
+    default:
+      return undefined
+  }
+}
+
+function failureActionIcon(action: AgentFailureAction) {
+  switch (action) {
+    case 'retry':
+      return <IconReload size={13} aria-hidden="true" />
+    case 'repair':
+      return <IconTool size={13} aria-hidden="true" />
+    case 'recharge':
+      return <IconCreditCard size={13} aria-hidden="true" />
+    case 'refresh_session':
+      return <IconRefresh size={13} aria-hidden="true" />
+    case 'workspace':
+      return <IconFolderPlus size={13} aria-hidden="true" />
+    case 'diagnostics':
+      return <IconStethoscope size={13} aria-hidden="true" />
+  }
+}
+
+function failureCategoryActionKey(category: string): Parameters<Translator>[0] {
+  switch (category) {
+    case 'transient':
+      return 'diagnostics.failureAction.transient'
+    case 'auth':
+      return 'diagnostics.failureAction.auth'
+    case 'quota':
+      return 'diagnostics.failureAction.quota'
+    case 'permission':
+      return 'diagnostics.failureAction.permission'
+    case 'configuration':
+      return 'diagnostics.failureAction.configuration'
+    case 'workspace':
+      return 'diagnostics.failureAction.workspace'
+    case 'validation':
+      return 'diagnostics.failureAction.validation'
+    case 'fatal':
+      return 'diagnostics.failureAction.fatal'
+    default:
+      return 'diagnostics.failureAction.unknown'
+  }
+}
+
 function uniqueCount(events: AgentTimelineItem[], select: (event: AgentTimelineItem) => string | undefined): number {
   return uniqueValues(events, select).length
 }
@@ -503,6 +650,8 @@ function isProgressEvent(event: AgentTimelineItem): boolean {
     'source.collected',
     'ui.action.requested',
     'ui.action.completed',
+    'repair.workflow',
+    'run.waiting',
     'verification.completed',
     'run.budget_warning',
     'checkpoint.resumed',
@@ -534,6 +683,9 @@ function activeLabel(event: AgentTimelineItem, t: Translator): string {
   if (event.type === 'ui.action.completed') {
     return t('agent.uiCompleted', { action: stripKnownPrefix(event.label, ['操作完成：', 'Action completed: ']) })
   }
+  if (event.type === 'run.waiting' && isHandoffLedgerWarning(event)) {
+    return t('agent.handoffWarning')
+  }
   return event.label || t('agent.processingFallback')
 }
 
@@ -546,6 +698,9 @@ function activeDetail(event: AgentTimelineItem | undefined, sourcesCount: number
   }
   if (event.type === 'run.budget_warning') {
     return t('agent.detail.longRunning')
+  }
+  if (event.type === 'run.waiting') {
+    return handoffLedgerDetail(event, t)
   }
   return undefined
 }
@@ -564,7 +719,28 @@ function defaultWorkingLabel(message: ChatMessage, t: Translator): string {
   if (message.status === 'waiting_permission') {
     return t('agent.waitingLocalAction')
   }
+  if (message.status === 'waiting_input') {
+    return t('agent.waitingInput')
+  }
   return t('agent.working')
+}
+
+function latestHandoffWarningEvent(events: AgentTimelineItem[]): AgentTimelineItem | undefined {
+  return [...events].reverse().find((event) => event.type === 'run.waiting' && isHandoffLedgerWarning(event))
+}
+
+function isHandoffLedgerWarning(event: AgentTimelineItem): boolean {
+  return event.handoffLedgerState === 'missing' || event.handoffLedgerState === 'stale'
+}
+
+function handoffLedgerDetail(event: AgentTimelineItem, t: Translator): string | undefined {
+  if (event.handoffLedgerState === 'missing') {
+    return t('agent.handoffLedgerMissingDetail')
+  }
+  if (event.handoffLedgerState === 'stale') {
+    return t('agent.handoffLedgerStaleDetail')
+  }
+  return undefined
 }
 
 function stripKnownPrefix(value: string, prefixes: string[]): string {
@@ -661,4 +837,3 @@ function collectInFlightTaskRequests(events: AgentTimelineItem[]): AgentTimeline
   }
   return result
 }
-

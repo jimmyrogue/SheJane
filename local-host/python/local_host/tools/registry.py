@@ -8,19 +8,24 @@ are misconfigured).
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
+from deepagents.backends import FilesystemBackend
+from deepagents.middleware import FilesystemMiddleware
 from langchain_core.tools import BaseTool
 
 from ..config import get_settings
+from ..middleware.memory_writeback import memory_namespace_for_workspace
 from ..store.sqlite import LocalStore
-from .browser import make_browser_tool
+from .browser import make_browser_tool_if_configured
 from .code import CODE_TOOLS_for_workspace
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
-from .memory import MEMORY_TOOLS
+from .memory import MEMORY_TOOLS, make_memory_search_tool
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
 from .pdf import PDF_TOOLS
+from .progress import PROGRESS_TOOLS, make_progress_tool
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
@@ -50,12 +55,14 @@ def core_tools() -> list[BaseTool]:
         # Always-on — the gateway re-checks document ownership +
         # bills credits per call. No external API key required.
         *PDF_TOOLS,
+        *PROGRESS_TOOLS,
     ]
 
 
 async def build_tools(
     *,
     store: LocalStore | None = None,
+    run_id: str | None = None,
     workspace_root: str | None = None,
     include_mcp: bool = True,
     mcp_disabled_servers: set[str] | None = None,
@@ -65,10 +72,10 @@ async def build_tools(
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
 
-    All Phase 2' categories: trivial + workspace.open + fs toolkit + web
-    (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP +
-    browser.task. The browser tool is always present but reports
-    "configure-me" if `browser_llm` is None.
+    All Phase 2' categories: trivial + workspace.open + web
+    (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP.
+    `browser.task` is intentionally omitted until both browser-use and a
+    browser-specific LLM binding are configured.
 
     `include_code_exec` gates the code.execute tool — defaulted to
     False so legacy callers (curl / tests / older client builds) don't
@@ -80,7 +87,7 @@ async def build_tools(
     tools.extend(WEB_TOOLS)
     tools.extend(VERIFY_TOOLS)
     tools.extend(IMAGE_TOOLS)
-    tools.extend(MEMORY_TOOLS)
+    tools.append(make_memory_search_tool(memory_namespace_for_workspace(workspace_root)))
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
     tools.extend(OFFICE_WRITE_TOOLS)
@@ -88,6 +95,7 @@ async def build_tools(
     # workspace binding needed (it operates on cloud document_id,
     # not on workspace files).
     tools.extend(PDF_TOOLS)
+    tools.append(make_progress_tool(store=store, run_id=run_id))
     if include_code_exec:
         # Bind code.execute to the run's workspace so files_in/files_out
         # can read/write against the correct directory. The closure
@@ -98,13 +106,16 @@ async def build_tools(
         tools.extend(CODE_TOOLS_for_workspace(workspace_root))
     if store is not None:
         tools.append(make_workspace_open_tool(store))
-    # fs.list/read/write are provided by deepagents FilesystemMiddleware
+    # ls/read_file/write_file/edit_file/glob/grep/execute are provided by
+    # deepagents FilesystemMiddleware
     # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
     # tools here — that would collide on `read_file` / `write_file` names.
     # `web.search` is now part of WEB_TOOLS (proxied through the cloud
     # gateway), so no conditional wiring is needed here.
 
-    tools.append(make_browser_tool(llm=browser_llm, headless=browser_headless))
+    browser_tool = make_browser_tool_if_configured(llm=browser_llm, headless=browser_headless)
+    if browser_tool is not None:
+        tools.append(browser_tool)
 
     if include_mcp:
         data_dir = get_settings().data_dir
@@ -118,15 +129,17 @@ def describe_tools_sync(
     store: LocalStore | None = None,
     workspace_root: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Sync subset for `GET /v1/tools` — omits MCP (which requires a
-    running event loop) + the deepagents auto-tools (ls, read_file,
-    write_file, edit_file, glob, grep, execute, task, write_todos) which
-    only materialize inside the compiled agent."""
+    """Sync subset for `GET /v1/tools`.
+
+    MCP is omitted because it requires a running event loop and configured
+    servers. deepagents filesystem/shell tools are included as the current
+    runtime contract, using deepagents' own middleware factory for schemas so
+    the discovery endpoint does not invent a parallel fs.* vocabulary.
+    """
     out: list[dict[str, Any]] = []
-    tools: list[BaseTool] = list(core_tools())
+    tools: list[BaseTool] = [*_deepagents_filesystem_tools(workspace_root), *core_tools()]
     if store is not None:
         tools.append(make_workspace_open_tool(store))
-    tools.append(make_browser_tool(llm=None))
     for t in tools:
         out.append(
             {
@@ -138,6 +151,18 @@ def describe_tools_sync(
             }
         )
     return out
+
+
+def _deepagents_filesystem_tools(workspace_root: str | None = None) -> list[BaseTool]:
+    """Return deepagents' filesystem/shell tool definitions for discovery.
+
+    The actual tools are injected later by create_deep_agent via
+    FilesystemMiddleware. This helper mirrors that source for /local/v1/tools
+    without adding duplicate tools to build_tools().
+    """
+    root = workspace_root or str(Path.home() / ".shejane" / "workspace")
+    backend = FilesystemBackend(root_dir=root, max_file_size_mb=10)
+    return list(FilesystemMiddleware(backend=backend).tools)
 
 
 def _serialize_args_schema(tool: BaseTool) -> dict[str, Any] | None:

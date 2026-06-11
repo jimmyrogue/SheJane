@@ -86,8 +86,12 @@ func TestAgentLLMStreamEmitsDeltaUsageAndDoneAndSettlesCredits(t *testing.T) {
 		t.Fatalf("monthly remaining before=%d after=%d, want decrease (credits should have been settled)",
 			before.MonthlyRemaining, after.MonthlyRemaining)
 	}
-	if calls := usageRecords(t, server, token); !strings.Contains(calls, `"scene":"agent_local"`) {
+	calls := usageRecords(t, server, token)
+	if !strings.Contains(calls, `"scene":"agent_local"`) {
 		t.Fatalf("usage records missing agent_local scene: %s", calls)
+	}
+	if !strings.Contains(calls, `"run_id":"local-run-stream-1"`) {
+		t.Fatalf("usage records missing local stream run_id: %s", calls)
 	}
 }
 

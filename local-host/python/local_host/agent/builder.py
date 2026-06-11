@@ -24,7 +24,7 @@ What deepagents auto-adds for us (we no longer wire these manually):
   SummarizationMiddleware         ← auto context compaction
   PatchToolCallsMiddleware        ← orphan tool_call self-heal
   ToolExclusionMiddleware         ← conditional tool gating
-  AnthropicPromptCachingMiddleware← Claude cache_control
+  Prompt caching                  ← Go Anthropic gateway adds cache_control
   MemoryMiddleware                ← AGENTS.md loader
   HumanInTheLoopMiddleware        ← when `interrupt_on=` passed
 """
@@ -37,6 +37,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
+import httpx
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from langchain.agents.middleware import (
@@ -44,7 +45,6 @@ from langchain.agents.middleware import (
     ContextEditingMiddleware,
     LLMToolSelectorMiddleware,
     ModelCallLimitMiddleware,
-    ModelFallbackMiddleware,
     ModelRetryMiddleware,
     PIIMiddleware,
     ToolCallLimitMiddleware,
@@ -55,14 +55,19 @@ from langgraph.store.base import BaseStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from ..config import Settings, get_settings
-from ..llm.backend import BackendChatModel
+from ..failure_policy import build_retry_decision
+from ..llm.backend import BackendChatModel, BackendLLMError
 from ..middleware import (
     InputGuardMiddleware,
     MemoryWritebackMiddleware,
     OutputGuardMiddleware,
     PlanFirstMiddleware,
+    ProgressLedgerGuardMiddleware,
     ReflectMiddleware,
+    ToolResultRetryMiddleware,
+    VerificationLoopMiddleware,
 )
+from ..middleware.memory_writeback import memory_namespace_for_workspace
 from ..store.sqlite import LocalStore
 from ..tools.registry import build_tools
 from .context_builder import RuntimeContext, build_default_context
@@ -196,17 +201,22 @@ async def open_store(settings: Settings | None = None) -> tuple[BaseStore, Async
     return store, stack
 
 
-def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> list[AgentMiddleware]:
+def _custom_middleware(
+    settings: Settings,
+    *,
+    memory_enabled: bool = True,
+    memory_namespace: tuple[str, ...] | None = None,
+) -> list[AgentMiddleware]:
     """Our middleware that deepagents doesn't auto-add.
 
     Order:
       InputGuard → ToolCallLimit → ToolRetry →
-      ModelRetry → ModelFallback (optional) → ModelCallLimit →
-      ContextEditing → OutputGuard → Reflect → MemoryWriteback
+      ModelRetry → ModelCallLimit → ContextEditing →
+      OutputGuard → VerificationLoop → ProgressLedgerGuard → Reflect → MemoryWriteback
 
     `before_*` fire top-to-bottom, `after_*` fire bottom-to-top —
-    so OutputGuard runs first after each LLM call, then Reflect, then
-    MemoryWriteback.
+    so OutputGuard runs before VerificationLoop after each LLM call, then the
+    progress-ledger guard, Reflect, and MemoryWriteback.
 
     `memory_enabled=False` keeps MemoryWritebackMiddleware in the chain
     but short-circuits its hooks — surfaces of the chain stay symmetric
@@ -254,33 +264,85 @@ def _custom_middleware(settings: Settings, *, memory_enabled: bool = True) -> li
                     OSError,
                 ),
             ),
-            ModelRetryMiddleware(max_retries=settings.max_tool_retries),
+            # Some tools return structured envelopes instead of raising.
+            # Retry only when the envelope explicitly opts in with
+            # `{ok:false, retryable:true}` and the tool is in the same
+            # allowlist as exception retries.
+            ToolResultRetryMiddleware(
+                max_retries=settings.max_tool_retries,
+                tools=list(RETRY_ELIGIBLE_TOOLS),
+                initial_delay=0.25,
+                max_delay=2.0,
+            ),
+            ModelRetryMiddleware(
+                max_retries=settings.max_model_retries,
+                retry_on=_should_retry_model_exception,
+                on_failure="error",
+            ),
         ]
     )
-    fallbacks = _parse_fallback_models(settings.fallback_models)
-    if fallbacks:
-        # Activated when primary BackendChatModel errors out and
-        # ModelRetryMiddleware has exhausted its retries. Each entry is
-        # a vendor identifier (`anthropic:claude-haiku-4`) — these talk
-        # *directly* to the provider, bypassing our cloud accounting.
-        # Use carefully: meant for "service degraded" continuity, not
-        # routine traffic.
-        middleware.append(ModelFallbackMiddleware(*fallbacks))
+    if settings.fallback_models.strip():
+        log.warning(
+            "SHEJANE_LOCAL_FALLBACK_MODELS is ignored; if model fallback is "
+            "introduced, it must live in the Go model gateway so provider keys "
+            "and credit accounting stay in the cloud control plane"
+        )
     middleware.extend(
         [
             ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
             ContextEditingMiddleware(),
             OutputGuardMiddleware(),  # P9
+            VerificationLoopMiddleware(max_attempts=settings.verification_repair_max),
+            ProgressLedgerGuardMiddleware(max_attempts=1),
             ReflectMiddleware(enabled=settings.enable_critic_reflection),  # P4
-            MemoryWritebackMiddleware(enabled=memory_enabled),  # P6
+            MemoryWritebackMiddleware(
+                enabled=memory_enabled,
+                namespace=memory_namespace or memory_namespace_for_workspace(None),
+            ),  # P6
         ]
     )
     return middleware
 
 
-def _parse_fallback_models(spec: str) -> list[str]:
-    """Split the comma-separated settings.fallback_models string."""
-    return [s.strip() for s in spec.split(",") if s.strip()]
+def _should_retry_model_exception(exc: Exception) -> bool:
+    if isinstance(exc, BackendLLMError):
+        return _should_retry_model_payload(exc.to_event_payload())
+    if isinstance(exc, httpx.HTTPStatusError):
+        return _should_retry_model_payload(
+            {
+                "code": str(exc.response.status_code),
+                "message": str(exc),
+            }
+        )
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return _should_retry_model_payload(
+            {
+                "code": "timeout",
+                "message": str(exc) or type(exc).__name__,
+                "retryable": True,
+            }
+        )
+    if isinstance(exc, (httpx.TransportError, ConnectionError)):
+        return _should_retry_model_payload(
+            {
+                "code": "network_error",
+                "message": str(exc) or type(exc).__name__,
+                "retryable": True,
+            }
+        )
+    return False
+
+
+def _should_retry_model_payload(payload: dict[str, Any]) -> bool:
+    decision = build_retry_decision(
+        "run.failed",
+        payload,
+        attempt=0,
+        max_attempts=1,
+        initial_delay=0,
+        max_delay=0,
+    )
+    return bool(decision["should_retry"])
 
 
 _VALID_PII_TYPES = {"email", "credit_card", "ip", "mac_address", "url"}
@@ -322,6 +384,22 @@ def _build_chat_model(settings: Settings, run_id: str, mode: str) -> Any:
     )
 
 
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _str_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 async def build_agent(
     *,
     store: LocalStore,
@@ -333,6 +411,9 @@ async def build_agent(
     task_goal: str | None = None,
     turn_count: int | None = None,
     dropped_history_count: int = 0,
+    dropped_history_summary: str | None = None,
+    repair_context: dict[str, Any] | None = None,
+    retry_context: dict[str, Any] | None = None,
     memory_enabled: bool = True,
     skills_enabled: bool = True,
     mcp_enabled: bool = True,
@@ -363,6 +444,16 @@ async def build_agent(
                          this run started. Surfaced to the model so it
                          knows context is incomplete instead of silently
                          losing it.
+        dropped_history_summary:
+                         Compact deterministic digest of truncated earlier
+                         messages. This preserves some decisions and
+                         constraints without making another model call.
+        repair_context:  Optional run metadata for a user-confirmed repair
+                         attempt. Rendered into the <state> layer so the
+                         model can distinguish repair from ordinary retry.
+        retry_context:   Optional run metadata for a user-confirmed retry
+                         attempt. Rendered into the <state> layer so the
+                         model can avoid repeating the failed path blindly.
         memory_enabled:  When False, drops `memory.search` from the tool
                          list and short-circuits the writeback middleware.
                          The user toggle in agent settings flows in here
@@ -391,6 +482,7 @@ async def build_agent(
 
     tools = await build_tools(
         store=store,
+        run_id=run_id,
         workspace_root=workspace_root,
         include_mcp=mcp_enabled,
         mcp_disabled_servers=mcp_disabled_servers,
@@ -431,7 +523,12 @@ async def build_agent(
         effective_workspace = str(scratch)
     backend = FilesystemBackend(root_dir=effective_workspace, max_file_size_mb=10)
 
-    middleware = _custom_middleware(settings, memory_enabled=memory_enabled)
+    memory_namespace = memory_namespace_for_workspace(workspace_root)
+    middleware = _custom_middleware(
+        settings,
+        memory_enabled=memory_enabled,
+        memory_namespace=memory_namespace,
+    )
 
     # LLM-driven tool preselection — sits in the custom middleware band
     # so the narrowed toolset is what the main LLM sees. Always-include
@@ -494,6 +591,24 @@ async def build_agent(
             mode=mode,
             turn_count=turn_count,
             dropped_history_count=dropped_history_count,
+            dropped_history_summary=dropped_history_summary,
+            repair_intent=bool(repair_context),
+            repair_attempt=_int_or_none((repair_context or {}).get("attempt")),
+            repair_max_attempts=_int_or_none((repair_context or {}).get("max_attempts")),
+            repair_source_run_id=_str_or_none((repair_context or {}).get("source_run_id")),
+            repair_source_message_id=_str_or_none((repair_context or {}).get("source_message_id")),
+            repair_failure_category=_str_or_none((repair_context or {}).get("failure_category")),
+            repair_failure_action_kind=_str_or_none(
+                (repair_context or {}).get("failure_action_kind")
+            ),
+            retry_intent=bool(retry_context),
+            retry_attempt=_int_or_none((retry_context or {}).get("attempt")),
+            retry_source_run_id=_str_or_none((retry_context or {}).get("source_run_id")),
+            retry_source_message_id=_str_or_none((retry_context or {}).get("source_message_id")),
+            retry_failure_category=_str_or_none((retry_context or {}).get("failure_category")),
+            retry_failure_action_kind=_str_or_none(
+                (retry_context or {}).get("failure_action_kind")
+            ),
         )
     )
 

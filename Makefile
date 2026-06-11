@@ -183,8 +183,8 @@ deploy-restore: ## DANGER: overwrite prod Postgres from BACKUP=<file.sql.gz>
 	@gunzip -c "$$BACKUP" | $(COMPOSE_PROD) exec -T postgres psql -v ON_ERROR_STOP=1 -U shejane -d shejane >/dev/null
 	@echo "✅ Restored from $$BACKUP"
 
-migrate: ## Apply SQL migrations against DATABASE_URL (psql, fail-fast)
-	@set -e; for file in api/migrations/*.sql; do psql -v ON_ERROR_STOP=1 "$$DATABASE_URL" -f "$$file"; done
+migrate: ## Apply pending SQL migrations against DATABASE_URL and record schema_migrations
+	cd api && go run ./cmd/migrate -dir ./migrations
 
 ##@ Smoke (opt-in; some hit real services)
 smoke-local-host: ## Standalone daemon HTTP smoke (health / auth / a deterministic run)

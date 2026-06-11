@@ -10,15 +10,17 @@ describe('ConversationSidebar', () => {
     localStorage.clear()
   })
 
-  it('marks inactive completed and permission-waiting chats while showing running chats as loading', () => {
+  it('marks inactive completed, paused, and failed chats while showing running chats as loading', () => {
     renderSidebar([
       conversation('done-inactive', '完成的后台任务', 'done'),
       conversation('permission-inactive', '等待授权的后台任务', 'waiting_permission'),
+      conversation('input-inactive', '等待回答的后台任务', 'waiting_input'),
+      conversation('error-inactive', '失败的后台任务', 'error'),
       conversation('running-inactive', '正在执行的后台任务', 'streaming'),
       conversation('done-active', '当前打开的完成任务', 'done'),
     ], 'done-active')
 
-    expect(screen.getAllByLabelText('需要用户操作')).toHaveLength(2)
+    expect(screen.getAllByLabelText('需要用户操作')).toHaveLength(4)
     expect(screen.getByLabelText('对话正在执行')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '当前打开的完成任务' })).toBeInTheDocument()
   })

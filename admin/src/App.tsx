@@ -53,6 +53,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   AdminAPI,
   type AdminAgentRun,
+  type AdminAgentRunTrace,
   type AdminAuditLog,
   type AdminBillingLevers,
   type AdminCreditRate,
@@ -266,6 +267,8 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
   const [auditPage, setAuditPage] = useState(0)
   const [hasMoreAudit, setHasMoreAudit] = useState(false)
   const [selectedUser, setSelectedUser] = useState<AdminUserDetail | null>(null)
+  const [agentTrace, setAgentTrace] = useState<AdminAgentRunTrace | null>(null)
+  const [traceLoadingId, setTraceLoadingId] = useState('')
   const [query, setQuery] = useState('')
   const [delta, setDelta] = useState('')
   const [reason, setReason] = useState('')
@@ -423,6 +426,18 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
 
   function closeUser() {
     setSelectedUser(null)
+  }
+
+  async function openAgentTrace(runId: string) {
+    setNotice('')
+    setTraceLoadingId(runId)
+    try {
+      setAgentTrace(await api.adminAgentRunTrace(runId))
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : '加载 Run Trace 失败')
+    } finally {
+      setTraceLoadingId('')
+    }
   }
 
   async function updateStatus(status: 'active' | 'disabled') {
@@ -598,13 +613,14 @@ function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: AuthPayl
             </TabsContent>
 
             <TabsContent value="agent-runs" className="mt-0">
-              <AgentRunsCard runs={agentRuns} />
+              <AgentRunsCard runs={agentRuns} traceLoadingId={traceLoadingId} onOpenTrace={openAgentTrace} />
             </TabsContent>
 
             <TabsContent value="audit" className="mt-0">
               <AuditCard logs={auditLogs} page={auditPage} hasMore={hasMoreAudit} onChangePage={changeAuditPage} />
             </TabsContent>
           </Tabs>
+          <AgentTraceDialog trace={agentTrace} onClose={() => setAgentTrace(null)} />
         </main>
       </SidebarInset>
     </SidebarProvider>
@@ -831,6 +847,7 @@ function UserDetailBody({
             <TableRow>
               <TableHead>模型</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>Run</TableHead>
               <TableHead>时间</TableHead>
               <TableHead className="text-right">额度</TableHead>
             </TableRow>
@@ -841,12 +858,13 @@ function UserDetailBody({
                 <TableRow key={call.request_id}>
                   <TableCell className="max-w-40 truncate">{call.provider}/{call.model}</TableCell>
                   <TableCell><StatusBadge status={call.status} /></TableCell>
+                  <TableCell className="max-w-36 truncate text-muted-foreground">{call.run_id || '-'}</TableCell>
                   <TableCell className="max-w-40 truncate text-muted-foreground">{call.started_at ?? '-'}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
                 </TableRow>
               ))
             ) : (
-              <EmptyTableRow columns={4} label="暂无调用记录" />
+              <EmptyTableRow columns={5} label="暂无调用记录" />
             )}
           </TableBody>
         </Table>
@@ -1619,7 +1637,15 @@ function ModelConfigCard({
   )
 }
 
-function AgentRunsCard({ runs }: { runs: AdminAgentRun[] }) {
+function AgentRunsCard({
+  runs,
+  traceLoadingId,
+  onOpenTrace,
+}: {
+  runs: AdminAgentRun[]
+  traceLoadingId: string
+  onOpenTrace: (runId: string) => Promise<void>
+}) {
   return (
     <Card id="agent-runs" className="min-w-0">
       <CardHeader>
@@ -1635,6 +1661,7 @@ function AgentRunsCard({ runs }: { runs: AdminAgentRun[] }) {
               <TableHead>摘要</TableHead>
               <TableHead>状态</TableHead>
               <TableHead>更新时间</TableHead>
+              <TableHead className="text-right">追踪</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1652,15 +1679,55 @@ function AgentRunsCard({ runs }: { runs: AdminAgentRun[] }) {
                   </TableCell>
                   <TableCell><StatusBadge status={run.status} /></TableCell>
                   <TableCell className="whitespace-nowrap">{formatDateTime(run.updated_at)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" disabled={traceLoadingId === run.id} onClick={() => void onOpenTrace(run.id)}>
+                      {traceLoadingId === run.id ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                      追踪
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))
             ) : (
-              <EmptyTableRow columns={5} label="暂无 Agent Runs" />
+              <EmptyTableRow columns={6} label="暂无 Agent Runs" />
             )}
           </TableBody>
         </Table>
       </CardContent>
     </Card>
+  )
+}
+
+function AgentTraceDialog({ trace, onClose }: { trace: AdminAgentRunTrace | null; onClose: () => void }) {
+  const eventItems = trace?.events.slice(-8).map((event) => `#${event.seq} ${event.event_type} · ${formatDateTime(event.created_at)}`) ?? []
+  const llmItems = trace?.llm_calls.slice(0, 8).map((call) => `${call.provider}/${call.model} · ${call.status} · ${formatNumber(call.credits_cost)} credits`) ?? []
+  const toolItems = trace?.tool_calls.slice(0, 8).map((call) => `${call.tool} · ${call.status} · ${formatNumber(call.credits_cost)} credits`) ?? []
+  const walletItems = trace?.wallet_transactions.slice(0, 8).map((tx) => `${tx.type} · ${formatSignedNumber(tx.amount)} credits · ${formatDateTime(tx.created_at)}`) ?? []
+
+  return (
+    <Dialog open={Boolean(trace)} onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-4xl">
+        {trace ? (
+          <div className="grid gap-5">
+            <DialogHeader>
+              <DialogTitle className="truncate">Run Trace</DialogTitle>
+              <DialogDescription className="truncate">{trace.run.id}</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 md:grid-cols-4">
+              <DetailItem label="用户" value={trace.run.user_email || trace.run.user_id} />
+              <DetailItem label="状态" value={trace.run.status} />
+              <DetailItem label="模型" value={trace.run.mode} />
+              <DetailItem label="更新时间" value={formatDateTime(trace.run.updated_at)} />
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <ActivityList title={`事件 ${trace.events.length}`} items={eventItems} />
+              <ActivityList title={`LLM ${trace.llm_calls.length}`} items={llmItems} />
+              <ActivityList title={`工具 ${trace.tool_calls.length}`} items={toolItems} />
+              <ActivityList title={`账务 ${trace.wallet_transactions.length}`} items={walletItems} />
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1682,6 +1749,10 @@ function ActivityList({ title, items }: { title: string; items: string[] }) {
       </div>
     </div>
   )
+}
+
+function formatSignedNumber(value: number): string {
+  return value > 0 ? `+${formatNumber(value)}` : formatNumber(value)
 }
 
 function EmptyTableRow({ columns, label }: { columns: number; label: string }) {

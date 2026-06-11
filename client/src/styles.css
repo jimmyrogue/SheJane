@@ -5021,6 +5021,21 @@ button.agent-progress-summary:focus-visible {
   white-space: nowrap;
 }
 
+.agent-progress-detail {
+  max-width: 680px;
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .agent-progress .tool-card-header .meta {
   min-width: 0;
   overflow: hidden;

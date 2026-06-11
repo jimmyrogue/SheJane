@@ -117,7 +117,7 @@ class ToolResultCriticMiddleware(AgentMiddleware):
             verdict.get("reason", ""),
         )
 
-        if verdict.get("usable", True):  # default to usable on uncertainty
+        if _verdict_usable(verdict):  # default to usable on uncertainty
             return result
 
         if self.mode == "watch":
@@ -150,7 +150,7 @@ class ToolResultCriticMiddleware(AgentMiddleware):
             log.debug("tool.critic skipped: no critic_model")
             return {"usable": True, "reason": "no critic model configured"}
 
-        original_task = _extract_first_user_text(request)
+        current_task = _extract_latest_user_text(request)
         tool_name = request.tool_call.get("name", "")
         tool_args = request.tool_call.get("args", {})
         result_text = _stringify(result.content)[: self.max_input_chars]
@@ -162,7 +162,7 @@ class ToolResultCriticMiddleware(AgentMiddleware):
 
         prompt = HumanMessage(
             content=(
-                f"ORIGINAL TASK:\n{original_task or '(unknown)'}\n\n"
+                f"CURRENT USER TASK:\n{current_task or '(unknown)'}\n\n"
                 f"TOOL: {tool_name}\n"
                 f"ARGS: {json.dumps(tool_args, default=str)[:500]}\n\n"
                 f"RESULT{truncated_note}:\n{result_text}"
@@ -206,16 +206,31 @@ def _stringify(content: Any) -> str:
     return str(content)
 
 
-def _extract_first_user_text(request: Any) -> str:
-    """Pull the original user prompt out of the runtime state so the
-    critic can judge usability *against the task*, not just the tool."""
+def _verdict_usable(verdict: dict[str, Any]) -> bool:
+    value = verdict.get("usable", True)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"false", "0", "no", "unusable", "bad"}:
+            return False
+        if normalized in {"true", "1", "yes", "usable", "ok", "good"}:
+            return True
+    if isinstance(value, (int, float)):
+        return value != 0
+    return True
+
+
+def _extract_latest_user_text(request: Any) -> str:
+    """Pull the current user prompt out of runtime state so the critic can
+    judge usability against this turn, not stale conversation history."""
     state = getattr(request, "state", None)
     if not state:
         return ""
     messages = state.get("messages") if isinstance(state, dict) else None
     if not messages:
         return ""
-    for msg in messages:
+    for msg in reversed(messages):
         if getattr(msg, "type", None) == "human":
             content = getattr(msg, "content", "")
             return content if isinstance(content, str) else ""

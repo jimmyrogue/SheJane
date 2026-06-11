@@ -3,7 +3,7 @@ state in memory, so a SIGKILL restart (routine via `make dev-electron`) used to
 strand in-flight runs as `running` forever and silently downgrade HITL resumes
 to the fast tier in a no-workspace sandbox. These tests lock the fix:
 
-  - recover_orphans(): queued/running → failed, waiting_permission → kept.
+  - recover_orphans(): queued/running → failed, waiting_permission/waiting_input → kept.
   - _hydrate_run_state(): rebuild goal/workspace/mode/settings/grants from the
     DB so a resume after restart isn't degraded.
   - resolved tier (fast|deep) is persisted, not the requested mode.
@@ -36,8 +36,13 @@ async def test_recover_orphans_fails_dead_runs_and_keeps_waiting(tmp_path: Path)
         # queued: create_run leaves status='queued'
         waiting = await store.create_run(goal="g3", workspace_path="/ws3", mode="deep")
         await store.update_run_status(waiting["id"], "waiting_permission")
+        waiting_input = await store.create_run(goal="g5", workspace_path="/ws5", mode="deep")
+        await store.update_run_status(waiting_input["id"], "waiting_input")
         done = await store.create_run(goal="g4", workspace_path=None, mode="fast")
         await store.update_run_status(done["id"], "completed")
+
+        active_ids = {run["id"] for run in await store.list_active_runs()}
+        assert waiting_input["id"] in active_ids
 
         # New coordinator = fresh process after a restart.
         await _coordinator(store).recover_orphans()
@@ -46,6 +51,7 @@ async def test_recover_orphans_fails_dead_runs_and_keeps_waiting(tmp_path: Path)
         assert (await store.get_run(queued["id"]))["status"] == "failed"
         # Paused-at-interrupt run stays resumable.
         assert (await store.get_run(waiting["id"]))["status"] == "waiting_permission"
+        assert (await store.get_run(waiting_input["id"]))["status"] == "waiting_input"
         # Terminal runs are untouched.
         assert (await store.get_run(done["id"]))["status"] == "completed"
     finally:
@@ -83,6 +89,36 @@ async def test_hydrate_run_state_rebuilds_caches_from_db(tmp_path: Path) -> None
         assert await coord._hydrate_run_state(rid) is True
         # Unknown run id → False (resume_run refuses).
         assert await coord._hydrate_run_state("run_missing") is False
+    finally:
+        await store.close()
+
+
+async def test_hydrate_run_state_rebuilds_run_metadata_from_db(tmp_path: Path) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run = await store.create_run(
+            goal="修复失败任务",
+            workspace_path="/proj",
+            metadata={
+                "intent": "repair",
+                "source_run_id": "run_original",
+                "source_message_id": "msg_original",
+                "attempt": 2,
+            },
+            mode="deep",
+        )
+        rid = run["id"]
+        await store.update_run_status(rid, "waiting_input")
+
+        coord = _coordinator(store)
+        assert await coord._hydrate_run_state(rid) is True
+
+        assert coord._run_metadata[rid] == {
+            "intent": "repair",
+            "source_run_id": "run_original",
+            "source_message_id": "msg_original",
+            "attempt": 2,
+        }
     finally:
         await store.close()
 

@@ -68,7 +68,7 @@ export interface CloudAgentLoopDeps {
     tool: string
     arguments: Record<string, unknown>
     idempotencyKey: string
-  }): Promise<CloudToolResult>
+  }, signal?: AbortSignal): Promise<CloudToolResult>
 }
 
 export interface CloudAgentLoopParams {
@@ -142,13 +142,15 @@ export async function runCloudAgentLoop(
     const results = await Promise.all(
       turn.toolCalls.map(async (call) => {
         params.onEvent?.(toolRequestedEvent(params.runId, call))
+        throwIfAborted(params.signal)
         const result = await deps.executeTool({
           runId: params.runId,
           toolCallId: call.id,
           tool: call.name,
           arguments: call.arguments,
           idempotencyKey: `${params.runId}:${call.id}:${call.name}`,
-        })
+        }, params.signal)
+        throwIfAborted(params.signal)
         params.onEvent?.(toolCompletedEvent(params.runId, call, result))
         return { call, result }
       }),
@@ -239,50 +241,30 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Web tool catalog — the ONLY tools advertised to the model on web. Schemas
-// mirror the daemon's image.generate / web.search tools (kept minimal). The
-// caller filters this by GET /agent/tool-capabilities so an unconfigured tool
-// (e.g. Tavily key absent) is never offered.
-// ---------------------------------------------------------------------------
-
-export const WEB_TOOL_DEFINITIONS: Record<string, CloudToolDefinition> = {
-  'web.search': {
-    name: 'web.search',
-    description:
-      'Search the public web for current information and return ranked results with titles, URLs and snippets. Use for recent events, facts, or anything that may have changed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'The search query.' },
-        max_results: { type: 'integer', description: 'How many results to return (1-10).', minimum: 1, maximum: 10 },
-      },
-      required: ['query'],
-    },
-  },
-  'image.generate': {
-    name: 'image.generate',
-    description:
-      'Generate one or more images from a text prompt. Use when the user asks to create, draw, or generate a picture.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'A detailed description of the image to generate.' },
-        size: { type: 'string', description: 'Image size, e.g. "1024x1024".' },
-        n: { type: 'integer', description: 'Number of images (1-4).', minimum: 1, maximum: 4 },
-      },
-      required: ['prompt'],
-    },
-  },
+interface WebToolCapability {
+  configured?: boolean
+  description?: string
+  inputSchema?: Record<string, unknown>
 }
 
 /** Build the advertised tool list from the capabilities map, in a stable
- *  order (search before image). A tool is offered only when configured. */
+ *  order (search before image). A tool is offered only when configured and
+ *  when the API supplied the LLM-facing schema. */
 export function webToolsFromCapabilities(
-  capabilities: Record<string, { configured?: boolean }>,
+  capabilities: Record<string, WebToolCapability>,
 ): CloudToolDefinition[] {
   const order = ['web.search', 'image.generate']
   return order
-    .filter((name) => capabilities[name]?.configured && WEB_TOOL_DEFINITIONS[name])
-    .map((name) => WEB_TOOL_DEFINITIONS[name])
+    .map((name) => {
+      const capability = capabilities[name]
+      if (!capability?.configured || !capability.description || !capability.inputSchema) {
+        return null
+      }
+      return {
+        name,
+        description: capability.description,
+        inputSchema: capability.inputSchema,
+      } satisfies CloudToolDefinition
+    })
+    .filter((tool): tool is CloudToolDefinition => Boolean(tool))
 }

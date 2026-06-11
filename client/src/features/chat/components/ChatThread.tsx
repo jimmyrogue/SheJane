@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef } from 'react'
-import { AgentProgress } from './AgentProgress'
+import { AgentProgress, type AgentFailureAction } from './AgentProgress'
 import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
@@ -20,6 +20,7 @@ export function ChatThread({
   onRegenerateMessage,
   onEditResendMessage,
   onDeleteMessage,
+  onFailureAction,
 }: {
   conversation?: Conversation
   onOpenArtifact: (artifactID: string) => void
@@ -49,6 +50,8 @@ export function ChatThread({
   onEditResendMessage?: (messageID: string, newText: string) => void
   /** Delete a message (user msg drops its paired reply too). */
   onDeleteMessage?: (messageID: string) => void
+  /** Action button surfaced from a failed assistant run. */
+  onFailureAction?: (action: AgentFailureAction, messageID: string) => void
 }) {
   // Conversations bound to a project workspace carry the absolute path;
   // MessageBubble uses it to resolve relative office-file refs surfaced
@@ -103,6 +106,7 @@ export function ChatThread({
                   message={message}
                   onOpenArtifact={onOpenArtifact}
                   onOpenDiagnostics={onOpenDiagnostics}
+                  onFailureAction={(action, failedMessage) => onFailureAction?.(action, failedMessage.id)}
                 />
               </MessageBubble>
             </Fragment>

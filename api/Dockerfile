@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -o /out/shejane-api ./cmd/api
+RUN go build -o /out/shejane-migrate ./cmd/migrate
 
 FROM alpine:3.21
 # poppler-utils → pdftotext + pdfinfo, used by
@@ -24,5 +25,7 @@ RUN adduser -D -H shejane
 USER shejane
 WORKDIR /app
 COPY --from=build /out/shejane-api /app/shejane-api
+COPY --from=build /out/shejane-migrate /app/shejane-migrate
+COPY --from=build /src/migrations /app/migrations
 EXPOSE 8080
 CMD ["/app/shejane-api"]

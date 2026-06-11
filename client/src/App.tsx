@@ -23,12 +23,13 @@ import {
 } from './shared/api/client'
 import { createAuthClient } from './shared/api/authClient'
 import { uploadWithProgress } from './shared/api/uploadWithProgress'
-import { createChatStore, timelineItem } from './features/chat/chatStore'
+import { createChatStore, recoverOrphanCloudStreamingConversations, timelineItem } from './features/chat/chatStore'
 import { webToolsFromCapabilities, type CloudToolDefinition } from './shared/cloudAgentLoop'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
+import type { AgentFailureAction } from './features/chat/components/AgentProgress'
 import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { parseSkillDraft } from './features/chat/skillDraft'
@@ -73,6 +74,7 @@ import {
   type LocalPermissionScope,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
+  type LocalRunMetadata,
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
@@ -81,6 +83,24 @@ const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'shejane-app-notice'
 const sidebarWidthStorageKey = 'shejane.sidebar.width.v1'
 const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
+const checkoutRecoveryPollMs = 3000
+const checkoutRecoveryMaxPolls = 40
+interface LocalHarnessRunOptions {
+  parentRunId?: string
+  metadata?: LocalRunMetadata
+  initialAgentEvents?: AgentTimelineItem[]
+}
+
+interface RecoveryTarget {
+  conversationID: string
+  assistantMessageID: string
+}
+
+interface PendingCloudSessionRecoveryTarget {
+  target: RecoveryTarget
+  userID?: string
+}
+
 // v7 — dropped the codeExec field. Cloud code execution is now always
 // on (no user-facing toggle): in practice every test confirmed the
 // flow works, and the original opt-in friction was hurting first-run
@@ -108,6 +128,7 @@ const defaultSidebarWidth = 220
 const minSidebarWidth = 176
 const maxSidebarWidth = 340
 const sidebarKeyboardStep = 12
+type NoticeOptions = Omit<NonNullable<Parameters<typeof toast.message>[1]>, 'id'>
 
 interface ConversationRenderContext {
   navigationVersionAtStart: number
@@ -176,6 +197,12 @@ function readAdvancedAgentSettings(raw: unknown): AdvancedAgentSettings {
   const out: AdvancedAgentSettings = {}
   if (typeof a.maxModelCalls === 'number' && Number.isFinite(a.maxModelCalls)) {
     out.maxModelCalls = a.maxModelCalls
+  }
+  if (typeof a.maxHistoryTurns === 'number' && Number.isFinite(a.maxHistoryTurns)) {
+    out.maxHistoryTurns = a.maxHistoryTurns
+  }
+  if (typeof a.maxModelRetries === 'number' && Number.isFinite(a.maxModelRetries)) {
+    out.maxModelRetries = a.maxModelRetries
   }
   if (typeof a.maxToolRetries === 'number' && Number.isFinite(a.maxToolRetries)) {
     out.maxToolRetries = a.maxToolRetries
@@ -291,7 +318,14 @@ function AppContent() {
   const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
+  const activeCloudToolLoopRunIdRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
+  const recoveryRetryInFlightRef = useRef<Set<string>>(new Set())
+  const recoveryRepairInFlightRef = useRef<Set<string>>(new Set())
+  const recoveryRechargeInFlightRef = useRef<Set<string>>(new Set())
+  const checkoutRecoveryTimerRef = useRef<number>()
+  const checkoutRecoveryGenerationRef = useRef(0)
+  const pendingCloudSessionRecoveryTargetRef = useRef<PendingCloudSessionRecoveryTarget>()
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
 
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -445,14 +479,16 @@ function AppContent() {
     }
   }
 
-  function setNotice(message: string) {
+  function setNotice(message: string, options: NoticeOptions = {}) {
     if (!message.trim()) {
       toast.dismiss(appNoticeToastID)
       return
     }
+    toast.dismiss(appNoticeToastID)
     toast.message(message, {
-      id: appNoticeToastID,
       duration: 3200,
+      ...options,
+      id: appNoticeToastID,
     })
   }
 
@@ -603,6 +639,7 @@ function AppContent() {
       if (liveRenderTimerRef.current !== undefined) {
         window.clearTimeout(liveRenderTimerRef.current)
       }
+      stopCheckoutRecoveryWatcher()
       pendingConversationRendersRef.current.clear()
     }
   }, [])
@@ -612,11 +649,18 @@ function AppContent() {
   }, [activeID])
 
   useEffect(() => {
-    void localData.list().then((items) => {
+    let disposed = false
+    void recoverOrphanCloudStreamingConversations(localData, { t }).then((items) => {
+      if (disposed) {
+        return
+      }
       setConversations(items)
       setActiveConversationID(items[0]?.id)
     })
-  }, [localData])
+    return () => {
+      disposed = true
+    }
+  }, [localData, t])
 
 
   // Reset transient session state when the signed-in user changes, so leftovers
@@ -744,15 +788,33 @@ function AppContent() {
     }
   }, [api, auth, localHost?.online, localHostConfig])
 
+  useEffect(() => {
+    if (!localCloudSession?.connected) {
+      return
+    }
+    const pendingRecovery = pendingCloudSessionRecoveryTargetRef.current
+    if (!pendingRecovery) {
+      return
+    }
+    if (pendingRecovery.userID && pendingRecovery.userID !== auth?.user?.id) {
+      pendingCloudSessionRecoveryTargetRef.current = undefined
+      return
+    }
+    pendingCloudSessionRecoveryTargetRef.current = undefined
+    const recoveryTarget = pendingRecovery.target
+    setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
+      duration: 8000,
+      action: recoveryRetryAction(recoveryTarget),
+    })
+  }, [auth?.user?.id, localCloudSession?.connected, t])
+
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
-  // Any assistant message that's still streaming OR paused at HITL
-  // counts as an "active" run from the user's perspective — the daemon
-  // can still be told to cancel it. Used to keep the composer's stop
-  // button visible during permission/question pauses, because the
-  // isSending state flips to false the moment the SSE stream blocks.
-  // Matches the precondition list in cancelActiveLocalRun below so
-  // the button and the cancel function agree on what's cancelable.
-  const hasActiveLocalRun = Boolean(
+  // A local daemon run can stay cancelable after `isSending` flips false
+  // because HITL permission/question pauses block the SSE stream while the
+  // daemon run remains alive. Web cloud tool loops are cancelable during the
+  // active send promise via `isSending`; after reload they need the separate
+  // orphan-streaming recovery path, not a stale Stop button.
+  const hasActiveRun = Boolean(
     activeConversation?.messages.some(
       (msg) =>
         msg.role === 'assistant' &&
@@ -783,7 +845,7 @@ function AppContent() {
   }
 
   async function refreshConversations(nextActiveID?: string, options: { preserveEmptyActive?: boolean } = {}) {
-    const items = await localData.list()
+    const items = await recoverOrphanCloudStreamingConversations(localData, { t })
     setConversations(items)
     setActiveConversationID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
   }
@@ -848,6 +910,25 @@ function AppContent() {
     }, 33)
   }
 
+  function trackActiveCloudToolLoop(conversation: Conversation) {
+    const activeCloudMessage = [...conversation.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.role === 'assistant' &&
+          message.runOrigin === 'cloud' &&
+          message.status === 'streaming' &&
+          Boolean(message.runId),
+      )
+    if (activeCloudMessage?.runId) {
+      activeCloudToolLoopRunIdRef.current = activeCloudMessage.runId
+      return
+    }
+    if (activeCloudToolLoopRunIdRef.current) {
+      activeCloudToolLoopRunIdRef.current = undefined
+    }
+  }
+
   async function sendMessage() {
     if (!auth) {
       setNotice(t('app.notice.loginBeforeSending'))
@@ -896,7 +977,10 @@ function AppContent() {
             // Web build: drive the client tool loop (image gen / web search)
             // for plain prompts. Document Q&A keeps the single-completion path.
             cloudTools: attachedDocument ? undefined : webTools,
-            onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
+            onConversationUpdate: (nextConversation) => {
+              trackActiveCloudToolLoop(nextConversation)
+              scheduleConversationRender(nextConversation, renderContext)
+            },
           })
       await refreshConversationsAfterStream(conversation.id, renderContext)
       setBalance(await api.balance())
@@ -917,18 +1001,24 @@ function AppContent() {
     }
   }
 
-  /** Truncate the active conversation to before `userMessageID`, persist,
-   *  then start a fresh run with `text` via the conversation's path (local
-   *  harness when available, else cloud). Shared by regenerate (text = the
-   *  original user message) and edit-resend (text = the edited message).
+  /** Truncate the target conversation to before `userMessageID`, persist,
+   *  then start a fresh run with `text` via the original message route
+   *  (local failures stay local; cloud replies stay cloud). Shared by
+   *  regenerate (text = the original user message) and edit-resend (text = the edited message).
    *  Both run paths rebuild model context purely from the supplied history,
    *  so a client-side truncate + fresh run is all that's needed — there is
    *  no server-side transcript to mutate. Re-running re-bills credits. */
-  async function resendFromUserMessage(userMessageID: string, text: string, preferLocal: boolean) {
-    if (!activeID) {
+  async function resendFromUserMessage(
+    userMessageID: string,
+    text: string,
+    preferLocal: boolean,
+    localRunOptions?: LocalHarnessRunOptions,
+    targetConversationID = activeIDRef.current,
+  ) {
+    if (!targetConversationID) {
       return
     }
-    const conversation = await localData.get(activeID)
+    const conversation = await localData.get(targetConversationID)
     if (!conversation) {
       return
     }
@@ -939,39 +1029,146 @@ function AppContent() {
     conversation.messages = conversation.messages.slice(0, index)
     conversation.updatedAt = new Date().toISOString()
     await localData.save(conversation)
-    await refreshConversations(activeID)
+    if (activeIDRef.current !== targetConversationID) {
+      navigationVersionRef.current += 1
+      setPendingWorkspace(undefined)
+      setPendingProject(undefined)
+      setActiveConversationID(targetConversationID)
+      setMainView('chat')
+    }
+    await refreshConversations(targetConversationID)
 
     const renderContext = createConversationRenderContext()
     setIsSending(true)
     setNotice('')
     try {
-      const canUseLocalHarness =
-        preferLocal && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
-      const next = canUseLocalHarness
-        ? await sendLocalHarnessMessage(text, renderContext, agentSettings)
+      const next = preferLocal
+        ? await sendLocalHarnessMessage(text, renderContext, agentSettings, localRunOptions, targetConversationID)
         : await chat.sendMessage({
-            conversationId: activeID,
+            conversationId: targetConversationID,
             content: parseSkillDraft(text).text,
             mode,
             scene: 'chat',
             cloudTools: webTools,
-            onConversationUpdate: (nextConversation) => scheduleConversationRender(nextConversation, renderContext),
+            onConversationUpdate: (nextConversation) => {
+              trackActiveCloudToolLoop(nextConversation)
+              scheduleConversationRender(nextConversation, renderContext)
+            },
           })
       await refreshConversationsAfterStream(next.id, renderContext)
       setBalance(await api.balance())
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
-      await refreshConversations(activeID)
+      await refreshConversations(targetConversationID)
     } finally {
       setIsSending(false)
     }
   }
 
-  function handleRegenerateMessage(assistantMessageID: string) {
+  function recoveryTargetFor(assistantMessageID: string): RecoveryTarget | undefined {
     if (!activeConversation) {
+      return undefined
+    }
+    return { conversationID: activeConversation.id, assistantMessageID }
+  }
+
+  function queueCloudSessionRecoveryTarget(target?: RecoveryTarget) {
+    if (target) {
+      pendingCloudSessionRecoveryTargetRef.current = {
+        target,
+        userID: auth?.user?.id,
+      }
+    }
+  }
+
+  async function retryRecoveryTarget(target: RecoveryTarget) {
+    const key = recoveryTargetKey(target)
+    if (recoveryRetryInFlightRef.current.has(key)) {
+      setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
       return
     }
-    const messages = activeConversation.messages
+    recoveryRetryInFlightRef.current.add(key)
+    try {
+      await regenerateMessageInConversation(target.conversationID, target.assistantMessageID)
+    } finally {
+      recoveryRetryInFlightRef.current.delete(key)
+    }
+  }
+
+  function recoveryRetryAction(target: RecoveryTarget) {
+    return {
+      label: t('agent.failureAction.retry'),
+      onClick: () => void retryRecoveryTarget(target),
+    }
+  }
+
+  function rechargeRetryAction(target: RecoveryTarget, walletBefore: WalletBalance | null) {
+    return {
+      label: t('agent.failureAction.retry'),
+      onClick: () => void confirmRechargeAndRetry(target, walletBefore),
+    }
+  }
+
+  function stopCheckoutRecoveryWatcher() {
+    checkoutRecoveryGenerationRef.current += 1
+    if (checkoutRecoveryTimerRef.current !== undefined) {
+      window.clearTimeout(checkoutRecoveryTimerRef.current)
+      checkoutRecoveryTimerRef.current = undefined
+    }
+  }
+
+  function startCheckoutRecoveryWatcher(target: RecoveryTarget, walletBefore: WalletBalance | null) {
+    stopCheckoutRecoveryWatcher()
+    const generation = checkoutRecoveryGenerationRef.current
+    let attempts = 0
+    const poll = async () => {
+      attempts += 1
+      try {
+        const walletAfter = await api.balance()
+        if (checkoutRecoveryGenerationRef.current !== generation) {
+          return
+        }
+        setBalance(walletAfter)
+        if (walletShowsRechargeCompletion(walletBefore, walletAfter)) {
+          stopCheckoutRecoveryWatcher()
+          setNotice(t('app.notice.checkoutCompletedWithRetry'), {
+            duration: 8000,
+            action: recoveryRetryAction(target),
+          })
+          return
+        }
+      } catch {
+        if (checkoutRecoveryGenerationRef.current !== generation) {
+          return
+        }
+        // Keep this observer quiet. The explicit retry action still performs
+        // its own balance check and reports failures to the user.
+      }
+      if (checkoutRecoveryGenerationRef.current === generation && attempts < checkoutRecoveryMaxPolls) {
+        checkoutRecoveryTimerRef.current = window.setTimeout(() => {
+          void poll()
+        }, checkoutRecoveryPollMs)
+      } else if (checkoutRecoveryGenerationRef.current === generation) {
+        checkoutRecoveryTimerRef.current = undefined
+      }
+    }
+    void poll()
+  }
+
+  function handleRegenerateMessage(assistantMessageID: string) {
+    const target = recoveryTargetFor(assistantMessageID)
+    if (!target) {
+      return
+    }
+    void retryRecoveryTarget(target)
+  }
+
+  async function regenerateMessageInConversation(conversationID: string, assistantMessageID: string) {
+    const conversation = await localData.get(conversationID)
+    if (!conversation) {
+      return
+    }
+    const messages = conversation.messages
     const assistantIndex = messages.findIndex((message) => message.id === assistantMessageID)
     if (assistantIndex < 0) {
       return
@@ -988,8 +1185,182 @@ function AppContent() {
       return
     }
     const userMessage = messages[userIndex]
-    const preferLocal = messages[assistantIndex].runOrigin !== 'cloud'
-    void resendFromUserMessage(userMessage.id, userMessage.content, preferLocal)
+    const assistantMessage = messages[assistantIndex]
+    const preferLocal = assistantMessage.runOrigin !== 'cloud'
+    void resendFromUserMessage(
+      userMessage.id,
+      userMessage.content,
+      preferLocal,
+      preferLocal ? retryRunOptionsFor(assistantMessage) : undefined,
+      conversationID,
+    )
+  }
+
+  function retryRunOptionsFor(assistantMessage: ChatMessage): LocalHarnessRunOptions | undefined {
+    const failure = latestRunFailureEvent(assistantMessage)
+    if (!failure) {
+      return undefined
+    }
+    const attempt = nextRetryAttempt(assistantMessage)
+    const retryAction = t('agent.retryAttemptLabel', { attempt })
+    return {
+      parentRunId: assistantMessage.runId,
+      metadata: {
+        intent: 'retry',
+        source_run_id: assistantMessage.runId,
+        source_message_id: assistantMessage.id,
+        attempt,
+        failure_category: failure.failureCategory,
+        failure_action_kind: failure.failureActionKind,
+      },
+      initialAgentEvents: [
+        {
+          type: 'ui.action.requested',
+          label: t('agent.uiActionRequestedLabel', { action: retryAction }),
+          retryAttempt: attempt,
+          retrySourceRunId: assistantMessage.runId,
+          retrySourceMessageId: assistantMessage.id,
+        },
+      ],
+    }
+  }
+
+  async function repairRecoveryTarget(target: RecoveryTarget) {
+    const key = recoveryTargetKey(target)
+    if (recoveryRepairInFlightRef.current.has(key)) {
+      setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
+      return
+    }
+    recoveryRepairInFlightRef.current.add(key)
+    try {
+      const conversation = await localData.get(target.conversationID)
+      if (!conversation) {
+        return
+      }
+      const messages = conversation.messages
+      const assistantIndex = messages.findIndex((message) => message.id === target.assistantMessageID)
+      if (assistantIndex < 0) {
+        return
+      }
+      let userIndex = -1
+      for (let i = assistantIndex - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userIndex = i
+          break
+        }
+      }
+      if (userIndex < 0) {
+        return
+      }
+      const assistantMessage = messages[assistantIndex]
+      const userMessage = messages[userIndex]
+      const preferLocal = assistantMessage.runOrigin !== 'cloud'
+      const failure = latestRunFailureEvent(assistantMessage)
+      const attempt = nextRepairAttempt(assistantMessage)
+      const repairAction = t('agent.repairAttemptLabel', { attempt })
+      const initialAgentEvents: AgentTimelineItem[] = [
+        {
+          type: 'ui.action.requested',
+          label: t('agent.uiActionRequestedLabel', { action: repairAction }),
+          repairAttempt: attempt,
+          repairSourceRunId: assistantMessage.runId,
+          repairSourceMessageId: assistantMessage.id,
+        },
+      ]
+      await resendFromUserMessage(
+        userMessage.id,
+        userMessage.content,
+        preferLocal,
+        {
+          parentRunId: assistantMessage.runId,
+          metadata: {
+            intent: 'repair',
+            source_run_id: assistantMessage.runId,
+            source_message_id: assistantMessage.id,
+            attempt,
+            failure_category: failure?.failureCategory,
+            failure_action_kind: failure?.failureActionKind,
+          },
+          initialAgentEvents,
+        },
+        target.conversationID,
+      )
+    } finally {
+      recoveryRepairInFlightRef.current.delete(key)
+    }
+  }
+
+  async function refreshLocalCloudSessionNow(recoveryTarget?: RecoveryTarget) {
+    const config = localHostConfig ?? getDesktopLocalHostConfig()
+    if (!auth?.access_token || !config?.token) {
+      queueCloudSessionRecoveryTarget(recoveryTarget)
+      setNotice(t('app.notice.cloudSessionRefreshUnavailable'))
+      return
+    }
+    if (!localHostConfig) {
+      setLocalHostConfig(config)
+    }
+    try {
+      const session = await setLocalCloudSession(
+        {
+          cloudBaseURL: api.baseURL,
+          accessToken: auth.access_token,
+        },
+        config,
+      )
+      setLocalCloudSessionState(session)
+      if (session.connected) {
+        pendingCloudSessionRecoveryTargetRef.current = undefined
+        if (recoveryTarget) {
+          setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
+            duration: 8000,
+            action: recoveryRetryAction(recoveryTarget),
+          })
+          return
+        }
+        setNotice(t('app.notice.cloudSessionRefreshed'))
+        return
+      }
+      queueCloudSessionRecoveryTarget(recoveryTarget)
+      setNotice(t('app.notice.cloudSessionRefreshFailed'))
+    } catch {
+      setLocalCloudSessionState({ connected: false })
+      queueCloudSessionRecoveryTarget(recoveryTarget)
+      setNotice(t('app.notice.cloudSessionRefreshFailed'))
+    }
+  }
+
+  function handleAgentFailureAction(action: AgentFailureAction, assistantMessageID: string) {
+    const recoveryTarget = recoveryTargetFor(assistantMessageID)
+    if (!recoveryTarget) {
+      return
+    }
+    if (action === 'retry') {
+      void retryRecoveryTarget(recoveryTarget)
+      return
+    }
+    if (action === 'repair') {
+      void repairRecoveryTarget(recoveryTarget)
+      return
+    }
+    if (action === 'recharge') {
+      void startRecharge(recoveryTarget)
+      return
+    }
+    if (action === 'refresh_session') {
+      void refreshLocalCloudSessionNow(recoveryTarget)
+      return
+    }
+    if (action === 'workspace') {
+      void selectProjectForActiveConversation(recoveryTarget)
+      return
+    }
+    if (action === 'diagnostics') {
+      const runID = activeConversation?.messages.find((message) => message.id === assistantMessageID)?.runId
+      if (runID) {
+        void openLocalRunDiagnostics(runID, recoveryTarget)
+      }
+    }
   }
 
   function handleEditResendMessage(userMessageID: string, newText: string) {
@@ -1038,9 +1409,15 @@ function AppContent() {
     content: string,
     context: ConversationRenderContext,
     settingsOverride?: Required<AgentSettings>,
+    runOptions?: LocalHarnessRunOptions,
+    targetConversationID = activeIDRef.current,
   ): Promise<Conversation> {
-    if (!localHostConfig) {
+    const runLocalHostConfig = localHostConfig ?? getDesktopLocalHostConfig()
+    if (!runLocalHostConfig) {
       throw new Error(t('app.notice.localHostDisconnected'))
+    }
+    if (!localHostConfig) {
+      setLocalHostConfig(runLocalHostConfig)
     }
     const {
       text: parsedText,
@@ -1054,7 +1431,7 @@ function AppContent() {
     }
 
     const timestamp = new Date().toISOString()
-    const conversation = (activeID ? await localData.get(activeID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
+    const conversation = (targetConversationID ? await localData.get(targetConversationID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
     // Composer's project picker can run before the first message, in
     // which case the workspace + project sit in pending* slots until
     // we materialize the conversation here.
@@ -1089,7 +1466,7 @@ function AppContent() {
       createdAt: timestamp,
       status: 'streaming',
       runOrigin: 'local',
-      agentEvents: [],
+      agentEvents: runOptions?.initialAgentEvents ? [...runOptions.initialAgentEvents] : [],
     }
 
     const priorMessages = conversation.messages
@@ -1098,7 +1475,7 @@ function AppContent() {
     await localData.save(conversation)
     scheduleConversationRender(conversation, context)
 
-    const parentRunId = [...priorMessages]
+    const parentRunId = runOptions?.parentRunId ?? [...priorMessages]
       .reverse()
       .find((message) => message.role === 'assistant' && message.runOrigin === 'local' && Boolean(message.runId))?.runId
 
@@ -1147,19 +1524,25 @@ function AppContent() {
         {
           goal,
           workspacePath: conversation.workspace?.path.trim() || undefined,
-          history: deriveAgentHistory(priorMessages),
+          history: deriveAgentHistory(
+            priorMessages,
+            effectiveSettings.advanced.maxHistoryTurns !== undefined
+              ? { maxMessages: effectiveSettings.advanced.maxHistoryTurns }
+              : undefined,
+          ),
           parentRunId,
           settings: effectiveSettings,
+          metadata: runOptions?.metadata,
           mode,
         },
-        localHostConfig,
+        runLocalHostConfig,
       )
       assistantMessage.runId = run.id
       setLocalRuns((items) => upsertLocalRun(items, run))
       scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
       const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalRun(run.id, localHostConfig, {
+      await streamLocalRun(run.id, runLocalHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, context)
@@ -1195,30 +1578,42 @@ function AppContent() {
     return conversation
   }
 
-  /** Stop whatever local run is currently streaming for the active
-   *  conversation. The daemon emits `run.canceled` on its SSE channel,
-   *  the existing stream loop finalizes the message, and the bubble
-   *  settles into its canceled state. No-op if nothing is in flight. */
-  async function cancelActiveLocalRun() {
-    if (!activeConversation || !localHostConfig) {
+  /** Stop whatever cancelable run is currently active for the active
+   *  conversation. Local daemon runs emit `run.canceled` on their SSE
+   *  channel; web cloud tool loops are aborted through their browser-held
+   *  AbortController and then settled locally as `run.canceled`. */
+  async function cancelActiveRun() {
+    if (!activeConversation) {
       return
     }
-    // Most-recent local assistant message that's still streaming or
-    // waiting for HITL — that's the in-flight run from the user's PoV.
-    const streamingMessage = [...activeConversation.messages]
+    // Most-recent assistant message that's still cancelable — that's the
+    // in-flight run from the user's PoV.
+    const activeMessage = [...activeConversation.messages]
       .reverse()
       .find(
         (msg) =>
           msg.role === 'assistant' &&
-          msg.runOrigin === 'local' &&
           Boolean(msg.runId) &&
-          (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
+          ((msg.runOrigin === 'local' &&
+            (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input')) ||
+            (msg.runOrigin === 'cloud' && msg.status === 'streaming')),
       )
-    if (!streamingMessage?.runId) {
+    if (!activeMessage?.runId) {
+      const activeCloudRunId = activeCloudToolLoopRunIdRef.current
+      if (activeCloudRunId) {
+        await chat.cancelCloudToolLoop(activeCloudRunId)
+      }
       return
     }
     try {
-      await cancelLocalRun(streamingMessage.runId, localHostConfig)
+      if (activeMessage.runOrigin === 'cloud') {
+        await chat.cancelCloudToolLoop(activeMessage.runId)
+        return
+      }
+      if (!localHostConfig) {
+        return
+      }
+      await cancelLocalRun(activeMessage.runId, localHostConfig)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
     }
@@ -1412,13 +1807,20 @@ function AppContent() {
     }
   }
 
-  async function openLocalRunDiagnostics(runID: string) {
+  async function openLocalRunDiagnostics(runID: string, recoveryTarget?: RecoveryTarget) {
     if (!localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
     }
     try {
       setRunDiagnostics(await getLocalRunDiagnostics(runID, localHostConfig))
+      if (recoveryTarget) {
+        setNotice(t('app.notice.diagnosticsOpenedWithRetry'), {
+          duration: 8000,
+          action: recoveryRetryAction(recoveryTarget),
+        })
+        return
+      }
       setNotice('')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.diagnosticsReadFailed'))
@@ -1458,15 +1860,20 @@ function AppContent() {
    *
    *  Returns silently if the user cancels the OS picker. Surfaces a
    *  toast on daemon-side errors (e.g. not yet paired). */
-  async function selectProjectForActiveConversation() {
-    if (!localHostConfig?.token) {
+  async function selectProjectForActiveConversation(recoveryTarget?: RecoveryTarget) {
+    const config = localHostConfig ?? getDesktopLocalHostConfig()
+    if (!config?.token) {
       setNotice(t('app.notice.localHostNotPairedAuthorize'))
       return
     }
+    if (!localHostConfig) {
+      setLocalHostConfig(config)
+    }
+    const targetConversationID = recoveryTarget?.conversationID ?? activeIDRef.current
     const picked = await chooseWorkspaceDirectory()
     if (!picked) return
     try {
-      const ws = await authorizeLocalWorkspace(picked, localHostConfig)
+      const ws = await authorizeLocalWorkspace(picked, config)
       setAuthorizedWorkspaces((items) => upsertWorkspace(items, ws))
       const name = pathBasename(ws.path) || ws.label || ws.path
       const workspace: ConversationWorkspace = {
@@ -1476,14 +1883,21 @@ function AppContent() {
         authorizationId: ws.id,
       }
       const project: ConversationProject = { name }
-      if (activeIDRef.current) {
-        await updateConversationMetadata(activeIDRef.current, (item) => {
+      if (targetConversationID) {
+        await updateConversationMetadata(targetConversationID, (item) => {
           item.project = project
           item.workspace = workspace
         })
       } else {
         setPendingWorkspace(workspace)
         setPendingProject(project)
+      }
+      if (recoveryTarget) {
+        setNotice(t('app.notice.workspaceBoundWithRetry', { label: name }), {
+          duration: 8000,
+          action: recoveryRetryAction(recoveryTarget),
+        })
+        return
       }
       setNotice(t('project.notice.bound', { name }))
     } catch (err) {
@@ -1771,15 +2185,56 @@ function AppContent() {
   // stub otherwise); window.open is intercepted by the Electron main
   // process (setWindowOpenHandler → shell.openExternal) so it lands in
   // the user's default browser, and works normally on the web.
-  async function startRecharge() {
+  async function startRecharge(recoveryTarget?: RecoveryTarget) {
+    const recoveryKey = recoveryTarget ? recoveryTargetKey(recoveryTarget) : undefined
+    if (recoveryKey && recoveryRechargeInFlightRef.current.has(recoveryKey)) {
+      setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
+      return
+    }
+    if (recoveryKey) {
+      recoveryRechargeInFlightRef.current.add(recoveryKey)
+    }
+    const walletBeforeCheckout = balance
     try {
       const { checkout_url } = await api.createSubscriptionCheckout()
       if (!checkout_url) {
         throw new Error('missing checkout url')
       }
       window.open(checkout_url, '_blank', 'noopener,noreferrer')
+      if (recoveryTarget) {
+        setNotice(t('app.notice.checkoutOpenedWithRetry'), {
+          duration: 8000,
+          action: rechargeRetryAction(recoveryTarget, walletBeforeCheckout),
+        })
+        startCheckoutRecoveryWatcher(recoveryTarget, walletBeforeCheckout)
+      }
     } catch {
       setNotice(t('billing.rechargeFailed'))
+    } finally {
+      if (recoveryKey) {
+        recoveryRechargeInFlightRef.current.delete(recoveryKey)
+      }
+    }
+  }
+
+  async function confirmRechargeAndRetry(recoveryTarget: RecoveryTarget, walletBefore: WalletBalance | null) {
+    stopCheckoutRecoveryWatcher()
+    try {
+      const walletAfter = await api.balance()
+      setBalance(walletAfter)
+      if (walletShowsRechargeCompletion(walletBefore, walletAfter)) {
+        void retryRecoveryTarget(recoveryTarget)
+        return
+      }
+      setNotice(t('app.notice.checkoutNotCompleted'), {
+        duration: 8000,
+        action: rechargeRetryAction(recoveryTarget, walletAfter),
+      })
+    } catch {
+      setNotice(t('app.notice.checkoutStatusCheckFailed'), {
+        duration: 8000,
+        action: rechargeRetryAction(recoveryTarget, walletBefore),
+      })
     }
   }
 
@@ -1976,6 +2431,7 @@ function AppContent() {
               onRegenerateMessage={handleRegenerateMessage}
               onEditResendMessage={handleEditResendMessage}
               onDeleteMessage={setPendingDeleteMessageID}
+              onFailureAction={handleAgentFailureAction}
             />
 
             <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
@@ -2045,14 +2501,14 @@ function AppContent() {
                   }
                   void handleQuestionAnswer(messageID, requestID, skipAnswers)
                 }}
-                onCancel={() => void cancelActiveLocalRun()}
+                onCancel={() => void cancelActiveRun()}
               />
 
               <Composer
               draft={draft}
               onDraftChange={setDraft}
               isSending={isSending}
-              hasActiveLocalRun={hasActiveLocalRun}
+              hasActiveRun={hasActiveRun}
               attachedDocument={attachedDocument}
               attachedPreview={attachedPreview}
               isUploading={isUploading}
@@ -2063,7 +2519,7 @@ function AppContent() {
                 setAttachedPreview(undefined)
               }}
               onSend={() => void sendMessage()}
-              onStop={() => void cancelActiveLocalRun()}
+              onStop={() => void cancelActiveRun()}
               listSkills={async () => {
                 if (!localHostConfig) return []
                 const catalog = await listInstalledSkills(localHostConfig)
@@ -2332,6 +2788,46 @@ function totalCredits(balance: WalletBalance): number {
   return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
 }
 
+function recoveryTargetKey(target: RecoveryTarget): string {
+  return `${target.conversationID}:${target.assistantMessageID}`
+}
+
+function walletShowsRechargeCompletion(before: WalletBalance | null, after: WalletBalance): boolean {
+  const afterCredits = totalCredits(after)
+  if (!before) {
+    return afterCredits > 0
+  }
+  const beforeCredits = totalCredits(before)
+  if (afterCredits > beforeCredits) {
+    return true
+  }
+  if (afterCredits <= 0) {
+    return false
+  }
+  if (after.monthly_credit_limit > before.monthly_credit_limit) {
+    return true
+  }
+  return after.plan_code !== before.plan_code && after.plan_code !== 'free_trial'
+}
+
+function nextRepairAttempt(message: ChatMessage): number {
+  const attempts = (message.agentEvents ?? [])
+    .map((event) => event.repairAttempt)
+    .filter((attempt): attempt is number => typeof attempt === 'number' && Number.isFinite(attempt))
+  return Math.max(0, ...attempts) + 1
+}
+
+function nextRetryAttempt(message: ChatMessage): number {
+  const attempts = (message.agentEvents ?? [])
+    .map((event) => event.retryAttempt)
+    .filter((attempt): attempt is number => typeof attempt === 'number' && Number.isFinite(attempt))
+  return Math.max(0, ...attempts) + 1
+}
+
+function latestRunFailureEvent(message: ChatMessage): AgentTimelineItem | undefined {
+  return [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')
+}
+
 /** Token from an email-verification link (CLIENT_BASE_URL/verify?token=…).
  *  Gated on the /verify path so it never collides with the /reset?token= link
  *  consumed by AuthScreen. */
@@ -2368,15 +2864,14 @@ function notifyAgentCompleted(message: ChatMessage, t: Translator): void {
 
 /** Fire a system notification when an assistant turn FAILS. Mirrors
  *  notifyAgentCompleted (main suppresses it while focused). The body
- *  prefers the run.failed event's message, falling back to the bubble
- *  content (set to the error message on a network/HTTP drop). */
+ *  prefers the run.failed event label, falling back to the bubble content
+ *  (set to the error message on a network/HTTP drop). */
 function notifyAgentFailed(message: ChatMessage, t: Translator): void {
   const bridge = window.shejaneDesktop
   if (!bridge?.notify) {
     return
   }
-  const failureEvent = [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')
-  const raw = (failureEvent?.label || message.content || '').trim().replace(/\s+/g, ' ')
+  const raw = (latestRunFailedLabel(message) || message.content || '').trim().replace(/\s+/g, ' ')
   const body = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw
   void bridge.notify({
     title: t('notify.agentFailed.title'),
@@ -2384,10 +2879,17 @@ function notifyAgentFailed(message: ChatMessage, t: Translator): void {
   })
 }
 
+function latestRunFailedLabel(message: ChatMessage): string {
+  return [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')?.label ?? ''
+}
+
 function finalizeLocalRunStatus(message: ChatMessage) {
   const events = message.agentEvents ?? []
   if (events.some((event) => event.type === 'run.failed')) {
     message.status = 'error'
+    if (!message.content.trim()) {
+      message.content = latestRunFailedLabel(message)
+    }
     return
   }
   if (events.some((event) => event.type === 'run.completed')) {

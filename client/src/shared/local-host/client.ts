@@ -129,6 +129,10 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
 export interface AdvancedAgentSettings {
   /** Hard cap on LLM calls per run (runaway guard). Daemon default 20. */
   maxModelCalls?: number
+  /** Prior user/assistant messages forwarded into a new local run. Daemon default 40. */
+  maxHistoryTurns?: number
+  /** Retries for transient model gateway failures. Daemon default 2. */
+  maxModelRetries?: number
   /** Retries for a failing tool before giving up. Daemon default 2. */
   maxToolRetries?: number
   /** Results the research / deep-search path requests per query. Daemon default 3. */
@@ -166,6 +170,8 @@ export interface AgentSettings {
   advanced?: AdvancedAgentSettings
 }
 
+export type LocalRunMetadata = Record<string, unknown>
+
 export async function createLocalRun(
   input: {
     goal: string
@@ -173,6 +179,7 @@ export async function createLocalRun(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
     parentRunId?: string
     settings?: AgentSettings
+    metadata?: LocalRunMetadata
     /** The model the user picked: 'auto' or a catalog model id. The daemon
      *  forwards it to the cloud, which resolves 'auto'/unknown → default.
      *  Omitted → daemon default ('auto'). */
@@ -200,6 +207,8 @@ export async function createLocalRun(
     const adv = src.advanced
     if (adv) {
       if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
+      if (adv.maxHistoryTurns !== undefined) out.max_history_turns = adv.maxHistoryTurns
+      if (adv.maxModelRetries !== undefined) out.max_model_retries = adv.maxModelRetries
       if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
       if (adv.researchSearchLimit !== undefined) out.research_search_limit = adv.researchSearchLimit
       if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
@@ -224,6 +233,7 @@ export async function createLocalRun(
       history: input.history ?? [],
       parent_run_id: input.parentRunId || undefined,
       settings,
+      metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
       model: input.mode,
     }),
   })

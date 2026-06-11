@@ -18,7 +18,19 @@
 	email {$ACME_EMAIL:tliang92@gmail.com}
 }
 
+(security_headers) {
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Content-Security-Policy "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; worker-src 'self' blob:; media-src 'self' blob: data:; form-action 'self'"
+    X-Frame-Options "DENY"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    Permissions-Policy "camera=(), geolocation=(), microphone=()"
+  }
+}
+
 {$APP_DOMAIN:localhost} {
+  import security_headers
   encode zstd gzip
 
   handle /api/* {
@@ -46,6 +58,7 @@
 }
 
 {$ADMIN_DOMAIN:admin.localhost} {
+  import security_headers
   encode zstd gzip
 
   handle /api/* {

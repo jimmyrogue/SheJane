@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -590,8 +592,40 @@ func TestAgentLLMGatewayRequiresAuthAndSettlesUsage(t *testing.T) {
 	if after.MonthlyRemaining >= before.MonthlyRemaining {
 		t.Fatalf("monthly remaining before=%d after=%d, want decrease", before.MonthlyRemaining, after.MonthlyRemaining)
 	}
-	if calls := usageRecords(t, server, token); !strings.Contains(calls, `"scene":"agent_local"`) {
+	calls := usageRecords(t, server, token)
+	if !strings.Contains(calls, `"scene":"agent_local"`) {
 		t.Fatalf("usage records missing agent_local scene: %s", calls)
+	}
+	if !strings.Contains(calls, `"run_id":"local-run-1"`) {
+		t.Fatalf("usage records missing local run_id: %s", calls)
+	}
+}
+
+func TestAdminLLMCallsExposeRunID(t *testing.T) {
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+
+	body := `{"run_id":"local-run-admin-1","model":"chat.fast","messages":[{"role":"user","content":"hello from admin trace"}],"tools":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("agent llm status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/llm-calls", nil)
+	adminReq.Header.Set("Authorization", "Bearer "+adminToken)
+	adminRecorder := httptest.NewRecorder()
+	server.ServeHTTP(adminRecorder, adminReq)
+	if adminRecorder.Code != http.StatusOK {
+		t.Fatalf("admin llm calls status = %d, body = %s", adminRecorder.Code, adminRecorder.Body.String())
+	}
+	if !strings.Contains(adminRecorder.Body.String(), `"run_id":"local-run-admin-1"`) {
+		t.Fatalf("admin llm calls missing run_id: %s", adminRecorder.Body.String())
 	}
 }
 
@@ -618,6 +652,66 @@ func TestAgentToolCapabilitiesRequireAuthAndHideUnconfiguredTavily(t *testing.T)
 	}
 	if !strings.Contains(recorder.Body.String(), `"web.search"`) || !strings.Contains(recorder.Body.String(), `"configured":false`) {
 		t.Fatalf("capabilities missing disabled web.search: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"description"`) || !strings.Contains(recorder.Body.String(), `"inputSchema"`) {
+		t.Fatalf("capabilities missing LLM tool schema metadata: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"query"`) || !strings.Contains(recorder.Body.String(), `"prompt"`) {
+		t.Fatalf("capabilities missing expected web/image schema fields: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"max_results"`) || strings.Contains(recorder.Body.String(), `"maxResults"`) {
+		t.Fatalf("capabilities should use model-facing argument name max_results: %s", recorder.Body.String())
+	}
+}
+
+func TestAgentToolCapabilitiesUseCloudToolSchemaArtifact(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndToken(t, server)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/tool-capabilities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("capabilities status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			Tools map[string]struct {
+				Description string         `json:"description"`
+				InputSchema map[string]any `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode capabilities response: %v", err)
+	}
+
+	raw, err := os.ReadFile("cloud_tool_schemas.json")
+	if err != nil {
+		t.Fatalf("read cloud tool schema artifact: %v", err)
+	}
+	var artifact map[string]struct {
+		Description string         `json:"description"`
+		InputSchema map[string]any `json:"inputSchema"`
+	}
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		t.Fatalf("decode cloud tool schema artifact: %v", err)
+	}
+
+	for _, name := range []string{"web.search", imageToolName, imageEditToolName, codeExecToolName, pdfInspectToolName} {
+		got, ok := response.Data.Tools[name]
+		if !ok {
+			t.Fatalf("capabilities missing %s", name)
+		}
+		want, ok := artifact[name]
+		if !ok {
+			t.Fatalf("schema artifact missing %s", name)
+		}
+		if got.Description != want.Description || !reflect.DeepEqual(got.InputSchema, want.InputSchema) {
+			t.Fatalf("%s schema drift\n got=%#v\nwant=%#v", name, got, want)
+		}
 	}
 }
 
@@ -882,6 +976,57 @@ func TestAdminCanObserveAgentRunsReadOnly(t *testing.T) {
 	}
 	if strings.Contains(body, "完整正文") {
 		t.Fatalf("admin agent runs should expose summaries, not full raw goal: %s", body)
+	}
+}
+
+func TestAdminAgentRunTraceJoinsEventsLLMAndToolCalls(t *testing.T) {
+	tavily := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{{"title": "Trace", "url": "https://example.com/trace", "content": "trace result"}},
+		})
+	}))
+	defer tavily.Close()
+
+	server := newTestServerWithConfig(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+		cfg.TavilyAPIKey = "tvly-cloud-secret"
+		cfg.TavilyBaseURL = tavily.URL
+		cfg.TavilySearchCredits = 20
+	})
+	adminToken := registerAndTokenWithEmail(t, server, "admin@example.com")
+	userToken := registerAndTokenWithEmail(t, server, "trace-user@example.com")
+	run := createAgentRun(t, server, userToken, `{"goal":"trace this run","model":"chat.fast"}`)
+
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+userToken)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("agent stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+
+	toolBody := `{"run_id":"` + run.ID + `","tool_call_id":"call-search-trace","tool":"web.search","arguments":{"query":"agent trace","max_results":1},"idempotency_key":"` + run.ID + `:call-search-trace"}`
+	toolReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent/tools/execute", strings.NewReader(toolBody))
+	toolReq.Header.Set("Authorization", "Bearer "+userToken)
+	toolReq.Header.Set("Content-Type", "application/json")
+	toolRecorder := httptest.NewRecorder()
+	server.ServeHTTP(toolRecorder, toolReq)
+	if toolRecorder.Code != http.StatusOK {
+		t.Fatalf("tool execute status = %d, body = %s", toolRecorder.Code, toolRecorder.Body.String())
+	}
+
+	traceReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/agent-runs/"+run.ID+"/trace", nil)
+	traceReq.Header.Set("Authorization", "Bearer "+adminToken)
+	traceRecorder := httptest.NewRecorder()
+	server.ServeHTTP(traceRecorder, traceReq)
+	if traceRecorder.Code != http.StatusOK {
+		t.Fatalf("admin trace status = %d, body = %s", traceRecorder.Code, traceRecorder.Body.String())
+	}
+	traceBody := traceRecorder.Body.String()
+	for _, want := range []string{run.ID, `"run.created"`, `"llm_calls"`, `"run_id":"` + run.ID + `"`, `"tool":"web.search"`, `"tool_calls"`, `"wallet_transactions"`, `"usage_reserve"`, `"usage_settle"`} {
+		if !strings.Contains(traceBody, want) {
+			t.Fatalf("admin trace missing %q: %s", want, traceBody)
+		}
 	}
 }
 

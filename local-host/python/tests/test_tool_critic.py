@@ -44,6 +44,15 @@ def _make_request(
     )
 
 
+def _make_request_with_messages(tool_name: str, messages: list[Any]) -> Any:
+    return SimpleNamespace(
+        tool_call={"name": tool_name, "args": {}, "id": "c1"},
+        tool=None,
+        state={"messages": messages},
+        runtime=None,
+    )
+
+
 async def _handler_returns(result: Any):
     async def _h(_request):
         return result
@@ -183,6 +192,23 @@ def test_block_replaces_content_when_usable_false() -> None:
     assert "garbage results" not in out.content
 
 
+def test_block_treats_string_false_as_unusable() -> None:
+    critic = FakeCriticModel(
+        response_text='{"usable": "false", "reason": "search results were off-topic"}'
+    )
+    mw = ToolResultCriticMiddleware(critic_model=critic, mode="block")
+    original = ToolMessage(content="garbage results", tool_call_id="c1", name="web.search")
+
+    async def run() -> ToolMessage:
+        handler = await _handler_returns(original)
+        return await mw.awrap_tool_call(_make_request("web.search"), handler)
+
+    out = asyncio.run(run())
+    assert "Tool result rejected" in out.content
+    assert "search results were off-topic" in out.content
+    assert "garbage results" not in out.content
+
+
 def test_block_passes_through_when_usable_true() -> None:
     critic = FakeCriticModel(response_text='{"usable": true, "reason": "great"}')
     mw = ToolResultCriticMiddleware(critic_model=critic, mode="block")
@@ -286,6 +312,29 @@ def test_critic_receives_task_args_and_result() -> None:
     assert "web.fetch" in user_msg_content
     assert "https://example.com/x" in user_msg_content
     assert "page content" in user_msg_content
+
+
+def test_critic_uses_latest_user_turn_when_history_is_present() -> None:
+    critic = FakeCriticModel(response_text='{"usable": true, "reason": "ok"}')
+    mw = ToolResultCriticMiddleware(critic_model=critic, mode="watch")
+    original = ToolMessage(content="new page content", tool_call_id="c1", name="web.fetch")
+    request = _make_request_with_messages(
+        "web.fetch",
+        [
+            HumanMessage(content="old task: summarize the roadmap"),
+            ToolMessage(content="old result", tool_call_id="old", name="web.fetch"),
+            HumanMessage(content="current task: compare agent runtimes"),
+        ],
+    )
+
+    async def run() -> None:
+        handler = await _handler_returns(original)
+        await mw.awrap_tool_call(request, handler)
+
+    asyncio.run(run())
+    prompt = critic.calls[0][1].content
+    assert "current task: compare agent runtimes" in prompt
+    assert "old task: summarize the roadmap" not in prompt
 
 
 # --- truncation guard ---

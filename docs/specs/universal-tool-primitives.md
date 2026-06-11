@@ -3,6 +3,18 @@
 **Status:** Phase 2.15 implementation spec; Phase 2.16 adds observation primitives on top
 **Updated:** 2026-05-11
 
+> **Current-state note (2026-06-10):** this file is a design spec for the
+> universal primitive vocabulary, not the current implementation source of
+> truth. The current Python/LangGraph daemon uses deepagents-provided
+> filesystem/shell tool names (`ls`, `read_file`, `write_file`, `edit_file`,
+> `glob`, `grep`, `execute`) plus SheJane tools such as `workspace.open`,
+> `web.fetch`, `web.search`, `open.*`, `clipboard.*`, `task.verify`,
+> `memory.search`, office tools, MCP tools, and gateway-backed paid tools.
+> Granular `browser.open/read/verify/snapshot/...` primitives are not
+> currently registered; `browser.task` is hidden until browser-use and a
+> browser LLM are wired. See [run-loop.md](../run-loop.md) and
+> [operations.md](../operations.md) for current behavior.
+
 ## Summary
 
 Universal Tool Primitives turn the SheJane Local Harness from a coding-oriented tool loop into a general work-agent foundation. The model should reason in simple verbs: read, write, open, search, list, and verify. Higher-level office automation, browser work, documents, spreadsheets, email, and calendar flows should compose these primitives instead of creating one-off scene tools.

@@ -110,7 +110,7 @@ describe('Composer (Lexical skill editor)', () => {
   // send promise resolved, which happens early when an SSE stream
   // blocks at a HITL permission card. Users were stranded with no
   // way to cancel a run paused for approval. The fix routes the
-  // stop visibility off `isSending || hasActiveLocalRun`.
+  // stop visibility off `isSending || hasActiveRun`.
   it('shows the stop button when a run is still active even if isSending is false', () => {
     const onStop = vi.fn()
     render(
@@ -119,7 +119,7 @@ describe('Composer (Lexical skill editor)', () => {
           draft=""
           onDraftChange={vi.fn()}
           isSending={false}
-          hasActiveLocalRun
+          hasActiveRun
           isUploading={false}
           onUploadDocument={vi.fn()}
           onDetachDocument={vi.fn()}
@@ -136,7 +136,7 @@ describe('Composer (Lexical skill editor)', () => {
     expect(onStop).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the send button (not stop) when neither isSending nor hasActiveLocalRun is set', () => {
+  it('shows the send button (not stop) when neither isSending nor hasActiveRun is set', () => {
     render(<Harness />)
     // Stop button uses aria-label "停止生成" (i18n key composer.stop).
     expect(screen.queryByRole('button', { name: '停止生成' })).not.toBeInTheDocument()

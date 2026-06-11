@@ -1074,6 +1074,9 @@ func (s *MemoryStore) AdminLLMCalls(ctx context.Context, opts AdminListOptions) 
 		if opts.Status != "" && record.Status != opts.Status {
 			continue
 		}
+		if opts.RunID != "" && record.RunID != opts.RunID {
+			continue
+		}
 		item := AdminLLMCallRecord{LLMCallRecord: record}
 		if user, ok := s.usersByID[record.UserID]; ok {
 			item.UserEmail = user.Email
@@ -1100,6 +1103,9 @@ func (s *MemoryStore) AdminExternalToolCalls(ctx context.Context, opts AdminList
 			continue
 		}
 		if opts.Status != "" && record.Status != opts.Status {
+			continue
+		}
+		if opts.RunID != "" && record.RunID != opts.RunID {
 			continue
 		}
 		item := AdminExternalToolCallRecord{ExternalToolCallRecord: cloneExternalToolCall(record)}
@@ -1174,6 +1180,60 @@ func (s *MemoryStore) AdminAgentRuns(ctx context.Context, opts AdminListOptions)
 		return []AdminAgentRun{}, nil
 	}
 	return runs[offset:minInt(offset+limit, len(runs))], nil
+}
+
+func (s *MemoryStore) AdminAgentRunByID(ctx context.Context, runID string) (AdminAgentRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.agentRuns[runID]
+	if !ok {
+		return AdminAgentRun{}, ErrNotFound
+	}
+	user, ok := s.usersByID[run.UserID]
+	if !ok {
+		return AdminAgentRun{}, ErrNotFound
+	}
+	return AdminAgentRun{AgentRun: run, UserEmail: user.Email}, nil
+}
+
+func (s *MemoryStore) AdminWalletTransactionsByRun(ctx context.Context, runID string, limit int) ([]billing.Transaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	reservationIDs := make(map[string]bool)
+	for _, record := range s.llmCalls {
+		if record.RunID == runID && record.ReservationID != "" {
+			reservationIDs[record.ReservationID] = true
+		}
+	}
+	for _, record := range s.toolCalls {
+		if record.RunID == runID && record.ReservationID != "" {
+			reservationIDs[record.ReservationID] = true
+		}
+	}
+	if len(reservationIDs) == 0 {
+		return []billing.Transaction{}, nil
+	}
+
+	transactions := make([]billing.Transaction, 0)
+	for _, wallet := range s.wallets {
+		for _, tx := range wallet.Transactions() {
+			if reservationIDs[tx.ReservationID] {
+				transactions = append(transactions, tx)
+			}
+		}
+	}
+	sort.Slice(transactions, func(i, j int) bool {
+		return transactions[i].CreatedAt.After(transactions[j].CreatedAt)
+	})
+	if len(transactions) > limit {
+		return transactions[:limit], nil
+	}
+	return transactions, nil
 }
 
 func (s *MemoryStore) AdminAuditLogs(ctx context.Context, opts AdminListOptions) ([]AuditLog, error) {

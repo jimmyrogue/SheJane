@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +17,12 @@ import (
 )
 
 type toolCapability struct {
-	Configured   bool   `json:"configured"`
-	Provider     string `json:"provider"`
-	CreditsCost  int64  `json:"credits_cost"`
-	RequiresAuth bool   `json:"requires_auth"`
+	Configured   bool           `json:"configured"`
+	Provider     string         `json:"provider"`
+	CreditsCost  int64          `json:"credits_cost"`
+	RequiresAuth bool           `json:"requires_auth"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
 }
 
 type toolCapabilitiesPayload struct {
@@ -43,26 +46,52 @@ type agentToolExecuteResult struct {
 	Usage       map[string]any `json:"usage,omitempty"`
 }
 
+type cloudToolDefinition struct {
+	Description string
+	InputSchema map[string]any
+}
+
+//go:embed cloud_tool_schemas.json
+var cloudToolSchemasJSON []byte
+
+var cloudToolDefinitions = mustLoadCloudToolDefinitions()
+
+func mustLoadCloudToolDefinitions() map[string]cloudToolDefinition {
+	var definitions map[string]cloudToolDefinition
+	if err := json.Unmarshal(cloudToolSchemasJSON, &definitions); err != nil {
+		panic(fmt.Sprintf("invalid cloud tool schema artifact: %v", err))
+	}
+	return definitions
+}
+
+func withCloudToolDefinition(name string, capability toolCapability) toolCapability {
+	if definition, ok := cloudToolDefinitions[name]; ok {
+		capability.Description = definition.Description
+		capability.InputSchema = definition.InputSchema
+	}
+	return capability
+}
+
 func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, user store.User) {
 	writeJSON(w, http.StatusOK, apiResponse[toolCapabilitiesPayload]{
 		Code:    0,
 		Message: "ok",
 		Data: toolCapabilitiesPayload{Tools: map[string]toolCapability{
-			"web.search": {
+			"web.search": withCloudToolDefinition("web.search", toolCapability{
 				Configured:   strings.TrimSpace(s.app.Config.TavilyAPIKey) != "",
 				Provider:     "tavily",
 				CreditsCost:  positiveCredits(s.app.Registry.TavilySearchCredits()),
 				RequiresAuth: true,
-			},
-			imageToolName:     s.imageToolCapability(r.Context()),
-			imageEditToolName: s.imageToolCapability(r.Context()),
-			codeExecToolName: {
+			}),
+			imageToolName:     withCloudToolDefinition(imageToolName, s.imageToolCapability(r.Context())),
+			imageEditToolName: withCloudToolDefinition(imageEditToolName, s.imageToolCapability(r.Context())),
+			codeExecToolName: withCloudToolDefinition(codeExecToolName, toolCapability{
 				Configured:   s.app.IsCodeExecEnabled(),
 				Provider:     "e2b",
 				CreditsCost:  positiveCredits(s.app.Registry.E2BCodeExecBaseCredits()),
 				RequiresAuth: true,
-			},
-			pdfInspectToolName: {
+			}),
+			pdfInspectToolName: withCloudToolDefinition(pdfInspectToolName, toolCapability{
 				// Always-configured: relies on poppler-utils
 				// installed in the API container (alpine
 				// apk add poppler-utils) plus the user's own
@@ -71,7 +100,7 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 				Provider:     "poppler",
 				CreditsCost:  pdfInspectCreditsCost,
 				RequiresAuth: true,
-			},
+			}),
 		}},
 	})
 }
@@ -270,7 +299,7 @@ func (s *Server) executeTavilySearch(ctx context.Context, arguments map[string]a
 		return result, 0, errors.New("query_required")
 	}
 	maxResults := 5
-	switch value := arguments["maxResults"].(type) {
+	switch value := firstPresent(arguments, "max_results", "maxResults").(type) {
 	case float64:
 		maxResults = int(value)
 	case int:
@@ -356,6 +385,15 @@ func (s *Server) executeTavilySearch(ctx context.Context, arguments map[string]a
 		Content: strings.Join(contentParts, "\n\n"),
 		Data:    data,
 	}, 1, nil
+}
+
+func firstPresent(values map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value
+		}
+	}
+	return nil
 }
 
 func resultFromToolRecord(record store.ExternalToolCallRecord) agentToolExecuteResult {

@@ -35,6 +35,8 @@ def test_all_knobs_applied_with_coercion() -> None:
         base,
         {
             "max_model_calls": "50",  # string → int
+            "max_history_turns": "12",
+            "max_model_retries": "1",
             "max_tool_retries": 4,
             "research_search_limit": "6",
             "tool_selector_max": "8",
@@ -48,6 +50,8 @@ def test_all_knobs_applied_with_coercion() -> None:
         },
     )
     assert eff.max_model_calls == 50 and isinstance(eff.max_model_calls, int)
+    assert eff.max_history_turns == 12
+    assert eff.max_model_retries == 1
     assert eff.max_tool_retries == 4
     assert eff.research_search_limit == 6
     assert eff.tool_selector_max_tools == 8
@@ -77,6 +81,51 @@ def test_invalid_values_are_ignored() -> None:
     assert eff.max_model_calls == base.max_model_calls
     assert eff.tool_critic_mode == base.tool_critic_mode
     assert eff.plan_first_mode == base.plan_first_mode
+
+
+def test_verification_repair_max_env_is_clamped() -> None:
+    assert Settings(SHEJANE_LOCAL_VERIFY_REPAIR_MAX="").verification_repair_max == 1
+    assert Settings(SHEJANE_LOCAL_VERIFY_REPAIR_MAX=0).verification_repair_max == 0
+    assert Settings(SHEJANE_LOCAL_VERIFY_REPAIR_MAX=9).verification_repair_max == 3
+
+
+def test_max_history_turns_is_clamped() -> None:
+    assert Settings(max_history_turns="").max_history_turns == 40
+    assert Settings(max_history_turns=0).max_history_turns == 1
+    assert Settings(max_history_turns=999).max_history_turns == 200
+    base = _base()
+    assert _apply_advanced_overrides(base, {"max_history_turns": -5}).max_history_turns == 1
+    assert _apply_advanced_overrides(base, {"max_history_turns": 999}).max_history_turns == 200
+
+
+def test_run_budget_integer_knobs_are_clamped() -> None:
+    assert Settings(max_model_calls=0).max_model_calls == 1
+    assert Settings(max_model_calls=999).max_model_calls == 100
+    assert Settings(max_model_retries=-1).max_model_retries == 0
+    assert Settings(max_model_retries=99).max_model_retries == 5
+    assert Settings(max_tool_retries=-1).max_tool_retries == 0
+    assert Settings(max_tool_retries=99).max_tool_retries == 5
+    assert Settings(research_search_limit=0).research_search_limit == 1
+    assert Settings(research_search_limit=99).research_search_limit == 20
+    assert Settings(tool_selector_max_tools=-1).tool_selector_max_tools == 0
+    assert Settings(tool_selector_max_tools=99).tool_selector_max_tools == 50
+
+    base = _base()
+    eff = _apply_advanced_overrides(
+        base,
+        {
+            "max_model_calls": -5,
+            "max_model_retries": -1,
+            "max_tool_retries": 999,
+            "research_search_limit": 0,
+            "tool_selector_max": 999,
+        },
+    )
+    assert eff.max_model_calls == 1
+    assert eff.max_model_retries == 0
+    assert eff.max_tool_retries == 5
+    assert eff.research_search_limit == 1
+    assert eff.tool_selector_max_tools == 50
 
 
 def test_partial_override_leaves_others_at_base() -> None:

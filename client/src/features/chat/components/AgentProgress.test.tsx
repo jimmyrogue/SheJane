@@ -42,6 +42,32 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
+  it('surfaces missing handoff ledger risk while waiting without restoring inline approval controls', () => {
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'waiting_permission',
+          agentEvents: [
+            { type: 'permission.required', label: '需要权限：运行命令', permissionRequestId: 'perm-shell', permissionTool: '运行命令' },
+            {
+              type: 'run.waiting',
+              label: '任务已暂停',
+              handoffLedgerState: 'missing',
+              handoffLedgerMessage: 'Progress ledger missing for handoff.',
+            },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('暂停交接需要注意')).toBeInTheDocument()
+    expect(screen.getByText('暂停前缺少进展账本，恢复时上下文可能不完整。')).toBeInTheDocument()
+    expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
+    expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
+  })
+
   it('collapses to an aggregated headline; expanding exposes only the diagnostics escape hatch', () => {
     // The expanded body used to dump a per-step list + source/artifact
     // tallies + a "view artifact" button. Users found it noisy and
@@ -122,6 +148,24 @@ describe('AgentProgress', () => {
     // with the globe icon for web tools.
     expect(screen.getByText('打开受控网页')).toBeInTheDocument()
     expect(screen.getByText('weather.com')).toBeInTheDocument()
+  })
+
+  it('uses repair workflow events as the live running headline', () => {
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'repair.workflow', label: '修复开始：第 2/3 次', repairAttempt: 2 },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('修复开始：第 2/3 次')).toBeInTheDocument()
+    expect(screen.queryByText('思考')).not.toBeInTheDocument()
   })
 
   it('does not show "已完成 X" as the live headline while the run is still active', () => {
@@ -223,6 +267,156 @@ describe('AgentProgress', () => {
     // The expanded drawer (when opened) carries only the diagnostics
     // button — no step labels regardless of state.
     expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
+  })
+
+  it('shows the latest run failure label as the failed headline', () => {
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        { type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' },
+        { type: 'run.failed', label: 'missing API key · 需要你处理' },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('missing API key · 需要你处理')).toBeInTheDocument()
+    expect(screen.queryByText('读取 1 个文件')).not.toBeInTheDocument()
+  })
+
+  it('shows localized next action guidance for user-action failures', () => {
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'cloud session required · 需要你处理',
+          failureCategory: 'auth',
+          failureActionKind: 'user_action',
+          failureSuggestedAction: 'Sign in to the Electron app or refresh the local cloud session, then retry.',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('cloud session required · 需要你处理')).toBeInTheDocument()
+    expect(screen.getByText('请重新登录或刷新本地云端会话，然后重试。')).toBeInTheDocument()
+  })
+
+  it('offers a top-up action for quota failures', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'credits exhausted · 需要你处理',
+          failureCategory: 'quota',
+          failureActionKind: 'user_action',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '充值' }))
+    expect(onFailureAction).toHaveBeenCalledWith('recharge', current)
+  })
+
+  it('offers a retry action for retryable failures', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'provider overloaded · 可重试',
+          failureCategory: 'transient',
+          failureActionKind: 'retry',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onFailureAction).toHaveBeenCalledWith('retry', current)
+  })
+
+  it('offers a distinct repair action for repairable validation failures', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'invalid tool arguments · 需要修复',
+          failureCategory: 'validation',
+          failureActionKind: 'repair',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '尝试修复' }))
+    expect(onFailureAction).toHaveBeenCalledWith('repair', current)
+  })
+
+  it('falls back to operator guidance for fatal failures without a category-specific action', () => {
+    const progress = deriveAgentProgress(
+      message({
+        status: 'error',
+        agentEvents: [
+          {
+            type: 'run.failed',
+            label: 'RuntimeError · 需要运维处理',
+            failureActionKind: 'operator_action',
+            failureSuggestedAction: 'Inspect logs and fix implementation.',
+          },
+        ],
+      }),
+    )
+
+    expect(progress).toMatchObject({
+      tone: 'failed',
+      label: 'RuntimeError · 需要运维处理',
+      detail: '请检查本地日志或实现错误，修复后再重试。',
+    })
   })
 
   it('parallel task dispatches: header shows count only; descriptions render as a per-task list below', () => {
@@ -407,6 +601,15 @@ describe('AgentProgress', () => {
         }),
       ),
     ).toMatchObject({ tone: 'working', label: '阅读网页正文' })
+
+    expect(
+      deriveAgentProgress(
+        message({
+          status: 'waiting_input',
+          agentEvents: [],
+        }),
+      ),
+    ).toMatchObject({ tone: 'working', label: '等待你的回答' })
   })
 })
 

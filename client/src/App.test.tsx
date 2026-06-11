@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 
 // The composer's document upload now goes through an XHR-based helper
 // (for upload progress reporting); jsdom can't hit the real S3 host
@@ -20,6 +21,9 @@ vi.mock('./shared/api/uploadWithProgress', () => ({
 
 import { App } from './App'
 import { $createParagraphNode, $createTextNode, $getRoot } from 'lexical'
+import type { WalletBalance } from './shared/api/client'
+import { LocalConversationStore } from './shared/local-data/localConversations'
+import type { Conversation } from './shared/local-data/types'
 
 const balance = {
   id: 'wallet-1',
@@ -40,9 +44,11 @@ describe('user client shell', () => {
     localStorage.clear()
     window.shejaneDesktop = undefined
     recordedUploadCalls.length = 0
+    toast.dismiss()
   })
 
   afterEach(() => {
+    toast.dismiss()
     cleanup()
     vi.restoreAllMocks()
   })
@@ -76,6 +82,46 @@ describe('user client shell', () => {
     await awaitSignedIn()
     expect(screen.queryByText('管理后台')).not.toBeInTheDocument()
     expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
+  })
+
+  it('marks orphaned web cloud tool loops as failed when loading user conversations', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    const conversation: Conversation = {
+      id: 'conv-orphan-cloud-loop',
+      title: '生成图片',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:00.000Z',
+      messages: [
+        { id: 'msg-user', role: 'user', content: '生成图片', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'streaming',
+          runId: 'run_interrupted_web_loop',
+          runOrigin: 'cloud',
+        },
+      ],
+    }
+    await localData.save(conversation)
+    mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    await waitFor(async () => {
+      const assistant = (await localData.get('conv-orphan-cloud-loop'))?.messages.at(-1)
+      expect(assistant).toMatchObject({
+        status: 'error',
+        content: '这次云端工具循环在浏览器刷新或关闭后中断，无法继续。请重新发送。',
+      })
+      expect(assistant?.agentEvents?.at(-1)).toMatchObject({ type: 'run.failed' })
+    })
   })
 
   it('lets users resize the sidebar within fixed bounds and persists the width', async () => {
@@ -387,6 +433,1069 @@ describe('user client shell', () => {
     })
   })
 
+  it('shows the local run.failed error in the assistant bubble and progress when no answer streamed', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    mockFetch('user', { localRunStream })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('运行本地检查')
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('运行本地检查')).length).toBeGreaterThan(0)
+
+    act(() => {
+      localRunStream.emit({ id: 'fail-event-1', event_type: 'run.failed', payload: { error: 'missing API key', type: 'BackendLLMError' } })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    const failureTexts = await screen.findAllByText('missing API key')
+    expect(failureTexts.length).toBeGreaterThanOrEqual(2)
+    expect(failureTexts.some((node) => node.closest('.message-content'))).toBe(true)
+    expect(failureTexts.some((node) => node.closest('.agent-progress-summary'))).toBe(true)
+  })
+
+  it('opens top-up checkout from a quota failure action', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    const calls = mockFetch('user', { localRunStream })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('运行本地检查')
+    fireEvent.click(screen.getByText('发送'))
+
+    act(() => {
+      localRunStream.emit({
+        id: 'fail-event-1',
+        event_type: 'run.failed',
+        payload: {
+          error: 'credits exhausted',
+          category: 'quota',
+          action_kind: 'user_action',
+          retryable: false,
+        },
+      })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    await clickFailureAction('充值')
+
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(true),
+    )
+    expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer')
+  })
+
+  it('opens only one checkout session when the same quota recovery action is clicked twice', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    const calls = mockFetch('user', { localRunStream })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('运行本地检查')
+    fireEvent.click(screen.getByText('发送'))
+
+    act(() => {
+      localRunStream.emit({
+        id: 'fail-event-1',
+        event_type: 'run.failed',
+        payload: {
+          error: 'credits exhausted',
+          category: 'quota',
+          action_kind: 'user_action',
+          retryable: false,
+        },
+      })
+      localRunStream.done()
+    })
+    await settleStreamRender()
+
+    const rechargeButton = (await screen.findAllByRole('button', { name: '充值' })).find((button) =>
+      button.closest('.agent-progress-actions'),
+    )
+    expect(rechargeButton).toBeTruthy()
+    fireEvent.click(rechargeButton!)
+    fireEvent.click(rechargeButton!)
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toHaveLength(1)
+      expect(openSpy).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('offers a retry confirmation after opening checkout for a quota failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-quota-failure',
+      title: '额度失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-quota', role: 'user', content: '继续运行本地检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-quota',
+          role: 'assistant',
+          content: 'credits exhausted',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-quota',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'credits exhausted · 需要你处理',
+              failureCategory: 'quota',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const emptyWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'free_trial',
+      monthly_credits_used: 10000,
+      monthly_remaining: 0,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    const calls = mockFetch('user', { balance: () => emptyWallet })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('额度失败任务', 'credits exhausted')
+
+    await clickFailureAction('充值')
+
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+    expect(await screen.findByText('充值页面已打开，完成后可重试刚才的任务')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('observes checkout completion and offers retry without auto-running the failed task', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-quota-failure',
+      title: '额度失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-quota', role: 'user', content: '继续运行本地检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-quota',
+          role: 'assistant',
+          content: 'credits exhausted',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-quota',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'credits exhausted · 需要你处理',
+              failureCategory: 'quota',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const emptyWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'free_trial',
+      monthly_credits_used: 10000,
+      monthly_remaining: 0,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    const paidWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'pro',
+      monthly_credit_limit: 50000,
+      monthly_credits_used: 0,
+      monthly_remaining: 50000,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    let currentWallet = emptyWallet
+    const calls = mockFetch('user', { balance: () => currentWallet })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('额度失败任务', 'credits exhausted')
+
+    currentWallet = paidWallet
+    await clickFailureAction('充值')
+
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+    expect(await screen.findByText('充值已完成，可重试刚才的任务')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('keeps retry confirmations bound to the failed conversation after navigation', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-quota-failure',
+      title: '额度失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-quota', role: 'user', content: '继续运行本地检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-quota',
+          role: 'assistant',
+          content: 'credits exhausted',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-quota',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'credits exhausted · 需要你处理',
+              failureCategory: 'quota',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    await localData.save({
+      id: 'conv-other',
+      title: '其它对话',
+      archived: false,
+      createdAt: '2026-05-10T00:00:02.000Z',
+      updatedAt: '2026-05-10T00:00:03.000Z',
+      messages: [
+        { id: 'msg-user-other', role: 'user', content: '普通任务', createdAt: '2026-05-10T00:00:02.000Z', status: 'done' },
+        { id: 'msg-assistant-other', role: 'assistant', content: '普通回答', createdAt: '2026-05-10T00:00:03.000Z', status: 'done', runOrigin: 'cloud' },
+      ],
+    })
+    const emptyWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'free_trial',
+      monthly_credits_used: 10000,
+      monthly_remaining: 0,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    const paidWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'pro',
+      monthly_credit_limit: 50000,
+      monthly_credits_used: 0,
+      monthly_remaining: 50000,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    let currentWallet = emptyWallet
+    const calls = mockFetch('user', { balance: () => currentWallet })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('额度失败任务', 'credits exhausted')
+
+    await clickFailureAction('充值')
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+    expect(await screen.findByText('充值页面已打开，完成后可重试刚才的任务')).toBeInTheDocument()
+
+    await selectConversationForTest('其它对话', '普通回答')
+    currentWallet = paidWallet
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({ goal: '继续运行本地检查' })
+    })
+  })
+
+  it('does not retry a quota failure until checkout completion is reflected in the wallet', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-quota-failure',
+      title: '额度失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-quota', role: 'user', content: '继续运行本地检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-quota',
+          role: 'assistant',
+          content: 'credits exhausted',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-quota',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'credits exhausted · 需要你处理',
+              failureCategory: 'quota',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const emptyWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'free_trial',
+      monthly_credits_used: 10000,
+      monthly_remaining: 0,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    const calls = mockFetch('user', { balance: () => emptyWallet })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('额度失败任务', 'credits exhausted')
+
+    await clickFailureAction('充值')
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(await screen.findByText('还没有检测到充值完成，请完成支付后再重试')).toBeInTheDocument()
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('retries a quota failure after checkout completion is reflected in the wallet', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-quota-failure',
+      title: '额度失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-quota', role: 'user', content: '继续运行本地检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-quota',
+          role: 'assistant',
+          content: 'credits exhausted',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-quota',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'credits exhausted · 需要你处理',
+              failureCategory: 'quota',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const emptyWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'free_trial',
+      monthly_credits_used: 10000,
+      monthly_remaining: 0,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    const paidWallet: WalletBalance = {
+      ...balance,
+      plan_code: 'pro',
+      monthly_credit_limit: 50000,
+      monthly_credits_used: 0,
+      monthly_remaining: 50000,
+      extra_credits_balance: 0,
+      status: 'active',
+    }
+    let currentWallet = emptyWallet
+    const calls = mockFetch('user', { balance: () => currentWallet })
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('额度失败任务', 'credits exhausted')
+
+    await clickFailureAction('充值')
+    await waitFor(() =>
+      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+    )
+    currentWallet = paidWallet
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({ goal: '继续运行本地检查' })
+    })
+  })
+
+  it('starts a repair run with source metadata from a repair failure action', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-repair-failure',
+      title: '修复任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-repair', role: 'user', content: '读取 workspace 外的文件', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-repair',
+          role: 'assistant',
+          content: 'invalid tool arguments',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'invalid tool arguments · 需要修复',
+              failureCategory: 'validation',
+              failureActionKind: 'repair',
+            },
+          ],
+        },
+      ],
+    })
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('修复任务', 'invalid tool arguments')
+
+    await clickFailureAction('尝试修复')
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+        goal: '读取 workspace 外的文件',
+        parent_run_id: 'local-run',
+        metadata: {
+          intent: 'repair',
+          source_run_id: 'local-run',
+          source_message_id: 'msg-assistant-repair',
+          attempt: 1,
+          failure_category: 'validation',
+          failure_action_kind: 'repair',
+        },
+      })
+    })
+    const updated = await localData.get('conv-repair-failure')
+    const repairAssistant = updated?.messages.at(-1)
+    expect(repairAssistant?.agentEvents?.[0]).toMatchObject({
+      type: 'ui.action.requested',
+      label: '请求操作：修复尝试 1',
+      repairAttempt: 1,
+      repairSourceRunId: 'local-run',
+      repairSourceMessageId: 'msg-assistant-repair',
+    })
+  })
+
+  it('starts only one repair run when the same repair action is clicked twice', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-repair-dedupe',
+      title: '修复去重任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-repair', role: 'user', content: '修复无效参数', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-repair',
+          role: 'assistant',
+          content: 'invalid tool arguments',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'invalid tool arguments · 需要修复',
+              failureCategory: 'validation',
+              failureActionKind: 'repair',
+            },
+          ],
+        },
+      ],
+    })
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('修复去重任务', 'invalid tool arguments')
+
+    const repairButton = await screen.findByRole('button', { name: '尝试修复' })
+    fireEvent.click(repairButton)
+    fireEvent.click(repairButton)
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+        goal: '修复无效参数',
+        parent_run_id: 'local-run',
+        metadata: {
+          intent: 'repair',
+          source_message_id: 'msg-assistant-repair',
+        },
+      })
+    })
+  })
+
+  it('offers a retry confirmation after refreshing a failed local cloud session', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-auth-failure',
+      title: '会话过期任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-auth', role: 'user', content: '继续检查本地项目', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-auth',
+          role: 'assistant',
+          content: 'cloud session expired',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-auth',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'cloud session expired · 需要你处理',
+              failureCategory: 'auth',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('会话过期任务', 'cloud session expired')
+
+    await clickFailureAction('刷新会话')
+
+    expect(await screen.findByText('本地云端会话已刷新，可重试刚才的任务')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+	  await waitFor(() => {
+	    const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+	    expect(localRunPosts).toHaveLength(1)
+	    expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+	      goal: '继续检查本地项目',
+        parent_run_id: 'local-run-auth',
+        metadata: {
+          intent: 'retry',
+          source_run_id: 'local-run-auth',
+          source_message_id: 'msg-assistant-auth',
+          attempt: 1,
+          failure_category: 'auth',
+          failure_action_kind: 'user_action',
+        },
+	    })
+	  })
+	})
+
+	it('keeps an auth recovery target until a later login repairs the local cloud session', async () => {
+	  const localData = new LocalConversationStore('shejane-local:user-1')
+	  await localData.save({
+	    id: 'conv-auth-pending',
+	    title: '会话恢复任务',
+	    archived: false,
+	    createdAt: '2026-05-10T00:00:00.000Z',
+	    updatedAt: '2026-05-10T00:00:01.000Z',
+	    messages: [
+	      { id: 'msg-user-auth-pending', role: 'user', content: '继续恢复本地任务', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+	      {
+	        id: 'msg-assistant-auth-pending',
+	        role: 'assistant',
+	        content: 'cloud session still expired',
+	        createdAt: '2026-05-10T00:00:01.000Z',
+	        status: 'error',
+	        runId: 'local-run-auth-pending',
+	        runOrigin: 'local',
+	        agentEvents: [
+	          {
+	            type: 'run.failed',
+	            label: 'cloud session still expired · 需要你处理',
+	            failureCategory: 'auth',
+	            failureActionKind: 'user_action',
+	          },
+	        ],
+	      },
+	    ],
+	  })
+	  const calls = mockFetch('user', {
+	    localSessionResponses: [
+	      { body: { connected: false } },
+	      { body: { connected: false } },
+	      {
+	        body: {
+	          connected: true,
+	          cloud_base_url: 'http://localhost:8080',
+	          auth: 'bearer',
+	          updated_at: '2026-05-11T00:00:00Z',
+	        },
+	      },
+	    ],
+	  })
+	  window.shejaneDesktop = {
+	    platform: 'darwin',
+	    localHost: {
+	      baseURL: 'http://127.0.0.1:17371',
+	      token: 'local-token',
+	    },
+	  }
+
+	  render(<App />)
+	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+	  fireEvent.click(screen.getByText('创建账号'))
+	  await awaitSignedIn()
+	  await selectConversationForTest('会话恢复任务', 'cloud session still expired')
+
+	  await clickFailureAction('刷新会话')
+	  expect(await screen.findByText('刷新本地云端会话失败')).toBeInTheDocument()
+
+	  const accountMenuTrigger = screen.getByRole('button', { name: '设置' })
+	  accountMenuTrigger.focus()
+	  fireEvent.keyDown(accountMenuTrigger, { key: 'Enter', code: 'Enter' })
+	  fireEvent.click(await screen.findByText('退出登录'))
+	  await screen.findByText('创建你的账号')
+	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+	  fireEvent.click(screen.getByText('创建账号'))
+
+	  expect(await screen.findByText('本地云端会话已刷新，可重试刚才的任务')).toBeInTheDocument()
+	  expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
+
+	  fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+	  await waitFor(() => {
+	    const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+	    expect(localRunPosts).toHaveLength(1)
+	    expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+	      goal: '继续恢复本地任务',
+	      parent_run_id: 'local-run-auth-pending',
+	      metadata: {
+	        intent: 'retry',
+	        source_run_id: 'local-run-auth-pending',
+	        source_message_id: 'msg-assistant-auth-pending',
+	        attempt: 1,
+	        failure_category: 'auth',
+	        failure_action_kind: 'user_action',
+	      },
+	    })
+	  })
+	})
+
+	it('starts only one retry when the same recovery confirmation is clicked twice', async () => {
+	  const localData = new LocalConversationStore('shejane-local:user-1')
+	  await localData.save({
+      id: 'conv-auth-failure',
+      title: '会话过期任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-auth', role: 'user', content: '继续检查本地项目', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-auth',
+          role: 'assistant',
+          content: 'cloud session expired',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-auth',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'cloud session expired · 需要你处理',
+              failureCategory: 'auth',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const localRunStream = createDeferredAgentStream('local-run')
+    const calls = mockFetch('user', { localRunStream })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('会话过期任务', 'cloud session expired')
+
+    await clickFailureAction('刷新会话')
+    expect(await screen.findByText('本地云端会话已刷新，可重试刚才的任务')).toBeInTheDocument()
+    const retryButton = screen.getByRole('button', { name: '重试' })
+    fireEvent.click(retryButton)
+    fireEvent.click(retryButton)
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({ goal: '继续检查本地项目' })
+    })
+  })
+
+  it('offers a retry confirmation after binding a workspace for a workspace failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-workspace-failure',
+      title: '工作区失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-workspace', role: 'user', content: '读取项目里的配置', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-workspace',
+          role: 'assistant',
+          content: 'path outside authorized workspace',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-workspace',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'path outside authorized workspace · 需要你处理',
+              failureCategory: 'workspace',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+      selectWorkspaceDirectory: vi.fn().mockResolvedValue('/tmp/fixed-workspace'),
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('工作区失败任务', 'path outside authorized workspace')
+
+    await clickFailureAction('选择工作区')
+
+    expect(await screen.findByText('当前对话已绑定工作区：fixed-workspace，可重试刚才的任务')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+        goal: '读取项目里的配置',
+        workspace_path: '/tmp/fixed-workspace',
+      })
+    })
+  })
+
+  it('binds recovery workspaces to the failed conversation when the user navigates during selection', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-workspace-failure',
+      title: '工作区失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-workspace', role: 'user', content: '读取项目里的配置', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-workspace',
+          role: 'assistant',
+          content: 'path outside authorized workspace',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run-workspace',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'path outside authorized workspace · 需要你处理',
+              failureCategory: 'workspace',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    await localData.save({
+      id: 'conv-other',
+      title: '其它对话',
+      archived: false,
+      createdAt: '2026-05-10T00:00:02.000Z',
+      updatedAt: '2026-05-10T00:00:03.000Z',
+      messages: [
+        { id: 'msg-user-other', role: 'user', content: '普通任务', createdAt: '2026-05-10T00:00:02.000Z', status: 'done' },
+        { id: 'msg-assistant-other', role: 'assistant', content: '普通回答', createdAt: '2026-05-10T00:00:03.000Z', status: 'done', runOrigin: 'cloud' },
+      ],
+    })
+    const calls = mockFetch('user')
+    let resolveWorkspace!: (path: string) => void
+    const workspaceSelection = new Promise<string>((resolve) => {
+      resolveWorkspace = resolve
+    })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+      selectWorkspaceDirectory: vi.fn().mockReturnValue(workspaceSelection),
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('工作区失败任务', 'path outside authorized workspace')
+
+    await clickFailureAction('选择工作区')
+    await selectConversationForTest('其它对话', '普通回答')
+    await act(async () => {
+      resolveWorkspace('/tmp/fixed-workspace')
+      await workspaceSelection
+    })
+
+    expect(await screen.findByText('当前对话已绑定工作区：fixed-workspace，可重试刚才的任务')).toBeInTheDocument()
+    expect((await localData.get('conv-workspace-failure'))?.workspace?.path).toBe('/tmp/fixed-workspace')
+    expect((await localData.get('conv-other'))?.workspace).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
+        goal: '读取项目里的配置',
+        workspace_path: '/tmp/fixed-workspace',
+      })
+    })
+  })
+
+  it('offers a retry confirmation after opening diagnostics for a configuration failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-config-failure',
+      title: '配置失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-config', role: 'user', content: '检查模型配置', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-config',
+          role: 'assistant',
+          content: 'missing API key',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'missing API key · 需要你处理',
+              failureCategory: 'configuration',
+              failureActionKind: 'user_action',
+            },
+          ],
+        },
+      ],
+    })
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('配置失败任务', 'missing API key')
+
+    await clickFailureAction('查看诊断')
+
+    expect(await screen.findByText('任务诊断：local-run')).toBeInTheDocument()
+    expect(await screen.findByText('诊断已打开，修复配置后可重试刚才的任务')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    await waitFor(() => {
+      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+      expect(localRunPosts).toHaveLength(1)
+      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({ goal: '检查模型配置' })
+    })
+  })
+
   it('fires the completion notification on a successful local run', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
@@ -562,6 +1671,58 @@ describe('user client shell', () => {
     })
   })
 
+  it('uses the Advanced max history turns setting before creating a local run', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    const priorMessages = Array.from({ length: 26 }, (_, index) => ({
+      id: `msg-history-${index}`,
+      role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+      content: `历史消息 ${index}`,
+      createdAt: `2026-05-10T00:${String(index).padStart(2, '0')}:00.000Z`,
+      status: 'done' as const,
+    }))
+    await localData.save({
+      id: 'conv-history-cap',
+      title: '历史任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:26:00.000Z',
+      messages: priorMessages,
+    })
+    localStorage.setItem(
+      'shejane.agentSettings.v7',
+      JSON.stringify({ memory: 'on', skills: 'on', mcp: 'on', mcpDisabled: [], advanced: { maxHistoryTurns: 25 } }),
+    )
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    fireEvent.click(await screen.findByRole('button', { name: '历史任务' }))
+    typeComposer('继续处理')
+    fireEvent.click(screen.getByText('发送'))
+
+    await waitFor(() => {
+      const body = calls
+        .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
+        .map((call) => JSON.parse(call.init?.body as string))
+        .at(-1)
+      expect(body).toMatchObject({ goal: '继续处理', settings: expect.objectContaining({ max_history_turns: 25 }) })
+      expect(body.history).toHaveLength(26)
+      expect(body.history[0].content).toContain('已省略更早的 1 条消息')
+      expect(body.history.at(-1).content).toBe('历史消息 25')
+    })
+  })
+
   it('hides recent local runs from the sidebar', async () => {
     mockFetch('user', {
       localRuns: [
@@ -709,6 +1870,18 @@ async function openAccountMenu(): Promise<void> {
   fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
 }
 
+async function selectConversationForTest(title: string, readyText: string): Promise<void> {
+  fireEvent.click(await screen.findByRole('button', { name: title }))
+  await screen.findByText(readyText)
+}
+
+async function clickFailureAction(label: string): Promise<void> {
+  const buttons = await screen.findAllByRole('button', { name: label })
+  const action = buttons.find((button) => button.closest('.agent-progress-actions'))
+  expect(action).toBeTruthy()
+  fireEvent.click(action!)
+}
+
 async function settleStreamRender() {
   await act(async () => {
     await new Promise((resolve) => window.setTimeout(resolve, 90))
@@ -763,18 +1936,21 @@ function createDeferredAgentStream(runID: string): DeferredAgentStream {
 
 function mockFetch(
   role: 'admin' | 'user',
-  options: {
-    workspaces?: Array<{ id: string; path: string; label: string }>
-    localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
-    agentStream?: DeferredAgentStream
-    localRunStream?: DeferredAgentStream
-    emailVerified?: boolean
-  } = {},
-) {
-  const calls: Array<{ url: string; init?: RequestInit }> = []
-  let workspaces = options.workspaces ?? []
-  const localRuns = options.localRuns ?? []
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+	  options: {
+	    workspaces?: Array<{ id: string; path: string; label: string }>
+	    localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
+	    agentStream?: DeferredAgentStream
+	    localRunStream?: DeferredAgentStream
+	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
+	    emailVerified?: boolean
+	    balance?: WalletBalance | (() => WalletBalance)
+	  } = {},
+	) {
+	  const calls: Array<{ url: string; init?: RequestInit }> = []
+	  let workspaces = options.workspaces ?? []
+	  const localRuns = options.localRuns ?? []
+	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
+	  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input)
     calls.push({ url, init })
     if (url.endsWith('/api/v1/auth/refresh')) {
@@ -790,10 +1966,17 @@ function mockFetch(
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
-    if (url === 'http://127.0.0.1:17371/local/v1/session' && init?.method === 'POST') {
-      return new Response(
-        JSON.stringify({
-          connected: true,
+	    if (url === 'http://127.0.0.1:17371/local/v1/session' && init?.method === 'POST') {
+	      const nextSessionResponse = localSessionResponses.shift()
+	      if (nextSessionResponse) {
+	        return new Response(JSON.stringify(nextSessionResponse.body), {
+	          status: nextSessionResponse.status ?? 200,
+	          headers: { 'Content-Type': 'application/json' },
+	        })
+	      }
+	      return new Response(
+	        JSON.stringify({
+	          connected: true,
           cloud_base_url: 'http://localhost:8080',
           auth: 'bearer',
           updated_at: '2026-05-11T00:00:00Z',
@@ -973,10 +2156,10 @@ function mockFetch(
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
-    if (url.endsWith('/api/v1/auth/register')) {
-      return jsonResponse({
-        code: 0,
-        message: 'ok',
+	    if (url.endsWith('/api/v1/auth/register')) {
+	      return jsonResponse({
+	        code: 0,
+	        message: 'ok',
         data: {
           access_token: `${role}-token`,
           user: {
@@ -987,17 +2170,21 @@ function mockFetch(
             status: 'active',
             email_verified: options.emailVerified ?? true,
           },
-        },
-      })
-    }
-    if (url.endsWith('/api/v1/auth/email/verify-request')) {
-      return jsonResponse({ code: 0, message: 'ok', data: { sent: true } })
-    }
+	        },
+	      })
+	    }
+	    if (url.endsWith('/api/v1/auth/logout')) {
+	      return jsonResponse({ code: 0, message: 'ok', data: null })
+	    }
+	    if (url.endsWith('/api/v1/auth/email/verify-request')) {
+	      return jsonResponse({ code: 0, message: 'ok', data: { sent: true } })
+	    }
     if (url.endsWith('/api/v1/auth/email/verify-confirm')) {
       return jsonResponse({ code: 0, message: 'ok', data: { verified: true } })
     }
     if (url.endsWith('/api/v1/billing/balance')) {
-      return jsonResponse({ code: 0, message: 'ok', data: balance })
+      const wallet = typeof options.balance === 'function' ? options.balance() : options.balance ?? balance
+      return jsonResponse({ code: 0, message: 'ok', data: wallet })
     }
     if (url.endsWith('/api/v1/billing/subscription/checkout')) {
       return jsonResponse({ code: 0, message: 'ok', data: { checkout_url: 'https://stripe.example.com/checkout/sess_test' } })

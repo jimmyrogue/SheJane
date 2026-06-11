@@ -88,6 +88,37 @@ def test_clear_memory_deletes_existing_notes(client: TestClient) -> None:
     assert asyncio.run(_remaining()) == []
 
 
+def test_clear_memory_deletes_all_notes_namespaces(client: TestClient) -> None:
+    import asyncio
+
+    from langgraph.store.memory import InMemoryStore
+
+    from local_host.middleware.memory_writeback import NAMESPACE
+
+    mem_store = InMemoryStore()
+    client.app.state.agent_store = mem_store
+    workspace_ns = ("notes", "workspace", "abc123")
+
+    async def _seed() -> None:
+        await mem_store.aput(NAMESPACE, "legacy", {"goal": "legacy", "answer": "global"})
+        await mem_store.aput(workspace_ns, "w1", {"goal": "workspace", "answer": "one"})
+        await mem_store.aput(workspace_ns, "w2", {"goal": "workspace", "answer": "two"})
+
+    asyncio.run(_seed())
+
+    resp = client.delete("/local/v1/memory", headers=HEADERS)
+    assert resp.status_code == 200
+    assert resp.json()["deleted_count"] == 3
+
+    async def _remaining() -> list:
+        out = []
+        for namespace in await mem_store.alist_namespaces(prefix=("notes",)):
+            out.extend(await mem_store.asearch(namespace))
+        return out
+
+    assert asyncio.run(_remaining()) == []
+
+
 def test_clear_memory_idempotent(client: TestClient) -> None:
     """Calling twice in a row must not error; second call returns 0."""
     resp1 = client.delete("/local/v1/memory", headers=HEADERS)

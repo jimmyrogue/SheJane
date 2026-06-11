@@ -72,4 +72,35 @@ describe('AuthScreen password reset', () => {
     )
     expect(screen.queryByRole('button', { name: '忘记密码？' })).not.toBeInTheDocument()
   })
+
+  it('does not show reset-email success when the request handler is not wired', async () => {
+    render(
+      <I18nProvider>
+        <AuthScreen authClient={makeAuthClient()} onAuthed={vi.fn()} onConfirmPasswordReset={vi.fn()} />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    fireEvent.click(screen.getByRole('button', { name: '忘记密码？' }))
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'me@example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送重置链接' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('重置密码 暂不可用。')
+    expect(screen.queryByText(/重置链接已发出/)).not.toBeInTheDocument()
+  })
+
+  it('does not show reset success when the confirm handler is not wired', async () => {
+    window.history.pushState({}, '', '/reset?token=tok-123')
+    render(
+      <I18nProvider>
+        <AuthScreen authClient={makeAuthClient()} onAuthed={vi.fn()} onRequestPasswordReset={vi.fn()} />
+      </I18nProvider>,
+    )
+
+    fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'newpass123' } })
+    fireEvent.click(screen.getByRole('button', { name: '重置密码' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('重置密码 暂不可用。')
+    expect(screen.queryByText(/密码已重置/)).not.toBeInTheDocument()
+  })
 })

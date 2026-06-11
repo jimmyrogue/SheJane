@@ -28,7 +28,7 @@
 ## 关键现实(调研 + 对抗验证确认,会改变做法)
 
 1. **必须冻结、且每个 OS+架构单独构建。** 依赖树全是平台相关原生 wheel(pydantic-core/lxml/cryptography/onnxruntime/tiktoken/pillow),交叉构建会在用户机 import 时崩。CI 必须用原生 runner:`macos-14`(arm64)、`macos-13`(x64)、`windows-latest`(x64)。
-2. **🔴 v1 把 browser-use + playwright 移出冻结环境。** 它们是当前硬依赖、`tools/registry.py` 无条件 import,但 `builder.py` 把 `browser_llm=None` 写死 → `browser.task` 现在就是返回"未配置"的 stub、根本不启动 Chromium。直接冻结会白塞 ~140M+ 死代码(googleapiclient 93M、pandas 48M、多个多余 LLM SDK)还得扛 Chromium 签名。做法:把 `browser-use`/`playwright` 放进 `[project.optional-dependencies]`,冻结环境不装 → registry 的 import guard 自然走 stub。等以后接 `browser_llm` 再单独做浏览器打包(bundle Chromium 进 extraResources + `PLAYWRIGHT_BROWSERS_PATH` + 签名)。
+2. **🔴 v1 把 browser-use + playwright 移出冻结环境。** `builder.py` 仍把 `browser_llm=None` 写死，未接线时 `browser.task` 不会暴露给模型；如果直接冻结 browser-use/playwright，会白塞 ~140M+ 死代码（googleapiclient 93M、pandas 48M、多个多余 LLM SDK）还得扛 Chromium 签名。做法：把 `browser-use`/`playwright` 保持在 `[project.optional-dependencies]`，冻结环境不装；等以后接 `browser_llm` 再单独做浏览器打包（bundle Chromium 进 extraResources + `PLAYWRIGHT_BROWSERS_PATH` + 签名）。
 3. **🔴 onnxruntime 必须显式收集。** 它(111M,经 `markitdown → magika`)在 `office.py` 模块级 `MarkItDown()` 构造时**开机即加载**。`.spec` 必须 `--collect-all onnxruntime magika`、装 `pyinstaller-hooks-contrib`,否则用户一启动就 import 崩(最坏的失败模式)。建议把 office 工具改懒加载,onnxruntime 首次用才加载,缩短冷启动 + 降低风险面。
 4. **`.spec` 还要处理动态 import**:`--collect-all langgraph langchain langchain_core deepagents markitdown`、`--copy-metadata`、`--hidden-import uvicorn.loops/uvicorn.protocols/uvicorn.lifespan`。**冒烟必须跑一次真实 agent loop**(不能只 curl /health),否则漏 import 的崩溃只在运行时暴露。
 5. **macOS 双架构**:每架构原生 wheel → 出**两个 arch-specific DMG + 各自更新源**(electron-builder 单 `latest-mac.yml` 对双架构是已知坑)。universal2 因 Python 原生 wheel 难合并,不走。
@@ -52,7 +52,7 @@
 | **0 生产配置** | 渲染层 + 主进程都指向 `https://app.shejane.com` | S/低 | 连生产云的构建,dev 可验证登录/云调用 |
 | **1 electron-builder 骨架** | 打包+(后续)签名链路跑通的"壳"(云聊天可用,本地 agent 还没有) | M/中 | 可安装的 `.dmg`/`.exe`,连生产 API |
 | **2 冻结 daemon + 主进程拉起**(核心) | PyInstaller onedir + main.cjs spawn/端口/token/health/强杀 | XL/高 | **本地 agent 能跑**的桌面包 |
-| **3 浏览器工具** | v1 stub(不打 Chromium);文档化后续接入 | M/中 | v1 不含 Chromium、启动不崩 |
+| **3 浏览器工具** | v1 隐藏未接线工具（不打 Chromium）；文档化后续接入 | M/中 | v1 不含 Chromium、启动不崩、模型看不到死工具 |
 | **4 签名 + 公证** | macOS hardened runtime+entitlements+公证;Windows 签名 | L/高 | 过 Gatekeeper 的 mac 包 + 签名 Win 包 |
 | **5 自动更新 + CI 发布** | `release-desktop.yml` 原生矩阵 + electron-updater 全量替换 | L/高 | tag 触发、自动签名公证发布 |
 
@@ -72,7 +72,7 @@
 - 冒烟:安装 → 登录 → 跑一次 SSE run(`POST /local/v1/runs` → stream)+ 一个网关计费工具(web.search),验证 daemon→cloud 代理 + JWT-via-`/local/v1/session`。
 
 ### Phase 3 — 浏览器工具
-- v1:browser-use/playwright 不进冻结环境,daemon 走 stub(import guard)。
+- v1：browser-use/playwright 不进冻结环境；daemon 不暴露 `browser.task`，除非未来显式接入 browser LLM。
 - 后续:build 时 `playwright install chromium` 进已知目录 → `extraResources` → runtime 设 `PLAYWRIGHT_BROWSERS_PATH`;Chromium 的 Mach-O/Helper 也要签名 + JIT entitlements。
 
 ### Phase 4 — 签名 + 公证

@@ -76,6 +76,18 @@
             ],
             "title": "History"
           },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
           "model": {
             "default": "auto",
             "title": "Model",
@@ -263,6 +275,172 @@
         "title": "DiagnosticsEvent",
         "type": "object"
       },
+      "DiagnosticsFailure": {
+        "description": "Structured classification for the latest failed run/tool event.",
+        "properties": {
+          "action_kind": {
+            "enum": [
+              "retry",
+              "user_action",
+              "repair",
+              "operator_action",
+              "inspect"
+            ],
+            "title": "Action Kind",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "transient",
+              "auth",
+              "quota",
+              "permission",
+              "configuration",
+              "workspace",
+              "validation",
+              "fatal",
+              "unknown"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "recoverable": {
+            "title": "Recoverable",
+            "type": "boolean"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "source_event_type": {
+            "title": "Source Event Type",
+            "type": "string"
+          },
+          "suggested_action": {
+            "title": "Suggested Action",
+            "type": "string"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          }
+        },
+        "required": [
+          "category",
+          "recoverable",
+          "retryable",
+          "action_kind",
+          "message",
+          "source_event_type",
+          "suggested_action"
+        ],
+        "title": "DiagnosticsFailure",
+        "type": "object"
+      },
+      "DiagnosticsHandoff": {
+        "description": "Compact handoff summary for long-running or resumed work.\n\nThis is derived from redacted run metadata and event types. It deliberately\ndoes not include full checkpoint messages, artifact bodies, or raw tool\noutput.",
+        "properties": {
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticsFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "ledger_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ledger Message"
+          },
+          "ledger_state": {
+            "default": "not_required",
+            "enum": [
+              "not_required",
+              "missing",
+              "fresh",
+              "stale"
+            ],
+            "title": "Ledger State",
+            "type": "string"
+          },
+          "next_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next Actions",
+            "type": "array"
+          },
+          "recent_event_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recent Event Types",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticsVerification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "headline"
+        ],
+        "title": "DiagnosticsHandoff",
+        "type": "object"
+      },
       "DiagnosticsPermission": {
         "properties": {
           "arguments": {
@@ -331,6 +509,253 @@
           "created_at"
         ],
         "title": "DiagnosticsPermission",
+        "type": "object"
+      },
+      "DiagnosticsReflection": {
+        "description": "Safe reflection summary from the latest checkpoint.\n\nThis deliberately excludes checkpoint messages and raw tool output.",
+        "properties": {
+          "ai_messages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Messages"
+          },
+          "critic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticsReflectionCritic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "final_answer_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Answer Chars"
+          },
+          "tool_results": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Results"
+          }
+        },
+        "title": "DiagnosticsReflection",
+        "type": "object"
+      },
+      "DiagnosticsReflectionCritic": {
+        "description": "Compact final-answer critic output, if reflection ran.",
+        "properties": {
+          "clarity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clarity"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage"
+          },
+          "grounding": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grounding"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          }
+        },
+        "title": "DiagnosticsReflectionCritic",
+        "type": "object"
+      },
+      "DiagnosticsVerification": {
+        "description": "Latest machine-readable task.verify result, if any.",
+        "properties": {
+          "fail_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fail Count"
+          },
+          "pass_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Count"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source_event_type": {
+            "title": "Source Event Type",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source_event_type"
+        ],
+        "title": "DiagnosticsVerification",
+        "type": "object"
+      },
+      "FeatureLedger": {
+        "description": "Latest durable progress ledger entry for the run.",
+        "properties": {
+          "acceptance_criteria": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acceptance Criteria",
+            "type": "array"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "decisions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "files_touched": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files Touched",
+            "type": "array"
+          },
+          "next_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next Actions",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "unresolved_risks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolved Risks",
+            "type": "array"
+          },
+          "validation_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Validation Commands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "summary",
+          "status"
+        ],
+        "title": "FeatureLedger",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -610,6 +1035,11 @@
             "title": "Id",
             "type": "string"
           },
+          "metadata_json": {
+            "default": "{}",
+            "title": "Metadata Json",
+            "type": "string"
+          },
           "parent_run_id": {
             "anyOf": [
               {
@@ -685,6 +1115,19 @@
             "title": "Exported At",
             "type": "string"
           },
+          "feature_ledger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureLedger"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handoff": {
+            "$ref": "#/components/schemas/DiagnosticsHandoff"
+          },
           "latest_checkpoint": {
             "anyOf": [
               {
@@ -713,6 +1156,16 @@
             "title": "Permissions",
             "type": "array"
           },
+          "reflection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiagnosticsReflection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "run": {
             "$ref": "#/components/schemas/LocalRun"
           },
@@ -728,7 +1181,8 @@
           "run",
           "events",
           "permissions",
-          "artifacts"
+          "artifacts",
+          "handoff"
         ],
         "title": "LocalRunDiagnostics",
         "type": "object"
@@ -1168,7 +1622,7 @@
     },
     "/local/v1/memory": {
       "delete": {
-        "description": "Wipe every note from the long-term memory namespace.\n\nBacks the \"清空记忆 / Clear memory\" button in the agent settings\ndialog. Walks (\"notes\", \"global\") in pages of 200 (matches the\nBaseStore default search limit ceiling for SQLite stores) and\ndeletes each key. Returns the total count so the UI can render\nan accurate \"cleared N memories\" toast.\n\nIdempotent: calling it on an empty store returns\n`deleted_count: 0` without error.",
+        "description": "Wipe every note from all long-term memory namespaces.\n\nBacks the \"清空记忆 / Clear memory\" button in the agent settings\ndialog. Walks every (\"notes\", ...) namespace in pages of 200\n(matches the BaseStore default search limit ceiling for SQLite stores)\nand deletes each key. Returns the total count so the UI can render an\naccurate \"cleared N memories\" toast.\n\nIdempotent: calling it on an empty store returns\n`deleted_count: 0` without error.",
         "operationId": "clear_memory_local_v1_memory_delete",
         "responses": {
           "200": {
@@ -1466,7 +1920,7 @@
     },
     "/local/v1/runs/{run_id}/diagnostics": {
       "get": {
-        "description": "Return the full `LocalRunDiagnostics` payload.\n\nShape (per TS interface `client/src/shared/local-host/client.ts:63-100`):\n    { schema_version: 1, exported_at, local_host_version?,\n      run, events, permissions, artifacts, latest_checkpoint }\n\nPhase 5'+ used to return only `{run, events}`, so the\n`DiagnosticsPanel` rendered NaN counts (permissions.length on\nundefined) and the \"latest checkpoint\" tab was always missing.",
+        "description": "Return the full `LocalRunDiagnostics` payload.\n\nShape (per TS interface `client/src/shared/local-host/client.ts`):\n    { schema_version: 1, exported_at, local_host_version?,\n      run, events, permissions, artifacts, latest_checkpoint, handoff }\n\nPhase 5'+ used to return only `{run, events}`, so the\n`DiagnosticsPanel` rendered NaN counts (permissions.length on\nundefined) and the \"latest checkpoint\" tab was always missing.",
         "operationId": "run_diagnostics_local_v1_runs__run_id__diagnostics_get",
         "parameters": [
           {

@@ -29,6 +29,7 @@ type ReservationMeta struct {
 	UserID               string
 	OrganizationID       string
 	RequestID            string
+	RunID                string
 	ClientConversationID string
 	ClientMessageID      string
 	Mode                 string

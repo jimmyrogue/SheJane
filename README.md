@@ -114,6 +114,7 @@ e2e/             Playwright end-to-end tests
 - **[CLAUDE.md](./CLAUDE.md)** — architecture, the critical invariants, where things live, common commands.
 - **[docs/run-loop.md](./docs/run-loop.md)** — one agent run from POST to terminal (middleware, HITL, SSE events).
 - **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** — the client ↔ daemon SSE wire format.
+- **[docs/agent-architecture-gap-review.md](./docs/agent-architecture-gap-review.md)** — current completion/gap review against LangGraph, harness, OpenAI Agents SDK, and MCP patterns.
 - **[docs/operations.md](./docs/operations.md)** — deployment + operations runbook.
 - **[docs/roadmap.md](./docs/roadmap.md)** — current priorities and deferred work.
 - **[spec.md](./spec.md)** — the local agent harness specification.

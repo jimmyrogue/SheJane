@@ -151,16 +151,17 @@ jobs:
         run: make client-test admin-test local-host-test test-race build
 
       # Cross-check memory.go vs postgres.go via the store conformance suite.
-      # Migrations apply with the same psql loop as `make migrate`; the suite
-      # skips Postgres when TEST_DATABASE_URL is unset (so local runs stay
+      # Migrations apply with the same versioned runner as `make migrate`; the
+      # suite skips Postgres when TEST_DATABASE_URL is unset (so local runs stay
       # DB-free), so this step is where the Postgres path actually runs.
       - name: Store conformance (postgres cross-check)
         env:
           TEST_DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
+          DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
-          for f in api/migrations/*.sql; do psql -v ON_ERROR_STOP=1 "$TEST_DATABASE_URL" -f "$f"; done
-          cd api && go test ./internal/store/ -run TestStoreConformance -v
+          cd api
+          go run ./cmd/migrate -dir ./migrations
+          go test ./internal/store/ -run TestStoreConformance -v
 
   # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
   # client/ and admin/, so both need their deps installed (not just e2e/).

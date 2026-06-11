@@ -58,6 +58,24 @@ def test_tools_lists_trivial_tools(client: TestClient) -> None:
     assert expected.issubset(names), f"missing: {expected - names}"
 
 
+def test_tools_listing_includes_deepagents_runtime_tool_contract(client: TestClient) -> None:
+    """The discovery endpoint should reflect the runtime tool names.
+
+    deepagents injects filesystem/shell tools inside create_deep_agent, but
+    clients and diagnostics still need a current contract from /local/v1/tools.
+    The current runtime contract is the deepagents names, not fs.* aliases.
+    """
+    r = client.get("/local/v1/tools", headers={"Authorization": "Bearer test-pairing-token"})
+    assert r.status_code == 200
+    tools = {t["name"]: t for t in r.json()["tools"]}
+
+    expected = {"ls", "read_file", "write_file", "edit_file", "glob", "grep", "execute"}
+    assert expected.issubset(tools), f"missing: {expected - set(tools)}"
+    assert not {"fs.list", "fs.read", "fs.write", "fs.search"} & set(tools)
+    assert "file_path" in tools["read_file"]["args_schema"]["properties"]
+    assert "command" in tools["execute"]["args_schema"]["properties"]
+
+
 def test_workspaces_crud(client: TestClient) -> None:
     headers = {"Authorization": "Bearer test-pairing-token"}
 
@@ -128,6 +146,18 @@ def test_tools_listing_includes_workspace_open(client: TestClient) -> None:
     assert "workspace.open" in names
 
 
+def test_tools_listing_includes_progress_ledger(client: TestClient) -> None:
+    r = client.get(
+        "/local/v1/tools",
+        headers={"Authorization": "Bearer test-pairing-token"},
+    )
+    tools = {t["name"]: t for t in r.json()["tools"]}
+    assert "task.progress" in tools
+    schema = tools["task.progress"]["args_schema"]
+    assert "acceptance_criteria" in schema["properties"]
+    assert "validation_commands" in schema["properties"]
+
+
 def test_workspace_open_tool_authorizes_directory(tmp_path: Path) -> None:
     """workspace.open should write a record to the store and return its id."""
     import asyncio
@@ -166,6 +196,46 @@ def test_workspace_open_rejects_missing_directory(tmp_path: Path) -> None:
     result = asyncio.run(run())
     assert result["ok"] == "false"
     assert "not an accessible directory" in result["error"]
+
+
+def test_progress_ledger_tool_creates_artifact(tmp_path: Path) -> None:
+    import asyncio
+    import json
+
+    from local_host.store.sqlite import LocalStore
+    from local_host.tools.progress import make_progress_tool
+
+    async def run() -> tuple[dict[str, str], list[dict]]:
+        store = await LocalStore.open(tmp_path / "store.db")
+        run = await store.create_run(goal="Build feature", workspace_path=str(tmp_path))
+        tool = make_progress_tool(store=store, run_id=run["id"])
+        try:
+            result = await tool.ainvoke(
+                {
+                    "summary": "Add durable progress ledger",
+                    "status": "in_progress",
+                    "acceptance_criteria": ["records decisions", "shows diagnostics"],
+                    "decisions": ["store as artifact"],
+                    "files_touched": ["local_host/tools/progress.py"],
+                    "validation_commands": ["uv run python -m pytest"],
+                    "unresolved_risks": ["needs UI polish"],
+                    "next_actions": ["wire diagnostics"],
+                }
+            )
+            artifacts = await store.list_artifacts_for_run(run["id"])
+            return result, artifacts
+        finally:
+            await store.close()
+
+    result, artifacts = asyncio.run(run())
+    assert result["ok"] == "true"
+    assert result["artifact_id"].startswith("art_")
+    assert result["status"] == "in_progress"
+    ledger = next(a for a in artifacts if a["kind"] == "progress_ledger")
+    assert ledger["title"] == "Progress ledger"
+    payload = json.loads(ledger["content"])
+    assert payload["acceptance_criteria"] == ["records decisions", "shows diagnostics"]
+    assert ledger["metadata"]["status"] == "in_progress"
 
 
 # (FileManagementToolkit removed in step 4/6 — deepagents FilesystemMiddleware
@@ -398,13 +468,13 @@ def test_browser_tool_stub_without_llm() -> None:
     assert "Phase 3" in out["error"] or "not installed" in out["error"]
 
 
-def test_browser_tool_present_in_registry(client: TestClient) -> None:
+def test_browser_tool_hidden_from_registry_until_configured(client: TestClient) -> None:
     r = client.get(
         "/local/v1/tools",
         headers={"Authorization": "Bearer test-pairing-token"},
     )
     names = {t["name"] for t in r.json()["tools"]}
-    assert "browser.task" in names
+    assert "browser.task" not in names
 
 
 # --- full registry async assembly ---
@@ -444,12 +514,13 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "image.generate",
         "image.edit",
         "workspace.open",
-        "browser.task",
         "memory.search",
         "user.ask",
     }
     # ls / read_file / write_file / edit_file / glob / grep / execute are
-    # added by deepagents FilesystemMiddleware INSIDE create_deep_agent —
-    # they're not in the registry's own list.
+    # added by deepagents FilesystemMiddleware INSIDE create_deep_agent, so
+    # build_tools() deliberately does not add duplicate BaseTool instances.
+    # /local/v1/tools exposes their schema separately as the discovery contract.
     missing = expected - set(names)
     assert not missing, f"missing tools: {missing}"
+    assert "browser.task" not in names

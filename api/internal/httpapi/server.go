@@ -28,6 +28,8 @@ import (
 
 const refreshCookieName = "shejane_refresh"
 
+const apiContentSecurityPolicy = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
 type Server struct {
 	app *app.App
 	mux *http.ServeMux
@@ -132,6 +134,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/admin/orders", s.requireAdmin(s.adminOrders))
 	s.mux.HandleFunc("GET /api/v1/admin/providers", s.requireAdmin(s.adminProviders))
 	s.mux.HandleFunc("GET /api/v1/admin/agent-runs", s.requireAdmin(s.adminAgentRuns))
+	s.mux.HandleFunc("GET /api/v1/admin/agent-runs/{id}/trace", s.requireAdmin(s.adminAgentRunTrace))
 	s.mux.HandleFunc("GET /api/v1/admin/tool-calls", s.requireAdmin(s.adminToolCalls))
 	s.mux.HandleFunc("GET /api/v1/admin/audit-logs", s.requireAdmin(s.adminAuditLogs))
 	s.mux.HandleFunc("GET /api/v1/admin/model-configs", s.requireAdmin(s.adminListModelConfigs))
@@ -152,6 +155,7 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		if requestID == "" {
 			requestID = s.app.NewRequestID()
 		}
+		setSecurityHeaders(w.Header())
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Access-Control-Allow-Origin", corsOrigin(r.Header.Get("Origin"), s.app.Config.ClientBaseURL, s.app.Config.AdminBaseURL))
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -193,6 +197,15 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), contextKeyRequestID{}, requestID)))
 	})
+}
+
+func setSecurityHeaders(headers http.Header) {
+	headers.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	headers.Set("Content-Security-Policy", apiContentSecurityPolicy)
+	headers.Set("X-Frame-Options", "DENY")
+	headers.Set("X-Content-Type-Options", "nosniff")
+	headers.Set("Referrer-Policy", "no-referrer")
+	headers.Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 }
 
 // allowRequest applies per-IP rate limits to the unauthenticated,
@@ -857,6 +870,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     body.RunID,
 		Mode:      modelID,
 	})
 	if err != nil {
@@ -872,6 +886,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		UserID:        user.ID,
 		WalletID:      reservation.WalletID,
 		ReservationID: reservation.ID,
+		RunID:         body.RunID,
 		Mode:          modelID,
 		Scene:         "agent_local",
 		Model:         model,
@@ -893,7 +908,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 	}
 	inputTokens := completion.InputTokens
 	if inputTokens < 1 {
-		inputTokens = llm.EstimateTokens(request.Messages)
+		inputTokens = llm.EstimateRequestTokens(request)
 	}
 	outputTokens := completion.OutputTokens
 	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
@@ -937,7 +952,7 @@ func completeAgentLLM(ctx context.Context, provider llm.Provider, request llm.Ch
 		return completer.CompleteWithTools(ctx, request, model)
 	}
 	chunks, errs := provider.Stream(ctx, request, model)
-	completion := llm.Completion{InputTokens: llm.EstimateTokens(request.Messages)}
+	completion := llm.Completion{InputTokens: llm.EstimateRequestTokens(request)}
 	var content strings.Builder
 	for chunk := range chunks {
 		if chunk.InputTokens > 0 {
@@ -1091,6 +1106,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 	reservation, err := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, estimatedCredits, billing.ReservationMeta{
 		UserID:               user.ID,
 		RequestID:            requestID,
+		RunID:                run.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
 		Mode:                 modelID,
@@ -1111,6 +1127,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		UserID:               user.ID,
 		WalletID:             reservation.WalletID,
 		ReservationID:        reservation.ID,
+		RunID:                run.ID,
 		ClientConversationID: body.ClientConversationID,
 		ClientMessageID:      body.ClientMessageID,
 		Mode:                 modelID,
@@ -1128,7 +1145,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 
 	_ = s.appendAgentEvent(ctx, w, run.ID, "llm.started", map[string]any{"request_id": requestID, "provider": provider.Name(), "model": model, "mode": modelID})
 	chunks, errs := provider.Stream(ctx, body, model)
-	inputTokens := llm.EstimateTokens(body.Messages)
+	inputTokens := llm.EstimateRequestTokens(body)
 	outputTokens := 0
 	for chunk := range chunks {
 		if chunk.InputTokens > 0 {
@@ -1347,7 +1364,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	inputTokens := llm.EstimateTokens(body.Messages)
+	inputTokens := llm.EstimateRequestTokens(body)
 	outputTokens := 0
 	for chunk := range chunks {
 		if chunk.InputTokens > 0 {
@@ -1510,6 +1527,53 @@ func (s *Server) adminAgentRuns(w http.ResponseWriter, r *http.Request, user sto
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]store.AdminAgentRun]{Code: 0, Message: "ok", Data: runs})
+}
+
+type adminAgentRunTracePayload struct {
+	Run                store.AdminAgentRun                 `json:"run"`
+	Events             []store.AgentEvent                  `json:"events"`
+	LLMCalls           []store.AdminLLMCallRecord          `json:"llm_calls"`
+	ToolCalls          []store.AdminExternalToolCallRecord `json:"tool_calls"`
+	WalletTransactions []billing.Transaction               `json:"wallet_transactions"`
+}
+
+func (s *Server) adminAgentRunTrace(w http.ResponseWriter, r *http.Request, user store.User) {
+	run, err := s.app.Store.AdminAgentRunByID(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreReadError(w, err, "读取 Agent Run 失败")
+		return
+	}
+	events, err := s.app.Store.AgentEventsByRun(r.Context(), run.UserID, run.ID)
+	if err != nil {
+		writeStoreReadError(w, err, "读取 Agent Run 事件失败")
+		return
+	}
+	llmCalls, err := s.app.Store.AdminLLMCalls(r.Context(), store.AdminListOptions{RunID: run.ID, Limit: 200})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取 Agent Run 模型调用失败")
+		return
+	}
+	toolCalls, err := s.app.Store.AdminExternalToolCalls(r.Context(), store.AdminListOptions{RunID: run.ID, Limit: 200})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取 Agent Run 工具调用失败")
+		return
+	}
+	walletTransactions, err := s.app.Store.AdminWalletTransactionsByRun(r.Context(), run.ID, 200)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取 Agent Run 账务流水失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[adminAgentRunTracePayload]{
+		Code:    0,
+		Message: "ok",
+		Data: adminAgentRunTracePayload{
+			Run:                run,
+			Events:             events,
+			LLMCalls:           llmCalls,
+			ToolCalls:          toolCalls,
+			WalletTransactions: walletTransactions,
+		},
+	})
 }
 
 func (s *Server) adminAuditLogs(w http.ResponseWriter, r *http.Request, user store.User) {

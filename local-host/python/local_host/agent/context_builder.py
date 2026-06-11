@@ -124,6 +124,20 @@ class RuntimeContext:
     mode: str | None = None  # the resolved mode ("fast" / "deep")
     turn_count: int | None = None  # message count incl. current turn
     dropped_history_count: int = 0  # earlier turns removed by truncation
+    dropped_history_summary: str | None = None  # compact digest of removed earlier turns
+    repair_intent: bool = False
+    repair_attempt: int | None = None
+    repair_max_attempts: int | None = None
+    repair_source_run_id: str | None = None
+    repair_source_message_id: str | None = None
+    repair_failure_category: str | None = None
+    repair_failure_action_kind: str | None = None
+    retry_intent: bool = False
+    retry_attempt: int | None = None
+    retry_source_run_id: str | None = None
+    retry_source_message_id: str | None = None
+    retry_failure_category: str | None = None
+    retry_failure_action_kind: str | None = None
 
 
 class ContextBuilder:
@@ -238,6 +252,41 @@ class ContextBuilder:
             bullets.append(
                 f"- 已省略本对话早期的 {runtime.dropped_history_count} 条消息以节省上下文，"
                 f"如需要更早的细节请向用户确认。"
+            )
+        if runtime.dropped_history_summary and runtime.dropped_history_summary.strip():
+            bullets.append(
+                "- 早期对话压缩摘要:\n" + _indent(runtime.dropped_history_summary.strip(), "  ")
+            )
+        if runtime.repair_intent:
+            attempt = runtime.repair_attempt if runtime.repair_attempt is not None else 1
+            max_attempts = runtime.repair_max_attempts if runtime.repair_max_attempts else "?"
+            bullets.append(f"- 修复工作流: 第 {attempt}/{max_attempts} 次修复尝试")
+            if runtime.repair_source_run_id:
+                bullets.append(f"- 来源 run: {runtime.repair_source_run_id}")
+            if runtime.repair_source_message_id:
+                bullets.append(f"- 来源消息: {runtime.repair_source_message_id}")
+            if runtime.repair_failure_category or runtime.repair_failure_action_kind:
+                category = runtime.repair_failure_category or "unknown"
+                action = runtime.repair_failure_action_kind or "unknown"
+                bullets.append(f"- 原失败分类: {category} / {action}")
+            bullets.append(
+                "- 修复要求: 不要机械重复上一次失败路径；先定位根因，修复后必须验证。"
+                "如果无法安全修复，说明明确阻塞和需要用户提供的信息。"
+            )
+        if runtime.retry_intent:
+            attempt = runtime.retry_attempt if runtime.retry_attempt is not None else 1
+            bullets.append(f"- 恢复重试: 第 {attempt} 次重试")
+            if runtime.retry_source_run_id:
+                bullets.append(f"- 来源 run: {runtime.retry_source_run_id}")
+            if runtime.retry_source_message_id:
+                bullets.append(f"- 来源消息: {runtime.retry_source_message_id}")
+            if runtime.retry_failure_category or runtime.retry_failure_action_kind:
+                category = runtime.retry_failure_category or "unknown"
+                action = runtime.retry_failure_action_kind or "unknown"
+                bullets.append(f"- 原失败分类: {category} / {action}")
+            bullets.append(
+                "- 重试要求: 先利用原失败分类调整策略，避免盲目重复上一次失败路径。"
+                "如果同类失败再次出现，说明明确阻塞和下一步需要用户或运营处理的信息。"
             )
         if not bullets:
             return ContextLayer(name="state", priority=50, content="")
@@ -397,6 +446,10 @@ def reset_prompt_cache_for_tests() -> None:
     Production code should NEVER call this — the cache is intentional
     to avoid file I/O per run."""
     _default_builder._developer_cache = None
+
+
+def _indent(value: str, prefix: str) -> str:
+    return "\n".join(prefix + line if line.strip() else line for line in value.splitlines())
 
 
 def _detect_locale() -> str | None:

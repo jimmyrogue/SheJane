@@ -41,6 +41,8 @@ from typing import Any
 from langchain_core.load.dump import dumps as lc_dumps
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
+from .failure_policy import classify_failure_payload
+
 
 def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
     """Return zero or more `{event, data}` dicts for a single stream tuple.
@@ -148,25 +150,32 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
     if isinstance(chunk, ToolMessage):
         # `tool.completed` is the canonical name the client expects
         # (chatStore.ts:155). Erroring tool messages get split to
-        # `tool.failed` so the UI can render them differently.
+        # `tool.failed` so the UI can render them differently. Some tools
+        # return a structured `{ok:false, ...}` envelope without setting
+        # ToolMessage.status="error"; treat those as failures too so
+        # diagnostics and retry policy see the real outcome.
         status = getattr(chunk, "status", None)
-        is_failed = status == "error"
+        envelope = _tool_result_envelope(chunk.content)
+        is_failed = status == "error" or _envelope_failed(envelope)
         if chunk.name == "task":
             event_name = "subagent.completed"
         elif is_failed:
             event_name = "tool.failed"
         else:
             event_name = "tool.completed"
+        data = {
+            "tool_call_id": chunk.tool_call_id,
+            "name": chunk.name,
+            "tool": chunk.name,  # client uses `tool` key for headline
+            "content": _stringify(chunk.content),
+            "status": "error" if is_failed else (status or "ok"),
+        }
+        if isinstance(envelope, dict):
+            _merge_tool_failure_envelope(data, envelope)
         return [
             {
                 "event": event_name,
-                "data": {
-                    "tool_call_id": chunk.tool_call_id,
-                    "name": chunk.name,
-                    "tool": chunk.name,  # client uses `tool` key for headline
-                    "content": _stringify(chunk.content),
-                    "status": status or "ok",
-                },
+                "data": data,
             }
         ]
 
@@ -305,6 +314,62 @@ def _stringify(content: Any) -> str:
                 parts.append(str(part))
         return "".join(parts)
     return str(content)
+
+
+def _tool_result_envelope(content: Any) -> dict[str, Any] | None:
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _envelope_failed(envelope: dict[str, Any] | None) -> bool:
+    if not isinstance(envelope, dict) or "ok" not in envelope:
+        return False
+    return not _truthy(envelope.get("ok"))
+
+
+def _merge_tool_failure_envelope(data: dict[str, Any], envelope: dict[str, Any]) -> None:
+    error_code = envelope.get("errorCode") or envelope.get("error_code") or envelope.get("code")
+    if error_code:
+        data["error_code"] = str(error_code)
+    recoverable = envelope.get("recoverable")
+    if isinstance(recoverable, bool):
+        data["recoverable"] = recoverable
+    retryable = envelope.get("retryable")
+    if isinstance(retryable, bool):
+        data["retryable"] = retryable
+    elif isinstance(recoverable, bool):
+        data["retryable"] = (
+            recoverable
+            and classify_failure_payload(
+                "tool.failed",
+                {
+                    "error_code": str(error_code or ""),
+                    "content": data["content"],
+                    "recoverable": recoverable,
+                },
+            )["retryable"]
+        )
+    message = envelope.get("message") or envelope.get("error") or envelope.get("content")
+    if isinstance(message, str) and message.strip():
+        data["message"] = message.strip()
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "ok", "passed"}
+    if isinstance(value, (int, float)):
+        return value != 0
+    return bool(value)
 
 
 def translate_many(events: Iterable[tuple[str, Any]]) -> list[dict[str, Any]]:

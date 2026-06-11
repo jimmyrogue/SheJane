@@ -151,6 +151,43 @@ def test_reflect_runs_critic_when_env_enabled(monkeypatch) -> None:
     assert FakeCriticModel.last_messages is not None
 
 
+def test_reflect_critic_uses_latest_user_turn(monkeypatch) -> None:
+    import asyncio as _a
+    from types import SimpleNamespace
+
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.reflect import ReflectMiddleware
+
+    monkeypatch.setenv("SHEJANE_LOCAL_CRITIC", "1")
+
+    class FakeCriticModel:
+        last_messages = None
+
+        async def ainvoke(self, msgs):
+            FakeCriticModel.last_messages = msgs
+            return SimpleNamespace(
+                content='{"coverage": 5, "clarity": 5, "grounding": 5, "notes": []}'
+            )
+
+    mw = ReflectMiddleware(critic_model=FakeCriticModel())
+    state = {
+        "messages": [
+            HumanMessage(content="first turn: explain X"),
+            AIMessage(content="X is old context."),
+            HumanMessage(content="latest turn: explain Y"),
+            AIMessage(content="Y is the final answer."),
+        ]
+    }
+
+    _a.run(mw.aafter_agent(state, runtime=None))
+
+    assert FakeCriticModel.last_messages is not None
+    prompt = FakeCriticModel.last_messages[-1].content
+    assert "latest turn: explain Y" in prompt
+    assert "first turn: explain X" not in prompt
+
+
 # --- memory.search tool ---
 
 
@@ -212,6 +249,223 @@ def test_memory_search_respects_limit() -> None:
     result = _a.run(run())
     assert result["ok"] == "true"
     assert len(result["results"]) <= 3
+
+
+def test_memory_search_clamps_limit() -> None:
+    import asyncio as _a
+
+    from langgraph.store.memory import InMemoryStore
+
+    from local_host.tools.memory import memory_search
+
+    class RecordingStore(InMemoryStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.limits: list[int] = []
+
+        async def asearch(self, namespace, *, query: str, limit: int):
+            self.limits.append(limit)
+            return []
+
+    store = RecordingStore()
+
+    async def run() -> None:
+        await memory_search.ainvoke({"query": "x", "limit": 0, "store": store})
+        await memory_search.ainvoke({"query": "x", "limit": 999, "store": store})
+
+    _a.run(run())
+    assert store.limits == [20, 50]
+
+
+def test_memory_search_prioritizes_explicit_user_facts() -> None:
+    import asyncio as _a
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from local_host.tools.memory import memory_search
+
+    class RecordingStore(InMemoryStore):
+        async def asearch(self, namespace, *, query: str, limit: int):
+            now = datetime.now(UTC)
+            return [
+                SimpleNamespace(
+                    key="run-note",
+                    value={
+                        "kind": "run_note",
+                        "goal": "remember my database",
+                        "answer": "Postgres is mentioned in a prior answer",
+                    },
+                    created_at=now,
+                    updated_at=now,
+                ),
+                SimpleNamespace(
+                    key="user-fact",
+                    value={
+                        "kind": "user_fact",
+                        "fact": "我的默认数据库是 Postgres。",
+                        "source": "explicit_user_request",
+                    },
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+
+    result = _a.run(
+        memory_search.ainvoke({"query": "Postgres", "limit": 2, "store": RecordingStore()})
+    )
+
+    assert result["ok"] == "true"
+    assert result["results"][0]["key"] == "user-fact"
+    assert result["results"][1]["key"] == "run-note"
+
+
+def test_memory_search_overfetches_before_user_fact_ranking() -> None:
+    import asyncio as _a
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from local_host.tools.memory import memory_search
+
+    class LimitAwareStore(InMemoryStore):
+        async def asearch(self, namespace, *, query: str, limit: int):
+            now = datetime.now(UTC)
+            items = [
+                SimpleNamespace(
+                    key="run-note",
+                    value={
+                        "kind": "run_note",
+                        "goal": "database setup",
+                        "answer": "A prior run mentioned Postgres.",
+                    },
+                    created_at=now,
+                    updated_at=now,
+                ),
+                SimpleNamespace(
+                    key="user-fact",
+                    value={
+                        "kind": "user_fact",
+                        "fact": "我的默认数据库是 Postgres。",
+                        "source": "explicit_user_request",
+                    },
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+            return items[:limit]
+
+    result = _a.run(
+        memory_search.ainvoke({"query": "Postgres", "limit": 1, "store": LimitAwareStore()})
+    )
+
+    assert result["ok"] == "true"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["key"] == "user-fact"
+
+
+def test_memory_search_prefers_newer_explicit_user_facts() -> None:
+    import asyncio as _a
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from local_host.tools.memory import memory_search
+
+    class ChronologicalStore(InMemoryStore):
+        async def asearch(self, namespace, *, query: str, limit: int):
+            old = datetime(2026, 1, 1, tzinfo=UTC)
+            new = datetime(2026, 6, 1, tzinfo=UTC)
+            return [
+                SimpleNamespace(
+                    key="old-fact",
+                    value={
+                        "kind": "user_fact",
+                        "fact": "我的默认数据库是 MySQL。",
+                        "source": "explicit_user_request",
+                    },
+                    created_at=old,
+                    updated_at=old,
+                ),
+                SimpleNamespace(
+                    key="new-fact",
+                    value={
+                        "kind": "user_fact",
+                        "fact": "我的默认数据库是 Postgres。",
+                        "source": "explicit_user_request",
+                    },
+                    created_at=new,
+                    updated_at=new,
+                ),
+            ][:limit]
+
+    result = _a.run(
+        memory_search.ainvoke({"query": "默认数据库", "limit": 1, "store": ChronologicalStore()})
+    )
+
+    assert result["ok"] == "true"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["key"] == "new-fact"
+    assert result["results"][0]["value"]["fact"] == "我的默认数据库是 Postgres。"
+
+
+def test_memory_search_uses_bound_workspace_namespace() -> None:
+    import asyncio as _a
+
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import (
+        MemoryWritebackMiddleware,
+        memory_namespace_for_workspace,
+    )
+    from local_host.tools.memory import make_memory_search_tool
+
+    store = InMemoryStore()
+    ns_alpha = memory_namespace_for_workspace("/tmp/shejane-alpha")
+    ns_beta = memory_namespace_for_workspace("/tmp/shejane-beta")
+    alpha_search = make_memory_search_tool(ns_alpha)
+    beta_search = make_memory_search_tool(ns_beta)
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    async def run() -> tuple[dict, dict]:
+        await MemoryWritebackMiddleware(namespace=ns_alpha).aafter_agent(
+            {
+                "messages": [
+                    HumanMessage(content="remember alpha workspace"),
+                    AIMessage(content="alpha-only answer"),
+                ]
+            },
+            runtime=_Runtime(store),
+        )
+        await MemoryWritebackMiddleware(namespace=ns_beta).aafter_agent(
+            {
+                "messages": [
+                    HumanMessage(content="remember beta workspace"),
+                    AIMessage(content="beta-only answer"),
+                ]
+            },
+            runtime=_Runtime(store),
+        )
+        alpha = await alpha_search.ainvoke({"query": "workspace", "limit": 5, "store": store})
+        beta = await beta_search.ainvoke({"query": "workspace", "limit": 5, "store": store})
+        return alpha, beta
+
+    alpha, beta = _a.run(run())
+    assert "alpha-only" in str(alpha["results"])
+    assert "beta-only" not in str(alpha["results"])
+    assert "beta-only" in str(beta["results"])
+    assert "alpha-only" not in str(beta["results"])
+
+
+def test_memory_search_schema_hides_namespace_and_store() -> None:
+    from local_host.middleware.memory_writeback import memory_namespace_for_workspace
+    from local_host.tools.memory import make_memory_search_tool
+
+    schema = make_memory_search_tool(
+        memory_namespace_for_workspace("/tmp/shejane-alpha")
+    ).tool_call_schema.model_json_schema()
+
+    assert set(schema["properties"]) == {"query", "limit"}
 
 
 # --- MemoryWritebackMiddleware: enabled flag gates persistence ---
@@ -280,6 +534,128 @@ def test_memory_writeback_persists_when_enabled() -> None:
     note = items[0].value
     assert "react routing" in note["goal"]
     assert "react-router" in note["answer"]
+    assert note["kind"] == "run_note"
+
+
+def test_memory_writeback_uses_latest_user_turn_for_run_note_goal() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import NAMESPACE, MemoryWritebackMiddleware
+
+    store = InMemoryStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware()
+    state = {
+        "messages": [
+            HumanMessage(content="old task: research react routing"),
+            AIMessage(content="old answer"),
+            HumanMessage(content="current task: compare agent runtimes"),
+            AIMessage(content="current answer mentions LangGraph"),
+        ]
+    }
+
+    async def run() -> list:
+        await mw.aafter_agent(state, runtime=_Runtime(store))
+        return list(await store.asearch(NAMESPACE))
+
+    items = asyncio.run(run())
+    run_notes = [item.value for item in items if item.value.get("kind") == "run_note"]
+    assert len(run_notes) == 1
+    assert "current task: compare agent runtimes" in run_notes[0]["goal"]
+    assert "old task: research react routing" not in run_notes[0]["goal"]
+
+
+def test_memory_writeback_persists_explicit_user_fact() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import NAMESPACE, MemoryWritebackMiddleware
+
+    store = InMemoryStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware()
+    state = {
+        "messages": [
+            HumanMessage(content="请记住：我的默认数据库是 Postgres。"),
+            AIMessage(content="我会记住。"),
+        ]
+    }
+
+    async def run() -> list:
+        await mw.aafter_agent(state, runtime=_Runtime(store))
+        return list(await store.asearch(NAMESPACE, query="Postgres"))
+
+    items = asyncio.run(run())
+    facts = [item.value for item in items if item.value.get("kind") == "user_fact"]
+    assert len(facts) == 1
+    assert facts[0]["fact"] == "我的默认数据库是 Postgres。"
+    assert facts[0]["source"] == "explicit_user_request"
+
+
+def test_memory_writeback_skips_duplicate_explicit_user_fact() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import NAMESPACE, MemoryWritebackMiddleware
+
+    store = InMemoryStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware()
+
+    async def run() -> list:
+        for answer in ("我会记住。", "已经记住。"):
+            await mw.aafter_agent(
+                {
+                    "messages": [
+                        HumanMessage(content="请记住：我的默认数据库是 Postgres。"),
+                        AIMessage(content=answer),
+                    ]
+                },
+                runtime=_Runtime(store),
+            )
+        return list(await store.asearch(NAMESPACE))
+
+    items = asyncio.run(run())
+    facts = [item.value for item in items if item.value.get("kind") == "user_fact"]
+    assert len(facts) == 1
+    assert facts[0]["fact"] == "我的默认数据库是 Postgres。"
+
+
+def test_memory_writeback_does_not_infer_fact_without_explicit_request() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from local_host.middleware.memory_writeback import NAMESPACE, MemoryWritebackMiddleware
+
+    store = InMemoryStore()
+
+    class _Runtime:
+        def __init__(self, s) -> None:
+            self.store = s
+
+    mw = MemoryWritebackMiddleware()
+    state = {
+        "messages": [
+            HumanMessage(content="My default database is Postgres."),
+            AIMessage(content="Noted for this answer."),
+        ]
+    }
+
+    async def run() -> list:
+        await mw.aafter_agent(state, runtime=_Runtime(store))
+        return list(await store.asearch(NAMESPACE, query="Postgres"))
+
+    items = asyncio.run(run())
+    assert all(item.value.get("kind") != "user_fact" for item in items)
 
 
 # --- build_agent: tool gating on memory_enabled ---
