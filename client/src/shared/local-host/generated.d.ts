@@ -119,9 +119,10 @@ export interface paths {
          *
          *     Translates the client's `{decision, scope}` body into the
          *     `{"decisions": [{"type": "approve"|"reject", ...}]}` shape
-         *     that `HumanInTheLoopMiddleware` expects on resume (the
-         *     middleware does `interrupt(...)["decisions"]` and KeyError's
-         *     on anything else).
+         *     that `HumanInTheLoopMiddleware` expects on resume. One LangGraph
+         *     interrupt can contain multiple HITL action requests, so the run
+         *     resumes only after every permission in the current pause batch is
+         *     resolved, preserving the original `permission.required` order.
          *
          *     When `scope=run`, the coordinator caches the tool name so the
          *     auto-approve loop in `_drive_run` skips re-prompting on

@@ -1641,7 +1641,7 @@
     },
     "/local/v1/permissions/{permission_id}": {
       "post": {
-        "description": "Approve / deny a pending tool-permission request.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"reject\", ...}]}` shape\nthat `HumanInTheLoopMiddleware` expects on resume (the\nmiddleware does `interrupt(...)[\"decisions\"]` and KeyError's\non anything else).\n\nWhen `scope=run`, the coordinator caches the tool name so the\nauto-approve loop in `_drive_run` skips re-prompting on\nsubsequent gates for the same tool in the same run.",
+        "description": "Approve / deny a pending tool-permission request.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"reject\", ...}]}` shape\nthat `HumanInTheLoopMiddleware` expects on resume. One LangGraph\ninterrupt can contain multiple HITL action requests, so the run\nresumes only after every permission in the current pause batch is\nresolved, preserving the original `permission.required` order.\n\nWhen `scope=run`, the coordinator caches the tool name so the\nauto-approve loop in `_drive_run` skips re-prompting on\nsubsequent gates for the same tool in the same run.",
         "operationId": "resolve_permission_local_v1_permissions__permission_id__post",
         "parameters": [
           {
