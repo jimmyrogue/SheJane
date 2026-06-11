@@ -1,6 +1,6 @@
 # 石间 / SheJane 运维与管理手册
 
-Updated: 2026-05-17
+Updated: 2026-06-11
 
 ## 当前管理边界
 
@@ -9,7 +9,7 @@ SheJane 长期采用 Local Agent Harness + Cloud Control Plane。普通用户 cl
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
 - 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
-- 模型/provider：后台「模型配置」页可**新增/编辑/启停/删除** chat 模型、provider、成本倍率、生图每次金额，并设置全局计费参数（加价系数 + 基准每 token 成本）；保存即时生效，**不再依赖 `.env` 重启**。API key 加密存储（`CONFIG_ENCRYPTION_KEY`）且永不回显，仅显示「key 已配置」。`.env` 的 provider 变量仅作**首次空库的种子**。
+- 模型/provider：后台「模型配置」页可**新增/编辑/启停/删除** chat 模型、provider、上游模型名、输入/输出 token 费率、生图每次金额，并设置全局计费参数（加价系数 + 基准每 token 成本）；保存即时生效，**不再依赖 `.env` 重启**。API key 加密存储（`CONFIG_ENCRYPTION_KEY`）且永不回显，仅显示「key 已配置」。`.env` 的 provider 变量仅作**首次空库的种子**。
 - 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
 - Local Agent Harness：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；Local Harness 负责 12 个 harness 组件、本地工具、文件、终端、浏览器、IDE、本地 MCP、checkpoint 和 artifact。
 - Agent Run：普通聊天和附件问答会创建短期 `agent_runs` / `agent_events`。后台只展示摘要、状态和错误，不展示完整用户输入或文档正文。
@@ -58,7 +58,7 @@ docker compose up -d --build api
 
 ## 模型配置（后台模型目录）
 
-模型 provider / 模型名 / API key / 成本倍率不再从 `.env` 读取并需要重启。`.env` 的 `FAST_PROVIDER_*` / `DEEP_PROVIDER_*` / `ANTHROPIC_API_KEY` 等变量**只在首次空库启动时作为种子**写入 `model_configs` 表；之后一切以后台「模型配置」页为准，保存即时生效（同进程立即、其它实例 ≤30s 收敛）。
+模型 provider / 模型名 / API key / token 费率不再从 `.env` 读取并需要重启。`.env` 的 `FAST_PROVIDER_*` / `DEEP_PROVIDER_*` / `ANTHROPIC_API_KEY` 等变量**只在首次空库启动时作为种子**写入 `model_configs` 表；之后一切以后台「模型配置」页为准，保存即时生效（同进程立即、其它实例 ≤30s 收敛）。
 
 新增一个 `.env` 变量用于密钥加密：
 
@@ -72,9 +72,10 @@ CONFIG_ENCRYPTION_KEY=任意足够强的口令（用于 AES-GCM 加密落库的 
 
 - **模型 ID**：chat 模型可自由填写稳定 ID，例如 `gpt-4o`、`claude-sonnet`、`deepseek-v4`、`chat.fast`。`auto` 是系统保留值，不能作为后台模型 ID；当前 DB 字段仍叫 `slot`，这是历史字段名，产品语义按「模型 ID」理解。
 - **显示名 / 描述 / 优先级**：显示名是用户端模型选择器看到的名称；描述会显示在选择器里并作为 Auto 路由提示；优先级越大越靠前，也是默认模型和 Auto 不确定时的兜底顺序。
-- **Provider 配置**：每行填写 provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）、成本倍率。AWS 或其它渠道先通过兼容网关按 `key + base_url + model_name` 接入。
+- **Provider 配置**：每行填写 provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）。AWS 或其它渠道先通过兼容网关按 `key + base_url + model_name` 接入。
+- **Token 费率**：每行填写相对 DeepSeek Pro 的基础倍率、输入 token 费率、输出 token 费率；缓存命中/缓存写入费率可配置但目前仅作为 provider usage 细分接入的兼容预留。留空或 0 的新费率字段会回退到基础倍率，旧 `credit_multiplier` 行不会失效。
 - **生图配置**：image capability 当前固定模型 ID 为 `image.default`，不会出现在用户端聊天模型选择器；生图行另填「每次金额」。
-- 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(成本倍率 0.1)、`chat.deep`=deepseek-v4-pro(1.0)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
+- 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(输入/输出费率 0.1)、`chat.deep`=deepseek-v4-pro(输入/输出费率 1.0)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
 - 种子条件是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把**全部模型配置删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
 
 真实模型 smoke 仍可用：
@@ -88,13 +89,13 @@ make smoke-real-llm
 最终扣费统一用 credits：
 
 ```
-文本：credits = (input+output tokens) × 该模型成本倍率 × 全局加价系数      （下限 1，估算下限 300）
+文本：credits = (input_tokens × 输入费率 + output_tokens × 输出费率) × 全局加价系数      （下限 1，估算下限 300）
 生图：credits/张 = ceil(每次金额 ÷ 基准每 token 成本 × 全局加价系数)，× 张数
 ```
 
 - 文本调用的预留估算会计入完整 request 形状：message content、reasoning、tool call 参数、工具 name / description / inputSchema。真实结算仍优先使用 provider 返回的 token usage；provider 未返回 usage 时才使用本地估算 fallback。
 - Anthropic provider 会在 Go 模型网关内为长 request 自动加顶层 `cache_control={"type":"ephemeral"}`，利用 Claude prompt caching 复用 `tools` / `system` / `messages` 的稳定前缀。Local daemon 不写 provider-specific cache 标记，也不需要旧版 beta header；真命中率只能通过真实 Anthropic usage 字段验证。
-- **成本倍率**（每模型）= 该模型相对 **DeepSeek-V4-Pro** 的纯成本比，不含利润。种子里的 `chat.deep`=Pro=基准=**1.0**；`chat.fast`=Flash≈**0.1**（约为 Pro 的 1/10）；更贵的模型按真实价填 Nx。
+- **Token 费率**（每模型）= 该模型相对 **DeepSeek-V4-Pro** 的纯成本比，不含利润。种子里的 `chat.deep`=Pro=基准=**1.0**；`chat.fast`=Flash≈**0.1**（约为 Pro 的 1/10）；更贵的模型按真实输入价/输出价分别填写。旧 **基础倍率** 仍作为兼容兜底。
 - **全局加价系数**（计费参数卡片，存 `app_settings`，默认 **1.15 = 全线加价 15%**，限 1.0–3.0）= 产品固定毛利旋钮，改一个数全线生效。注意 1.15 是「加价 15%」，对应毛利率 ≈ 13%（0.15/1.15）。
 - **基准每 token 成本**（¥/token，默认 `0.00002` ≈ ¥20/1M）= 「1 credit ≈ 1 个 DeepSeek-Pro token 成本」的锚点，**仅生图等按次金额模型换算用**；文本计费不需要它。建议按 **Pro 原价**（非 2.5 折促销价）锚定，促销到期不亏。
 - 生图作为 **Agent 工具 `image.generate`** 经 Cloud Tool Gateway 计费（复用 `external_tool_call_records` reserve/settle/release，幂等），也提供 `POST /api/v1/images/generations` REST 入口。未配置基准成本时生图直接拒绝（`image_billing_not_configured`），不会乱扣。

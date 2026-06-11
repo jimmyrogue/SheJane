@@ -153,15 +153,14 @@ describe('admin web app', () => {
     fireEvent.click(await screen.findByText('新增模型'))
 
     const modelID = await screen.findByLabelText('模型 ID')
+    expect(screen.getByText('常用模板')).toBeInTheDocument()
     expect(screen.queryByText('chat.fast · 快速对话模型')).not.toBeInTheDocument()
     expect(screen.queryByText('chat.deep · 深度对话模型')).not.toBeInTheDocument()
 
     fireEvent.change(modelID, { target: { value: 'gpt-4o' } })
-    fireEvent.change(screen.getByLabelText('显示名（用户在模型选择器里看到的标签）'), { target: { value: 'GPT-4o' } })
-    fireEvent.change(screen.getByLabelText('描述（选择器 tooltip + Auto 路由提示，仅 chat 模型）'), { target: { value: '通用强模型' } })
-    fireEvent.change(screen.getByLabelText('优先级（数字越大越靠前；最高的为默认模型）'), { target: { value: '80' } })
+    fireEvent.change(screen.getByLabelText('显示名'), { target: { value: 'GPT-4o' } })
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.openai.com/v1' } })
-    fireEvent.change(screen.getByLabelText('模型名'), { target: { value: 'gpt-4o' } })
+    fireEvent.change(screen.getByLabelText('上游模型名'), { target: { value: 'gpt-4o' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -173,6 +172,8 @@ describe('admin web app', () => {
       capability: 'chat',
       display_name: 'GPT-4o',
       model_name: 'gpt-4o',
+      input_credit_multiplier: 1,
+      output_credit_multiplier: 1,
     })
   })
 
@@ -435,6 +436,10 @@ function mockFetch(role: 'admin' | 'user') {
             base_url: 'https://api.deepseek.com',
             model_name: 'deepseek-v4-flash',
             credit_multiplier: 1,
+            input_credit_multiplier: 0.1,
+            output_credit_multiplier: 0.1,
+            cached_input_credit_multiplier: 0,
+            cache_write_credit_multiplier: 0.1,
             price_per_call_cny: 0,
             enabled: true,
             params: {},

@@ -6,6 +6,19 @@ package llm
 // the default model id).
 type ModelResolveFunc func(modelID string) (provider Provider, model string, multiplier float64, ok bool)
 
+// ModelBilling describes token-level credit multipliers for one catalog model.
+// All values are cost ratios relative to the DeepSeek Pro baseline (1.0).
+// Zero token-level fields mean "fall back to CreditMultiplier".
+type ModelBilling struct {
+	CreditMultiplier            float64
+	InputCreditMultiplier       float64
+	OutputCreditMultiplier      float64
+	CachedInputCreditMultiplier float64
+	CacheWriteCreditMultiplier  float64
+}
+
+type ModelBillingFunc func(modelID string) (billing ModelBilling, ok bool)
+
 type Router struct {
 	// fast/fastModel are the static fallback used by SelectModel when the
 	// catalog resolver can't resolve a model (e.g. an empty catalog). deep/
@@ -15,6 +28,7 @@ type Router struct {
 	fastModel      string
 	deepModel      string
 	resolveModel   ModelResolveFunc
+	resolveBilling ModelBillingFunc
 	defaultModelID func() string
 }
 
@@ -44,6 +58,12 @@ func NewRouterWithModels(fast Provider, fastModel string, deep Provider, deepMod
 func (r *Router) SetModelResolver(resolve ModelResolveFunc, defaultID func() string) {
 	r.resolveModel = resolve
 	r.defaultModelID = defaultID
+}
+
+// SetModelBillingResolver installs the token-level billing resolver for the
+// same catalog ids used by SetModelResolver.
+func (r *Router) SetModelBillingResolver(resolve ModelBillingFunc) {
+	r.resolveBilling = resolve
 }
 
 // resolveModelID maps a requested model field to a concrete catalog id for
@@ -82,13 +102,49 @@ func (r *Router) SelectModel(requested string) (Provider, string, string) {
 // MultiplierForModel returns the per-model credit multiplier for a concrete
 // model id. Defaults to 1 when unresolved.
 func (r *Router) MultiplierForModel(modelID string) float64 {
+	return r.BillingForModel(modelID).LegacyMultiplier()
+}
+
+// BillingForModel returns the configured token-level billing for a concrete
+// catalog model id. Defaults to the legacy 1x shape when unresolved.
+func (r *Router) BillingForModel(modelID string) ModelBilling {
 	id := r.resolveModelID(modelID)
-	if r.resolveModel != nil {
-		if _, _, m, ok := r.resolveModel(id); ok && m > 0 {
-			return m
+	if r.resolveBilling != nil {
+		if billing, ok := r.resolveBilling(id); ok {
+			return billing.Normalized()
 		}
 	}
-	return 1
+	if r.resolveModel != nil {
+		if _, _, m, ok := r.resolveModel(id); ok && m > 0 {
+			return ModelBilling{CreditMultiplier: m}.Normalized()
+		}
+	}
+	return ModelBilling{CreditMultiplier: 1}.Normalized()
+}
+
+func (b ModelBilling) Normalized() ModelBilling {
+	legacy := b.LegacyMultiplier()
+	if b.InputCreditMultiplier <= 0 {
+		b.InputCreditMultiplier = legacy
+	}
+	if b.OutputCreditMultiplier <= 0 {
+		b.OutputCreditMultiplier = legacy
+	}
+	if b.CachedInputCreditMultiplier <= 0 {
+		b.CachedInputCreditMultiplier = b.InputCreditMultiplier
+	}
+	if b.CacheWriteCreditMultiplier <= 0 {
+		b.CacheWriteCreditMultiplier = b.InputCreditMultiplier
+	}
+	b.CreditMultiplier = legacy
+	return b
+}
+
+func (b ModelBilling) LegacyMultiplier() float64 {
+	if b.CreditMultiplier <= 0 {
+		return 1
+	}
+	return b.CreditMultiplier
 }
 
 func InjectScenePrompt(scene string, messages []Message) []Message {

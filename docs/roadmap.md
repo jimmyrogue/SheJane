@@ -7,7 +7,7 @@
 ## 当前事实
 
 - 旧 P0/P1/P2 主线已经完成：CI 修复、充值入口、欢迎页磁贴、安全与计费护栏、监控探针、自动备份、Stripe webhook 原子化、P2 体验功能和质量测试都已落地。
-- 模型选择已经切到 **Auto + 后台模型目录**。用户端始终有 `Auto`，下面显示后台启用的 chat 模型。管理员用「模型 ID + 显示名 + provider_kind + key + base_url + model_name」配置模型；数据库字段仍叫 `slot`，只是历史字段名。
+- 模型选择已经切到 **Auto + 后台模型目录**。用户端始终有 `Auto`，下面显示后台启用的 chat 模型。管理员用「模型 ID + 显示名 + provider_kind + key + base_url + model_name + 输入/输出 token 费率」配置模型；数据库字段仍叫 `slot`，只是历史字段名。
 - `chat.fast` / `chat.deep` 仍作为种子模型 ID 保留，保证老配置可用；它们不再代表固定的产品层级。新的 chat 模型 ID 可以是 `gpt-4o`、`claude-sonnet`、`deepseek-v4` 等。
 - `Auto` 由 Go API 统一解析：`POST /api/v1/models/resolve` 在 run 开始时从 enabled chat 模型里选一个，并发出 `model.selected`。daemon、本地 run、web cloud tool loop 都只传 `model="auto"` 或具体模型 ID。
 - image 模型不进入聊天选择器。当前 resolver 只支持 `image.default`，后台也只允许 image capability 使用这个模型 ID。

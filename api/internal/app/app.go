@@ -120,6 +120,7 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 		log.Printf("app: model config seed failed (falling back to env config): %v", err)
 	}
 	router.SetModelResolver(registry.ResolveModel, registry.DefaultChatModelID)
+	router.SetModelBillingResolver(registry.ResolveBilling)
 
 	// E2B is optional: empty API key disables code.execute entirely
 	// (no panic, the gateway returns a "tool not configured" envelope).
@@ -393,6 +394,25 @@ func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
 // ratio (by model id) times the global markup, minimum 1 credit.
 func (a *App) UsageCredits(modelID string, totalTokens int) int64 {
 	credits := applyMultiplier(int64(totalTokens), a.Router.MultiplierForModel(modelID)*a.markupFactor())
+	if credits < 1 {
+		return 1
+	}
+	return credits
+}
+
+// UsageCreditsForTokens converts settled chat usage to credits using separate
+// input/output cost multipliers. Multipliers are relative to the DeepSeek Pro
+// baseline (1.0) and the global markup is applied once on the blended cost.
+func (a *App) UsageCreditsForTokens(modelID string, inputTokens int, outputTokens int) int64 {
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
+	billing := a.Router.BillingForModel(modelID)
+	raw := float64(inputTokens)*billing.InputCreditMultiplier + float64(outputTokens)*billing.OutputCreditMultiplier
+	credits := int64(math.Ceil(raw * a.markupFactor()))
 	if credits < 1 {
 		return 1
 	}

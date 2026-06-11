@@ -142,6 +142,10 @@ export interface AdminModelConfig {
   base_url: string
   model_name: string
   credit_multiplier: number
+  input_credit_multiplier: number
+  output_credit_multiplier: number
+  cached_input_credit_multiplier: number
+  cache_write_credit_multiplier: number
   price_per_call_cny: number
   enabled: boolean
   params: Record<string, unknown>
@@ -159,6 +163,10 @@ export interface ModelConfigInput {
   base_url: string
   model_name: string
   credit_multiplier: number
+  input_credit_multiplier?: number
+  output_credit_multiplier?: number
+  cached_input_credit_multiplier?: number
+  cache_write_credit_multiplier?: number
   price_per_call_cny: number
   enabled: boolean
   params?: Record<string, unknown>

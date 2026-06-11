@@ -64,6 +64,7 @@ type resolved struct {
 	provider   llm.Provider
 	model      string
 	multiplier float64
+	billing    llm.ModelBilling
 }
 
 type imageResolved struct {
@@ -189,6 +190,19 @@ func (r *Registry) ResolveModel(modelID string) (llm.Provider, string, float64, 
 	return res.provider, res.model, res.multiplier, true
 }
 
+// ResolveBilling returns the token-level billing shape for a catalog model id.
+// ok is false when no enabled model has that id.
+func (r *Registry) ResolveBilling(modelID string) (llm.ModelBilling, bool) {
+	r.refreshIfStale(context.Background())
+	r.mu.RLock()
+	res, ok := r.bySlot[modelID]
+	r.mu.RUnlock()
+	if !ok {
+		return llm.ModelBilling{CreditMultiplier: 1}, false
+	}
+	return res.billing, true
+}
+
 // ListChatModels returns the user-facing catalog (enabled chat models, highest
 // priority first). Safe copy; no secrets.
 func (r *Registry) ListChatModels() []ChatModelInfo {
@@ -260,6 +274,13 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			provider:   r.buildProvider(cfg),
 			model:      cfg.ModelName,
 			multiplier: normalizeMultiplier(cfg.CreditMultiplier),
+			billing: llm.ModelBilling{
+				CreditMultiplier:            normalizeMultiplier(cfg.CreditMultiplier),
+				InputCreditMultiplier:       cfg.InputCreditMultiplier,
+				OutputCreditMultiplier:      cfg.OutputCreditMultiplier,
+				CachedInputCreditMultiplier: cfg.CachedInputCreditMultiplier,
+				CacheWriteCreditMultiplier:  cfg.CacheWriteCreditMultiplier,
+			}.Normalized(),
 		}
 		label := cfg.DisplayName
 		if strings.TrimSpace(label) == "" {

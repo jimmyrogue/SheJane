@@ -203,3 +203,41 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAdminModelConfigPersistsTokenPricingFields(t *testing.T) {
+	server, _ := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	token := registerAndTokenWithEmail(t, server, "admin@example.com")
+
+	payload := `{
+		"slot":"deepseek-pro-compatible",
+		"capability":"chat",
+		"provider_kind":"mock",
+		"display_name":"DeepSeek Pro Compatible",
+		"model_name":"deepseek-v4-pro",
+		"credit_multiplier":1,
+		"input_credit_multiplier":0.5,
+		"output_credit_multiplier":2,
+		"cached_input_credit_multiplier":0.1,
+		"cache_write_credit_multiplier":1.25,
+		"enabled":true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body apiResponse[adminModelConfigView]
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if body.Data.InputCreditMultiplier != 0.5 || body.Data.OutputCreditMultiplier != 2 ||
+		body.Data.CachedInputCreditMultiplier != 0.1 || body.Data.CacheWriteCreditMultiplier != 1.25 {
+		t.Fatalf("pricing fields = %+v, want input/output/cache fields persisted", body.Data)
+	}
+}

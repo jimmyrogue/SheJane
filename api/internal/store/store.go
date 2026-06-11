@@ -241,8 +241,15 @@ type ModelConfig struct {
 	ModelName        string  `json:"model_name"`
 	APIKeyEncrypted  string  `json:"-"`
 	CreditMultiplier float64 `json:"credit_multiplier"`
-	PricePerCallCNY  float64 `json:"price_per_call_cny"`
-	Enabled          bool    `json:"enabled"`
+	// Token-level billing multipliers are relative to the DeepSeek Pro
+	// baseline (1.0). Zero means "fall back to CreditMultiplier" for
+	// backwards-compatible rows and old admin clients.
+	InputCreditMultiplier       float64 `json:"input_credit_multiplier"`
+	OutputCreditMultiplier      float64 `json:"output_credit_multiplier"`
+	CachedInputCreditMultiplier float64 `json:"cached_input_credit_multiplier"`
+	CacheWriteCreditMultiplier  float64 `json:"cache_write_credit_multiplier"`
+	PricePerCallCNY             float64 `json:"price_per_call_cny"`
+	Enabled                     bool    `json:"enabled"`
 	// Priority orders the catalog (higher first), breaks Auto-router ties, and
 	// selects the default model (highest-priority enabled chat row) when none
 	// or an unknown model is requested. Admin-configured.

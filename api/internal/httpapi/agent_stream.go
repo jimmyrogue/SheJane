@@ -127,7 +127,7 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 		inputTokens = llm.EstimateRequestTokens(request)
 	}
 
-	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCreditsForTokens(modelID, inputTokens, outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, err.Error())
 		message := "额度结算失败"

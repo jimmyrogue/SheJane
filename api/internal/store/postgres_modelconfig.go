@@ -8,6 +8,10 @@ import (
 
 const modelConfigColumns = `id::text, slot, capability, provider_kind, display_name, base_url,
 	model_name, api_key_encrypted, credit_multiplier::double precision,
+	COALESCE(input_credit_multiplier, 0)::double precision,
+	COALESCE(output_credit_multiplier, 0)::double precision,
+	COALESCE(cached_input_credit_multiplier, 0)::double precision,
+	COALESCE(cache_write_credit_multiplier, 0)::double precision,
 	price_per_call_cny::double precision, enabled,
 	COALESCE(params, '{}'::jsonb)::text, created_at, updated_at, COALESCE(updated_by::text, ''),
 	COALESCE(description, ''), COALESCE(priority, 0)`
@@ -18,6 +22,8 @@ func scanModelConfig(scanner interface{ Scan(...any) error }) (ModelConfig, erro
 	if err := scanner.Scan(
 		&cfg.ID, &cfg.Slot, &cfg.Capability, &cfg.ProviderKind, &cfg.DisplayName, &cfg.BaseURL,
 		&cfg.ModelName, &cfg.APIKeyEncrypted, &cfg.CreditMultiplier,
+		&cfg.InputCreditMultiplier, &cfg.OutputCreditMultiplier,
+		&cfg.CachedInputCreditMultiplier, &cfg.CacheWriteCreditMultiplier,
 		&cfg.PricePerCallCNY, &cfg.Enabled,
 		&paramsRaw, &cfg.CreatedAt, &cfg.UpdatedAt, &cfg.UpdatedBy,
 		&cfg.Description, &cfg.Priority,
@@ -111,25 +117,32 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			INSERT INTO model_configs
 				(slot, capability, provider_kind, display_name, base_url, model_name,
-				 api_key_encrypted, credit_multiplier, price_per_call_cny, enabled, params, updated_by,
-				 description, priority)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NULLIF($12,'')::uuid, $13, $14)
+				 api_key_encrypted, credit_multiplier, input_credit_multiplier, output_credit_multiplier,
+				 cached_input_credit_multiplier, cache_write_credit_multiplier, price_per_call_cny, enabled,
+				 params, updated_by, description, priority)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NULLIF($16,'')::uuid, $17, $18)
 			RETURNING `+modelConfigColumns+`
 		`, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL, cfg.ModelName,
-			cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID,
+			cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier, cfg.OutputCreditMultiplier,
+			cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled,
+			encodeParams(cfg.Params), actorUserID,
 			cfg.Description, cfg.Priority))
 	} else {
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			UPDATE model_configs SET
 				slot=$2, capability=$3, provider_kind=$4, display_name=$5, base_url=$6,
-				model_name=$7, api_key_encrypted=$8, credit_multiplier=$9, price_per_call_cny=$10,
-				enabled=$11, params=$12, updated_at=NOW(), updated_by=NULLIF($13,'')::uuid,
-				description=$14, priority=$15
+				model_name=$7, api_key_encrypted=$8, credit_multiplier=$9,
+				input_credit_multiplier=$10, output_credit_multiplier=$11,
+				cached_input_credit_multiplier=$12, cache_write_credit_multiplier=$13,
+				price_per_call_cny=$14, enabled=$15, params=$16, updated_at=NOW(),
+				updated_by=NULLIF($17,'')::uuid, description=$18, priority=$19
 			WHERE id=$1
 			RETURNING `+modelConfigColumns+`
 		`, cfg.ID, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL,
-			cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.PricePerCallCNY,
-			cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description, cfg.Priority))
+			cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier,
+			cfg.OutputCreditMultiplier, cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier,
+			cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description,
+			cfg.Priority))
 	}
 	if err != nil {
 		return ModelConfig{}, mapNotFound(err)
@@ -137,7 +150,8 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 
 	if err := insertAuditLog(ctx, tx, actorUserID, "model_config.upsert", "model_config", saved.ID, map[string]any{
 		"slot": saved.Slot, "provider_kind": saved.ProviderKind, "model_name": saved.ModelName,
-		"credit_multiplier": saved.CreditMultiplier, "enabled": saved.Enabled,
+		"credit_multiplier": saved.CreditMultiplier, "input_credit_multiplier": saved.InputCreditMultiplier,
+		"output_credit_multiplier": saved.OutputCreditMultiplier, "enabled": saved.Enabled,
 	}); err != nil {
 		return ModelConfig{}, err
 	}

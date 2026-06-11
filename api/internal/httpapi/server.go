@@ -911,7 +911,7 @@ func (s *Server) agentLLMGateway(w http.ResponseWriter, r *http.Request, user st
 		inputTokens = llm.EstimateRequestTokens(request)
 	}
 	outputTokens := completion.OutputTokens
-	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCreditsForTokens(modelID, inputTokens, outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Settle failed (e.g. actual > estimate and the overage exceeds
 		// the balance): the reservation is still Reserved, so release it
@@ -1166,7 +1166,7 @@ func (s *Server) streamAgentLLM(ctx context.Context, w io.Writer, user store.Use
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCreditsForTokens(modelID, inputTokens, outputTokens)
 	if err := s.app.Store.SettleUsage(ctx, user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.
@@ -1388,7 +1388,7 @@ func (s *Server) streamLLMResponse(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 
-	actualCredits := s.app.UsageCredits(modelID, inputTokens+outputTokens)
+	actualCredits := s.app.UsageCreditsForTokens(modelID, inputTokens, outputTokens)
 	if err := s.app.Store.SettleUsage(r.Context(), user.ID, reservation.ID, actualCredits); err != nil {
 		// Reservation is still Reserved on settle failure — release it so
 		// the held estimate isn't stranded.

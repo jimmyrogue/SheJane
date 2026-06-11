@@ -1099,6 +1099,75 @@ const CAPABILITY_OPTIONS = [
 
 const IMAGE_DEFAULT_MODEL_ID = 'image.default'
 
+type ModelPreset = {
+  id: string
+  label: string
+  helper: string
+  patch: Partial<ModelConfigForm>
+}
+
+const MODEL_PRESETS: ModelPreset[] = [
+  {
+    id: 'deepseek-pro',
+    label: 'DeepSeek Pro',
+    helper: '基准 1x',
+    patch: {
+      capability: 'chat',
+      slot: 'deepseek-pro',
+      provider_kind: 'deepseek-v4',
+      display_name: 'DeepSeek Pro',
+      description: '基准模型,适合复杂分析和多步任务',
+      base_url: 'https://api.deepseek.com',
+      model_name: 'deepseek-v4-pro',
+      credit_multiplier: '1',
+      input_credit_multiplier: '1',
+      output_credit_multiplier: '1',
+      cache_write_credit_multiplier: '1',
+    },
+  },
+  {
+    id: 'deepseek-flash',
+    label: 'DeepSeek Flash',
+    helper: '轻量 0.1x',
+    patch: {
+      capability: 'chat',
+      slot: 'deepseek-flash',
+      provider_kind: 'deepseek-v4',
+      display_name: 'DeepSeek Flash',
+      description: '速度快、成本低,适合日常对话和简单任务',
+      base_url: 'https://api.deepseek.com',
+      model_name: 'deepseek-v4-flash',
+      credit_multiplier: '0.1',
+      input_credit_multiplier: '0.1',
+      output_credit_multiplier: '0.1',
+      cache_write_credit_multiplier: '0.1',
+      priority: '100',
+    },
+  },
+  {
+    id: 'openai-compatible',
+    label: 'OpenAI 兼容',
+    helper: '通用网关',
+    patch: {
+      capability: 'chat',
+      provider_kind: 'openai-compatible',
+      base_url: 'https://api.openai.com/v1',
+      model_name: '',
+    },
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    helper: 'Claude 路由',
+    patch: {
+      capability: 'chat',
+      provider_kind: 'anthropic',
+      base_url: '',
+      model_name: 'claude-sonnet-4-5',
+    },
+  },
+]
+
 const SELECT_CLASS =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
 
@@ -1112,6 +1181,10 @@ interface ModelConfigForm {
   base_url: string
   model_name: string
   credit_multiplier: string
+  input_credit_multiplier: string
+  output_credit_multiplier: string
+  cached_input_credit_multiplier: string
+  cache_write_credit_multiplier: string
   price_per_call_cny: string
   enabled: boolean
   api_key: string
@@ -1128,6 +1201,10 @@ function emptyModelForm(): ModelConfigForm {
     base_url: '',
     model_name: '',
     credit_multiplier: '1',
+    input_credit_multiplier: '1',
+    output_credit_multiplier: '1',
+    cached_input_credit_multiplier: '',
+    cache_write_credit_multiplier: '1',
     price_per_call_cny: '0',
     enabled: true,
     api_key: '',
@@ -1201,6 +1278,10 @@ function ModelConfigCard({
       base_url: cfg.base_url,
       model_name: cfg.model_name,
       credit_multiplier: String(cfg.credit_multiplier),
+      input_credit_multiplier: String(cfg.input_credit_multiplier || cfg.credit_multiplier || 1),
+      output_credit_multiplier: String(cfg.output_credit_multiplier || cfg.credit_multiplier || 1),
+      cached_input_credit_multiplier: cfg.cached_input_credit_multiplier ? String(cfg.cached_input_credit_multiplier) : '',
+      cache_write_credit_multiplier: String(cfg.cache_write_credit_multiplier || cfg.input_credit_multiplier || cfg.credit_multiplier || 1),
       price_per_call_cny: String(cfg.price_per_call_cny ?? 0),
       enabled: cfg.enabled,
       api_key: '',
@@ -1208,17 +1289,45 @@ function ModelConfigCard({
     setDialogOpen(true)
   }
 
+  function applyPreset(preset: ModelPreset) {
+    setForm((current) => ({
+      ...current,
+      ...preset.patch,
+      slot: preset.patch.capability === 'image'
+        ? IMAGE_DEFAULT_MODEL_ID
+        : preset.patch.slot ?? current.slot,
+    }))
+  }
+
   async function submitForm() {
     const multiplier = Number(form.credit_multiplier)
+    const parseTokenMultiplier = (raw: string, label: string): number | null => {
+      const trimmed = raw.trim()
+      if (!trimmed) return 0
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 0) {
+        onNotice(`${label}必须是非负数字；留空或 0 表示沿用基础倍率`)
+        return null
+      }
+      return n
+    }
     const modelID = form.capability === 'image' ? IMAGE_DEFAULT_MODEL_ID : form.slot.trim()
     if (!modelID || !form.provider_kind.trim()) {
       onNotice('模型 ID 与 provider_kind 必填')
       return
     }
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
-      onNotice('倍率必须是大于 0 的数字')
+      onNotice('基础倍率必须是大于 0 的数字')
       return
     }
+    const inputMultiplier = parseTokenMultiplier(form.input_credit_multiplier, '输入 token 倍率')
+    if (inputMultiplier === null) return
+    const outputMultiplier = parseTokenMultiplier(form.output_credit_multiplier, '输出 token 倍率')
+    if (outputMultiplier === null) return
+    const cachedInputMultiplier = parseTokenMultiplier(form.cached_input_credit_multiplier, '缓存命中 token 倍率')
+    if (cachedInputMultiplier === null) return
+    const cacheWriteMultiplier = parseTokenMultiplier(form.cache_write_credit_multiplier, '缓存写入 token 倍率')
+    if (cacheWriteMultiplier === null) return
     const payload: ModelConfigInput = {
       slot: modelID,
       capability: form.capability.trim() || 'chat',
@@ -1229,6 +1338,10 @@ function ModelConfigCard({
       base_url: form.base_url.trim(),
       model_name: form.model_name.trim(),
       credit_multiplier: multiplier,
+      input_credit_multiplier: inputMultiplier,
+      output_credit_multiplier: outputMultiplier,
+      cached_input_credit_multiplier: cachedInputMultiplier,
+      cache_write_credit_multiplier: cacheWriteMultiplier,
       price_per_call_cny: Number(form.price_per_call_cny) || 0,
       enabled: form.enabled,
     }
@@ -1335,7 +1448,7 @@ function ModelConfigCard({
         <CardHeader className="flex flex-row items-start justify-between gap-2">
           <div>
             <CardTitle>模型配置</CardTitle>
-            <CardDescription>动态管理用户端模型目录、provider / 模型 / 计费倍率，保存后即时生效，不再依赖 .env。API key 加密存储且不回显。</CardDescription>
+            <CardDescription>动态管理用户端模型目录、provider / 上游模型 / token 费率，保存后即时生效，不再依赖 .env。API key 加密存储且不回显。</CardDescription>
           </div>
           <Button size="sm" onClick={openCreate}>
             <Plus className="size-4" />
@@ -1348,7 +1461,7 @@ function ModelConfigCard({
               <TableRow>
                 <TableHead>模型 ID / 能力</TableHead>
                 <TableHead>Provider / Model</TableHead>
-                <TableHead>成本倍率</TableHead>
+                <TableHead>Token 费率</TableHead>
                 <TableHead>每次金额</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -1368,7 +1481,10 @@ function ModelConfigCard({
                         {cfg.provider_kind} · {cfg.model_name || '-'} · {cfg.base_url || 'default'}
                       </div>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{cfg.credit_multiplier}x</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <div className="text-xs">in {formatMultiplier(cfg.input_credit_multiplier || cfg.credit_multiplier)}x · out {formatMultiplier(cfg.output_credit_multiplier || cfg.credit_multiplier)}x</div>
+                      <div className="text-xs text-muted-foreground">base {formatMultiplier(cfg.credit_multiplier)}x</div>
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {cfg.price_per_call_cny ? `¥${cfg.price_per_call_cny}/次` : '-'}
                     </TableCell>
@@ -1408,7 +1524,7 @@ function ModelConfigCard({
         <CardHeader>
           <CardTitle>计费参数</CardTitle>
           <CardDescription>
-            全局加价系数 = 产品固定利润（1.15 = 全线加价 15%，建议 1.10–1.20）。最终扣费 = tokens × 模型成本倍率 × 加价系数。
+            全局加价系数 = 产品固定利润（1.15 = 全线加价 15%，建议 1.10–1.20）。最终扣费 = 输入 tokens × 输入费率 + 输出 tokens × 输出费率，再乘加价系数。
             基准每 token 成本仅用于把生图等「按次金额」模型换算成 credits（每次金额 ÷ 基准成本 × 加价系数）。
           </CardDescription>
         </CardHeader>
@@ -1500,127 +1616,226 @@ function ModelConfigCard({
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-[520px]">
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingId ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
-            <DialogDescription>保存后立即生效。留空 API key 表示保持原有密钥不变。</DialogDescription>
+            <DialogDescription>先选模板，再补上游连接和费率。保存后立即生效；API key 留空会保持原值。</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="mc-cap">能力 capability</Label>
-                <select
-                  id="mc-cap"
-                  className={SELECT_CLASS}
-                  value={form.capability}
-                  onChange={(e) => {
-                    const capability = e.target.value
-                    const slot = capability === 'image'
-                      ? IMAGE_DEFAULT_MODEL_ID
-                      : form.capability === 'image' && form.slot === IMAGE_DEFAULT_MODEL_ID
-                        ? ''
-                        : form.slot
-                    setForm({ ...form, capability, slot })
-                  }}
-                >
-                  {CAPABILITY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+          <div className="grid gap-4">
+            {!editingId ? (
+              <div className="grid gap-2">
+                <div className="text-xs font-medium text-muted-foreground">常用模板</div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {MODEL_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="rounded-lg border bg-background px-3 py-2 text-left transition hover:bg-muted active:scale-[0.99]"
+                      onClick={() => applyPreset(preset)}
+                    >
+                      <div className="text-sm font-medium">{preset.label}</div>
+                      <div className="text-xs text-muted-foreground">{preset.helper}</div>
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="mc-slot">模型 ID</Label>
-                {form.capability === 'image' ? (
-                  <Input id="mc-slot" value={IMAGE_DEFAULT_MODEL_ID} disabled />
-                ) : (
-                  <Input
-                    id="mc-slot"
-                    value={form.slot}
-                    onChange={(e) => setForm({ ...form, slot: e.target.value })}
-                    placeholder="gpt-4o / claude-sonnet / deepseek-v4"
-                    maxLength={40}
+            ) : null}
+
+            <div className="grid gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">模型身份</div>
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.enabled}
+                    onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
                   />
-                )}
+                  启用
+                </label>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[160px_1fr_1fr]">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-cap">能力</Label>
+                  <select
+                    id="mc-cap"
+                    className={SELECT_CLASS}
+                    value={form.capability}
+                    onChange={(e) => {
+                      const capability = e.target.value
+                      const slot = capability === 'image'
+                        ? IMAGE_DEFAULT_MODEL_ID
+                        : form.capability === 'image' && form.slot === IMAGE_DEFAULT_MODEL_ID
+                          ? ''
+                          : form.slot
+                      setForm({ ...form, capability, slot })
+                    }}
+                  >
+                    {CAPABILITY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-slot">模型 ID</Label>
+                  {form.capability === 'image' ? (
+                    <Input id="mc-slot" value={IMAGE_DEFAULT_MODEL_ID} disabled />
+                  ) : (
+                    <Input
+                      id="mc-slot"
+                      value={form.slot}
+                      onChange={(e) => setForm({ ...form, slot: e.target.value })}
+                      placeholder="gpt-4o / claude-sonnet / deepseek-v4"
+                      maxLength={40}
+                    />
+                  )}
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-name">显示名</Label>
+                  <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="DeepSeek Pro" />
+                </div>
               </div>
             </div>
-            <p className="-mt-1 text-xs text-muted-foreground">
-              模型 ID 是用户请求里保存和发送的稳定标识；显示名才是用户在选择器里看到的名称。chat 模型可自由命名，生图当前固定为 image.default。
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="mc-kind">Provider 类型</Label>
-                <select
-                  id="mc-kind"
-                  className={SELECT_CLASS}
-                  value={form.provider_kind}
-                  onChange={(e) => setForm({ ...form, provider_kind: e.target.value })}
-                >
-                  {PROVIDER_KINDS.map((kind) => (
-                    <option key={kind} value={kind}>
-                      {kind}
-                    </option>
-                  ))}
-                </select>
+
+            <div className="grid gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="text-sm font-medium">上游连接</div>
+              <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-kind">Provider</Label>
+                  <select
+                    id="mc-kind"
+                    className={SELECT_CLASS}
+                    value={form.provider_kind}
+                    onChange={(e) => setForm({ ...form, provider_kind: e.target.value })}
+                  >
+                    {PROVIDER_KINDS.map((kind) => (
+                      <option key={kind} value={kind}>
+                        {kind}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-base">Base URL</Label>
+                  <Input id="mc-base" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://api.deepseek.com" />
+                </div>
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="mc-mult">成本倍率（相对 DeepSeek-Pro）</Label>
-                <Input
-                  id="mc-mult"
-                  value={form.credit_multiplier}
-                  onChange={(e) => setForm({ ...form, credit_multiplier: e.target.value })}
-                  placeholder="纯成本比：Pro=1，轻量=0.x，Claude/高级=Nx（利润由全局加价系数统一加）"
-                />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-model">上游模型名</Label>
+                  <Input id="mc-model" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} placeholder="deepseek-v4-pro" />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-key">API Key</Label>
+                  <Input
+                    id="mc-key"
+                    type="password"
+                    value={form.api_key}
+                    onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                    placeholder={editingHasKey ? '已配置，留空保持不变' : '输入 API key'}
+                  />
+                </div>
               </div>
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-price">每次金额（¥，仅生图按次计费用）</Label>
-              <Input
-                id="mc-price"
-                value={form.price_per_call_cny}
-                onChange={(e) => setForm({ ...form, price_per_call_cny: e.target.value })}
-                placeholder="0 表示不按次计费；生图填每张图片金额"
-              />
+
+            <div className="grid gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium">计费</div>
+                  <div className="text-xs text-muted-foreground">DeepSeek Pro = 1，利润由全局加价系数统一处理。</div>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <Badge variant="outline">in {formatMultiplier(Number(form.input_credit_multiplier || form.credit_multiplier || 0))}x</Badge>
+                  <Badge variant="outline">out {formatMultiplier(Number(form.output_credit_multiplier || form.credit_multiplier || 0))}x</Badge>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-input-mult">输入费率</Label>
+                  <Input
+                    id="mc-input-mult"
+                    value={form.input_credit_multiplier}
+                    onChange={(e) => setForm({ ...form, input_credit_multiplier: e.target.value })}
+                    placeholder="DeepSeek Pro = 1"
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-output-mult">输出费率</Label>
+                  <Input
+                    id="mc-output-mult"
+                    value={form.output_credit_multiplier}
+                    onChange={(e) => setForm({ ...form, output_credit_multiplier: e.target.value })}
+                    placeholder="通常高于输入费率"
+                  />
+                </div>
+              </div>
+              {form.capability === 'image' ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-price">每次金额（¥）</Label>
+                  <Input
+                    id="mc-price"
+                    value={form.price_per_call_cny}
+                    onChange={(e) => setForm({ ...form, price_per_call_cny: e.target.value })}
+                    placeholder="生图按每张图片金额换算 credits"
+                  />
+                </div>
+              ) : null}
+              <details className="group rounded-lg border bg-background px-3 py-2">
+                <summary className="cursor-pointer list-none text-sm font-medium">
+                  高级参数
+                  <span className="ml-2 text-xs text-muted-foreground">缓存、排序、兼容兜底</span>
+                </summary>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="mc-mult">基础倍率</Label>
+                    <Input
+                      id="mc-mult"
+                      value={form.credit_multiplier}
+                      onChange={(e) => setForm({ ...form, credit_multiplier: e.target.value })}
+                      placeholder="新费率留空时的兜底"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="mc-priority">优先级</Label>
+                    <Input id="mc-priority" type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} placeholder="100" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="mc-cache-read-mult">缓存命中费率</Label>
+                    <Input
+                      id="mc-cache-read-mult"
+                      value={form.cached_input_credit_multiplier}
+                      onChange={(e) => setForm({ ...form, cached_input_credit_multiplier: e.target.value })}
+                      placeholder="留空=沿用输入费率"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="mc-cache-write-mult">缓存写入费率</Label>
+                    <Input
+                      id="mc-cache-write-mult"
+                      value={form.cache_write_credit_multiplier}
+                      onChange={(e) => setForm({ ...form, cache_write_credit_multiplier: e.target.value })}
+                      placeholder="留空=沿用输入费率"
+                    />
+                  </div>
+                  <div className="grid gap-1.5 sm:col-span-2">
+                    <Label htmlFor="mc-desc">Auto 路由描述</Label>
+                    <Input id="mc-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="速度快、成本低,适合日常任务" />
+                  </div>
+                  {form.capability !== 'image' ? (
+                    <div className="grid gap-1.5 sm:col-span-2">
+                      <Label htmlFor="mc-price">每次金额（¥）</Label>
+                      <Input
+                        id="mc-price"
+                        value={form.price_per_call_cny}
+                        onChange={(e) => setForm({ ...form, price_per_call_cny: e.target.value })}
+                        placeholder="文本模型通常保持 0"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </details>
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-name">显示名（用户在模型选择器里看到的标签）</Label>
-              <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="快速 / DeepSeek V4 / Claude" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-desc">描述（选择器 tooltip + Auto 路由提示，仅 chat 模型）</Label>
-              <Input id="mc-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="速度快、成本低,适合日常任务" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-priority">优先级（数字越大越靠前；最高的为默认模型）</Label>
-              <Input id="mc-priority" type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} placeholder="100" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-base">Base URL</Label>
-              <Input id="mc-base" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://api.deepseek.com" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-model">模型名</Label>
-              <Input id="mc-model" value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} placeholder="deepseek-v4-pro" />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="mc-key">API Key</Label>
-              <Input
-                id="mc-key"
-                type="password"
-                value={form.api_key}
-                onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                placeholder={editingHasKey ? '已配置，留空保持不变' : '输入 API key'}
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.enabled}
-                onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
-              />
-              启用（chat 模型会进入用户端目录与 Auto 候选；生图只使用 image.default）
-            </label>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
@@ -1772,6 +1987,10 @@ function StatusBadge({ status }: { status: string }) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+function formatMultiplier(value: number) {
+  return Number.isFinite(value) ? Number(value.toFixed(4)).toString() : '0'
 }
 
 function formatCurrency(amountCents: number) {

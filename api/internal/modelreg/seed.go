@@ -70,12 +70,14 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 		// Cost ratio vs the DeepSeek-V4-Pro baseline. DeepSeek-V4-Flash is
 		// roughly 1/10 the blended cost of Pro, so 0.1; admins refine per
 		// real provider pricing and the global markup adds the margin.
-		DisplayName:      "快速",
-		Description:      "速度快、成本低,适合日常对话和简单任务",
-		Priority:         100, // highest → the catalog default
-		CreditMultiplier: 0.1,
-		Enabled:          true,
-		Params:           map[string]any{},
+		DisplayName:            "快速",
+		Description:            "速度快、成本低,适合日常对话和简单任务",
+		Priority:               100, // highest → the catalog default
+		CreditMultiplier:       0.1,
+		InputCreditMultiplier:  0.1,
+		OutputCreditMultiplier: 0.1,
+		Enabled:                true,
+		Params:                 map[string]any{},
 	}
 	switch {
 	case cfg.MockLLM:
@@ -99,12 +101,14 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 		// Pure cost ratio vs the DeepSeek-V4-Pro baseline (1.0 = same cost).
 		// Admins set the real ratio per provider pricing; the global markup
 		// adds the margin on top.
-		DisplayName:      "深度",
-		Description:      "推理更强,适合复杂分析、写作和多步任务",
-		Priority:         90,
-		CreditMultiplier: 1,
-		Enabled:          true,
-		Params:           map[string]any{},
+		DisplayName:            "深度",
+		Description:            "推理更强,适合复杂分析、写作和多步任务",
+		Priority:               90,
+		CreditMultiplier:       1,
+		InputCreditMultiplier:  1,
+		OutputCreditMultiplier: 1,
+		Enabled:                true,
+		Params:                 map[string]any{},
 	}
 	deepKind := llm.NormalizeProviderKind(cfg.DeepProviderKind)
 	switch {
