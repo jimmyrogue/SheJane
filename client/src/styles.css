@@ -3573,30 +3573,10 @@ button:active {
   line-height: 1.5;
 }
 
-.agent-settings-reset-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 8px;
-  background: var(--accent-danger-bg);
-  color: var(--accent-danger-text);
-  border: 1px solid var(--accent-danger-border);
-}
-
-.agent-settings-reset-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-danger-bg) 70%, var(--accent-danger));
-}
-
 /* "Advanced" disclosure — a flush section inside the basics card. The
    trigger styling + chevron rotation now live on the Collapsible's
    <CollapsibleTrigger> via Tailwind; this rule only owns the top divider
-   that separates it from the basic toggles, and the divider before the
-   "clear memory" row that follows it. */
+   that separates it from the basic toggles. */
 .agent-settings-advanced {
   border-top: 1px solid var(--border-hairline);
 }
@@ -5885,8 +5865,7 @@ button.agent-progress-summary:focus-visible {
   box-shadow: var(--sj-shadow-2);
 }
 
-.logo img,
-.auth-wordmark-mark img {
+.logo img {
   display: block;
   width: 100%;
   height: 100%;
@@ -6026,24 +6005,14 @@ button.agent-progress-summary:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
-  color: var(--text-primary);
-  font-family: var(--sj-font-serif);
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
 }
 
-.auth-wordmark-mark {
-  display: grid;
-  width: 84px;
-  height: 84px;
-  overflow: hidden;
-  place-items: center;
-  border-radius: 18px;
-  border: 0.5px solid var(--sj-line);
-  background: var(--sj-paper);
-  box-shadow: var(--sj-shadow-2);
+/* Horizontal brand lockup (ring mark + 石间 + SHEJANE) baked into one
+   image — replaces the old mark-card + text wordmark on the auth page. */
+.auth-wordmark-lockup {
+  display: block;
+  width: min(300px, 64vw);
+  height: auto;
 }
 
 .auth-form-panel {
@@ -7753,9 +7722,26 @@ button.settings-action:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.settings-danger,
-.settings-danger:hover {
+button.settings-action.settings-danger {
+  margin-top: 4px;
+  padding-inline: 12px;
+  border: 0.5px solid var(--accent-danger-border, color-mix(in srgb, var(--sj-seal) 34%, var(--sj-paper-raised)));
+  border-radius: 8px;
+  background: var(--accent-danger-bg, color-mix(in srgb, var(--sj-seal) 10%, var(--sj-paper-raised)));
   color: var(--accent-danger-text, #8F3E27);
+}
+
+button.settings-action.settings-danger:hover {
+  background: color-mix(in srgb, var(--accent-danger-bg, #F4E3DC) 78%, var(--sj-seal, #B3532F));
+}
+
+button.settings-action.settings-danger .settings-row-label,
+button.settings-action.settings-danger .settings-row-chevron {
+  color: var(--accent-danger-text, #8F3E27);
+}
+
+button.settings-action.settings-danger .settings-row-hint {
+  color: color-mix(in srgb, var(--accent-danger-text, #8F3E27) 74%, var(--sj-ink-faint, #A8A39A));
 }
 
 /* 高级 disclosure inside the 智能体 group. */
@@ -7835,11 +7821,12 @@ button.settings-action:focus-visible {
   /* 20px is the spacing the user settled on in the v4 prototype Tweaks
      (msg gap 20 / column 700). */
   gap: 20px;
-  /* Bottom buffer trimmed from 76px: the composer fade is now a thin 22px
-     strip, so the last bubble only needs a little slack to clear it. This
-     pulls the conversation down toward the composer, leaving a small gap
-     instead of a large empty band. */
-  padding: 56px 22px 40px;
+  /* Bottom buffer must clear BOTH overlays below the last message: the
+     hover meta row (~24px, floated below the bubble via `top: 100%`, so it
+     lives inside this padding) and the 36px bottom fade
+     (.chat-surface::after). 40px let the fade wash over the meta row;
+     64px keeps the meta legible when scrolled to the bottom. */
+  padding: 56px 22px 64px;
   scrollbar-gutter: stable;
 }
 
@@ -7882,14 +7869,28 @@ button.settings-action:focus-visible {
   color: var(--sj-ink, #2B2A28);
   font-size: 14px;
   line-height: 1.76;
+  /* Unbroken runs (pasted IDs, URLs, file paths) wrap instead of
+     overflowing the column — applies to user bubbles and assistant
+     prose alike; <pre> blocks keep their own overflow handling. */
+  overflow-wrap: anywhere;
 }
 
 .message.assistant .message-content {
   letter-spacing: 0;
 }
 
+/* Prototype v4 sizes the bubble at 78% OF THE CHAT COLUMN. The natural
+   place for that cap is .message-bubble-inner (whose containing block is
+   the .message row = the column); putting a percentage on .message-content
+   resolves against the shrink-wrapped bubble-inner instead — circular, so
+   it never actually constrained anything. This also overrides the legacy
+   74% from the pre-v4 theme. */
+.message.user .message-bubble-inner {
+  max-width: min(546px, 78%);
+}
+
 .message.user .message-content {
-  max-width: min(520px, 78%);
+  max-width: 100%;
   border: 0.5px solid var(--sj-line, #E8E5DE);
   /* Prototype v4 bubble: asymmetric tail (bottom-right notch), not a
      uniform pill. The 4px corner sits on the trailing edge nearest the
@@ -7898,6 +7899,7 @@ button.settings-action:focus-visible {
   background: var(--sj-paper-raised, #FFFFFF);
   box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
   padding: 10px 14px;
+  line-height: 1.65;
 }
 
 .message .message-content h1,

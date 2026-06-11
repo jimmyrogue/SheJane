@@ -49,7 +49,7 @@ describe('SettingsView', () => {
         status: 'active',
       },
     })
-    expect(screen.getByText('剩余Token数 50')).toBeInTheDocument()
+    expect(screen.getByText('剩余积分 50')).toBeInTheDocument()
     expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
     expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
   })
@@ -67,7 +67,7 @@ describe('SettingsView', () => {
         status: 'active',
       },
     })
-    expect(screen.queryByText(/剩余Token数/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/剩余积分/)).not.toBeInTheDocument()
   })
 
   it('toggles the memory agent setting', () => {
@@ -107,8 +107,7 @@ describe('SettingsView', () => {
     const onClearMemory = vi.fn(async () => 7)
     renderSettings({ onClearMemory })
 
-    // The bare 清空 button opens the confirm dialog, does NOT clear directly.
-    fireEvent.click(screen.getByRole('button', { name: '清空' }))
+    fireEvent.click(screen.getByRole('button', { name: /清空记忆/ }))
     expect(onClearMemory).not.toHaveBeenCalled()
 
     const confirm = await screen.findByRole('alertdialog')
@@ -120,9 +119,37 @@ describe('SettingsView', () => {
   it('does not call onClearMemory when the confirmation is cancelled', async () => {
     const onClearMemory = vi.fn(async () => 0)
     renderSettings({ onClearMemory })
-    fireEvent.click(screen.getByRole('button', { name: '清空' }))
+    fireEvent.click(screen.getByRole('button', { name: /清空记忆/ }))
     const confirm = await screen.findByRole('alertdialog')
     fireEvent.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(onClearMemory).not.toHaveBeenCalled()
+  })
+
+  it('keeps account security actions at the bottom and requires logout confirmation', async () => {
+    const onClearMemory = vi.fn(async () => 0)
+    const onLogout = vi.fn()
+    renderSettings({ onClearMemory, onLogout })
+
+    const importRow = screen.getByRole('button', { name: /导入本地数据/ })
+    const clearMemoryRow = screen.getByRole('button', { name: /清空记忆/ })
+    const logoutRow = screen.getByRole('button', { name: /退出登录/ })
+    expect(screen.getByText('账号安全')).toBeInTheDocument()
+    expect(Boolean(importRow.compareDocumentPosition(logoutRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(Boolean(importRow.compareDocumentPosition(clearMemoryRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(Boolean(clearMemoryRow.compareDocumentPosition(logoutRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(screen.queryByText('退出前需要确认，避免误触。')).not.toBeInTheDocument()
+
+    fireEvent.click(logoutRow)
+    expect(onLogout).not.toHaveBeenCalled()
+
+    const confirm = await screen.findByRole('alertdialog')
+    expect(within(confirm).getByText('退出当前账号？')).toBeInTheDocument()
+    fireEvent.click(within(confirm).getByRole('button', { name: '取消' }))
+    expect(onLogout).not.toHaveBeenCalled()
+
+    fireEvent.click(logoutRow)
+    const secondConfirm = await screen.findByRole('alertdialog')
+    fireEvent.click(within(secondConfirm).getByRole('button', { name: '确认退出' }))
+    expect(onLogout).toHaveBeenCalledTimes(1)
   })
 })

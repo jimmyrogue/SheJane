@@ -2486,12 +2486,6 @@ function AppContent() {
               </AlertDialogContent>
             </AlertDialog>
 
-            <SpendHistoryDialog
-              open={spendHistoryOpen}
-              onOpenChange={setSpendHistoryOpen}
-              fetchTransactions={fetchSpendHistory}
-            />
-
             <div className="composer-dock">
               <PendingApprovalBar
                 approval={pendingApproval}
@@ -2559,6 +2553,11 @@ function AppContent() {
           </section>
           )}
           </div>
+          <SpendHistoryDialog
+            open={spendHistoryOpen}
+            onOpenChange={setSpendHistoryOpen}
+            fetchTransactions={fetchSpendHistory}
+          />
         </div>
       </main>
     </TooltipProvider>

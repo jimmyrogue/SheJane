@@ -204,6 +204,22 @@ describe('user client shell', () => {
     )
   })
 
+  it('opens spend history directly from the settings page', async () => {
+    const calls = mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await openAccountMenu()
+    fireEvent.click(await screen.findByText('消费记录'))
+
+    expect(await screen.findByRole('dialog', { name: '消费记录' })).toBeInTheDocument()
+    expect(await screen.findByText('注册赠送')).toBeInTheDocument()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/transactions'))).toBe(true)
+  })
+
   it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
     const calls = mockFetch('user')
     const refresh = vi.fn().mockRejectedValue(new Error('expired'))
@@ -1201,6 +1217,8 @@ describe('user client shell', () => {
 
 	  await openAccountMenu()
 	  fireEvent.click(await screen.findByText('退出登录'))
+	  const logoutConfirm = await screen.findByRole('alertdialog')
+	  fireEvent.click(within(logoutConfirm).getByRole('button', { name: '确认退出' }))
 	  await screen.findByText('创建你的账号')
 	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
 	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
@@ -2184,6 +2202,24 @@ function mockFetch(
     if (url.endsWith('/api/v1/billing/balance')) {
       const wallet = typeof options.balance === 'function' ? options.balance() : options.balance ?? balance
       return jsonResponse({ code: 0, message: 'ok', data: wallet })
+    }
+    if (url.endsWith('/api/v1/billing/transactions')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: [
+          {
+            id: 'tx-signup',
+            wallet_id: 'wallet-1',
+            type: 'signup_grant',
+            amount: 1000,
+            monthly_used_after: 0,
+            extra_balance_after: 1000,
+            description: 'signup bonus',
+            created_at: '2026-06-10T00:00:00Z',
+          },
+        ],
+      })
     }
     if (url.endsWith('/api/v1/billing/subscription/checkout')) {
       return jsonResponse({ code: 0, message: 'ok', data: { checkout_url: 'https://stripe.example.com/checkout/sess_test' } })

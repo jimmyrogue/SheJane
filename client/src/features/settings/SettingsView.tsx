@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { IconChevronRight, IconLoader2 } from '@tabler/icons-react'
+import { IconChevronRight, IconLogout, IconTrash } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,7 +11,6 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -26,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { IconTrash } from '@tabler/icons-react'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
 import type { AdvancedAgentSettings, AgentSettings } from '@/shared/local-host/client'
@@ -130,6 +128,7 @@ export function SettingsView({
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
 
   const memoryEnabled = (agentSettings.memory ?? 'on') === 'on'
@@ -164,7 +163,6 @@ export function SettingsView({
             {onShowSpendHistory ? (
               <SettingActionRow label={t('sidebar.account.spendHistory')} onClick={onShowSpendHistory} />
             ) : null}
-            {onLogout ? <SettingActionRow label={t('sidebar.account.logout')} danger onClick={onLogout} /> : null}
           </SettingGroup>
 
           <SettingGroup label={t('settings.group.agent')}>
@@ -336,23 +334,6 @@ export function SettingsView({
               </>
             ) : null}
 
-            {onClearMemory ? (
-              <SettingRow
-                label={t('sidebar.agentSettings.memory.clearAction')}
-                hint={t('sidebar.agentSettings.memory.clearHint')}
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  className="agent-settings-reset-btn"
-                  disabled={clearingMemory}
-                  onClick={() => setClearMemoryConfirmOpen(true)}
-                >
-                  {clearingMemory ? <IconLoader2 size={14} className="animate-spin" aria-hidden="true" /> : null}
-                  <span>{t('sidebar.agentSettings.memory.clearButton')}</span>
-                </Button>
-              </SettingRow>
-            ) : null}
           </SettingGroup>
 
           <SettingGroup label={t('settings.group.general')}>
@@ -380,6 +361,26 @@ export function SettingsView({
               }}
             />
           </SettingGroup>
+
+          {onClearMemory || onLogout ? (
+            <SettingGroup label={t('settings.group.accountSecurity')}>
+              {onClearMemory ? (
+                <SettingActionRow
+                  label={t('sidebar.agentSettings.memory.clearAction')}
+                  hint={t('sidebar.agentSettings.memory.clearHint')}
+                  danger
+                  onClick={() => setClearMemoryConfirmOpen(true)}
+                />
+              ) : null}
+              {onLogout ? (
+                <SettingActionRow
+                  label={t('sidebar.account.logout')}
+                  danger
+                  onClick={() => setLogoutConfirmOpen(true)}
+                />
+              ) : null}
+            </SettingGroup>
+          ) : null}
         </div>
       </div>
 
@@ -418,6 +419,34 @@ export function SettingsView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {onLogout ? (
+        <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
+          <AlertDialogContent className="conversation-delete-dialog">
+            <AlertDialogHeader className="conversation-delete-header">
+              <AlertDialogMedia className="conversation-delete-media">
+                <IconLogout aria-hidden="true" />
+              </AlertDialogMedia>
+              <AlertDialogTitle>{t('sidebar.account.logoutConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>{t('sidebar.account.logoutConfirmBody')}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="conversation-delete-footer">
+              <AlertDialogCancel variant="outline" autoFocus>
+                <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  setLogoutConfirmOpen(false)
+                  onLogout()
+                }}
+              >
+                <span className="conversation-delete-button-label">{t('sidebar.account.logoutConfirmAction')}</span>
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </section>
   )
 }

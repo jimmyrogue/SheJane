@@ -202,7 +202,10 @@ describe('MessageBubble meta', () => {
         />
       </I18nProvider>,
     )
-    expect(screen.getByText('1.2k tokens · 3 积分 · 1 次工具')).toBeInTheDocument()
+    // Token counts are tracked on the message but intentionally not shown —
+    // the chip is credits · tool-calls only.
+    expect(screen.getByText('3 积分 · 1 次工具')).toBeInTheDocument()
+    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
   })
 
   it('omits the usage chip when there is no usage data', () => {

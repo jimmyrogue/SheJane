@@ -57,11 +57,13 @@ function createWindow() {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hidden',
-          // The sidebar is a floating card at 12px margin with a 14px corner
-          // radius; default {14,14} lands the lights on that rounded corner.
-          // Shift right so they sit on the card's flat top edge, clear of the
-          // curve, and a touch down to center in the window-controls row.
-          trafficLightPosition: { x: 26, y: 17 },
+          // Calibrated to the v4 design deliverable (SheJane 原型 v4.html):
+          // the floating sidebar card sits at 12px margin + ~1px border +
+          // 10px side padding, and the prototype's TrafficLights row adds
+          // 6px left / 14px top inside that — lights group lands at
+          // (12+1+10+6, 12+1+14) = (29, 27) from the window corner, clear
+          // of the card's 14px corner radius.
+          trafficLightPosition: { x: 29, y: 27 },
         }
       : {}),
     icon: appIconPath,

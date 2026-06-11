@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { AuthClient } from '@/shared/api/authClient'
 import type { AuthPayload } from '@/shared/api/client'
-import { appLogoURL } from '@/shared/assets/logo'
+import { appLogoLockupURL } from '@/shared/assets/logo'
 import { LocaleSwitcher, useI18n, type Translator } from '@/shared/i18n/i18n'
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset'
@@ -102,10 +102,11 @@ export function AuthScreen({
         <div className={isRegistering ? 'auth-layout register' : 'auth-layout login'}>
           <section className="auth-brand-panel" aria-label={t('app.productName')}>
             <div className="auth-wordmark">
-              <span className="auth-wordmark-mark">
-                <img src={appLogoURL} alt="" aria-hidden="true" />
-              </span>
-              <span>{t('app.productName')}</span>
+              <img
+                className="auth-wordmark-lockup"
+                src={appLogoLockupURL}
+                alt={t('app.productName')}
+              />
             </div>
           </section>
 
