@@ -15,6 +15,7 @@ interface Window {
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
     setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
+    setWindowButtonPosition?: (position: 'app' | 'auth') => Promise<boolean>
     notify?: (payload: { title: string; body: string }) => Promise<boolean>
     onNewChatRequest?: (handler: () => void) => () => void
     /** Open a file with the OS's default app. Resolves to "" on

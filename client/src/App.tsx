@@ -83,7 +83,7 @@ import {
 
 const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'shejane-app-notice'
-const sidebarWidthStorageKey = 'shejane.sidebar.width.v1'
+const sidebarWidthStorageKey = 'shejane.sidebar.width.v2'
 const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 const checkoutRecoveryPollMs = 3000
 const checkoutRecoveryMaxPolls = 40
@@ -126,8 +126,8 @@ const defaultAgentSettings: Required<AgentSettings> = {
   advanced: {},
 }
 const defaultChatMode: ChatMode = 'auto'
-const defaultSidebarWidth = 220
-const minSidebarWidth = 176
+const defaultSidebarWidth = 252
+const minSidebarWidth = 190
 const maxSidebarWidth = 340
 const sidebarKeyboardStep = 12
 type NoticeOptions = Omit<NonNullable<Parameters<typeof toast.message>[1]>, 'id'>
@@ -558,9 +558,9 @@ function AppContent() {
    *  `--sidebar-width` set on `.app-shell` — can offset its
    *  horizontal centering to land over the chat area, not the whole
    *  viewport. Collapsed sidebar → 0px; expanded → the same
-   *  clamp(176, sidebarWidth, 340) used in styles.css. */
+   *  clamp(190, sidebarWidth, 340) used in styles.css. */
   useEffect(() => {
-    const visible = sidebarCollapsed ? 0 : Math.min(340, Math.max(176, sidebarWidth))
+    const visible = sidebarCollapsed ? 0 : Math.min(maxSidebarWidth, Math.max(minSidebarWidth, sidebarWidth))
     document.documentElement.style.setProperty('--toast-center-offset', `${visible / 2}px`)
   }, [sidebarWidth, sidebarCollapsed])
 

@@ -1,7 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { IconArrowRight, IconCheck, IconEye, IconEyeOff, IconLock, IconMail, IconUser } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import type { AuthClient } from '@/shared/api/authClient'
 import type { AuthPayload } from '@/shared/api/client'
@@ -9,6 +8,8 @@ import { appLogoLockupURL } from '@/shared/assets/logo'
 import { LocaleSwitcher, useI18n, type Translator } from '@/shared/i18n/i18n'
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset'
+type AuthFieldName = 'name' | 'email' | 'password'
+type FieldErrors = Partial<Record<AuthFieldName, string>>
 
 export function AuthScreen({
   authClient,
@@ -35,22 +36,61 @@ export function AuthScreen({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
-  const pageClassName = window.shejaneDesktop ? 'auth-page electron-auth-page' : 'auth-page'
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const isDesktop = Boolean(window.shejaneDesktop)
+  const pageClassName = isDesktop ? 'auth-page electron-auth-page' : 'auth-page'
   const isRegistering = mode === 'register'
   const isForgot = mode === 'forgot'
   const isReset = mode === 'reset'
   const isPasswordFlow = isForgot || isReset
-  const emailLooksValid = isValidEmail(email)
+
+  useEffect(() => {
+    const bridge = window.shejaneDesktop
+    if (bridge?.platform !== 'darwin' || !bridge.setWindowButtonPosition) {
+      return
+    }
+    void bridge.setWindowButtonPosition('auth')
+    return () => {
+      void bridge.setWindowButtonPosition?.('app')
+    }
+  }, [])
 
   function switchMode(next: AuthMode) {
     setError('')
     setInfo('')
+    setFieldErrors({})
     setPassword('')
     setMode(next)
   }
 
+  function clearFieldError(field: AuthFieldName) {
+    setFieldErrors((current) => {
+      if (!current[field]) {
+        return current
+      }
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
+
   async function submit() {
+    const normalizedEmail = email.trim()
+    const normalizedName = name.trim()
+    const nextFieldErrors = validateAuthFields(mode, {
+      email: normalizedEmail,
+      name: normalizedName,
+      password,
+    }, t)
+
     setError('')
+    setInfo('')
+    setFieldErrors(nextFieldErrors)
+    if (hasFieldErrors(nextFieldErrors)) {
+      focusFirstInvalidField(mode, nextFieldErrors)
+      return
+    }
+
     if (isRegistering && !acceptedTerms) {
       setError(t('auth.error.acceptTerms'))
       return
@@ -62,7 +102,7 @@ export function AuthScreen({
           setError(t('auth.error.unavailable', { feature: t('auth.forgot.heading') }))
           return
         }
-        await onRequestPasswordReset(email)
+        await onRequestPasswordReset(normalizedEmail)
         setInfo(t('auth.forgot.sent'))
         return
       }
@@ -81,8 +121,8 @@ export function AuthScreen({
         return
       }
       const payload = isRegistering
-        ? await authClient.register({ email, password, name: name || email.split('@')[0] })
-        : await authClient.login({ email, password })
+        ? await authClient.register({ email: normalizedEmail, password, name: normalizedName || normalizedEmail.split('@')[0] })
+        : await authClient.login({ email: normalizedEmail, password })
       await onAuthed(payload)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('auth.error.failed'))
@@ -94,20 +134,33 @@ export function AuthScreen({
   return (
     <main className={pageClassName}>
       <div className="window-drag-layer" aria-hidden="true" />
-      <Card className="auth-panel">
+      <div className="auth-panel">
         <div className="auth-titlebar">
+          <div className="auth-titlebar-left" aria-hidden="true">
+            {!isDesktop ? (
+              <div className="auth-window-lights">
+                <i />
+                <i />
+                <i />
+              </div>
+            ) : null}
+          </div>
           <LocaleSwitcher className="auth-language-switch" />
         </div>
 
-        <div className={isRegistering ? 'auth-layout register' : 'auth-layout login'}>
+        <div className={`auth-layout ${mode}`}>
           <section className="auth-brand-panel" aria-label={t('app.productName')}>
+            <span className="auth-brand-halo" aria-hidden="true" />
+            <span className="auth-brand-halo two" aria-hidden="true" />
             <div className="auth-wordmark">
               <img
                 className="auth-wordmark-lockup"
                 src={appLogoLockupURL}
                 alt={t('app.productName')}
               />
+              <p className="auth-brand-tagline">{t('auth.brand.tagline')}</p>
             </div>
+            <div className="auth-brand-foot">{t('auth.brand.foot')}</div>
           </section>
 
           <section className="auth-form-panel" aria-label={isRegistering ? t('auth.panelLabel.register') : t('auth.panelLabel.login')}>
@@ -134,19 +187,34 @@ export function AuthScreen({
 
               <form
                 className="auth-form"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || event.nativeEvent.isComposing) {
+                    return
+                  }
+                  if (!(event.target instanceof HTMLInputElement)) {
+                    return
+                  }
+                  event.preventDefault()
+                  void submit()
+                }}
                 onSubmit={(event) => {
                   event.preventDefault()
                   void submit()
                 }}
               >
                 {isRegistering ? (
-                  <AuthField id="auth-name" label={t('auth.name.label')} icon={<IconUser size={14} />}>
+                  <AuthField id="auth-name" label={t('auth.name.label')} icon={<IconUser size={14} />} error={fieldErrors.name}>
                     <Input
                       id="auth-name"
                       aria-label={t('auth.name.label')}
+                      aria-invalid={Boolean(fieldErrors.name)}
+                      aria-describedby={fieldErrors.name ? 'auth-name-error' : undefined}
                       autoComplete="name"
                       value={name}
-                      onChange={(event) => setName(event.target.value)}
+                      onChange={(event) => {
+                        setName(event.target.value)
+                        clearFieldError('name')
+                      }}
                       placeholder={t('auth.name.placeholder')}
                     />
                   </AuthField>
@@ -157,15 +225,30 @@ export function AuthScreen({
                     id="auth-email"
                     label={t('auth.email.label')}
                     icon={<IconMail size={14} />}
-                    success={Boolean(email) && emailLooksValid}
+                    error={fieldErrors.email}
                   >
                     <Input
                       id="auth-email"
                       aria-label={t('auth.email.label')}
+                      aria-invalid={Boolean(fieldErrors.email)}
+                      aria-describedby={fieldErrors.email ? 'auth-email-error' : undefined}
                       autoComplete="email"
                       inputMode="email"
                       value={email}
-                      onChange={(event) => setEmail(event.target.value)}
+                      onChange={(event) => {
+                        setEmail(event.target.value)
+                        clearFieldError('email')
+                      }}
+                      onKeyDown={(event) => {
+                        if (mode !== 'login' || event.key !== 'Tab' || event.shiftKey) {
+                          return
+                        }
+                        const passwordInput = document.getElementById('auth-password')
+                        if (passwordInput instanceof HTMLInputElement) {
+                          event.preventDefault()
+                          passwordInput.focus()
+                        }
+                      }}
                       placeholder={t('auth.email.placeholder')}
                     />
                   </AuthField>
@@ -176,6 +259,7 @@ export function AuthScreen({
                     id="auth-password"
                     label={isReset ? t('auth.reset.newPassword') : t('auth.password.label')}
                     icon={<IconLock size={14} />}
+                    error={fieldErrors.password}
                     action={
                       mode === 'login' ? (
                         <button type="button" className="auth-link" onClick={() => switchMode('forgot')}>
@@ -197,10 +281,15 @@ export function AuthScreen({
                     <Input
                       id="auth-password"
                       aria-label={isReset ? t('auth.reset.newPassword') : t('auth.password.label')}
+                      aria-invalid={Boolean(fieldErrors.password)}
+                      aria-describedby={fieldErrors.password ? 'auth-password-error' : undefined}
                       autoComplete={isRegistering || isReset ? 'new-password' : 'current-password'}
                       value={password}
                       type={showPassword ? 'text' : 'password'}
-                      onChange={(event) => setPassword(event.target.value)}
+                      onChange={(event) => {
+                        setPassword(event.target.value)
+                        clearFieldError('password')
+                      }}
                       placeholder={
                         isReset
                           ? t('auth.reset.newPasswordPlaceholder')
@@ -266,7 +355,7 @@ export function AuthScreen({
             <AuthFooter />
           </section>
         </div>
-      </Card>
+      </div>
     </main>
   )
 }
@@ -277,7 +366,7 @@ function AuthField({
   icon,
   action,
   control,
-  success = false,
+  error,
   children,
 }: {
   id: string
@@ -285,20 +374,23 @@ function AuthField({
   icon: ReactNode
   action?: ReactNode
   control?: ReactNode
-  success?: boolean
+  error?: string
   children: ReactNode
 }) {
   return (
     <div className="auth-field">
-      <div className="auth-field-top">
-        <label htmlFor={id}>{label}</label>
-        {action}
-      </div>
-      <div className={success ? 'auth-input-shell success' : 'auth-input-shell'}>
+      <label className="auth-field-label" htmlFor={id}>{label}</label>
+      <div className={error ? 'auth-input-shell invalid' : 'auth-input-shell'}>
         <span className="auth-input-icon">{icon}</span>
         {children}
-        {success ? <IconCheck className="auth-input-check" size={14} /> : control}
+        {control}
       </div>
+      {action ? <div className="auth-field-action">{action}</div> : null}
+      {error ? (
+        <p id={`${id}-error`} className="auth-field-error" aria-live="polite">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -309,10 +401,6 @@ function AuthFooter() {
       <span>© 2026 ColdFlameUs LLC</span>
     </footer>
   )
-}
-
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 }
 
 /** Reset links land on the web client as `…/reset?token=<token>`. Read the
@@ -369,6 +457,83 @@ function authSubmitLabel(mode: AuthMode, submitting: boolean, t: Translator): st
       return submitting ? t('auth.reset.submitting') : t('auth.reset.submit')
     default:
       return submitting ? t('auth.submit.signingIn') : t('auth.submit.login')
+  }
+}
+
+function validateAuthFields(
+  mode: AuthMode,
+  input: { email: string; name: string; password: string },
+  t: Translator,
+): FieldErrors {
+  const errors: FieldErrors = {}
+
+  if (mode === 'register') {
+    if (!input.name) {
+      errors.name = t('auth.validation.nameRequired')
+    }
+    addEmailValidation(errors, input.email, t)
+    addNewPasswordValidation(errors, input.password, t)
+    return errors
+  }
+
+  if (mode === 'forgot') {
+    addEmailValidation(errors, input.email, t)
+    return errors
+  }
+
+  if (mode === 'reset') {
+    addNewPasswordValidation(errors, input.password, t)
+    return errors
+  }
+
+  addEmailValidation(errors, input.email, t)
+  if (!input.password) {
+    errors.password = t('auth.validation.passwordRequired')
+  }
+  return errors
+}
+
+function addEmailValidation(errors: FieldErrors, email: string, t: Translator) {
+  if (!email) {
+    errors.email = t('auth.validation.emailRequired')
+    return
+  }
+  if (!isValidEmail(email)) {
+    errors.email = t('auth.validation.emailInvalid')
+  }
+}
+
+function addNewPasswordValidation(errors: FieldErrors, password: string, t: Translator) {
+  if (!password) {
+    errors.password = t('auth.validation.passwordRequired')
+    return
+  }
+  if (password.length < 8) {
+    errors.password = t('auth.validation.passwordTooShort')
+  }
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+function hasFieldErrors(errors: FieldErrors): boolean {
+  return Object.values(errors).some(Boolean)
+}
+
+function focusFirstInvalidField(mode: AuthMode, errors: FieldErrors) {
+  const order: AuthFieldName[] = mode === 'register'
+    ? ['name', 'email', 'password']
+    : mode === 'reset'
+      ? ['password']
+      : ['email', 'password']
+  const field = order.find((name) => errors[name])
+  if (!field) {
+    return
+  }
+  const element = document.getElementById(`auth-${field}`)
+  if (element instanceof HTMLInputElement) {
+    element.focus()
   }
 }
 

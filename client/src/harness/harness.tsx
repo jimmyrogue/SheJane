@@ -114,7 +114,7 @@ function Shell() {
   return (
     <main className="app-window-shell electron-window-shell">
       <div className="window-drag-layer" aria-hidden="true" />
-      <div className="app-shell" style={{ ['--sidebar-width' as string]: '212px' }}>
+      <div className="app-shell" style={{ ['--sidebar-width' as string]: '252px' }}>
         <ConversationSidebar
           conversations={conversations}
           activeID="c-active"

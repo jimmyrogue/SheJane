@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { IconLanguage } from '@tabler/icons-react'
 
 export type Locale = 'zh' | 'en'
 
@@ -167,6 +168,11 @@ const zh = {
   'auth.error.acceptTerms': '创建账号前请先同意服务条款。',
   'auth.error.failed': '认证失败',
   'auth.error.unavailable': '{feature} 暂不可用。',
+  'auth.validation.nameRequired': '请输入名称',
+  'auth.validation.emailRequired': '请输入邮箱',
+  'auth.validation.emailInvalid': '请输入有效的邮箱地址',
+  'auth.validation.passwordRequired': '请输入密码',
+  'auth.validation.passwordTooShort': '密码至少需要 8 位',
   'auth.submit.create': '创建账号',
   'auth.submit.login': '登录',
   'auth.submit.creating': '创建中...',
@@ -175,6 +181,8 @@ const zh = {
   'auth.brand.loginTitle': '你的 AI Agent，\n现在就在桌面上。',
   'auth.brand.registerBody': '个人使用免费，无需信用卡。等流程超过基础额度时，再按需升级。',
   'auth.brand.loginBody': '跨工具、代码和文件运行多步骤任务，同时保留对每一次操作的控制。',
+  'auth.brand.tagline': '石与石之间的余地——\n把琐事交给它，你只管要紧的。',
+  'auth.brand.foot': '为上班族打造的桌面 AGENT',
   'auth.features.tools': '内置工具和 MCP 连接器',
   'auth.features.review': '敏感操作先由你确认',
   'auth.features.local': '本地优先工作区，文件留在磁盘',
@@ -941,6 +949,11 @@ const en: Record<TranslationKey, string> = {
   'auth.error.acceptTerms': 'Please accept the terms before creating an account.',
   'auth.error.failed': 'Authentication failed',
   'auth.error.unavailable': '{feature} is not available yet.',
+  'auth.validation.nameRequired': 'Enter your name',
+  'auth.validation.emailRequired': 'Enter your email',
+  'auth.validation.emailInvalid': 'Enter a valid email address',
+  'auth.validation.passwordRequired': 'Enter your password',
+  'auth.validation.passwordTooShort': 'Password must be at least 8 characters.',
   'auth.submit.create': 'Create account',
   'auth.submit.login': 'Sign in',
   'auth.submit.creating': 'Creating...',
@@ -949,6 +962,8 @@ const en: Record<TranslationKey, string> = {
   'auth.brand.loginTitle': 'Your AI agent,\nnow on your desktop.',
   'auth.brand.registerBody': 'Free for personal use. No credit card required. Upgrade when the workflow outgrows the basics.',
   'auth.brand.loginBody': 'Run multi-step tasks across your tools, code and files with full control over every action.',
+  'auth.brand.tagline': 'The space between stones -\nhand SheJane the busywork, keep only what matters.',
+  'auth.brand.foot': 'A desktop agent for modern work',
   'auth.features.tools': 'Built-in tools and MCP connectors',
   'auth.features.review': 'Human review for sensitive actions',
   'auth.features.local': 'Local-first workspace, files stay on disk',
@@ -1654,7 +1669,8 @@ export function LocaleSwitcher({ className = '' }: { className?: string }) {
       type="button"
       onClick={() => setLocale(nextLocale)}
     >
-      {label}
+      <IconLanguage aria-hidden="true" size={13} />
+      <span>{label}</span>
     </button>
   )
 }

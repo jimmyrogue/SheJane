@@ -46,6 +46,8 @@ let tray = null
 let daemonProcess = null
 let daemonURL = null
 let daemonToken = null
+const appWindowButtonPosition = { x: 29, y: 27 }
+const authWindowButtonPosition = { x: 29, y: 20 }
 
 function createWindow() {
   const windowOptions = {
@@ -63,7 +65,7 @@ function createWindow() {
           // 6px left / 14px top inside that — lights group lands at
           // (12+1+10+6, 12+1+14) = (29, 27) from the window corner, clear
           // of the card's 14px corner radius.
-          trafficLightPosition: { x: 29, y: 27 },
+          trafficLightPosition: appWindowButtonPosition,
         }
       : {}),
     icon: appIconPath,
@@ -310,6 +312,20 @@ function registerAuthHandlers() {
   ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout()))
 }
 
+function setMainWindowButtonPosition(position) {
+  if (process.platform !== 'darwin' || !mainWindow || typeof mainWindow.setWindowButtonPosition !== 'function') {
+    return false
+  }
+  const next =
+    position === 'auth'
+      ? authWindowButtonPosition
+      : position === 'app'
+        ? appWindowButtonPosition
+        : appWindowButtonPosition
+  mainWindow.setWindowButtonPosition(next)
+  return true
+}
+
 app.whenReady().then(async () => {
   app.setName(appName)
   if (process.platform === 'darwin') {
@@ -357,6 +373,8 @@ ipcMain.handle('shejane:set-locale', async (_event, locale) => {
   }
   return normalized
 })
+
+ipcMain.handle('shejane:set-window-button-position', async (_event, position) => setMainWindowButtonPosition(position))
 
 /** Surface a native OS notification. Returns `false` when the main
  *  window is currently focused — in that case the user can already see

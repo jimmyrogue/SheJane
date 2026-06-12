@@ -57,6 +57,7 @@ describe('user client shell', () => {
     mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -75,6 +76,7 @@ describe('user client shell', () => {
     mockFetch('admin')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -109,6 +111,7 @@ describe('user client shell', () => {
     mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -128,6 +131,7 @@ describe('user client shell', () => {
     mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -136,17 +140,17 @@ describe('user client shell', () => {
     const resizeHandle = screen.getByRole('separator', { name: '调整侧栏宽度' })
     const shell = resizeHandle.closest('.app-shell') as HTMLElement
 
-    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('220px')
-    expect(resizeHandle).toHaveAttribute('aria-valuemin', '176')
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('252px')
+    expect(resizeHandle).toHaveAttribute('aria-valuemin', '190')
     expect(resizeHandle).toHaveAttribute('aria-valuemax', '340')
 
     fireEvent.keyDown(resizeHandle, { key: 'Home' })
-    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('176px')
-    expect(resizeHandle).toHaveAttribute('aria-valuenow', '176')
+    expect(shell.style.getPropertyValue('--sidebar-width')).toBe('190px')
+    expect(resizeHandle).toHaveAttribute('aria-valuenow', '190')
 
     fireEvent.keyDown(resizeHandle, { key: 'End' })
     expect(shell.style.getPropertyValue('--sidebar-width')).toBe('340px')
-    await waitFor(() => expect(localStorage.getItem('shejane.sidebar.width.v1')).toBe('340'))
+    await waitFor(() => expect(localStorage.getItem('shejane.sidebar.width.v2')).toBe('340'))
 
     // Collapsing is now a separate state (data-collapsed) rather than a width clamp.
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
@@ -188,6 +192,7 @@ describe('user client shell', () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -208,6 +213,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -282,6 +288,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -309,6 +316,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user')
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -343,6 +351,7 @@ describe('user client shell', () => {
     mockFetch('user', { agentStream })
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -381,6 +390,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -429,6 +439,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -461,6 +472,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -495,6 +507,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -539,6 +552,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -623,6 +637,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -697,6 +712,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -783,6 +799,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -854,6 +871,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -929,6 +947,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -988,6 +1007,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1062,6 +1082,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1125,6 +1146,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1206,7 +1228,8 @@ describe('user client shell', () => {
 	  }
 
 	  render(<App />)
-	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
 	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
 	  fireEvent.click(screen.getByText('创建账号'))
 	  await awaitSignedIn()
@@ -1220,7 +1243,8 @@ describe('user client shell', () => {
 	  const logoutConfirm = await screen.findByRole('alertdialog')
 	  fireEvent.click(within(logoutConfirm).getByRole('button', { name: '确认退出' }))
 	  await screen.findByText('创建你的账号')
-	  fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
 	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
 	  fireEvent.click(screen.getByText('创建账号'))
 
@@ -1287,6 +1311,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1346,6 +1371,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1422,6 +1448,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1490,6 +1517,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1526,6 +1554,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1559,6 +1588,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1595,6 +1625,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1615,6 +1646,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1634,6 +1666,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1665,6 +1698,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1718,6 +1752,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1761,6 +1796,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1779,6 +1815,7 @@ describe('user client shell', () => {
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))
@@ -1814,6 +1851,7 @@ describe('user client shell', () => {
     }
 
     render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
     fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
     fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('创建账号'))

@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('shejane:select-workspace-directory'),
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
+  setWindowButtonPosition: (position) => ipcRenderer.invoke('shejane:set-window-button-position', position),
   notify: (payload) => ipcRenderer.invoke('shejane:notify', payload),
   /** Open a file with the OS's default application — used by the
    *  right-side PptxPreview's "Open in PowerPoint" button. */
