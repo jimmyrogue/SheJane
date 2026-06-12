@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   IconCheck,
   IconFolderOpen,
+  IconPlus,
   IconRefresh,
   IconSearch,
   IconSparkles,
@@ -40,6 +41,10 @@ function matchesQuery(skill: InstalledSkill, needle: string): boolean {
 }
 
 const EMPTY_CATALOG: SkillCatalog = { skills: [], roots: [] }
+
+function skillKind(source: string | undefined): 'builtin' | 'custom' {
+  return source === 'shejane' ? 'custom' : 'builtin'
+}
 
 export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
   const { t, locale } = useI18n()
@@ -101,30 +106,26 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
 
   const totalCount = catalog.skills.length
   const filteredEmpty = totalCount > 0 && filteredSkills.length === 0
+  const personalRootPath = useMemo(() => {
+    return (
+      catalog.roots.find((root) => root.source === 'shejane')?.path
+      ?? catalog.skills.find((skill) => skill.source === 'shejane')?.root_path
+      ?? ''
+    )
+  }, [catalog.roots, catalog.skills])
+  const canCreateSkill = Boolean(onOpenFolder && personalRootPath)
 
   return (
-    <section className="workspace">
+    <section className="workspace skills-view">
       <header className="topbar topbar-page">
         <div className="chat-toolbar-title">
           <span>{t('skills.title')}</span>
-        </div>
-        <div className="skills-topbar-actions">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => void refresh()}
-            disabled={loading}
-          >
-            <IconRefresh size={14} aria-hidden="true" />
-            {t('skills.refresh')}
-          </Button>
         </div>
       </header>
 
       <div className="skills-scroll">
         <div className="skills-content">
-          {totalCount > 0 ? (
+          <div className="skills-toolbar">
             <div className="skills-search">
               <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
               <Input
@@ -135,7 +136,33 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
                 aria-label={t('skills.searchPlaceholder')}
               />
             </div>
-          ) : null}
+            <div className="skills-toolbar-actions">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="skills-refresh-button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                aria-label={t('skills.refresh')}
+                title={t('skills.refresh')}
+              >
+                <IconRefresh size={14} aria-hidden="true" />
+              </Button>
+              {canCreateSkill ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="skills-new-button"
+                  onClick={() => onOpenFolder?.(personalRootPath)}
+                >
+                  <IconPlus size={14} aria-hidden="true" />
+                  {t('skills.newSkill')}
+                </Button>
+              ) : null}
+            </div>
+          </div>
 
           {filteredEmpty ? (
             <p className="skills-not-found">{t('skills.notFound')}</p>
@@ -167,16 +194,28 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
                 <div className="skills-grid">
                   {skills.map((skill) => (
                     <div className="skill-card" key={skill.path} data-source={root.source}>
-                      <div className="skill-card-icon" aria-hidden="true">
-                        <IconSparkles size={18} />
+                      <div className="skill-card-head">
+                        <div className="skill-card-title">
+                          <div className="skill-card-icon" aria-hidden="true">
+                            <IconSparkles size={16} />
+                          </div>
+                          <div className="skill-card-name">{skill.name}</div>
+                        </div>
+                        <span className="skill-card-status" aria-label={t('skills.statusReady')}>
+                          <span aria-hidden="true" />
+                        </span>
                       </div>
                       <div className="skill-card-text">
-                        <div className="skill-card-name">{skill.name}</div>
                         {skill.description ? (
                           <div className="skill-card-desc">{skill.description}</div>
                         ) : null}
                       </div>
-                      <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
+                      <div className="skill-card-footer">
+                        <span className="skill-card-kind">
+                          {t(skillKind(skill.source) === 'builtin' ? 'skills.kindBuiltin' : 'skills.kindCustom')}
+                        </span>
+                        <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
+                      </div>
                     </div>
                   ))}
                 </div>

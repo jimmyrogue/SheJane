@@ -96,10 +96,20 @@ describe('SkillsView — grouped catalog', () => {
     expect(screen.queryByRole('button', { name: '打开文件夹' })).not.toBeInTheDocument()
   })
 
-  it('hides the search box when no skills exist (nothing to filter)', async () => {
+  it('keeps the search box visible even when no skills exist', async () => {
     renderView({ listInstalled: vi.fn().mockResolvedValue(catalog([])) })
     await screen.findByText('系统')
-    expect(screen.queryByLabelText('搜索技能')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('搜索技能')).toBeInTheDocument()
+  })
+
+  it('opens the personal skills folder from the new-skill action', async () => {
+    const onOpenFolder = vi.fn()
+    renderView({
+      onOpenFolder,
+      listInstalled: vi.fn().mockResolvedValue(catalog([shejaneSkill, claudeSkill])),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: '新建技能' }))
+    expect(onOpenFolder).toHaveBeenCalledWith('/u/.shejane/skills')
   })
 
   it('filters skills by search query and shows 找不到技能 on empty match', async () => {

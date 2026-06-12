@@ -62,6 +62,7 @@ export function ModeSelector({
           type="button"
           className="composer-mode-trigger"
           aria-label={t('composer.mode.menuLabel')}
+          title={selectedLabel}
           disabled={disabled}
         >
           <IconSparkles size={14} aria-hidden="true" />

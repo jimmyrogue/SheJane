@@ -34,10 +34,12 @@ import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
+import { RechargeDialog } from './features/billing/RechargeDialog'
 import { SpendHistoryDialog } from './features/billing/SpendHistoryDialog'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
+import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
 import { SettingsView } from './features/settings/SettingsView'
 import { SkillsView } from './features/skills/SkillsView'
@@ -303,7 +305,7 @@ export function App() {
 }
 
 function AppContent() {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const api = useMemo(() => new SheJaneAPI(), [])
   // Stable reference so SpendHistoryDialog's fetch-on-open effect doesn't
   // re-run on every parent render.
@@ -347,6 +349,7 @@ function AppContent() {
   const [isSending, setIsSending] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
+  const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false)
   const [emailBannerDismissed, setEmailBannerDismissed] = useState(false)
   const [emailVerifySent, setEmailVerifySent] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -361,7 +364,7 @@ function AppContent() {
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'settings' | 'today'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   // Web build only: cloud tools (image gen / web search) the model may call
   // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
@@ -2048,6 +2051,25 @@ function AppContent() {
     setNotice(t('app.notice.localDataImported'))
   }
 
+  async function exportLocalData() {
+    const conversationExport = await localData.exportAll()
+    const payload = {
+      ...conversationExport,
+      settings: {
+        agentSettings,
+        chatMode: mode,
+        locale,
+      },
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `shejane-local-data-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    setNotice(t('app.notice.localDataExported'))
+  }
+
   async function uploadDocument(file: File | undefined) {
     if (!file) {
       return
@@ -2132,7 +2154,8 @@ function AppContent() {
 
   // Desktop = the Electron build (preload injects window.shejaneDesktop). The
   // web build (app.shejane.com) has NO local daemon, so the whole local-agent
-  // surface — skills, MCP, workspace — can never work there and must be hidden.
+  // surface — skills, MCP, IM connections, workspace — can never work there
+  // and must be hidden.
   const isDesktop = !!window.shejaneDesktop
   const shellClassName = isDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
@@ -2269,6 +2292,7 @@ function AppContent() {
             onOpenToday={() => setMainView('today')}
             onOpenSkills={() => setMainView('skills')}
             onOpenMcp={() => setMainView('mcp')}
+            onOpenConnections={() => setMainView('connections')}
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
           />
@@ -2324,6 +2348,8 @@ function AppContent() {
                 }
               }}
             />
+          ) : mainView === 'connections' ? (
+            <ConnectionsView />
           ) : mainView === 'today' ? (
             <TodayView
               onQuoteToChat={(text) => {
@@ -2341,12 +2367,13 @@ function AppContent() {
                 setAgentSettings(next)
                 writeAgentSettings(next)
               }}
-              onRecharge={() => void startRecharge()}
+              onRecharge={() => setRechargeDialogOpen(true)}
               onShowSpendHistory={() => setSpendHistoryOpen(true)}
               onLogout={() => {
                 void authClient.logout().finally(() => setAuth(null))
               }}
               onImportLocalData={(file) => void importLocalData(file)}
+              onExportLocalData={() => void exportLocalData()}
               onClearMemory={
                 localHostConfig
                   ? async () => {
@@ -2369,15 +2396,17 @@ function AppContent() {
           <section className="workspace">
             <header className="topbar">
               {sidebarCollapsed ? (
-                <button
-                  type="button"
-                  className="topbar-expand-button"
-                  title={t('app.expandSidebar')}
-                  aria-label={t('app.expandSidebar')}
-                  onClick={expandSidebar}
-                >
-                  <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
-                </button>
+                <div className="topbar-expand-hotspot">
+                  <button
+                    type="button"
+                    className="topbar-expand-button"
+                    title={t('app.expandSidebar')}
+                    aria-label={t('app.expandSidebar')}
+                    onClick={expandSidebar}
+                  >
+                    <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
+                  </button>
+                </div>
               ) : null}
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
@@ -2557,6 +2586,12 @@ function AppContent() {
             open={spendHistoryOpen}
             onOpenChange={setSpendHistoryOpen}
             fetchTransactions={fetchSpendHistory}
+          />
+          <RechargeDialog
+            open={rechargeDialogOpen}
+            onOpenChange={setRechargeDialogOpen}
+            balance={balance}
+            onConfirm={() => startRecharge()}
           />
         </div>
       </main>

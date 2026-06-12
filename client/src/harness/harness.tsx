@@ -1,6 +1,6 @@
 /* Dev-only design-QA harness. NOT shipped. Mounts the real shell components
  * with mock data against the real styles.css so we can screenshot each surface
- * and diff it against the v4 design. Switch surface with ?view=chat|skills|mcp|preview.
+ * and diff it against the v4 design. Switch surface with ?view=chat|skills|mcp|connections|preview.
  *
  * This file deliberately bypasses auth + the local daemon — every callback is a
  * no-op and every data source is a literal mock. It is never imported by the
@@ -8,18 +8,23 @@
  */
 import { StrictMode, useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
 import '../styles.css'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar'
 import { ChatThread } from '@/features/chat/components/ChatThread'
 import { Composer } from '@/features/chat/components/Composer'
+import { ConnectionsView } from '@/features/connections/ConnectionsView'
 import { SkillsView } from '@/features/skills/SkillsView'
 import { MCPView } from '@/features/mcp/MCPView'
+import { RechargeDialog } from '@/features/billing/RechargeDialog'
 import { SettingsView } from '@/features/settings/SettingsView'
+import { SpendHistoryDialog } from '@/features/billing/SpendHistoryDialog'
 import { TodayView } from '@/features/today/TodayView'
-import type { Conversation, ChatMessage } from '@/shared/local-data/types'
-import type { WalletBalance } from '@/shared/api/client'
+import type { ChatMode, Conversation, ChatMessage } from '@/shared/local-data/types'
+import type { ModelOption } from '@/features/chat/components/ModeSelector'
+import type { WalletBalance, WalletTransaction } from '@/shared/api/client'
 import type { AgentSettings, InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 
 const HOUR = 3600_000
@@ -77,6 +82,12 @@ const balance: WalletBalance = {
   monthly_remaining: 0, extra_credits_balance: 35190, period_end: iso(now + 20 * DAY), status: 'active',
 }
 
+const mockTransactions: WalletTransaction[] = [
+  { id: 'tx1', wallet_id: 'w1', type: 'usage_settle', amount: -1280, monthly_used_after: 1280, extra_balance_after: 35190, description: 'deepseek-fast · 工具运行', created_at: iso(now - 2 * HOUR) },
+  { id: 'tx2', wallet_id: 'w1', type: 'subscription_grant', amount: 9000, monthly_used_after: 0, extra_balance_after: 36470, description: '月度订阅', created_at: iso(now - DAY) },
+  { id: 'tx3', wallet_id: 'w1', type: 'usage_settle', amount: -460, monthly_used_after: 1740, extra_balance_after: 35190, description: '文档解析', created_at: iso(now - 2 * DAY) },
+]
+
 const agentSettings: Required<AgentSettings> = {
   memory: 'on', skills: 'on', mcp: 'on', mcpDisabled: [], advanced: {},
 }
@@ -94,27 +105,41 @@ const mockServers: McpServerInfo[] = [
   { name: 'github', transport: 'streamable_http', args: [], url: 'https://api.githubcopilot.com/mcp/', env_keys: ['GITHUB_TOKEN'], source: 'claude-desktop', source_path: '/Users/x/Library/Application Support/Claude/claude_desktop_config.json' },
 ]
 
+const mockChatModels: ModelOption[] = [
+  { id: 'deepseek-fast', label: 'deepseek-fast', description: '速度优先' },
+  { id: 'deep-compatible', label: 'deep-compatible', description: '兼容模式' },
+]
+
 const noop = () => {}
-const view = new URLSearchParams(location.search).get('view') ?? 'chat'
+const params = new URLSearchParams(location.search)
+const view = params.get('view') ?? 'chat'
+const initialSidebarCollapsed = params.get('collapsed') === '1'
+const initialMode = (params.get('model') || 'auto') as ChatMode
 
 function Shell() {
   const [draft, setDraft] = useState('')
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'settings' | 'today'>(
+  const [mode, setMode] = useState<ChatMode>(initialMode)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(initialSidebarCollapsed)
+  const [rechargeOpen, setRechargeOpen] = useState(false)
+  const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>(
     view === 'skills'
       ? 'skills'
       : view === 'mcp'
         ? 'mcp'
-        : view === 'settings'
-          ? 'settings'
-          : view === 'today'
-            ? 'today'
-            : 'chat',
+        : view === 'connections'
+          ? 'connections'
+          : view === 'settings'
+            ? 'settings'
+            : view === 'today'
+              ? 'today'
+              : 'chat',
   )
 
   return (
     <main className="app-window-shell electron-window-shell">
       <div className="window-drag-layer" aria-hidden="true" />
-      <div className="app-shell" style={{ ['--sidebar-width' as string]: '252px' }}>
+      <div className="app-shell" style={{ ['--sidebar-width' as string]: '252px' }} data-collapsed={sidebarCollapsed ? 'true' : undefined}>
         <ConversationSidebar
           conversations={conversations}
           activeID="c-active"
@@ -125,11 +150,12 @@ function Shell() {
           onTogglePinConversation={noop}
           onRenameConversation={noop}
           onDeleteConversation={noop}
-          onCollapseSidebar={noop}
+          onCollapseSidebar={() => setSidebarCollapsed(true)}
           isDesktop
           onOpenToday={() => setMainView('today')}
           onOpenSkills={() => setMainView('skills')}
           onOpenMcp={() => setMainView('mcp')}
+          onOpenConnections={() => setMainView('connections')}
           onOpenSettings={() => setMainView('settings')}
           activeView={mainView}
         />
@@ -146,6 +172,8 @@ function Shell() {
               onDisabledChange={noop}
               onOpenFolder={noop}
             />
+          ) : mainView === 'connections' ? (
+            <ConnectionsView />
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop
@@ -153,15 +181,29 @@ function Shell() {
               balance={balance}
               agentSettings={agentSettings}
               onAgentSettingsChange={noop}
-              onRecharge={noop}
-              onShowSpendHistory={noop}
+              onRecharge={() => setRechargeOpen(true)}
+              onShowSpendHistory={() => setSpendHistoryOpen(true)}
               onLogout={noop}
               onImportLocalData={noop}
+              onExportLocalData={noop}
               onClearMemory={async () => 0}
             />
           ) : (
             <section className="workspace">
               <header className="topbar">
+                {sidebarCollapsed ? (
+                  <div className="topbar-expand-hotspot">
+                    <button
+                      type="button"
+                      className="topbar-expand-button"
+                      title="展开侧栏"
+                      aria-label="展开侧栏"
+                      onClick={() => setSidebarCollapsed(false)}
+                    >
+                      <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                ) : null}
                 <div className="chat-toolbar-title"><span>{activeConvo.title}</span></div>
                 <div className="topbar-status">
                   <span className="topbar-daemon-dot is-online" />
@@ -180,15 +222,21 @@ function Shell() {
                   onSend={noop}
                   onStop={noop}
                   listSkills={async () => mockSkills as never}
-                  mode="auto"
-                  models={[]}
-                  onModeChange={noop}
+                  mode={mode}
+                  models={mockChatModels}
+                  onModeChange={setMode}
                   isDesktop
                 />
                 <p className="composer-disclaimer">石间可能出错，重要决定请自行确认</p>
               </div>
             </section>
           )}
+          <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} balance={balance} onConfirm={noop} />
+          <SpendHistoryDialog
+            open={spendHistoryOpen}
+            onOpenChange={setSpendHistoryOpen}
+            fetchTransactions={async () => mockTransactions}
+          />
         </div>
       </div>
     </main>

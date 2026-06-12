@@ -36,7 +36,7 @@ describe('SettingsView', () => {
     expect(screen.getByText('test@example.com')).toBeInTheDocument()
   })
 
-  it('shows only the extra-credits line (monthly quota is hidden)', () => {
+  it('shows the total available credits in the account card', () => {
     renderSettings({
       balance: {
         id: 'w1',
@@ -49,12 +49,13 @@ describe('SettingsView', () => {
         status: 'active',
       },
     })
-    expect(screen.getByText('剩余积分 50')).toBeInTheDocument()
+    expect(screen.getByText('余额 · 剩余积分')).toBeInTheDocument()
+    expect(screen.getByText('850')).toBeInTheDocument()
     expect(screen.queryByText(/本月余额/)).not.toBeInTheDocument()
     expect(screen.queryByText(/本月额度不限量/)).not.toBeInTheDocument()
   })
 
-  it('renders no balance line when there are no extra credits', () => {
+  it('keeps the balance row visible when there are no credits', () => {
     renderSettings({
       balance: {
         id: 'w1',
@@ -67,7 +68,8 @@ describe('SettingsView', () => {
         status: 'active',
       },
     })
-    expect(screen.queryByText(/剩余积分/)).not.toBeInTheDocument()
+    expect(screen.getByText('余额 · 剩余积分')).toBeInTheDocument()
+    expect(screen.getByText('0')).toBeInTheDocument()
   })
 
   it('toggles the memory agent setting', () => {
@@ -103,11 +105,22 @@ describe('SettingsView', () => {
     expect(screen.queryByText('清空记忆')).not.toBeInTheDocument()
   })
 
+  it('renders general and data rows with trailing controls', () => {
+    const onExportLocalData = vi.fn()
+    renderSettings({ onExportLocalData })
+
+    expect(screen.getByRole('combobox', { name: '语言' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '导入…' })).toBeInTheDocument()
+    expect(screen.getByText('导出全部数据')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '导出…' }))
+    expect(onExportLocalData).toHaveBeenCalledTimes(1)
+  })
+
   it('calls onClearMemory only after confirming', async () => {
     const onClearMemory = vi.fn(async () => 7)
     renderSettings({ onClearMemory })
 
-    fireEvent.click(screen.getByRole('button', { name: /清空记忆/ }))
+    fireEvent.click(screen.getByRole('button', { name: '清空' }))
     expect(onClearMemory).not.toHaveBeenCalled()
 
     const confirm = await screen.findByRole('alertdialog')
@@ -119,7 +132,7 @@ describe('SettingsView', () => {
   it('does not call onClearMemory when the confirmation is cancelled', async () => {
     const onClearMemory = vi.fn(async () => 0)
     renderSettings({ onClearMemory })
-    fireEvent.click(screen.getByRole('button', { name: /清空记忆/ }))
+    fireEvent.click(screen.getByRole('button', { name: '清空' }))
     const confirm = await screen.findByRole('alertdialog')
     fireEvent.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(onClearMemory).not.toHaveBeenCalled()
@@ -128,18 +141,24 @@ describe('SettingsView', () => {
   it('keeps account security actions at the bottom and requires logout confirmation', async () => {
     const onClearMemory = vi.fn(async () => 0)
     const onLogout = vi.fn()
-    renderSettings({ onClearMemory, onLogout })
+    const onExportLocalData = vi.fn()
+    renderSettings({ onClearMemory, onLogout, onExportLocalData })
 
-    const importRow = screen.getByRole('button', { name: /导入本地数据/ })
-    const clearMemoryRow = screen.getByRole('button', { name: /清空记忆/ })
-    const logoutRow = screen.getByRole('button', { name: /退出登录/ })
-    expect(screen.getByText('账号安全')).toBeInTheDocument()
-    expect(Boolean(importRow.compareDocumentPosition(logoutRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
-    expect(Boolean(importRow.compareDocumentPosition(clearMemoryRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
-    expect(Boolean(clearMemoryRow.compareDocumentPosition(logoutRow) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    const importRow = screen.getByText('导入本地数据').closest('.settings-row')
+    const exportRow = screen.getByText('导出全部数据').closest('.settings-row')
+    const clearMemoryRow = screen.getByText('清空记忆').closest('.settings-row')
+    const logoutRow = screen.getByText('退出登录').closest('.settings-row')
+    expect(importRow).not.toBeNull()
+    expect(exportRow).not.toBeNull()
+    expect(clearMemoryRow).not.toBeNull()
+    expect(logoutRow).not.toBeNull()
+    expect(screen.getAllByText('数据与安全').length).toBeGreaterThan(0)
+    expect(Boolean(importRow!.compareDocumentPosition(exportRow!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(Boolean(exportRow!.compareDocumentPosition(clearMemoryRow!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(Boolean(clearMemoryRow!.compareDocumentPosition(logoutRow!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     expect(screen.queryByText('退出前需要确认，避免误触。')).not.toBeInTheDocument()
 
-    fireEvent.click(logoutRow)
+    fireEvent.click(screen.getByRole('button', { name: '退出' }))
     expect(onLogout).not.toHaveBeenCalled()
 
     const confirm = await screen.findByRole('alertdialog')
@@ -147,7 +166,7 @@ describe('SettingsView', () => {
     fireEvent.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(onLogout).not.toHaveBeenCalled()
 
-    fireEvent.click(logoutRow)
+    fireEvent.click(screen.getByRole('button', { name: '退出' }))
     const secondConfirm = await screen.findByRole('alertdialog')
     fireEvent.click(within(secondConfirm).getByRole('button', { name: '确认退出' }))
     expect(onLogout).toHaveBeenCalledTimes(1)

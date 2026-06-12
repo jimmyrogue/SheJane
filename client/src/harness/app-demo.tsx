@@ -5,7 +5,7 @@
  * conversations so the sidebar + chat render with content.
  *
  * Open via `npm run dev` → http://localhost:<port>/app-demo.html
- * The web build has no local daemon (isDesktop=false), so 技能/连接 are hidden
+ * The web build has no local daemon (isDesktop=false), so 技能/MCP/连接 are hidden
  * exactly as in production web — that is correct. Use the Electron build or the
  * component harness (harness.html) to calibrate the desktop-only surfaces.
  */

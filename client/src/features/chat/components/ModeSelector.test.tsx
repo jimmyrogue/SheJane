@@ -31,6 +31,20 @@ describe('ModeSelector (catalog-driven)', () => {
     expect(screen.getByRole('button')).toHaveTextContent('Claude Sonnet')
   })
 
+  it('keeps the full selected model label available for long names', () => {
+    const longModels: ModelOption[] = [{ id: 'deep-compatible', label: 'deep-compatible', description: '兼容模式' }]
+    render(
+      <I18nProvider>
+        <ModeSelector mode="deep-compatible" models={longModels} onChange={vi.fn()} />
+      </I18nProvider>,
+    )
+
+    const trigger = screen.getByRole('button', { name: '选择模型' })
+    expect(trigger).toHaveTextContent('deep-compatible')
+    expect(trigger).toHaveAttribute('title', 'deep-compatible')
+    expect(screen.getByText('deep-compatible')).toHaveClass('composer-mode-trigger-label')
+  })
+
   it('lists Auto plus every catalog model and selects one', async () => {
     const onChange = renderSelector('auto')
     // Radix DropdownMenu opens on keyboard activation in jsdom (pointer events

@@ -54,6 +54,16 @@ describe('ConversationSidebar', () => {
     expect(screen.queryByLabelText('需要用户操作')).not.toBeInTheDocument()
   })
 
+  it('keeps the expanded-state window actions grouped on the right', () => {
+    const { container } = renderSidebar([emptyConversation('a', '行程安排')])
+    const collapseButton = screen.getByRole('button', { name: '收起侧栏' })
+    const searchButton = screen.getByRole('button', { name: '搜索' })
+    const actions = container.querySelector('.sidebar-window-actions')
+
+    expect(actions).toContainElement(collapseButton)
+    expect(actions).toContainElement(searchButton)
+  })
+
   it('puts pinned conversations above the unified chats list (no project split)', () => {
     const { container } = renderSidebar([
       emptyConversation('recent-chat', '普通对话'),
@@ -81,6 +91,7 @@ describe('ConversationSidebar', () => {
 
     expect(screen.getByRole('button', { name: '今日 · 待办' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '连接' })).toBeInTheDocument()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
@@ -113,9 +124,10 @@ describe('ConversationSidebar', () => {
       </I18nProvider>,
     )
 
-    // Local-daemon footer actions (技能 + 连接) are gone on web.
+    // Local-daemon footer actions (技能 + MCP + 连接) are gone on web.
     expect(screen.queryByText('工具')).not.toBeInTheDocument()
     expect(screen.queryByText('技能')).not.toBeInTheDocument()
+    expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('连接')).not.toBeInTheDocument()
 
     // 设置 is now a plain nav button (no dropdown) that navigates to the page.
@@ -181,6 +193,30 @@ describe('ConversationSidebar', () => {
     )
     const skillsItem = screen.getByRole('button', { name: '技能' })
     expect(skillsItem.className).toContain('active')
+  })
+
+  it('marks the Connections nav as active separately from MCP', () => {
+    render(
+      <I18nProvider>
+        <ConversationSidebar
+          conversations={[]}
+          onNewConversation={vi.fn()}
+          onSelectConversation={vi.fn()}
+          onExportConversation={vi.fn()}
+          onImportLocalData={vi.fn()}
+          onTogglePinConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onCollapseSidebar={vi.fn()}
+          onOpenMcp={vi.fn()}
+          onOpenConnections={vi.fn()}
+          activeView="connections"
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByRole('button', { name: '连接' }).className).toContain('active')
+    expect(screen.getByRole('button', { name: 'MCP' }).className).not.toContain('active')
   })
 
   describe('search', () => {

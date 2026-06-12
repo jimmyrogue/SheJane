@@ -155,6 +155,7 @@ describe('user client shell', () => {
     // Collapsing is now a separate state (data-collapsed) rather than a width clamp.
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
     expect(shell).toHaveAttribute('data-collapsed', 'true')
+    expect(screen.getByRole('button', { name: '展开侧栏' }).closest('.topbar-expand-hotspot')).not.toBeNull()
   })
 
   it('restores an Electron login session through the desktop auth bridge on startup', async () => {
@@ -187,7 +188,7 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
   })
 
-  it('opens the Stripe checkout from the account-menu top-up entry', async () => {
+  it('opens the recharge dialog from settings and confirms the Stripe checkout', async () => {
     const calls = mockFetch('user')
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
 
@@ -200,6 +201,10 @@ describe('user client shell', () => {
     await awaitSignedIn()
     await openAccountMenu()
     fireEvent.click(await screen.findByText('充值'))
+
+    expect(await screen.findByRole('dialog', { name: '充值' })).toBeInTheDocument()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '确认充值' }))
 
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(true),
@@ -224,6 +229,32 @@ describe('user client shell', () => {
     expect(await screen.findByRole('dialog', { name: '消费记录' })).toBeInTheDocument()
     expect(await screen.findByText('注册赠送')).toBeInTheDocument()
     expect(calls.some((call) => call.url.endsWith('/api/v1/billing/transactions'))).toBe(true)
+  })
+
+  it('exports local data directly from the settings page', async () => {
+    mockFetch('user')
+    const createObjectURL = vi.fn<(blob: Blob) => string>(() => 'blob:local-data-export')
+    const revokeObjectURL = vi.fn()
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await openAccountMenu()
+    fireEvent.click(await screen.findByRole('button', { name: '导出…' }))
+
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalled())
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob
+    expect(blob).toBeInstanceOf(Blob)
+    expect(blob.type).toBe('application/json')
+    expect(anchorClick).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:local-data-export')
+    expect(await screen.findByText('本地数据已导出')).toBeInTheDocument()
   })
 
   it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
@@ -1239,7 +1270,7 @@ describe('user client shell', () => {
 	  expect(await screen.findByText('刷新本地云端会话失败')).toBeInTheDocument()
 
 	  await openAccountMenu()
-	  fireEvent.click(await screen.findByText('退出登录'))
+	  fireEvent.click(await screen.findByRole('button', { name: '退出' }))
 	  const logoutConfirm = await screen.findByRole('alertdialog')
 	  fireEvent.click(within(logoutConfirm).getByRole('button', { name: '确认退出' }))
 	  await screen.findByText('创建你的账号')

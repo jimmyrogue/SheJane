@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { WalletTransaction } from '@/shared/api/client'
@@ -38,7 +38,21 @@ describe('SpendHistoryDialog', () => {
     expect(await screen.findByText('消耗')).toBeInTheDocument()
     expect(screen.getByText('订阅发放')).toBeInTheDocument()
     expect(screen.getByText('-12')).toBeInTheDocument()
-    expect(screen.getByText('+9000')).toBeInTheDocument()
+    expect(screen.getByText('+9,000')).toBeInTheDocument()
+    expect(screen.getByText('近 30 天消费')).toBeInTheDocument()
+    expect(screen.getByText('导出账单')).toBeInTheDocument()
+  })
+
+  it('filters usage and top-up rows', async () => {
+    renderDialog(async () => [
+      tx({ id: 'a', type: 'usage_settle', amount: -12 }),
+      tx({ id: 'b', type: 'subscription_grant', amount: 9000, description: '月度订阅' }),
+    ])
+
+    expect(await screen.findByText('消耗')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '充值' }))
+    expect(screen.queryByText('消耗')).not.toBeInTheDocument()
+    expect(screen.getByText('订阅发放')).toBeInTheDocument()
   })
 
   it('shows an empty state when there are no transactions', async () => {

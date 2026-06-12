@@ -16,6 +16,15 @@ const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
+const {
+  appNameForLocale,
+  configureApplicationMenuForPlatform,
+  normalizeDesktopLocale,
+  suppressWindowMenuForPlatform,
+  trayIconConfigForPlatform,
+  trayMenuTemplateForPlatform,
+  windowMenuOptionsForPlatform,
+} = require('./menu.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 const dockLangFile =
@@ -28,15 +37,23 @@ function readDockLocale() {
     return 'zh'
   }
 }
-const appName = readDockLocale() === 'en' ? 'SheJane' : '石间'
+let currentLocale = readDockLocale()
+function currentAppName() {
+  return appNameForLocale(currentLocale)
+}
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
-// Separate path for the menu-bar (Tray) icon. macOS template images
-// must be a black + transparent mask — the full-color app-icon.png
-// rendered as nothing visible because `setTemplateImage(true)`
-// discards color. app-tray.png is a hand-tuned stone silhouette
-// matching the product name 石间. Electron auto-loads `@2x` for
-// Retina menu bars when the file sits in the same directory.
-const trayIconPath = path.join(__dirname, 'assets/app-tray.png')
+// Tray/menu-bar icons are platform-specific:
+// - macOS wants a black + transparent template mask so the system can tint it.
+// - Windows/Linux use a small full-color app icon so dark taskbars still read.
+// Electron auto-loads matching `@2x` PNGs when they sit beside the base file.
+function createTrayIcon(platform = process.platform) {
+  const { filename, template } = trayIconConfigForPlatform(platform)
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', filename))
+  if (template) {
+    icon.setTemplateImage(true)
+  }
+  return icon
+}
 
 /** Module-scope references so tray/menu/notification handlers can find
  *  the main window without searching every time. */
@@ -55,7 +72,8 @@ function createWindow() {
     height: 820,
     minWidth: 960,
     minHeight: 680,
-    title: appName,
+    title: currentAppName(),
+    ...windowMenuOptionsForPlatform(process.platform),
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hidden',
@@ -81,6 +99,7 @@ function createWindow() {
 
   const window = new BrowserWindow(windowOptions)
   mainWindow = window
+  suppressWindowMenuForPlatform(window, process.platform)
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -123,47 +142,53 @@ function showOrCreateMainWindow() {
   createWindow()
 }
 
-function createTray() {
-  // app-tray.png is 16×16, app-tray@2x.png is 32×32 — both sit next
-  // to each other so Electron picks the right one for the current
-  // display. No manual `.resize()` call (which used to mangle the
-  // alpha edges by re-scaling already-pixelated 18px output).
-  const trayIcon = nativeImage.createFromPath(trayIconPath)
-  if (process.platform === 'darwin') {
-    trayIcon.setTemplateImage(true)
+function requestNewChat() {
+  showOrCreateMainWindow()
+  if (mainWindow) {
+    mainWindow.webContents.send('shejane:new-chat')
   }
+}
+
+function configureApplicationMenu() {
+  configureApplicationMenuForPlatform(Menu, process.platform, currentLocale, { onNewChat: requestNewChat })
+}
+
+function refreshTrayMenu() {
+  if (!tray) {
+    return
+  }
+  tray.setToolTip(currentAppName())
+  tray.setContextMenu(
+    Menu.buildFromTemplate(
+      trayMenuTemplateForPlatform(process.platform, currentLocale, {
+        onShow: showOrCreateMainWindow,
+        onNewChat: requestNewChat,
+      }),
+    ),
+  )
+}
+
+function createTray() {
+  const trayIcon = createTrayIcon(process.platform)
   tray = new Tray(trayIcon)
-  tray.setToolTip(appName)
-  const locale = readDockLocale()
-  const labels =
-    locale === 'en'
-      ? { show: 'Show', newChat: 'New Chat', quit: 'Quit' }
-      : { show: '显示主窗口', newChat: '新建对话', quit: '退出' }
-  const menu = Menu.buildFromTemplate([
-    {
-      label: labels.show,
-      click: () => showOrCreateMainWindow(),
-    },
-    {
-      label: labels.newChat,
-      accelerator: process.platform === 'darwin' ? 'Cmd+N' : 'Ctrl+N',
-      click: () => {
-        showOrCreateMainWindow()
-        if (mainWindow) {
-          mainWindow.webContents.send('shejane:new-chat')
-        }
-      },
-    },
-    { type: 'separator' },
-    { label: labels.quit, role: 'quit' },
-  ])
-  tray.setContextMenu(menu)
+  refreshTrayMenu()
   // Single click on the tray icon: bring the window forward. Right-click
   // shows the context menu on its own (platform-default).
   tray.on('click', () => showOrCreateMainWindow())
 }
 
-app.setName(appName)
+function applyDesktopLocale(locale) {
+  currentLocale = normalizeDesktopLocale(locale)
+  app.setName(currentAppName())
+  configureApplicationMenu()
+  refreshTrayMenu()
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setTitle(currentAppName())
+  }
+  return currentLocale
+}
+
+app.setName(currentAppName())
 
 // The cloud API the main-process auth bridge (register/login/refresh) talks to.
 // Must match the renderer's build-time VITE_API_BASE_URL or auth cookies bind to
@@ -263,12 +288,12 @@ async function startBundledDaemon() {
   daemonProcess.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
   daemonProcess.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
   daemonProcess.on('error', (err) => {
-    dialog.showErrorBox(appName, `无法启动本地引擎：${err.message}`)
+    dialog.showErrorBox(currentAppName(), `无法启动本地引擎：${err.message}`)
   })
   daemonProcess.on('exit', (code, signal) => {
     daemonProcess = null
     if (!app.isQuitting) {
-      dialog.showErrorBox(appName, `本地引擎已退出（code=${code}, signal=${signal}），请重启应用。`)
+      dialog.showErrorBox(currentAppName(), `本地引擎已退出（code=${code}, signal=${signal}），请重启应用。`)
     }
   })
 
@@ -277,7 +302,7 @@ async function startBundledDaemon() {
   process.env.SHEJANE_LOCAL_HOST_TOKEN = daemonToken
 
   if (!(await waitForHealth(daemonURL))) {
-    dialog.showErrorBox(appName, '本地引擎启动超时，请重启应用。')
+    dialog.showErrorBox(currentAppName(), '本地引擎启动超时，请重启应用。')
   }
 }
 
@@ -327,7 +352,8 @@ function setMainWindowButtonPosition(position) {
 }
 
 app.whenReady().then(async () => {
-  app.setName(appName)
+  app.setName(currentAppName())
+  configureApplicationMenu()
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
   }
@@ -364,7 +390,7 @@ app.on('before-quit', () => {
 })
 
 ipcMain.handle('shejane:set-locale', async (_event, locale) => {
-  const normalized = locale === 'en' ? 'en' : 'zh'
+  const normalized = applyDesktopLocale(locale)
   try {
     fs.mkdirSync(path.dirname(dockLangFile), { recursive: true })
     fs.writeFileSync(dockLangFile, normalized, 'utf8')
@@ -384,7 +410,7 @@ ipcMain.handle('shejane:notify', async (_event, payload) => {
   if (!Notification.isSupported()) {
     return false
   }
-  const title = typeof payload?.title === 'string' ? payload.title : appName
+  const title = typeof payload?.title === 'string' ? payload.title : currentAppName()
   const body = typeof payload?.body === 'string' ? payload.body : ''
   if (mainWindow && mainWindow.isFocused() && mainWindow.isVisible()) {
     return false

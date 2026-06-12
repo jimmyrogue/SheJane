@@ -18,7 +18,7 @@ directories:
   output: release
 
 # What goes inside the asar: built renderer + Electron main/preload + runtime
-# assets (main.cjs loads assets/app-icon.png + app-tray.png at runtime).
+# assets (main.cjs loads app-icon.png plus platform-specific tray icons).
 files:
   - dist/**/*
   - electron/**/*.cjs

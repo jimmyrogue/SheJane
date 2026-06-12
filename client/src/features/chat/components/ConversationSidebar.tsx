@@ -6,6 +6,7 @@ import {
   IconDownload,
   IconLayoutSidebarLeftCollapse,
   IconLoader2,
+  IconMessageCircle,
   IconPencil,
   IconPin,
   IconPlus,
@@ -67,6 +68,7 @@ export function ConversationSidebar({
   onOpenToday,
   onOpenSkills,
   onOpenMcp,
+  onOpenConnections,
   onOpenSettings,
   activeView = 'chat',
 }: {
@@ -80,17 +82,18 @@ export function ConversationSidebar({
   onRenameConversation: (conversationID: string, title: string) => void
   onDeleteConversation: (conversationID: string) => void
   onCollapseSidebar: () => void
-  /** Electron build flag. The web build has no local daemon, so skills/MCP
-   *  are hidden when false. */
+  /** Electron build flag. The web build has no local daemon, so local-agent
+   *  pages are hidden when false. */
   isDesktop?: boolean
   /** Navigate to the 今日 · 待办 view (priority-grouped daily digest). */
   onOpenToday?: () => void
   onOpenSkills?: () => void
   onOpenMcp?: () => void
+  onOpenConnections?: () => void
   /** Navigate to the full 设置 page. Account, billing, agent config, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
-  activeView?: 'chat' | 'skills' | 'mcp' | 'settings' | 'today'
+  activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'
 }) {
   const { t, locale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -364,7 +367,7 @@ export function ConversationSidebar({
       </div>
 
       <div className="sidebar-footer">
-        {/* Skills + MCP run only in the local daemon — hidden on the web build. */}
+        {/* Local-agent surfaces only work in the desktop build. */}
         {isDesktop ? (
           <div className="sidebar-footer-nav" aria-label={t('sidebar.section.tools')}>
             <button
@@ -382,6 +385,14 @@ export function ConversationSidebar({
             >
               <IconAffiliate size={14} />
               <span>{t('sidebar.mcp')}</span>
+            </button>
+            <button
+              className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'connections' ? ' active' : ''}`}
+              type="button"
+              onClick={() => onOpenConnections?.()}
+            >
+              <IconMessageCircle size={14} />
+              <span>{t('sidebar.connections')}</span>
             </button>
           </div>
         ) : null}
@@ -610,4 +621,3 @@ function writeSeenConversationVersions(value: Record<string, string>) {
     // Ignore storage failures; the in-memory state still keeps the current session correct.
   }
 }
-

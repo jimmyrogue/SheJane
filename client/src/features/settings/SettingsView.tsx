@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { IconChevronRight, IconLogout, IconTrash } from '@tabler/icons-react'
+import { IconLogout, IconTrash } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,12 +12,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import {
   Select,
   SelectContent,
@@ -25,24 +19,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useI18n } from '@/shared/i18n/i18n'
+import { Switch } from '@/components/ui/switch'
+import { useI18n, type Locale } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
 import type { AdvancedAgentSettings, AgentSettings } from '@/shared/local-host/client'
 
-/** One settings row: copy on the left (label + optional hint), a control or
- *  value on the right. Mirrors the v4 prototype's SjpSetRow (label flex:1,
- *  bottom hairline). */
+type SettingsSectionID = 'account' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+
+const runFields = [
+  ['maxModelCalls', 1, 100, '20'],
+  ['maxHistoryTurns', 1, 200, '40'],
+  ['maxModelRetries', 0, 5, '2'],
+  ['maxToolRetries', 0, 5, '2'],
+  ['researchSearchLimit', 1, 20, '3'],
+  ['toolSelectorMax', 0, 50, '0'],
+] as const
+
 function SettingRow({
   label,
   hint,
   children,
+  danger = false,
 }: {
   label: string
   hint?: string
   children?: ReactNode
+  danger?: boolean
 }) {
   return (
-    <div className="settings-row">
+    <div className={`settings-row${danger ? ' settings-danger' : ''}`}>
       <div className="settings-row-copy">
         <div className="settings-row-label">{label}</div>
         {hint ? <div className="settings-row-hint">{hint}</div> : null}
@@ -52,43 +57,45 @@ function SettingRow({
   )
 }
 
-function SettingGroup({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <section className="settings-group">
-      <div className="settings-group-label">{label}</div>
-      {children}
-    </section>
-  )
-}
-
-/** A whole tappable row (the prototype's 模型 / 语言 / 导出 rows): label on the
- *  left, a value or chevron on the right, the entire row is the button. Avoids
- *  the redundant "label + same-text button" pairing. */
-function SettingActionRow({
-  label,
-  hint,
-  value,
+function SettingsRowButton({
+  children,
   danger,
   onClick,
 }: {
-  label: string
-  hint?: string
-  value?: string
+  children: ReactNode
   danger?: boolean
   onClick: () => void
 }) {
   return (
-    <button type="button" className={`settings-row settings-action${danger ? ' settings-danger' : ''}`} onClick={onClick}>
-      <div className="settings-row-copy">
-        <div className="settings-row-label">{label}</div>
-        {hint ? <div className="settings-row-hint">{hint}</div> : null}
-      </div>
-      {value ? (
-        <span className="settings-row-value">{value}</span>
-      ) : (
-        <IconChevronRight size={15} className="settings-row-chevron" aria-hidden="true" />
-      )}
+    <button
+      type="button"
+      className={`settings-row-button${danger ? ' settings-row-button-danger' : ''}`}
+      onClick={onClick}
+    >
+      {children}
     </button>
+  )
+}
+
+function SettingsSection({
+  id,
+  title,
+  note,
+  children,
+}: {
+  id: SettingsSectionID
+  title: string
+  note?: string
+  children: ReactNode
+}) {
+  return (
+    <section id={`settings-${id}`} className="settings-section">
+      <div className="settings-section-head">
+        <h2>{title}</h2>
+        {note ? <p>{note}</p> : null}
+      </div>
+      <div className="settings-card">{children}</div>
+    </section>
   )
 }
 
@@ -96,12 +103,10 @@ function formatCredits(value: number): string {
   return Math.max(0, Math.round(value)).toLocaleString()
 }
 
-/**
- * The 设置 main view — a full page (not a dropdown/dialog) matching the v4
- * prototype's PageShell. Consolidates what used to live in the sidebar account
- * menu (account / billing / language / logout) and the Agent-settings dialog
- * (memory / skills / MCP + advanced run knobs) into grouped rows.
- */
+function displayInitial(email: string): string {
+  return (email.trim().charAt(0) || 'S').toUpperCase()
+}
+
 export function SettingsView({
   isDesktop = true,
   userEmail,
@@ -113,6 +118,7 @@ export function SettingsView({
   onShowSpendHistory,
   onLogout,
   onImportLocalData,
+  onExportLocalData,
 }: {
   isDesktop?: boolean
   userEmail: string
@@ -124,9 +130,11 @@ export function SettingsView({
   onShowSpendHistory?: () => void
   onLogout?: () => void
   onImportLocalData: (file?: File) => void
+  onExportLocalData?: () => void
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
+  const [activeSection, setActiveSection] = useState<SettingsSectionID>('account')
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
@@ -137,8 +145,26 @@ export function SettingsView({
   const adv: AdvancedAgentSettings = agentSettings.advanced ?? {}
   const setAdv = (patch: Partial<AdvancedAgentSettings>) =>
     onAgentSettingsChange({ ...agentSettings, advanced: { ...adv, ...patch } })
+  const availableCredits = Math.max(0, (balance?.monthly_remaining ?? 0) + (balance?.extra_credits_balance ?? 0))
 
-  const extraCredits = Math.max(0, balance?.extra_credits_balance ?? 0)
+  const navItems: Array<{ id: SettingsSectionID, label: string }> = [
+    { id: 'account', label: t('settings.group.account') },
+    { id: 'agent', label: t('settings.group.agent') },
+    ...(isDesktop
+      ? [
+          { id: 'run' as const, label: t('sidebar.agentSettings.advanced.group.run') },
+          { id: 'quality' as const, label: t('sidebar.agentSettings.advanced.group.quality') },
+          { id: 'capability' as const, label: t('sidebar.agentSettings.advanced.group.capability') },
+        ]
+      : []),
+    { id: 'general', label: t('settings.group.general') },
+    { id: 'data', label: t('settings.group.dataSecurity') },
+  ]
+
+  const selectSection = (id: SettingsSectionID) => {
+    setActiveSection(id)
+    document.getElementById(`settings-${id}`)?.scrollIntoView?.({ block: 'start' })
+  }
 
   return (
     <section className="workspace">
@@ -149,76 +175,93 @@ export function SettingsView({
       </header>
 
       <div className="skills-scroll">
-        <div className="settings-content">
-          <SettingGroup label={t('settings.group.account')}>
-            <SettingRow label={userEmail} />
-            {extraCredits > 0 ? (
-              <SettingRow label={t('settings.balance')}>
-                <span className="settings-row-value">
-                  {t('sidebar.account.creditsExtra', { extra: formatCredits(extraCredits) })}
-                </span>
-              </SettingRow>
-            ) : null}
-            {onRecharge ? <SettingActionRow label={t('sidebar.account.recharge')} onClick={onRecharge} /> : null}
-            {onShowSpendHistory ? (
-              <SettingActionRow label={t('sidebar.account.spendHistory')} onClick={onShowSpendHistory} />
-            ) : null}
-          </SettingGroup>
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label={t('settings.navAria')}>
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`settings-nav-item${activeSection === item.id ? ' active' : ''}`}
+                aria-current={activeSection === item.id ? 'page' : undefined}
+                onClick={() => selectSection(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-          <SettingGroup label={t('settings.group.agent')}>
-            <SettingRow label={t('sidebar.agentSettings.memory.label')} hint={t('sidebar.agentSettings.memory.hint')}>
-              <Switch
-                checked={memoryEnabled}
-                aria-label={t('sidebar.agentSettings.memory.label')}
-                onCheckedChange={(checked) =>
-                  onAgentSettingsChange({ ...agentSettings, memory: checked ? 'on' : 'off' })
-                }
-              />
-            </SettingRow>
-            {isDesktop ? (
-              <>
-                <SettingRow label={t('sidebar.agentSettings.skills.label')} hint={t('sidebar.agentSettings.skills.hint')}>
+          <div className="settings-main-scroll">
+            <div className="settings-main">
+              <SettingsSection id="account" title={t('settings.group.account')}>
+                <div className="settings-account-head">
+                  <div className="settings-avatar" aria-hidden="true">{displayInitial(userEmail)}</div>
+                  <div className="settings-account-copy">
+                    <div className="settings-account-email">{userEmail}</div>
+                    <div className="settings-account-type">{t('settings.accountType')}</div>
+                  </div>
+                </div>
+                <div className="settings-balance-row">
+                  <div>
+                    <div className="settings-balance-label">{t('settings.balanceCredits')}</div>
+                    <div className="settings-balance-value">{formatCredits(availableCredits)}</div>
+                  </div>
+                  <div className="settings-account-actions">
+                    {onShowSpendHistory ? (
+                      <button type="button" className="settings-inline-button" onClick={onShowSpendHistory}>
+                        {t('sidebar.account.spendHistory')}
+                      </button>
+                    ) : null}
+                    {onRecharge ? (
+                      <button type="button" className="settings-primary-button" onClick={onRecharge}>
+                        {t('sidebar.account.recharge')}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection id="agent" title={t('settings.group.agent')}>
+                <SettingRow label={t('sidebar.agentSettings.memory.label')} hint={t('sidebar.agentSettings.memory.hint')}>
                   <Switch
-                    checked={skillsEnabled}
-                    aria-label={t('sidebar.agentSettings.skills.label')}
+                    checked={memoryEnabled}
+                    aria-label={t('sidebar.agentSettings.memory.label')}
                     onCheckedChange={(checked) =>
-                      onAgentSettingsChange({ ...agentSettings, skills: checked ? 'on' : 'off' })
+                      onAgentSettingsChange({ ...agentSettings, memory: checked ? 'on' : 'off' })
                     }
                   />
                 </SettingRow>
-                <SettingRow label={t('sidebar.agentSettings.mcp.label')} hint={t('sidebar.agentSettings.mcp.hint')}>
-                  <Switch
-                    checked={mcpEnabled}
-                    aria-label={t('sidebar.agentSettings.mcp.label')}
-                    onCheckedChange={(checked) =>
-                      onAgentSettingsChange({ ...agentSettings, mcp: checked ? 'on' : 'off' })
-                    }
-                  />
-                </SettingRow>
+                {isDesktop ? (
+                  <>
+                    <SettingRow label={t('sidebar.agentSettings.skills.label')} hint={t('sidebar.agentSettings.skills.hint')}>
+                      <Switch
+                        checked={skillsEnabled}
+                        aria-label={t('sidebar.agentSettings.skills.label')}
+                        onCheckedChange={(checked) =>
+                          onAgentSettingsChange({ ...agentSettings, skills: checked ? 'on' : 'off' })
+                        }
+                      />
+                    </SettingRow>
+                    <SettingRow label={t('sidebar.agentSettings.mcp.label')} hint={t('sidebar.agentSettings.mcp.hint')}>
+                      <Switch
+                        checked={mcpEnabled}
+                        aria-label={t('sidebar.agentSettings.mcp.label')}
+                        onCheckedChange={(checked) =>
+                          onAgentSettingsChange({ ...agentSettings, mcp: checked ? 'on' : 'off' })
+                        }
+                      />
+                    </SettingRow>
+                  </>
+                ) : null}
+              </SettingsSection>
 
-                <Collapsible className="settings-advanced">
-                  <CollapsibleTrigger className="settings-advanced-trigger group">
-                    <span>{t('sidebar.agentSettings.advanced.title')}</span>
-                    <IconChevronRight
-                      size={15}
-                      className="shrink-0 text-[var(--text-tertiary)] transition-transform duration-150 group-data-[state=open]:rotate-90"
-                      aria-hidden="true"
-                    />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <p className="settings-advanced-desc">{t('sidebar.agentSettings.advanced.description')}</p>
-
-                    <div className="settings-advanced-sub">{t('sidebar.agentSettings.advanced.group.run')}</div>
-                    {(
-                      [
-                        ['maxModelCalls', 1, 100, '20'],
-                        ['maxHistoryTurns', 1, 200, '40'],
-                        ['maxModelRetries', 0, 5, '2'],
-                        ['maxToolRetries', 0, 5, '2'],
-                        ['researchSearchLimit', 1, 20, '3'],
-                        ['toolSelectorMax', 0, 50, '0'],
-                      ] as const
-                    ).map(([key, min, max, ph]) => (
+              {isDesktop ? (
+                <>
+                  <SettingsSection
+                    id="run"
+                    title={t('sidebar.agentSettings.advanced.group.run')}
+                    note={t('sidebar.agentSettings.advanced.description')}
+                  >
+                    {runFields.map(([key, min, max, ph]) => (
                       <SettingRow
                         key={key}
                         label={t(`sidebar.agentSettings.advanced.${key}.label`)}
@@ -229,7 +272,7 @@ export function SettingsView({
                           inputMode="numeric"
                           min={min}
                           max={max}
-                          className="h-8 w-16 text-right tabular-nums"
+                          className="settings-number-input"
                           aria-label={t(`sidebar.agentSettings.advanced.${key}.label`)}
                           placeholder={ph}
                           value={(adv[key] as number | undefined) ?? ''}
@@ -240,8 +283,9 @@ export function SettingsView({
                         />
                       </SettingRow>
                     ))}
+                  </SettingsSection>
 
-                    <div className="settings-advanced-sub">{t('sidebar.agentSettings.advanced.group.quality')}</div>
+                  <SettingsSection id="quality" title={t('sidebar.agentSettings.advanced.group.quality')}>
                     <SettingRow label={t('sidebar.agentSettings.advanced.planFirst.label')} hint={t('sidebar.agentSettings.advanced.planFirst.hint')}>
                       <Select
                         value={adv.planFirst ?? '__default__'}
@@ -249,7 +293,7 @@ export function SettingsView({
                           setAdv({ planFirst: value === '__default__' ? undefined : (value as 'off' | 'auto' | 'always') })
                         }
                       >
-                        <SelectTrigger className="w-[136px]" aria-label={t('sidebar.agentSettings.advanced.planFirst.label')}>
+                        <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.planFirst.label')}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -274,7 +318,7 @@ export function SettingsView({
                           setAdv({ toolCritic: value === '__default__' ? undefined : (value as 'off' | 'watch' | 'nudge' | 'block') })
                         }
                       >
-                        <SelectTrigger className="w-[136px]" aria-label={t('sidebar.agentSettings.advanced.toolCritic.label')}>
+                        <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.toolCritic.label')}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -286,8 +330,9 @@ export function SettingsView({
                         </SelectContent>
                       </Select>
                     </SettingRow>
+                  </SettingsSection>
 
-                    <div className="settings-advanced-sub">{t('sidebar.agentSettings.advanced.group.capability')}</div>
+                  <SettingsSection id="capability" title={t('sidebar.agentSettings.advanced.group.capability')}>
                     <SettingRow label={t('sidebar.agentSettings.advanced.subagents.label')} hint={t('sidebar.agentSettings.advanced.subagents.hint')}>
                       <Switch
                         checked={adv.subagents ?? true}
@@ -309,7 +354,7 @@ export function SettingsView({
                           setAdv({ inputGuard: value === '__default__' ? undefined : (value as 'observe' | 'block') })
                         }
                       >
-                        <SelectTrigger className="w-[136px]" aria-label={t('sidebar.agentSettings.advanced.inputGuard.label')}>
+                        <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.inputGuard.label')}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -322,65 +367,79 @@ export function SettingsView({
                     <SettingRow label={t('sidebar.agentSettings.advanced.piiRedact.label')} hint={t('sidebar.agentSettings.advanced.piiRedact.hint')}>
                       <Input
                         type="text"
-                        className="h-8 w-[150px]"
+                        className="settings-text-input"
                         aria-label={t('sidebar.agentSettings.advanced.piiRedact.label')}
                         placeholder="email, credit_card"
                         value={adv.piiRedact ?? ''}
                         onChange={(e) => setAdv({ piiRedact: e.target.value === '' ? undefined : e.target.value })}
                       />
                     </SettingRow>
-                  </CollapsibleContent>
-                </Collapsible>
-              </>
-            ) : null}
-
-          </SettingGroup>
-
-          <SettingGroup label={t('settings.group.general')}>
-            <SettingActionRow
-              label={t('settings.language')}
-              value={locale === 'zh' ? '中文' : 'English'}
-              onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
-            />
-          </SettingGroup>
-
-          <SettingGroup label={t('settings.group.data')}>
-            <SettingActionRow
-              label={t('settings.import')}
-              hint={t('settings.importHint')}
-              onClick={() => importInputRef.current?.click()}
-            />
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json"
-              hidden
-              onChange={(event) => {
-                onImportLocalData(event.currentTarget.files?.[0])
-                event.currentTarget.value = ''
-              }}
-            />
-          </SettingGroup>
-
-          {onClearMemory || onLogout ? (
-            <SettingGroup label={t('settings.group.accountSecurity')}>
-              {onClearMemory ? (
-                <SettingActionRow
-                  label={t('sidebar.agentSettings.memory.clearAction')}
-                  hint={t('sidebar.agentSettings.memory.clearHint')}
-                  danger
-                  onClick={() => setClearMemoryConfirmOpen(true)}
-                />
+                  </SettingsSection>
+                </>
               ) : null}
-              {onLogout ? (
-                <SettingActionRow
-                  label={t('sidebar.account.logout')}
-                  danger
-                  onClick={() => setLogoutConfirmOpen(true)}
+
+              <SettingsSection id="general" title={t('settings.group.general')}>
+                <SettingRow label={t('settings.language')}>
+                  <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
+                    <SelectTrigger className="settings-language-select" aria-label={t('settings.language')}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="zh">中文</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+              </SettingsSection>
+
+              <SettingsSection id="data" title={t('settings.group.dataSecurity')}>
+                <SettingRow label={t('settings.import')} hint={t('settings.importHint')}>
+                  <SettingsRowButton onClick={() => importInputRef.current?.click()}>
+                    {t('settings.importAction')}
+                  </SettingsRowButton>
+                </SettingRow>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json"
+                  hidden
+                  onChange={(event) => {
+                    onImportLocalData(event.currentTarget.files?.[0])
+                    event.currentTarget.value = ''
+                  }}
                 />
-              ) : null}
-            </SettingGroup>
-          ) : null}
+                {onExportLocalData ? (
+                  <SettingRow label={t('settings.export')} hint={t('settings.exportHint')}>
+                    <SettingsRowButton onClick={onExportLocalData}>
+                      {t('settings.exportAction')}
+                    </SettingsRowButton>
+                  </SettingRow>
+                ) : null}
+                {onClearMemory ? (
+                  <SettingRow
+                    label={t('sidebar.agentSettings.memory.clearAction')}
+                    hint={t('sidebar.agentSettings.memory.clearHint')}
+                    danger
+                  >
+                    <SettingsRowButton danger onClick={() => setClearMemoryConfirmOpen(true)}>
+                      {t('settings.clearAction')}
+                    </SettingsRowButton>
+                  </SettingRow>
+                ) : null}
+                {onLogout ? (
+                  <SettingRow
+                    label={t('sidebar.account.logout')}
+                    hint={t('settings.logoutHint')}
+                    danger
+                  >
+                    <SettingsRowButton danger onClick={() => setLogoutConfirmOpen(true)}>
+                      {t('settings.logoutAction')}
+                    </SettingsRowButton>
+                  </SettingRow>
+                ) : null}
+              </SettingsSection>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -13,8 +13,9 @@ function Switch({
       className={cn(
         // Track. INK when on (the v4 design reserves seal/coral for the brand
         // mark, "running" state, and urgent to-dos — a plain on/off toggle is
-        // none of those); line-strong gray when off. 36×20 with a 16px thumb.
-        "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors outline-none",
+        // none of those); line-strong gray when off. 34×20 with a 16px thumb
+        // leaves exactly 2px padding on both sides in either state.
+        "peer inline-flex h-[20px] w-[34px] shrink-0 cursor-pointer items-center rounded-full border-0 p-0 transition-colors outline-none",
         "focus-visible:ring-2 focus-visible:ring-[var(--sj-ink)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-surface)]",
         "disabled:cursor-not-allowed disabled:opacity-50",
         "data-[state=checked]:bg-[var(--sj-ink)] data-[state=unchecked]:bg-[var(--sj-line-strong)]",
@@ -25,8 +26,8 @@ function Switch({
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
         className={cn(
-          "pointer-events-none block size-4 rounded-full bg-white shadow-sm ring-0 transition-transform",
-          "data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5"
+          "pointer-events-none block h-[16px] w-[16px] rounded-full bg-white shadow-[var(--sj-shadow-1)] ring-0 transition-transform",
+          "data-[state=checked]:translate-x-[16px] data-[state=unchecked]:translate-x-[2px]"
         )}
       />
     </SwitchPrimitive.Root>
