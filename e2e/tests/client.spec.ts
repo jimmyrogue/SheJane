@@ -1,19 +1,30 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { clientURL, installClientMocks, requestWasMade } from './helpers'
+
+const composerLabel = '交给石间——描述任务，或拖入文件'
+
+async function registerUser(page: Page) {
+  await page.getByLabel('名称').fill('Test User')
+  await page.getByLabel('邮箱').fill('user@example.com')
+  await page.getByLabel('密码', { exact: true }).fill('secret123')
+  await page.getByRole('button', { name: '创建账号' }).click()
+}
+
+function composer(page: Page) {
+  return page.getByRole('textbox', { name: composerLabel })
+}
 
 test.describe('client simulated user flows', () => {
   test('registers, sends a normal chat message, and hides admin entry', async ({ page }) => {
     const state = await installClientMocks(page)
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
+    await registerUser(page)
 
-    await expect(page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' })).toBeVisible()
+    await expect(composer(page)).toBeVisible()
     await expect(page.getByText('管理后台')).toHaveCount(0)
 
-    await page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' }).fill('你好')
+    await composer(page).fill('你好')
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('普通回答')).toBeVisible()
@@ -26,27 +37,23 @@ test.describe('client simulated user flows', () => {
     await installClientMocks(page)
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
+    await registerUser(page)
 
-    const composer = page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' })
-    await expect(composer).toBeVisible()
-    await expect(composer).toHaveText('') // starts empty (not a dead button)
+    const input = composer(page)
+    await expect(input).toBeVisible()
+    await expect(input).toHaveText('') // starts empty (not a dead button)
 
     // Clicking a suggestion tile drops a concrete, ready-to-send prompt in.
     await page.getByRole('button', { name: /生成一张草地上的柯基小狗图片/ }).click()
-    await expect(composer).toHaveText(/生成一张草地上的柯基小狗图片/)
+    await expect(input).toHaveText(/生成一张草地上的柯基小狗图片/)
   })
 
   test('asks an attached document through agent runs instead of the legacy document ask API', async ({ page }) => {
     const state = await installClientMocks(page)
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
-    await expect(page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' })).toBeVisible()
+    await registerUser(page)
+    await expect(composer(page)).toBeVisible()
 
     // Attaching now means uploading (the pick-an-existing-document list was
     // removed) — drive the hidden file input directly.
@@ -56,7 +63,7 @@ test.describe('client simulated user flows', () => {
       buffer: Buffer.from('hello'),
     })
     await expect(page.getByTitle(/brief\.docx/)).toBeVisible()
-    await page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' }).fill('这份文档的结论是什么？')
+    await composer(page).fill('这份文档的结论是什么？')
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('文档回答')).toBeVisible()
@@ -69,10 +76,8 @@ test.describe('client simulated user flows', () => {
     const state = await installClientMocks(page)
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
-    await expect(page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' })).toBeVisible()
+    await registerUser(page)
+    await expect(composer(page)).toBeVisible()
 
     // The attach tool now triggers the native file chooser directly (no
     // dialog) — drive the hidden file input programmatically instead of
@@ -93,17 +98,15 @@ test.describe('client simulated user flows', () => {
     const state = await installClientMocks(page, { localHost: true })
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
+    await registerUser(page)
 
     await expect(page.getByLabel('本地服务已连接').first()).toBeVisible()
     // Binding a workspace now goes through the native folder picker (stubbed
     // in installClientMocks to return /tmp/picked-workspace) — no in-app
     // path-input dialog anymore.
     await page.getByRole('button', { name: '添加项目' }).click()
-    await expect(page.getByText('picked-workspace').first()).toBeVisible()
-    await page.getByRole('textbox', { name: '描述你的问题、任务，或让石间阅读附件' }).fill('运行本地检查')
+    await expect(page.getByLabel('项目已锁定：picked-workspace（新建对话可换）')).toBeVisible()
+    await composer(page).fill('运行本地检查')
     await page.getByRole('button', { name: '发送' }).click()
 
     await expect(page.getByText('等待批准：运行命令').first()).toBeVisible()
@@ -141,9 +144,7 @@ test.describe('client simulated user flows', () => {
     const state = await installClientMocks(page, { localHost: true, recentRun: true })
 
     await page.goto(clientURL)
-    await page.getByLabel('邮箱').fill('user@example.com')
-    await page.getByLabel('密码', { exact: true }).fill('secret123')
-    await page.getByRole('button', { name: '创建账号' }).click()
+    await registerUser(page)
 
     await expect(page.getByText('Resume workspace scan')).toHaveCount(0)
     await expect(page.getByText('最近本地任务')).toHaveCount(0)
