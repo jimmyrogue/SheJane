@@ -44,8 +44,8 @@ test.describe('client simulated user flows', () => {
     await expect(input).toHaveText('') // starts empty (not a dead button)
 
     // Clicking a suggestion tile drops a concrete, ready-to-send prompt in.
-    await page.getByRole('button', { name: /生成一张草地上的柯基小狗图片/ }).click()
-    await expect(input).toHaveText(/生成一张草地上的柯基小狗图片/)
+    await page.getByRole('button', { name: /整理未读消息/ }).click()
+    await expect(input).toHaveText(/帮我整理今天的未读消息/)
   })
 
   test('asks an attached document through agent runs instead of the legacy document ask API', async ({ page }) => {

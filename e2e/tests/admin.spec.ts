@@ -11,7 +11,7 @@ test.describe('admin simulated operations flows', () => {
     await page.getByRole('button', { name: '登录' }).click()
 
     await expect(page.getByRole('heading', { name: '管理后台' })).toBeVisible()
-    await expect(page.getByText('运营概览')).toBeVisible()
+    await expect(page.getByRole('heading', { name: '概览' })).toBeVisible()
 
     await page.getByRole('button', { name: '订单', exact: true }).click()
     await expect(page.getByText(/order_1/)).toBeVisible()
@@ -20,7 +20,7 @@ test.describe('admin simulated operations flows', () => {
 
     await page.getByRole('button', { name: '模型', exact: true }).click()
     await expect(page.getByText(/deepseek-v4-flash/)).toBeVisible()
-    await expect(page.getByText(/https:\/\/api\.deepseek\.com/)).toBeVisible()
+    await expect(page.getByText(/api\.deepseek\.com/)).toBeVisible()
     // Guard against a leaked key VALUE — not the benign word "token", which
     // now appears in the merged billing copy ("每 token 成本").
     await expect(page.getByText(/secret|sk-[A-Za-z0-9]|API_KEY/i)).toHaveCount(0)
@@ -43,7 +43,7 @@ test.describe('admin simulated operations flows', () => {
     await page.getByLabel('邮箱').fill('admin@example.com')
     await page.getByLabel('密码').fill('secret123')
     await page.getByRole('button', { name: '登录' }).click()
-    await expect(page.getByText('运营概览')).toBeVisible()
+    await expect(page.getByRole('heading', { name: '概览' })).toBeVisible()
 
     await page.getByRole('button', { name: '用户', exact: true }).click()
     // The credit-adjust controls now live in the per-user detail dialog —

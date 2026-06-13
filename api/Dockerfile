@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS build
+FROM golang:1.25-alpine3.22 AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,7 +7,7 @@ COPY . .
 RUN go build -o /out/shejane-api ./cmd/api
 RUN go build -o /out/shejane-migrate ./cmd/migrate
 
-FROM alpine:3.21
+FROM alpine:3.22
 # poppler-utils → pdftotext + pdfinfo, used by
 #   • documents.ExtractText / ExtractMetadata at upload time
 #     (Layer A — text + metadata extraction), and
@@ -20,7 +20,7 @@ FROM alpine:3.21
 # library when pdftotext is missing, and pdf.inspect returns a
 # clean tool-error envelope if a binary is absent — so a build
 # without these only degrades features, never crashes.
-RUN apk add --no-cache poppler-utils pdfgrep
+RUN apk upgrade --no-cache && apk add --no-cache poppler-utils pdfgrep
 RUN adduser -D -H shejane
 USER shejane
 WORKDIR /app
