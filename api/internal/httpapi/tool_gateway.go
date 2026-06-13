@@ -26,7 +26,8 @@ type toolCapability struct {
 }
 
 type toolCapabilitiesPayload struct {
-	Tools map[string]toolCapability `json:"tools"`
+	Tools               map[string]toolCapability `json:"tools"`
+	WebToolLoopMaxSteps int                       `json:"web_tool_loop_max_steps"`
 }
 
 type agentToolExecuteRequest struct {
@@ -76,32 +77,35 @@ func (s *Server) agentToolCapabilities(w http.ResponseWriter, r *http.Request, u
 	writeJSON(w, http.StatusOK, apiResponse[toolCapabilitiesPayload]{
 		Code:    0,
 		Message: "ok",
-		Data: toolCapabilitiesPayload{Tools: map[string]toolCapability{
-			"web.search": withCloudToolDefinition("web.search", toolCapability{
-				Configured:   strings.TrimSpace(s.app.Config.TavilyAPIKey) != "",
-				Provider:     "tavily",
-				CreditsCost:  positiveCredits(s.app.Registry.TavilySearchCredits()),
-				RequiresAuth: true,
-			}),
-			imageToolName:     withCloudToolDefinition(imageToolName, s.imageToolCapability(r.Context())),
-			imageEditToolName: withCloudToolDefinition(imageEditToolName, s.imageToolCapability(r.Context())),
-			codeExecToolName: withCloudToolDefinition(codeExecToolName, toolCapability{
-				Configured:   s.app.IsCodeExecEnabled(),
-				Provider:     "e2b",
-				CreditsCost:  positiveCredits(s.app.Registry.E2BCodeExecBaseCredits()),
-				RequiresAuth: true,
-			}),
-			pdfInspectToolName: withCloudToolDefinition(pdfInspectToolName, toolCapability{
-				// Always-configured: relies on poppler-utils
-				// installed in the API container (alpine
-				// apk add poppler-utils) plus the user's own
-				// uploaded PDFs. No external API key.
-				Configured:   true,
-				Provider:     "poppler",
-				CreditsCost:  pdfInspectCreditsCost,
-				RequiresAuth: true,
-			}),
-		}},
+		Data: toolCapabilitiesPayload{
+			WebToolLoopMaxSteps: s.app.Config.WebToolLoopMaxSteps,
+			Tools: map[string]toolCapability{
+				"web.search": withCloudToolDefinition("web.search", toolCapability{
+					Configured:   strings.TrimSpace(s.app.Config.TavilyAPIKey) != "",
+					Provider:     "tavily",
+					CreditsCost:  positiveCredits(s.app.Registry.TavilySearchCredits()),
+					RequiresAuth: true,
+				}),
+				imageToolName:     withCloudToolDefinition(imageToolName, s.imageToolCapability(r.Context())),
+				imageEditToolName: withCloudToolDefinition(imageEditToolName, s.imageToolCapability(r.Context())),
+				codeExecToolName: withCloudToolDefinition(codeExecToolName, toolCapability{
+					Configured:   s.app.IsCodeExecEnabled(),
+					Provider:     "e2b",
+					CreditsCost:  positiveCredits(s.app.Registry.E2BCodeExecBaseCredits()),
+					RequiresAuth: true,
+				}),
+				pdfInspectToolName: withCloudToolDefinition(pdfInspectToolName, toolCapability{
+					// Always-configured: relies on poppler-utils
+					// installed in the API container (alpine
+					// apk add poppler-utils) plus the user's own
+					// uploaded PDFs. No external API key.
+					Configured:   true,
+					Provider:     "poppler",
+					CreditsCost:  pdfInspectCreditsCost,
+					RequiresAuth: true,
+				}),
+			},
+		},
 	})
 }
 

@@ -24,7 +24,7 @@ import { SpendHistoryDialog } from '@/features/billing/SpendHistoryDialog'
 import { TodayView } from '@/features/today/TodayView'
 import type { ChatMode, Conversation, ChatMessage } from '@/shared/local-data/types'
 import type { ModelOption } from '@/features/chat/components/ModeSelector'
-import type { WalletBalance, WalletTransaction } from '@/shared/api/client'
+import type { UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
 import type { AgentSettings, InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 
 const HOUR = 3600_000
@@ -106,8 +106,10 @@ const mockServers: McpServerInfo[] = [
 ]
 
 const mockChatModels: ModelOption[] = [
-  { id: 'deepseek-fast', label: 'deepseek-fast', description: '速度优先' },
-  { id: 'deep-compatible', label: 'deep-compatible', description: '兼容模式' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', capability_tier: 'fast', description: '速度优先' },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vendor: 'DeepSeek', capability_tier: 'max', description: '复杂推理' },
+  { id: 'mimo-v2-5', label: 'Mimo V2.5', vendor: 'xiaomi', capability_tier: 'balanced', description: '代码生成' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', vendor: 'Claude', capability_tier: 'max', description: '复杂推理和长文' },
 ]
 
 const noop = () => {}
@@ -115,6 +117,21 @@ const params = new URLSearchParams(location.search)
 const view = params.get('view') ?? 'chat'
 const initialSidebarCollapsed = params.get('collapsed') === '1'
 const initialMode = (params.get('model') || 'auto') as ChatMode
+const showComposerAttachment = params.get('attachment') === '1'
+
+const mockComposerAttachment: UserDocument = {
+  id: 'doc-harness',
+  user_id: 'user-harness',
+  original_name: 'quarterly-brief.pdf',
+  content_type: 'application/pdf',
+  size_bytes: 2048,
+  status: 'ready',
+  source_object_key: 'documents/harness/doc-harness/source.pdf',
+  text_object_key: 'documents/harness/doc-harness/extracted.txt',
+  expires_at: iso(now + 7 * DAY),
+  created_at: iso(now),
+  updated_at: iso(now),
+}
 
 function Shell() {
   const [draft, setDraft] = useState('')
@@ -164,12 +181,28 @@ function Shell() {
           {mainView === 'today' ? (
             <TodayView onQuoteToChat={() => setMainView('chat')} />
           ) : mainView === 'skills' ? (
-            <SkillsView listInstalled={async () => ({ skills: mockSkills, roots: [] })} onOpenFolder={noop} />
+            <SkillsView
+              listInstalled={async () => ({ skills: mockSkills, roots: [] })}
+              onCreateSkill={async () => {}}
+              onLoadSkill={async (name) => ({
+                name,
+                description: 'Mock skill body for visual QA.',
+                path: `/Users/x/.shejane/skills/${name}/SKILL.md`,
+                root_path: '/Users/x/.shejane/skills',
+                content: `---\nname: ${name}\ndescription: Mock skill body for visual QA.\n---\n\n# ${name}\n`,
+              })}
+              onUpdateSkill={async () => {}}
+              onDeleteSkill={async () => {}}
+              onOpenFolder={noop}
+            />
           ) : mainView === 'mcp' ? (
             <MCPView
               listCatalog={async () => ({ servers: mockServers, sources_scanned: [] })}
               disabledServers={['postgres']}
               onDisabledChange={noop}
+              onCreateServer={async () => {}}
+              onUpdateServer={async () => {}}
+              onDeleteServer={async () => {}}
               onOpenFolder={noop}
             />
           ) : mainView === 'connections' ? (
@@ -215,7 +248,7 @@ function Shell() {
                   draft={draft}
                   onDraftChange={setDraft}
                   isSending={false}
-                  attachedDocument={undefined}
+                  attachedDocuments={showComposerAttachment ? [mockComposerAttachment] : undefined}
                   isUploading={false}
                   onUploadDocument={noop}
                   onDetachDocument={noop}

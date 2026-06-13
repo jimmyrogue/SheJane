@@ -12,6 +12,13 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import {
@@ -38,6 +45,7 @@ import { RechargeDialog } from './features/billing/RechargeDialog'
 import { SpendHistoryDialog } from './features/billing/SpendHistoryDialog'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
+import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
 import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
@@ -45,40 +53,56 @@ import { SettingsView } from './features/settings/SettingsView'
 import { SkillsView } from './features/skills/SkillsView'
 import { TodayView } from './features/today/TodayView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
+import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
+import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
   cancelLocalRun,
   clearLocalMemory,
+  createLocalSkill,
   createLocalRun,
+  createMcpServer,
+  deleteLocalSkill,
+  deleteMcpServer,
   diagnoseLocalWorkspace,
   fetchWorkspaceFile,
+  forkLocalRun,
   getLocalRunDiagnostics,
   getDesktopLocalHostConfig,
   answerLocalQuestion,
   getLocalArtifact,
+  getLocalSkillFile,
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalRuns,
+  listLocalSchedules,
   listMcpServers,
+  markLocalScheduleNotified,
+  injectLocalRunInstruction,
   probeLocalHost,
+  resolveLocalPlanApproval,
   resolveLocalPermission,
   setLocalCloudSession,
   streamLocalRun,
+  updateLocalSkill,
+  updateMcpServer,
   type AdvancedAgentSettings,
   type AgentSettings,
   type LocalArtifact,
   type LocalCloudSession,
   type LocalHostConfig,
   type LocalHostProbe,
+  type LocalPlanApprovalDecision,
   type LocalPermissionScope,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
   type LocalRunMetadata,
+  type LocalScheduledRun,
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
@@ -89,6 +113,7 @@ const sidebarWidthStorageKey = 'shejane.sidebar.width.v2'
 const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 const checkoutRecoveryPollMs = 3000
 const checkoutRecoveryMaxPolls = 40
+const scheduledRunNotificationPollMs = 30_000
 interface LocalHarnessRunOptions {
   parentRunId?: string
   metadata?: LocalRunMetadata
@@ -275,8 +300,9 @@ function readChatMode(): ChatMode {
   }
   try {
     const raw = window.localStorage.getItem(chatModeStorageKey)?.trim()
-    // Any non-empty value ('auto' or a model id) is accepted here; the catalog
-    // fetch reconciles an id that's no longer in the catalog back to 'auto'.
+    // Any non-empty value (Auto sentinel or a model id) is accepted here; the
+    // catalog fetch reconciles an id that's no longer in the catalog back to
+    // 'auto'.
     if (raw) {
       return raw
     }
@@ -335,16 +361,16 @@ function AppContent() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
-  // User-selected model mode (persisted in localStorage). 'auto' lets the
-  // daemon's classifier decide fast vs pro; 'fast' / 'pro' are explicit.
+  // User-selected model mode (persisted in localStorage). Auto sentinels let
+  // the cloud resolver decide; concrete ids pin a specific catalog model.
   const [mode, setMode] = useState<ChatMode>(readChatMode)
   function changeMode(next: ChatMode): void {
     setMode(next)
     writeChatMode(next)
   }
   const [documents, setDocuments] = useState<UserDocument[]>([])
-  const [attachedDocumentID, setAttachedDocumentID] = useState<string>()
-  const [attachedPreview, setAttachedPreview] = useState<string>()
+  const [attachedDocumentIDs, setAttachedDocumentIDs] = useState<string[]>([])
+  const [attachedPreviews, setAttachedPreviews] = useState<Record<string, string | undefined>>({})
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
@@ -366,10 +392,13 @@ function AppContent() {
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
+  const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
   // Web build only: cloud tools (image gen / web search) the model may call
   // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
   // and until capabilities are fetched / when none are configured.
   const [webTools, setWebTools] = useState<CloudToolDefinition[]>([])
+  const [webToolLoopMaxSteps, setWebToolLoopMaxSteps] = useState(5)
   // The chat model catalog (GET /api/v1/models), feeding the composer picker.
   // 'auto' is always offered on top of these.
   const [models, setModels] = useState<ChatModelInfo[]>([])
@@ -386,6 +415,7 @@ function AppContent() {
   const [pendingProject, setPendingProject] = useState<ConversationProject | undefined>()
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
+  const scheduledNotificationIDs = useRef(new Set<string>())
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null)
   // Bumped on `doc.changed` (Phase 2 territory) to force the renderer to
@@ -503,16 +533,23 @@ function AppContent() {
   useEffect(() => {
     if (window.shejaneDesktop || !auth?.access_token) {
       setWebTools([])
+      setWebToolLoopMaxSteps(5)
       return
     }
     let cancelled = false
     void api
       .agentToolCapabilities()
       .then((caps) => {
-        if (!cancelled) setWebTools(webToolsFromCapabilities(caps))
+        if (!cancelled) {
+          setWebTools(webToolsFromCapabilities(caps.tools))
+          setWebToolLoopMaxSteps(caps.webToolLoopMaxSteps)
+        }
       })
       .catch(() => {
-        if (!cancelled) setWebTools([])
+        if (!cancelled) {
+          setWebTools([])
+          setWebToolLoopMaxSteps(5)
+        }
       })
     return () => {
       cancelled = true
@@ -534,7 +571,7 @@ function AppContent() {
         if (cancelled) return
         setModels(catalog)
         setMode((current) => {
-          if (current === 'auto' || catalog.some((m) => m.id === current)) return current
+          if (isAutoMode(current) || catalog.some((m) => m.id === current)) return current
           const next: ChatMode = 'auto'
           writeChatMode(next)
           return next
@@ -567,26 +604,28 @@ function AppContent() {
     document.documentElement.style.setProperty('--toast-center-offset', `${visible / 2}px`)
   }, [sidebarWidth, sidebarCollapsed])
 
-  /** Global Cmd/Ctrl+N → start a fresh conversation. Bypasses the
-   *  OS-level "new window" intent because in this app it's a chat
-   *  shell, not a browser. setState fns are stable across renders so
-   *  the closure here stays correct without deps. */
+  /** Global app shortcuts. Bypass browser/OS defaults only for app-level
+   *  actions that are already visible in the shell. */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey
-      if (!mod || event.shiftKey || event.altKey) {
+      const key = event.key.toLowerCase()
+      if (mod && !event.shiftKey && !event.altKey && key === 'n') {
+        event.preventDefault()
+        startNewConversation()
         return
       }
-      if (event.key !== 'n' && event.key !== 'N') {
+      if (mod && !event.shiftKey && !event.altKey && key === 'k') {
+        event.preventDefault()
+        setSidebarCollapsed(false)
+        setMainView('chat')
+        setSidebarSearchRequestVersion((version) => version + 1)
         return
       }
-      event.preventDefault()
-      navigationVersionRef.current += 1
-      setActiveConversationID(undefined)
-      setPendingWorkspace(undefined)
-      setPendingProject(undefined)
-      setDraft('')
-      setMainView('chat')
+      if (!mod && !event.altKey && event.key === '?' && !isEditableKeyboardTarget(event.target)) {
+        event.preventDefault()
+        setKeyboardHelpOpen(true)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -667,13 +706,12 @@ function AppContent() {
     }
   }, [localData, t])
 
-
   // Reset transient session state when the signed-in user changes, so leftovers
   // from the previous account (draft, attached doc, etc.) don't bleed across.
   useEffect(() => {
     setDraft('')
-    setAttachedDocumentID(undefined)
-    setAttachedPreview(undefined)
+    setAttachedDocumentIDs([])
+    setAttachedPreviews({})
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
     setDocuments([])
@@ -764,6 +802,42 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
+    if (!localHost?.online || !localHostConfig?.token) {
+      return
+    }
+    let disposed = false
+    const config = localHostConfig
+    const poll = async () => {
+      try {
+        const schedules = await listLocalSchedules(config, { notifyPending: true })
+        if (disposed || schedules.length === 0) {
+          return
+        }
+        for (const schedule of schedules) {
+          if (scheduledNotificationIDs.current.has(schedule.id)) {
+            continue
+          }
+          scheduledNotificationIDs.current.add(schedule.id)
+          notifyScheduledRun(schedule, t)
+          await markLocalScheduleNotified(schedule.id, config)
+        }
+        const freshRuns = await listLocalRuns(config)
+        if (!disposed) {
+          setLocalRuns(freshRuns)
+        }
+      } catch {
+        // Best-effort observer; the next poll will retry.
+      }
+    }
+    void poll()
+    const interval = window.setInterval(() => void poll(), scheduledRunNotificationPollMs)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [localHost?.online, localHostConfig, t])
+
+  useEffect(() => {
     if (!auth?.access_token || !localHost?.online || !localHostConfig?.token) {
       if (!auth) {
         setLocalCloudSessionState(null)
@@ -829,8 +903,11 @@ function AppContent() {
     ),
   )
   const pendingApproval = findConversationPendingApproval(activeConversation, t)
-  const pendingQuestion = pendingApproval ? null : findConversationPendingQuestion(activeConversation)
-  const attachedDocument = documents.find((document) => document.id === attachedDocumentID)
+  const pendingPlanApproval = pendingApproval ? null : findConversationPendingPlanApproval(activeConversation)
+  const pendingQuestion = pendingApproval || pendingPlanApproval ? null : findConversationPendingQuestion(activeConversation)
+  const attachedDocuments = attachedDocumentIDs
+    .map((id) => documents.find((document) => document.id === id))
+    .filter((document): document is UserDocument => Boolean(document))
   const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
   const selectedWorkspace = activeWorkspace ? findWorkspaceByPath(authorizedWorkspaces, activeWorkspace.path) : undefined
   const localProject = activeWorkspace
@@ -861,6 +938,8 @@ function AppContent() {
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
     setDraft('')
+    setAttachedDocumentIDs([])
+    setAttachedPreviews({})
     setMainView('chat')
   }
 
@@ -939,7 +1018,7 @@ function AppContent() {
       setNotice(t('app.notice.loginBeforeSending'))
       return
     }
-    if (attachedDocument && attachedDocument.status !== 'ready') {
+    if (attachedDocuments.some((document) => document.status !== 'ready')) {
       setNotice(t('app.notice.documentNotReady'))
       return
     }
@@ -951,20 +1030,22 @@ function AppContent() {
     // draft mirrors the message-bar behaviour: the prompt + its
     // attachment vanish from the composer the instant Enter fires;
     // the catch path restores both if the request never landed.
-    const sentDocumentID = attachedDocumentID
-    const sentPreview = attachedPreview
+    const sentDocumentIDs = attachedDocumentIDs
+    const sentPreviews = attachedPreviews
     setIsSending(true)
     setNotice('')
     setDraft('')
-    setAttachedDocumentID(undefined)
-    setAttachedPreview(undefined)
+    setAttachedDocumentIDs([])
+    setAttachedPreviews({})
     const renderContext = createConversationRenderContext()
     try {
       // Image attachments go through the tool-capable local harness (so the
       // agent can image.edit them); other documents keep the cloud text path.
-      const attachedIsImage = Boolean(attachedDocument && attachedDocument.content_type.startsWith('image/'))
+      const attachmentsAreImages = attachedDocuments.length > 0 &&
+        attachedDocuments.every((document) => document.content_type.startsWith('image/'))
       const canUseLocalHarness =
-        (!attachedDocument || attachedIsImage) && Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
+        (attachedDocuments.length === 0 || attachmentsAreImages) &&
+        Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
       const conversation = canUseLocalHarness
         ? await sendLocalHarnessMessage(content, renderContext)
         : await chat.sendMessage({
@@ -972,16 +1053,15 @@ function AppContent() {
             content: parseSkillDraft(content).text,
             mode,
             scene: 'chat',
-            document: attachedDocument
-              ? {
-                  id: attachedDocument.id,
-                  name: attachedDocument.original_name,
-                  contentType: attachedDocument.content_type,
-                }
-              : undefined,
+            documents: attachedDocuments.map((document) => ({
+              id: document.id,
+              name: document.original_name,
+              contentType: document.content_type,
+            })),
             // Web build: drive the client tool loop (image gen / web search)
             // for plain prompts. Document Q&A keeps the single-completion path.
-            cloudTools: attachedDocument ? undefined : webTools,
+            cloudTools: attachedDocuments.length > 0 ? undefined : webTools,
+            cloudToolMaxSteps: webToolLoopMaxSteps,
             onConversationUpdate: (nextConversation) => {
               trackActiveCloudToolLoop(nextConversation)
               scheduleConversationRender(nextConversation, renderContext)
@@ -994,8 +1074,8 @@ function AppContent() {
       // Only restore the attachment if the user hasn't picked a new
       // one in the meantime (same guard the draft uses) — otherwise
       // we'd clobber the new pick on a failed retry.
-      setAttachedDocumentID((current) => current ?? sentDocumentID)
-      setAttachedPreview((current) => current ?? sentPreview)
+      setAttachedDocumentIDs((current) => current.length > 0 ? current : sentDocumentIDs)
+      setAttachedPreviews((current) => Object.keys(current).length > 0 ? current : sentPreviews)
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
       await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
@@ -1055,6 +1135,7 @@ function AppContent() {
             mode,
             scene: 'chat',
             cloudTools: webTools,
+            cloudToolMaxSteps: webToolLoopMaxSteps,
             onConversationUpdate: (nextConversation) => {
               trackActiveCloudToolLoop(nextConversation)
               scheduleConversationRender(nextConversation, renderContext)
@@ -1453,15 +1534,13 @@ function AppContent() {
       createdAt: timestamp,
       status: 'done',
       attachments:
-        !settingsOverride && attachedDocument
-          ? [
-              {
-                documentId: attachedDocument.id,
-                name: attachedDocument.original_name,
-                contentType: attachedDocument.content_type,
-                previewDataUrl: attachedPreview,
-              },
-            ]
+        !settingsOverride && attachedDocuments.length > 0
+          ? attachedDocuments.map((document) => ({
+              documentId: document.id,
+              name: document.original_name,
+              contentType: document.content_type,
+              previewDataUrl: attachedPreviews[document.id],
+            }))
           : undefined,
     }
     const assistantMessage: ChatMessage = {
@@ -1497,10 +1576,15 @@ function AppContent() {
     if (mcpsForRun.length > 0) {
       directives.push(t('mcp.useDirective', { names: mcpsForRun.join('、') }))
     }
-    if (!settingsOverride && attachedDocument && attachedDocument.content_type.startsWith('image/')) {
-      directives.push(
-        t('functions.imageEditDirective', { documentId: attachedDocument.id, name: attachedDocument.original_name }),
-      )
+    if (!settingsOverride) {
+      for (const document of attachedDocuments) {
+        if (!document.content_type.startsWith('image/')) {
+          continue
+        }
+        directives.push(
+          t('functions.imageEditDirective', { documentId: document.id, name: document.original_name }),
+        )
+      }
     }
     const goal = directives.length > 0 ? `${directives.join('\n\n')}\n\n${text}` : text
     // Layered settings overrides — later wins. settingsOverride is used
@@ -1624,6 +1708,60 @@ function AppContent() {
     }
   }
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.key !== 'Escape') {
+        return
+      }
+      if (keyboardHelpOpen) {
+        event.preventDefault()
+        setKeyboardHelpOpen(false)
+        return
+      }
+      if (isSending || hasActiveRun) {
+        event.preventDefault()
+        void cancelActiveRun()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [keyboardHelpOpen, isSending, hasActiveRun])
+
+  async function appendInstructionToActiveRun() {
+    const content = draft.trim()
+    if (!content) {
+      setNotice(t('app.notice.emptyMessage'))
+      return
+    }
+    if (!activeConversation || !localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const activeMessage = [...activeConversation.messages]
+      .reverse()
+      .find(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.runOrigin === 'local' &&
+          Boolean(msg.runId) &&
+          (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
+      )
+    if (!activeMessage?.runId) {
+      setNotice(t('app.notice.missingLocalTask'))
+      return
+    }
+
+    setNotice('')
+    setDraft('')
+    try {
+      await injectLocalRunInstruction(activeMessage.runId, content, localHostConfig)
+      toast.success(t('app.notice.steeringQueued'), { id: 'steering-queued', duration: 2200 })
+    } catch (error) {
+      setDraft((current) => current || content)
+      setNotice(error instanceof Error ? error.message : t('app.notice.steeringFailed'))
+    }
+  }
+
   async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
@@ -1681,12 +1819,41 @@ function AppContent() {
   }
 
   async function handleQuestionAnswer(messageID: string, requestID: string, answers: Record<string, string[]>) {
-    if (!activeID || !localHostConfig) {
-      setNotice(t('app.notice.localHostDisconnected'))
+    if (!activeID) {
+      setNotice(t('app.notice.missingLocalTask'))
       return
     }
     const conversation = await localData.get(activeID)
     const message = conversation?.messages.find((item) => item.id === messageID)
+    if (conversation && message?.runOrigin === 'cloud' && message.cloudToolContinuation) {
+      setNotice('')
+      const renderContext = createConversationRenderContext()
+      try {
+        await chat.continueCloudToolLoop({
+          conversationId: conversation.id,
+          messageId: message.id,
+          requestId: requestID,
+          answers,
+          maxSteps: webToolLoopMaxSteps,
+          onConversationUpdate: (nextConversation) => {
+            trackActiveCloudToolLoop(nextConversation)
+            scheduleConversationRender(nextConversation, renderContext)
+          },
+        })
+        toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
+        await refreshConversationsAfterStream(conversation.id, renderContext)
+        setBalance(await api.balance())
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
+        await refreshConversations(conversation.id)
+      }
+      return
+    }
+
+    if (!localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
     if (!conversation || !message?.runId) {
       setNotice(t('app.notice.missingLocalTask'))
       return
@@ -1703,6 +1870,62 @@ function AppContent() {
     try {
       await answerLocalQuestion(requestID, answers, localHostConfig)
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
+      await streamLocalRun(message.runId, localHostConfig, {
+        onEvent: (event) => {
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
+          scheduleConversationRender(conversation, renderContext)
+        },
+        onDelta: (delta, event) => {
+          appendLocalDelta(message, delta, event, seenEventIDs)
+          scheduleConversationRender(conversation, renderContext)
+        },
+      })
+      finalizeLocalRunStatus(message)
+      scheduleConversationRender(conversation, renderContext)
+    } catch (error) {
+      message.status = 'error'
+      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
+      setNotice(message.content)
+      scheduleConversationRender(conversation, renderContext)
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
+    }
+  }
+
+  async function handlePlanApprovalDecision(
+    messageID: string,
+    requestID: string,
+    decision: LocalPlanApprovalDecision,
+    instructions?: string,
+  ) {
+    if (!activeID || !localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const conversation = await localData.get(activeID)
+    const message = conversation?.messages.find((item) => item.id === messageID)
+    if (!conversation || !message?.runId) {
+      setNotice(t('app.notice.missingLocalTask'))
+      return
+    }
+
+    setNotice('')
+    message.status = 'streaming'
+    message.content = ''
+    const renderContext = createConversationRenderContext()
+    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    const toolArgsByCallId: ToolArgsByCallId = new Map()
+    try {
+      await resolveLocalPlanApproval(requestID, decision, instructions, localHostConfig)
+      const noticeKey =
+        decision === 'approve'
+          ? 'app.notice.planApproved'
+          : decision === 'modify'
+            ? 'app.notice.planModified'
+            : 'app.notice.planRejected'
+      toast.success(t(noticeKey), { id: 'plan-approval-decision', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
@@ -1838,6 +2061,78 @@ function AppContent() {
     }
     downloadLocalRunDiagnostics(runDiagnostics)
     setNotice(t('app.notice.diagnosticsExported', { id: runDiagnostics.run.id }))
+  }
+
+  async function forkLocalRunFromCheckpoint(runID: string, checkpointID: string) {
+    if (!localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const sourceDiagnostics = runDiagnostics?.run.id === runID ? runDiagnostics : null
+    const forkGoal = sourceDiagnostics?.run.goal || undefined
+    try {
+      setNotice('')
+      const run = await forkLocalRun(runID, { checkpointId: checkpointID, goal: forkGoal }, localHostConfig)
+      setLocalRuns((items) => upsertLocalRun(items, run))
+
+      const timestamp = new Date().toISOString()
+      let conversation = activeIDRef.current ? await localData.get(activeIDRef.current) : undefined
+      if (!conversation) {
+        conversation = createConversation(run.goal, timestamp, t('chat.newConversation'))
+        navigationVersionRef.current += 1
+        setPendingWorkspace(undefined)
+        setPendingProject(undefined)
+        setActiveConversationID(conversation.id)
+        setMainView('chat')
+      }
+
+      const userMessage: ChatMessage = {
+        id: createLocalID('msg'),
+        role: 'user',
+        content: t('app.notice.checkpointForkUserMessage', {
+          checkpoint: checkpointID.slice(0, 12),
+          goal: run.goal,
+        }),
+        createdAt: timestamp,
+        status: 'done',
+      }
+      const assistantMessage: ChatMessage = {
+        id: createLocalID('msg'),
+        role: 'assistant',
+        content: '',
+        createdAt: timestamp,
+        status: 'streaming',
+        runId: run.id,
+        runOrigin: 'local',
+        agentEvents: [],
+      }
+      conversation.messages = [...conversation.messages, userMessage, assistantMessage]
+      conversation.updatedAt = timestamp
+      await localData.save(conversation)
+      setRunDiagnostics(null)
+
+      const renderContext = createConversationRenderContext()
+      scheduleConversationRender(conversation, renderContext)
+      const seenEventIDs = new Set<string>()
+      const toolArgsByCallId: ToolArgsByCallId = new Map()
+      await streamLocalRun(run.id, localHostConfig, {
+        onEvent: (event) => {
+          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
+          scheduleConversationRender(conversation, renderContext)
+        },
+        onDelta: (delta, event) => {
+          appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
+          scheduleConversationRender(conversation, renderContext)
+        },
+      })
+      finalizeLocalRunStatus(assistantMessage)
+      scheduleConversationRender(conversation, renderContext)
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t('app.notice.checkpointForkFailed'))
+    }
   }
 
   async function chooseWorkspaceDirectory(): Promise<string | undefined> {
@@ -2070,56 +2365,74 @@ function AppContent() {
     setNotice(t('app.notice.localDataExported'))
   }
 
-  async function uploadDocument(file: File | undefined) {
-    if (!file) {
+  async function uploadDocument(input: File | File[] | FileList | undefined) {
+    const files = normalizeUploadFiles(input)
+    if (files.length === 0) {
       return
     }
     if (!auth) {
       setNotice(t('app.notice.loginBeforeUpload'))
       return
     }
-    const contentType = normalizeDocumentContentType(file)
-    if (!contentType) {
-      setNotice(t('app.notice.unsupportedDocument'))
-      return
-    }
-    if (file.size <= 0 || file.size > documentMaxBytes) {
-      setNotice(t('app.notice.documentTooLarge'))
-      return
+    const prepared: Array<{ file: File; contentType: string }> = []
+    for (const file of files) {
+      const contentType = normalizeDocumentContentType(file)
+      if (!contentType) {
+        setNotice(t('app.notice.unsupportedDocument'))
+        return
+      }
+      if (file.size <= 0 || file.size > documentMaxBytes) {
+        setNotice(t('app.notice.documentTooLarge'))
+        return
+      }
+      prepared.push({ file, contentType })
     }
     setNotice('')
     setIsUploading(true)
-    setUploadProgress(0)
     try {
-      const upload = await api.createDocumentUpload({
-        filename: file.name,
-        content_type: contentType,
-        size_bytes: file.size,
-      })
-      setDocuments((items) => upsertDocument(items, upload.document))
-      setAttachedDocumentID(upload.document.id)
-      // XHR-based PUT so we can render a progress ring on the
-      // attachment chip. Slow cross-border S3 uploads (typical
-      // China → Singapore, even with Transfer Acceleration on)
-      // would otherwise just spin for ~30s with no feedback and
-      // the user would assume the app is frozen.
-      const uploadResponse = await uploadWithProgress({
-        method: upload.upload.method,
-        url: upload.upload.url,
-        headers: upload.upload.headers,
-        body: file,
-        onProgress: ({ percent }) => {
-          setUploadProgress(Number.isFinite(percent) ? percent : undefined)
-        },
-      })
-      if (!uploadResponse.ok) {
-        throw new Error(t('app.notice.s3UploadFailed', { status: uploadResponse.status }))
+      for (const { file, contentType } of prepared) {
+        setUploadProgress(0)
+        const upload = await api.createDocumentUpload({
+          filename: file.name,
+          content_type: contentType,
+          size_bytes: file.size,
+        })
+        setDocuments((items) => upsertDocument(items, upload.document))
+        setAttachedDocumentIDs((ids) => appendUnique(ids, upload.document.id))
+        // XHR-based PUT so we can render a progress ring on the
+        // attachment chip. Slow cross-border S3 uploads (typical
+        // China → Singapore, even with Transfer Acceleration on)
+        // would otherwise just spin for ~30s with no feedback and
+        // the user would assume the app is frozen.
+        const uploadResponse = await uploadWithProgress({
+          method: upload.upload.method,
+          url: upload.upload.url,
+          headers: upload.upload.headers,
+          body: file,
+          onProgress: ({ percent }) => {
+            setUploadProgress(Number.isFinite(percent) ? percent : undefined)
+          },
+        })
+        if (!uploadResponse.ok) {
+          throw new Error(t('app.notice.s3UploadFailed', { status: uploadResponse.status }))
+        }
+        const completed = await api.completeDocument(upload.document.id)
+        setDocuments((items) => upsertDocument(items, completed))
+        setAttachedDocumentIDs((ids) => appendUnique(ids, completed.id))
+        const preview = await makeImageThumbnail(file)
+        setAttachedPreviews((current) => {
+          const next = { ...current }
+          if (preview) {
+            next[completed.id] = preview
+          } else {
+            delete next[completed.id]
+          }
+          return next
+        })
       }
-      const completed = await api.completeDocument(upload.document.id)
-      setDocuments((items) => upsertDocument(items, completed))
-      setAttachedDocumentID(completed.id)
-      setAttachedPreview(await makeImageThumbnail(file))
-      setNotice(t('app.notice.documentReady'))
+      setNotice(prepared.length > 1
+        ? t('app.notice.documentsReady', { count: String(prepared.length) })
+        : t('app.notice.documentReady'))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.documentUploadFailed'))
     } finally {
@@ -2131,12 +2444,11 @@ function AppContent() {
   async function deleteDocument(document: UserDocument) {
     const deleted = await api.deleteDocument(document.id)
     setDocuments((items) => items.filter((item) => item.id !== deleted.id))
-    setAttachedDocumentID((current) => {
-      if (current === deleted.id) {
-        setAttachedPreview(undefined)
-        return undefined
-      }
-      return current
+    setAttachedDocumentIDs((ids) => ids.filter((id) => id !== deleted.id))
+    setAttachedPreviews((current) => {
+      const next = { ...current }
+      delete next[deleted.id]
+      return next
     })
     setNotice(t('app.notice.documentDeleted'))
   }
@@ -2159,6 +2471,13 @@ function AppContent() {
   const isDesktop = !!window.shejaneDesktop
   const shellClassName = isDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
+  const shortcutModifier = keyboardShortcutModifier()
+  const shortcutRows = [
+    { label: t('shortcuts.newChat'), keys: [`${shortcutModifier}N`] },
+    { label: t('shortcuts.searchChats'), keys: [`${shortcutModifier}K`] },
+    { label: t('shortcuts.stopRun'), keys: ['Esc'] },
+    { label: t('shortcuts.help'), keys: ['?'] },
+  ]
 
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.pointerType === 'mouse' && event.button !== 0) {
@@ -2295,6 +2614,7 @@ function AppContent() {
             onOpenConnections={() => setMainView('connections')}
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
+            searchRequestVersion={sidebarSearchRequestVersion}
           />
 
           <div
@@ -2321,6 +2641,22 @@ function AppContent() {
                   ? listInstalledSkills(localHostConfig)
                   : Promise.resolve({ skills: [], roots: [] })
               }
+              onCreateSkill={async (input) => {
+                if (!localHostConfig) return
+                await createLocalSkill(input, localHostConfig)
+              }}
+              onLoadSkill={(name) => {
+                if (!localHostConfig) return Promise.reject(new Error('local host unavailable'))
+                return getLocalSkillFile(name, localHostConfig)
+              }}
+              onUpdateSkill={async (name, input) => {
+                if (!localHostConfig) return
+                await updateLocalSkill(name, input, localHostConfig)
+              }}
+              onDeleteSkill={async (name) => {
+                if (!localHostConfig) return
+                await deleteLocalSkill(name, localHostConfig)
+              }}
               onOpenFolder={(path) => {
                 const bridge = window.shejaneDesktop
                 if (bridge?.openFileWithDefaultApp) {
@@ -2340,6 +2676,18 @@ function AppContent() {
                 const updated: Required<AgentSettings> = { ...agentSettings, mcpDisabled: next }
                 setAgentSettings(updated)
                 writeAgentSettings(updated)
+              }}
+              onCreateServer={async (input) => {
+                if (!localHostConfig) return
+                await createMcpServer(input, localHostConfig)
+              }}
+              onUpdateServer={async (name, input) => {
+                if (!localHostConfig) return
+                await updateMcpServer(name, input, localHostConfig)
+              }}
+              onDeleteServer={async (name) => {
+                if (!localHostConfig) return
+                await deleteMcpServer(name, localHostConfig)
               }}
               onOpenFolder={(path) => {
                 const bridge = window.shejaneDesktop
@@ -2482,7 +2830,12 @@ function AppContent() {
               refreshKey={docPreviewRefreshKey}
               onClose={() => setActiveDocument(null)}
             />
-            <DiagnosticsPanel diagnostics={runDiagnostics} onClose={() => setRunDiagnostics(null)} onExport={exportCurrentRunDiagnostics} />
+            <DiagnosticsPanel
+              diagnostics={runDiagnostics}
+              onClose={() => setRunDiagnostics(null)}
+              onExport={exportCurrentRunDiagnostics}
+              onForkCheckpoint={(runID, checkpointID) => void forkLocalRunFromCheckpoint(runID, checkpointID)}
+            />
 
             <AlertDialog
               open={Boolean(pendingDeleteMessageID)}
@@ -2521,6 +2874,12 @@ function AppContent() {
                 onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
               />
 
+              <PendingPlanApprovalBar
+                key={pendingPlanApproval?.requestID ?? 'no-plan-approval'}
+                plan={pendingPlanApproval}
+                onDecision={(messageID, requestID, decision, instructions) => void handlePlanApprovalDecision(messageID, requestID, decision, instructions)}
+              />
+
               <PendingQuestionBar
                 key={pendingQuestion?.requestID ?? 'no-question'}
                 question={pendingQuestion}
@@ -2545,16 +2904,26 @@ function AppContent() {
               onDraftChange={setDraft}
               isSending={isSending}
               hasActiveRun={hasActiveRun}
-              attachedDocument={attachedDocument}
-              attachedPreview={attachedPreview}
+              attachedDocuments={attachedDocuments}
+              attachedPreviews={attachedPreviews}
               isUploading={isUploading}
               uploadProgress={uploadProgress}
               onUploadDocument={(file) => void uploadDocument(file)}
-              onDetachDocument={() => {
-                setAttachedDocumentID(undefined)
-                setAttachedPreview(undefined)
+              onDetachDocument={(documentID) => {
+                if (!documentID) {
+                  setAttachedDocumentIDs([])
+                  setAttachedPreviews({})
+                  return
+                }
+                setAttachedDocumentIDs((ids) => ids.filter((id) => id !== documentID))
+                setAttachedPreviews((current) => {
+                  const next = { ...current }
+                  delete next[documentID]
+                  return next
+                })
               }}
               onSend={() => void sendMessage()}
+              onAppendInstruction={hasActiveRun ? () => void appendInstructionToActiveRun() : undefined}
               onStop={() => void cancelActiveRun()}
               listSkills={async () => {
                 if (!localHostConfig) return []
@@ -2593,10 +2962,50 @@ function AppContent() {
             balance={balance}
             onConfirm={() => startRecharge()}
           />
+          <Dialog open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
+            <DialogContent className="keyboard-shortcuts-dialog sm:max-w-[420px]">
+              <DialogHeader>
+                <DialogTitle>{t('shortcuts.title')}</DialogTitle>
+                <DialogDescription>{t('shortcuts.description')}</DialogDescription>
+              </DialogHeader>
+              <div className="keyboard-shortcuts-list">
+                {shortcutRows.map((row) => (
+                  <div className="keyboard-shortcut-row" key={row.label}>
+                    <span>{row.label}</span>
+                    <span className="keyboard-shortcut-keys">
+                      {row.keys.map((key) => (
+                        <kbd key={key}>{key}</kbd>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </main>
     </TooltipProvider>
   )
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  const tagName = target.tagName.toLowerCase()
+  return (
+    target.isContentEditable ||
+    tagName === 'input' ||
+    tagName === 'textarea' ||
+    tagName === 'select'
+  )
+}
+
+function keyboardShortcutModifier(): string {
+  if (typeof navigator === 'undefined') {
+    return 'Ctrl+'
+  }
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? '⌘' : 'Ctrl+'
 }
 
 function localHostStatusLabel(
@@ -2927,6 +3336,24 @@ function notifyAgentFailed(message: ChatMessage, t: Translator): void {
   })
 }
 
+function notifyScheduledRun(schedule: LocalScheduledRun, t: Translator): void {
+  const bridge = window.shejaneDesktop
+  if (!bridge?.notify) {
+    return
+  }
+  const fallback = schedule.goal || t('notify.scheduledRun.empty')
+  const raw = (schedule.status === 'failed' ? schedule.error_message : schedule.result_text)
+    || fallback
+  const normalized = raw.trim().replace(/\s+/g, ' ')
+  const body = normalized.length > 140 ? `${normalized.slice(0, 140)}…` : normalized
+  void bridge.notify({
+    title: schedule.status === 'failed'
+      ? t('notify.scheduledRunFailed.title')
+      : t('notify.scheduledRunCompleted.title'),
+    body: body || t('notify.scheduledRun.empty'),
+  })
+}
+
 function latestRunFailedLabel(message: ChatMessage): string {
   return [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')?.label ?? ''
 }
@@ -2946,6 +3373,10 @@ function finalizeLocalRunStatus(message: ChatMessage) {
   }
   if (hasPendingPermission(events)) {
     message.status = 'waiting_permission'
+    return
+  }
+  if (hasPendingPlanApproval(events)) {
+    message.status = 'waiting_input'
     return
   }
   message.status = hasPendingQuestion(events) ? 'waiting_input' : 'done'
@@ -2977,6 +3408,19 @@ function hasPendingQuestion(events: AgentTimelineItem[]): boolean {
   return pending.size > 0
 }
 
+function hasPendingPlanApproval(events: AgentTimelineItem[]): boolean {
+  const pending = new Set<string>()
+  for (const event of events) {
+    if (event.type === 'plan.approval_required' && event.planApprovalRequestId) {
+      pending.add(event.planApprovalRequestId)
+    }
+    if (event.type === 'plan.approval_resolved' && event.planApprovalRequestId) {
+      pending.delete(event.planApprovalRequestId)
+    }
+  }
+  return pending.size > 0
+}
+
 function downloadLocalRunDiagnostics(diagnostics: LocalRunDiagnostics) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' }))
   const link = document.createElement('a')
@@ -2988,6 +3432,20 @@ function downloadLocalRunDiagnostics(diagnostics: LocalRunDiagnostics) {
 
 function upsertDocument(items: UserDocument[], document: UserDocument): UserDocument[] {
   return [document, ...items.filter((item) => item.id !== document.id)]
+}
+
+function appendUnique(items: string[], item: string): string[] {
+  return items.includes(item) ? items : [...items, item]
+}
+
+function normalizeUploadFiles(input: File | File[] | FileList | undefined): File[] {
+  if (!input) {
+    return []
+  }
+  if (input instanceof File) {
+    return [input]
+  }
+  return Array.from(input).filter((file): file is File => file instanceof File)
 }
 
 function upsertWorkspace(items: LocalWorkspaceAuthorization[], workspace: LocalWorkspaceAuthorization): LocalWorkspaceAuthorization[] {

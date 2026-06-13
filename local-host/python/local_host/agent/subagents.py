@@ -21,10 +21,21 @@ Why this layout
 
 from __future__ import annotations
 
+import logging
+import os
+import re
+from collections.abc import Sequence
+from pathlib import Path
+
+import yaml
 from deepagents.backends import FilesystemBackend
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
+
+log = logging.getLogger("local_host.agent.subagents")
+
+SUBAGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 # ---- subagent system prompts -----------------------------------------------
 
@@ -62,8 +73,9 @@ def build_subagents(
     *,
     main_tools: list[BaseTool],
     main_model: str | BaseChatModel,
+    agent_roots: Sequence[Path] | None = None,
 ) -> list[SubAgent]:
-    """Assemble the starter subagent roster.
+    """Assemble the built-in + configured subagent roster.
 
     Args:
         main_tools: the parent agent's full tool list — researcher reuses
@@ -72,7 +84,31 @@ def build_subagents(
                     Keeping the same model means subagent LLM calls flow
                     through the same backend gateway as the parent (so
                     credits/throttling stay coherent).
+        agent_roots: optional roots to scan for `*.md` subagent definitions.
+                     `None` uses the runtime resolver; tests pass `[]` to
+                     exercise only the built-ins.
     """
+    subagents = _builtin_subagents(main_tools=main_tools, main_model=main_model)
+    configured = _load_configured_subagents(
+        main_tools=main_tools,
+        main_model=main_model,
+        agent_roots=_resolve_agent_roots() if agent_roots is None else list(agent_roots),
+    )
+
+    # Later definitions override earlier ones by name. This lets
+    # `~/.shejane/agents/writer.md` replace the generic built-in writer
+    # without producing two visually-identical choices for the model.
+    by_name: dict[str, SubAgent] = {}
+    for subagent in [*subagents, *configured]:
+        by_name[subagent["name"]] = subagent
+    return list(by_name.values())
+
+
+def _builtin_subagents(
+    *,
+    main_tools: list[BaseTool],
+    main_model: str | BaseChatModel,
+) -> list[SubAgent]:
     research_tool_names = {
         "web.fetch",
         "web.search",
@@ -115,6 +151,115 @@ def build_subagents(
         },
     ]
     return subagents
+
+
+def _resolve_agent_roots() -> list[Path]:
+    """Return existing directories that may contain Markdown subagents.
+
+    `SHEJANE_LOCAL_AGENTS_PATH` is a full override, matching the skills
+    resolver. When unset, SheJane scans its canonical user-owned root:
+    `~/.shejane/agents/*.md`.
+    """
+    custom = os.environ.get("SHEJANE_LOCAL_AGENTS_PATH", "").strip()
+    raw_paths = (
+        [p.strip() for p in custom.split(",") if p.strip()]
+        if custom
+        else [str(Path.home() / ".shejane" / "agents")]
+    )
+    roots: list[Path] = []
+    for raw in raw_paths:
+        candidate = Path(raw).expanduser()
+        if candidate.is_dir():
+            roots.append(candidate)
+    return roots
+
+
+def _load_configured_subagents(
+    *,
+    main_tools: list[BaseTool],
+    main_model: str | BaseChatModel,
+    agent_roots: Sequence[Path],
+) -> list[SubAgent]:
+    out: list[SubAgent] = []
+    for root in agent_roots:
+        for path in sorted(root.glob("*.md"), key=lambda p: p.name.lower()):
+            subagent = _load_subagent_file(path, main_tools=main_tools, main_model=main_model)
+            if subagent is not None:
+                out.append(subagent)
+    return out
+
+
+def _load_subagent_file(
+    path: Path,
+    *,
+    main_tools: list[BaseTool],
+    main_model: str | BaseChatModel,
+) -> SubAgent | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning("failed to read configured subagent %s: %s", path, exc)
+        return None
+
+    metadata, prompt = _split_frontmatter(text)
+    if not metadata or not prompt.strip():
+        return None
+
+    name = _clean_scalar(metadata.get("name"))
+    description = _clean_scalar(metadata.get("description"))
+    if not name or not description or not SUBAGENT_NAME_RE.fullmatch(name):
+        return None
+
+    allowed_tools = _normalize_tool_names(metadata.get("tools"))
+    selected_tools = _filter_tools(main_tools, allowed_tools)
+    return {
+        "name": name,
+        "description": description,
+        "system_prompt": prompt.strip(),
+        "model": main_model,
+        "tools": selected_tools,
+    }
+
+
+def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            raw_frontmatter = "\n".join(lines[1:index])
+            prompt = "\n".join(lines[index + 1 :])
+            try:
+                parsed = yaml.safe_load(raw_frontmatter) or {}
+            except yaml.YAMLError as exc:
+                log.warning("invalid subagent frontmatter: %s", exc)
+                return {}, prompt
+            if isinstance(parsed, dict):
+                return parsed, prompt
+            return {}, prompt
+    return {}, text
+
+
+def _clean_scalar(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _normalize_tool_names(value: object) -> set[str]:
+    if value is None or value == "":
+        return set()
+    if isinstance(value, str):
+        raw_names = value.split(",")
+    elif isinstance(value, list):
+        raw_names = value
+    else:
+        return set()
+    return {str(name).strip() for name in raw_names if str(name).strip()}
+
+
+def _filter_tools(main_tools: list[BaseTool], allowed_tool_names: set[str]) -> list[BaseTool]:
+    if not allowed_tool_names:
+        return []
+    return [tool for tool in main_tools if tool.name in allowed_tool_names]
 
 
 def build_subagent_backend(workspace_root: str | None) -> FilesystemBackend:

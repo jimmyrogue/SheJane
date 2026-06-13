@@ -130,4 +130,60 @@ describe('SkillsView — grouped catalog', () => {
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }))
     await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
   })
+
+  it('creates a personal skill from the inline editor', async () => {
+    const listInstalled = vi.fn().mockResolvedValue(catalog([]))
+    const onCreateSkill = vi.fn().mockResolvedValue(undefined)
+    renderView({ listInstalled, onCreateSkill })
+
+    fireEvent.click(await screen.findByRole('button', { name: '新建技能' }))
+    fireEvent.change(screen.getByLabelText('技能名称'), { target: { value: 'daily-digest' } })
+    fireEvent.change(screen.getByLabelText('描述'), { target: { value: '整理每日摘要' } })
+    fireEvent.change(screen.getByLabelText('SKILL.md'), { target: { value: '# Daily\n' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存技能' }))
+
+    await waitFor(() => {
+      expect(onCreateSkill).toHaveBeenCalledWith({
+        name: 'daily-digest',
+        description: '整理每日摘要',
+        content: '# Daily\n',
+      })
+    })
+    await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
+  })
+
+  it('edits and deletes personal skills only', async () => {
+    const onLoadSkill = vi.fn().mockResolvedValue({
+      name: 'my-skill',
+      description: 'mine here',
+      path: shejaneSkill.path,
+      root_path: shejaneSkill.root_path,
+      content: '# Mine\n',
+    })
+    const onUpdateSkill = vi.fn().mockResolvedValue(undefined)
+    const onDeleteSkill = vi.fn().mockResolvedValue(undefined)
+    renderView({
+      listInstalled: vi.fn().mockResolvedValue(catalog([shejaneSkill, claudeSkill])),
+      onLoadSkill,
+      onUpdateSkill,
+      onDeleteSkill,
+    })
+
+    await screen.findByText('my-skill')
+    expect(screen.queryByRole('button', { name: '编辑 claude-skill' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑 my-skill' }))
+    await waitFor(() => expect(onLoadSkill).toHaveBeenCalledWith('my-skill'))
+    fireEvent.change(await screen.findByLabelText('SKILL.md'), { target: { value: '# Updated\n' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存技能' }))
+    await waitFor(() => {
+      expect(onUpdateSkill).toHaveBeenCalledWith('my-skill', {
+        name: 'my-skill',
+        description: 'mine here',
+        content: '# Updated\n',
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '删除 my-skill' }))
+    await waitFor(() => expect(onDeleteSkill).toHaveBeenCalledWith('my-skill'))
+  })
 })

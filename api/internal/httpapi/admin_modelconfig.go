@@ -23,6 +23,8 @@ type adminModelConfigView struct {
 	Capability                  string         `json:"capability"`
 	ProviderKind                string         `json:"provider_kind"`
 	DisplayName                 string         `json:"display_name"`
+	Vendor                      string         `json:"vendor"`
+	CapabilityTier              string         `json:"capability_tier"`
 	Description                 string         `json:"description"`
 	Priority                    int            `json:"priority"`
 	BaseURL                     string         `json:"base_url"`
@@ -49,6 +51,8 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 		Capability:                  c.Capability,
 		ProviderKind:                c.ProviderKind,
 		DisplayName:                 c.DisplayName,
+		Vendor:                      c.Vendor,
+		CapabilityTier:              c.CapabilityTier,
 		Description:                 c.Description,
 		Priority:                    c.Priority,
 		BaseURL:                     c.BaseURL,
@@ -66,10 +70,14 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 }
 
 type modelConfigInput struct {
-	Slot         string `json:"slot"`
-	Capability   string `json:"capability"`
-	ProviderKind string `json:"provider_kind"`
-	DisplayName  string `json:"display_name"`
+	Slot         string  `json:"slot"`
+	Capability   string  `json:"capability"`
+	ProviderKind string  `json:"provider_kind"`
+	DisplayName  string  `json:"display_name"`
+	Vendor       *string `json:"vendor"`
+	// CapabilityTier is intentionally not a pointer: omitted/blank means
+	// preserve existing on PATCH or default to balanced on create.
+	CapabilityTier string `json:"capability_tier"`
 	// Description / Priority are pointers so a partial PATCH that omits them
 	// preserves the stored value (rather than zeroing the seeded catalog data).
 	Description                 *string        `json:"description"`
@@ -177,6 +185,22 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		writeError(w, http.StatusBadRequest, 40201, "该 provider_kind 不支持工具调用，无法加入聊天模型目录")
 		return store.ModelConfig{}, false
 	}
+	vendor := existing.Vendor
+	if input.Vendor != nil {
+		vendor = strings.TrimSpace(*input.Vendor)
+	}
+	capabilityTier := strings.TrimSpace(input.CapabilityTier)
+	if capabilityTier == "" {
+		capabilityTier = existing.CapabilityTier
+	}
+	if capabilityTier == "" {
+		capabilityTier = modelreg.CapabilityTierBalanced
+	}
+	capabilityTier = modelreg.NormalizeCapabilityTier(capabilityTier)
+	if capabilityTier == "" {
+		writeError(w, http.StatusBadRequest, 40201, "未知能力档位（支持 fast / balanced / reasoning / max）")
+		return store.ModelConfig{}, false
+	}
 	multiplier := input.CreditMultiplier
 	if multiplier <= 0 {
 		multiplier = 1
@@ -228,6 +252,8 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		Capability:                  capability,
 		ProviderKind:                providerKind,
 		DisplayName:                 strings.TrimSpace(input.DisplayName),
+		Vendor:                      vendor,
+		CapabilityTier:              capabilityTier,
 		Description:                 description,
 		Priority:                    priority,
 		BaseURL:                     strings.TrimSpace(input.BaseURL),
@@ -258,8 +284,9 @@ func modelConfigOptionalMultiplier(w http.ResponseWriter, input *float64, existi
 func validateModelConfigID(w http.ResponseWriter, modelID string, capability string) bool {
 	switch capability {
 	case modelreg.CapabilityChat:
-		if strings.EqualFold(modelID, "auto") {
-			writeError(w, http.StatusBadRequest, 40201, "auto 是系统保留模型 ID，不能作为后台模型 ID")
+		lowerModelID := strings.ToLower(modelID)
+		if lowerModelID == "auto" || strings.HasPrefix(lowerModelID, "auto.") {
+			writeError(w, http.StatusBadRequest, 40201, "auto 是系统保留模型 ID 前缀，不能作为后台模型 ID")
 			return false
 		}
 		if strings.ContainsFunc(modelID, unicode.IsSpace) {

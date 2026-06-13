@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { LocalRunDiagnostics } from '@/shared/local-host/client'
@@ -97,15 +97,40 @@ describe('DiagnosticsPanel', () => {
     expect(screen.getByText('依据 3')).toBeInTheDocument()
     expect(screen.getByText('cite source')).toBeInTheDocument()
   })
+
+  it('offers a checkpoint fork action when a checkpoint is available', async () => {
+    const onForkCheckpoint = vi.fn()
+    renderPanel(
+      {
+        latest_checkpoint: {
+          id: 'ckpt-1',
+          run_id: 'run-1',
+          step: 4,
+          reason: 'loop',
+          messages_count: 3,
+          created_at: '2026-06-13T00:00:00Z',
+        },
+      },
+      { onForkCheckpoint },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '从这里重试' }))
+
+    expect(onForkCheckpoint).toHaveBeenCalledWith('run-1', 'ckpt-1')
+  })
 })
 
-function renderPanel(overrides: Partial<LocalRunDiagnostics> = {}) {
+function renderPanel(
+  overrides: Partial<LocalRunDiagnostics> = {},
+  props: { onForkCheckpoint?: (runID: string, checkpointID: string) => void } = {},
+) {
   return render(
     <I18nProvider>
       <DiagnosticsPanel
         diagnostics={diagnostics(overrides)}
         onClose={() => undefined}
         onExport={() => undefined}
+        onForkCheckpoint={props.onForkCheckpoint}
       />
     </I18nProvider>,
   )

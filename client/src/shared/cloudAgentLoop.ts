@@ -92,6 +92,7 @@ export interface CloudAgentLoopResult {
   outputTokens: number
   steps: number
   hitStepCap: boolean
+  continuationMessages?: CloudLLMMessage[]
 }
 
 const DEFAULT_MAX_STEPS = 5
@@ -170,7 +171,15 @@ export async function runCloudAgentLoop(
   // Ran out of steps with tools still pending. Caller decides how to surface;
   // we return hitStepCap so it can append a note.
   appendMissingGeneratedImages(params.onDelta, pendingGeneratedImageURLs, '')
-  return { requestId, creditsCost, inputTokens, outputTokens, steps: maxSteps, hitStepCap: true }
+  return {
+    requestId,
+    creditsCost,
+    inputTokens,
+    outputTokens,
+    steps: maxSteps,
+    hitStepCap: true,
+    continuationMessages: messages,
+  }
 }
 
 /** Extract image URLs from an image.* tool result (`data.images[].url`). */

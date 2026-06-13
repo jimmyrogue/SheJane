@@ -85,6 +85,8 @@ func conformModelCatalog(t *testing.T, s Store) {
 		Capability:       "chat",
 		ProviderKind:     "deepseek-v4",
 		DisplayName:      "DeepSeek V4",
+		Vendor:           "DeepSeek",
+		CapabilityTier:   "reasoning",
 		Description:      "通用快速模型",
 		ModelName:        "deepseek-v4",
 		CreditMultiplier: 1,
@@ -94,21 +96,23 @@ func conformModelCatalog(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatalf("UpsertModelConfig: %v", err)
 	}
-	if saved.Description != "通用快速模型" || saved.Priority != 50 {
-		t.Fatalf("upsert returned description=%q priority=%d, want 通用快速模型/50", saved.Description, saved.Priority)
+	if saved.Description != "通用快速模型" || saved.Priority != 50 || saved.Vendor != "DeepSeek" || saved.CapabilityTier != "reasoning" {
+		t.Fatalf("upsert returned description=%q priority=%d vendor=%q tier=%q, want catalog fields", saved.Description, saved.Priority, saved.Vendor, saved.CapabilityTier)
 	}
 
 	got, err := s.GetModelConfig(ctx, saved.ID)
 	if err != nil {
 		t.Fatalf("GetModelConfig: %v", err)
 	}
-	if got.Description != "通用快速模型" || got.Priority != 50 {
-		t.Fatalf("get returned description=%q priority=%d, want 通用快速模型/50", got.Description, got.Priority)
+	if got.Description != "通用快速模型" || got.Priority != 50 || got.Vendor != "DeepSeek" || got.CapabilityTier != "reasoning" {
+		t.Fatalf("get returned description=%q priority=%d vendor=%q tier=%q, want catalog fields", got.Description, got.Priority, got.Vendor, got.CapabilityTier)
 	}
 
 	// Update priority/description and confirm persistence.
 	got.Priority = 10
 	got.Description = "降级"
+	got.Vendor = "ChatGPT"
+	got.CapabilityTier = "balanced"
 	if _, err := s.UpsertModelConfig(ctx, "", got); err != nil {
 		t.Fatalf("UpsertModelConfig (update): %v", err)
 	}
@@ -116,8 +120,8 @@ func conformModelCatalog(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatalf("GetModelConfig (reload): %v", err)
 	}
-	if reloaded.Priority != 10 || reloaded.Description != "降级" {
-		t.Fatalf("reloaded description=%q priority=%d, want 降级/10", reloaded.Description, reloaded.Priority)
+	if reloaded.Priority != 10 || reloaded.Description != "降级" || reloaded.Vendor != "ChatGPT" || reloaded.CapabilityTier != "balanced" {
+		t.Fatalf("reloaded description=%q priority=%d vendor=%q tier=%q, want updated catalog fields", reloaded.Description, reloaded.Priority, reloaded.Vendor, reloaded.CapabilityTier)
 	}
 
 	list, err := s.ListModelConfigs(ctx, "chat")

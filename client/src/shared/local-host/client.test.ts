@@ -8,13 +8,26 @@ import {
   getLocalArtifact,
   listAuthorizedWorkspaces,
   listInstalledSkills,
+  createMcpServer,
+  deleteMcpServer,
+  createLocalSkill,
+  getLocalSkillFile,
+  updateLocalSkill,
+  deleteLocalSkill,
+  cancelLocalSchedule,
+  createLocalSchedule,
   listLocalRuns,
+  listLocalSchedules,
+  markLocalScheduleNotified,
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermission,
   setLocalCloudSession,
   clearLocalCloudSession,
+  forkLocalRun,
   streamLocalRun,
+  injectLocalRunInstruction,
+  resolveLocalPlanApproval,
 } from './client'
 
 describe('desktop local host client', () => {
@@ -266,6 +279,44 @@ describe('desktop local host client', () => {
     expect('settings' in sent).toBe(false)
   })
 
+  it('forks a local run from a checkpoint through the protected run API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-fork',
+          goal: 'Retry from checkpoint',
+          status: 'queued',
+          parent_run_id: 'run-source',
+          created_at: '2026-06-13T00:00:00Z',
+          updated_at: '2026-06-13T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      forkLocalRun(
+        'run-source',
+        { checkpointId: 'ckpt-1', goal: 'Retry from checkpoint', mode: 'auto' },
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ id: 'run-fork', parent_run_id: 'run-source' })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs/run-source/fork',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+        body: JSON.stringify({
+          checkpoint_id: 'ckpt-1',
+          goal: 'Retry from checkpoint',
+          model: 'auto',
+        }),
+      }),
+    )
+  })
+
   it('lists installed skills and roots from the local host', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -287,6 +338,110 @@ describe('desktop local host client', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/skills',
       expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('creates and deletes a SheJane-managed MCP server', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            server: {
+              name: 'context7',
+              transport: 'stdio',
+              source: 'shejane',
+              source_path: '/u/.shejane/mcp-servers.json',
+              command: 'npx',
+              args: ['-y', '@upstash/context7-mcp'],
+              env_keys: [],
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ deleted: true, name: 'context7' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+
+    await createMcpServer(
+      {
+        name: 'context7',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@upstash/context7-mcp'],
+        env: {},
+      },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+    await deleteMcpServer(
+      'context7',
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/mcp-servers',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+        body: JSON.stringify({
+          name: 'context7',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['-y', '@upstash/context7-mcp'],
+          env: {},
+        }),
+      }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/mcp-servers/context7',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+      }),
+    )
+  })
+
+  it('creates, loads, updates, and deletes a local skill file', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ skill: { name: 'daily', content: '# Daily' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ name: 'daily', content: '# Daily' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ skill: { name: 'daily', content: '# Updated' } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ deleted: true, name: 'daily' }), { status: 200 }))
+
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+    await createLocalSkill({ name: 'daily', description: 'Digest', content: '# Daily' }, config, fetcher)
+    await getLocalSkillFile('daily', config, fetcher)
+    await updateLocalSkill('daily', { description: '', content: '# Updated' }, config, fetcher)
+    await deleteLocalSkill('daily', config, fetcher)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/skills',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'daily', description: 'Digest', content: '# Daily' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/skills/daily',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:17371/local/v1/skills/daily',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ description: '', content: '# Updated' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:17371/local/v1/skills/daily',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 
@@ -407,6 +562,73 @@ describe('desktop local host client', () => {
       3,
       'http://127.0.0.1:17371/local/v1/artifacts/artifact-1',
       expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('injects mid-run steering instructions through the protected run API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          run_id: 'run-active',
+          instruction_id: 'steer-1',
+          queued: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      injectLocalRunInstruction(
+        'run-active',
+        'Focus on the failing tests before editing.',
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ queued: true, instruction_id: 'steer-1' })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs/run-active/inject',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+        body: JSON.stringify({ content: 'Focus on the failing tests before editing.' }),
+      }),
+    )
+  })
+
+  it('posts plan approval decisions with optional modification instructions', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          approval_id: 'plan-1',
+          resolved: true,
+          decision: 'modify',
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      resolveLocalPlanApproval(
+        'plan-1',
+        'modify',
+        'Add a verification step.',
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toBeUndefined()
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/plans/plan-1',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer local-token',
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({ decision: 'modify', instructions: 'Add a verification step.' }),
+      }),
     )
   })
 
@@ -566,6 +788,136 @@ describe('desktop local host client', () => {
       2,
       'http://127.0.0.1:17371/local/v1/runs/run-1/diagnostics',
       expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+  })
+
+  it('manages scheduled local runs', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'sched-1',
+            goal: '稍后跑',
+            status: 'scheduled',
+            run_at: '2026-06-13T10:00:00Z',
+            created_at: '2026-06-13T09:00:00Z',
+            updated_at: '2026-06-13T09:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            schedules: [
+              {
+                id: 'sched-1',
+                goal: '稍后跑',
+                status: 'completed',
+                run_at: '2026-06-13T10:00:00Z',
+                result_text: '完成了',
+                created_at: '2026-06-13T09:00:00Z',
+                updated_at: '2026-06-13T10:01:00Z',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'sched-1',
+            goal: '稍后跑',
+            status: 'completed',
+            run_at: '2026-06-13T10:00:00Z',
+            notified_at: '2026-06-13T10:02:00Z',
+            created_at: '2026-06-13T09:00:00Z',
+            updated_at: '2026-06-13T10:02:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'sched-2',
+            goal: '取消',
+            status: 'canceled',
+            run_at: '2026-06-13T11:00:00Z',
+            created_at: '2026-06-13T09:00:00Z',
+            updated_at: '2026-06-13T09:10:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+
+    await expect(
+      createLocalSchedule(
+        {
+          goal: '稍后跑',
+          runAt: '2026-06-13T10:00:00Z',
+          mode: 'auto',
+          history: [{ role: 'user', content: '背景' }],
+          settings: {
+            memory: 'on',
+            skills: 'on',
+            mcp: 'on',
+            mcpDisabled: [],
+            advanced: {},
+          },
+        },
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ id: 'sched-1', status: 'scheduled' })
+    await expect(
+      listLocalSchedules(
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        { notifyPending: true },
+        fetcher,
+      ),
+    ).resolves.toEqual([expect.objectContaining({ id: 'sched-1', result_text: '完成了' })])
+    await expect(
+      markLocalScheduleNotified('sched-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher),
+    ).resolves.toMatchObject({ notified_at: '2026-06-13T10:02:00Z' })
+    await expect(
+      cancelLocalSchedule('sched-2', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher),
+    ).resolves.toMatchObject({ status: 'canceled' })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/schedules',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          goal: '稍后跑',
+          run_at: '2026-06-13T10:00:00Z',
+          model: 'auto',
+          history: [{ role: 'user', content: '背景' }],
+          settings: {
+            memory: 'on',
+            skills: 'on',
+            mcp: 'on',
+          },
+        }),
+      }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/schedules?notify_pending=true',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:17371/local/v1/schedules/sched-1/notified',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:17371/local/v1/schedules/sched-2',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 })

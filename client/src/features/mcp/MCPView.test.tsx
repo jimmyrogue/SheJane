@@ -152,4 +152,64 @@ describe('MCPView', () => {
     fireEvent.click(screen.getByRole('button', { name: /刷新/ }))
     await waitFor(() => expect(listCatalog).toHaveBeenCalledTimes(2))
   })
+
+  it('creates a personal MCP server from the inline form', async () => {
+    const listCatalog = vi.fn().mockResolvedValue(makeCatalog([]))
+    const onCreateServer = vi.fn().mockResolvedValue(undefined)
+    renderView({ listCatalog, onCreateServer })
+
+    fireEvent.click(await screen.findByRole('button', { name: '添加服务' }))
+    fireEvent.change(screen.getByLabelText('服务名称'), { target: { value: 'context7' } })
+    fireEvent.change(screen.getByLabelText('命令'), { target: { value: 'npx' } })
+    fireEvent.change(screen.getByLabelText('参数'), { target: { value: '-y @upstash/context7-mcp' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存服务' }))
+
+    await waitFor(() => {
+      expect(onCreateServer).toHaveBeenCalledWith({
+        name: 'context7',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@upstash/context7-mcp'],
+        env: {},
+      })
+    })
+    await waitFor(() => expect(listCatalog).toHaveBeenCalledTimes(2))
+  })
+
+  it('edits and deletes only personal MCP servers', async () => {
+    const personal: McpServerInfo = {
+      ...githubServer,
+      name: 'context7',
+      source: 'shejane',
+      source_path: '/u/.shejane/mcp-servers.json',
+      command: 'npx',
+      args: ['-y', '@upstash/context7-mcp'],
+      env_keys: [],
+    }
+    const onUpdateServer = vi.fn().mockResolvedValue(undefined)
+    const onDeleteServer = vi.fn().mockResolvedValue(undefined)
+    renderView({
+      listCatalog: vi.fn().mockResolvedValue(makeCatalog([personal, githubServer])),
+      onUpdateServer,
+      onDeleteServer,
+    })
+
+    await screen.findByText('context7')
+    expect(screen.queryByRole('button', { name: '编辑 github' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑 context7' }))
+    fireEvent.change(screen.getByLabelText('参数'), { target: { value: '-y @upstash/context7-mcp --fresh' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存服务' }))
+    await waitFor(() => {
+      expect(onUpdateServer).toHaveBeenCalledWith('context7', {
+        name: 'context7',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@upstash/context7-mcp', '--fresh'],
+        env: {},
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '删除 context7' }))
+    await waitFor(() => expect(onDeleteServer).toHaveBeenCalledWith('context7'))
+  })
 })

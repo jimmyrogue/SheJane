@@ -44,10 +44,11 @@ type Completion struct {
 }
 
 type Chunk struct {
-	Text         string
-	InputTokens  int
-	OutputTokens int
-	FinishReason string
+	Text             string
+	ReasoningContent string
+	InputTokens      int
+	OutputTokens     int
+	FinishReason     string
 }
 
 type Provider interface {

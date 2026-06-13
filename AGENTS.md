@@ -85,7 +85,7 @@ make smoke-stripe-webhook
 - User-facing model selection is `Auto` plus enabled chat models from `GET /api/v1/models`.
 - The stable model ID is stored in `model_configs.slot` for compatibility, but UI/docs should call it "model ID".
 - Chat model IDs are admin-defined strings such as `gpt-4o`, `claude-sonnet`, `deepseek-v4`, or legacy `chat.fast`; they must not be `auto`, blank, contain whitespace, or exceed the current `VARCHAR(40)` database limit.
-- `Auto` is reserved. The Go API resolves it once per run through `POST /api/v1/models/resolve` and emits `model.selected`.
+- `Auto` and the `auto.` prefix are reserved. The Go API resolves `auto`, `auto.fast`, and `auto.smart` once per run through `POST /api/v1/models/resolve` and emits `model.selected`; the latter two are Auto intent sentinels, not concrete model IDs.
 - Do not reintroduce fast/deep UX or daemon-side model classifiers. `chat.fast` and `chat.deep` are seed IDs, not fixed product tiers.
 - Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
 - Text model billing is relative to DeepSeek Pro = 1. Configure input and output token multipliers separately; legacy `credit_multiplier` is only the fallback when split fields are unset. Global markup remains the product margin knob.

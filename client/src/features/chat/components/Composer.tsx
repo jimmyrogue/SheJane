@@ -3,6 +3,7 @@ import {
   IconArrowUp,
   IconFolder,
   IconFolderPlus,
+  IconInfoCircle,
   IconLoader2,
   IconPaperclip,
   IconPlayerStopFilled,
@@ -68,12 +69,15 @@ export function Composer({
   isSending,
   hasActiveRun = false,
   attachedDocument,
+  attachedDocuments,
   attachedPreview,
+  attachedPreviews,
   isUploading,
   uploadProgress,
   onUploadDocument,
   onDetachDocument,
   onSend,
+  onAppendInstruction,
   onStop,
   listSkills,
   listMcpServers,
@@ -97,9 +101,11 @@ export function Composer({
    *  cases. */
   hasActiveRun?: boolean
   attachedDocument?: UserDocument
+  attachedDocuments?: UserDocument[]
   /** Inline data: URL for image previews. Non-image documents leave
    *  this undefined and we fall back to a file-icon tile. */
   attachedPreview?: string
+  attachedPreviews?: Record<string, string | undefined>
   isUploading: boolean
   /** 0..100 percentage during an in-flight upload, undefined when
    *  idle. Used to render a determinate progress overlay on the
@@ -108,9 +114,11 @@ export function Composer({
    *  like the app froze. When undefined but `isUploading` is true,
    *  the indeterminate spinner is shown instead. */
   uploadProgress?: number
-  onUploadDocument: (file?: File) => void
-  onDetachDocument: () => void
+  onUploadDocument: (file?: File | File[] | FileList) => void
+  onDetachDocument: (documentId?: string) => void
   onSend: () => void
+  /** Append a user instruction into the currently active local run. */
+  onAppendInstruction?: () => void
   /** Cancel the in-flight run. Shown as a "stop" button in place of
    *  "send" while `isSending` OR `hasActiveRun` is true. */
   onStop?: () => void
@@ -149,8 +157,20 @@ export function Composer({
   // OR while a run is still cancelable outside that promise (local HITL
   // pauses, or a web cloud tool loop with an active AbortController).
   const canStop = (isSending || hasActiveRun) && Boolean(onStop)
+  const steeringMode = hasActiveRun && Boolean(onAppendInstruction)
+  const sendLabel = steeringMode ? t('composer.appendInstruction') : t('composer.send')
+  const sendTitle = steeringMode ? t('composer.appendInstruction') : t('composer.kbdHint')
+  const handleSend = steeringMode ? onAppendInstruction : onSend
   const [isDragging, setIsDragging] = useState(false)
   const dragDepthRef = useRef(0)
+  const visibleAttachments = attachedDocuments ?? (attachedDocument ? [attachedDocument] : [])
+  const attachmentToolHint =
+    visibleAttachments.length > 0 && slashCommandsEnabled && !steeringMode
+      ? {
+          label: t('composer.attachmentToolStatus'),
+          title: t('composer.attachmentToolStatusTitle'),
+        }
+      : null
 
   function openFilePicker() {
     if (isUploading) {
@@ -231,9 +251,9 @@ export function Composer({
     if (isUploading) {
       return
     }
-    const file = event.dataTransfer.files?.[0]
-    if (file) {
-      onUploadDocument(file)
+    const files = event.dataTransfer.files
+    if (files && files.length > 0) {
+      onUploadDocument(files)
     }
   }
 
@@ -247,34 +267,37 @@ export function Composer({
       onDrop={handleDrop}
     >
       <div className="composer-input">
-        {attachedDocument ? (
+        {visibleAttachments.length > 0 ? (
           <div className="composer-chips">
-            {(() => {
+            {visibleAttachments.map((document) => {
               // Compute the expiry hint once per render. Only surface
               // it after the document is "ready" — while uploading or
               // processing, the expires_at field exists but is moot
               // (the user can't even reuse the file yet), and showing
               // "expires in 7 days" next to a spinner reads as noise.
               const expiryHint =
-                attachedDocument.status === 'ready'
-                  ? formatDocumentExpiry(attachedDocument.expires_at, new Date(), t)
+                document.status === 'ready'
+                  ? formatDocumentExpiry(document.expires_at, new Date(), t)
                   : null
               const tooltip = expiryHint
-                ? `${attachedDocument.original_name} · ${expiryHint}`
-                : attachedDocument.original_name
+                ? `${document.original_name} · ${expiryHint}`
+                : document.original_name
+              const preview = attachedPreviews?.[document.id] ?? (
+                visibleAttachments.length === 1 ? attachedPreview : undefined
+              )
               return (
-            <div className="attachment-tile">
+            <div className="attachment-tile" key={document.id}>
             <div
-              className={`attachment-thumb status-${attachedDocument.status}`}
+              className={`attachment-thumb status-${document.status}`}
               title={tooltip}
             >
-              {attachedPreview ? (
-                <img src={attachedPreview} alt={attachedDocument.original_name} className="attachment-thumb-image" />
+              {preview ? (
+                <img src={preview} alt={document.original_name} className="attachment-thumb-image" />
               ) : (
                 (() => {
                   const { colorKey, glyph, label } = fileIconFor(
-                    attachedDocument.original_name,
-                    attachedDocument.content_type,
+                    document.original_name,
+                    document.content_type,
                   )
                   return (
                     <div
@@ -287,7 +310,7 @@ export function Composer({
                   )
                 })()
               )}
-              {attachedDocument.status !== 'ready' && attachedDocument.status !== 'failed' ? (
+              {document.status !== 'ready' && document.status !== 'failed' ? (
                 <div
                   className="attachment-thumb-overlay"
                   aria-hidden="true"
@@ -322,7 +345,7 @@ export function Composer({
                 className="attachment-thumb-remove"
                 aria-label={t('composer.removeAttachment')}
                 title={t('composer.removeAttachment')}
-                onClick={onDetachDocument}
+                onClick={() => onDetachDocument(document.id)}
               >
                 <IconX size={12} aria-hidden="true" />
               </Button>
@@ -339,17 +362,17 @@ export function Composer({
               ) : null}
             </div>
               )
-            })()}
+            })}
           </div>
         ) : null}
         <SkillEditor
           draft={draft}
           onDraftChange={onDraftChange}
-          onSend={onSend}
+          onSend={() => handleSend?.()}
           listSkills={listSkills}
           listMcpServers={listMcpServers}
           commandsEnabled={slashCommandsEnabled}
-          placeholder={t('composer.placeholder')}
+          placeholder={steeringMode ? t('composer.steeringPlaceholder') : t('composer.placeholder')}
         />
       </div>
       {/* Tools row below the input — borderless, hover-darken icons; the
@@ -361,7 +384,7 @@ export function Composer({
           className="composer-tool"
           aria-label={t('composer.attachmentTitle')}
           title={t('composer.attachmentTitle')}
-          disabled={isUploading}
+          disabled={isUploading || steeringMode}
           onClick={openFilePicker}
         >
           {isUploading ? (
@@ -370,6 +393,16 @@ export function Composer({
             <IconPaperclip size={16} aria-hidden="true" />
           )}
         </button>
+        {attachmentToolHint ? (
+          <span
+            className="composer-capability-chip"
+            role="status"
+            title={attachmentToolHint.title}
+          >
+            <IconInfoCircle size={14} aria-hidden="true" />
+            <span>{attachmentToolHint.label}</span>
+          </span>
+        ) : null}
         {/* Workspace/project binding is a local-daemon concept — hidden on web. */}
         {!isDesktop ? null : projectName ? (
           // Locked chip — once bound, project can't be changed without
@@ -389,13 +422,13 @@ export function Composer({
             className="composer-tool composer-project-button"
             aria-label={t('composer.projectPicker.add')}
             title={t('composer.projectPicker.tooltip')}
-            disabled={!onSelectProject || isSending}
+            disabled={!onSelectProject || isSending || steeringMode}
             onClick={() => onSelectProject?.()}
           >
             <IconFolderPlus size={16} aria-hidden="true" />
           </button>
         )}
-        <ModeSelector mode={mode} models={models} onChange={onModeChange} disabled={isSending} />
+        <ModeSelector mode={mode} models={models} onChange={onModeChange} disabled={isSending || steeringMode} />
         {canStop ? (
           <button
             type="button"
@@ -407,31 +440,33 @@ export function Composer({
             <IconPlayerStopFilled size={14} aria-hidden="true" />
             <span className="sr-only">{t('composer.stop')}</span>
           </button>
-        ) : (
+        ) : null}
+        {!canStop || steeringMode ? (
           <button
             type="button"
             className="composer-send"
-            aria-label={t('composer.send')}
-            disabled={isSending || !draft.trim()}
-            title={t('composer.kbdHint')}
-            onClick={onSend}
+            aria-label={sendLabel}
+            disabled={steeringMode ? !draft.trim() : isSending || !draft.trim()}
+            title={sendTitle}
+            onClick={() => handleSend?.()}
           >
             <IconArrowUp size={16} aria-hidden="true" />
-            <span className="sr-only">{t('composer.send')}</span>
+            <span className="sr-only">{sendLabel}</span>
           </button>
-        )}
+        ) : null}
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests
             and screen readers can find it. */}
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept={documentAccept}
           aria-label={t('composer.upload')}
           disabled={isUploading}
           style={{ display: 'none' }}
           onChange={(event) => {
-            onUploadDocument(event.currentTarget.files?.[0])
+            onUploadDocument(event.currentTarget.files ?? undefined)
             event.currentTarget.value = ''
           }}
         />

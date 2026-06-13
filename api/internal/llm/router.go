@@ -1,5 +1,7 @@
 package llm
 
+import "strings"
+
 // ModelResolveFunc resolves a catalog model id to a live provider/model/credit
 // multiplier. The id is persisted in the legacy model_configs.slot column. ok
 // is false when the id is not an enabled catalog model (caller falls back to
@@ -67,12 +69,13 @@ func (r *Router) SetModelBillingResolver(resolve ModelBillingFunc) {
 }
 
 // resolveModelID maps a requested model field to a concrete catalog id for
-// low-level chat calls: a valid catalog id passes through; "auto" / "" / an
-// unknown id fall back to the default (highest-priority enabled) model. Higher
-// level run endpoints resolve "auto" once with the task-aware Auto resolver
-// before they call into this router.
+// low-level chat calls: a valid catalog id passes through; Auto sentinels
+// ("auto", "auto.fast", "auto.smart") / "" / unknown ids fall back to the
+// default (highest-priority enabled) model. Higher level run endpoints resolve
+// Auto once with the task-aware Auto resolver before they call into this router.
 func (r *Router) resolveModelID(modelID string) string {
-	if modelID != "" && modelID != "auto" && r.resolveModel != nil {
+	modelID = strings.TrimSpace(modelID)
+	if modelID != "" && modelID != "auto" && !strings.HasPrefix(modelID, "auto.") && r.resolveModel != nil {
 		if _, _, _, ok := r.resolveModel(modelID); ok {
 			return modelID
 		}

@@ -538,14 +538,30 @@ func TestAutoModelResolveEndpointAndRunEvent(t *testing.T) {
 		t.Fatalf("resolved = %+v, want chat.fast/快速", resolved.Data)
 	}
 
+	smartReq := httptest.NewRequest(http.MethodPost, "/api/v1/models/resolve", strings.NewReader(`{"goal":"   ","intent":"smart"}`))
+	smartReq.Header.Set("Authorization", "Bearer "+token)
+	smartReq.Header.Set("Content-Type", "application/json")
+	smartRec := httptest.NewRecorder()
+	server.ServeHTTP(smartRec, smartReq)
+	if smartRec.Code != http.StatusOK {
+		t.Fatalf("smart resolve status = %d, body = %s", smartRec.Code, smartRec.Body.String())
+	}
+	var smartResolved apiResponse[resolvedModelPayload]
+	if err := json.Unmarshal(smartRec.Body.Bytes(), &smartResolved); err != nil {
+		t.Fatalf("decode smart resolve: %v", err)
+	}
+	if smartResolved.Data.ModelID != "chat.deep" || smartResolved.Data.Reason != "能力优先" {
+		t.Fatalf("smart resolved = %+v, want chat.deep/能力优先", smartResolved.Data)
+	}
+
 	// An "auto" cloud run resolves once and surfaces model.selected.
-	run := createAgentRun(t, server, token, `{"goal":"帮我写周报","model":"auto"}`)
+	run := createAgentRun(t, server, token, `{"goal":"偏好测试","model":"auto.smart"}`)
 	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
 	stream.Header.Set("Authorization", "Bearer "+token)
 	streamRecorder := httptest.NewRecorder()
 	server.ServeHTTP(streamRecorder, stream)
 	body := streamRecorder.Body.String()
-	for _, want := range []string{`model.selected`, `"resolved_model_id":"chat.fast"`, `"label":"快速"`, "run.completed"} {
+	for _, want := range []string{`model.selected`, `"requested_model":"auto.smart"`, `"requested_label":"更强"`, `"resolved_model_id":"chat.deep"`, `"label":"深度"`, "run.completed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("auto run stream missing %q: %s", want, body)
 		}
@@ -661,6 +677,9 @@ func TestAgentToolCapabilitiesRequireAuthAndHideUnconfiguredTavily(t *testing.T)
 	}
 	if !strings.Contains(recorder.Body.String(), `"max_results"`) || strings.Contains(recorder.Body.String(), `"maxResults"`) {
 		t.Fatalf("capabilities should use model-facing argument name max_results: %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"web_tool_loop_max_steps":5`) {
+		t.Fatalf("capabilities missing web tool loop step cap: %s", recorder.Body.String())
 	}
 }
 
@@ -923,6 +942,40 @@ func TestAgentRunWithDocumentAttachmentEmitsDocumentToolEvents(t *testing.T) {
 	for _, want := range []string{"document-analysis", "document.read", "tool.requested", "tool.completed", "run.completed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agent document stream missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestAgentRunWithMultipleDocumentAttachmentsEmitsDocumentToolEvents(t *testing.T) {
+	server, objects := newDocumentTestServer(t, nil)
+	token := registerAndToken(t, server)
+	firstUpload := createDocumentUpload(t, server, token, "brief.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := objects.PutObject(t.Context(), firstUpload.Document.SourceObjectKey, firstUpload.Document.ContentType, minimalDocx("The roadmap risk is delayed billing.")); err != nil {
+		t.Fatalf("put first source object: %v", err)
+	}
+	completeDocument(t, server, token, firstUpload.Document.ID)
+	secondUpload := createDocumentUpload(t, server, token, "budget.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 512)
+	if err := objects.PutObject(t.Context(), secondUpload.Document.SourceObjectKey, secondUpload.Document.ContentType, minimalDocx("The budget risk is unpaid invoices.")); err != nil {
+		t.Fatalf("put second source object: %v", err)
+	}
+	completeDocument(t, server, token, secondUpload.Document.ID)
+
+	body := fmt.Sprintf(`{"goal":"综合两份文档的风险","model":"chat.fast","attachments":[{"type":"document","document_id":%q,"name":"brief.docx"},{"type":"document","document_id":%q,"name":"budget.docx"}]}`, firstUpload.Document.ID, secondUpload.Document.ID)
+	run := createAgentRun(t, server, token, body)
+	stream := httptest.NewRequest(http.MethodGet, "/api/v1/agent/runs/"+run.ID+"/stream", nil)
+	stream.Header.Set("Authorization", "Bearer "+token)
+	streamRecorder := httptest.NewRecorder()
+	server.ServeHTTP(streamRecorder, stream)
+	if streamRecorder.Code != http.StatusOK {
+		t.Fatalf("agent document stream status = %d, body = %s", streamRecorder.Code, streamRecorder.Body.String())
+	}
+	streamBody := streamRecorder.Body.String()
+	if strings.Count(streamBody, `"event_type":"tool.requested"`) < 2 || strings.Count(streamBody, `"event_type":"tool.completed"`) < 2 {
+		t.Fatalf("agent document stream should read both documents: %s", streamBody)
+	}
+	for _, want := range []string{firstUpload.Document.ID, secondUpload.Document.ID, "brief.docx", "budget.docx", "run.completed"} {
+		if !strings.Contains(streamBody, want) {
+			t.Fatalf("agent document stream missing %q: %s", want, streamBody)
 		}
 	}
 }

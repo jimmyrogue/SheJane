@@ -1,4 +1,4 @@
-import { IconDownload, IconX } from '@tabler/icons-react'
+import { IconGitBranch, IconDownload, IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -32,10 +32,12 @@ export function DiagnosticsPanel({
   diagnostics,
   onClose,
   onExport,
+  onForkCheckpoint,
 }: {
   diagnostics: LocalRunDiagnostics | null
   onClose: () => void
   onExport: () => void
+  onForkCheckpoint?: (runID: string, checkpointID: string) => void
 }) {
   const { t } = useI18n()
   const handoffNextActions = diagnostics?.handoff ? localizedNextActions(t, diagnostics.handoff) : []
@@ -83,13 +85,26 @@ export function DiagnosticsPanel({
               <Badge variant="outline">{t('diagnostics.artifacts', { count: diagnostics.artifacts.length })}</Badge>
             </div>
             {diagnostics.latest_checkpoint ? (
-              <small className="diagnostics-checkpoint block rounded-md border bg-muted/40 p-3">
-                {t('diagnostics.checkpoint', {
-                  id: diagnostics.latest_checkpoint.id,
-                  reason: diagnostics.latest_checkpoint.reason,
-                  count: diagnostics.latest_checkpoint.messages_count,
-                })}
-              </small>
+              <section className="diagnostics-checkpoint flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 p-3 text-sm">
+                <small>
+                  {t('diagnostics.checkpoint', {
+                    id: diagnostics.latest_checkpoint.id,
+                    reason: diagnostics.latest_checkpoint.reason,
+                    count: diagnostics.latest_checkpoint.messages_count,
+                  })}
+                </small>
+                {onForkCheckpoint ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onForkCheckpoint(diagnostics.run.id, diagnostics.latest_checkpoint!.id)}
+                  >
+                    <IconGitBranch size={14} />
+                    {t('diagnostics.retryFromCheckpoint')}
+                  </Button>
+                ) : null}
+              </section>
             ) : null}
             {diagnostics.handoff ? (
               <section className="diagnostics-handoff space-y-2 rounded-md border bg-muted/30 p-3 text-sm">

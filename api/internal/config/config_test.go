@@ -19,6 +19,16 @@ func TestLoadProviderKinds(t *testing.T) {
 	}
 }
 
+func TestLoadWebToolLoopMaxSteps(t *testing.T) {
+	t.Setenv("WEB_TOOL_LOOP_MAX_STEPS", "9")
+
+	cfg := Load()
+
+	if cfg.WebToolLoopMaxSteps != 9 {
+		t.Fatalf("WebToolLoopMaxSteps = %d, want 9", cfg.WebToolLoopMaxSteps)
+	}
+}
+
 func TestLoadStrictRejectsProductionWeakSecrets(t *testing.T) {
 	t.Setenv("SHEJANE_ENV", "production")
 	t.Setenv("JWT_SECRET", "replace-with-a-long-random-secret")

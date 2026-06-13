@@ -134,6 +134,81 @@
         "title": "CreateRunRequest",
         "type": "object"
       },
+      "CreateScheduledRunRequest": {
+        "properties": {
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "model": {
+            "default": "auto",
+            "title": "Model",
+            "type": "string"
+          },
+          "run_at": {
+            "title": "Run At",
+            "type": "string"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "goal",
+          "run_at"
+        ],
+        "title": "CreateScheduledRunRequest",
+        "type": "object"
+      },
       "CreateWorkspaceRequest": {
         "properties": {
           "label": {
@@ -758,6 +833,65 @@
         "title": "FeatureLedger",
         "type": "object"
       },
+      "ForkRunRequest": {
+        "properties": {
+          "checkpoint_id": {
+            "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          }
+        },
+        "required": [
+          "checkpoint_id"
+        ],
+        "title": "ForkRunRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -809,6 +943,43 @@
           "pairing_configured"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "InjectRunInstructionRequest": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "InjectRunInstructionRequest",
+        "type": "object"
+      },
+      "InjectRunInstructionResponse": {
+        "properties": {
+          "instruction_id": {
+            "title": "Instruction Id",
+            "type": "string"
+          },
+          "queued": {
+            "const": true,
+            "default": true,
+            "title": "Queued",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "instruction_id"
+        ],
+        "title": "InjectRunInstructionResponse",
         "type": "object"
       },
       "LatestCheckpoint": {
@@ -876,6 +1047,22 @@
           "runs"
         ],
         "title": "ListRunsResponse",
+        "type": "object"
+      },
+      "ListScheduledRunsResponse": {
+        "properties": {
+          "schedules": {
+            "items": {
+              "$ref": "#/components/schemas/LocalScheduledRun"
+            },
+            "title": "Schedules",
+            "type": "array"
+          }
+        },
+        "required": [
+          "schedules"
+        ],
+        "title": "ListScheduledRunsResponse",
         "type": "object"
       },
       "ListWorkspacesResponse": {
@@ -1187,6 +1374,137 @@
         "title": "LocalRunDiagnostics",
         "type": "object"
       },
+      "LocalScheduledRun": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "history_json": {
+            "default": "[]",
+            "title": "History Json",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata_json": {
+            "default": "{}",
+            "title": "Metadata Json",
+            "type": "string"
+          },
+          "model": {
+            "default": "auto",
+            "title": "Model",
+            "type": "string"
+          },
+          "notified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notified At"
+          },
+          "result_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Text"
+          },
+          "run_at": {
+            "title": "Run At",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "settings_json": {
+            "default": "{}",
+            "title": "Settings Json",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "scheduled",
+              "running",
+              "completed",
+              "failed",
+              "canceled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
+          }
+        },
+        "required": [
+          "id",
+          "goal",
+          "status",
+          "run_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalScheduledRun",
+        "type": "object"
+      },
       "LocalWorkspaceAuthorization": {
         "properties": {
           "created_at": {
@@ -1295,6 +1613,24 @@
         "title": "McpServerCatalog",
         "type": "object"
       },
+      "McpServerDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "McpServerDeleteResponse",
+        "type": "object"
+      },
       "McpServerInfo": {
         "description": "One MCP server we discovered on the user's machine.\n\n`name` is the unique key the user (or installer tool) gave it.\n`transport` is the normalized transport — `stdio` / `streamable_http`\n/ `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are\ndescriptive only — we never echo env *values* (could be secrets).\n`source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`\n/ `env` — used by the UI to group servers by provenance.\n`source_path` is the absolute path of the config file the entry was\nread from, displayed in the settings panel so the user knows where\nto go edit it.",
         "properties": {
@@ -1373,6 +1709,90 @@
         "title": "McpServerInfo",
         "type": "object"
       },
+      "McpServerWriteRequest": {
+        "description": "Create/update one SheJane-managed MCP server.\n\nThis writes only `~/.shejane/mcp-servers.json`; discovered Claude\nDesktop / Cursor / Codex entries remain read-only.",
+        "properties": {
+          "args": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "array"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwd"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "title": "Env",
+            "type": "object"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "transport": {
+            "default": "stdio",
+            "title": "Transport",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "McpServerWriteRequest",
+        "type": "object"
+      },
+      "McpServerWriteResponse": {
+        "properties": {
+          "server": {
+            "$ref": "#/components/schemas/McpServerInfo"
+          }
+        },
+        "required": [
+          "server"
+        ],
+        "title": "McpServerWriteResponse",
+        "type": "object"
+      },
       "PermissionResolution": {
         "properties": {
           "decision": {
@@ -1413,6 +1833,40 @@
           "resumed"
         ],
         "title": "PermissionResolution",
+        "type": "object"
+      },
+      "PlanApprovalResolution": {
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "modify",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "resolved": {
+            "const": true,
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "approval_id",
+          "decision",
+          "resumed"
+        ],
+        "title": "PlanApprovalResolution",
         "type": "object"
       },
       "QuestionAnswer": {
@@ -1465,6 +1919,35 @@
         "title": "ResolvePermissionRequest",
         "type": "object"
       },
+      "ResolvePlanApprovalRequest": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "modify",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ResolvePlanApprovalRequest",
+        "type": "object"
+      },
       "ResumeRunResponse": {
         "properties": {
           "resumed": {
@@ -1493,6 +1976,103 @@
           "access_token"
         ],
         "title": "SetCloudSessionRequest",
+        "type": "object"
+      },
+      "SkillDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SkillDeleteResponse",
+        "type": "object"
+      },
+      "SkillFile": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "root_path": {
+            "title": "Root Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "root_path",
+          "content"
+        ],
+        "title": "SkillFile",
+        "type": "object"
+      },
+      "SkillWriteRequest": {
+        "description": "Create/update one SheJane-managed skill under `~/.shejane/skills`.",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "SkillWriteRequest",
+        "type": "object"
+      },
+      "SkillWriteResponse": {
+        "properties": {
+          "skill": {
+            "$ref": "#/components/schemas/SkillFile"
+          }
+        },
+        "required": [
+          "skill"
+        ],
+        "title": "SkillWriteResponse",
         "type": "object"
       },
       "ValidationError": {
@@ -1618,6 +2198,128 @@
           }
         },
         "summary": "List Mcp Servers"
+      },
+      "post": {
+        "operationId": "create_mcp_server_local_v1_mcp_servers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerWriteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Mcp Server"
+      }
+    },
+    "/local/v1/mcp-servers/{server_name}": {
+      "delete": {
+        "operationId": "delete_mcp_server_local_v1_mcp_servers__server_name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_name",
+            "required": true,
+            "schema": {
+              "title": "Server Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Mcp Server"
+      },
+      "put": {
+        "operationId": "update_mcp_server_local_v1_mcp_servers__server_name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_name",
+            "required": true,
+            "schema": {
+              "title": "Server Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerWriteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Mcp Server"
       }
     },
     "/local/v1/memory": {
@@ -1687,6 +2389,56 @@
           }
         },
         "summary": "Resolve Permission"
+      }
+    },
+    "/local/v1/plans/{approval_id}": {
+      "post": {
+        "description": "Approve, revise, or reject a Plan Mode `write_todos` pause.",
+        "operationId": "resolve_plan_approval_local_v1_plans__approval_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolvePlanApprovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanApprovalResolution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Plan Approval"
       }
     },
     "/local/v1/pptx-outline": {
@@ -1958,6 +2710,104 @@
         "summary": "Run Diagnostics"
       }
     },
+    "/local/v1/runs/{run_id}/fork": {
+      "post": {
+        "operationId": "fork_run_local_v1_runs__run_id__fork_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForkRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Fork Run"
+      }
+    },
+    "/local/v1/runs/{run_id}/inject": {
+      "post": {
+        "operationId": "inject_run_instruction_local_v1_runs__run_id__inject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InjectRunInstructionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InjectRunInstructionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inject Run Instruction"
+      }
+    },
     "/local/v1/runs/{run_id}/resume": {
       "post": {
         "operationId": "resume_run_local_v1_runs__run_id__resume_post",
@@ -2044,6 +2894,176 @@
           }
         },
         "summary": "Stream Run"
+      }
+    },
+    "/local/v1/schedules": {
+      "get": {
+        "operationId": "list_schedules_local_v1_schedules_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "notify_pending",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Notify Pending",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListScheduledRunsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Schedules"
+      },
+      "post": {
+        "operationId": "create_schedule_local_v1_schedules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateScheduledRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalScheduledRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Schedule"
+      }
+    },
+    "/local/v1/schedules/{schedule_id}": {
+      "delete": {
+        "operationId": "cancel_schedule_local_v1_schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalScheduledRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Schedule"
+      }
+    },
+    "/local/v1/schedules/{schedule_id}/notified": {
+      "post": {
+        "operationId": "mark_schedule_notified_local_v1_schedules__schedule_id__notified_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "schedule_id",
+            "required": true,
+            "schema": {
+              "title": "Schedule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalScheduledRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Schedule Notified"
       }
     },
     "/local/v1/session": {
@@ -2136,6 +3156,165 @@
           }
         },
         "summary": "List Local Skills"
+      },
+      "post": {
+        "operationId": "create_local_skill_local_v1_skills_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillWriteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Local Skill"
+      }
+    },
+    "/local/v1/skills/{skill_name}": {
+      "delete": {
+        "operationId": "delete_local_skill_local_v1_skills__skill_name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Local Skill"
+      },
+      "get": {
+        "operationId": "get_local_skill_local_v1_skills__skill_name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Local Skill"
+      },
+      "put": {
+        "operationId": "update_local_skill_local_v1_skills__skill_name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "skill_name",
+            "required": true,
+            "schema": {
+              "title": "Skill Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillWriteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Local Skill"
       }
     },
     "/local/v1/tools": {

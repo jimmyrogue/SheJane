@@ -96,6 +96,47 @@ describe('chat store', () => {
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
   })
 
+  it('streams multiple attached documents through one agent run', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-documents')
+    const api: ChatAPI = {
+      createAgentRun: async (request) => {
+        expect(request.goal).toBe('对比这两份材料')
+        expect(request.attachments).toEqual([
+          { type: 'document', document_id: 'doc-1', name: 'roadmap.pdf' },
+          { type: 'document', document_id: 'doc-2', name: 'budget.xlsx' },
+        ])
+        return { id: 'run-docs-1', status: 'queued', mode: 'auto' }
+      },
+      streamAgentRun: async (_runID, handlers) => {
+        handlers.onDelta('对比完成')
+        return { requestId: 'req-docs-1', inputTokens: 12, outputTokens: 6, creditsCost: 18 }
+      },
+      runCloudToolLoop: async () => {
+        throw new Error('runCloudToolLoop not used in this test')
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({
+      content: '对比这两份材料',
+      mode: 'auto',
+      scene: 'chat',
+      documents: [
+        { id: 'doc-1', name: 'roadmap.pdf', contentType: 'application/pdf' },
+        { id: 'doc-2', name: 'budget.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      ],
+    })
+
+    expect(conversation.messages[0]).toMatchObject({
+      role: 'user',
+      content: '对比这两份材料',
+      attachments: [
+        { documentId: 'doc-1', name: 'roadmap.pdf', contentType: 'application/pdf' },
+        { documentId: 'doc-2', name: 'budget.xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      ],
+    })
+  })
+
   it('model.selected sets the Auto badge (runMode) from label + reason', async () => {
     const localData = new LocalConversationStore('shejane-chat-test-modelsel')
     const api: ChatAPI = {
@@ -119,6 +160,35 @@ describe('chat store', () => {
     const conversation = await chat.sendMessage({ content: '分析一下', mode: 'auto', scene: 'chat' })
 
     expect(conversation.messages[1].runMode).toEqual({ resolved: '深度', reason: '需要推理' })
+  })
+
+  it('model.selected keeps the requested Auto intent label when present', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-modelsel-intent')
+    const api: ChatAPI = {
+      createAgentRun: async () => ({ id: 'run-auto-smart', status: 'queued', mode: 'auto.smart' }),
+      streamAgentRun: async (_runID, handlers) => {
+        handlers.onEvent?.({
+          event_type: 'model.selected',
+          payload: {
+            requested_model: 'auto.smart',
+            requested_label: '更强',
+            resolved_model_id: 'chat.deep',
+            label: '深度',
+            reason: '能力优先',
+          },
+        })
+        handlers.onDelta('好的')
+        return { requestId: 'req-a', inputTokens: 1, outputTokens: 2, creditsCost: 3 }
+      },
+      runCloudToolLoop: async () => {
+        throw new Error('not used')
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({ content: '分析一下', mode: 'auto.smart', scene: 'chat' })
+
+    expect(conversation.messages[1].runMode).toEqual({ requested: '更强', resolved: '深度', reason: '能力优先' })
   })
 
   it('shows a specific rate-limit message with retry-after guidance', async () => {
@@ -187,6 +257,118 @@ describe('chat store', () => {
     })
     expect(conversation.messages[1].content).toContain('![image.generate](https://cdn.example.com/cat.png)')
     expect(conversation.messages[1].agentEvents?.[0]).toMatchObject({ type: 'tool.completed' })
+  })
+
+  it('pauses a web cloud tool loop at the step cap and resumes from saved loop history', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-toolloop-continue')
+    const runInputs: unknown[] = []
+    const api: ChatAPI = {
+      createAgentRun: async () => {
+        throw new Error('createAgentRun not used')
+      },
+      streamAgentRun: async () => {
+        throw new Error('streamAgentRun not used')
+      },
+      runCloudToolLoop: async (input, handlers) => {
+        runInputs.push(input)
+        if (runInputs.length === 1) {
+          handlers.onEvent?.({ event_type: 'tool.completed', payload: { tool: 'web.search' } })
+          handlers.onDelta('先查到一半。')
+          return {
+            requestId: 'req-cap',
+            inputTokens: 5,
+            outputTokens: 7,
+            creditsCost: 12,
+            hitStepCap: true,
+            steps: 2,
+            maxSteps: 2,
+            continuationMessages: [
+              { role: 'user', content: '继续查资料' },
+              {
+                role: 'assistant',
+                content: '先查到一半。',
+                toolCalls: [{ id: 'call-1', name: 'web.search', arguments: { query: '资料' } }],
+              },
+              { role: 'tool', toolCallId: 'call-1', name: 'web.search', content: 'search result' },
+            ],
+          }
+        }
+        handlers.onDelta('续跑完成。')
+        return {
+          requestId: 'req-final',
+          inputTokens: 3,
+          outputTokens: 4,
+          creditsCost: 9,
+          hitStepCap: false,
+          steps: 1,
+          maxSteps: 2,
+          continuationMessages: [
+            { role: 'user', content: '继续查资料' },
+            { role: 'tool', toolCallId: 'call-1', name: 'web.search', content: 'search result' },
+            { role: 'assistant', content: '续跑完成。' },
+          ],
+        }
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({
+      content: '继续查资料',
+      mode: 'auto',
+      scene: 'chat',
+      cloudTools: [{ name: 'web.search', description: 'search', inputSchema: { type: 'object' } }],
+      cloudToolMaxSteps: 2,
+    })
+
+    const assistant = conversation.messages[1]
+    const question = assistant.agentEvents?.find((event) => event.type === 'question.asked')
+    expect(assistant).toMatchObject({
+      role: 'assistant',
+      status: 'waiting_input',
+      requestId: 'req-cap',
+      creditsCost: 12,
+    })
+    expect(question).toMatchObject({
+      questionRequestId: expect.stringMatching(/^web-step-cap_/),
+      questions: [
+        expect.objectContaining({
+          header: '继续',
+          options: [expect.objectContaining({ label: '继续 2 步' })],
+        }),
+      ],
+    })
+    expect(assistant.cloudToolContinuation?.messages.at(-1)).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call-1',
+      name: 'web.search',
+    })
+
+    const continued = await chat.continueCloudToolLoop({
+      conversationId: conversation.id,
+      messageId: assistant.id,
+      requestId: question!.questionRequestId!,
+      answers: { [question!.questions![0].question]: ['继续 2 步'] },
+    })
+
+    const continuedAssistant = continued.messages[1]
+    expect(runInputs).toHaveLength(2)
+    expect(runInputs[1]).toMatchObject({
+      runId: assistant.runId,
+      maxSteps: 2,
+      continuationMessages: [
+        { role: 'user', content: '继续查资料' },
+        expect.objectContaining({ role: 'assistant' }),
+        expect.objectContaining({ role: 'tool', toolCallId: 'call-1' }),
+      ],
+    })
+    expect(continuedAssistant).toMatchObject({
+      status: 'done',
+      requestId: 'req-final',
+      creditsCost: 21,
+    })
+    expect(continuedAssistant.content).toBe('先查到一半。续跑完成。')
+    expect(continuedAssistant.agentEvents?.some((event) => event.type === 'question.answered')).toBe(true)
+    expect(continuedAssistant.cloudToolContinuation).toBeUndefined()
   })
 
   it('can abort an in-flight cloud tool loop and settle the assistant message as canceled', async () => {
@@ -500,6 +682,53 @@ describe('chat store', () => {
     expect(timelineItem({ event_type: 'permission.auto_approved', payload: { tool: 'shell.run', scope: 'run' } })).toMatchObject({
       label: '本会话自动允许：运行命令',
       permissionScope: 'run',
+    })
+  })
+
+  it('renders mid-run steering injection events', () => {
+    expect(
+      timelineItem({
+        event_type: 'steering.injected',
+        payload: { count: 1 },
+      }),
+    ).toMatchObject({
+      type: 'steering.injected',
+      label: '已追加指示到当前任务',
+    })
+  })
+
+  it('renders plan approval lifecycle events', () => {
+    expect(
+      timelineItem({
+        event_type: 'plan.approval_required',
+        payload: {
+          request_id: 'plan-1',
+          todos: [
+            { content: 'Write tests', status: 'pending' },
+            { content: 'Implement fix', status: 'pending' },
+          ],
+        },
+      }),
+    ).toMatchObject({
+      type: 'plan.approval_required',
+      label: '等待你批准计划',
+      planApprovalRequestId: 'plan-1',
+      planTodos: [
+        { content: 'Write tests', status: 'pending' },
+        { content: 'Implement fix', status: 'pending' },
+      ],
+    })
+
+    expect(
+      timelineItem({
+        event_type: 'plan.approval_resolved',
+        payload: { request_id: 'plan-1', decision: 'modify' },
+      }),
+    ).toMatchObject({
+      type: 'plan.approval_resolved',
+      label: '计划需要修改',
+      planApprovalRequestId: 'plan-1',
+      planApprovalDecision: 'modify',
     })
   })
 

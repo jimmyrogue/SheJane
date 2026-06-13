@@ -14,9 +14,26 @@ const sampleSkills: InstalledSkill[] = [
   { name: 'write', description: 'Strip AI writing patterns', path: '/s/write/SKILL.md' },
 ]
 
+function documentFixture(id: string, name: string, contentType: string): UserDocument {
+  return {
+    id,
+    user_id: 'user-1',
+    original_name: name,
+    content_type: contentType,
+    size_bytes: 128,
+    status: 'ready',
+    source_object_key: `documents/user/${id}/source`,
+    text_object_key: `documents/user/${id}/text`,
+    expires_at: '2026-05-28T12:00:00Z',
+    created_at: '2026-05-26T12:00:00Z',
+    updated_at: '2026-05-26T12:00:00Z',
+  }
+}
+
 function Harness({
   initialDraft = '',
   onSend = vi.fn(),
+  onAppendInstruction,
   listSkills = vi.fn().mockResolvedValue(sampleSkills),
   onDraft = vi.fn(),
   projectName,
@@ -24,6 +41,7 @@ function Harness({
 }: {
   initialDraft?: string
   onSend?: () => void
+  onAppendInstruction?: () => void
   listSkills?: () => Promise<InstalledSkill[]>
   onDraft?: (value: string) => void
   projectName?: string
@@ -43,6 +61,7 @@ function Harness({
         onUploadDocument={vi.fn()}
         onDetachDocument={vi.fn()}
         onSend={onSend}
+        onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
         mode="auto"
         onModeChange={vi.fn()}
@@ -136,10 +155,110 @@ describe('Composer (Lexical skill editor)', () => {
     expect(onStop).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps stop available and sends draft as an appended instruction during an active run', () => {
+    const onStop = vi.fn()
+    const onAppendInstruction = vi.fn()
+    render(
+      <I18nProvider>
+        <Composer
+          draft="先补失败测试"
+          onDraftChange={vi.fn()}
+          isSending
+          hasActiveRun
+          isUploading={false}
+          onUploadDocument={vi.fn()}
+          onDetachDocument={vi.fn()}
+          onSend={vi.fn()}
+          onAppendInstruction={onAppendInstruction}
+          onStop={onStop}
+          listSkills={vi.fn().mockResolvedValue([])}
+          mode="auto"
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }))
+    expect(onStop).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '追加指示' }))
+    expect(onAppendInstruction).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the appended-instruction placeholder while a local run is active', () => {
+    render(
+      <I18nProvider>
+        <Composer
+          draft=""
+          onDraftChange={vi.fn()}
+          isSending={false}
+          hasActiveRun
+          isUploading={false}
+          onUploadDocument={vi.fn()}
+          onDetachDocument={vi.fn()}
+          onSend={vi.fn()}
+          onAppendInstruction={vi.fn()}
+          onStop={vi.fn()}
+          listSkills={vi.fn().mockResolvedValue([])}
+          mode="auto"
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('追加指示到当前任务')).toBeInTheDocument()
+  })
+
   it('shows the send button (not stop) when neither isSending nor hasActiveRun is set', () => {
     render(<Harness />)
     // Stop button uses aria-label "停止生成" (i18n key composer.stop).
     expect(screen.queryByRole('button', { name: '停止生成' })).not.toBeInTheDocument()
+  })
+
+  it('renders multiple attachment tiles and accepts multiple files from picker', () => {
+    const onDetachDocument = vi.fn()
+    const onUploadDocument = vi.fn()
+    render(
+      <I18nProvider>
+        <Composer
+          draft=""
+          onDraftChange={vi.fn()}
+          isSending={false}
+          isUploading={false}
+          attachedDocuments={[
+            documentFixture('doc-1', 'roadmap.pdf', 'application/pdf'),
+            documentFixture('doc-2', 'budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+          ]}
+          attachedPreviews={{ 'doc-1': 'data:image/png;base64,abc' }}
+          onUploadDocument={onUploadDocument}
+          onDetachDocument={onDetachDocument}
+          onSend={vi.fn()}
+          listSkills={vi.fn().mockResolvedValue([])}
+          mode="auto"
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByTitle(/roadmap\.pdf/)).toBeInTheDocument()
+    expect(screen.getByTitle(/budget\.xlsx/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('附件模式')
+    expect(screen.getByRole('status')).toHaveAttribute(
+      'title',
+      '带附件的提问会走附件上下文，本次不混用网页搜索或生成图片工具。',
+    )
+    const removeButtons = screen.getAllByRole('button', { name: '移除附件' })
+    fireEvent.click(removeButtons[1])
+    expect(onDetachDocument).toHaveBeenCalledWith('doc-2')
+
+    const input = screen.getByLabelText('上传附件') as HTMLInputElement
+    expect(input.multiple).toBe(true)
+    const files = [
+      new File(['a'], 'a.pdf', { type: 'application/pdf' }),
+      new File(['b'], 'b.pdf', { type: 'application/pdf' }),
+    ]
+    fireEvent.change(input, { target: { files } })
+    expect(onUploadDocument).toHaveBeenCalledWith(files)
   })
 })
 

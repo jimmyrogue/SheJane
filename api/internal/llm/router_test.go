@@ -45,7 +45,7 @@ func TestSelectModelUsesResolverAndDefault(t *testing.T) {
 		t.Fatalf("SelectModel(chat.claude) = (%q,%q), want claude", p.Name(), id)
 	}
 	// "auto" / unknown resolve to the default model.
-	for _, requested := range []string{"auto", "", "chat.removed"} {
+	for _, requested := range []string{"auto", "auto.smart", "", "chat.removed"} {
 		p, _, id := router.SelectModel(requested)
 		if p.Name() != "deepseek" || id != "chat.deepseek" {
 			t.Fatalf("SelectModel(%q) = (%q,%q), want default chat.deepseek", requested, p.Name(), id)

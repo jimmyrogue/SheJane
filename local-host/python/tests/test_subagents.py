@@ -27,10 +27,30 @@ def _patched_async_client(handler):
 # --- subagent definitions ---
 
 
+def _write_subagent(
+    root: Path,
+    filename: str,
+    *,
+    frontmatter: str,
+    body: str,
+) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / filename
+    path.write_text(
+        f"---\n{frontmatter.strip()}\n---\n\n{body.strip()}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_build_subagents_returns_researcher_and_writer() -> None:
     from local_host.agent.subagents import build_subagents
 
-    subs = build_subagents(main_tools=[], main_model="anthropic:claude-sonnet-4-6")
+    subs = build_subagents(
+        main_tools=[],
+        main_model="anthropic:claude-sonnet-4-6",
+        agent_roots=[],
+    )
     names = {s["name"] for s in subs}
     assert names == {"researcher", "writer"}
 
@@ -60,6 +80,7 @@ def test_researcher_pulls_only_research_relevant_tools_from_main() -> None:
     subs = build_subagents(
         main_tools=[web_fetch, shell_run, time_now],
         main_model="x",
+        agent_roots=[],
     )
     researcher = next(s for s in subs if s["name"] == "researcher")
     res_tool_names = {t.name for t in researcher["tools"]}
@@ -71,9 +92,96 @@ def test_researcher_pulls_only_research_relevant_tools_from_main() -> None:
 def test_writer_has_no_tools() -> None:
     from local_host.agent.subagents import build_subagents
 
-    subs = build_subagents(main_tools=[], main_model="x")
+    subs = build_subagents(main_tools=[], main_model="x", agent_roots=[])
     writer = next(s for s in subs if s["name"] == "writer")
     assert writer["tools"] == []
+
+
+def test_build_subagents_loads_configured_markdown_agent(tmp_path: Path) -> None:
+    from langchain_core.tools import tool
+
+    from local_host.agent.subagents import build_subagents
+
+    @tool("web.search")
+    def web_search(query: str) -> str:
+        """Search the web."""
+        return query
+
+    @tool("execute")
+    def execute(command: str) -> str:
+        """Run a shell command."""
+        return command
+
+    @tool("time.now")
+    def time_now() -> str:
+        """Return current time."""
+        return "now"
+
+    agent_root = tmp_path / "agents"
+    _write_subagent(
+        agent_root,
+        "reviewer.md",
+        frontmatter="""
+name: reviewer
+description: Review implementation diffs with a narrow evidence trail.
+tools:
+  - web.search
+  - time.now
+""",
+        body="You are a careful implementation reviewer.",
+    )
+
+    subs = build_subagents(
+        main_tools=[web_search, execute, time_now],
+        main_model="model-x",
+        agent_roots=[agent_root],
+    )
+    reviewer = next(s for s in subs if s["name"] == "reviewer")
+
+    assert reviewer["description"] == "Review implementation diffs with a narrow evidence trail."
+    assert reviewer["system_prompt"] == "You are a careful implementation reviewer."
+    assert reviewer["model"] == "model-x"
+    assert [t.name for t in reviewer["tools"]] == ["web.search", "time.now"]
+
+
+def test_configured_subagent_can_override_builtin_writer(tmp_path: Path) -> None:
+    from local_host.agent.subagents import build_subagents
+
+    agent_root = tmp_path / "agents"
+    _write_subagent(
+        agent_root,
+        "writer.md",
+        frontmatter="""
+name: writer
+description: A project-specific release note writer.
+tools: []
+""",
+        body="Write in the team's release-note voice.",
+    )
+
+    subs = build_subagents(main_tools=[], main_model="model-x", agent_roots=[agent_root])
+    writers = [s for s in subs if s["name"] == "writer"]
+
+    assert len(writers) == 1
+    assert writers[0]["description"] == "A project-specific release note writer."
+    assert writers[0]["system_prompt"] == "Write in the team's release-note voice."
+
+
+def test_invalid_configured_subagent_is_skipped(tmp_path: Path) -> None:
+    from local_host.agent.subagents import build_subagents
+
+    agent_root = tmp_path / "agents"
+    _write_subagent(
+        agent_root,
+        "missing-description.md",
+        frontmatter="name: missing-description",
+        body="This file is incomplete.",
+    )
+
+    subs = build_subagents(main_tools=[], main_model="model-x", agent_roots=[agent_root])
+    names = {s["name"] for s in subs}
+
+    assert names == {"researcher", "writer"}
 
 
 def test_backend_factory_uses_workspace_root(tmp_path: Path) -> None:

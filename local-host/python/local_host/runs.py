@@ -40,6 +40,7 @@ from .event_translator import translate
 from .failure_policy import classify_failure_payload
 from .llm.backend import BackendLLMError
 from .llm.resolve import resolve_auto_model
+from .middleware.plan_approval import normalize_todos, summarize_todos
 from .observability import build_callbacks
 from .progress_ledger import build_handoff_snapshot
 from .store.sqlite import LocalStore
@@ -63,6 +64,34 @@ _IMPORTANT_HISTORY_RE = re.compile(
     re.IGNORECASE,
 )
 _CLIENT_OMISSION_MARKER_PREFIX = "【上下文提示｜对话较长，已省略更早的 "
+
+
+def _is_auto_model(model: str) -> bool:
+    return model in {"", "auto", "auto.fast", "auto.smart"}
+
+
+def _auto_intent_from_model(model: str) -> str:
+    if model == "auto.fast":
+        return "fast"
+    if model == "auto.smart":
+        return "smart"
+    return ""
+
+
+def _auto_requested_label(model: str) -> str:
+    if model == "auto.fast":
+        return "更快"
+    if model == "auto.smart":
+        return "更强"
+    return "自动"
+
+
+class RunNotFoundError(Exception):
+    """Raised when an operation references an unknown run."""
+
+
+class CheckpointNotFoundError(Exception):
+    """Raised when a checkpoint fork references an unknown checkpoint."""
 
 
 def _merge_pii_types(base: str, extra: str) -> str:
@@ -357,6 +386,93 @@ class RunCoordinator:
         self._tasks[run_id] = task
         return run
 
+    async def fork_run(
+        self,
+        *,
+        source_run_id: str,
+        checkpoint_id: str,
+        goal: str | None = None,
+        mode: str | None = None,
+        settings: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new run branched from `source_run_id` at `checkpoint_id`.
+
+        The new run gets its own LangGraph thread_id, but starts with the
+        source checkpoint chain copied into that thread. We then append the
+        fork goal as a fresh user message, so retrying from a prior step
+        keeps the old state without mutating the original run.
+        """
+        source = await self.store.get_run(source_run_id)
+        if source is None:
+            raise RunNotFoundError(source_run_id)
+        checkpoint_id = checkpoint_id.strip()
+        if not checkpoint_id:
+            raise CheckpointNotFoundError(checkpoint_id)
+
+        source_config = {
+            "configurable": {
+                "thread_id": source_run_id,
+                "checkpoint_ns": "",
+                "checkpoint_id": checkpoint_id,
+            }
+        }
+        if await self.checkpointer.aget_tuple(source_config) is None:
+            raise CheckpointNotFoundError(checkpoint_id)
+
+        fork_goal = (goal or source.get("goal") or "").strip()
+        if not fork_goal:
+            raise ValueError("goal required")
+        fork_mode = (mode or source.get("mode") or "auto").strip() or "auto"
+        fork_settings = (
+            settings if settings is not None else _json_object(source.get("settings_json"))
+        )
+        fork_metadata = _json_object(source.get("metadata_json"))
+        if metadata:
+            fork_metadata.update(metadata)
+        fork_metadata.update(
+            {
+                "intent": "checkpoint_fork",
+                "source_run_id": source_run_id,
+                "source_checkpoint_id": checkpoint_id,
+            }
+        )
+
+        run = await self.store.create_run(
+            goal=fork_goal,
+            workspace_path=source.get("workspace_path"),
+            parent_run_id=source_run_id,
+            settings=fork_settings,
+            metadata=fork_metadata,
+            mode=fork_mode,
+        )
+        run_id = run["id"]
+        await _copy_checkpoint_branch(
+            self.checkpointer,
+            source_thread_id=source_run_id,
+            target_thread_id=run_id,
+            checkpoint_id=checkpoint_id,
+        )
+
+        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=2048)
+        self._queues[run_id] = queue
+        self._goals[run_id] = fork_goal
+        self._workspaces[run_id] = source.get("workspace_path")
+        self._histories[run_id] = []
+        self._settings_overrides[run_id] = dict(fork_settings or {})
+        self._run_metadata[run_id] = dict(fork_metadata)
+        self._modes[run_id] = fork_mode
+
+        task = asyncio.create_task(
+            self._drive_run(
+                run_id=run_id,
+                resume_payload=None,
+                mode=fork_mode,
+            )
+        )
+        self._tasks[run_id] = task
+        return run
+
     async def _hydrate_run_state(self, run_id: str) -> bool:
         """Repopulate the in-memory per-run caches from the DB when they're
         missing — the path after a daemon restart, where `resume_run` runs
@@ -590,17 +706,19 @@ class RunCoordinator:
             # forwards the user's selection; "pro" stays a wire alias for the
             # legacy "deep" tier for any old caller.
             resolved_model = "deep" if mode == "pro" else mode
+            requested_model = resolved_model or "auto"
 
             # "Auto": ask the cloud's task-aware classifier ONCE per run which
             # catalog model fits this goal, and surface model.selected so the
             # UI badges "Auto → <label> · reason". On any failure we stay on
             # "auto" — the cloud LLM endpoint maps that to the default model
             # per turn, so the run still works (just without the badge).
-            if resume_payload is None and resolved_model in ("auto", ""):
+            if resume_payload is None and _is_auto_model(resolved_model):
                 picked = await resolve_auto_model(
                     goal,
                     cloud_base_url=settings.cloud_base_url,
                     cloud_token=settings.cloud_token,
+                    intent=_auto_intent_from_model(resolved_model),
                     run_id=run_id,
                 )
                 if picked:
@@ -610,7 +728,8 @@ class RunCoordinator:
                         run_id,
                         "model.selected",
                         {
-                            "requested_model": "auto",
+                            "requested_model": requested_model,
+                            "requested_label": _auto_requested_label(requested_model),
                             "resolved_model_id": picked["model_id"],
                             "label": picked["label"],
                             "reason": picked["reason"],
@@ -680,6 +799,10 @@ class RunCoordinator:
             mcp_disabled_servers: set[str] = {
                 str(name) for name in raw_disabled if isinstance(name, str)
             }
+
+            async def emit_steering_event(event_type: str, payload: dict[str, Any]) -> None:
+                await self._enqueue(queue, run_id, event_type, payload)
+
             agent = await build_agent(
                 store=self.store,
                 checkpointer=self.checkpointer,
@@ -699,6 +822,7 @@ class RunCoordinator:
                 settings=effective_settings,
                 repair_context=repair_context,
                 retry_context=retry_context,
+                steering_emit=emit_steering_event,
             )
             config = {
                 "configurable": {"thread_id": run_id},
@@ -968,6 +1092,8 @@ class RunCoordinator:
           look up `run_id` from the `permission_id` alone.
         * `question.asked` (for the `user.ask` tool) — persisted in
           `local_questions`.
+        * `plan.approval_required` (for Plan Mode `write_todos`) —
+          persisted in `local_plan_approvals`.
 
         Without this bridge, both flows surface only as the generic
         `run.waiting` and the UI can't render approval bars or question
@@ -975,6 +1101,31 @@ class RunCoordinator:
         point of view.
         """
         value = getattr(snap_interrupt, "value", None)
+        if isinstance(value, dict) and value.get("kind") == "plan_approval":
+            todos = normalize_todos(value.get("todos"))
+            tool_call_id = str(
+                value.get("tool_call_id") or getattr(snap_interrupt, "id", None) or ""
+            )
+            summary = str(value.get("summary") or summarize_todos(todos))
+            record = await self.store.create_plan_approval(
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+                todos=todos,
+                summary=summary,
+            )
+            await self._enqueue(
+                queue,
+                run_id,
+                "plan.approval_required",
+                {
+                    "request_id": record["id"],
+                    "tool_call_id": tool_call_id,
+                    "todos": record["todos"],
+                    "summary": record["summary"],
+                },
+            )
+            return
+
         if isinstance(value, dict) and value.get("kind") == "question":
             question_text = str(value.get("question", ""))
             options_raw = value.get("options") or []
@@ -1113,6 +1264,138 @@ def _serialize_payload(payload: Any) -> dict[str, Any]:
             return {"repr": str(payload)}
 
 
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+async def _copy_checkpoint_branch(
+    checkpointer: AsyncSqliteSaver,
+    *,
+    source_thread_id: str,
+    target_thread_id: str,
+    checkpoint_id: str,
+    checkpoint_ns: str = "",
+) -> None:
+    """Copy `checkpoint_id` and its parent chain to a new thread_id.
+
+    LangGraph's SQLite saver exposes the data model, but its async
+    `acopy_thread` is not implemented in the version we ship. This
+    helper deliberately copies only the chain needed for the selected
+    time-travel point, not future checkpoints from the source run.
+    """
+    await checkpointer.setup()
+    async with checkpointer.lock, checkpointer.conn.cursor() as cur:
+        await cur.execute(
+            """
+            WITH RECURSIVE chain(checkpoint_id, parent_checkpoint_id) AS (
+                SELECT checkpoint_id, parent_checkpoint_id
+                FROM checkpoints
+                WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id = ?
+
+                UNION ALL
+
+                SELECT c.checkpoint_id, c.parent_checkpoint_id
+                FROM checkpoints c
+                JOIN chain ch ON c.checkpoint_id = ch.parent_checkpoint_id
+                WHERE c.thread_id = ? AND c.checkpoint_ns = ?
+            )
+            SELECT c.checkpoint_ns, c.checkpoint_id, c.parent_checkpoint_id,
+                   c.type, c.checkpoint, c.metadata
+            FROM checkpoints c
+            JOIN chain ch ON c.checkpoint_id = ch.checkpoint_id
+            WHERE c.thread_id = ? AND c.checkpoint_ns = ?
+            """,
+            (
+                source_thread_id,
+                checkpoint_ns,
+                checkpoint_id,
+                source_thread_id,
+                checkpoint_ns,
+                source_thread_id,
+                checkpoint_ns,
+            ),
+        )
+        checkpoint_rows = await cur.fetchall()
+        if not checkpoint_rows:
+            raise CheckpointNotFoundError(checkpoint_id)
+
+        for row in checkpoint_rows:
+            (
+                row_checkpoint_ns,
+                row_checkpoint_id,
+                parent_checkpoint_id,
+                checkpoint_type,
+                checkpoint_blob,
+                metadata_blob,
+            ) = row
+            await cur.execute(
+                """
+                INSERT OR REPLACE INTO checkpoints
+                    (thread_id, checkpoint_ns, checkpoint_id, parent_checkpoint_id,
+                     type, checkpoint, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    target_thread_id,
+                    row_checkpoint_ns,
+                    row_checkpoint_id,
+                    parent_checkpoint_id,
+                    checkpoint_type,
+                    checkpoint_blob,
+                    metadata_blob,
+                ),
+            )
+
+        checkpoint_ids = [row[1] for row in checkpoint_rows]
+        placeholders = ",".join("?" for _ in checkpoint_ids)
+        await cur.execute(
+            f"""
+            SELECT checkpoint_ns, checkpoint_id, task_id, idx, channel, type, value
+            FROM writes
+            WHERE thread_id = ? AND checkpoint_ns = ? AND checkpoint_id IN ({placeholders})
+            """,
+            (source_thread_id, checkpoint_ns, *checkpoint_ids),
+        )
+        write_rows = await cur.fetchall()
+        for row in write_rows:
+            (
+                row_checkpoint_ns,
+                row_checkpoint_id,
+                task_id,
+                idx,
+                channel,
+                write_type,
+                value_blob,
+            ) = row
+            await cur.execute(
+                """
+                INSERT OR REPLACE INTO writes
+                    (thread_id, checkpoint_ns, checkpoint_id, task_id, idx,
+                     channel, type, value)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    target_thread_id,
+                    row_checkpoint_ns,
+                    row_checkpoint_id,
+                    task_id,
+                    idx,
+                    channel,
+                    write_type,
+                    value_blob,
+                ),
+            )
+        await checkpointer.conn.commit()
+
+
 def _repair_context_from_metadata(
     metadata: dict[str, Any],
     *,
@@ -1212,14 +1495,23 @@ def _run_failed_payload(exc: Exception) -> dict[str, Any]:
 
 
 def _waiting_status_for_interrupts(interrupts: list[Any]) -> str:
-    if interrupts and all(_is_question_interrupt(item) for item in interrupts):
+    if interrupts and all(_is_user_input_interrupt(item) for item in interrupts):
         return "waiting_input"
     return "waiting_permission"
+
+
+def _is_user_input_interrupt(interrupt: Any) -> bool:
+    return _is_question_interrupt(interrupt) or _is_plan_approval_interrupt(interrupt)
 
 
 def _is_question_interrupt(interrupt: Any) -> bool:
     value = getattr(interrupt, "value", None)
     return isinstance(value, dict) and value.get("kind") == "question"
+
+
+def _is_plan_approval_interrupt(interrupt: Any) -> bool:
+    value = getattr(interrupt, "value", None)
+    return isinstance(value, dict) and value.get("kind") == "plan_approval"
 
 
 def _extract_final_text(state_values: Any) -> str:

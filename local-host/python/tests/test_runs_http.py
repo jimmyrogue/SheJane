@@ -185,6 +185,79 @@ def test_create_run_persists_run_metadata(client: TestClient) -> None:
     assert json.loads(fetched.json()["metadata_json"])["intent"] == "repair"
 
 
+def test_fork_run_missing_checkpoint_returns_404(client: TestClient) -> None:
+    source = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={"goal": "source task"},
+    )
+    assert source.status_code == 200
+    source_run_id = source.json()["id"]
+
+    fork = client.post(
+        f"/local/v1/runs/{source_run_id}/fork",
+        headers={"Authorization": "Bearer tok"},
+        json={"checkpoint_id": "checkpoint-does-not-exist"},
+    )
+
+    assert fork.status_code == 404
+    assert fork.json()["detail"] == "checkpoint not found"
+
+
+def test_fork_run_from_checkpoint_creates_child_thread(client: TestClient) -> None:
+    source = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={"goal": "draft a plan"},
+    )
+    assert source.status_code == 200
+    source_run_id = source.json()["id"]
+    with client.stream(
+        "GET",
+        f"/local/v1/runs/{source_run_id}/stream",
+        headers={"Authorization": "Bearer tok"},
+    ) as resp:
+        assert resp.status_code == 200
+        resp.read()
+
+    diagnostics = client.get(
+        f"/local/v1/runs/{source_run_id}/diagnostics",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert diagnostics.status_code == 200
+    checkpoint = diagnostics.json()["latest_checkpoint"]
+    assert checkpoint is not None
+    checkpoint_id = checkpoint["id"]
+
+    fork = client.post(
+        f"/local/v1/runs/{source_run_id}/fork",
+        headers={"Authorization": "Bearer tok"},
+        json={"checkpoint_id": checkpoint_id, "goal": "retry from that point"},
+    )
+
+    assert fork.status_code == 200
+    child = fork.json()
+    assert child["id"].startswith("run_")
+    assert child["id"] != source_run_id
+    assert child["parent_run_id"] == source_run_id
+    assert child["goal"] == "retry from that point"
+    metadata = json.loads(child["metadata_json"])
+    assert metadata["intent"] == "checkpoint_fork"
+    assert metadata["source_run_id"] == source_run_id
+    assert metadata["source_checkpoint_id"] == checkpoint_id
+
+    copied = client.app.state.checkpointer.get(
+        {
+            "configurable": {
+                "thread_id": child["id"],
+                "checkpoint_ns": "",
+                "checkpoint_id": checkpoint_id,
+            }
+        }
+    )
+    assert copied is not None
+
+
 def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-repair-"))
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
@@ -1286,6 +1359,74 @@ def test_multi_permission_batch_waits_for_all_decisions_before_resume(
             },
         }
     ]
+
+
+def test_plan_approval_resolution_emits_event_and_resumes(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    store = client.app.state.store
+    resume_calls: list[dict] = []
+
+    async def create_waiting_run() -> tuple[str, dict]:
+        run = await store.create_run(goal="Plan before editing", workspace_path=None)
+        approval = await store.create_plan_approval(
+            run_id=run["id"],
+            tool_call_id="call-plan",
+            todos=[{"content": "Write tests", "status": "pending"}],
+            summary="Write tests",
+        )
+        await store.append_event(
+            run["id"],
+            "plan.approval_required",
+            {
+                "request_id": approval["id"],
+                "tool_call_id": "call-plan",
+                "todos": approval["todos"],
+            },
+        )
+        await store.append_event(run["id"], "run.waiting", {"next": ["model"], "interrupts": []})
+        await store.update_run_status(run["id"], "waiting_input")
+        return run["id"], approval
+
+    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
+        resume_calls.append({"run_id": run_id, "decision": decision})
+        return True
+
+    import asyncio
+
+    run_id, approval = asyncio.run(create_waiting_run())
+    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
+
+    response = client.post(
+        f"/local/v1/plans/{approval['id']}",
+        headers={"Authorization": "Bearer tok"},
+        json={"decision": "modify", "instructions": "Add verification."},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "approval_id": approval["id"],
+        "resolved": True,
+        "decision": "modify",
+        "resumed": True,
+    }
+    assert resume_calls == [
+        {
+            "run_id": run_id,
+            "decision": {
+                "approval_id": approval["id"],
+                "decision": "modify",
+                "instructions": "Add verification.",
+            },
+        }
+    ]
+    resolved = asyncio.run(store.get_plan_approval(approval["id"]))
+    assert resolved["status"] == "modified"
+    assert resolved["instructions"] == "Add verification."
+
+    events = asyncio.run(store.events_since(run_id, after_seq=0))
+    assert any(event["event_type"] == "plan.approval_resolved" for event in events)
 
 
 def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(

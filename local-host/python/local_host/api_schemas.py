@@ -144,6 +144,75 @@ class CreateRunRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+ScheduledRunStatus = Literal["scheduled", "running", "completed", "failed", "canceled"]
+
+
+class LocalScheduledRun(BaseModel):
+    id: str
+    goal: str
+    status: ScheduledRunStatus
+    run_at: str
+    workspace_path: str | None = None
+    model: str = "auto"
+    history_json: str = "[]"
+    settings_json: str = "{}"
+    metadata_json: str = "{}"
+    run_id: str | None = None
+    result_text: str | None = None
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+    completed_at: str | None = None
+    notified_at: str | None = None
+
+
+class ListScheduledRunsResponse(BaseModel):
+    schedules: list[LocalScheduledRun]
+
+
+class CreateScheduledRunRequest(BaseModel):
+    goal: str
+    run_at: str
+    workspace_path: str | None = None
+    model: str = "auto"
+    history: list[dict[str, str]] | None = None
+    settings: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ForkRunRequest(BaseModel):
+    checkpoint_id: str
+    goal: str | None = None
+    model: str | None = None
+    settings: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class InjectRunInstructionRequest(BaseModel):
+    content: str
+
+
+class InjectRunInstructionResponse(BaseModel):
+    run_id: str
+    instruction_id: str
+    queued: Literal[True] = True
+
+
+PlanApprovalDecision = Literal["approve", "modify", "reject"]
+
+
+class ResolvePlanApprovalRequest(BaseModel):
+    decision: PlanApprovalDecision
+    instructions: str | None = None
+
+
+class PlanApprovalResolution(BaseModel):
+    approval_id: str
+    resolved: Literal[True] = True
+    decision: PlanApprovalDecision
+    resumed: bool
+
+
 # ---------------------------------------------------------------------------
 # Workspaces
 # ---------------------------------------------------------------------------
@@ -435,7 +504,7 @@ class ClearMemoryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# MCP servers (discovery only — we never install / manage these)
+# MCP servers
 # ---------------------------------------------------------------------------
 
 
@@ -473,6 +542,61 @@ class McpServerCatalog(BaseModel):
 
     servers: list[McpServerInfo]
     sources_scanned: list[str]
+
+
+class McpServerWriteRequest(BaseModel):
+    """Create/update one SheJane-managed MCP server.
+
+    This writes only `~/.shejane/mcp-servers.json`; discovered Claude
+    Desktop / Cursor / Codex entries remain read-only.
+    """
+
+    name: str | None = None
+    transport: str = "stdio"
+    command: str | None = None
+    args: list[str] = []
+    url: str | None = None
+    env: dict[str, str] = {}
+    cwd: str | None = None
+
+
+class McpServerWriteResponse(BaseModel):
+    server: McpServerInfo
+
+
+class McpServerDeleteResponse(BaseModel):
+    deleted: bool = True
+    name: str
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+
+class SkillWriteRequest(BaseModel):
+    """Create/update one SheJane-managed skill under `~/.shejane/skills`."""
+
+    name: str | None = None
+    description: str = ""
+    content: str | None = None
+
+
+class SkillFile(BaseModel):
+    name: str
+    description: str = ""
+    path: str
+    root_path: str
+    content: str
+
+
+class SkillWriteResponse(BaseModel):
+    skill: SkillFile
+
+
+class SkillDeleteResponse(BaseModel):
+    deleted: bool = True
+    name: str
 
 
 # ---------------------------------------------------------------------------

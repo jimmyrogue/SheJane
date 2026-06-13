@@ -71,6 +71,7 @@ export function ConversationSidebar({
   onOpenConnections,
   onOpenSettings,
   activeView = 'chat',
+  searchRequestVersion = 0,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -94,6 +95,7 @@ export function ConversationSidebar({
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
   activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'
+  searchRequestVersion?: number
 }) {
   const { t, locale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -155,6 +157,14 @@ export function ConversationSidebar({
       searchInputRef.current?.focus()
     }
   }, [searchOpen])
+
+  useEffect(() => {
+    if (!searchRequestVersion) {
+      return
+    }
+    setSearchOpen(true)
+    window.setTimeout(() => searchInputRef.current?.focus(), 0)
+  }, [searchRequestVersion])
 
   function toggleSearch() {
     setSearchOpen((open) => {

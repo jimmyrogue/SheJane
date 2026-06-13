@@ -68,8 +68,27 @@ export interface paths {
          */
         get: operations["list_mcp_servers_local_v1_mcp_servers_get"];
         put?: never;
-        post?: never;
+        /** Create Mcp Server */
+        post: operations["create_mcp_server_local_v1_mcp_servers_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/mcp-servers/{server_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Mcp Server */
+        put: operations["update_mcp_server_local_v1_mcp_servers__server_name__put"];
+        post?: never;
+        /** Delete Mcp Server */
+        delete: operations["delete_mcp_server_local_v1_mcp_servers__server_name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -129,6 +148,26 @@ export interface paths {
          *     subsequent gates for the same tool in the same run.
          */
         post: operations["resolve_permission_local_v1_permissions__permission_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/plans/{approval_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Plan Approval
+         * @description Approve, revise, or reject a Plan Mode `write_todos` pause.
+         */
+        post: operations["resolve_plan_approval_local_v1_plans__approval_id__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -287,6 +326,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/runs/{run_id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fork Run */
+        post: operations["fork_run_local_v1_runs__run_id__fork_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/runs/{run_id}/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inject Run Instruction */
+        post: operations["inject_run_instruction_local_v1_runs__run_id__inject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/runs/{run_id}/resume": {
         parameters: {
             query?: never;
@@ -315,6 +388,58 @@ export interface paths {
         get: operations["stream_run_local_v1_runs__run_id__stream_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedules */
+        get: operations["list_schedules_local_v1_schedules_get"];
+        put?: never;
+        /** Create Schedule */
+        post: operations["create_schedule_local_v1_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cancel Schedule */
+        delete: operations["cancel_schedule_local_v1_schedules__schedule_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/schedules/{schedule_id}/notified": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark Schedule Notified */
+        post: operations["mark_schedule_notified_local_v1_schedules__schedule_id__notified_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -371,8 +496,28 @@ export interface paths {
          */
         get: operations["list_local_skills_local_v1_skills_get"];
         put?: never;
-        post?: never;
+        /** Create Local Skill */
+        post: operations["create_local_skill_local_v1_skills_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/skills/{skill_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Local Skill */
+        get: operations["get_local_skill_local_v1_skills__skill_name__get"];
+        /** Update Local Skill */
+        put: operations["update_local_skill_local_v1_skills__skill_name__put"];
+        post?: never;
+        /** Delete Local Skill */
+        delete: operations["delete_local_skill_local_v1_skills__skill_name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -546,6 +691,32 @@ export interface components {
             model: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            } | null;
+            /** Workspace Path */
+            workspace_path?: string | null;
+        };
+        /** CreateScheduledRunRequest */
+        CreateScheduledRunRequest: {
+            /** Goal */
+            goal: string;
+            /** History */
+            history?: {
+                [key: string]: string;
+            }[] | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Model
+             * @default auto
+             */
+            model: string;
+            /** Run At */
+            run_at: string;
             /** Settings */
             settings?: {
                 [key: string]: unknown;
@@ -780,6 +951,23 @@ export interface components {
             /** Validation Commands */
             validation_commands?: string[];
         };
+        /** ForkRunRequest */
+        ForkRunRequest: {
+            /** Checkpoint Id */
+            checkpoint_id: string;
+            /** Goal */
+            goal?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Model */
+            model?: string | null;
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -819,6 +1007,24 @@ export interface components {
              */
             worker: string;
         };
+        /** InjectRunInstructionRequest */
+        InjectRunInstructionRequest: {
+            /** Content */
+            content: string;
+        };
+        /** InjectRunInstructionResponse */
+        InjectRunInstructionResponse: {
+            /** Instruction Id */
+            instruction_id: string;
+            /**
+             * Queued
+             * @default true
+             * @constant
+             */
+            queued: true;
+            /** Run Id */
+            run_id: string;
+        };
         /**
          * LatestCheckpoint
          * @description Slim summary of the agent run's last persisted superstep — used
@@ -844,6 +1050,11 @@ export interface components {
         ListRunsResponse: {
             /** Runs */
             runs: components["schemas"]["LocalRun"][];
+        };
+        /** ListScheduledRunsResponse */
+        ListScheduledRunsResponse: {
+            /** Schedules */
+            schedules: components["schemas"]["LocalScheduledRun"][];
         };
         /** ListWorkspacesResponse */
         ListWorkspacesResponse: {
@@ -960,6 +1171,56 @@ export interface components {
              */
             schema_version: 1;
         };
+        /** LocalScheduledRun */
+        LocalScheduledRun: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Error Message */
+            error_message?: string | null;
+            /** Goal */
+            goal: string;
+            /**
+             * History Json
+             * @default []
+             */
+            history_json: string;
+            /** Id */
+            id: string;
+            /**
+             * Metadata Json
+             * @default {}
+             */
+            metadata_json: string;
+            /**
+             * Model
+             * @default auto
+             */
+            model: string;
+            /** Notified At */
+            notified_at?: string | null;
+            /** Result Text */
+            result_text?: string | null;
+            /** Run At */
+            run_at: string;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Settings Json
+             * @default {}
+             */
+            settings_json: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "scheduled" | "running" | "completed" | "failed" | "canceled";
+            /** Updated At */
+            updated_at: string;
+            /** Workspace Path */
+            workspace_path?: string | null;
+        };
         /** LocalWorkspaceAuthorization */
         LocalWorkspaceAuthorization: {
             /** Created At */
@@ -1008,6 +1269,16 @@ export interface components {
             /** Sources Scanned */
             sources_scanned: string[];
         };
+        /** McpServerDeleteResponse */
+        McpServerDeleteResponse: {
+            /**
+             * Deleted
+             * @default true
+             */
+            deleted: boolean;
+            /** Name */
+            name: string;
+        };
         /**
          * McpServerInfo
          * @description One MCP server we discovered on the user's machine.
@@ -1048,6 +1319,44 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /**
+         * McpServerWriteRequest
+         * @description Create/update one SheJane-managed MCP server.
+         *
+         *     This writes only `~/.shejane/mcp-servers.json`; discovered Claude
+         *     Desktop / Cursor / Codex entries remain read-only.
+         */
+        McpServerWriteRequest: {
+            /**
+             * Args
+             * @default []
+             */
+            args: string[];
+            /** Command */
+            command?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /**
+             * Env
+             * @default {}
+             */
+            env: {
+                [key: string]: string;
+            };
+            /** Name */
+            name?: string | null;
+            /**
+             * Transport
+             * @default stdio
+             */
+            transport: string;
+            /** Url */
+            url?: string | null;
+        };
+        /** McpServerWriteResponse */
+        McpServerWriteResponse: {
+            server: components["schemas"]["McpServerInfo"];
+        };
         /** PermissionResolution */
         PermissionResolution: {
             /**
@@ -1070,6 +1379,24 @@ export interface components {
              * @enum {string}
              */
             scope: "once" | "run";
+        };
+        /** PlanApprovalResolution */
+        PlanApprovalResolution: {
+            /** Approval Id */
+            approval_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "modify" | "reject";
+            /**
+             * Resolved
+             * @default true
+             * @constant
+             */
+            resolved: true;
+            /** Resumed */
+            resumed: boolean;
         };
         /** QuestionAnswer */
         QuestionAnswer: {
@@ -1098,6 +1425,16 @@ export interface components {
              */
             scope: "once" | "run";
         };
+        /** ResolvePlanApprovalRequest */
+        ResolvePlanApprovalRequest: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "modify" | "reject";
+            /** Instructions */
+            instructions?: string | null;
+        };
         /** ResumeRunResponse */
         ResumeRunResponse: {
             /**
@@ -1113,6 +1450,51 @@ export interface components {
             access_token: string;
             /** Cloud Base Url */
             cloud_base_url: string;
+        };
+        /** SkillDeleteResponse */
+        SkillDeleteResponse: {
+            /**
+             * Deleted
+             * @default true
+             */
+            deleted: boolean;
+            /** Name */
+            name: string;
+        };
+        /** SkillFile */
+        SkillFile: {
+            /** Content */
+            content: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Root Path */
+            root_path: string;
+        };
+        /**
+         * SkillWriteRequest
+         * @description Create/update one SheJane-managed skill under `~/.shejane/skills`.
+         */
+        SkillWriteRequest: {
+            /** Content */
+            content?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name?: string | null;
+        };
+        /** SkillWriteResponse */
+        SkillWriteResponse: {
+            skill: components["schemas"]["SkillFile"];
         };
         /** ValidationError */
         ValidationError: {
@@ -1207,6 +1589,105 @@ export interface operations {
             };
         };
     };
+    create_mcp_server_local_v1_mcp_servers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_mcp_server_local_v1_mcp_servers__server_name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mcp_server_local_v1_mcp_servers__server_name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     clear_memory_local_v1_memory_delete: {
         parameters: {
             query?: never;
@@ -1249,6 +1730,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PermissionResolution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_plan_approval_local_v1_plans__approval_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolvePlanApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanApprovalResolution"];
                 };
             };
             /** @description Validation Error */
@@ -1477,6 +1993,76 @@ export interface operations {
             };
         };
     };
+    fork_run_local_v1_runs__run_id__fork_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForkRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inject_run_instruction_local_v1_runs__run_id__inject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InjectRunInstructionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InjectRunInstructionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     resume_run_local_v1_runs__run_id__resume_post: {
         parameters: {
             query?: never;
@@ -1532,6 +2118,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_local_v1_schedules_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                notify_pending?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListScheduledRunsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_schedule_local_v1_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduledRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalScheduledRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_schedule_local_v1_schedules__schedule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalScheduledRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_schedule_notified_local_v1_schedules__schedule_id__notified_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalScheduledRun"];
                 };
             };
             /** @description Validation Error */
@@ -1636,6 +2349,136 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    create_local_skill_local_v1_skills_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_local_skill_local_v1_skills__skill_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_local_skill_local_v1_skills__skill_name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_local_skill_local_v1_skills__skill_name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skill_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

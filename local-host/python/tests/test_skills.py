@@ -9,9 +9,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from fastapi.testclient import TestClient
 from langgraph.store.memory import InMemoryStore
 
 from local_host.config import reset_settings_for_tests
+from local_host.server import create_app
 
 
 def _write_skill(root: Path, name: str, *, title: str = "", description: str = "") -> Path:
@@ -196,6 +198,61 @@ def test_list_skill_files_skips_underscore_and_dot_dirs(tmp_path: Path, monkeypa
     assert "real" in names
     assert "_private" not in names
     assert ".dotted" not in names
+
+
+def test_http_skill_crud_writes_personal_skill(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path / "data",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/local/v1/skills",
+            headers={"Authorization": "Bearer tok"},
+            json={
+                "name": "daily-digest",
+                "description": "整理每日摘要",
+                "content": "---\ntitle: Daily Digest\ndescription: 整理每日摘要\n---\n\n# Daily\n",
+            },
+        )
+        assert created.status_code == 200, created.text
+        skill_path = tmp_path / ".shejane" / "skills" / "daily-digest" / "SKILL.md"
+        assert skill_path.read_text(encoding="utf-8").startswith("---\ntitle: Daily Digest")
+
+        listed = client.get("/local/v1/skills", headers={"Authorization": "Bearer tok"})
+        assert listed.status_code == 200
+        assert any(s["name"] == "daily-digest" for s in listed.json()["skills"])
+
+        loaded = client.get(
+            "/local/v1/skills/daily-digest",
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert loaded.status_code == 200
+        assert loaded.json()["content"].startswith("---\ntitle: Daily Digest")
+
+        updated = client.put(
+            "/local/v1/skills/daily-digest",
+            headers={"Authorization": "Bearer tok"},
+            json={
+                "description": "新版摘要",
+                "content": "---\ntitle: Daily Digest\ndescription: 新版摘要\n---\n\n# Updated\n",
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert "# Updated" in skill_path.read_text(encoding="utf-8")
+
+        deleted = client.delete(
+            "/local/v1/skills/daily-digest",
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert deleted.status_code == 200
+        assert not skill_path.exists()
 
 
 # --- build_agent skills_enabled gate ----------------------------------------

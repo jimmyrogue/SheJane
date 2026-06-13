@@ -26,7 +26,21 @@ type AnthropicProvider struct {
 	version   string
 	baseURL   string
 	maxTokens int
+	thinking  AnthropicThinkingConfig
 	client    *http.Client
+}
+
+type AnthropicThinkingConfig struct {
+	Type         string
+	BudgetTokens int
+	Display      string
+	Effort       string
+}
+
+type AnthropicProviderOptions struct {
+	BaseURL   string
+	MaxTokens int
+	Thinking  AnthropicThinkingConfig
 }
 
 func NewAnthropicProvider(apiKey string, version string) *AnthropicProvider {
@@ -37,12 +51,24 @@ func NewAnthropicProvider(apiKey string, version string) *AnthropicProvider {
 // settings: baseURL (proxy/gateway deployments) and maxTokens (response cap).
 // Zero values fall back to the package defaults.
 func NewAnthropicProviderWithConfig(apiKey, version, baseURL string, maxTokens int) *AnthropicProvider {
+	return NewAnthropicProviderWithOptions(apiKey, version, AnthropicProviderOptions{
+		BaseURL:   baseURL,
+		MaxTokens: maxTokens,
+	})
+}
+
+// NewAnthropicProviderWithOptions allows admin model params to opt into
+// Anthropic-specific request controls without widening the neutral Provider
+// interface used by the rest of the stack.
+func NewAnthropicProviderWithOptions(apiKey, version string, options AnthropicProviderOptions) *AnthropicProvider {
 	if version == "" {
 		version = "2023-06-01"
 	}
+	baseURL := options.BaseURL
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = defaultAnthropicBaseURL
 	}
+	maxTokens := options.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = defaultAnthropicMaxTokens
 	}
@@ -51,6 +77,7 @@ func NewAnthropicProviderWithConfig(apiKey, version, baseURL string, maxTokens i
 		version:   version,
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		maxTokens: maxTokens,
+		thinking:  options.Thinking,
 		client:    &http.Client{Timeout: 90 * time.Second},
 	}
 }
@@ -92,6 +119,7 @@ func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, mod
 		if system != "" {
 			payload["system"] = system
 		}
+		p.applyRequestConfig(payload)
 		enableAnthropicPromptCaching(payload, request)
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -139,7 +167,16 @@ func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, mod
 					chunks <- Chunk{InputTokens: event.Message.Usage.InputTokens}
 				}
 			case "content_block_delta":
-				chunks <- Chunk{Text: event.Delta.Text, OutputTokens: event.Usage.OutputTokens}
+				switch event.Delta.Type {
+				case "thinking_delta":
+					if event.Delta.Thinking != "" {
+						chunks <- Chunk{ReasoningContent: event.Delta.Thinking, OutputTokens: event.Usage.OutputTokens}
+					}
+				case "text_delta", "":
+					if event.Delta.Text != "" {
+						chunks <- Chunk{Text: event.Delta.Text, OutputTokens: event.Usage.OutputTokens}
+					}
+				}
 			case "message_delta":
 				if event.Delta.StopReason != "" {
 					chunks <- Chunk{
@@ -191,6 +228,7 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatR
 		payload["tools"] = tools
 		payload["tool_choice"] = map[string]any{"type": "auto"}
 	}
+	p.applyRequestConfig(payload)
 	enableAnthropicPromptCaching(payload, request)
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -218,8 +256,11 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatR
 		FinishReason: anthropicFinishReason(event.StopReason),
 	}
 	var text strings.Builder
+	var reasoning strings.Builder
 	for _, block := range event.Content {
 		switch block.Type {
+		case "thinking":
+			reasoning.WriteString(block.Thinking)
 		case "text":
 			text.WriteString(block.Text)
 		case "tool_use":
@@ -237,7 +278,52 @@ func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatR
 		}
 	}
 	completion.Content = text.String()
+	completion.ReasoningContent = reasoning.String()
 	return completion, nil
+}
+
+func (p *AnthropicProvider) applyRequestConfig(payload map[string]any) {
+	if config := p.thinkingPayload(); config != nil {
+		payload["thinking"] = config
+	}
+	if effort := strings.TrimSpace(p.thinking.Effort); effort != "" {
+		payload["output_config"] = map[string]any{"effort": effort}
+	}
+}
+
+func (p *AnthropicProvider) thinkingPayload() map[string]any {
+	thinkingType := strings.ToLower(strings.TrimSpace(p.thinking.Type))
+	switch thinkingType {
+	case "", "disabled", "off", "none":
+		return nil
+	case "enabled":
+		budgetTokens := p.thinking.BudgetTokens
+		if budgetTokens <= 0 {
+			budgetTokens = 1024
+		}
+		if p.maxTokens > 1 && budgetTokens >= p.maxTokens {
+			budgetTokens = p.maxTokens - 1
+		}
+		if budgetTokens <= 0 {
+			return nil
+		}
+		payload := map[string]any{
+			"type":          "enabled",
+			"budget_tokens": budgetTokens,
+		}
+		if display := strings.TrimSpace(p.thinking.Display); display != "" {
+			payload["display"] = display
+		}
+		return payload
+	case "adaptive":
+		payload := map[string]any{"type": "adaptive"}
+		if display := strings.TrimSpace(p.thinking.Display); display != "" {
+			payload["display"] = display
+		}
+		return payload
+	default:
+		return nil
+	}
 }
 
 func enableAnthropicPromptCaching(payload map[string]any, request ChatRequest) {
@@ -325,7 +411,9 @@ type anthropicStreamEvent struct {
 		} `json:"usage"`
 	} `json:"message"`
 	Delta struct {
+		Type       string `json:"type"`
 		Text       string `json:"text"`
+		Thinking   string `json:"thinking"`
 		StopReason string `json:"stop_reason"`
 	} `json:"delta"`
 	Usage struct {
@@ -335,11 +423,12 @@ type anthropicStreamEvent struct {
 
 type anthropicCompletionResponse struct {
 	Content []struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		ID    string          `json:"id"`
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
+		Type     string          `json:"type"`
+		Text     string          `json:"text"`
+		Thinking string          `json:"thinking"`
+		ID       string          `json:"id"`
+		Name     string          `json:"name"`
+		Input    json.RawMessage `json:"input"`
 	} `json:"content"`
 	StopReason string `json:"stop_reason"`
 	Usage      struct {

@@ -27,6 +27,11 @@ const (
 	CapabilityChat  = "chat"
 	CapabilityImage = "image"
 
+	CapabilityTierFast      = "fast"
+	CapabilityTierBalanced  = "balanced"
+	CapabilityTierReasoning = "reasoning"
+	CapabilityTierMax       = "max"
+
 	cacheTTL = 30 * time.Second
 
 	// BillingSettingsKey is the app_settings row holding the global billing
@@ -54,10 +59,12 @@ const (
 // No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
 // GET /api/v1/models and fed to the Auto router as candidate context.
 type ChatModelInfo struct {
-	ID          string `json:"id"` // stable model id; persisted in legacy slot column
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
-	Priority    int    `json:"priority"`
+	ID             string `json:"id"` // stable model id; persisted in legacy slot column
+	Label          string `json:"label"`
+	Description    string `json:"description,omitempty"`
+	Vendor         string `json:"vendor,omitempty"`
+	CapabilityTier string `json:"capability_tier,omitempty"`
+	Priority       int    `json:"priority"`
 }
 
 type resolved struct {
@@ -287,10 +294,12 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			label = cfg.Slot
 		}
 		catalog = append(catalog, ChatModelInfo{
-			ID:          cfg.Slot,
-			Label:       label,
-			Description: cfg.Description,
-			Priority:    cfg.Priority,
+			ID:             cfg.Slot,
+			Label:          label,
+			Description:    cfg.Description,
+			Vendor:         strings.TrimSpace(cfg.Vendor),
+			CapabilityTier: NormalizeCapabilityTier(cfg.CapabilityTier),
+			Priority:       cfg.Priority,
 		})
 	}
 	// Highest priority first; stable id tiebreak. Drives the picker order,
@@ -356,8 +365,18 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 		}
 		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
 		// BaseURL supports proxy/gateway deployments; params.max_tokens caps the
-		// response (0 → provider default). Both are per-row admin knobs.
-		return llm.NewAnthropicProviderWithConfig(apiKey, version, cfg.BaseURL, intParam(cfg.Params, "max_tokens", 0))
+		// response (0 → provider default). Anthropic thinking params are optional
+		// per-row knobs for models that support extended/adaptive thinking.
+		return llm.NewAnthropicProviderWithOptions(apiKey, version, llm.AnthropicProviderOptions{
+			BaseURL:   cfg.BaseURL,
+			MaxTokens: intParam(cfg.Params, "max_tokens", 0),
+			Thinking: llm.AnthropicThinkingConfig{
+				Type:         stringParam(cfg.Params, "thinking_type", ""),
+				BudgetTokens: intParam(cfg.Params, "thinking_budget_tokens", 0),
+				Display:      stringParam(cfg.Params, "thinking_display", ""),
+				Effort:       stringParam(cfg.Params, "thinking_effort", ""),
+			},
+		})
 	default:
 		if apiKey == "" || cfg.BaseURL == "" {
 			return llm.NewUnconfiguredProvider(name, "missing API key or base URL")
@@ -383,6 +402,21 @@ func normalizeMultiplier(m float64) float64 {
 		return 1
 	}
 	return m
+}
+
+func NormalizeCapabilityTier(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", CapabilityTierBalanced:
+		return CapabilityTierBalanced
+	case CapabilityTierFast:
+		return CapabilityTierFast
+	case CapabilityTierReasoning:
+		return CapabilityTierReasoning
+	case CapabilityTierMax:
+		return CapabilityTierMax
+	default:
+		return ""
+	}
 }
 
 func stringParam(params map[string]any, key string, fallback string) string {

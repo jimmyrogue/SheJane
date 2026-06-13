@@ -234,6 +234,10 @@ type ModelConfig struct {
 	Capability   string `json:"capability"`
 	ProviderKind string `json:"provider_kind"`
 	DisplayName  string `json:"display_name"`
+	Vendor       string `json:"vendor"`
+	// CapabilityTier tells the Auto router what strength band this model
+	// belongs to: fast | balanced | reasoning | max.
+	CapabilityTier string `json:"capability_tier"`
 	// Description: user-facing blurb shown in the model-picker tooltip and fed
 	// to the Auto router as a "what this model is good for" hint.
 	Description      string  `json:"description,omitempty"`

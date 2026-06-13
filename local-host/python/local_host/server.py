@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,24 +31,39 @@ from .api_schemas import (
     CancelRunResponse,
     ClearMemoryResponse,
     CreateRunRequest,
+    CreateScheduledRunRequest,
     CreateWorkspaceRequest,
     DiagnoseWorkspaceRequest,
+    ForkRunRequest,
     HealthResponse,
+    InjectRunInstructionRequest,
+    InjectRunInstructionResponse,
     ListRunsResponse,
+    ListScheduledRunsResponse,
     ListWorkspacesResponse,
     LocalArtifact,
     LocalCloudSession,
     LocalRun,
     LocalRunDiagnostics,
+    LocalScheduledRun,
     LocalWorkspaceAuthorization,
     LocalWorkspaceDiagnosis,
     McpServerCatalog,
+    McpServerDeleteResponse,
     McpServerInfo,
+    McpServerWriteRequest,
+    McpServerWriteResponse,
     PermissionResolution,
+    PlanApprovalResolution,
     QuestionAnswer,
     ResolvePermissionRequest,
+    ResolvePlanApprovalRequest,
     ResumeRunResponse,
     SetCloudSessionRequest,
+    SkillDeleteResponse,
+    SkillFile,
+    SkillWriteRequest,
+    SkillWriteResponse,
 )
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
@@ -57,7 +74,8 @@ from .progress_ledger import (
 from .progress_ledger import (
     progress_ledger_state as _progress_ledger_state,
 )
-from .runs import RunCoordinator
+from .runs import CheckpointNotFoundError, RunCoordinator, RunNotFoundError
+from .scheduler import ScheduledRunDispatcher
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.server")
@@ -146,6 +164,175 @@ def _parse_frontmatter_minimal(text: str) -> tuple[str, str]:
     return title, description
 
 
+_SAFE_CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+
+
+def _safe_catalog_name(raw: str | None) -> str:
+    name = (raw or "").strip()
+    if not _SAFE_CATALOG_NAME_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=400,
+            detail="name must start with a letter or number and contain only letters, numbers, '.', '_' or '-'",
+        )
+    return name
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _normalize_schedule_time(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="run_at required")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="run_at must be an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _shejane_mcp_config_path() -> Path:
+    return Path.home() / ".shejane" / "mcp-servers.json"
+
+
+def _read_shejane_mcp_config() -> dict[str, Any]:
+    path = _shejane_mcp_config_path()
+    if not path.exists():
+        return {"mcpServers": {}}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"shejane MCP config is not readable JSON: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        return {"mcpServers": {}}
+    servers = raw.get("mcpServers")
+    if isinstance(servers, dict):
+        return raw
+    if all(isinstance(v, dict) and ("command" in v or "url" in v) for v in raw.values()):
+        return {"mcpServers": raw}
+    raw["mcpServers"] = {}
+    return raw
+
+
+def _mcp_info_from_config(name: str, config: dict[str, Any]) -> McpServerInfo:
+    path = _shejane_mcp_config_path()
+    return McpServerInfo(
+        name=name,
+        transport=str(config.get("transport") or "stdio"),
+        source="shejane",
+        source_path=str(path),
+        command=config.get("command") if isinstance(config.get("command"), str) else None,
+        args=[str(arg) for arg in config.get("args", []) or []],
+        url=config.get("url") if isinstance(config.get("url"), str) else None,
+        env_keys=sorted(str(key) for key in (config.get("env") or {}).keys()),
+        cwd=config.get("cwd") if isinstance(config.get("cwd"), str) else None,
+    )
+
+
+def _personal_skills_root() -> Path:
+    root = Path.home() / ".shejane" / "skills"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _skill_md_path(name: str) -> Path:
+    root = _personal_skills_root().resolve()
+    skill_dir = (root / name).resolve()
+    if root not in skill_dir.parents:
+        raise HTTPException(status_code=400, detail="skill path escapes personal skills root")
+    return skill_dir / "SKILL.md"
+
+
+def _default_skill_content(name: str, description: str) -> str:
+    lines = ["---", f"name: {name}"]
+    description = description.strip()
+    if description:
+        lines.append(f"description: {description}")
+    lines.extend(["---", "", f"# {name}", ""])
+    if description:
+        lines.append(description)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _skill_file_from_path(name: str, path: Path) -> SkillFile:
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="skill not found")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"failed to read skill: {exc}") from exc
+    _, description = _parse_frontmatter_minimal(content)
+    return SkillFile(
+        name=name,
+        description=description,
+        path=str(path),
+        root_path=str(_personal_skills_root()),
+        content=content,
+    )
+
+
+def _write_mcp_server(
+    route_name: str | None, request: McpServerWriteRequest
+) -> McpServerWriteResponse:
+    from .tools.mcp import _normalize_entry
+
+    name = _safe_catalog_name(route_name or request.name)
+    raw: dict[str, Any] = {
+        "transport": request.transport,
+    }
+    if request.command is not None:
+        raw["command"] = request.command
+    if request.args:
+        raw["args"] = request.args
+    if request.url is not None:
+        raw["url"] = request.url
+    if request.env:
+        raw["env"] = request.env
+    if request.cwd is not None:
+        raw["cwd"] = request.cwd
+
+    normalized = _normalize_entry(name, raw)
+    if normalized is None:
+        raise HTTPException(status_code=400, detail="MCP server must include command or url")
+
+    config = _read_shejane_mcp_config()
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        servers = {}
+        config["mcpServers"] = servers
+    servers[name] = normalized
+    _write_json_atomic(_shejane_mcp_config_path(), config)
+    return McpServerWriteResponse(server=_mcp_info_from_config(name, normalized))
+
+
+def _write_local_skill(route_name: str | None, request: SkillWriteRequest) -> SkillWriteResponse:
+    name = _safe_catalog_name(route_name or request.name)
+    path = _skill_md_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = request.content
+    if content is None:
+        content = _default_skill_content(name, request.description)
+    if not content.endswith("\n"):
+        content += "\n"
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"failed to write skill: {exc}") from exc
+    return SkillWriteResponse(skill=_skill_file_from_path(name, path))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -162,16 +349,20 @@ async def lifespan(app: FastAPI):
         checkpointer=checkpointer,
         agent_store=agent_store,
     )
+    scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
     app.state.store = store
     app.state.settings = settings
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
+    app.state.scheduler = scheduler
     # Reconcile runs the previous process left non-terminal (the daemon is
     # SIGKILLed on every `make dev-electron` restart): fail dead queued/running
     # runs, leave waiting_permission runs resumable. Without this they sit
     # `running` forever and the client never sees a terminal state.
     await coordinator.recover_orphans()
+    await scheduler.recover_running()
+    scheduler.start()
     # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
     # GET response so the client can show "paired Xs ago".
     app.state.cloud_session_updated_at = None
@@ -184,6 +375,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await scheduler.stop()
         await store_stack.aclose()
         await ck_stack.aclose()
         await store.close()
@@ -336,6 +528,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             metadata=body.metadata,
         )
 
+    @app.get("/local/v1/schedules", response_model=ListScheduledRunsResponse)
+    async def list_schedules(
+        status: str | None = Query(default=None),
+        notify_pending: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        schedules = await store.list_scheduled_runs(
+            status=status,
+            notify_pending=notify_pending,
+        )
+        return {"schedules": schedules}
+
+    @app.post("/local/v1/schedules", response_model=LocalScheduledRun)
+    async def create_schedule(body: CreateScheduledRunRequest) -> dict[str, Any]:
+        goal = body.goal.strip()
+        if not goal:
+            raise HTTPException(status_code=400, detail="goal required")
+        store: LocalStore = app.state.store
+        return await store.create_scheduled_run(
+            goal=goal,
+            run_at=_normalize_schedule_time(body.run_at),
+            workspace_path=body.workspace_path,
+            model=body.model.strip() or "auto",
+            history=body.history or [],
+            settings=body.settings,
+            metadata=body.metadata,
+        )
+
+    @app.delete("/local/v1/schedules/{schedule_id}", response_model=LocalScheduledRun)
+    async def cancel_schedule(schedule_id: str) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        schedule = await store.cancel_scheduled_run(schedule_id)
+        if schedule is None:
+            raise HTTPException(status_code=404, detail="schedule not found")
+        return schedule
+
+    @app.post("/local/v1/schedules/{schedule_id}/notified", response_model=LocalScheduledRun)
+    async def mark_schedule_notified(schedule_id: str) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        schedule = await store.mark_scheduled_run_notified(schedule_id)
+        if schedule is None:
+            raise HTTPException(status_code=404, detail="schedule not found")
+        return schedule
+
+    @app.post("/local/v1/runs/{run_id}/fork", response_model=LocalRun)
+    async def fork_run(run_id: str, body: ForkRunRequest) -> dict[str, Any]:
+        checkpoint_id = body.checkpoint_id.strip()
+        if not checkpoint_id:
+            raise HTTPException(status_code=400, detail="checkpoint_id required")
+        coordinator: RunCoordinator = app.state.coordinator
+        try:
+            return await coordinator.fork_run(
+                source_run_id=run_id,
+                checkpoint_id=checkpoint_id,
+                goal=body.goal,
+                mode=body.model,
+                settings=body.settings,
+                metadata=body.metadata,
+            )
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except CheckpointNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="checkpoint not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/local/v1/runs/{run_id}", response_model=LocalRun)
     async def get_run(run_id: str) -> dict[str, Any]:
         """Return the flat run record (same shape as POST /runs)."""
@@ -380,6 +638,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         coordinator: RunCoordinator = app.state.coordinator
         ok = await coordinator.cancel_run(run_id)
         return {"canceled": ok}
+
+    @app.post(
+        "/local/v1/runs/{run_id}/inject",
+        response_model=InjectRunInstructionResponse,
+    )
+    async def inject_run_instruction(
+        run_id: str,
+        body: InjectRunInstructionRequest,
+    ) -> dict[str, Any]:
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="content required")
+        store: LocalStore = app.state.store
+        run = await store.get_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if run.get("status") in {"completed", "canceled", "failed"}:
+            raise HTTPException(status_code=409, detail="run is not active")
+        record = await store.create_steering_instruction(run_id=run_id, content=content)
+        return {"run_id": run_id, "instruction_id": record["id"], "queued": True}
 
     @app.post("/local/v1/runs/{run_id}/resume", response_model=ResumeRunResponse)
     async def resume_run(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -498,6 +776,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "question_id": question_id,
             "answered": True,
+            "resumed": ok,
+        }
+
+    @app.post("/local/v1/plans/{approval_id}", response_model=PlanApprovalResolution)
+    async def resolve_plan_approval(
+        approval_id: str,
+        body: ResolvePlanApprovalRequest,
+    ) -> dict[str, Any]:
+        """Approve, revise, or reject a Plan Mode `write_todos` pause."""
+        decision_text = body.decision
+        instructions = (body.instructions or "").strip() or None
+        if decision_text == "modify" and not instructions:
+            raise HTTPException(status_code=400, detail="instructions required")
+
+        store: LocalStore = app.state.store
+        record = await store.get_plan_approval(approval_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="plan approval not found")
+
+        status = {
+            "approve": "approved",
+            "modify": "modified",
+            "reject": "rejected",
+        }[decision_text]
+        await store.resolve_plan_approval(
+            approval_id,
+            status=status,
+            instructions=instructions,
+        )
+        coordinator: RunCoordinator = app.state.coordinator
+        await coordinator.emit_for_run(
+            record["run_id"],
+            "plan.approval_resolved",
+            {
+                "request_id": approval_id,
+                "decision": decision_text,
+                "instructions": instructions,
+            },
+        )
+        ok = await coordinator.resume_run(
+            run_id=record["run_id"],
+            decision={
+                "approval_id": approval_id,
+                "decision": decision_text,
+                "instructions": instructions,
+            },
+        )
+        return {
+            "approval_id": approval_id,
+            "resolved": True,
+            "decision": decision_text,
             "resumed": ok,
         }
 
@@ -873,6 +1202,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
         return McpServerCatalog(servers=servers, sources_scanned=sources_scanned)
 
+    @app.post("/local/v1/mcp-servers", response_model=McpServerWriteResponse)
+    async def create_mcp_server(request: McpServerWriteRequest) -> McpServerWriteResponse:
+        return _write_mcp_server(request.name, request)
+
+    @app.put("/local/v1/mcp-servers/{server_name}", response_model=McpServerWriteResponse)
+    async def update_mcp_server(
+        server_name: str, request: McpServerWriteRequest
+    ) -> McpServerWriteResponse:
+        return _write_mcp_server(server_name, request)
+
+    @app.delete("/local/v1/mcp-servers/{server_name}", response_model=McpServerDeleteResponse)
+    async def delete_mcp_server(server_name: str) -> McpServerDeleteResponse:
+        name = _safe_catalog_name(server_name)
+        config = _read_shejane_mcp_config()
+        servers = config.setdefault("mcpServers", {})
+        if isinstance(servers, dict):
+            servers.pop(name, None)
+        _write_json_atomic(_shejane_mcp_config_path(), config)
+        return McpServerDeleteResponse(name=name)
+
     @app.get("/local/v1/skills")
     async def list_local_skills() -> dict[str, Any]:
         """Catalog of every SKILL.md the daemon can see across all
@@ -897,6 +1246,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for d in _resolve_skills_dirs()
         ]
         return {"skills": _list_skill_files(), "roots": roots}
+
+    @app.post("/local/v1/skills", response_model=SkillWriteResponse)
+    async def create_local_skill(request: SkillWriteRequest) -> SkillWriteResponse:
+        return _write_local_skill(request.name, request)
+
+    @app.get("/local/v1/skills/{skill_name}", response_model=SkillFile)
+    async def get_local_skill(skill_name: str) -> SkillFile:
+        name = _safe_catalog_name(skill_name)
+        return _skill_file_from_path(name, _skill_md_path(name))
+
+    @app.put("/local/v1/skills/{skill_name}", response_model=SkillWriteResponse)
+    async def update_local_skill(skill_name: str, request: SkillWriteRequest) -> SkillWriteResponse:
+        return _write_local_skill(skill_name, request)
+
+    @app.delete("/local/v1/skills/{skill_name}", response_model=SkillDeleteResponse)
+    async def delete_local_skill(skill_name: str) -> SkillDeleteResponse:
+        name = _safe_catalog_name(skill_name)
+        path = _skill_md_path(name)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="skill not found")
+        shutil.rmtree(path.parent)
+        return SkillDeleteResponse(name=name)
 
     return app
 

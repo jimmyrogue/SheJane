@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   IconCheck,
+  IconDeviceFloppy,
   IconFolderOpen,
+  IconPencil,
   IconPlus,
   IconRefresh,
   IconSearch,
   IconSparkles,
+  IconTrash,
+  IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill, SkillCatalog, SkillRoot } from '@/shared/local-host/client'
+import type { InstalledSkill, SkillCatalog, SkillFile, SkillRoot, SkillWriteRequest } from '@/shared/local-host/client'
 
 export interface SkillsViewProps {
   listInstalled: () => Promise<SkillCatalog>
+  onCreateSkill?: (input: SkillWriteRequest) => Promise<void>
+  onLoadSkill?: (name: string) => Promise<SkillFile>
+  onUpdateSkill?: (name: string, input: SkillWriteRequest) => Promise<void>
+  onDeleteSkill?: (name: string) => Promise<void>
   /** Open a folder in the OS file manager. When the Electron bridge
    *  isn't wired (browser-only build) the Open-folder buttons hide. */
   onOpenFolder?: (path: string) => void
@@ -46,11 +54,48 @@ function skillKind(source: string | undefined): 'builtin' | 'custom' {
   return source === 'shejane' ? 'custom' : 'builtin'
 }
 
-export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
+interface SkillFormState {
+  name: string
+  description: string
+  content: string
+}
+
+type SkillEditorState =
+  | { mode: 'create' }
+  | { mode: 'edit'; originalName: string }
+  | null
+
+const EMPTY_SKILL_FORM: SkillFormState = {
+  name: '',
+  description: '',
+  content: '',
+}
+
+function defaultSkillContent(name: string, description: string): string {
+  const safeName = name.trim() || 'new-skill'
+  const lines = ['---', `name: ${safeName}`]
+  if (description.trim()) {
+    lines.push(`description: ${description.trim()}`)
+  }
+  lines.push('---', '', `# ${safeName}`, '')
+  return lines.join('\n')
+}
+
+export function SkillsView({
+  listInstalled,
+  onCreateSkill,
+  onLoadSkill,
+  onUpdateSkill,
+  onDeleteSkill,
+  onOpenFolder,
+}: SkillsViewProps) {
   const { t, locale } = useI18n()
   const [catalog, setCatalog] = useState<SkillCatalog>(EMPTY_CATALOG)
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
+  const [editor, setEditor] = useState<SkillEditorState>(null)
+  const [form, setForm] = useState<SkillFormState>(EMPTY_SKILL_FORM)
+  const [saving, setSaving] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -114,6 +159,52 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
     )
   }, [catalog.roots, catalog.skills])
   const canCreateSkill = Boolean(onOpenFolder && personalRootPath)
+  const canEditSkills = Boolean(onCreateSkill)
+
+  const openCreate = useCallback(() => {
+    setForm({ ...EMPTY_SKILL_FORM, content: defaultSkillContent('', '') })
+    setEditor({ mode: 'create' })
+  }, [])
+
+  const openEdit = useCallback(async (skill: InstalledSkill) => {
+    if (!onLoadSkill) return
+    const file = await onLoadSkill(skill.name)
+    setForm({
+      name: file.name,
+      description: file.description ?? skill.description ?? '',
+      content: file.content,
+    })
+    setEditor({ mode: 'edit', originalName: skill.name })
+  }, [onLoadSkill])
+
+  const submitEditor = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (saving) return
+    const input: SkillWriteRequest = {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      content: form.content,
+    }
+    if (!input.name) return
+    setSaving(true)
+    try {
+      if (editor?.mode === 'edit') {
+        await onUpdateSkill?.(editor.originalName, input)
+      } else {
+        await onCreateSkill?.(input)
+      }
+      setEditor(null)
+      setForm(EMPTY_SKILL_FORM)
+      await refresh()
+    } finally {
+      setSaving(false)
+    }
+  }, [editor, form, onCreateSkill, onUpdateSkill, refresh, saving])
+
+  const deleteSkill = useCallback(async (name: string) => {
+    await onDeleteSkill?.(name)
+    await refresh()
+  }, [onDeleteSkill, refresh])
 
   return (
     <section className="workspace skills-view">
@@ -149,7 +240,18 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
               >
                 <IconRefresh size={14} aria-hidden="true" />
               </Button>
-              {canCreateSkill ? (
+              {canEditSkills ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="skills-new-button"
+                  onClick={openCreate}
+                >
+                  <IconPlus size={14} aria-hidden="true" />
+                  {t('skills.newSkill')}
+                </Button>
+              ) : canCreateSkill ? (
                 <Button
                   type="button"
                   size="sm"
@@ -163,6 +265,59 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
               ) : null}
             </div>
           </div>
+
+          {editor ? (
+            <form className="resource-editor-form" onSubmit={(event) => void submitEditor(event)}>
+              <div className="resource-editor-grid">
+                <label>
+                  <span>{t('skills.form.name')}</span>
+                  <Input
+                    value={form.name}
+                    onChange={(event) => {
+                      const name = event.target.value
+                      setForm((current) => ({
+                        ...current,
+                        name,
+                        content: editor.mode === 'create' && !current.content.trim()
+                          ? defaultSkillContent(name, current.description)
+                          : current.content,
+                      }))
+                    }}
+                    aria-label={t('skills.form.name')}
+                    disabled={editor.mode === 'edit'}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>{t('skills.form.description')}</span>
+                  <Input
+                    value={form.description}
+                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                    aria-label={t('skills.form.description')}
+                  />
+                </label>
+                <label className="resource-editor-wide">
+                  <span>{t('skills.form.content')}</span>
+                  <textarea
+                    value={form.content}
+                    onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
+                    aria-label={t('skills.form.content')}
+                    rows={10}
+                  />
+                </label>
+              </div>
+              <div className="resource-editor-actions">
+                <Button type="submit" size="sm" disabled={saving}>
+                  <IconDeviceFloppy size={14} aria-hidden="true" />
+                  {t('skills.saveSkill')}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEditor(null)}>
+                  <IconX size={14} aria-hidden="true" />
+                  {t('common.cancel')}
+                </Button>
+              </div>
+            </form>
+          ) : null}
 
           {filteredEmpty ? (
             <p className="skills-not-found">{t('skills.notFound')}</p>
@@ -214,7 +369,34 @@ export function SkillsView({ listInstalled, onOpenFolder }: SkillsViewProps) {
                         <span className="skill-card-kind">
                           {t(skillKind(skill.source) === 'builtin' ? 'skills.kindBuiltin' : 'skills.kindCustom')}
                         </span>
-                        <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
+                        {skill.source === 'shejane' && (onUpdateSkill || onDeleteSkill) ? (
+                          <div className="resource-row-actions">
+                            {onUpdateSkill && onLoadSkill ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={t('skills.editSkillAria', { name: skill.name })}
+                                onClick={() => void openEdit(skill)}
+                              >
+                                <IconPencil size={13} aria-hidden="true" />
+                              </Button>
+                            ) : null}
+                            {onDeleteSkill ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={t('skills.deleteSkillAria', { name: skill.name })}
+                                onClick={() => void deleteSkill(skill.name)}
+                              >
+                                <IconTrash size={13} aria-hidden="true" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
+                        )}
                       </div>
                     </div>
                   ))}

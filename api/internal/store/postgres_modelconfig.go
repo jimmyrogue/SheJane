@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 )
 
-const modelConfigColumns = `id::text, slot, capability, provider_kind, display_name, base_url,
+const modelConfigColumns = `id::text, slot, capability, provider_kind, display_name,
+	COALESCE(vendor, ''), COALESCE(capability_tier, 'balanced'), base_url,
 	model_name, api_key_encrypted, credit_multiplier::double precision,
 	COALESCE(input_credit_multiplier, 0)::double precision,
 	COALESCE(output_credit_multiplier, 0)::double precision,
@@ -20,7 +21,8 @@ func scanModelConfig(scanner interface{ Scan(...any) error }) (ModelConfig, erro
 	var cfg ModelConfig
 	var paramsRaw string
 	if err := scanner.Scan(
-		&cfg.ID, &cfg.Slot, &cfg.Capability, &cfg.ProviderKind, &cfg.DisplayName, &cfg.BaseURL,
+		&cfg.ID, &cfg.Slot, &cfg.Capability, &cfg.ProviderKind, &cfg.DisplayName,
+		&cfg.Vendor, &cfg.CapabilityTier, &cfg.BaseURL,
 		&cfg.ModelName, &cfg.APIKeyEncrypted, &cfg.CreditMultiplier,
 		&cfg.InputCreditMultiplier, &cfg.OutputCreditMultiplier,
 		&cfg.CachedInputCreditMultiplier, &cfg.CacheWriteCreditMultiplier,
@@ -70,7 +72,7 @@ func (s *PostgresStore) ListModelConfigs(ctx context.Context, capability string)
 		SELECT `+modelConfigColumns+`
 		FROM model_configs
 		WHERE ($1 = '' OR capability = $1)
-		ORDER BY capability, slot, enabled DESC, updated_at DESC
+		ORDER BY capability, COALESCE(NULLIF(vendor, ''), '~'), enabled DESC, priority DESC, slot, updated_at DESC
 	`, capability)
 	if err != nil {
 		return nil, err
@@ -116,30 +118,31 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 	if cfg.ID == "" {
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			INSERT INTO model_configs
-				(slot, capability, provider_kind, display_name, base_url, model_name,
+				(slot, capability, provider_kind, display_name, vendor, capability_tier, base_url, model_name,
 				 api_key_encrypted, credit_multiplier, input_credit_multiplier, output_credit_multiplier,
 				 cached_input_credit_multiplier, cache_write_credit_multiplier, price_per_call_cny, enabled,
 				 params, updated_by, description, priority)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NULLIF($16,'')::uuid, $17, $18)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, NULLIF($18,'')::uuid, $19, $20)
 			RETURNING `+modelConfigColumns+`
-		`, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL, cfg.ModelName,
-			cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier, cfg.OutputCreditMultiplier,
+		`, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.Vendor, cfg.CapabilityTier,
+			cfg.BaseURL, cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier, cfg.OutputCreditMultiplier,
 			cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled,
 			encodeParams(cfg.Params), actorUserID,
 			cfg.Description, cfg.Priority))
 	} else {
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
 			UPDATE model_configs SET
-				slot=$2, capability=$3, provider_kind=$4, display_name=$5, base_url=$6,
-				model_name=$7, api_key_encrypted=$8, credit_multiplier=$9,
-				input_credit_multiplier=$10, output_credit_multiplier=$11,
-				cached_input_credit_multiplier=$12, cache_write_credit_multiplier=$13,
-				price_per_call_cny=$14, enabled=$15, params=$16, updated_at=NOW(),
-				updated_by=NULLIF($17,'')::uuid, description=$18, priority=$19
+				slot=$2, capability=$3, provider_kind=$4, display_name=$5,
+				vendor=$6, capability_tier=$7, base_url=$8,
+				model_name=$9, api_key_encrypted=$10, credit_multiplier=$11,
+				input_credit_multiplier=$12, output_credit_multiplier=$13,
+				cached_input_credit_multiplier=$14, cache_write_credit_multiplier=$15,
+				price_per_call_cny=$16, enabled=$17, params=$18, updated_at=NOW(),
+				updated_by=NULLIF($19,'')::uuid, description=$20, priority=$21
 			WHERE id=$1
 			RETURNING `+modelConfigColumns+`
-		`, cfg.ID, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.BaseURL,
-			cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier,
+		`, cfg.ID, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.Vendor,
+			cfg.CapabilityTier, cfg.BaseURL, cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier,
 			cfg.OutputCreditMultiplier, cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier,
 			cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description,
 			cfg.Priority))
@@ -149,7 +152,8 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 	}
 
 	if err := insertAuditLog(ctx, tx, actorUserID, "model_config.upsert", "model_config", saved.ID, map[string]any{
-		"slot": saved.Slot, "provider_kind": saved.ProviderKind, "model_name": saved.ModelName,
+		"slot": saved.Slot, "provider_kind": saved.ProviderKind, "vendor": saved.Vendor, "model_name": saved.ModelName,
+		"capability_tier":   saved.CapabilityTier,
 		"credit_multiplier": saved.CreditMultiplier, "input_credit_multiplier": saved.InputCreditMultiplier,
 		"output_credit_multiplier": saved.OutputCreditMultiplier, "enabled": saved.Enabled,
 	}); err != nil {

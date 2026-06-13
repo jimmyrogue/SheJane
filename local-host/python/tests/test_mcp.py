@@ -371,6 +371,48 @@ def test_http_mcp_servers_lists_env_entries(
     assert "ghp_secret_value" not in json.dumps(body)
 
 
+def test_http_mcp_server_crud_writes_only_shejane_config(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = _isolate_home(monkeypatch, tmp_path)
+    payload = {
+        "name": "context7",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@upstash/context7-mcp"],
+        "env": {"CONTEXT7_API_KEY": "secret-value"},
+    }
+
+    created = client.post(
+        "/local/v1/mcp-servers",
+        headers={"Authorization": "Bearer tok"},
+        json=payload,
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["server"]["name"] == "context7"
+
+    config_path = home / ".shejane" / "mcp-servers.json"
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["mcpServers"]["context7"]["command"] == "npx"
+    assert raw["mcpServers"]["context7"]["env"]["CONTEXT7_API_KEY"] == "secret-value"
+
+    listed = client.get("/local/v1/mcp-servers", headers={"Authorization": "Bearer tok"})
+    assert listed.status_code == 200
+    body = listed.json()
+    server = next(s for s in body["servers"] if s["name"] == "context7")
+    assert server["source"] == SOURCE_SHEJANE
+    assert server["env_keys"] == ["CONTEXT7_API_KEY"]
+    assert "secret-value" not in json.dumps(body)
+
+    deleted = client.delete(
+        "/local/v1/mcp-servers/context7",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert deleted.status_code == 200
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "context7" not in raw.get("mcpServers", {})
+
+
 # ---------------------------------------------------------------------------
 # build_agent — mcp_enabled gate
 # ---------------------------------------------------------------------------

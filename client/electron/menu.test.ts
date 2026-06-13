@@ -3,11 +3,17 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
+  appNameForLocale,
   applicationMenuTemplateForPlatform,
+  desktopText,
+  normalizeDesktopLocale,
   trayIconConfigForPlatform,
   windowMenuOptionsForPlatform,
 } = require('./menu.cjs') as {
+  appNameForLocale: (locale: string) => string
   applicationMenuTemplateForPlatform: (platform: NodeJS.Platform, locale: 'zh' | 'en') => unknown[] | null
+  desktopText: (locale: string, key: string, params?: Record<string, unknown>) => string
+  normalizeDesktopLocale: (locale: string) => 'zh' | 'en'
   trayIconConfigForPlatform: (platform: NodeJS.Platform) => { filename: string; template: boolean }
   windowMenuOptionsForPlatform: (platform: NodeJS.Platform) => Record<string, boolean>
 }
@@ -29,6 +35,14 @@ describe('Electron menu policy', () => {
     expect(zhMenu).not.toMatch(/\bFile\b|\bEdit\b|\bView\b|\bWindow\b|\bHelp\b/)
     expect(enMenu).toContain('New Chat')
     expect(enMenu).toContain('Hide SheJane')
+  })
+
+  it('normalizes system locales and localizes main-process strings', () => {
+    expect(normalizeDesktopLocale('en-US')).toBe('en')
+    expect(appNameForLocale('en-US')).toBe('SheJane')
+    expect(desktopText('en-US', 'daemon.startFailed', { message: 'boom' })).toBe('Could not start the local engine: boom')
+    expect(desktopText('en-US', 'dialogs.selectWorkspaceTitle')).toBe('Choose local workspace')
+    expect(desktopText('zh-CN', 'dialogs.selectWorkspaceTitle')).toBe('选择本地工作区')
   })
 
   it('uses template tray icons only on macOS', () => {

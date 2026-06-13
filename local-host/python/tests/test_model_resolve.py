@@ -53,12 +53,12 @@ async def test_resolve_auto_model_parses_cloud_response(monkeypatch) -> None:
 
     monkeypatch.setattr("local_host.llm.resolve.httpx.AsyncClient", _patched_async_client(handler))
     picked = await resolve_auto_model(
-        "重构认证模块", cloud_base_url="http://cloud.test", cloud_token="tok-1"
+        "重构认证模块", cloud_base_url="http://cloud.test", cloud_token="tok-1", intent="smart"
     )
     assert picked == {"model_id": "chat.deep", "label": "深度", "reason": "复杂推理"}
     assert captured["url"] == "http://cloud.test/api/v1/models/resolve"
     assert captured["auth"] == "Bearer tok-1"
-    assert captured["body"] == {"goal": "重构认证模块"}
+    assert captured["body"] == {"goal": "重构认证模块", "intent": "smart"}
 
 
 @pytest.mark.asyncio
@@ -123,8 +123,9 @@ def test_auto_run_emits_model_selected_and_persists(monkeypatch) -> None:
     )
 
     # Re-patch the conftest no-op with a canned cloud answer.
-    async def fake_resolve(goal, **kwargs):
+    async def fake_resolve(goal, *, intent="", **kwargs):
         assert goal == "帮我分析这份报表"
+        assert intent == "smart"
         return {"model_id": "chat.deep", "label": "深度", "reason": "需要推理"}
 
     monkeypatch.setattr("local_host.runs.resolve_auto_model", fake_resolve)
@@ -140,7 +141,7 @@ def test_auto_run_emits_model_selected_and_persists(monkeypatch) -> None:
         created = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "帮我分析这份报表", "model": "auto"},
+            json={"goal": "帮我分析这份报表", "model": "auto.smart"},
         )
         assert created.status_code == 200, created.text
         run_id = created.json()["id"]
@@ -153,6 +154,7 @@ def test_auto_run_emits_model_selected_and_persists(monkeypatch) -> None:
 
         # model.selected rides the SSE envelope with the resolved id + label.
         assert "model.selected" in body
+        assert '"requested_model": "auto.smart"' in body or '"requested_model":"auto.smart"' in body
         assert (
             '"resolved_model_id": "chat.deep"' in body or '"resolved_model_id":"chat.deep"' in body
         )

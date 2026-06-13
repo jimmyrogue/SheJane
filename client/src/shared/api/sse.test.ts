@@ -69,5 +69,22 @@ describe('SSE parser', () => {
       const result = parseLLMStreamBuffer('event: llm.error\ndata: {"request_id":"r","message":"boom"}\n\n')
       expect(result.events).toEqual([{ type: 'error', requestId: 'r', message: 'boom' }])
     })
+
+    it('parses model fallback selections', () => {
+      const result = parseLLMStreamBuffer(
+        'event: llm.model_selected\n' +
+          'data: {"requested_model":"bad-model","resolved_model_id":"good-model","label":"Good","reason":"上游失败后降级"}\n\n',
+      )
+
+      expect(result.events).toEqual([
+        {
+          type: 'model_selected',
+          requestedModel: 'bad-model',
+          resolvedModelId: 'good-model',
+          label: 'Good',
+          reason: '上游失败后降级',
+        },
+      ])
+    })
   })
 })

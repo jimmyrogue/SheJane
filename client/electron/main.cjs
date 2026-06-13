@@ -16,10 +16,9 @@ const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
+const { appNameForLocale, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
 const {
-  appNameForLocale,
   configureApplicationMenuForPlatform,
-  normalizeDesktopLocale,
   suppressWindowMenuForPlatform,
   trayIconConfigForPlatform,
   trayMenuTemplateForPlatform,
@@ -32,14 +31,24 @@ const dockLangFile =
 function readDockLocale() {
   try {
     const value = fs.readFileSync(dockLangFile, 'utf8').trim()
-    return value === 'en' ? 'en' : 'zh'
+    return normalizeDesktopLocale(value)
   } catch {
-    return 'zh'
+    return systemDesktopLocale()
   }
 }
 let currentLocale = readDockLocale()
 function currentAppName() {
   return appNameForLocale(currentLocale)
+}
+function systemDesktopLocale() {
+  try {
+    if (typeof app.getLocale === 'function') {
+      return normalizeDesktopLocale(app.getLocale())
+    }
+  } catch {
+    // Fall through to the platform Intl locale when Electron has not initialized locale data yet.
+  }
+  return normalizeDesktopLocale(Intl.DateTimeFormat().resolvedOptions().locale)
 }
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
 // Tray/menu-bar icons are platform-specific:
@@ -288,12 +297,12 @@ async function startBundledDaemon() {
   daemonProcess.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
   daemonProcess.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
   daemonProcess.on('error', (err) => {
-    dialog.showErrorBox(currentAppName(), `无法启动本地引擎：${err.message}`)
+    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startFailed', { message: err.message }))
   })
   daemonProcess.on('exit', (code, signal) => {
     daemonProcess = null
     if (!app.isQuitting) {
-      dialog.showErrorBox(currentAppName(), `本地引擎已退出（code=${code}, signal=${signal}），请重启应用。`)
+      dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.exited', { code, signal }))
     }
   })
 
@@ -302,7 +311,7 @@ async function startBundledDaemon() {
   process.env.SHEJANE_LOCAL_HOST_TOKEN = daemonToken
 
   if (!(await waitForHealth(daemonURL))) {
-    dialog.showErrorBox(currentAppName(), '本地引擎启动超时，请重启应用。')
+    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startTimeout'))
   }
 }
 
@@ -329,12 +338,13 @@ function registerAuthHandlers() {
     apiBaseURL: apiBaseURL(),
     cookies: session.defaultSession.cookies,
     fetchImpl: globalThis.fetch,
+    locale: () => currentLocale,
   })
 
-  ipcMain.handle('shejane:auth-register', (_event, input) => authIPCResult(() => auth.register(input)))
-  ipcMain.handle('shejane:auth-login', (_event, input) => authIPCResult(() => auth.login(input)))
-  ipcMain.handle('shejane:auth-refresh', () => authIPCResult(() => auth.refresh()))
-  ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout()))
+  ipcMain.handle('shejane:auth-register', (_event, input) => authIPCResult(() => auth.register(input), currentLocale))
+  ipcMain.handle('shejane:auth-login', (_event, input) => authIPCResult(() => auth.login(input), currentLocale))
+  ipcMain.handle('shejane:auth-refresh', () => authIPCResult(() => auth.refresh(), currentLocale))
+  ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout(), currentLocale))
 }
 
 function setMainWindowButtonPosition(position) {
@@ -429,7 +439,7 @@ ipcMain.handle('shejane:notify', async (_event, payload) => {
 ipcMain.handle('shejane:select-workspace-directory', async () => {
   const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
   const options = {
-    title: '选择本地工作区',
+    title: desktopText(currentLocale, 'dialogs.selectWorkspaceTitle'),
     properties: ['openDirectory'],
   }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)

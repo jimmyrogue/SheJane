@@ -1,71 +1,4 @@
-function normalizeDesktopLocale(locale) {
-  return locale === 'en' ? 'en' : 'zh'
-}
-
-function appNameForLocale(locale) {
-  return normalizeDesktopLocale(locale) === 'en' ? 'SheJane' : '石间'
-}
-
-function desktopLabels(locale) {
-  const normalized = normalizeDesktopLocale(locale)
-  const appName = appNameForLocale(normalized)
-  if (normalized === 'en') {
-    return {
-      appName,
-      about: `About ${appName}`,
-      close: 'Close Window',
-      copy: 'Copy',
-      cut: 'Cut',
-      edit: 'Edit',
-      forceReload: 'Force Reload',
-      hide: `Hide ${appName}`,
-      hideOthers: 'Hide Others',
-      minimize: 'Minimize',
-      newChat: 'New Chat',
-      paste: 'Paste',
-      quit: `Quit ${appName}`,
-      redo: 'Redo',
-      reload: 'Reload',
-      resetZoom: 'Actual Size',
-      selectAll: 'Select All',
-      show: 'Show',
-      showAll: 'Show All',
-      toggleDevTools: 'Developer Tools',
-      undo: 'Undo',
-      view: 'View',
-      window: 'Window',
-      zoomIn: 'Zoom In',
-      zoomOut: 'Zoom Out',
-    }
-  }
-  return {
-    appName,
-    about: `关于${appName}`,
-    close: '关闭窗口',
-    copy: '复制',
-    cut: '剪切',
-    edit: '编辑',
-    forceReload: '强制重新加载',
-    hide: `隐藏${appName}`,
-    hideOthers: '隐藏其他',
-    minimize: '最小化',
-    newChat: '新建对话',
-    paste: '粘贴',
-    quit: `退出${appName}`,
-    redo: '重做',
-    reload: '重新加载',
-    resetZoom: '实际大小',
-    selectAll: '全选',
-    show: '显示主窗口',
-    showAll: '全部显示',
-    toggleDevTools: '开发者工具',
-    undo: '撤销',
-    view: '显示',
-    window: '窗口',
-    zoomIn: '放大',
-    zoomOut: '缩小',
-  }
-}
+const { appNameForLocale, desktopLabels, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
 
 function applicationMenuTemplateForPlatform(platform, locale, actions = {}) {
   if (platform !== 'darwin') {
@@ -172,6 +105,8 @@ module.exports = {
   appNameForLocale,
   applicationMenuTemplateForPlatform,
   configureApplicationMenuForPlatform,
+  desktopLabels,
+  desktopText,
   normalizeDesktopLocale,
   suppressWindowMenuForPlatform,
   trayIconConfigForPlatform,

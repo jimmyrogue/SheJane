@@ -19,7 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  id-token: write
   packages: write
 
 jobs:
@@ -71,6 +73,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build & push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./${{ matrix.service }}
@@ -81,3 +84,65 @@ jobs:
           build-args: ${{ matrix.build-args }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Prepare supply-chain metadata
+        id: supply
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          image_ref="$(printf '%s\n' "${TAGS}" | head -n1)@${DIGEST}"
+          safe_ref="${GITHUB_REF_NAME//\//-}"
+          echo "image_ref=${image_ref}" >> "${GITHUB_OUTPUT}"
+          echo "sbom_file=shejane-${{ matrix.service }}-${safe_ref}.spdx.json" >> "${GITHUB_OUTPUT}"
+
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.supply.outputs.image_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.supply.outputs.image_ref }}
+          format: spdx-json
+          artifact-name: ${{ steps.supply.outputs.sbom_file }}
+          output-file: ${{ steps.supply.outputs.sbom_file }}
+          upload-artifact: true
+          upload-release-assets: false
+
+      - name: Attach SBOM to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SBOM_FILE: ${{ steps.supply.outputs.sbom_file }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || \
+            gh release create "${GITHUB_REF_NAME}" --draft --title "${GITHUB_REF_NAME}" \
+              --notes "Container images are published to GHCR." || \
+            gh release view "${GITHUB_REF_NAME}" >/dev/null
+          gh release upload "${GITHUB_REF_NAME}" "${SBOM_FILE}" --clobber
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image digests
+        env:
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          images=""
+          while IFS= read -r tag; do
+            if [ -n "${tag}" ]; then
+              images="${images}${tag}@${DIGEST} "
+            fi
+          done <<EOF
+          ${TAGS}
+          EOF
+          cosign sign ${images}

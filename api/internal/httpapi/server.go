@@ -451,12 +451,13 @@ type modelsPayload struct {
 // the catalog is non-empty (classifier failures degrade to the default).
 func (s *Server) resolveModel(w http.ResponseWriter, r *http.Request, _ store.User) {
 	var body struct {
-		Goal string `json:"goal"`
+		Goal   string `json:"goal"`
+		Intent string `json:"intent"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	resolved, reason := s.app.ResolveAutoModel(r.Context(), body.Goal)
+	resolved, reason := s.app.ResolveAutoModelWithIntent(r.Context(), body.Goal, body.Intent)
 	if resolved.ID == "" {
 		writeError(w, http.StatusServiceUnavailable, 50301, "模型目录为空，无法解析 Auto")
 		return
@@ -1044,12 +1045,14 @@ func (s *Server) executeAgentRun(w io.Writer, r *http.Request, user store.User, 
 	// "Auto" resolves ONCE per run via the task-aware classifier (unbilled,
 	// degrades to the default model on any failure) and is surfaced as a
 	// model.selected event so the client can badge "Auto → <label> · reason".
-	model := run.Mode
-	if model == "" || model == "auto" {
-		if resolved, reason := s.app.ResolveAutoModel(ctx, run.Goal); resolved.ID != "" {
+	model := strings.TrimSpace(run.Mode)
+	if app.IsAutoModelMode(model) {
+		requestedModel := app.NormalizeAutoModelMode(model)
+		if resolved, reason := s.app.ResolveAutoModelWithIntent(ctx, run.Goal, app.AutoIntentFromMode(requestedModel)); resolved.ID != "" {
 			model = resolved.ID
 			_ = s.appendAgentEvent(ctx, w, run.ID, "model.selected", map[string]any{
-				"requested_model":   "auto",
+				"requested_model":   requestedModel,
+				"requested_label":   app.AutoRequestedLabel(requestedModel),
 				"resolved_model_id": resolved.ID,
 				"label":             resolved.Label,
 				"reason":            reason,

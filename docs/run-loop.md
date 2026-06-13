@@ -1,7 +1,7 @@
 # Run Loop —— 当前能力实现态
 
 > **范围**：`local-host/python/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
-> **关联**：[client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
+> **关联**：[client-sse-protocol.md](client-sse-protocol.md) · [self-correction-stack.md](self-correction-stack.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
 > **状态**：当前实现态。历史 Node→Python 迁移背景见 [migration-langgraph.md](migration-langgraph.md)，不要把那份迁移计划当成当前架构入口。
 
 ---

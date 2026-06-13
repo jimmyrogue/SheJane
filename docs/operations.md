@@ -58,7 +58,7 @@ docker compose up -d --build api
 
 ## 模型配置（后台模型目录）
 
-模型 provider / 模型名 / API key / token 费率不再从 `.env` 读取并需要重启。`.env` 的 `FAST_PROVIDER_*` / `DEEP_PROVIDER_*` / `ANTHROPIC_API_KEY` 等变量**只在首次空库启动时作为种子**写入 `model_configs` 表；之后一切以后台「模型配置」页为准，保存即时生效（同进程立即、其它实例 ≤30s 收敛）。
+模型 provider / 模型名 / API key / token 费率不再从 `.env` 读取并需要重启。`.env` 的 `FAST_PROVIDER_*` / `DEEP_PROVIDER_*` / `ANTHROPIC_API_KEY` 等变量**只在首次空库启动时作为 `chat.fast` / `chat.deep` 种子**写入 `model_configs` 表；之后一切以后台「模型配置」页为准，保存即时生效（同进程立即、其它实例 ≤30s 收敛）。另外，API 会补齐一组默认停用的 OpenRouter 推荐模型模板，方便管理员启用主流厂商模型。
 
 新增一个 `.env` 变量用于密钥加密：
 
@@ -70,19 +70,30 @@ CONFIG_ENCRYPTION_KEY=任意足够强的口令（用于 AES-GCM 加密落库的 
 
 **在后台配置（推荐路径）**：admin → 模型配置 →
 
-- **模型 ID**：chat 模型可自由填写稳定 ID，例如 `gpt-4o`、`claude-sonnet`、`deepseek-v4`、`chat.fast`。`auto` 是系统保留值，不能作为后台模型 ID；当前 DB 字段仍叫 `slot`，这是历史字段名，产品语义按「模型 ID」理解。
-- **显示名 / 描述 / 优先级**：显示名是用户端模型选择器看到的名称；描述会显示在选择器里并作为 Auto 路由提示；优先级越大越靠前，也是默认模型和 Auto 不确定时的兜底顺序。
+- **模型 ID**：chat 模型可自由填写稳定 ID，例如 `gpt-4o`、`claude-sonnet`、`deepseek-v4`、`chat.fast`。`auto` 和 `auto.` 前缀是系统保留值（`auto.fast` / `auto.smart` 是用户端 Auto 意图 sentinel），不能作为后台模型 ID；当前 DB 字段仍叫 `slot`，这是历史字段名，产品语义按「模型 ID」理解。
+- **显示名 / 厂商 / 能力档位 / 描述 / 优先级**：显示名是用户端模型选择器看到的名称；厂商用于把用户端模型列表按 DeepSeek、xiaomi、ChatGPT、Claude、Minimax、kimi 等分组；能力档位支持 `fast` / `balanced` / `reasoning` / `max`。Auto 会先按用户问题难度筛选档位，再扣入最近 30 分钟 `llm_call_records` 的失败率/延迟和模型输入/输出 token 费率；用户端「更快」发送 `auto.fast`，优先 `fast/balanced` 候选；「更强」发送 `auto.smart`，优先 `reasoning/max` 候选。三者都继续复用同一健康/成本/priority 排序和 classifier。
 - **Provider 配置**：每行填写 provider 类型（`deepseek-v4`/`openai-compatible`/`anthropic`/`mock`）、Base URL、模型名、API key（只写，留空保持原值）。AWS 或其它渠道先通过兼容网关按 `key + base_url + model_name` 接入。
 - **Token 费率**：每行填写相对 DeepSeek Pro 的基础倍率、输入 token 费率、输出 token 费率；缓存命中/缓存写入费率可配置但目前仅作为 provider usage 细分接入的兼容预留。留空或 0 的新费率字段会回退到基础倍率，旧 `credit_multiplier` 行不会失效。
+- **Anthropic 扩展思考**：Anthropic 行可在 `params` 里配置 `max_tokens`、`thinking_type`、`thinking_budget_tokens`、`thinking_display`、`thinking_effort`。手动预算示例：`{"max_tokens":8192,"thinking_type":"enabled","thinking_budget_tokens":2048,"thinking_display":"summarized"}`；Claude 新模型推荐：`{"max_tokens":16000,"thinking_type":"adaptive","thinking_display":"summarized","thinking_effort":"medium"}`。返回的 `thinking` / `thinking_delta` 会统一映射成现有 `llm.reasoning` 事件；`thinking_display:"omitted"` 会减少可展示思考内容。
 - **生图配置**：image capability 当前固定模型 ID 为 `image.default`，不会出现在用户端聊天模型选择器；生图行另填「每次金额」。
-- 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(输入/输出费率 0.1)、`chat.deep`=deepseek-v4-pro(输入/输出费率 1.0)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
-- 种子条件是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把**全部模型配置删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
+- 全新/空库首启会自动种子：`chat.fast`=deepseek-v4-flash(输入/输出费率 0.1、档位 fast)、`chat.deep`=deepseek-v4-pro(输入/输出费率 1.0、档位 reasoning)、计费参数 加价系数 1.15 / 基准每 token 成本 0.00002 cny。**现有库不会被覆盖**，需手动调。
+- OpenRouter 推荐模板会在缺失时补齐，默认 `enabled=false`，包括 DeepSeek V4 Flash/Pro、Mimo V2.5、MiniMax M3、GPT-5.5、Claude Opus 4.8、Kimi K2、Qwen3 Coder、Gemini 3.1 Pro 等。它们是可编辑模板，不会在未启用或未配置 key 时出现在用户聊天选择器。
+- `chat.fast` / `chat.deep` 的 env 种子条件仍是「`model_configs` 整表为空」(`EnsureSeed`，`count==0`，见 `api/internal/modelreg/seed.go`)。因此若在后台把**全部模型配置删光**导致整表清空，下次重启会再次从 `.env` 种子。**即便已迁到后台管理，也不要从 `.env` 删除** `FAST_*` / `DEEP_*` / `ANTHROPIC_*`：它们仍作首启种子，并在 resolver 找不到启用行时作为兜底（`router.go` → `app.go` 静态 provider）。请求时模型选择走 DB（`Router.Select` 优先咨询 `registry.Resolve`），env 仅在上述两种情况被读取。
+- `/api/v1/agent/llm/stream` 若某个模型上游失败，会把该次 reservation release 并把该 LLM call 记为 `failed`，然后按同一 Auto 排序选择下一候选重试一次；降级会通过 `llm.model_selected` SSE 映射为前端的 `model.selected`，所以用户仍能看到「Auto/当前模型 → 新模型」而不是静默换模。若降级模型也失败，才返回 `llm.error`。
 
 真实模型 smoke 仍可用：
 
 ```bash
 make smoke-real-llm
 ```
+
+## Local Host MCP / Skills 管理
+
+桌面端「MCP」和「技能」页可以直接管理 SheJane 自己的配置源：
+
+- MCP 新增/编辑/删除只写 `~/.shejane/mcp-servers.json`。Claude Desktop、Cursor、Codex、环境变量来源仍是只读发现源，只能在原工具里改。
+- Skills 新增/编辑/删除只写 `~/.shejane/skills/<name>/SKILL.md`。`~/.claude/skills` 或 `SHEJANE_LOCAL_SKILLS_PATH` 发现到的外部 skill 仍只读。
+- MCP catalog 只回显 `env_keys`，不会把 `env` 的值返回给 renderer。若需要密钥型 MCP server，应在新增表单外手动补好本机环境变量或由后续安全输入 UI 接入。
 
 ## 计费模型（统一 credits）
 
@@ -184,7 +195,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 
 1. 配好 `.env` 后运行 `docker compose up -d --build`。
 2. 登录普通用户 Web：`http://localhost:5173`。
-3. 在普通聊天 composer 的“上传附件”入口上传 PDF / DOCX / XLSX。
+3. 在普通聊天 composer 的“上传附件”入口上传一个或多个 PDF / DOCX / XLSX。
 4. 确认 bucket 中出现 `documents/<user_id>/<document_id>/source.*` 和 `extracted.txt`。
 5. 附件显示 ready 后，在同一个 composer 发送问题，确认真实 LLM 回复、额度减少、管理后台用量可见。
 6. 在 admin 的 Agent Runs 页确认能看到 run 摘要、状态、模式和用户邮箱。
@@ -193,7 +204,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 边界说明：
 
 - 上传和解析不扣额度；文档问答扣额度。
-- 本阶段只做单文件上下文，不做向量库、多文档 RAG、团队文档库或 Local Host 本地文件读取。
+- 本阶段支持同一提问附加多个上传文档，并把每个文档的抽取文本注入同一个云端 agent run；仍不做向量库、团队文档库或 Local Host 本地文件读取。附件与工具的组合策略见 `docs/document-tool-policy.md`。
 - 提取文本只保留前 `DOCUMENT_TEXT_LIMIT` 字符，避免超长 prompt 失控。
 - 文档默认 7 天过期；当前没有后台手工延长或恢复入口。
 - Agent Run 事件默认 7 天过期；当前没有后台重放、修改、取消已完成 run 的入口。
@@ -204,8 +215,9 @@ SheJane 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **本地 Python daemon / harness**：`local-host/python` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`POST /local/v1/permissions/{request_id}`、`POST /local/v1/questions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token。当前 agent loop 由 Python/FastAPI + LangGraph/deepagents 运行，事件与 checkpoint 存在本地 SQLite。
+- **本地 Python daemon / harness**：`local-host/python` 提供 `GET /local/v1/health`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、`GET/POST /local/v1/workspaces`、`POST /local/v1/workspaces/diagnose`、`DELETE /local/v1/workspaces/{id}`、`GET/POST /local/v1/runs`、`GET /local/v1/runs/{id}`、`GET /local/v1/runs/{id}/stream`、`GET /local/v1/runs/{id}/diagnostics`、`POST /local/v1/runs/{id}/cancel`、`GET/POST /local/v1/schedules`、`DELETE /local/v1/schedules/{id}`、`POST /local/v1/schedules/{id}/notified`、`POST /local/v1/permissions/{request_id}`、`POST /local/v1/questions/{request_id}`、`GET /local/v1/artifacts/{id}`。除 health 外都需要 pairing token。当前 agent loop 由 Python/FastAPI + LangGraph/deepagents 运行，事件、checkpoint 和本机 schedule 存在本地 SQLite。
 - **Local Agent Harness**：运行在用户本机，只通过短期 token 调云端模型网关和计费接口；本地文件、shell、IDE、MCP 结果默认留在本机。`web.search`、`image.*`、`pdf.inspect`、`code.execute` 等平台付费或云资源工具通过 Cloud Tool Gateway 代理，provider key 不进入 Local Host。`browser.task` 是未来浏览器自动化入口；未安装 `browser-use` 且未配置 browser LLM 时不会暴露给模型。
+- **自我纠错栈**：plan-first、计划审批、tool critic、verification loop、progress ledger 和 reflect 的外部能力说明见 [`docs/self-correction-stack.md`](self-correction-stack.md)；底层时序仍以 [`docs/run-loop.md`](run-loop.md) 为准。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单；`GET /api/v1/admin/agent-runs/{id}/trace` 会按单个 run 聚合 run 摘要、事件、LLM 调用、Tool Gateway 调用和该 run 相关钱包流水，仍不提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 - **密钥边界**：provider key 仍只在云端环境变量中配置，不下发给 client 或 Local Harness。
 
@@ -225,6 +237,22 @@ SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 npm run electron
 ```
+
+自定义 subagent 可放在 `~/.shejane/agents/*.md`，也可以用 `SHEJANE_LOCAL_AGENTS_PATH=/path/a,/path/b` 完整覆盖扫描目录。每个文件使用 YAML frontmatter：
+
+```markdown
+---
+name: reviewer
+description: Review implementation diffs with a narrow evidence trail.
+tools:
+  - read_file
+  - web.search
+---
+
+You are a focused reviewer. Return concrete findings with file and line evidence.
+```
+
+`name` / `description` / 正文都必填；`tools` 是对主 agent 当前工具集的白名单，未列出的工具不会暴露给该 subagent。同名配置会覆盖内置 `researcher` / `writer`。
 
 连接云端模型网关：
 
@@ -267,6 +295,12 @@ SHEJANE_LOCAL_BROWSER_HEADLESS=true
 ```
 
 `SHEJANE_LOCAL_VERIFY_REPAIR_MAX` 控制验证回环：当 `task.verify` 明确返回 `ok=false` 且模型准备结束时，daemon 会最多跳回模型这几次，让模型修复后重新验证。设为 `0` 可关闭，超过 `3` 会被夹到 `3`，避免无限循环。`SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 控制用户点击“尝试修复”后创建的 repair run attempt 上限，默认 `3`，夹在 `0–5`；超过上限的 `metadata.intent=repair` run 会 fail-fast，发出 `repair.workflow(status=rejected)` 和结构化 `run.failed`，不会再调用模型。合法 repair run 会把 source run/message、attempt、原失败分类写进 `<state>`，并发出 `repair.workflow` started/completed/failed/canceled 事件；client 会按失败 `{conversation_id, assistant_message_id}` 给“尝试修复”和 quota checkout 创建请求加 in-flight guard，连续点击同一个修复或充值按钮不会创建重复 repair run 或多个 checkout session。`SHEJANE_LOCAL_BROWSER_HEADLESS` 只在未来 `browser.task` 真实接线时生效；当前未配置 browser LLM 时该工具不会出现在 `/local/v1/tools` 或 agent toolset 中。Local Host 的 step/model 上限由 `SHEJANE_LOCAL_MAX_MODEL_CALLS`（默认 20）和客户端 Advanced 设置控制，夹在 1–100 之间；新 run 带入的历史消息数由 `SHEJANE_LOCAL_MAX_HISTORY_TURNS` 控制，默认 40，夹在 1–200 之间，超出时 `<state>` 会提示省略了多少早期消息并附带确定性早期历史摘要；client 自己因消息数/字符预算省略更早对话时，也会在 omission marker 中附带短摘要，且该 marker 在 daemon 二次截断时会被保留为压缩锚点，不会被当成普通最旧消息吃掉。两端摘要都会保留开头/结尾摘录，并优先纳入中段包含“决定、必须、记住、decision、must、remember”等关键约束的 turn；这仍是无 LLM 的确定性摘要。模型网关失败重试由 `SHEJANE_LOCAL_MAX_MODEL_RETRIES` 控制，默认 2，夹在 0–5 之间，和诊断面板共用 `failure_policy` 分类：只重试 transient 或 unknown 且云端显式标记 `retryable:true` 的模型错误，quota/auth/configuration/workspace/validation/fatal 不会仅因响应里出现 `429` 或误带 `retryable:true` 就被自动重试；重试耗尽后会保留结构化 `run.failed`，不会伪装成普通 assistant 回答。工具失败重试由 `SHEJANE_LOCAL_MAX_TOOL_RETRIES` 控制，默认 2，夹在 0–5 之间，客户端 Advanced 面板也可以覆盖。`SHEJANE_LOCAL_RESEARCH_SEARCH_LIMIT` 默认 3，夹在 1–20 之间；`SHEJANE_LOCAL_TOOL_SELECTOR_MAX` 默认 0，夹在 0–50 之间，0 表示关闭。web build 的云端工具循环另有独立的 5-step cap，并且当前发送中的 web loop 可以通过 Stop 按钮中断。浏览器标签页关闭或刷新后留下的 client-generated web tool-loop `run_...` orphan `streaming` 消息，会在会话加载/刷新时自动收束为失败；server-backed cloud run 和 local run 不会被这条兜底清理。
+
+本机定时任务：
+
+- `POST /local/v1/schedules` 写入本地 SQLite 的 `local_scheduled_runs`，字段与普通 run 保持一致：`goal`、`workspace_path`、`model`、`history`、`settings`、`metadata` 和 ISO `run_at`。daemon 内置 `ScheduledRunDispatcher` 每 5 秒 claim 到期任务，并复用 `RunCoordinator.start_run()` 创建正常本地 run。
+- dispatcher 会主动消费该 run 的 stream，避免没有前台 renderer 时 live queue 堵住；事件仍写入 `local_events`，后续诊断和恢复查看会从 SQLite replay。run 完成后 schedule 记录 `result_text`，失败记录 `error_message`；如果 run 暂停在权限或用户问题，schedule 会标记为 failed 并提示需要人工介入。
+- Electron renderer 会轮询 `GET /local/v1/schedules?notify_pending=true`，收到 completed/failed schedule 后调用系统通知，再 `POST /local/v1/schedules/{id}/notified` 标记已提醒。当前是本机最小版：不做云端推送、不跨设备同步，也不替代普通 foreground run 的审批交互。
 
 本地开发日志：
 
@@ -313,13 +347,14 @@ Electron 手动 smoke：
 TAVILY_API_KEY=tvly-...
 TAVILY_BASE_URL=https://api.tavily.com
 TAVILY_SEARCH_CREDITS=20
+WEB_TOOL_LOOP_MAX_STEPS=5
 
 # Local Host 只保留本地 MCP 配置，不保存 Tavily / Stripe / AWS / LLM provider key
 SHEJANE_MCP_ALLOWLIST=local-docs.safe.search,design-system.tokens.read
 SHEJANE_MCP_SERVERS_JSON='{"local-docs":{"command":"node","args":["/absolute/path/to/local-docs-mcp.mjs"]}}'
 ```
 
-`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态调用 `/api/v1/agent/tools/execute` 执行和扣费。`GET /api/v1/agent/tool-capabilities` 是 web build 的云端工具发现来源：它返回 configured/provider/cost，也返回 LLM-facing `description` 和 `inputSchema`，所以 browser web loop 不再维护自己的工具 schema。Cloud gateway 工具的模型可见 schema 来源是 `api/internal/httpapi/cloud_tool_schemas.json`；Go API embed 这份 artifact，Local Host contract test 校验 Python BaseTool schema 覆盖同一字段。`web.search` 的模型可见参数名是 `max_results`，Go gateway 仍兼容旧 `maxResults`。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。MCP server 通过 stdio / HTTP / SSE 配置接入；Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
+`web.fetch` 不需要第三方 key，但会在请求前解析目标域名并阻止 localhost、私网、链路本地、多播和保留地址；HTTP 4xx/5xx 错误只返回短摘要，避免把大段错误 HTML/CSS 塞进模型上下文。`web.search` 当前只支持 Cloud Tool Gateway 上的 Tavily；Local Host 不再读取 `TAVILY_API_KEY` / `TAVILY_BASE_URL`，而是通过登录态调用 `/api/v1/agent/tools/execute` 执行和扣费。`GET /api/v1/agent/tool-capabilities` 是 web build 的云端工具发现来源：它返回 configured/provider/cost，也返回 LLM-facing `description` 和 `inputSchema`，所以 browser web loop 不再维护自己的工具 schema；同一响应还返回 `web_tool_loop_max_steps`（来自 `WEB_TOOL_LOOP_MAX_STEPS`，API 夹在 1-50），web client 撞到该段上限时会停在「继续 N 步？」确认卡，确认后用同一 `run_id` 和保存的模型/工具 history 继续下一段，后续模型与工具调用照常计费。Cloud gateway 工具的模型可见 schema 来源是 `api/internal/httpapi/cloud_tool_schemas.json`；Go API embed 这份 artifact，Local Host contract test 校验 Python BaseTool schema 覆盖同一字段。`web.search` 的模型可见参数名是 `max_results`，Go gateway 仍兼容旧 `maxResults`。`make dev-electron` 会读取项目根目录 `.env` 给 Docker/API 使用，但 Local Host、client 和 Electron 进程会用 allowlist 环境启动，避免继承 Tavily、LLM provider、Stripe 或 AWS secret。MCP server 通过 stdio / HTTP / SSE 配置接入；Local Host 不会把 command、args、env 或 secret 回传给模型或 UI。
 
 研究策略预算可用环境变量微调：
 
@@ -402,6 +437,12 @@ RUN_EXTERNAL_SMOKE=1 make smoke-external
 - `make smoke-real-llm`：要求 API 已用 `MOCK_LLM=false` 和真实 provider key 启动。
 - `make smoke-stripe-webhook`：合成 Stripe webhook 并验证订阅状态生命周期。
 - `make smoke-s3-document`：创建文档 presigned upload，向真实 S3 PUT 一个小 PDF source object，并通过文档删除接口做 best-effort 清理。
+
+Nightly External Smoke 在 GitHub Actions 中会把缺失配置显式降级为 warning：
+
+- 缺 `SHEJANE_API_BASE_URL` 时整套 external smoke 跳过，job summary 会说明原因。
+- 缺 `STRIPE_WEBHOOK_SECRET` 时只跳过 Stripe webhook smoke；真实 LLM 和 S3 文档 smoke 仍会继续跑。
+- 本地运行不受这个降级影响：`smoke-stripe-webhook.sh` 仍会在 shell 变量为空时尝试从当前目录 `.env` 读取 `STRIPE_WEBHOOK_SECRET`。
 
 注意：
 
@@ -594,6 +635,12 @@ make release VERSION=v0.1.0
 - `ghcr.io/jimmyrogue/shejane-client:v0.1.0`
 - `ghcr.io/jimmyrogue/shejane-admin:v0.1.0`
 
+Release workflow 在每个镜像推送后会按 digest 做供应链守门：
+
+- Trivy 扫描镜像 OS/library 漏洞；未修复的 HIGH / CRITICAL 漏洞会让 workflow 失败，阻止继续签名和发布 SBOM。
+- Anchore Syft 生成 `spdx-json` SBOM，作为 workflow artifact 保存；tag 发布时还会附到同名 GitHub Release，文件名形如 `shejane-api-v0.1.0.spdx.json`。
+- Cosign 使用 GitHub Actions OIDC 做 keyless 签名，把 `vX.Y.Z` 和 `latest` 两个 tag 对应的同一 manifest digest 都签入 GHCR。
+
 `client` / `admin` 用**空的 `VITE_API_BASE_URL`** 构建，因此发出相对、同源的 `/api/*` 请求，由 Caddy 路由到 `api`——一套镜像适用于任意域名，无需为每个部署重建。
 
 **服务器首次部署**
@@ -620,7 +667,7 @@ make deploy
 
 > **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
 >
-> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** 模型注册表只在「空表首启」时从 env 播种；若首启时 provider key 为空，`chat.fast`/`chat.deep` 会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再播种，见 `seed.go` 的 `count>0` 提前返回），只能去后台「模型配置」逐模型配置改。生产环境中 `CONFIG_ENCRYPTION_KEY` 未设或仍是弱占位值会让 API 启动失败；开发环境仍允许明文以便本地调试。
+> - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** `chat.fast`/`chat.deep` 只在「空表首启」时从 env 播种；若首启时 provider key 为空，会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再重写这两行），只能去后台「模型配置」逐模型配置改。推荐模型模板会按缺失补齐但默认停用，不会替代真实 key 配置。生产环境中 `CONFIG_ENCRYPTION_KEY` 未设或仍是弱占位值会让 API 启动失败；开发环境仍允许明文以便本地调试。
 > - **（开计费时）`STRIPE_PRICE_ID` / `STRIPE_SECRET_KEY` 不能留空** —— 否则结账走 dev 假成功路径（伪造 `dev_` 会话、不扣款、不发 webhook、不发放 credits），前端却显示「订阅成功」。不开计费可忽略。
 > - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 

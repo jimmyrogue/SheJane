@@ -226,6 +226,45 @@ describe('runCloudAgentLoop', () => {
     expect(result.steps).toBe(3)
   })
 
+  it('returns the accumulated model/tool history when a continuation is needed', async () => {
+    const streamLLM = vi.fn().mockResolvedValue(
+      turn({
+        content: '继续查',
+        toolCalls: [{ id: 'c1', name: 'web.search', arguments: { query: 'step cap' } }],
+        finishReason: 'tool_calls',
+      }),
+    )
+    const executeTool = vi.fn().mockResolvedValue({ ok: true, content: 'search result' } satisfies CloudToolResult)
+
+    const result = await runCloudAgentLoop(
+      { streamLLM, executeTool },
+      {
+        runId: 'r',
+        mode: 'fast',
+        messages: [{ role: 'user', content: 'loop forever' }],
+        tools: [WEB_TOOL_FIXTURES['web.search']],
+        maxSteps: 1,
+        onDelta: () => {},
+      },
+    )
+
+    expect(result.hitStepCap).toBe(true)
+    expect(result.continuationMessages).toEqual([
+      { role: 'user', content: 'loop forever' },
+      {
+        role: 'assistant',
+        content: '继续查',
+        toolCalls: [{ id: 'c1', name: 'web.search', arguments: { query: 'step cap' } }],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'c1',
+        name: 'web.search',
+        content: 'search result',
+      },
+    ])
+  })
+
   it('aborts when the signal is already aborted', async () => {
     const streamLLM = vi.fn()
     const controller = new AbortController()

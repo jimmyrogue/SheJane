@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -61,9 +62,11 @@ from ..middleware import (
     InputGuardMiddleware,
     MemoryWritebackMiddleware,
     OutputGuardMiddleware,
+    PlanApprovalMiddleware,
     PlanFirstMiddleware,
     ProgressLedgerGuardMiddleware,
     ReflectMiddleware,
+    SteeringMiddleware,
     ToolResultRetryMiddleware,
     VerificationLoopMiddleware,
 )
@@ -229,6 +232,8 @@ def _custom_middleware(
         # panel can override the SHEJANE_PLAN_FIRST env default per-run.
         PlanFirstMiddleware(mode=settings.plan_first_mode),
     ]
+    if str(settings.plan_first_mode).lower() != "off":
+        middleware.append(PlanApprovalMiddleware())
     # PII redaction (opt-in via SHEJANE_LOCAL_PII_REDACT). One
     # PIIMiddleware instance per PII type — they compose cleanly.
     for pii_type in _parse_pii_types(settings.pii_redact_types):
@@ -420,6 +425,7 @@ async def build_agent(
     mcp_disabled_servers: set[str] | None = None,
     code_exec_enabled: bool = False,
     settings: Settings | None = None,
+    steering_emit: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
     """Build a compiled agent for one run via `create_deep_agent`.
@@ -476,6 +482,9 @@ async def build_agent(
                          MCP tab; layered ON TOP of mcp_enabled — if the
                          master flag is off, this set is moot.
         settings:        Override settings (tests).
+        steering_emit:   Optional async event sink used by SteeringMiddleware
+                         to mirror injected instructions onto the run SSE
+                         stream after it drains the SQLite queue.
         extra_middleware: Appended after the built-in custom stack.
     """
     settings = settings or get_settings()
@@ -529,6 +538,11 @@ async def build_agent(
         memory_enabled=memory_enabled,
         memory_namespace=memory_namespace,
     )
+    if steering_emit is not None:
+        middleware.insert(
+            2,
+            SteeringMiddleware(store=store, run_id=run_id, emit=steering_emit),
+        )
 
     # LLM-driven tool preselection — sits in the custom middleware band
     # so the narrowed toolset is what the main LLM sees. Always-include

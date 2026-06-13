@@ -18,8 +18,9 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 		t.Fatalf("EnsureSeed: %v", err)
 	}
 	configs, _ := st.ListModelConfigs(context.Background(), CapabilityChat)
-	if len(configs) != 2 {
-		t.Fatalf("seeded configs = %d, want 2", len(configs))
+	wantConfigs := 2 + len(recommendedChatModelTemplates())
+	if len(configs) != wantConfigs {
+		t.Fatalf("seeded configs = %d, want %d", len(configs), wantConfigs)
 	}
 
 	fastP, fastModel, fastMult, ok := reg.ResolveModel(SlotChatFast)
@@ -29,6 +30,22 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 	deepP, deepModel, deepMult, ok := reg.ResolveModel(SlotChatDeep)
 	if !ok || deepP.Name() != "深度" || deepModel != cfg.DeepModel || deepMult != 1 {
 		t.Fatalf("deep resolve = (%v,%q,%v,%v) want deep cost ratio 1", deepP, deepModel, deepMult, ok)
+	}
+	catalog := reg.ListChatModels()
+	if len(catalog) != 2 {
+		t.Fatalf("user catalog len = %d, want 2 enabled legacy rows only", len(catalog))
+	}
+	if catalog[0].Vendor != "DeepSeek" || catalog[0].CapabilityTier != CapabilityTierFast {
+		t.Fatalf("fast catalog metadata = %+v, want DeepSeek/fast", catalog[0])
+	}
+	var foundTemplate bool
+	for _, c := range configs {
+		if c.Slot == "minimax-m3" && c.Vendor == "Minimax" && c.CapabilityTier == CapabilityTierReasoning && !c.Enabled {
+			foundTemplate = true
+		}
+	}
+	if !foundTemplate {
+		t.Fatalf("recommended templates missing disabled MiniMax row: %+v", configs)
 	}
 
 	// EnsureSeed also seeds the billing defaults (markup 1.15, baseline cost).
@@ -123,8 +140,9 @@ func TestEnsureSeedIsIdempotent(t *testing.T) {
 	_ = reg.EnsureSeed(context.Background())
 	_ = reg.EnsureSeed(context.Background())
 	configs, _ := st.ListModelConfigs(context.Background(), "")
-	if len(configs) != 2 {
-		t.Fatalf("configs after double seed = %d, want 2", len(configs))
+	wantConfigs := 2 + len(recommendedChatModelTemplates())
+	if len(configs) != wantConfigs {
+		t.Fatalf("configs after double seed = %d, want %d", len(configs), wantConfigs)
 	}
 }
 
@@ -161,9 +179,9 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 
 	// Three enabled chat models with distinct priorities + arbitrary catalog ids.
 	for _, m := range []store.ModelConfig{
-		{Slot: "deepseek-v4", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "DeepSeek", Priority: 10, Enabled: true},
-		{Slot: "gpt-4o", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "GPT-4o", Description: "首选", Priority: 99, Enabled: true},
-		{Slot: "claude-sonnet", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Claude Sonnet", Priority: 50, Enabled: true},
+		{Slot: "deepseek-v4", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "DeepSeek", Vendor: "DeepSeek", CapabilityTier: CapabilityTierFast, Priority: 10, Enabled: true},
+		{Slot: "gpt-4o", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "GPT-4o", Vendor: "ChatGPT", CapabilityTier: CapabilityTierMax, Description: "首选", Priority: 99, Enabled: true},
+		{Slot: "claude-sonnet", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Claude Sonnet", Vendor: "Claude", CapabilityTier: CapabilityTierReasoning, Priority: 50, Enabled: true},
 		{Slot: "chat.disabled", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Off", Priority: 100, Enabled: false},
 	} {
 		if _, err := st.UpsertModelConfig(ctx, "admin", m); err != nil {
@@ -183,8 +201,8 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 			t.Fatalf("catalog order = %v, want %v (priority desc)", gotOrder, wantOrder)
 		}
 	}
-	if catalog[0].Label != "GPT-4o" || catalog[0].Description != "首选" {
-		t.Fatalf("top entry = %+v, want Label=GPT-4o Description=首选", catalog[0])
+	if catalog[0].Label != "GPT-4o" || catalog[0].Description != "首选" || catalog[0].Vendor != "ChatGPT" || catalog[0].CapabilityTier != CapabilityTierMax {
+		t.Fatalf("top entry = %+v, want GPT-4o catalog metadata", catalog[0])
 	}
 
 	if def := reg.DefaultChatModelID(); def != "gpt-4o" {
@@ -218,6 +236,9 @@ func TestSeedFromRealEnvEncryptsKeysAndPicksProviders(t *testing.T) {
 
 	configs, _ := st.ListModelConfigs(context.Background(), CapabilityChat)
 	for _, c := range configs {
+		if c.Slot != SlotChatFast && c.Slot != SlotChatDeep {
+			continue
+		}
 		if c.APIKeyEncrypted == "" {
 			t.Fatalf("slot %s: api key not seeded", c.Slot)
 		}

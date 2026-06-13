@@ -89,6 +89,7 @@ export type LLMStreamEvent =
   | { type: 'delta'; contentDelta: string; reasoningDelta: string }
   | { type: 'tool_call'; id: string; name: string; arguments: Record<string, unknown> }
   | { type: 'usage'; inputTokens: number; outputTokens: number; creditsCost: number }
+  | { type: 'model_selected'; requestedModel: string; resolvedModelId: string; label: string; reason: string }
   | { type: 'done'; requestId: string; finishReason: string }
   | { type: 'error'; requestId: string; message: string }
   | { type: 'ignore' }
@@ -141,6 +142,14 @@ function parseLLMStreamChunk(chunk: string): LLMStreamEvent {
         inputTokens: num('input_tokens'),
         outputTokens: num('output_tokens'),
         creditsCost: num('credits_cost'),
+      }
+    case 'llm.model_selected':
+      return {
+        type: 'model_selected',
+        requestedModel: str('requested_model'),
+        resolvedModelId: str('resolved_model_id'),
+        label: str('label'),
+        reason: str('reason'),
       }
     case 'llm.done':
       return { type: 'done', requestId: str('request_id'), finishReason: str('finish_reason') }

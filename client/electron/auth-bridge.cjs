@@ -1,6 +1,7 @@
 const REFRESH_COOKIE_NAME = 'shejane_refresh'
+const { desktopText } = require('./desktop-i18n.cjs')
 
-function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cookies, fetchImpl = globalThis.fetch } = {}) {
+function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cookies, fetchImpl = globalThis.fetch, locale = 'zh' } = {}) {
   if (!cookies) {
     throw new Error('Electron cookie store is required')
   }
@@ -10,12 +11,12 @@ function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cook
   const baseURL = normalizeBaseURL(apiBaseURL)
 
   return {
-    register: (input) => authRequest({ baseURL, cookies, fetchImpl, path: '/api/v1/auth/register', body: input }),
-    login: (input) => authRequest({ baseURL, cookies, fetchImpl, path: '/api/v1/auth/login', body: input }),
-    refresh: () => authRequest({ baseURL, cookies, fetchImpl, path: '/api/v1/auth/refresh', body: {}, includeCookie: true }),
+    register: (input) => authRequest({ baseURL, cookies, fetchImpl, locale: resolveLocale(locale), path: '/api/v1/auth/register', body: input }),
+    login: (input) => authRequest({ baseURL, cookies, fetchImpl, locale: resolveLocale(locale), path: '/api/v1/auth/login', body: input }),
+    refresh: () => authRequest({ baseURL, cookies, fetchImpl, locale: resolveLocale(locale), path: '/api/v1/auth/refresh', body: {}, includeCookie: true }),
     logout: async () => {
       try {
-        await authRequest({ baseURL, cookies, fetchImpl, path: '/api/v1/auth/logout', body: {}, includeCookie: true })
+        await authRequest({ baseURL, cookies, fetchImpl, locale: resolveLocale(locale), path: '/api/v1/auth/logout', body: {}, includeCookie: true })
       } finally {
         await clearRefreshCookie(cookies, baseURL)
       }
@@ -23,20 +24,20 @@ function createElectronAuthHandlers({ apiBaseURL = 'http://localhost:8080', cook
   }
 }
 
-async function authIPCResult(action) {
+async function authIPCResult(action, locale = 'zh') {
   try {
     return { ok: true, data: await action() }
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : '请求失败',
+      error: error instanceof Error ? error.message : desktopText(locale, 'errors.requestFailed'),
     }
   }
 }
 
-function unwrapAuthIPCResult(result) {
+function unwrapAuthIPCResult(result, locale = 'zh') {
   if (result?.ok === false) {
-    throw new Error(result.error || '请求失败')
+    throw new Error(result.error || desktopText(locale, 'errors.requestFailed'))
   }
   if (result?.ok === true) {
     return result.data
@@ -44,7 +45,7 @@ function unwrapAuthIPCResult(result) {
   return result
 }
 
-async function authRequest({ baseURL, cookies, fetchImpl, path, body, includeCookie = false }) {
+async function authRequest({ baseURL, cookies, fetchImpl, locale = 'zh', path, body, includeCookie = false }) {
   const headers = {
     'Content-Type': 'application/json',
   }
@@ -61,10 +62,10 @@ async function authRequest({ baseURL, cookies, fetchImpl, path, body, includeCoo
     body: JSON.stringify(body ?? {}),
   })
   await persistRefreshCookie(response, cookies, baseURL)
-  return decodeAPIResponse(response)
+  return decodeAPIResponse(response, locale)
 }
 
-async function decodeAPIResponse(response) {
+async function decodeAPIResponse(response, locale = 'zh') {
   let body
   try {
     body = await response.json()
@@ -76,7 +77,7 @@ async function decodeAPIResponse(response) {
     throw new Error(body?.message || `HTTP ${response.status}`)
   }
   if (body?.code !== 0) {
-    throw new Error(body?.message || '请求失败')
+    throw new Error(body?.message || desktopText(locale, 'errors.requestFailed'))
   }
   return body.data
 }
@@ -205,6 +206,10 @@ function normalizeBaseURL(value) {
 
 function cookieURL(baseURL) {
   return `${new URL(baseURL).origin}/`
+}
+
+function resolveLocale(locale) {
+  return typeof locale === 'function' ? locale() : locale
 }
 
 module.exports = {

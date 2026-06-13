@@ -36,11 +36,23 @@ func (s *MemoryStore) ListModelConfigs(ctx context.Context, capability string) (
 		if configs[i].Capability != configs[j].Capability {
 			return configs[i].Capability < configs[j].Capability
 		}
-		if configs[i].Slot != configs[j].Slot {
-			return configs[i].Slot < configs[j].Slot
+		if configs[i].Vendor != configs[j].Vendor {
+			if configs[i].Vendor == "" {
+				return false
+			}
+			if configs[j].Vendor == "" {
+				return true
+			}
+			return configs[i].Vendor < configs[j].Vendor
 		}
 		if configs[i].Enabled != configs[j].Enabled {
 			return configs[i].Enabled
+		}
+		if configs[i].Priority != configs[j].Priority {
+			return configs[i].Priority > configs[j].Priority
+		}
+		if configs[i].Slot != configs[j].Slot {
+			return configs[i].Slot < configs[j].Slot
 		}
 		return configs[i].UpdatedAt.After(configs[j].UpdatedAt)
 	})

@@ -1097,7 +1097,15 @@ const CAPABILITY_OPTIONS = [
   { value: 'image', label: '生图 (image)' },
 ] as const
 
+const CAPABILITY_TIER_OPTIONS = [
+  { value: 'fast', label: '快速' },
+  { value: 'balanced', label: '均衡' },
+  { value: 'reasoning', label: '推理' },
+  { value: 'max', label: '最强' },
+] as const
+
 const IMAGE_DEFAULT_MODEL_ID = 'image.default'
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 
 type ModelPreset = {
   id: string
@@ -1108,62 +1116,163 @@ type ModelPreset = {
 
 const MODEL_PRESETS: ModelPreset[] = [
   {
-    id: 'deepseek-pro',
-    label: 'DeepSeek Pro',
-    helper: '基准 1x',
-    patch: {
-      capability: 'chat',
-      slot: 'deepseek-pro',
-      provider_kind: 'deepseek-v4',
-      display_name: 'DeepSeek Pro',
-      description: '基准模型,适合复杂分析和多步任务',
-      base_url: 'https://api.deepseek.com',
-      model_name: 'deepseek-v4-pro',
-      credit_multiplier: '1',
-      input_credit_multiplier: '1',
-      output_credit_multiplier: '1',
-      cache_write_credit_multiplier: '1',
-    },
-  },
-  {
     id: 'deepseek-flash',
     label: 'DeepSeek Flash',
-    helper: '轻量 0.1x',
+    helper: '快速 0.1x',
     patch: {
       capability: 'chat',
-      slot: 'deepseek-flash',
-      provider_kind: 'deepseek-v4',
-      display_name: 'DeepSeek Flash',
-      description: '速度快、成本低,适合日常对话和简单任务',
-      base_url: 'https://api.deepseek.com',
-      model_name: 'deepseek-v4-flash',
+      slot: 'deepseek-v4-flash',
+      provider_kind: 'openai-compatible',
+      display_name: 'DeepSeek V4 Flash',
+      vendor: 'DeepSeek',
+      capability_tier: 'fast',
+      description: 'OpenRouter 高使用量编码模型,适合快速问答、代码补全和低成本任务',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'deepseek/deepseek-v4-flash',
       credit_multiplier: '0.1',
       input_credit_multiplier: '0.1',
       output_credit_multiplier: '0.1',
       cache_write_credit_multiplier: '0.1',
-      priority: '100',
+      priority: '95',
+    },
+  },
+  {
+    id: 'deepseek-pro',
+    label: 'DeepSeek Pro',
+    helper: '推理 1x',
+    patch: {
+      capability: 'chat',
+      slot: 'deepseek-v4-pro',
+      provider_kind: 'openai-compatible',
+      display_name: 'DeepSeek V4 Pro',
+      vendor: 'DeepSeek',
+      capability_tier: 'reasoning',
+      description: 'DeepSeek 基准强推理模型,适合复杂分析、多步任务和代码审查',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'deepseek/deepseek-v4-pro',
+      credit_multiplier: '1',
+      input_credit_multiplier: '1',
+      output_credit_multiplier: '1',
+      cache_write_credit_multiplier: '1',
+      priority: '90',
+    },
+  },
+  {
+    id: 'mimo-v2-5',
+    label: 'Mimo V2.5',
+    helper: 'xiaomi',
+    patch: {
+      capability: 'chat',
+      slot: 'mimo-v2-5',
+      provider_kind: 'openai-compatible',
+      display_name: 'Mimo V2.5',
+      vendor: 'xiaomi',
+      capability_tier: 'balanced',
+      description: 'OpenRouter 编程榜高使用量模型,适合代码生成和日常开发任务',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'xiaomi/mimo-v2.5',
+      credit_multiplier: '0.6',
+      input_credit_multiplier: '0.5',
+      output_credit_multiplier: '0.8',
+      cache_write_credit_multiplier: '0.5',
+      priority: '88',
+    },
+  },
+  {
+    id: 'minimax-m3',
+    label: 'MiniMax M3',
+    helper: '长上下文',
+    patch: {
+      capability: 'chat',
+      slot: 'minimax-m3',
+      provider_kind: 'openai-compatible',
+      display_name: 'MiniMax M3',
+      vendor: 'Minimax',
+      capability_tier: 'reasoning',
+      description: '适合长上下文、工具调用、代理式编码和多步执行',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'minimax/minimax-m3',
+      credit_multiplier: '1',
+      input_credit_multiplier: '0.5',
+      output_credit_multiplier: '1.5',
+      cache_write_credit_multiplier: '0.5',
+      priority: '86',
+    },
+  },
+  {
+    id: 'gpt-5-5',
+    label: 'GPT-5.5',
+    helper: 'ChatGPT',
+    patch: {
+      capability: 'chat',
+      slot: 'gpt-5-5',
+      provider_kind: 'openai-compatible',
+      display_name: 'GPT-5.5',
+      vendor: 'ChatGPT',
+      capability_tier: 'max',
+      description: 'OpenAI 前沿通用模型模板,适合高难度推理、写作和综合任务',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'openai/gpt-5.5',
+      credit_multiplier: '6',
+      input_credit_multiplier: '4',
+      output_credit_multiplier: '8',
+      cache_write_credit_multiplier: '4',
+      priority: '82',
+    },
+  },
+  {
+    id: 'claude-opus',
+    label: 'Claude Opus',
+    helper: '最强',
+    patch: {
+      capability: 'chat',
+      slot: 'claude-opus-4-8',
+      provider_kind: 'openai-compatible',
+      display_name: 'Claude Opus 4.8',
+      vendor: 'Claude',
+      capability_tier: 'max',
+      description: 'OpenRouter 编程榜强模型模板,适合复杂架构、长文推理和高风险改动',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'anthropic/claude-opus-4.8',
+      credit_multiplier: '6',
+      input_credit_multiplier: '4',
+      output_credit_multiplier: '8',
+      cache_write_credit_multiplier: '4',
+      priority: '80',
+    },
+  },
+  {
+    id: 'kimi-k2',
+    label: 'Kimi K2',
+    helper: 'kimi',
+    patch: {
+      capability: 'chat',
+      slot: 'kimi-k2',
+      provider_kind: 'openai-compatible',
+      display_name: 'Kimi K2',
+      vendor: 'kimi',
+      capability_tier: 'reasoning',
+      description: 'Moonshot/Kimi 长上下文与推理模板,适合资料整理和复杂问答',
+      base_url: OPENROUTER_BASE_URL,
+      model_name: 'moonshotai/kimi-k2',
+      credit_multiplier: '1.2',
+      input_credit_multiplier: '0.8',
+      output_credit_multiplier: '2',
+      cache_write_credit_multiplier: '0.8',
+      priority: '76',
     },
   },
   {
     id: 'openai-compatible',
     label: 'OpenAI 兼容',
-    helper: '通用网关',
+    helper: '空白模板',
     patch: {
       capability: 'chat',
       provider_kind: 'openai-compatible',
-      base_url: 'https://api.openai.com/v1',
+      vendor: 'ChatGPT',
+      capability_tier: 'balanced',
+      base_url: OPENROUTER_BASE_URL,
       model_name: '',
-    },
-  },
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    helper: 'Claude 路由',
-    patch: {
-      capability: 'chat',
-      provider_kind: 'anthropic',
-      base_url: '',
-      model_name: 'claude-sonnet-4-5',
     },
   },
 ]
@@ -1176,6 +1285,8 @@ interface ModelConfigForm {
   capability: string
   provider_kind: string
   display_name: string
+  vendor: string
+  capability_tier: string
   description: string
   priority: string
   base_url: string
@@ -1196,6 +1307,8 @@ function emptyModelForm(): ModelConfigForm {
     capability: 'chat',
     provider_kind: 'openai-compatible',
     display_name: '',
+    vendor: '',
+    capability_tier: 'balanced',
     description: '',
     priority: '0',
     base_url: '',
@@ -1273,6 +1386,8 @@ function ModelConfigCard({
       capability: cfg.capability,
       provider_kind: cfg.provider_kind,
       display_name: cfg.display_name,
+      vendor: cfg.vendor ?? '',
+      capability_tier: cfg.capability_tier || 'balanced',
       description: cfg.description ?? '',
       priority: String(cfg.priority ?? 0),
       base_url: cfg.base_url,
@@ -1333,6 +1448,8 @@ function ModelConfigCard({
       capability: form.capability.trim() || 'chat',
       provider_kind: form.provider_kind,
       display_name: form.display_name.trim(),
+      vendor: form.vendor.trim(),
+      capability_tier: form.capability_tier,
       description: form.description.trim(),
       priority: Math.trunc(Number(form.priority)) || 0,
       base_url: form.base_url.trim(),
@@ -1473,7 +1590,11 @@ function ModelConfigCard({
                   <TableRow key={cfg.id}>
                     <TableCell>
                       <div className="font-medium">{cfg.slot}</div>
-                      <div className="text-xs text-muted-foreground">{cfg.capability}</div>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        <Badge variant="outline">{cfg.vendor || '其他'}</Badge>
+                        <Badge variant="secondary">{formatCapabilityTier(cfg.capability_tier)}</Badge>
+                        <Badge variant="outline">{cfg.capability}</Badge>
+                      </div>
                     </TableCell>
                     <TableCell className="max-w-52">
                       <div className="truncate font-medium">{cfg.display_name || cfg.provider_kind}</div>
@@ -1653,7 +1774,7 @@ function ModelConfigCard({
                   启用
                 </label>
               </div>
-              <div className="grid gap-3 sm:grid-cols-[160px_1fr_1fr]">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div className="grid gap-1.5">
                   <Label htmlFor="mc-cap">能力</Label>
                   <select
@@ -1694,6 +1815,25 @@ function ModelConfigCard({
                 <div className="grid gap-1.5">
                   <Label htmlFor="mc-name">显示名</Label>
                   <Input id="mc-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} placeholder="DeepSeek Pro" />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-vendor">厂商</Label>
+                  <Input id="mc-vendor" value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} placeholder="DeepSeek / ChatGPT / Claude" />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="mc-tier">能力档位</Label>
+                  <select
+                    id="mc-tier"
+                    className={SELECT_CLASS}
+                    value={form.capability_tier}
+                    onChange={(e) => setForm({ ...form, capability_tier: e.target.value })}
+                  >
+                    {CAPABILITY_TIER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>
@@ -1991,6 +2131,10 @@ function formatNumber(value: number) {
 
 function formatMultiplier(value: number) {
   return Number.isFinite(value) ? Number(value.toFixed(4)).toString() : '0'
+}
+
+function formatCapabilityTier(value?: string) {
+  return CAPABILITY_TIER_OPTIONS.find((option) => option.value === value)?.label ?? '均衡'
 }
 
 function formatCurrency(amountCents: number) {

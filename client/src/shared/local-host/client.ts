@@ -16,16 +16,26 @@ import type { components } from './generated'
 type Schemas = components['schemas']
 
 export type LocalRun = Schemas['LocalRun']
+export type LocalScheduledRun = Schemas['LocalScheduledRun']
 export type LocalCloudSession = Schemas['LocalCloudSession']
 export type LocalArtifact = Schemas['LocalArtifact']
 export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunResponse = Schemas['CancelRunResponse']
+export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
 export type McpServerCatalog = Schemas['McpServerCatalog']
+export type McpServerWriteRequest = Schemas['McpServerWriteRequest']
+export type McpServerWriteResponse = Schemas['McpServerWriteResponse']
+export type McpServerDeleteResponse = Schemas['McpServerDeleteResponse']
+export type SkillFile = Schemas['SkillFile']
+export type SkillWriteRequest = Schemas['SkillWriteRequest']
+export type SkillWriteResponse = Schemas['SkillWriteResponse']
+export type SkillDeleteResponse = Schemas['SkillDeleteResponse']
 export type LocalPermissionScope = 'once' | 'run'
+export type LocalPlanApprovalDecision = 'approve' | 'modify' | 'reject'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
 //
@@ -172,6 +182,40 @@ export interface AgentSettings {
 
 export type LocalRunMetadata = Record<string, unknown>
 
+function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
+  const src = settings
+  if (!src || Object.keys(src).length === 0) return undefined
+  const out: Record<string, unknown> = {}
+  if (src.memory !== undefined) out.memory = src.memory
+  if (src.skills !== undefined) out.skills = src.skills
+  if (src.mcp !== undefined) out.mcp = src.mcp
+  if (src.mcpDisabled !== undefined && src.mcpDisabled.length > 0) {
+    out.mcp_disabled = src.mcpDisabled
+  }
+  // Advanced knobs -> flat snake_case keys the daemon's run_settings
+  // reader understands. Only defined fields ship, so an untouched knob
+  // leaves the daemon's own default in force.
+  const adv = src.advanced
+  if (adv) {
+    if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
+    if (adv.maxHistoryTurns !== undefined) out.max_history_turns = adv.maxHistoryTurns
+    if (adv.maxModelRetries !== undefined) out.max_model_retries = adv.maxModelRetries
+    if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
+    if (adv.researchSearchLimit !== undefined) out.research_search_limit = adv.researchSearchLimit
+    if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
+    if (adv.subagents !== undefined) out.subagents = adv.subagents
+    if (adv.reflect !== undefined) out.reflect = adv.reflect
+    if (adv.browserHeadless !== undefined) out.browser_headless = adv.browserHeadless
+    if (adv.toolCritic !== undefined) out.tool_critic = adv.toolCritic
+    if (adv.inputGuard !== undefined) out.input_guard = adv.inputGuard
+    if (adv.planFirst !== undefined) out.plan_first = adv.planFirst
+    if (adv.piiRedact !== undefined && adv.piiRedact.trim() !== '') {
+      out.pii_redact = adv.piiRedact.trim()
+    }
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
 export async function createLocalRun(
   input: {
     goal: string
@@ -191,39 +235,7 @@ export async function createLocalRun(
   // Translate camelCase → snake_case for the few keys the daemon
   // reads as snake_case (mcp_disabled). Everything else (memory /
   // skills / mcp) is already named the same on both sides.
-  const settings = (() => {
-    const src = input.settings
-    if (!src || Object.keys(src).length === 0) return undefined
-    const out: Record<string, unknown> = {}
-    if (src.memory !== undefined) out.memory = src.memory
-    if (src.skills !== undefined) out.skills = src.skills
-    if (src.mcp !== undefined) out.mcp = src.mcp
-    if (src.mcpDisabled !== undefined && src.mcpDisabled.length > 0) {
-      out.mcp_disabled = src.mcpDisabled
-    }
-    // Advanced knobs → flat snake_case keys the daemon's run_settings
-    // reader understands. Only defined fields ship, so an untouched knob
-    // leaves the daemon's own default in force.
-    const adv = src.advanced
-    if (adv) {
-      if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
-      if (adv.maxHistoryTurns !== undefined) out.max_history_turns = adv.maxHistoryTurns
-      if (adv.maxModelRetries !== undefined) out.max_model_retries = adv.maxModelRetries
-      if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
-      if (adv.researchSearchLimit !== undefined) out.research_search_limit = adv.researchSearchLimit
-      if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
-      if (adv.subagents !== undefined) out.subagents = adv.subagents
-      if (adv.reflect !== undefined) out.reflect = adv.reflect
-      if (adv.browserHeadless !== undefined) out.browser_headless = adv.browserHeadless
-      if (adv.toolCritic !== undefined) out.tool_critic = adv.toolCritic
-      if (adv.inputGuard !== undefined) out.input_guard = adv.inputGuard
-      if (adv.planFirst !== undefined) out.plan_first = adv.planFirst
-      if (adv.piiRedact !== undefined && adv.piiRedact.trim() !== '') {
-        out.pii_redact = adv.piiRedact.trim()
-      }
-    }
-    return Object.keys(out).length === 0 ? undefined : out
-  })()
+  const settings = serializeAgentSettings(input.settings)
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
     method: 'POST',
     headers: localHeaders(config, true),
@@ -235,6 +247,32 @@ export async function createLocalRun(
       settings,
       metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
       model: input.mode,
+    }),
+  })
+  return decodeLocalResponse<LocalRun>(response)
+}
+
+export async function forkLocalRun(
+  runID: string,
+  input: {
+    checkpointId: string
+    goal?: string
+    mode?: ChatMode
+    settings?: AgentSettings
+    metadata?: LocalRunMetadata
+  },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalRun> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/fork`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      checkpoint_id: input.checkpointId,
+      goal: input.goal || undefined,
+      model: input.mode || undefined,
+      settings: input.settings && Object.keys(input.settings).length > 0 ? input.settings : undefined,
+      metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
     }),
   })
   return decodeLocalResponse<LocalRun>(response)
@@ -309,6 +347,96 @@ export async function listMcpServers(
   }
 }
 
+export async function createMcpServer(
+  input: McpServerWriteRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<McpServerWriteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/mcp-servers`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<McpServerWriteResponse>(response)
+}
+
+export async function updateMcpServer(
+  name: string,
+  input: McpServerWriteRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<McpServerWriteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/mcp-servers/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<McpServerWriteResponse>(response)
+}
+
+export async function deleteMcpServer(
+  name: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<McpServerDeleteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/mcp-servers/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<McpServerDeleteResponse>(response)
+}
+
+export async function createLocalSkill(
+  input: SkillWriteRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SkillWriteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<SkillWriteResponse>(response)
+}
+
+export async function getLocalSkillFile(
+  name: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SkillFile> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills/${encodeURIComponent(name)}`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<SkillFile>(response)
+}
+
+export async function updateLocalSkill(
+  name: string,
+  input: SkillWriteRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SkillWriteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<SkillWriteResponse>(response)
+}
+
+export async function deleteLocalSkill(
+  name: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SkillDeleteResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/skills/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<SkillDeleteResponse>(response)
+}
+
 export async function setLocalCloudSession(
   input: { cloudBaseURL: string; accessToken: string },
   config: LocalHostConfig,
@@ -340,6 +468,80 @@ export async function listLocalRuns(config: LocalHostConfig, fetcher: Fetcher = 
   })
   const body = await decodeLocalResponse<{ runs?: LocalRun[] }>(response)
   return body.runs ?? []
+}
+
+export async function listLocalSchedules(
+  config: LocalHostConfig,
+  options: { notifyPending?: boolean; status?: LocalScheduledRun['status'] } = {},
+  fetcher: Fetcher = fetch,
+): Promise<LocalScheduledRun[]> {
+  const params = new URLSearchParams()
+  if (options.notifyPending) {
+    params.set('notify_pending', 'true')
+  }
+  if (options.status) {
+    params.set('status', options.status)
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/schedules${suffix}`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ schedules?: LocalScheduledRun[] }>(response)
+  return body.schedules ?? []
+}
+
+export async function createLocalSchedule(
+  input: {
+    goal: string
+    runAt: string
+    workspacePath?: string
+    mode?: ChatMode
+    history?: Array<{ role: string; content: string }>
+    settings?: AgentSettings
+    metadata?: LocalRunMetadata
+  },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalScheduledRun> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/schedules`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      goal: input.goal,
+      run_at: input.runAt,
+      workspace_path: input.workspacePath || undefined,
+      model: input.mode || 'auto',
+      history: input.history ?? [],
+      settings: serializeAgentSettings(input.settings),
+      metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
+    }),
+  })
+  return decodeLocalResponse<LocalScheduledRun>(response)
+}
+
+export async function cancelLocalSchedule(
+  scheduleID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalScheduledRun> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/schedules/${encodeURIComponent(scheduleID)}`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalScheduledRun>(response)
+}
+
+export async function markLocalScheduleNotified(
+  scheduleID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalScheduledRun> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/schedules/${encodeURIComponent(scheduleID)}/notified`, {
+    method: 'POST',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalScheduledRun>(response)
 }
 
 export async function getLocalRunDiagnostics(
@@ -384,6 +586,20 @@ export async function cancelLocalRun(
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<CancelRunResponse>(response)
+}
+
+export async function injectLocalRunInstruction(
+  runID: string,
+  content: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<InjectRunInstructionResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/inject`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ content }),
+  })
+  return decodeLocalResponse<InjectRunInstructionResponse>(response)
 }
 
 /** Fetch the structured slide outline for a .pptx file.
@@ -535,6 +751,28 @@ export async function answerLocalQuestion(
     method: 'POST',
     headers: localHeaders(config, true),
     body: JSON.stringify({ answers }),
+  })
+  if (!response.ok) {
+    throw new Error(await localErrorMessage(response))
+  }
+}
+
+export async function resolveLocalPlanApproval(
+  requestID: string,
+  decision: LocalPlanApprovalDecision,
+  instructions: string | undefined,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<void> {
+  const body: { decision: LocalPlanApprovalDecision; instructions?: string } = { decision }
+  const note = instructions?.trim()
+  if (note) {
+    body.instructions = note
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/plans/${encodeURIComponent(requestID)}`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
   })
   if (!response.ok) {
     throw new Error(await localErrorMessage(response))

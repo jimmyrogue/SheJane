@@ -62,8 +62,7 @@ func TestAdminUpdateModelConfigReproUserPayload(t *testing.T) {
 // Catalog admission rules: unknown provider kinds are rejected outright (typo
 // guard — they would silently run as openai-compatible), anthropic is accepted
 // into the chat catalog now that it does tool calls, and an admin PATCH must
-// not wipe the seeded catalog fields (description/priority aren't admin input
-// yet — Phase 4).
+// not wipe the seeded catalog fields.
 func TestAdminModelConfigCatalogValidation(t *testing.T) {
 	server, st := newTestServerAndStore(t, func(cfg *config.Config) {
 		cfg.AdminEmails = []string{"admin@example.com"}
@@ -119,8 +118,8 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Priority != 100 || reloaded.Description != fast.Description {
-		t.Fatalf("after PATCH priority=%d description=%q — seeded catalog fields were wiped", reloaded.Priority, reloaded.Description)
+	if reloaded.Priority != 100 || reloaded.Description != fast.Description || reloaded.Vendor != fast.Vendor || reloaded.CapabilityTier != fast.CapabilityTier {
+		t.Fatalf("after PATCH catalog fields were wiped: priority=%d description=%q vendor=%q tier=%q", reloaded.Priority, reloaded.Description, reloaded.Vendor, reloaded.CapabilityTier)
 	}
 }
 
@@ -139,7 +138,7 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		return rec
 	}
 
-	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
+	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","vendor":"ChatGPT","capability_tier":"max","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
 	if valid.Code != http.StatusOK {
 		t.Fatalf("valid arbitrary chat model id status = %d, want 200; body = %s", valid.Code, valid.Body.String())
 	}
@@ -147,8 +146,8 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 	if err := json.Unmarshal(valid.Body.Bytes(), &validBody); err != nil {
 		t.Fatalf("decode valid response: %v", err)
 	}
-	if validBody.Data.Slot != "gpt-4o" || validBody.Data.DisplayName != "GPT-4o" {
-		t.Fatalf("saved model config = %+v, want slot gpt-4o + label GPT-4o", validBody.Data)
+	if validBody.Data.Slot != "gpt-4o" || validBody.Data.DisplayName != "GPT-4o" || validBody.Data.Vendor != "ChatGPT" || validBody.Data.CapabilityTier != "max" {
+		t.Fatalf("saved model config = %+v, want slot gpt-4o + ChatGPT/max metadata", validBody.Data)
 	}
 	modelsReq := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
 	modelsReq.Header.Set("Authorization", "Bearer "+token)
@@ -163,12 +162,12 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 	}
 	found := false
 	for _, model := range modelsBody.Data.Models {
-		if model.ID == "gpt-4o" && model.Label == "GPT-4o" {
+		if model.ID == "gpt-4o" && model.Label == "GPT-4o" && model.Vendor == "ChatGPT" && model.CapabilityTier == "max" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("GET /models missing gpt-4o/GPT-4o; body = %s", modelsRec.Body.String())
+		t.Fatalf("GET /models missing gpt-4o/GPT-4o catalog metadata; body = %s", modelsRec.Body.String())
 	}
 
 	for _, tc := range []struct {
@@ -178,6 +177,10 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		{
 			name:    "auto is reserved",
 			payload: `{"slot":"auto","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
+		},
+		{
+			name:    "auto prefix is reserved",
+			payload: `{"slot":"auto.fast","capability":"chat","provider_kind":"mock","credit_multiplier":1}`,
 		},
 		{
 			name:    "blank model id",
@@ -194,6 +197,10 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		{
 			name:    "image slot is fixed",
 			payload: `{"slot":"image.alt","capability":"image","provider_kind":"openai-compatible","base_url":"https://api.example.com/v1","model_name":"gpt-image-1","api_key":"sk-test","price_per_call_cny":0.1,"credit_multiplier":1}`,
+		},
+		{
+			name:    "unknown capability tier",
+			payload: `{"slot":"tier-bad","capability":"chat","provider_kind":"mock","capability_tier":"ultra","credit_multiplier":1}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

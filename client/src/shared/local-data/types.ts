@@ -1,9 +1,9 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
-/** The model the user picked in the composer: the sentinel `'auto'` (the Go
- *  LLM router resolves it to the default / highest-priority model) or a
- *  concrete catalog model id from GET /api/v1/models. The `string & {}` keeps
- *  `'auto'` autocompletion while allowing any model id. */
-export type ChatMode = 'auto' | (string & {})
+/** The model the user picked in the composer: Auto sentinels (`auto`,
+ *  `auto.fast`, `auto.smart`) or a concrete catalog model id from
+ *  GET /api/v1/models. The `string & {}` keeps Auto autocompletion while
+ *  allowing any model id. */
+export type ChatMode = 'auto' | 'auto.fast' | 'auto.smart' | (string & {})
 export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
 
 export interface AgentQuestionChoice {
@@ -32,6 +32,34 @@ export interface AgentToolDetail {
    *  the renderer to draw the default IconWorld glyph alongside the
    *  host. We don't fetch real favicons — privacy + no external deps. */
   showWebIcon?: boolean
+}
+
+export interface StoredCloudToolDefinition {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+export interface StoredCloudLLMMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  toolCallId?: string
+  name?: string
+  toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[]
+}
+
+export interface CloudToolContinuation {
+  requestId: string
+  goal: string
+  mode: ChatMode
+  messages: StoredCloudLLMMessage[]
+  tools: StoredCloudToolDefinition[]
+  maxSteps: number
+}
+
+export interface AgentPlanTodo {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
 }
 
 export interface AgentTimelineItem {
@@ -71,6 +99,9 @@ export interface AgentTimelineItem {
   permissionTool?: string
   permissionDecision?: 'approve' | 'deny'
   permissionScope?: 'once' | 'run'
+  planApprovalRequestId?: string
+  planApprovalDecision?: 'approve' | 'modify' | 'reject'
+  planTodos?: AgentPlanTodo[]
   questionRequestId?: string
   questions?: AgentQuestionItem[]
   questionAnswers?: Record<string, string[]>
@@ -116,16 +147,19 @@ export interface ChatMessage {
    *  `status === 'streaming'` triggers the ephemeral "Thinking…"
    *  indicator above the bubble. */
   reasoning?: string
-  /** Set only when the run was started with mode='auto' AND the daemon's
-   *  classifier picked a concrete model. UI uses this to show a small
-   *  "Auto → Pro" badge in the message meta row so the user can see what
-   *  the auto-router decided. Absent when the user picked fast/pro
-   *  manually (no need to repeat what's in the composer). */
+  /** Set when an Auto mode resolved to a concrete model. UI uses this to show
+   *  a small "自动/更快/更强 → Pro" badge in the message meta row so the user
+   *  can see what the auto-router decided. */
   runMode?: {
+    /** User-facing label for the Auto sentinel, if provided by the cloud. */
+    requested?: string
     /** The concrete model id the cloud resolved an "auto" run to. */
     resolved: string
     reason: string
   }
+  /** Web build only: saved browser-orchestrated tool-loop state when the
+   *  run reaches its configured step cap and waits for the user to continue. */
+  cloudToolContinuation?: CloudToolContinuation
 }
 
 export interface ConversationWorkspace {

@@ -23,6 +23,7 @@ files:
   - dist/**/*
   - electron/**/*.cjs
   - electron/assets/**/*
+  - shared/**/*
   - package.json
 
 asar: true

@@ -9,6 +9,7 @@ import {
   type CloudToolResult,
 } from '../cloudAgentLoop'
 import type { ChatMode, PdfDocumentMetadata } from '../local-data/types'
+import { autoIntentFromMode, isAutoMode } from '../modelMode'
 
 export interface StreamChatRequest {
   mode: ChatMode
@@ -28,6 +29,10 @@ export interface StreamChatResult {
   inputTokens: number
   outputTokens: number
   creditsCost: number
+  hitStepCap?: boolean
+  steps?: number
+  maxSteps?: number
+  continuationMessages?: CloudLLMMessage[]
 }
 
 export interface ChatAPI {
@@ -44,6 +49,8 @@ export interface CloudToolLoopRequest {
   mode: ChatMode
   history: AgentHistoryMessage[]
   tools: CloudToolDefinition[]
+  maxSteps?: number
+  continuationMessages?: CloudLLMMessage[]
 }
 
 /** Per-tool configuration as reported by GET /agent/tool-capabilities. */
@@ -54,6 +61,11 @@ export interface ToolCapability {
   requires_auth?: boolean
   description?: string
   inputSchema?: Record<string, unknown>
+}
+
+export interface ToolCapabilitiesResult {
+  tools: Record<string, ToolCapability>
+  webToolLoopMaxSteps: number
 }
 
 export interface AgentAttachment {
@@ -188,6 +200,8 @@ export interface ChatModelInfo {
   id: string
   label: string
   description?: string
+  vendor?: string
+  capability_tier?: string
   priority: number
 }
 
@@ -477,16 +491,19 @@ export class SheJaneAPI implements ChatAPI {
   }
 
   /** GET /agent/tool-capabilities → which cloud tools are configured. */
-  async agentToolCapabilities(): Promise<Record<string, ToolCapability>> {
-    const data = await this.get<{ tools: Record<string, ToolCapability> }>('/api/v1/agent/tool-capabilities')
-    return data.tools ?? {}
+  async agentToolCapabilities(): Promise<ToolCapabilitiesResult> {
+    const data = await this.get<{ tools: Record<string, ToolCapability>; web_tool_loop_max_steps?: number }>('/api/v1/agent/tool-capabilities')
+    return {
+      tools: data.tools ?? {},
+      webToolLoopMaxSteps: positiveInteger(data.web_tool_loop_max_steps, 5),
+    }
   }
 
   /** POST /agent/llm/stream — one model turn. Streams content via onDelta and
    *  returns the turn (content + tool_calls + usage). Parses NAMED llm.* SSE. */
   async streamAgentLLM(
     body: { runId: string; mode: ChatMode; messages: CloudLLMMessage[]; tools: CloudToolDefinition[] },
-    handlers: { onDelta: (delta: string) => void },
+    handlers: { onDelta: (delta: string) => void; onEvent?: (event: AgentRunEvent) => void },
     signal?: AbortSignal,
   ): Promise<CloudLLMTurn> {
     const response = await this.authedFetch(
@@ -550,6 +567,17 @@ export class SheJaneAPI implements ChatAPI {
           inputTokens = event.inputTokens
           outputTokens = event.outputTokens
           creditsCost = event.creditsCost
+        } else if (event.type === 'model_selected') {
+          handlers.onEvent?.({
+            event_type: 'model.selected',
+            run_id: body.runId,
+            payload: {
+              requested_model: event.requestedModel,
+              resolved_model_id: event.resolvedModelId,
+              label: event.label,
+              reason: event.reason,
+            },
+          })
         } else if (event.type === 'done') {
           requestId = event.requestId || requestId
           finishReason = event.finishReason
@@ -607,22 +635,23 @@ export class SheJaneAPI implements ChatAPI {
     handlers: StreamHandlers,
     signal?: AbortSignal,
   ): Promise<StreamChatResult> {
-    const messages: CloudLLMMessage[] = [
-      ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
-      { role: 'user', content: input.goal },
-    ]
-    // "Auto" resolves ONCE before the loop (the cloud's task-aware
+    const messages: CloudLLMMessage[] = input.continuationMessages
+      ? [...input.continuationMessages]
+      : [
+          ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
+          { role: 'user', content: input.goal },
+        ]
+    // Auto modes resolve ONCE before the loop (the cloud's task-aware
     // classifier), so every turn of this run uses the same concrete model.
-    // The synthetic model.selected event feeds the same handler pipeline the
-    // daemon path uses, lighting up the "Auto → <label>" badge. Resolution
-    // failure is non-fatal: stay on "auto" and the LLM endpoint maps it to
-    // the default model per turn.
+    // Intent sentinels bias that resolver without pinning a static model.
     let model = input.mode
-    if (!model || model === 'auto') {
+    if (!model || isAutoMode(model)) {
+      const requestedModel = model || 'auto'
+      const intent = autoIntentFromMode(requestedModel)
       try {
         const resolved = await this.post<{ model_id: string; label: string; reason: string }>(
           '/api/v1/models/resolve',
-          { goal: input.goal },
+          intent ? { goal: input.goal, intent } : { goal: input.goal },
           true,
         )
         if (resolved.model_id) {
@@ -631,7 +660,8 @@ export class SheJaneAPI implements ChatAPI {
             event_type: 'model.selected',
             run_id: input.runId,
             payload: {
-              requested_model: 'auto',
+              requested_model: requestedModel,
+              requested_label: autoRequestedLabel(requestedModel),
               resolved_model_id: resolved.model_id,
               label: resolved.label,
               reason: resolved.reason,
@@ -639,11 +669,12 @@ export class SheJaneAPI implements ChatAPI {
           })
         }
       } catch {
-        // Keep 'auto'; the cloud resolves it to the default model per turn.
+        // Keep the Auto sentinel; the cloud resolves it to a default model per turn.
       }
     }
     const deps: CloudAgentLoopDeps = {
-      streamLLM: (body, loopHandlers, loopSignal) => this.streamAgentLLM(body, loopHandlers, loopSignal),
+      streamLLM: (body, loopHandlers, loopSignal) =>
+        this.streamAgentLLM(body, { ...loopHandlers, onEvent: handlers.onEvent }, loopSignal),
       executeTool: (req, loopSignal) => this.executeAgentTool(req, loopSignal),
     }
     const result = await runCloudAgentLoop(deps, {
@@ -651,6 +682,7 @@ export class SheJaneAPI implements ChatAPI {
       mode: model,
       messages,
       tools: input.tools,
+      maxSteps: input.maxSteps,
       onDelta: handlers.onDelta,
       onEvent: handlers.onEvent,
       signal,
@@ -662,15 +694,25 @@ export class SheJaneAPI implements ChatAPI {
         payload: {
           reason: 'max_steps_reached',
           max_steps: result.steps,
+          continue_steps: input.maxSteps ?? result.steps,
         },
       })
     }
-    return {
+    const streamResult: StreamChatResult = {
       requestId: result.requestId,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
       creditsCost: result.creditsCost,
     }
+    if (result.hitStepCap) {
+      streamResult.hitStepCap = true
+      streamResult.steps = result.steps
+      streamResult.maxSteps = input.maxSteps ?? result.steps
+    }
+    if (result.continuationMessages) {
+      streamResult.continuationMessages = result.continuationMessages
+    }
+    return streamResult
   }
 
   private async get<T>(path: string): Promise<T> {
@@ -691,6 +733,17 @@ export class SheJaneAPI implements ChatAPI {
       headers.Authorization = `Bearer ${this.accessToken}`
     }
     return headers
+  }
+}
+
+function autoRequestedLabel(mode: string): string {
+  switch (mode) {
+    case 'auto.fast':
+      return '更快'
+    case 'auto.smart':
+      return '更强'
+    default:
+      return '自动'
   }
 }
 
@@ -735,4 +788,8 @@ function retryAfterSeconds(value: string | null): number | undefined {
     return undefined
   }
   return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000))
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback
 }

@@ -11,6 +11,9 @@ Tables in this file:
 - `local_permissions` — pending / resolved permission requests
 - `local_questions`   — pending / answered user questions
 - `local_artifacts`   — tool-produced artifacts (file content, snapshots)
+- `local_steering`    — user instructions queued into an active run
+- `local_plan_approvals` — pending / resolved plan-mode approvals
+- `local_scheduled_runs` — local-only delayed run requests
 """
 
 from __future__ import annotations
@@ -54,6 +57,30 @@ CREATE TABLE IF NOT EXISTS local_runs (
     updated_at TEXT NOT NULL,
     completed_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS local_scheduled_runs (
+    id TEXT PRIMARY KEY,
+    goal TEXT NOT NULL,
+    workspace_path TEXT,
+    model TEXT NOT NULL DEFAULT 'auto',
+    history_json TEXT NOT NULL DEFAULT '[]',
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    run_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    run_id TEXT,
+    result_text TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    notified_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES local_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_local_scheduled_runs_due
+    ON local_scheduled_runs(status, run_at);
+CREATE INDEX IF NOT EXISTS idx_local_scheduled_runs_notify
+    ON local_scheduled_runs(status, notified_at, updated_at);
 
 CREATE TABLE IF NOT EXISTS local_events (
     id TEXT PRIMARY KEY,
@@ -105,6 +132,34 @@ CREATE TABLE IF NOT EXISTS local_artifacts (
     created_at TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES local_runs(id)
 );
+
+CREATE TABLE IF NOT EXISTS local_steering (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | injected
+    created_at TEXT NOT NULL,
+    injected_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES local_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_local_steering_run_status
+    ON local_steering(run_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS local_plan_approvals (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    todos_json TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | modified | rejected
+    instructions TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES local_runs(id),
+    UNIQUE (run_id, tool_call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_local_plan_approvals_run_status
+    ON local_plan_approvals(run_id, status, created_at);
 """
 
 
@@ -114,6 +169,17 @@ def _now() -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def _decode_plan_approval_record(record: dict[str, Any]) -> dict[str, Any]:
+    try:
+        todos = json.loads(str(record.get("todos_json") or "[]"))
+    except json.JSONDecodeError:
+        todos = []
+    return {
+        **record,
+        "todos": todos if isinstance(todos, list) else [],
+    }
 
 
 class LocalStore:
@@ -309,6 +375,183 @@ class LocalStore:
         )
         await self._conn.commit()
 
+    # --- scheduled runs ---
+
+    async def create_scheduled_run(
+        self,
+        *,
+        goal: str,
+        run_at: str,
+        workspace_path: str | None = None,
+        model: str = "auto",
+        history: list[dict[str, str]] | None = None,
+        settings: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        record = {
+            "id": _new_id("sched"),
+            "goal": goal,
+            "workspace_path": workspace_path,
+            "model": model or "auto",
+            "history_json": json.dumps(history or [], ensure_ascii=False, default=str),
+            "settings_json": json.dumps(settings or {}, ensure_ascii=False, default=str),
+            "metadata_json": json.dumps(metadata or {}, ensure_ascii=False, default=str),
+            "run_at": run_at,
+            "status": "scheduled",
+            "run_id": None,
+            "result_text": None,
+            "error_message": None,
+            "created_at": _now(),
+            "updated_at": _now(),
+            "completed_at": None,
+            "notified_at": None,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_scheduled_runs "
+            "(id, goal, workspace_path, model, history_json, settings_json, metadata_json, "
+            " run_at, status, run_id, result_text, error_message, created_at, updated_at, "
+            " completed_at, notified_at) "
+            "VALUES (:id, :goal, :workspace_path, :model, :history_json, :settings_json, "
+            "        :metadata_json, :run_at, :status, :run_id, :result_text, :error_message, "
+            "        :created_at, :updated_at, :completed_at, :notified_at)",
+            record,
+        )
+        await self._conn.commit()
+        return record
+
+    async def get_scheduled_run(self, schedule_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_scheduled_runs WHERE id = ?",
+            (schedule_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_scheduled_runs(
+        self,
+        *,
+        limit: int = 50,
+        status: str | None = None,
+        notify_pending: bool = False,
+    ) -> list[dict[str, Any]]:
+        if notify_pending:
+            cursor = await self._conn.execute(
+                """
+                SELECT * FROM local_scheduled_runs
+                 WHERE status IN ('completed', 'failed')
+                   AND notified_at IS NULL
+                 ORDER BY datetime(updated_at) ASC, id ASC
+                 LIMIT ?
+                """,
+                (limit,),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+        if status:
+            cursor = await self._conn.execute(
+                """
+                SELECT * FROM local_scheduled_runs
+                 WHERE status = ?
+                 ORDER BY datetime(run_at) ASC, id ASC
+                 LIMIT ?
+                """,
+                (status, limit),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+        cursor = await self._conn.execute(
+            """
+            SELECT * FROM local_scheduled_runs
+             ORDER BY datetime(run_at) DESC, id DESC
+             LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+    async def claim_due_scheduled_runs(
+        self,
+        *,
+        now: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            """
+            SELECT * FROM local_scheduled_runs
+             WHERE status = 'scheduled'
+               AND run_at <= ?
+             ORDER BY run_at ASC, id ASC
+             LIMIT ?
+            """,
+            (now, limit),
+        )
+        rows = [dict(row) for row in await cursor.fetchall()]
+        if not rows:
+            return []
+        updated_at = _now()
+        await self._conn.executemany(
+            "UPDATE local_scheduled_runs SET status = 'running', updated_at = ? "
+            "WHERE id = ? AND status = 'scheduled'",
+            [(updated_at, row["id"]) for row in rows],
+        )
+        await self._conn.commit()
+        claimed: list[dict[str, Any]] = []
+        for row in rows:
+            fresh = await self.get_scheduled_run(row["id"])
+            if fresh and fresh["status"] == "running":
+                claimed.append(fresh)
+        return claimed
+
+    async def mark_scheduled_run_started(
+        self, schedule_id: str, run_id: str
+    ) -> dict[str, Any] | None:
+        await self._conn.execute(
+            "UPDATE local_scheduled_runs SET status = 'running', run_id = ?, updated_at = ? "
+            "WHERE id = ?",
+            (run_id, _now(), schedule_id),
+        )
+        await self._conn.commit()
+        return await self.get_scheduled_run(schedule_id)
+
+    async def complete_scheduled_run(
+        self,
+        schedule_id: str,
+        *,
+        status: str,
+        result_text: str | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, Any] | None:
+        completed_at = _now()
+        await self._conn.execute(
+            "UPDATE local_scheduled_runs "
+            "SET status = ?, result_text = ?, error_message = ?, completed_at = ?, updated_at = ? "
+            "WHERE id = ?",
+            (status, result_text, error_message, completed_at, completed_at, schedule_id),
+        )
+        await self._conn.commit()
+        return await self.get_scheduled_run(schedule_id)
+
+    async def cancel_scheduled_run(self, schedule_id: str) -> dict[str, Any] | None:
+        existing = await self.get_scheduled_run(schedule_id)
+        if existing is None:
+            return None
+        if existing["status"] != "scheduled":
+            return existing
+        canceled_at = _now()
+        await self._conn.execute(
+            "UPDATE local_scheduled_runs "
+            "SET status = 'canceled', completed_at = ?, updated_at = ? WHERE id = ?",
+            (canceled_at, canceled_at, schedule_id),
+        )
+        await self._conn.commit()
+        return await self.get_scheduled_run(schedule_id)
+
+    async def mark_scheduled_run_notified(self, schedule_id: str) -> dict[str, Any] | None:
+        await self._conn.execute(
+            "UPDATE local_scheduled_runs SET notified_at = ?, updated_at = ? WHERE id = ?",
+            (_now(), _now(), schedule_id),
+        )
+        await self._conn.commit()
+        return await self.get_scheduled_run(schedule_id)
+
     # --- events ---
 
     async def append_event(
@@ -344,6 +587,123 @@ class LocalStore:
             (run_id, after_seq),
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+    # --- steering ---
+
+    async def create_steering_instruction(
+        self,
+        *,
+        run_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        record = {
+            "id": _new_id("steer"),
+            "run_id": run_id,
+            "content": content,
+            "status": "pending",
+            "created_at": _now(),
+            "injected_at": None,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_steering "
+            "(id, run_id, content, status, created_at, injected_at) "
+            "VALUES (:id, :run_id, :content, :status, :created_at, :injected_at)",
+            record,
+        )
+        await self._conn.commit()
+        return record
+
+    async def claim_pending_steering(self, run_id: str) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_steering "
+            "WHERE run_id = ? AND status = 'pending' "
+            "ORDER BY created_at, id",
+            (run_id,),
+        )
+        rows = [dict(row) for row in await cursor.fetchall()]
+        if not rows:
+            return []
+        injected_at = _now()
+        await self._conn.executemany(
+            "UPDATE local_steering SET status = 'injected', injected_at = ? "
+            "WHERE id = ? AND status = 'pending'",
+            [(injected_at, row["id"]) for row in rows],
+        )
+        await self._conn.commit()
+        return [{**row, "status": "injected", "injected_at": injected_at} for row in rows]
+
+    # --- plan approvals ---
+
+    async def create_plan_approval(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        todos: list[dict[str, Any]],
+        summary: str = "",
+    ) -> dict[str, Any]:
+        record = {
+            "id": _new_id("plan"),
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "todos_json": json.dumps(todos, ensure_ascii=False, default=str),
+            "summary": summary,
+            "status": "pending",
+            "instructions": None,
+            "created_at": _now(),
+            "resolved_at": None,
+        }
+        try:
+            await self._conn.execute(
+                "INSERT INTO local_plan_approvals "
+                "(id, run_id, tool_call_id, todos_json, summary, status, instructions, created_at, resolved_at) "
+                "VALUES (:id, :run_id, :tool_call_id, :todos_json, :summary, :status, :instructions, :created_at, :resolved_at)",
+                record,
+            )
+            await self._conn.commit()
+        except aiosqlite.IntegrityError:
+            existing = await self.get_plan_approval_by_tool_call(
+                run_id=run_id,
+                tool_call_id=tool_call_id,
+            )
+            assert existing is not None
+            return existing
+        return _decode_plan_approval_record(record)
+
+    async def get_plan_approval(self, approval_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_plan_approvals WHERE id = ?",
+            (approval_id,),
+        )
+        row = await cursor.fetchone()
+        return _decode_plan_approval_record(dict(row)) if row else None
+
+    async def get_plan_approval_by_tool_call(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+    ) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_plan_approvals WHERE run_id = ? AND tool_call_id = ?",
+            (run_id, tool_call_id),
+        )
+        row = await cursor.fetchone()
+        return _decode_plan_approval_record(dict(row)) if row else None
+
+    async def resolve_plan_approval(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        instructions: str | None = None,
+    ) -> dict[str, Any] | None:
+        await self._conn.execute(
+            "UPDATE local_plan_approvals SET status = ?, instructions = ?, resolved_at = ? WHERE id = ?",
+            (status, instructions, _now(), approval_id),
+        )
+        await self._conn.commit()
+        return await self.get_plan_approval(approval_id)
 
     # --- permissions (HumanInTheLoop pause record) ---
 

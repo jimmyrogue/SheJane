@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
+  IconDeviceFloppy,
   IconExternalLink,
   IconFileDescription,
+  IconPencil,
+  IconPlus,
   IconRefresh,
   IconSearch,
   IconServer,
+  IconTrash,
+  IconX,
 } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { McpServerCatalog, McpServerInfo } from '@/shared/local-host/client'
+import type { McpServerCatalog, McpServerInfo, McpServerWriteRequest } from '@/shared/local-host/client'
 
 export interface MCPViewProps {
   listCatalog: () => Promise<McpServerCatalog>
@@ -20,6 +25,9 @@ export interface MCPViewProps {
    *  default to ON without the renderer having to touch state. */
   disabledServers: readonly string[]
   onDisabledChange: (next: string[]) => void
+  onCreateServer?: (input: McpServerWriteRequest) => Promise<void>
+  onUpdateServer?: (name: string, input: McpServerWriteRequest) => Promise<void>
+  onDeleteServer?: (name: string) => Promise<void>
   /** Open the config file's parent directory in the OS file manager.
    *  Hidden when the Electron bridge isn't wired (browser-only). */
   onOpenFolder?: (path: string) => void
@@ -59,16 +67,71 @@ function matchesQuery(server: McpServerInfo, needle: string): boolean {
 
 const EMPTY_CATALOG: McpServerCatalog = { servers: [], sources_scanned: [] }
 
+interface McpFormState {
+  name: string
+  transport: string
+  command: string
+  argsText: string
+  url: string
+}
+
+type McpEditorState =
+  | { mode: 'create' }
+  | { mode: 'edit'; originalName: string }
+  | null
+
+const EMPTY_FORM: McpFormState = {
+  name: '',
+  transport: 'stdio',
+  command: '',
+  argsText: '',
+  url: '',
+}
+
+function formFromServer(server: McpServerInfo): McpFormState {
+  return {
+    name: server.name,
+    transport: server.transport || 'stdio',
+    command: server.command ?? '',
+    argsText: server.args.join(' '),
+    url: server.url ?? '',
+  }
+}
+
+function argsFromText(value: string): string[] {
+  return value.trim().split(/\s+/).filter(Boolean)
+}
+
+function requestFromForm(form: McpFormState): McpServerWriteRequest {
+  const input: McpServerWriteRequest = {
+    name: form.name.trim(),
+    transport: form.transport,
+    args: [],
+    env: {},
+  }
+  if (form.command.trim()) input.command = form.command.trim()
+  const args = argsFromText(form.argsText)
+  input.args = args
+  if (form.url.trim()) input.url = form.url.trim()
+  return input
+}
+
 export function MCPView({
   listCatalog,
   disabledServers,
   onDisabledChange,
+  onCreateServer,
+  onUpdateServer,
+  onDeleteServer,
   onOpenFolder,
 }: MCPViewProps) {
   const { t, locale } = useI18n()
   const [catalog, setCatalog] = useState<McpServerCatalog>(EMPTY_CATALOG)
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
+  const [editor, setEditor] = useState<McpEditorState>(null)
+  const [form, setForm] = useState<McpFormState>(EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -139,6 +202,41 @@ export function MCPView({
     [disabledServers, onDisabledChange],
   )
 
+  const openCreate = useCallback(() => {
+    setForm(EMPTY_FORM)
+    setEditor({ mode: 'create' })
+  }, [])
+
+  const openEdit = useCallback((server: McpServerInfo) => {
+    setForm(formFromServer(server))
+    setEditor({ mode: 'edit', originalName: server.name })
+  }, [])
+
+  const submitEditor = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (saving) return
+    const input = requestFromForm(form)
+    if (!input.name) return
+    setSaving(true)
+    try {
+      if (editor?.mode === 'edit') {
+        await onUpdateServer?.(editor.originalName, input)
+      } else {
+        await onCreateServer?.(input)
+      }
+      setEditor(null)
+      setForm(EMPTY_FORM)
+      await refresh()
+    } finally {
+      setSaving(false)
+    }
+  }, [editor, form, onCreateServer, onUpdateServer, refresh, saving])
+
+  const deleteServer = useCallback(async (name: string) => {
+    await onDeleteServer?.(name)
+    await refresh()
+  }, [onDeleteServer, refresh])
+
   const totalCount = catalog.servers.length
   const filteredEmpty = totalCount > 0 && filteredServers.length === 0
 
@@ -149,6 +247,17 @@ export function MCPView({
           <span>{t('mcp.title')}</span>
         </div>
         <div className="skills-topbar-actions">
+          {onCreateServer ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={openCreate}
+            >
+              <IconPlus size={14} aria-hidden="true" />
+              {t('mcp.addServer')}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -164,6 +273,69 @@ export function MCPView({
 
       <div className="skills-scroll">
         <div className="skills-content">
+          {editor ? (
+            <form className="resource-editor-form" onSubmit={(event) => void submitEditor(event)}>
+              <div className="resource-editor-grid">
+                <label>
+                  <span>{t('mcp.form.name')}</span>
+                  <Input
+                    value={form.name}
+                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                    aria-label={t('mcp.form.name')}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>{t('mcp.form.transport')}</span>
+                  <select
+                    value={form.transport}
+                    onChange={(event) => setForm((current) => ({ ...current, transport: event.target.value }))}
+                    aria-label={t('mcp.form.transport')}
+                  >
+                    <option value="stdio">stdio</option>
+                    <option value="streamable_http">streamable_http</option>
+                    <option value="sse">sse</option>
+                    <option value="websocket">websocket</option>
+                  </select>
+                </label>
+                <label>
+                  <span>{t('mcp.form.command')}</span>
+                  <Input
+                    value={form.command}
+                    onChange={(event) => setForm((current) => ({ ...current, command: event.target.value }))}
+                    aria-label={t('mcp.form.command')}
+                  />
+                </label>
+                <label>
+                  <span>{t('mcp.form.args')}</span>
+                  <Input
+                    value={form.argsText}
+                    onChange={(event) => setForm((current) => ({ ...current, argsText: event.target.value }))}
+                    aria-label={t('mcp.form.args')}
+                  />
+                </label>
+                <label className="resource-editor-wide">
+                  <span>{t('mcp.form.url')}</span>
+                  <Input
+                    value={form.url}
+                    onChange={(event) => setForm((current) => ({ ...current, url: event.target.value }))}
+                    aria-label={t('mcp.form.url')}
+                  />
+                </label>
+              </div>
+              <div className="resource-editor-actions">
+                <Button type="submit" size="sm" disabled={saving}>
+                  <IconDeviceFloppy size={14} aria-hidden="true" />
+                  {t('mcp.saveServer')}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEditor(null)}>
+                  <IconX size={14} aria-hidden="true" />
+                  {t('common.cancel')}
+                </Button>
+              </div>
+            </form>
+          ) : null}
+
           {totalCount > 0 ? (
             <div className="skills-search">
               <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
@@ -241,6 +413,32 @@ export function MCPView({
                             ) : null}
                           </div>
                         </div>
+                        {server.source === 'shejane' && (onUpdateServer || onDeleteServer) ? (
+                          <div className="resource-row-actions">
+                            {onUpdateServer ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={t('mcp.editServerAria', { name: server.name })}
+                                onClick={() => openEdit(server)}
+                              >
+                                <IconPencil size={13} aria-hidden="true" />
+                              </Button>
+                            ) : null}
+                            {onDeleteServer ? (
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                aria-label={t('mcp.deleteServerAria', { name: server.name })}
+                                onClick={() => void deleteServer(server.name)}
+                              >
+                                <IconTrash size={13} aria-hidden="true" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
                         <Switch
                           checked={!isOff}
                           aria-label={server.name}

@@ -26,6 +26,7 @@ async def resolve_auto_model(
     *,
     cloud_base_url: str,
     cloud_token: str,
+    intent: str = "",
     run_id: str = "",
     timeout_s: float = 15.0,
 ) -> dict[str, Any] | None:
@@ -40,7 +41,10 @@ async def resolve_auto_model(
         headers["Authorization"] = f"Bearer {cloud_token}"
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
-            resp = await client.post(url, json={"goal": goal}, headers=headers)
+            body: dict[str, Any] = {"goal": goal}
+            if intent:
+                body["intent"] = intent
+            resp = await client.post(url, json=body, headers=headers)
         if resp.status_code != 200:
             log.warning("model resolve failed (%s) for run %s", resp.status_code, run_id)
             return None

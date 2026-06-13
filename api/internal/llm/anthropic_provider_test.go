@@ -137,6 +137,64 @@ func TestAnthropicCompleteWithToolsPlainAnswerMapsEndTurn(t *testing.T) {
 	}
 }
 
+func TestAnthropicCompleteWithToolsIncludesThinkingAndParsesReasoning(t *testing.T) {
+	var captured map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"content": [
+				{"type":"thinking","thinking":"先判断是否需要工具。","signature":"sig"},
+				{"type":"text","text":"需要读取文件。"},
+				{"type":"tool_use","id":"toolu_read","name":"file__read","input":{"path":"README.md"}}
+			],
+			"stop_reason":"tool_use",
+			"usage":{"input_tokens":80,"output_tokens":22}
+		}`))
+	}))
+	defer fake.Close()
+
+	provider := NewAnthropicProviderWithOptions("sk-test", "", AnthropicProviderOptions{
+		BaseURL:   fake.URL,
+		MaxTokens: 4096,
+		Thinking: AnthropicThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: 1024,
+			Display:      "summarized",
+		},
+	})
+	completion, err := provider.CompleteWithTools(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "先想再读 README"}},
+		Tools: []ToolDefinition{{
+			Name:        "file.read",
+			Description: "读取文件",
+			InputSchema: map[string]any{"type": "object"},
+		}},
+	}, "claude-sonnet-test")
+	if err != nil {
+		t.Fatalf("CompleteWithTools: %v", err)
+	}
+
+	thinking, ok := captured["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("thinking payload missing: %#v", captured["thinking"])
+	}
+	if thinking["type"] != "enabled" || thinking["budget_tokens"] != float64(1024) || thinking["display"] != "summarized" {
+		t.Fatalf("thinking payload = %#v, want enabled budget 1024 summarized", thinking)
+	}
+	if completion.ReasoningContent != "先判断是否需要工具。" {
+		t.Fatalf("reasoning content = %q", completion.ReasoningContent)
+	}
+	if completion.Content != "需要读取文件。" {
+		t.Fatalf("content = %q", completion.Content)
+	}
+	if len(completion.ToolCalls) != 1 || completion.ToolCalls[0].Name != "file.read" {
+		t.Fatalf("tool calls = %+v", completion.ToolCalls)
+	}
+}
+
 func TestAnthropicCompleteWithToolsEnablesPromptCachingForLongRequests(t *testing.T) {
 	var captured map[string]any
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +280,66 @@ func TestAnthropicStreamReportsInputTokensAndMaxTokens(t *testing.T) {
 	}
 	if text != "你好" || outputTokens != 5 || finish != "stop" {
 		t.Errorf("stream result = (%q,%d,%q), want (你好,5,stop)", text, outputTokens, finish)
+	}
+}
+
+func TestAnthropicStreamEnablesAdaptiveThinkingAndEmitsReasoning(t *testing.T) {
+	var captured map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(
+			"event: message_start\n" +
+				`data: {"type":"message_start","message":{"usage":{"input_tokens":77}}}` + "\n\n" +
+				"event: content_block_delta\n" +
+				`data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"先分解任务。"}}` + "\n\n" +
+				"event: content_block_delta\n" +
+				`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"答案。"}}` + "\n\n" +
+				"event: message_delta\n" +
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}` + "\n\n"))
+	}))
+	defer fake.Close()
+
+	provider := NewAnthropicProviderWithOptions("sk-test", "", AnthropicProviderOptions{
+		BaseURL:   fake.URL,
+		MaxTokens: 4096,
+		Thinking: AnthropicThinkingConfig{
+			Type:    "adaptive",
+			Display: "summarized",
+			Effort:  "medium",
+		},
+	})
+	chunks, errs := provider.Stream(context.Background(), ChatRequest{
+		Messages: []Message{{Role: "user", Content: "解释一下"}},
+	}, "claude-opus-test")
+
+	reasoning, text, finish := "", "", ""
+	for chunk := range chunks {
+		reasoning += chunk.ReasoningContent
+		text += chunk.Text
+		if chunk.FinishReason != "" {
+			finish = chunk.FinishReason
+		}
+	}
+	if err := <-errs; err != nil {
+		t.Fatalf("stream error: %v", err)
+	}
+
+	thinking, ok := captured["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("thinking payload missing: %#v", captured["thinking"])
+	}
+	if thinking["type"] != "adaptive" || thinking["display"] != "summarized" {
+		t.Fatalf("thinking payload = %#v, want adaptive summarized", thinking)
+	}
+	outputConfig, ok := captured["output_config"].(map[string]any)
+	if !ok || outputConfig["effort"] != "medium" {
+		t.Fatalf("output_config = %#v, want effort medium", captured["output_config"])
+	}
+	if reasoning != "先分解任务。" || text != "答案。" || finish != "stop" {
+		t.Fatalf("stream result = (%q,%q,%q), want reasoning/text/stop", reasoning, text, finish)
 	}
 }
 

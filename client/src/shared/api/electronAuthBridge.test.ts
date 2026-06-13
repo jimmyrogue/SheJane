@@ -3,17 +3,18 @@ import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { authIPCResult, createElectronAuthHandlers, unwrapAuthIPCResult } = require('../../../electron/auth-bridge.cjs') as {
-  authIPCResult: <T>(action: () => Promise<T>) => Promise<{ ok: true, data: T } | { ok: false, error: string }>
+  authIPCResult: <T>(action: () => Promise<T>, locale?: string) => Promise<{ ok: true, data: T } | { ok: false, error: string }>
   createElectronAuthHandlers: (options: {
     apiBaseURL: string
     cookies: CookieStore
     fetchImpl: typeof fetch
+    locale?: string | (() => string)
   }) => {
     login: (input: { email: string; password: string }) => Promise<unknown>
     refresh: () => Promise<unknown>
     logout: () => Promise<void>
   }
-  unwrapAuthIPCResult: <T>(result: { ok: true, data: T } | { ok: false, error: string } | T) => T
+  unwrapAuthIPCResult: <T>(result: { ok: true, data: T } | { ok: false, error: string } | T, locale?: string) => T
 }
 
 interface CookieStore {
@@ -101,6 +102,20 @@ describe('Electron auth bridge helpers', () => {
 
     expect(result).toEqual({ ok: false, error: '未登录或登录已过期' })
     expect(() => unwrapAuthIPCResult(result)).toThrow('未登录或登录已过期')
+  })
+
+  it('uses desktop locale resources for generic auth failures', async () => {
+    const cookies = mockCookies()
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ code: 1, data: null }))
+    const auth = createElectronAuthHandlers({ apiBaseURL: 'http://localhost:8080', cookies, fetchImpl, locale: () => 'en-US' })
+
+    await expect(auth.login({ email: 'user@example.com', password: 'secret123' })).rejects.toThrow('Request failed')
+
+    const result = await authIPCResult(async () => {
+      throw 'boom'
+    }, 'en-US')
+    expect(result).toEqual({ ok: false, error: 'Request failed' })
+    expect(() => unwrapAuthIPCResult({ ok: false, error: '' }, 'en-US')).toThrow('Request failed')
   })
 })
 

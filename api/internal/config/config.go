@@ -102,6 +102,7 @@ type Config struct {
 	TavilyBaseURL       string
 	TavilySearchCredits int64
 	ToolGatewayTimeout  time.Duration
+	WebToolLoopMaxSteps int
 
 	// AgentSpendRateLimitPerMinute is a tighter, dedicated per-user ceiling on
 	// the spend-heavy agent endpoints (LLM + tool execute), layered ON TOP of
@@ -195,6 +196,7 @@ func Default() Config {
 		TavilyBaseURL:                 "https://api.tavily.com",
 		TavilySearchCredits:           20,
 		ToolGatewayTimeout:            15 * time.Second,
+		WebToolLoopMaxSteps:           5,
 		AgentSpendRateLimitPerMinute:  120,
 
 		E2BAPIKey:                       "",
@@ -259,6 +261,7 @@ func Load() Config {
 	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)
 	cfg.TavilySearchCredits = getEnvInt64("TAVILY_SEARCH_CREDITS", cfg.TavilySearchCredits)
 	cfg.ToolGatewayTimeout = time.Duration(getEnvInt("TOOL_GATEWAY_TIMEOUT_MS", int(cfg.ToolGatewayTimeout/time.Millisecond))) * time.Millisecond
+	cfg.WebToolLoopMaxSteps = clampInt(getEnvInt("WEB_TOOL_LOOP_MAX_STEPS", cfg.WebToolLoopMaxSteps), 1, 50)
 	cfg.E2BAPIKey = getEnv("E2B_API_KEY", cfg.E2BAPIKey)
 	cfg.E2BBaseURL = getEnv("E2B_BASE_URL", cfg.E2BBaseURL)
 	cfg.E2BTemplateID = getEnv("E2B_TEMPLATE_ID", cfg.E2BTemplateID)
@@ -384,6 +387,16 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func clampInt(value int, min int, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func getEnvList(key string, fallback []string) []string {

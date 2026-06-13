@@ -86,6 +86,21 @@ describe('user client shell', () => {
     expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
   })
 
+  it('keeps saved Auto intent modes after catalog reconciliation', async () => {
+    localStorage.setItem('shejane.chatMode.v2', 'auto.smart')
+    const calls = mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith('/api/v1/models'))).toBe(true))
+    expect(localStorage.getItem('shejane.chatMode.v2')).toBe('auto.smart')
+  })
+
   it('marks orphaned web cloud tool loops as failed when loading user conversations', async () => {
     const localData = new LocalConversationStore('shejane-local:user-1')
     const conversation: Conversation = {
@@ -156,6 +171,29 @@ describe('user client shell', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
     expect(shell).toHaveAttribute('data-collapsed', 'true')
     expect(screen.getByRole('button', { name: '展开侧栏' }).closest('.topbar-expand-hotspot')).not.toBeNull()
+  })
+
+  it('opens keyboard help and sidebar search from global shortcuts', async () => {
+    mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+
+    fireEvent.keyDown(window, { key: '?', shiftKey: true })
+    expect(await screen.findByRole('dialog', { name: '快捷键' })).toBeInTheDocument()
+    expect(screen.getByText('搜索 / 切换对话')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '快捷键' })).not.toBeInTheDocument())
+
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const search = await screen.findByRole('searchbox', { name: '搜索' })
+    await waitFor(() => expect(search).toHaveFocus())
   })
 
   it('restores an Electron login session through the desktop auth bridge on startup', async () => {
@@ -377,6 +415,42 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/chat/completions'))).toBe(false)
   })
 
+  it('sends multiple attached documents in one agent run', async () => {
+    const calls = mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    const files = [
+      new File(['hello'], 'brief.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      }),
+      new File(['budget'], 'budget.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
+    ]
+    fireEvent.change(screen.getByLabelText('上传附件'), { target: { files } })
+    expect(await screen.findByTitle(/brief\.docx/)).toBeInTheDocument()
+    expect(await screen.findByTitle(/budget\.xlsx/)).toBeInTheDocument()
+
+    typeComposer('对比这两份材料')
+    fireEvent.click(screen.getByText('发送'))
+
+    await waitFor(() => expect(screen.getByText('文档回答')).toBeInTheDocument(), { timeout: 3000 })
+    const agentRunBody = calls
+      .filter((call) => call.url.endsWith('/api/v1/agent/runs'))
+      .map((call) => JSON.parse(String(call.init?.body ?? '{}')))
+      .at(-1)
+    expect(agentRunBody.attachments).toEqual([
+      { type: 'document', document_id: 'doc-upload', name: 'brief.docx' },
+      { type: 'document', document_id: 'doc-upload-2', name: 'budget.xlsx' },
+    ])
+  })
+
   it('keeps a blank new chat active when an older cloud stream updates in the background', async () => {
     const agentStream = createDeferredAgentStream('run-doc')
     mockFetch('user', { agentStream })
@@ -488,6 +562,56 @@ describe('user client shell', () => {
 
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith({ title: '石间任务失败', body: '工具调用超时' })
+    })
+  })
+
+  it('fires and acknowledges a desktop notification when a scheduled local run finishes', async () => {
+    const calls = mockFetch('user', {
+      localSchedules: [
+        {
+          id: 'sched-1',
+          goal: '每日总结',
+          status: 'completed',
+          run_at: '2026-06-13T10:00:00Z',
+          result_text: '计划任务完成',
+          run_id: 'run-scheduled-1',
+          created_at: '2026-06-13T09:00:00Z',
+          updated_at: '2026-06-13T10:01:00Z',
+        },
+      ],
+      localRuns: [
+        {
+          id: 'run-scheduled-1',
+          goal: '每日总结',
+          status: 'completed',
+          created_at: '2026-06-13T10:00:00Z',
+          updated_at: '2026-06-13T10:01:00Z',
+          events_count: 3,
+        },
+      ],
+    })
+    const notify = vi.fn(async () => true)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      notify,
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        token: 'local-token',
+      },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    await waitFor(() => {
+      expect(notify).toHaveBeenCalledWith({ title: '石间定时任务完成', body: '计划任务完成' })
+    })
+    await waitFor(() => {
+      expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/schedules/sched-1/notified' && call.init?.method === 'POST')).toBe(true)
     })
   })
 
@@ -2025,6 +2149,17 @@ function mockFetch(
 	  options: {
 	    workspaces?: Array<{ id: string; path: string; label: string }>
 	    localRuns?: Array<{ id: string; goal: string; status: string; created_at: string; updated_at: string; events_count?: number }>
+	    localSchedules?: Array<{
+	      id: string
+	      goal: string
+	      status: string
+	      run_at: string
+	      result_text?: string
+	      error_message?: string
+	      run_id?: string
+	      created_at: string
+	      updated_at: string
+	    }>
 	    agentStream?: DeferredAgentStream
 	    localRunStream?: DeferredAgentStream
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
@@ -2035,7 +2170,10 @@ function mockFetch(
 	  const calls: Array<{ url: string; init?: RequestInit }> = []
 	  let workspaces = options.workspaces ?? []
 	  const localRuns = options.localRuns ?? []
+	  const localSchedules = options.localSchedules ?? []
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
+	  let uploadCounter = 0
+	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
 	  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const url = String(input)
     calls.push({ url, init })
@@ -2087,6 +2225,23 @@ function mockFetch(
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs') {
       return new Response(JSON.stringify({ runs: localRuns }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/schedules/')) {
+      const schedule = localSchedules[0] ?? {
+        id: 'sched-notified',
+        goal: 'scheduled',
+        status: 'completed',
+        run_at: '2026-06-13T10:00:00Z',
+        created_at: '2026-06-13T09:00:00Z',
+        updated_at: '2026-06-13T10:01:00Z',
+      }
+      return new Response(
+        JSON.stringify({ ...schedule, notified_at: '2026-06-13T10:02:00Z' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/schedules')) {
+      return new Response(JSON.stringify({ schedules: localSchedules }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url === 'http://127.0.0.1:17371/local/v1/workspaces' && init?.method === 'POST') {
       const body = JSON.parse(String(init.body ?? '{}')) as { path?: string }
@@ -2293,6 +2448,18 @@ function mockFetch(
     if (url.endsWith('/api/v1/billing/subscription/checkout')) {
       return jsonResponse({ code: 0, message: 'ok', data: { checkout_url: 'https://stripe.example.com/checkout/sess_test' } })
     }
+    if (url.endsWith('/api/v1/models')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          models: [
+            { id: 'gpt-4o', label: 'GPT-4o', vendor: 'ChatGPT', capability_tier: 'max', priority: 100 },
+            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', capability_tier: 'fast', priority: 90 },
+          ],
+        },
+      })
+    }
     if (url.endsWith('/api/v1/documents')) {
       return jsonResponse({
         code: 0,
@@ -2315,26 +2482,33 @@ function mockFetch(
       })
     }
     if (url.endsWith('/api/v1/documents/uploads')) {
+      uploadCounter += 1
+      const body = JSON.parse(String(init?.body ?? '{}')) as { filename?: string; content_type?: string; size_bytes?: number }
+      const id = uploadCounter === 1 ? 'doc-upload' : `doc-upload-${uploadCounter}`
+      const originalName = body.filename || 'brief.docx'
+      const contentType = body.content_type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      const documentRecord = {
+        id,
+        user_id: `${role}-1`,
+        original_name: originalName,
+        content_type: contentType,
+        size_bytes: body.size_bytes ?? 5,
+        status: 'uploading',
+        source_object_key: `documents/user/${id}/source`,
+        expires_at: '2026-05-17T00:00:00Z',
+        created_at: '2026-05-10T00:00:00Z',
+        updated_at: '2026-05-10T00:00:00Z',
+      }
+      uploadedDocuments.set(id, documentRecord)
       return jsonResponse({
         code: 0,
         message: 'ok',
         data: {
-          document: {
-            id: 'doc-upload',
-            user_id: `${role}-1`,
-            original_name: 'brief.docx',
-            content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            size_bytes: 5,
-            status: 'uploading',
-            source_object_key: 'documents/user/doc-upload/source.docx',
-            expires_at: '2026-05-17T00:00:00Z',
-            created_at: '2026-05-10T00:00:00Z',
-            updated_at: '2026-05-10T00:00:00Z',
-          },
+          document: documentRecord,
           upload: {
             method: 'PUT',
             url: 'https://s3.example.com/upload',
-            headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+            headers: { 'Content-Type': contentType },
             expires_at: '2026-05-10T01:00:00Z',
           },
         },
@@ -2343,21 +2517,28 @@ function mockFetch(
     if (url === 'https://s3.example.com/upload') {
       return new Response(null, { status: 200 })
     }
-    if (url.endsWith('/api/v1/documents/doc-upload/complete')) {
+    const completeMatch = url.match(/\/api\/v1\/documents\/([^/]+)\/complete$/)
+    if (completeMatch) {
+      const id = decodeURIComponent(completeMatch[1])
+      const documentRecord = uploadedDocuments.get(id) ?? {
+        id,
+        user_id: `${role}-1`,
+        original_name: 'brief.docx',
+        content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size_bytes: 5,
+        status: 'uploading',
+        source_object_key: `documents/user/${id}/source.docx`,
+        expires_at: '2026-05-17T00:00:00Z',
+        created_at: '2026-05-10T00:00:00Z',
+        updated_at: '2026-05-10T00:00:00Z',
+      }
       return jsonResponse({
         code: 0,
         message: 'ok',
         data: {
-          id: 'doc-upload',
-          user_id: `${role}-1`,
-          original_name: 'brief.docx',
-          content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          size_bytes: 5,
+          ...documentRecord,
           status: 'ready',
-          source_object_key: 'documents/user/doc-upload/source.docx',
-          text_object_key: 'documents/user/doc-upload/extracted.txt',
-          expires_at: '2026-05-17T00:00:00Z',
-          created_at: '2026-05-10T00:00:00Z',
+          text_object_key: `documents/user/${id}/extracted.txt`,
           updated_at: '2026-05-10T00:00:00Z',
         },
       })

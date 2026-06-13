@@ -1,11 +1,19 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/coldflame/shejane/api/internal/app"
+	"github.com/coldflame/shejane/api/internal/config"
+	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/modelreg"
+	"github.com/coldflame/shejane/api/internal/store"
 )
 
 func TestAgentLLMStreamRequiresAuth(t *testing.T) {
@@ -95,7 +103,131 @@ func TestAgentLLMStreamEmitsDeltaUsageAndDoneAndSettlesCredits(t *testing.T) {
 	}
 }
 
+func TestRunAgentLLMStreamEmitsReasoningOnlyChunks(t *testing.T) {
+	provider := streamReasoningProvider{}
+	recorder := httptest.NewRecorder()
+
+	err, _, _, finishReason := (&Server{}).runAgentLLMStream(
+		context.Background(),
+		recorder,
+		provider,
+		llm.ChatRequest{Messages: []llm.Message{{Role: "user", Content: "think first"}}},
+		"claude-test",
+		"req_test",
+	)
+	if err != nil {
+		t.Fatalf("runAgentLLMStream: %v", err)
+	}
+	if finishReason != "stop" {
+		t.Fatalf("finish reason = %q, want stop", finishReason)
+	}
+
+	events := parseSSEEvents(t, recorder.Body.String())
+	mustHaveEvent(t, events, "llm.delta", func(payload map[string]any) bool {
+		content, _ := payload["content_delta"].(string)
+		reasoning, _ := payload["reasoning_delta"].(string)
+		return content == "" && reasoning == "先想一步。"
+	})
+}
+
+func TestAgentLLMStreamFallsBackToNextCandidateOnProviderFailure(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 10_000
+	memory := store.NewMemoryStore()
+	application := app.New(cfg, memory)
+
+	configs, _ := memory.ListModelConfigs(context.Background(), modelreg.CapabilityChat)
+	for _, c := range configs {
+		if c.Slot == modelreg.SlotChatFast || c.Slot == modelreg.SlotChatDeep {
+			if _, err := memory.SetModelConfigEnabled(context.Background(), "", c.ID, false); err != nil {
+				t.Fatalf("disable seed model: %v", err)
+			}
+		}
+	}
+	if _, err := memory.UpsertModelConfig(context.Background(), "admin", store.ModelConfig{
+		Slot:         "bad-model",
+		Capability:   modelreg.CapabilityChat,
+		ProviderKind: "anthropic",
+		DisplayName:  "Bad Model",
+		BaseURL:      "https://anthropic.invalid",
+		ModelName:    "claude-bad",
+		Priority:     120,
+		Enabled:      true,
+	}); err != nil {
+		t.Fatalf("upsert bad model: %v", err)
+	}
+	if _, err := memory.UpsertModelConfig(context.Background(), "admin", store.ModelConfig{
+		Slot:         "good-model",
+		Capability:   modelreg.CapabilityChat,
+		ProviderKind: "mock",
+		DisplayName:  "Good Model",
+		ModelName:    "good-model",
+		Priority:     100,
+		Enabled:      true,
+		Params:       map[string]any{"mock_reply": "fallback ok"},
+	}); err != nil {
+		t.Fatalf("upsert good model: %v", err)
+	}
+	application.Registry.Invalidate()
+	server := NewServer(application)
+	token := registerAndToken(t, server)
+
+	body := `{"run_id":"local-run-fallback","model":"bad-model","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	events := parseSSEEvents(t, recorder.Body.String())
+	mustHaveEvent(t, events, "llm.model_selected", func(payload map[string]any) bool {
+		return payload["requested_model"] == "bad-model" &&
+			payload["resolved_model_id"] == "good-model" &&
+			payload["reason"] == "上游失败后降级"
+	})
+	mustHaveEvent(t, events, "llm.delta", func(payload map[string]any) bool {
+		content, _ := payload["content_delta"].(string)
+		return strings.Contains(content, "fallback ok")
+	})
+	for _, ev := range events {
+		if ev.event == "llm.error" {
+			t.Fatalf("unexpected llm.error after fallback: %s", ev.raw)
+		}
+	}
+	calls := usageRecords(t, server, token)
+	for _, want := range []string{`"mode":"bad-model"`, `"status":"failed"`, `"mode":"good-model"`, `"status":"done"`} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("usage records missing %q after fallback: %s", want, calls)
+		}
+	}
+}
+
 // --- helpers ---
+
+type streamReasoningProvider struct{}
+
+func (streamReasoningProvider) Name() string {
+	return "reasoning-test"
+}
+
+func (streamReasoningProvider) Stream(context.Context, llm.ChatRequest, string) (<-chan llm.Chunk, <-chan error) {
+	chunks := make(chan llm.Chunk, 2)
+	errs := make(chan error, 1)
+	chunks <- llm.Chunk{ReasoningContent: "先想一步。"}
+	chunks <- llm.Chunk{FinishReason: "stop"}
+	close(chunks)
+	close(errs)
+	return chunks, errs
+}
+
+func (streamReasoningProvider) CompleteWithTools(context.Context, llm.ChatRequest, string) (llm.Completion, error) {
+	return llm.Completion{}, errors.New("unexpected CompleteWithTools call")
+}
 
 type sseEvent struct {
 	event string

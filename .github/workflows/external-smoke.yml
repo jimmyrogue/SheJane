@@ -33,6 +33,4 @@ jobs:
           node-version: 22
 
       - name: Run external smoke scripts
-        run: |
-          test -n "$API_BASE_URL"
-          ./scripts/smoke-external.sh
+        run: ./scripts/smoke-external.sh
