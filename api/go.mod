@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/getsentry/sentry-go v0.46.2
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	golang.org/x/crypto v0.37.0
