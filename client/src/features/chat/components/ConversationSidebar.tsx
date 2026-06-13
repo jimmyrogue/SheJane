@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconAffiliate,
   IconCalendar,
@@ -72,6 +72,7 @@ export function ConversationSidebar({
   onOpenSettings,
   activeView = 'chat',
   searchRequestVersion = 0,
+  resizeHandle,
 }: {
   conversations: Conversation[]
   activeID?: string
@@ -96,6 +97,7 @@ export function ConversationSidebar({
   onOpenSettings?: () => void
   activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'
   searchRequestVersion?: number
+  resizeHandle?: ReactNode
 }) {
   const { t, locale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -104,8 +106,10 @@ export function ConversationSidebar({
   const [renameTitle, setRenameTitle] = useState('')
   const [seenConversationVersions, setSeenConversationVersions] = useState<Record<string, string>>(readSeenConversationVersions)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchMounted, setSearchMounted] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchExitTimerRef = useRef<number>()
   const renameConversation = conversations.find((conversation) => conversation.id === renameConversationID)
   const deleteConversation = conversations.find((conversation) => conversation.id === deleteConversationID)
   const deleteConversationTitle = deleteConversation?.title ?? t('sidebar.dialog.currentConversation')
@@ -159,20 +163,44 @@ export function ConversationSidebar({
   }, [searchOpen])
 
   useEffect(() => {
+    return () => {
+      if (searchExitTimerRef.current) {
+        window.clearTimeout(searchExitTimerRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (!searchRequestVersion) {
       return
     }
-    setSearchOpen(true)
-    window.setTimeout(() => searchInputRef.current?.focus(), 0)
+    openSearch()
   }, [searchRequestVersion])
 
+  function openSearch() {
+    if (searchExitTimerRef.current) {
+      window.clearTimeout(searchExitTimerRef.current)
+    }
+    setSearchMounted(true)
+    setSearchOpen(true)
+    window.setTimeout(() => searchInputRef.current?.focus(), 0)
+  }
+
+  function closeSearch() {
+    setSearchQuery('')
+    setSearchOpen(false)
+    if (searchExitTimerRef.current) {
+      window.clearTimeout(searchExitTimerRef.current)
+    }
+    searchExitTimerRef.current = window.setTimeout(() => setSearchMounted(false), 180)
+  }
+
   function toggleSearch() {
-    setSearchOpen((open) => {
-      if (open) {
-        setSearchQuery('')
-      }
-      return !open
-    })
+    if (searchOpen) {
+      closeSearch()
+      return
+    }
+    openSearch()
   }
 
   function renderConversationRow(conversation: Conversation) {
@@ -258,6 +286,7 @@ export function ConversationSidebar({
 
   return (
     <aside className="sidebar">
+      {resizeHandle}
       <div className="sidebar-window-controls">
         <div className="sidebar-window-actions" aria-label={t('app.windowActions')}>
           <button className="sidebar-window-control-button" type="button" title={t('app.collapseSidebar')} aria-label={t('app.collapseSidebar')} onClick={onCollapseSidebar}>
@@ -276,8 +305,8 @@ export function ConversationSidebar({
         </div>
       </div>
 
-      {searchOpen ? (
-        <div className="sidebar-search">
+      {searchMounted ? (
+        <div className="sidebar-search" data-state={searchOpen ? 'open' : 'closed'}>
           <IconSearch className="sidebar-search-icon" size={14} aria-hidden="true" />
           <Input
             ref={searchInputRef}

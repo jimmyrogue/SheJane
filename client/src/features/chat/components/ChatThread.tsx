@@ -3,7 +3,7 @@ import { AgentProgress, type AgentFailureAction } from './AgentProgress'
 import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
-import { IconCodeDots, IconPalette, IconSearch, IconWriting } from '@tabler/icons-react'
+import { IconCalendar, IconFileText, IconMessage } from '@tabler/icons-react'
 import type { CloudOfficeAttachmentRef, Conversation, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
@@ -78,6 +78,26 @@ export function ChatThread({
           ? 'welcome.greeting.afternoon'
           : 'welcome.greeting.evening'
   const streamDisplayCacheRef = useRef<Map<string, string>>(new Map())
+  const welcomeSuggestions = [
+    {
+      Icon: IconMessage,
+      title: t('welcome.unread.title'),
+      description: t('welcome.unread.description'),
+      prompt: t('welcome.unread.prompt'),
+    },
+    {
+      Icon: IconFileText,
+      title: t('welcome.minutes.title'),
+      description: t('welcome.minutes.description'),
+      prompt: t('welcome.minutes.prompt'),
+    },
+    {
+      Icon: IconCalendar,
+      title: t('welcome.today.title'),
+      description: t('welcome.today.description'),
+      prompt: t('welcome.today.prompt'),
+    },
+  ]
   const messageCount = conversation?.messages.length ?? 0
   const lastMessageContent = conversation?.messages.at(-1)?.content ?? ''
   const scrollRef = useSmartAutoScroll<HTMLDivElement>([messageCount, lastMessageContent.length], { bottomThreshold: 120 })
@@ -140,22 +160,13 @@ export function ChatThread({
           <h1>{t(greetingKey)}</h1>
           <p>{t('welcome.subtitle')}</p>
           <div className="suggest-grid" aria-label={t('welcome.suggestions')}>
-            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.code'))}>
-              <span className="tag tag-code"><IconCodeDots size={14} /> Code</span>
-              <span className="text">{t('welcome.code')}</span>
-            </button>
-            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.write'))}>
-              <span className="tag tag-write"><IconWriting size={14} /> Write</span>
-              <span className="text">{t('welcome.write')}</span>
-            </button>
-            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.research'))}>
-              <span className="tag tag-research"><IconSearch size={14} /> Research</span>
-              <span className="text">{t('welcome.research')}</span>
-            </button>
-            <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(t('welcome.create'))}>
-              <span className="tag tag-create"><IconPalette size={14} /> Create</span>
-              <span className="text">{t('welcome.create')}</span>
-            </button>
+            {welcomeSuggestions.map(({ Icon, title, description, prompt }) => (
+              <button className="suggest-tile" type="button" onClick={() => onPickSuggestion?.(prompt)} key={title}>
+                <Icon className="suggest-tile-icon" size={17} stroke={1.8} aria-hidden="true" />
+                <span className="suggest-title">{title}</span>
+                <span className="suggest-description">{description}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}

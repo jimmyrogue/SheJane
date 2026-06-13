@@ -85,7 +85,8 @@ export function AgentProgress({
       ? collectInFlightTaskRequests(events)
       : []
   const showTaskList = inFlightTasks.length >= 2
-  const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics)
+  const hasDiagnosticsFailureAction = progress.failureAction?.action === 'diagnostics' && Boolean(onFailureAction)
+  const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !hasDiagnosticsFailureAction)
 
   // The leading status dot we used to show next to the headline was
   // pure ornament — the tone is already reflected in the label

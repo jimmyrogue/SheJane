@@ -316,6 +316,34 @@ describe('AgentProgress', () => {
     expect(screen.getByText('请重新登录或刷新本地云端会话，然后重试。')).toBeInTheDocument()
   })
 
+  it('does not render the duplicate drawer diagnostics button when the failure CTA opens diagnostics', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'model provider is not configured · 需要你处理',
+          failureCategory: 'configuration',
+          failureActionKind: 'user_action',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '查看诊断' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '诊断' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '展开步骤' })).not.toBeInTheDocument()
+  })
+
   it('offers a top-up action for quota failures', () => {
     const onFailureAction = vi.fn()
     const current = message({

@@ -6,7 +6,7 @@
  * no-op and every data source is a literal mock. It is never imported by the
  * real app (main.tsx renders <App/>, not this).
  */
-import { StrictMode, useState } from 'react'
+import { StrictMode, useEffect, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { IconLayoutSidebarLeftExpand } from '@tabler/icons-react'
 import '../styles.css'
@@ -115,9 +115,11 @@ const mockChatModels: ModelOption[] = [
 const noop = () => {}
 const params = new URLSearchParams(location.search)
 const view = params.get('view') ?? 'chat'
+const useEmptyConversation = params.get('conversation') === 'empty'
 const initialSidebarCollapsed = params.get('collapsed') === '1'
 const initialMode = (params.get('model') || 'auto') as ChatMode
 const showComposerAttachment = params.get('attachment') === '1'
+const sidebarMotionMs = 220
 
 const mockComposerAttachment: UserDocument = {
   id: 'doc-harness',
@@ -137,6 +139,8 @@ function Shell() {
   const [draft, setDraft] = useState('')
   const [mode, setMode] = useState<ChatMode>(initialMode)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(initialSidebarCollapsed)
+  const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
+  const sidebarMotionTimerRef = useRef<number>()
   const [rechargeOpen, setRechargeOpen] = useState(false)
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>(
@@ -152,11 +156,45 @@ function Shell() {
               ? 'today'
               : 'chat',
   )
+  const displayedConversation = useEmptyConversation
+    ? { ...activeConvo, id: 'c-empty', title: '新对话', messages: [] }
+    : activeConvo
+
+  useEffect(() => {
+    return () => {
+      if (sidebarMotionTimerRef.current) {
+        window.clearTimeout(sidebarMotionTimerRef.current)
+      }
+    }
+  }, [])
+
+  function collapseSidebar() {
+    if (sidebarMotionTimerRef.current) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+    setSidebarMotion('closing')
+    setSidebarCollapsed(true)
+    sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
+  }
+
+  function expandSidebar() {
+    if (sidebarMotionTimerRef.current) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+    setSidebarMotion('opening')
+    setSidebarCollapsed(false)
+    sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
+  }
 
   return (
     <main className="app-window-shell electron-window-shell">
       <div className="window-drag-layer" aria-hidden="true" />
-      <div className="app-shell" style={{ ['--sidebar-width' as string]: '252px' }} data-collapsed={sidebarCollapsed ? 'true' : undefined}>
+      <div
+        className="app-shell"
+        style={{ ['--sidebar-width' as string]: '252px' }}
+        data-collapsed={sidebarCollapsed ? 'true' : undefined}
+        data-sidebar-motion={sidebarMotion === 'idle' ? undefined : sidebarMotion}
+      >
         <ConversationSidebar
           conversations={conversations}
           activeID="c-active"
@@ -167,7 +205,7 @@ function Shell() {
           onTogglePinConversation={noop}
           onRenameConversation={noop}
           onDeleteConversation={noop}
-          onCollapseSidebar={() => setSidebarCollapsed(true)}
+          onCollapseSidebar={collapseSidebar}
           isDesktop
           onOpenToday={() => setMainView('today')}
           onOpenSkills={() => setMainView('skills')}
@@ -175,8 +213,10 @@ function Shell() {
           onOpenConnections={() => setMainView('connections')}
           onOpenSettings={() => setMainView('settings')}
           activeView={mainView}
+          resizeHandle={(
+            <div className="sidebar-resize-handle" role="separator" aria-orientation="vertical" tabIndex={0} />
+          )}
         />
-        <div className="sidebar-resize-handle" role="separator" aria-orientation="vertical" tabIndex={0} />
         <div className="view-transition" key={mainView}>
           {mainView === 'today' ? (
             <TodayView onQuoteToChat={() => setMainView('chat')} />
@@ -231,18 +271,18 @@ function Shell() {
                       className="topbar-expand-button"
                       title="展开侧栏"
                       aria-label="展开侧栏"
-                      onClick={() => setSidebarCollapsed(false)}
+                      onClick={expandSidebar}
                     >
                       <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
                     </button>
                   </div>
                 ) : null}
-                <div className="chat-toolbar-title"><span>{activeConvo.title}</span></div>
+                <div className="chat-toolbar-title"><span>{displayedConversation.title}</span></div>
                 <div className="topbar-status">
                   <span className="topbar-daemon-dot is-online" />
                 </div>
               </header>
-              <ChatThread conversation={activeConvo} onOpenArtifact={noop} onOpenDiagnostics={noop} onPickSuggestion={setDraft} />
+              <ChatThread conversation={displayedConversation} onOpenArtifact={noop} onOpenDiagnostics={noop} onPickSuggestion={setDraft} />
               <div className="composer-dock">
                 <Composer
                   draft={draft}

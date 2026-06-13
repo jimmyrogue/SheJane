@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { IconLogout, IconTrash } from '@tabler/icons-react'
 import {
   AlertDialog,
@@ -25,6 +25,8 @@ import type { WalletBalance } from '@/shared/api/client'
 import type { AdvancedAgentSettings, AgentSettings } from '@/shared/local-host/client'
 
 type SettingsSectionID = 'account' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+
+const SETTINGS_SECTION_TOP_OFFSET = 72
 
 const runFields = [
   ['maxModelCalls', 1, 100, '20'],
@@ -134,6 +136,7 @@ export function SettingsView({
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
+  const settingsScrollRef = useRef<HTMLDivElement>(null)
   const [activeSection, setActiveSection] = useState<SettingsSectionID>('account')
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
@@ -147,23 +150,83 @@ export function SettingsView({
     onAgentSettingsChange({ ...agentSettings, advanced: { ...adv, ...patch } })
   const availableCredits = Math.max(0, (balance?.monthly_remaining ?? 0) + (balance?.extra_credits_balance ?? 0))
 
-  const navItems: Array<{ id: SettingsSectionID, label: string }> = [
-    { id: 'account', label: t('settings.group.account') },
-    { id: 'agent', label: t('settings.group.agent') },
-    ...(isDesktop
-      ? [
-          { id: 'run' as const, label: t('sidebar.agentSettings.advanced.group.run') },
-          { id: 'quality' as const, label: t('sidebar.agentSettings.advanced.group.quality') },
-          { id: 'capability' as const, label: t('sidebar.agentSettings.advanced.group.capability') },
-        ]
-      : []),
-    { id: 'general', label: t('settings.group.general') },
-    { id: 'data', label: t('settings.group.dataSecurity') },
-  ]
+  const navItems = useMemo<Array<{ id: SettingsSectionID, label: string }>>(
+    () => [
+      { id: 'account', label: t('settings.group.account') },
+      { id: 'agent', label: t('settings.group.agent') },
+      ...(isDesktop
+        ? [
+            { id: 'run' as const, label: t('sidebar.agentSettings.advanced.group.run') },
+            { id: 'quality' as const, label: t('sidebar.agentSettings.advanced.group.quality') },
+            { id: 'capability' as const, label: t('sidebar.agentSettings.advanced.group.capability') },
+          ]
+        : []),
+      { id: 'general', label: t('settings.group.general') },
+      { id: 'data', label: t('settings.group.dataSecurity') },
+    ],
+    [isDesktop, t],
+  )
+
+  const updateActiveSectionFromScroll = useCallback(() => {
+    const scrollRoot = settingsScrollRef.current
+    if (!scrollRoot) return
+
+    const rootTop = scrollRoot.getBoundingClientRect().top
+    const sectionPositions = navItems
+      .map((item) => {
+        const section = document.getElementById(`settings-${item.id}`)
+        if (!section) return null
+        return {
+          id: item.id,
+          top: section.getBoundingClientRect().top - rootTop,
+        }
+      })
+      .filter((item): item is { id: SettingsSectionID, top: number } => item !== null)
+
+    if (sectionPositions.length === 0) return
+
+    const hasScrollableLayout = scrollRoot.scrollHeight > scrollRoot.clientHeight
+    const hasMeasuredSections = sectionPositions.some((position, index) =>
+      index === 0 ? position.top !== 0 : position.top !== sectionPositions[0].top,
+    )
+    if (!hasScrollableLayout && !hasMeasuredSections) return
+
+    const atBottom = hasScrollableLayout
+      && scrollRoot.scrollTop + scrollRoot.clientHeight >= scrollRoot.scrollHeight - 8
+    const nextActive = atBottom
+      ? sectionPositions[sectionPositions.length - 1].id
+      : sectionPositions.reduce<SettingsSectionID>((current, position) => (
+          position.top <= SETTINGS_SECTION_TOP_OFFSET ? position.id : current
+        ), sectionPositions[0].id)
+
+    setActiveSection((current) => (current === nextActive ? current : nextActive))
+  }, [navItems])
+
+  useEffect(() => {
+    updateActiveSectionFromScroll()
+  }, [updateActiveSectionFromScroll])
 
   const selectSection = (id: SettingsSectionID) => {
     setActiveSection(id)
-    document.getElementById(`settings-${id}`)?.scrollIntoView?.({ block: 'start' })
+    const scrollRoot = settingsScrollRef.current
+    const section = document.getElementById(`settings-${id}`)
+    if (!section) return
+    if (!scrollRoot) {
+      section.scrollIntoView?.({ block: 'start' })
+      return
+    }
+
+    const rootTop = scrollRoot.getBoundingClientRect().top
+    const sectionTop = section.getBoundingClientRect().top - rootTop + scrollRoot.scrollTop
+    const nextTop = Math.max(0, sectionTop - 12)
+    if (typeof scrollRoot.scrollTo === 'function') {
+      scrollRoot.scrollTo({
+        top: nextTop,
+        behavior: 'smooth',
+      })
+    } else {
+      scrollRoot.scrollTop = nextTop
+    }
   }
 
   return (
@@ -174,7 +237,7 @@ export function SettingsView({
         </div>
       </header>
 
-      <div className="skills-scroll">
+      <div ref={settingsScrollRef} className="skills-scroll settings-scroll" onScroll={updateActiveSectionFromScroll}>
         <div className="settings-layout">
           <nav className="settings-nav" aria-label={t('settings.navAria')}>
             {navItems.map((item) => (

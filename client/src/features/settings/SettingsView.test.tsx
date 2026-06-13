@@ -12,6 +12,20 @@ const baseSettings: Required<AgentSettings> = {
   advanced: {},
 }
 
+function mockRect(top: number): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    bottom: top + 40,
+    left: 0,
+    right: 100,
+    width: 100,
+    height: 40,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
 function renderSettings(props: Partial<React.ComponentProps<typeof SettingsView>> = {}) {
   return render(
     <I18nProvider>
@@ -114,6 +128,41 @@ describe('SettingsView', () => {
     expect(screen.getByText('导出全部数据')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '导出…' }))
     expect(onExportLocalData).toHaveBeenCalledTimes(1)
+  })
+
+  it('updates the active navigation item while the settings content scrolls', () => {
+    renderSettings()
+
+    const scrollRoot = document.querySelector('.settings-scroll') as HTMLDivElement
+    expect(scrollRoot).not.toBeNull()
+    Object.defineProperties(scrollRoot, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, value: 1300 },
+      scrollTop: { configurable: true, writable: true, value: 640 },
+    })
+    scrollRoot.getBoundingClientRect = vi.fn(() => mockRect(0))
+
+    const sectionTops: Record<string, number> = {
+      account: -600,
+      agent: -420,
+      run: -250,
+      quality: -90,
+      capability: 40,
+      general: 220,
+      data: 410,
+    }
+    Object.entries(sectionTops).forEach(([id, top]) => {
+      const section = document.getElementById(`settings-${id}`)
+      expect(section).not.toBeNull()
+      section!.getBoundingClientRect = vi.fn(() => mockRect(top))
+    })
+
+    fireEvent.scroll(scrollRoot)
+    expect(screen.getByRole('button', { name: '能力与安全' })).toHaveAttribute('aria-current', 'page')
+
+    Object.defineProperty(scrollRoot, 'scrollTop', { configurable: true, writable: true, value: 800 })
+    fireEvent.scroll(scrollRoot)
+    expect(screen.getByRole('button', { name: '数据与安全' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('calls onClearMemory only after confirming', async () => {

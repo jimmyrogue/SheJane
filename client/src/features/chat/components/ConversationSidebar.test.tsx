@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { Conversation, MessageStatus } from '@/shared/local-data/types'
@@ -229,7 +229,7 @@ describe('ConversationSidebar', () => {
       })
     }
 
-    it('toggles the search input open and closed', () => {
+    it('toggles the search input open and closed', async () => {
       renderSidebar([emptyConversation('a', '行程安排')])
       expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
 
@@ -237,7 +237,9 @@ describe('ConversationSidebar', () => {
       expect(screen.getByRole('searchbox')).toBeInTheDocument()
 
       fireEvent.click(screen.getByRole('button', { name: '搜索' }))
-      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+      })
     })
 
     it('filters rows by a title substring', () => {

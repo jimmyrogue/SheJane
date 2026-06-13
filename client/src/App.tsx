@@ -157,6 +157,7 @@ const defaultSidebarWidth = 252
 const minSidebarWidth = 190
 const maxSidebarWidth = 340
 const sidebarKeyboardStep = 12
+const sidebarMotionMs = 220
 type NoticeOptions = Omit<NonNullable<Parameters<typeof toast.message>[1]>, 'id'>
 
 interface ConversationRenderContext {
@@ -357,6 +358,7 @@ function AppContent() {
   const checkoutRecoveryGenerationRef = useRef(0)
   const pendingCloudSessionRecoveryTargetRef = useRef<PendingCloudSessionRecoveryTarget>()
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
+  const sidebarMotionTimerRef = useRef<number>()
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -389,6 +391,7 @@ function AppContent() {
   const [uploadProgress, setUploadProgress] = useState<number | undefined>(undefined)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
+  const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
@@ -593,6 +596,14 @@ function AppContent() {
     writeSidebarCollapsed(sidebarCollapsed)
   }, [sidebarCollapsed])
 
+  useEffect(() => {
+    return () => {
+      if (sidebarMotionTimerRef.current) {
+        window.clearTimeout(sidebarMotionTimerRef.current)
+      }
+    }
+  }, [])
+
   /** Mirror the visible sidebar width onto `:root` so the sonner
    *  toaster — which portals to <body> and therefore can't inherit the
    *  `--sidebar-width` set on `.app-shell` — can offset its
@@ -617,7 +628,7 @@ function AppContent() {
       }
       if (mod && !event.shiftKey && !event.altKey && key === 'k') {
         event.preventDefault()
-        setSidebarCollapsed(false)
+        expandSidebar()
         setMainView('chat')
         setSidebarSearchRequestVersion((version) => version + 1)
         return
@@ -2517,11 +2528,21 @@ function AppContent() {
   }
 
   function collapseSidebar() {
+    if (sidebarMotionTimerRef.current) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+    setSidebarMotion('closing')
     setSidebarCollapsed(true)
+    sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
   }
 
   function expandSidebar() {
+    if (sidebarMotionTimerRef.current) {
+      window.clearTimeout(sidebarMotionTimerRef.current)
+    }
+    setSidebarMotion('opening')
     setSidebarCollapsed(false)
+    sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
   }
 
   // Open the Stripe checkout / top-up page. The cloud API returns a
@@ -2595,7 +2616,12 @@ function AppContent() {
     <TooltipProvider>
       <main className={shellClassName}>
         <div className="window-drag-layer" aria-hidden="true" />
-        <div className="app-shell" style={appShellStyle} data-collapsed={sidebarCollapsed ? 'true' : undefined}>
+        <div
+          className="app-shell"
+          style={appShellStyle}
+          data-collapsed={sidebarCollapsed ? 'true' : undefined}
+          data-sidebar-motion={sidebarMotion === 'idle' ? undefined : sidebarMotion}
+        >
           <ConversationSidebar
             conversations={conversations}
             activeID={activeID}
@@ -2615,20 +2641,21 @@ function AppContent() {
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
             searchRequestVersion={sidebarSearchRequestVersion}
-          />
-
-          <div
-            className="sidebar-resize-handle"
-            role="separator"
-            aria-label={t('app.resizeSidebar')}
-            aria-orientation="vertical"
-            aria-valuemin={minSidebarWidth}
-            aria-valuemax={maxSidebarWidth}
-            aria-valuenow={sidebarWidth}
-            data-resizing={isResizingSidebar ? 'true' : undefined}
-            tabIndex={0}
-            onKeyDown={handleSidebarResizeKeyDown}
-            onPointerDown={beginSidebarResize}
+            resizeHandle={(
+              <div
+                className="sidebar-resize-handle"
+                role="separator"
+                aria-label={t('app.resizeSidebar')}
+                aria-orientation="vertical"
+                aria-valuemin={minSidebarWidth}
+                aria-valuemax={maxSidebarWidth}
+                aria-valuenow={sidebarWidth}
+                data-resizing={isResizingSidebar ? 'true' : undefined}
+                tabIndex={0}
+                onKeyDown={handleSidebarResizeKeyDown}
+                onPointerDown={beginSidebarResize}
+              />
+            )}
           />
 
           {/* `key={mainView}` remounts this wrapper on view change so the
