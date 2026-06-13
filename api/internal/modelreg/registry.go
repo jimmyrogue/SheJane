@@ -63,6 +63,7 @@ type ChatModelInfo struct {
 	Label          string `json:"label"`
 	Description    string `json:"description,omitempty"`
 	Vendor         string `json:"vendor,omitempty"`
+	VendorInfo     string `json:"vendor_info,omitempty"`
 	CapabilityTier string `json:"capability_tier,omitempty"`
 	Priority       int    `json:"priority"`
 }
@@ -298,6 +299,7 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			Label:          label,
 			Description:    cfg.Description,
 			Vendor:         strings.TrimSpace(cfg.Vendor),
+			VendorInfo:     strings.TrimSpace(cfg.VendorInfo),
 			CapabilityTier: NormalizeCapabilityTier(cfg.CapabilityTier),
 			Priority:       cfg.Priority,
 		})

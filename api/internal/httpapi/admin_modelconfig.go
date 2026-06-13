@@ -24,6 +24,7 @@ type adminModelConfigView struct {
 	ProviderKind                string         `json:"provider_kind"`
 	DisplayName                 string         `json:"display_name"`
 	Vendor                      string         `json:"vendor"`
+	VendorInfo                  string         `json:"vendor_info"`
 	CapabilityTier              string         `json:"capability_tier"`
 	Description                 string         `json:"description"`
 	Priority                    int            `json:"priority"`
@@ -52,6 +53,7 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 		ProviderKind:                c.ProviderKind,
 		DisplayName:                 c.DisplayName,
 		Vendor:                      c.Vendor,
+		VendorInfo:                  c.VendorInfo,
 		CapabilityTier:              c.CapabilityTier,
 		Description:                 c.Description,
 		Priority:                    c.Priority,
@@ -75,6 +77,7 @@ type modelConfigInput struct {
 	ProviderKind string  `json:"provider_kind"`
 	DisplayName  string  `json:"display_name"`
 	Vendor       *string `json:"vendor"`
+	VendorInfo   *string `json:"vendor_info"`
 	// CapabilityTier is intentionally not a pointer: omitted/blank means
 	// preserve existing on PATCH or default to balanced on create.
 	CapabilityTier string `json:"capability_tier"`
@@ -189,6 +192,10 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 	if input.Vendor != nil {
 		vendor = strings.TrimSpace(*input.Vendor)
 	}
+	vendorInfo := existing.VendorInfo
+	if input.VendorInfo != nil {
+		vendorInfo = strings.TrimSpace(*input.VendorInfo)
+	}
 	capabilityTier := strings.TrimSpace(input.CapabilityTier)
 	if capabilityTier == "" {
 		capabilityTier = existing.CapabilityTier
@@ -253,6 +260,7 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		ProviderKind:                providerKind,
 		DisplayName:                 strings.TrimSpace(input.DisplayName),
 		Vendor:                      vendor,
+		VendorInfo:                  vendorInfo,
 		CapabilityTier:              capabilityTier,
 		Description:                 description,
 		Priority:                    priority,

@@ -235,6 +235,9 @@ type ModelConfig struct {
 	ProviderKind string `json:"provider_kind"`
 	DisplayName  string `json:"display_name"`
 	Vendor       string `json:"vendor"`
+	// VendorInfo is a short user-facing blurb for the model picker vendor
+	// tooltip. It is grouped by Vendor on the client.
+	VendorInfo string `json:"vendor_info,omitempty"`
 	// CapabilityTier tells the Auto router what strength band this model
 	// belongs to: fast | balanced | reasoning | max.
 	CapabilityTier string `json:"capability_tier"`

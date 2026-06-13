@@ -1,5 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
@@ -12,11 +14,17 @@ const MODELS: ModelOption[] = [
 
 function renderSelector(mode: string, onChange = vi.fn()) {
   render(
-    <I18nProvider>
-      <ModeSelector mode={mode} models={MODELS} onChange={onChange} />
-    </I18nProvider>,
+    withProviders(<ModeSelector mode={mode} models={MODELS} onChange={onChange} />),
   )
   return onChange
+}
+
+function withProviders(children: ReactNode) {
+  return (
+    <I18nProvider>
+      <TooltipProvider>{children}</TooltipProvider>
+    </I18nProvider>
+  )
 }
 
 function openMenu() {
@@ -41,9 +49,9 @@ describe('ModeSelector (catalog-driven)', () => {
   it('keeps the full selected model label available for long names', () => {
     const longModels: ModelOption[] = [{ id: 'deep-compatible', label: 'deep-compatible', vendor: 'DeepSeek', description: '兼容模式' }]
     render(
-      <I18nProvider>
+      withProviders(
         <ModeSelector mode="deep-compatible" models={longModels} onChange={vi.fn()} />
-      </I18nProvider>,
+      ),
     )
 
     const trigger = screen.getByRole('button', { name: '选择模型' })
@@ -73,6 +81,53 @@ describe('ModeSelector (catalog-driven)', () => {
     expect(screen.getByText('DeepSeek')).toBeInTheDocument()
     expect(screen.getByText('GPT-4o')).toBeInTheDocument()
     expect(screen.getByText('DeepSeek V4 Flash')).toBeInTheDocument()
+  })
+
+  it('normalizes known vendor casing in the concrete model list', async () => {
+    render(
+      withProviders(
+        <ModeSelector
+          mode="auto"
+          models={[
+            { id: 'mimo-v2-5', label: 'Mimo V2.5', vendor: 'xiaomi', capability_tier: 'balanced' },
+            { id: 'kimi-k2', label: 'Kimi K2', vendor: 'kimi', capability_tier: 'reasoning' },
+            { id: 'minimax-m3', label: 'MiniMax M3', vendor: 'Minimax', capability_tier: 'reasoning' },
+          ]}
+          onChange={vi.fn()}
+        />
+      ),
+    )
+    openMenu()
+    fireEvent.click(screen.getByText('选择具体模型'))
+
+    expect(await screen.findByText('Xiaomi')).toBeInTheDocument()
+    expect(screen.getByText('Kimi')).toBeInTheDocument()
+    expect(screen.getByText('MiniMax')).toBeInTheDocument()
+  })
+
+  it('uses catalog vendor_info for the vendor info tooltip', async () => {
+    render(
+      withProviders(
+        <ModeSelector
+          mode="auto"
+          models={[
+            {
+              id: 'deepseek-v4-pro',
+              label: 'DeepSeek V4 Pro',
+              vendor: 'DeepSeek',
+              vendor_info: '数据库里的 DeepSeek 厂商简介',
+              capability_tier: 'reasoning',
+            },
+          ]}
+          onChange={vi.fn()}
+        />
+      ),
+    )
+    openMenu()
+    fireEvent.click(screen.getByText('选择具体模型'))
+
+    const info = await screen.findByLabelText('数据库里的 DeepSeek 厂商简介')
+    expect(info).toHaveAttribute('title', '数据库里的 DeepSeek 厂商简介')
   })
 
   it('maps intent shortcuts to Auto intent sentinel modes', async () => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/coldflame/shejane/api/internal/llm"
 	"github.com/coldflame/shejane/api/internal/store"
@@ -74,6 +75,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 		// real provider pricing and the global markup adds the margin.
 		DisplayName:            "快速",
 		Vendor:                 "DeepSeek",
+		VendorInfo:             defaultVendorInfo("DeepSeek"),
 		CapabilityTier:         CapabilityTierFast,
 		Description:            "速度快、成本低,适合日常对话和简单任务",
 		Priority:               100, // highest → the catalog default
@@ -107,6 +109,7 @@ func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
 		// adds the margin on top.
 		DisplayName:            "深度",
 		Vendor:                 "Claude",
+		VendorInfo:             defaultVendorInfo("Claude"),
 		CapabilityTier:         CapabilityTierReasoning,
 		Description:            "推理更强,适合复杂分析、写作和多步任务",
 		Priority:               90,
@@ -171,6 +174,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "DeepSeek V4 Flash",
 			Vendor:                 "DeepSeek",
+			VendorInfo:             defaultVendorInfo("DeepSeek"),
 			CapabilityTier:         CapabilityTierFast,
 			Description:            "OpenRouter 高使用量编码模型,适合快速问答、代码补全和低成本任务",
 			BaseURL:                openRouterBaseURL,
@@ -188,6 +192,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "DeepSeek V4 Pro",
 			Vendor:                 "DeepSeek",
+			VendorInfo:             defaultVendorInfo("DeepSeek"),
 			CapabilityTier:         CapabilityTierReasoning,
 			Description:            "DeepSeek 基准强推理模型,适合复杂分析、多步任务和代码审查",
 			BaseURL:                openRouterBaseURL,
@@ -204,7 +209,8 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			Capability:             CapabilityChat,
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "Mimo V2.5",
-			Vendor:                 "xiaomi",
+			Vendor:                 "Xiaomi",
+			VendorInfo:             defaultVendorInfo("Xiaomi"),
 			CapabilityTier:         CapabilityTierBalanced,
 			Description:            "OpenRouter 编程榜高使用量模型,适合代码生成和日常开发任务",
 			BaseURL:                openRouterBaseURL,
@@ -221,7 +227,8 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			Capability:             CapabilityChat,
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "MiniMax M3",
-			Vendor:                 "Minimax",
+			Vendor:                 "MiniMax",
+			VendorInfo:             defaultVendorInfo("MiniMax"),
 			CapabilityTier:         CapabilityTierReasoning,
 			Description:            "适合长上下文、工具调用、代理式编码和多步执行",
 			BaseURL:                openRouterBaseURL,
@@ -239,6 +246,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "GPT-5.5",
 			Vendor:                 "ChatGPT",
+			VendorInfo:             defaultVendorInfo("ChatGPT"),
 			CapabilityTier:         CapabilityTierMax,
 			Description:            "OpenAI 前沿通用模型模板,适合高难度推理、写作和综合任务",
 			BaseURL:                openRouterBaseURL,
@@ -256,6 +264,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "Claude Opus 4.8",
 			Vendor:                 "Claude",
+			VendorInfo:             defaultVendorInfo("Claude"),
 			CapabilityTier:         CapabilityTierMax,
 			Description:            "OpenRouter 编程榜强模型模板,适合复杂架构、长文推理和高风险改动",
 			BaseURL:                openRouterBaseURL,
@@ -272,7 +281,8 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			Capability:             CapabilityChat,
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "Kimi K2",
-			Vendor:                 "kimi",
+			Vendor:                 "Kimi",
+			VendorInfo:             defaultVendorInfo("Kimi"),
 			CapabilityTier:         CapabilityTierReasoning,
 			Description:            "Moonshot/Kimi 长上下文与推理模板,适合资料整理和复杂问答",
 			BaseURL:                openRouterBaseURL,
@@ -290,6 +300,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "Qwen3 Coder",
 			Vendor:                 "Qwen",
+			VendorInfo:             defaultVendorInfo("Qwen"),
 			CapabilityTier:         CapabilityTierBalanced,
 			Description:            "通义代码模型模板,适合常规代码生成、解释和中等复杂度开发",
 			BaseURL:                openRouterBaseURL,
@@ -307,6 +318,7 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			ProviderKind:           string(llm.ProviderKindOpenAICompatible),
 			DisplayName:            "Gemini 3.1 Pro",
 			Vendor:                 "Gemini",
+			VendorInfo:             defaultVendorInfo("Gemini"),
 			CapabilityTier:         CapabilityTierMax,
 			Description:            "Google 前沿通用模型模板,适合长上下文、综合推理和复杂创作",
 			BaseURL:                openRouterBaseURL,
@@ -318,5 +330,28 @@ func recommendedChatModelTemplates() []store.ModelConfig {
 			Enabled:                false,
 			Params:                 map[string]any{},
 		},
+	}
+}
+
+func defaultVendorInfo(vendor string) string {
+	switch strings.ToLower(strings.TrimSpace(vendor)) {
+	case "deepseek":
+		return "深度求索，推理能力与性价比突出。"
+	case "xiaomi":
+		return "小米模型，适合快速问答与编码辅助。"
+	case "chatgpt", "openai":
+		return "OpenAI 出品，通用能力全面。"
+	case "claude", "anthropic":
+		return "Anthropic 出品，擅长写作、代码与长文理解。"
+	case "minimax":
+		return "MiniMax 出品，适合长上下文和 Agent 任务。"
+	case "kimi":
+		return "月之暗面，擅长长上下文与长文档。"
+	case "qwen":
+		return "阿里通义千问，中文与多语言表现出色。"
+	case "gemini":
+		return "Google 出品，原生多模态能力突出。"
+	default:
+		return ""
 	}
 }

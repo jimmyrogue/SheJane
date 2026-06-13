@@ -201,6 +201,7 @@ export interface ChatModelInfo {
   label: string
   description?: string
   vendor?: string
+  vendor_info?: string
   capability_tier?: string
   priority: number
 }

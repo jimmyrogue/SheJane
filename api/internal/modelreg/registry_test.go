@@ -40,7 +40,7 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 	}
 	var foundTemplate bool
 	for _, c := range configs {
-		if c.Slot == "minimax-m3" && c.Vendor == "Minimax" && c.CapabilityTier == CapabilityTierReasoning && !c.Enabled {
+		if c.Slot == "minimax-m3" && c.Vendor == "MiniMax" && c.CapabilityTier == CapabilityTierReasoning && !c.Enabled {
 			foundTemplate = true
 		}
 	}
@@ -180,7 +180,7 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 	// Three enabled chat models with distinct priorities + arbitrary catalog ids.
 	for _, m := range []store.ModelConfig{
 		{Slot: "deepseek-v4", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "DeepSeek", Vendor: "DeepSeek", CapabilityTier: CapabilityTierFast, Priority: 10, Enabled: true},
-		{Slot: "gpt-4o", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "GPT-4o", Vendor: "ChatGPT", CapabilityTier: CapabilityTierMax, Description: "首选", Priority: 99, Enabled: true},
+		{Slot: "gpt-4o", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "GPT-4o", Vendor: "ChatGPT", VendorInfo: "OpenAI 出品，通用能力全面。", CapabilityTier: CapabilityTierMax, Description: "首选", Priority: 99, Enabled: true},
 		{Slot: "claude-sonnet", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Claude Sonnet", Vendor: "Claude", CapabilityTier: CapabilityTierReasoning, Priority: 50, Enabled: true},
 		{Slot: "chat.disabled", Capability: CapabilityChat, ProviderKind: "mock", DisplayName: "Off", Priority: 100, Enabled: false},
 	} {
@@ -201,7 +201,7 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 			t.Fatalf("catalog order = %v, want %v (priority desc)", gotOrder, wantOrder)
 		}
 	}
-	if catalog[0].Label != "GPT-4o" || catalog[0].Description != "首选" || catalog[0].Vendor != "ChatGPT" || catalog[0].CapabilityTier != CapabilityTierMax {
+	if catalog[0].Label != "GPT-4o" || catalog[0].Description != "首选" || catalog[0].Vendor != "ChatGPT" || catalog[0].VendorInfo != "OpenAI 出品，通用能力全面。" || catalog[0].CapabilityTier != CapabilityTierMax {
 		t.Fatalf("top entry = %+v, want GPT-4o catalog metadata", catalog[0])
 	}
 

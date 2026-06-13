@@ -1125,6 +1125,7 @@ const MODEL_PRESETS: ModelPreset[] = [
       provider_kind: 'openai-compatible',
       display_name: 'DeepSeek V4 Flash',
       vendor: 'DeepSeek',
+      vendor_info: '深度求索，推理能力与性价比突出。',
       capability_tier: 'fast',
       description: 'OpenRouter 高使用量编码模型,适合快速问答、代码补全和低成本任务',
       base_url: OPENROUTER_BASE_URL,
@@ -1146,6 +1147,7 @@ const MODEL_PRESETS: ModelPreset[] = [
       provider_kind: 'openai-compatible',
       display_name: 'DeepSeek V4 Pro',
       vendor: 'DeepSeek',
+      vendor_info: '深度求索，推理能力与性价比突出。',
       capability_tier: 'reasoning',
       description: 'DeepSeek 基准强推理模型,适合复杂分析、多步任务和代码审查',
       base_url: OPENROUTER_BASE_URL,
@@ -1160,13 +1162,14 @@ const MODEL_PRESETS: ModelPreset[] = [
   {
     id: 'mimo-v2-5',
     label: 'Mimo V2.5',
-    helper: 'xiaomi',
+    helper: 'Xiaomi',
     patch: {
       capability: 'chat',
       slot: 'mimo-v2-5',
       provider_kind: 'openai-compatible',
       display_name: 'Mimo V2.5',
-      vendor: 'xiaomi',
+      vendor: 'Xiaomi',
+      vendor_info: '小米模型，适合快速问答与编码辅助。',
       capability_tier: 'balanced',
       description: 'OpenRouter 编程榜高使用量模型,适合代码生成和日常开发任务',
       base_url: OPENROUTER_BASE_URL,
@@ -1187,7 +1190,8 @@ const MODEL_PRESETS: ModelPreset[] = [
       slot: 'minimax-m3',
       provider_kind: 'openai-compatible',
       display_name: 'MiniMax M3',
-      vendor: 'Minimax',
+      vendor: 'MiniMax',
+      vendor_info: 'MiniMax 出品，适合长上下文和 Agent 任务。',
       capability_tier: 'reasoning',
       description: '适合长上下文、工具调用、代理式编码和多步执行',
       base_url: OPENROUTER_BASE_URL,
@@ -1209,6 +1213,7 @@ const MODEL_PRESETS: ModelPreset[] = [
       provider_kind: 'openai-compatible',
       display_name: 'GPT-5.5',
       vendor: 'ChatGPT',
+      vendor_info: 'OpenAI 出品，通用能力全面。',
       capability_tier: 'max',
       description: 'OpenAI 前沿通用模型模板,适合高难度推理、写作和综合任务',
       base_url: OPENROUTER_BASE_URL,
@@ -1230,6 +1235,7 @@ const MODEL_PRESETS: ModelPreset[] = [
       provider_kind: 'openai-compatible',
       display_name: 'Claude Opus 4.8',
       vendor: 'Claude',
+      vendor_info: 'Anthropic 出品，擅长写作、代码与长文理解。',
       capability_tier: 'max',
       description: 'OpenRouter 编程榜强模型模板,适合复杂架构、长文推理和高风险改动',
       base_url: OPENROUTER_BASE_URL,
@@ -1244,13 +1250,14 @@ const MODEL_PRESETS: ModelPreset[] = [
   {
     id: 'kimi-k2',
     label: 'Kimi K2',
-    helper: 'kimi',
+    helper: 'Kimi',
     patch: {
       capability: 'chat',
       slot: 'kimi-k2',
       provider_kind: 'openai-compatible',
       display_name: 'Kimi K2',
-      vendor: 'kimi',
+      vendor: 'Kimi',
+      vendor_info: '月之暗面，擅长长上下文与长文档。',
       capability_tier: 'reasoning',
       description: 'Moonshot/Kimi 长上下文与推理模板,适合资料整理和复杂问答',
       base_url: OPENROUTER_BASE_URL,
@@ -1270,6 +1277,7 @@ const MODEL_PRESETS: ModelPreset[] = [
       capability: 'chat',
       provider_kind: 'openai-compatible',
       vendor: 'ChatGPT',
+      vendor_info: 'OpenAI 出品，通用能力全面。',
       capability_tier: 'balanced',
       base_url: OPENROUTER_BASE_URL,
       model_name: '',
@@ -1286,6 +1294,7 @@ interface ModelConfigForm {
   provider_kind: string
   display_name: string
   vendor: string
+  vendor_info: string
   capability_tier: string
   description: string
   priority: string
@@ -1308,6 +1317,7 @@ function emptyModelForm(): ModelConfigForm {
     provider_kind: 'openai-compatible',
     display_name: '',
     vendor: '',
+    vendor_info: '',
     capability_tier: 'balanced',
     description: '',
     priority: '0',
@@ -1387,6 +1397,7 @@ function ModelConfigCard({
       provider_kind: cfg.provider_kind,
       display_name: cfg.display_name,
       vendor: cfg.vendor ?? '',
+      vendor_info: cfg.vendor_info ?? '',
       capability_tier: cfg.capability_tier || 'balanced',
       description: cfg.description ?? '',
       priority: String(cfg.priority ?? 0),
@@ -1449,6 +1460,7 @@ function ModelConfigCard({
       provider_kind: form.provider_kind,
       display_name: form.display_name.trim(),
       vendor: form.vendor.trim(),
+      vendor_info: form.vendor_info.trim(),
       capability_tier: form.capability_tier,
       description: form.description.trim(),
       priority: Math.trunc(Number(form.priority)) || 0,
@@ -1819,6 +1831,15 @@ function ModelConfigCard({
                 <div className="grid gap-1.5">
                   <Label htmlFor="mc-vendor">厂商</Label>
                   <Input id="mc-vendor" value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} placeholder="DeepSeek / ChatGPT / Claude" />
+                </div>
+                <div className="grid gap-1.5 sm:col-span-2">
+                  <Label htmlFor="mc-vendor-info">厂商简介</Label>
+                  <Input
+                    id="mc-vendor-info"
+                    value={form.vendor_info}
+                    onChange={(e) => setForm({ ...form, vendor_info: e.target.value })}
+                    placeholder="鼠标悬浮厂商 info 时展示，例如：OpenAI 出品，通用能力全面。"
+                  />
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="mc-tier">能力档位</Label>

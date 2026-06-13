@@ -102,8 +102,8 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 			fast = c
 		}
 	}
-	if fast.ID == "" || fast.Priority != 100 || fast.Description == "" {
-		t.Fatalf("seeded chat.fast = %+v, want priority 100 + non-empty description", fast)
+	if fast.ID == "" || fast.Priority != 100 || fast.Description == "" || fast.VendorInfo == "" {
+		t.Fatalf("seeded chat.fast = %+v, want priority 100 + non-empty description/vendor_info", fast)
 	}
 	payload := `{"slot":"chat.fast","capability":"chat","provider_kind":"mock","display_name":"快速","credit_multiplier":0.2,"enabled":true}`
 	patchReq := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/model-configs/"+fast.ID, strings.NewReader(payload))
@@ -118,8 +118,8 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Priority != 100 || reloaded.Description != fast.Description || reloaded.Vendor != fast.Vendor || reloaded.CapabilityTier != fast.CapabilityTier {
-		t.Fatalf("after PATCH catalog fields were wiped: priority=%d description=%q vendor=%q tier=%q", reloaded.Priority, reloaded.Description, reloaded.Vendor, reloaded.CapabilityTier)
+	if reloaded.Priority != 100 || reloaded.Description != fast.Description || reloaded.Vendor != fast.Vendor || reloaded.VendorInfo != fast.VendorInfo || reloaded.CapabilityTier != fast.CapabilityTier {
+		t.Fatalf("after PATCH catalog fields were wiped: priority=%d description=%q vendor=%q vendor_info=%q tier=%q", reloaded.Priority, reloaded.Description, reloaded.Vendor, reloaded.VendorInfo, reloaded.CapabilityTier)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		return rec
 	}
 
-	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","vendor":"ChatGPT","capability_tier":"max","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
+	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","vendor":"ChatGPT","vendor_info":"OpenAI 出品，通用能力全面。","capability_tier":"max","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
 	if valid.Code != http.StatusOK {
 		t.Fatalf("valid arbitrary chat model id status = %d, want 200; body = %s", valid.Code, valid.Body.String())
 	}
@@ -146,7 +146,7 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 	if err := json.Unmarshal(valid.Body.Bytes(), &validBody); err != nil {
 		t.Fatalf("decode valid response: %v", err)
 	}
-	if validBody.Data.Slot != "gpt-4o" || validBody.Data.DisplayName != "GPT-4o" || validBody.Data.Vendor != "ChatGPT" || validBody.Data.CapabilityTier != "max" {
+	if validBody.Data.Slot != "gpt-4o" || validBody.Data.DisplayName != "GPT-4o" || validBody.Data.Vendor != "ChatGPT" || validBody.Data.VendorInfo != "OpenAI 出品，通用能力全面。" || validBody.Data.CapabilityTier != "max" {
 		t.Fatalf("saved model config = %+v, want slot gpt-4o + ChatGPT/max metadata", validBody.Data)
 	}
 	modelsReq := httptest.NewRequest(http.MethodGet, "/api/v1/models", nil)
@@ -162,7 +162,7 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 	}
 	found := false
 	for _, model := range modelsBody.Data.Models {
-		if model.ID == "gpt-4o" && model.Label == "GPT-4o" && model.Vendor == "ChatGPT" && model.CapabilityTier == "max" {
+		if model.ID == "gpt-4o" && model.Label == "GPT-4o" && model.Vendor == "ChatGPT" && model.VendorInfo == "OpenAI 出品，通用能力全面。" && model.CapabilityTier == "max" {
 			found = true
 		}
 	}

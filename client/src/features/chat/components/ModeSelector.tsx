@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
 import { autoModeForIntent, autoModeLabelKey, isAutoMode, type AutoIntent } from '@/shared/modelMode'
@@ -24,6 +25,7 @@ export interface ModelOption {
   label: string
   description?: string
   vendor?: string
+  vendor_info?: string
   capability_tier?: string
 }
 
@@ -199,12 +201,21 @@ export function ModeSelector({
                     <span className="composer-mode-group-line" />
                     <span className="composer-mode-group-label">
                       {group.vendor}
-                      <IconInfoCircle
-                        size={12}
-                        strokeWidth={1.8}
-                        aria-label={vendorInfo(group.vendor)}
-                        title={vendorInfo(group.vendor)}
-                      />
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="composer-mode-vendor-info-trigger"
+                            aria-label={group.vendorInfo}
+                            title={group.vendorInfo}
+                            tabIndex={0}
+                          >
+                            <IconInfoCircle size={12} strokeWidth={1.8} aria-hidden="true" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6}>
+                          {group.vendorInfo}
+                        </TooltipContent>
+                      </Tooltip>
                     </span>
                     <span className="composer-mode-group-line" />
                   </div>
@@ -219,23 +230,54 @@ export function ModeSelector({
   )
 }
 
-function groupModelsByVendor(models: ModelOption[]): Array<{ vendor: string; models: ModelOption[] }> {
-  const groups: Array<{ vendor: string; models: ModelOption[] }> = []
-  const byVendor = new Map<string, ModelOption[]>()
+function groupModelsByVendor(models: ModelOption[]): Array<{ vendor: string; vendorInfo: string; models: ModelOption[] }> {
+  const groups: Array<{ vendor: string; vendorInfo: string; models: ModelOption[] }> = []
+  const byVendor = new Map<string, { vendor: string; vendorInfo: string; models: ModelOption[] }>()
   for (const model of models) {
-    const vendor = model.vendor?.trim() || '其他'
-    let bucket = byVendor.get(vendor)
-    if (!bucket) {
-      bucket = []
-      byVendor.set(vendor, bucket)
-      groups.push({ vendor, models: bucket })
+    const vendor = canonicalVendorName(model.vendor)
+    let group = byVendor.get(vendor)
+    if (!group) {
+      group = { vendor, vendorInfo: model.vendor_info?.trim() || '', models: [] }
+      byVendor.set(vendor, group)
+      groups.push(group)
+    } else if (!group.vendorInfo && model.vendor_info?.trim()) {
+      group.vendorInfo = model.vendor_info.trim()
     }
-    bucket.push(model)
+    group.models.push(model)
   }
   for (const group of groups) {
+    if (!group.vendorInfo) group.vendorInfo = vendorInfo(group.vendor)
     group.models.sort((a, b) => capabilityRank(a.capability_tier) - capabilityRank(b.capability_tier))
   }
   return groups
+}
+
+function canonicalVendorName(vendor?: string): string {
+  const trimmed = vendor?.trim()
+  switch (trimmed?.toLowerCase()) {
+    case 'deepseek':
+      return 'DeepSeek'
+    case 'xiaomi':
+      return 'Xiaomi'
+    case 'chatgpt':
+      return 'ChatGPT'
+    case 'openai':
+      return 'OpenAI'
+    case 'claude':
+      return 'Claude'
+    case 'anthropic':
+      return 'Anthropic'
+    case 'minimax':
+      return 'MiniMax'
+    case 'kimi':
+      return 'Kimi'
+    case 'qwen':
+      return 'Qwen'
+    case 'gemini':
+      return 'Gemini'
+    default:
+      return trimmed || '其他'
+  }
 }
 
 function capabilityRank(tier?: string): number {

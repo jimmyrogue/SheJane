@@ -86,6 +86,7 @@ func conformModelCatalog(t *testing.T, s Store) {
 		ProviderKind:     "deepseek-v4",
 		DisplayName:      "DeepSeek V4",
 		Vendor:           "DeepSeek",
+		VendorInfo:       "深度求索，推理能力与性价比突出。",
 		CapabilityTier:   "reasoning",
 		Description:      "通用快速模型",
 		ModelName:        "deepseek-v4",
@@ -96,22 +97,23 @@ func conformModelCatalog(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatalf("UpsertModelConfig: %v", err)
 	}
-	if saved.Description != "通用快速模型" || saved.Priority != 50 || saved.Vendor != "DeepSeek" || saved.CapabilityTier != "reasoning" {
-		t.Fatalf("upsert returned description=%q priority=%d vendor=%q tier=%q, want catalog fields", saved.Description, saved.Priority, saved.Vendor, saved.CapabilityTier)
+	if saved.Description != "通用快速模型" || saved.Priority != 50 || saved.Vendor != "DeepSeek" || saved.VendorInfo != "深度求索，推理能力与性价比突出。" || saved.CapabilityTier != "reasoning" {
+		t.Fatalf("upsert returned description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want catalog fields", saved.Description, saved.Priority, saved.Vendor, saved.VendorInfo, saved.CapabilityTier)
 	}
 
 	got, err := s.GetModelConfig(ctx, saved.ID)
 	if err != nil {
 		t.Fatalf("GetModelConfig: %v", err)
 	}
-	if got.Description != "通用快速模型" || got.Priority != 50 || got.Vendor != "DeepSeek" || got.CapabilityTier != "reasoning" {
-		t.Fatalf("get returned description=%q priority=%d vendor=%q tier=%q, want catalog fields", got.Description, got.Priority, got.Vendor, got.CapabilityTier)
+	if got.Description != "通用快速模型" || got.Priority != 50 || got.Vendor != "DeepSeek" || got.VendorInfo != "深度求索，推理能力与性价比突出。" || got.CapabilityTier != "reasoning" {
+		t.Fatalf("get returned description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want catalog fields", got.Description, got.Priority, got.Vendor, got.VendorInfo, got.CapabilityTier)
 	}
 
 	// Update priority/description and confirm persistence.
 	got.Priority = 10
 	got.Description = "降级"
 	got.Vendor = "ChatGPT"
+	got.VendorInfo = "OpenAI 出品，通用能力全面。"
 	got.CapabilityTier = "balanced"
 	if _, err := s.UpsertModelConfig(ctx, "", got); err != nil {
 		t.Fatalf("UpsertModelConfig (update): %v", err)
@@ -120,8 +122,8 @@ func conformModelCatalog(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatalf("GetModelConfig (reload): %v", err)
 	}
-	if reloaded.Priority != 10 || reloaded.Description != "降级" || reloaded.Vendor != "ChatGPT" || reloaded.CapabilityTier != "balanced" {
-		t.Fatalf("reloaded description=%q priority=%d vendor=%q tier=%q, want updated catalog fields", reloaded.Description, reloaded.Priority, reloaded.Vendor, reloaded.CapabilityTier)
+	if reloaded.Priority != 10 || reloaded.Description != "降级" || reloaded.Vendor != "ChatGPT" || reloaded.VendorInfo != "OpenAI 出品，通用能力全面。" || reloaded.CapabilityTier != "balanced" {
+		t.Fatalf("reloaded description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want updated catalog fields", reloaded.Description, reloaded.Priority, reloaded.Vendor, reloaded.VendorInfo, reloaded.CapabilityTier)
 	}
 
 	list, err := s.ListModelConfigs(ctx, "chat")

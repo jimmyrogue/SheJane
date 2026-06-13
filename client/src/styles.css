@@ -6104,7 +6104,7 @@ button.agent-progress-summary:focus-visible {
   display: inline-flex;
   align-items: center;
   min-width: 78px;
-  max-width: min(150px, 42vw);
+  max-width: min(220px, 58vw);
   justify-content: flex-start;
   gap: 4px;
   height: 28px;
@@ -6286,6 +6286,22 @@ button.agent-progress-summary:focus-visible {
   letter-spacing: 0.08em;
   line-height: 1;
   white-space: nowrap;
+}
+.composer-mode-vendor-info-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  cursor: help;
+}
+.composer-mode-vendor-info-trigger:hover,
+.composer-mode-vendor-info-trigger:focus-visible {
+  color: var(--text-secondary);
+  outline: none;
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
 }
 .composer-mode-tier-indicator {
   color: var(--text-tertiary);
@@ -9636,7 +9652,7 @@ button.settings-row-button:focus-visible,
 
 .composer-mode-trigger {
   min-width: 78px;
-  max-width: min(150px, 42vw);
+  max-width: min(220px, 58vw);
   margin-left: auto;
 }
 

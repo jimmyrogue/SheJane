@@ -138,6 +138,7 @@ export interface AdminModelConfig {
   provider_kind: string
   display_name: string
   vendor: string
+  vendor_info: string
   capability_tier: string
   description: string
   priority: number
@@ -161,6 +162,7 @@ export interface ModelConfigInput {
   provider_kind: string
   display_name: string
   vendor?: string
+  vendor_info?: string
   capability_tier?: string
   description?: string
   priority?: number
