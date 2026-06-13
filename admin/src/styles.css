@@ -18,12 +18,14 @@
   --sj-seal: #B3532F;
   --sj-moss: #5E7A6E;
   --sj-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Source Han Sans SC", "Helvetica Neue", sans-serif;
+  --sj-font-serif: "Noto Serif SC", "Songti SC", "STSong", serif;
   --sj-font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
   --sj-r-s: 6px;
   --sj-r-m: 10px;
   --sj-r-l: 14px;
   --sj-shadow-1: 0 1px 2px rgba(43, 42, 40, 0.04);
   --sj-shadow-2: 0 2px 8px rgba(43, 42, 40, 0.06), 0 1px 2px rgba(43, 42, 40, 0.04);
+  --sj-shadow-3: 0 8px 28px rgba(43, 42, 40, 0.1), 0 2px 6px rgba(43, 42, 40, 0.05);
   --adm-warn-ink: #9A7234;
   --adm-warn-wash: #F4EEDF;
   --adm-warn-line: #E4D7B5;
@@ -169,6 +171,25 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid var(--sj-paper);
+    border-radius: 6px;
+    background: var(--sj-line-strong);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--sj-ink-ghost);
+  }
+
+  ::selection {
+    background: rgba(179, 83, 47, 0.16);
+  }
 }
 
 @layer components {
@@ -221,10 +242,12 @@
     padding: 18px 14px 14px;
   }
 
+  /* shadcn ships `p-2` on header/content/footer/group; it lives in the
+     utilities layer and beats a plain component rule, so the !important here is
+     required — otherwise every section is inset an extra 8px past the design */
   .admin-sidebar [data-slot="sidebar-header"],
-  .admin-sidebar [data-slot="sidebar-content"],
-  .admin-sidebar [data-slot="sidebar-footer"] {
-    padding: 0;
+  .admin-sidebar [data-slot="sidebar-content"] {
+    padding: 0 !important;
   }
 
   .admin-sidebar [data-slot="sidebar-content"] {
@@ -232,15 +255,16 @@
     margin-top: 0;
   }
 
-  .admin-sidebar [data-slot="sidebar-group"] {
-    padding: 0;
+  .admin-sidebar [data-slot="sidebar-group"],
+  .admin-sidebar [data-slot="sidebar-group-content"] {
+    padding: 0 !important;
   }
 
   .admin-sidebar-brand {
     display: flex;
     align-items: center;
     gap: 11px;
-    padding: 2px 6px 24px;
+    padding: 2px 6px 16px;
   }
 
   .admin-brand-mark {
@@ -267,11 +291,11 @@
   }
 
   .admin-sidebar [data-slot="sidebar-menu-button"] {
-    height: 32px !important;
-    min-height: 32px !important;
+    height: auto !important;
+    min-height: 0 !important;
     border-radius: 8px !important;
     gap: 10px !important;
-    padding: 6px 10px !important;
+    padding: 8px 11px !important;
     color: var(--sj-ink-soft);
     font-size: 13.5px !important;
     font-weight: 400;
@@ -289,13 +313,15 @@
     opacity: 0.7;
   }
 
-  .admin-sidebar [data-slot="sidebar-menu-button"]:hover {
-    background: var(--sj-paper-wash);
+  .admin-sidebar [data-slot="sidebar-menu-button"]:not([data-active="true"]):hover {
+    /* !important: shadcn's `hover:bg-sidebar-accent` utility (white) would
+       otherwise win over this component-layer rule and make hover look active */
+    background: var(--sj-paper-wash) !important;
     color: var(--sj-ink);
   }
 
   .admin-sidebar [data-slot="sidebar-menu-button"][data-active="true"] {
-    background: var(--sj-paper-raised);
+    background: var(--sj-paper-raised) !important;
     box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
     color: var(--sj-ink);
     font-weight: 500;
@@ -308,7 +334,8 @@
   .admin-sidebar [data-slot="sidebar-footer"] {
     margin-top: auto;
     border-top: 1px solid var(--sj-line);
-    padding-top: 12px;
+    /* !important padding (12 top, 0 sides) to override shadcn's `p-2` */
+    padding: 12px 0 0 !important;
   }
 
   .admin-account-block {
@@ -414,6 +441,68 @@
     align-items: start;
   }
 
+  .admin-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .admin-kpi-card {
+    border-radius: var(--sj-r-l);
+    background: var(--sj-paper-raised);
+    box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
+    padding: 18px 20px 20px;
+  }
+
+  .admin-kpi-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .admin-kpi-label {
+    color: var(--sj-ink-soft);
+    font-size: 12.5px;
+  }
+
+  .admin-kpi-icon {
+    display: flex;
+    color: var(--sj-ink-ghost);
+  }
+
+  .admin-kpi-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .admin-kpi-value {
+    margin-top: 10px;
+    color: var(--sj-ink);
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .admin-kpi-sub {
+    margin-top: 4px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+  }
+
+  @media (max-width: 1100px) {
+    .admin-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 640px) {
+    .admin-kpi-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   .admin-shell [data-slot="card"] {
     gap: 0;
     padding-block: 8px 4px;
@@ -450,13 +539,15 @@
   .admin-shell [data-slot="button"] {
     min-height: 34px;
     border-radius: 8px;
-    font-size: 13px;
+    /* !important: shadcn's base `text-sm` (14px) sits in the utilities layer */
+    font-size: 13px !important;
     font-weight: 500;
-    transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 120ms ease, opacity 140ms ease;
+    transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
   }
 
-  .admin-shell [data-slot="button"]:active:not(:disabled) {
-    transform: scale(0.98);
+  .admin-shell [data-slot="button"][data-size="default"] {
+    /* design Btn is 0 14px; shadcn default size is px-2.5 (10px) */
+    padding-inline: 14px !important;
   }
 
   .admin-shell [data-variant="default"] {
@@ -467,20 +558,22 @@
   .admin-shell [data-variant="outline"],
   .admin-shell [data-variant="ghost"] {
     border-color: transparent;
-    background: var(--sj-paper-raised);
+    /* !important: outline's `bg-background` utility would otherwise win */
+    background: var(--sj-paper-raised) !important;
     box-shadow: inset 0 0 0 1px var(--sj-line-strong);
     color: var(--sj-ink);
   }
 
   .admin-shell [data-variant="ghost"] {
-    background: transparent;
+    background: transparent !important;
     box-shadow: none;
     color: var(--sj-ink-soft);
   }
 
   .admin-shell [data-variant="outline"]:hover,
   .admin-shell [data-variant="ghost"]:hover {
-    background: var(--sj-paper-wash);
+    /* !important: shadcn's `hover:bg-muted` (sunken) would otherwise win */
+    background: var(--sj-paper-wash) !important;
     color: var(--sj-ink);
   }
 
@@ -582,9 +675,12 @@
     white-space: nowrap;
   }
 
-  .admin-activity-list,
-  .admin-glance-list {
+  .admin-activity-list {
     padding-inline: 22px;
+  }
+
+  .admin-glance-list {
+    padding: 2px 22px 8px;
   }
 
   .admin-activity-row {
@@ -827,16 +923,370 @@
     max-width: min(564px, 92vw) !important;
     max-height: none !important;
     height: 100svh !important;
-    transform: none !important;
+    /* reset ONLY `translate` — the dialog centres itself with the `translate`
+       property (`-translate-x-1/2 -translate-y-1/2`), and if we also reset
+       `transform` here the minifier dedupes the two and drops this line,
+       letting the drawer recentre. Keep this standalone. */
     translate: none !important;
-    scale: none !important;
-    rotate: none !important;
     border: 0 !important;
     border-radius: 0 !important;
     background: var(--sj-paper) !important;
     box-shadow: -1px 0 0 var(--sj-line), -24px 0 60px rgba(43, 42, 40, 0.16) !important;
-    padding: 22px 26px 18px !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column;
+    gap: 0 !important;
+    overflow: hidden;
+  }
+
+  /* slide in/out from the right — !important so it beats shadcn's
+     `data-open:zoom-in-95 / fade-in` center-modal animation utilities */
+  .admin-model-drawer[data-state="open"] {
+    animation: admin-drawer-in 0.28s cubic-bezier(0.32, 0.72, 0.3, 1) !important;
+  }
+
+  .admin-model-drawer[data-state="closed"] {
+    /* `forwards` holds the drawer off-screen after the slide-out finishes;
+       without it the transform reverts to none and the drawer snaps back to
+       its resting spot for one frame before Radix unmounts it (a visible flash) */
+    animation: admin-drawer-out 0.2s ease forwards !important;
+  }
+
+  /* animate `transform` (not `translate`): the base pins `translate: none
+     !important` to defeat the dialog's `-translate-x-1/2` centering, and per
+     spec an !important property can't be animated — so the slide must ride on
+     the separate `transform` property instead */
+  @keyframes admin-drawer-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes admin-drawer-out {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+
+  /* ---- drawer internals (rendered in a portal — NOT under .admin-shell, so
+     these are top-level classes that don't depend on the shell scope) ---- */
+  .admin-drawer-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 22px 26px 18px;
+  }
+
+  .admin-drawer-title {
+    color: var(--sj-ink);
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    line-height: 1.3;
+  }
+
+  .admin-drawer-desc {
+    margin-top: 5px;
+    color: var(--sj-ink-soft);
+    font-size: 12.5px !important;
+    line-height: 1.5;
+  }
+
+  .admin-drawer-body {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+  }
+
+  .admin-drawer-foot {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-top: 1px solid var(--sj-line);
+    padding: 14px 26px;
+    background: var(--sj-paper);
+  }
+
+  .admin-drawer-foot-note {
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+  }
+
+  .admin-drawer-foot-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .admin-tpl {
+    padding: 0 26px 18px;
+  }
+
+  .admin-tpl-label {
+    margin-bottom: 10px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+
+  .admin-tpl-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .admin-tpl-btn {
+    border: 0;
+    border-radius: 9px;
+    padding: 9px 10px;
+    text-align: left;
+    background: var(--sj-paper-raised);
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    color: var(--sj-ink);
+    cursor: pointer;
+    transition: background 140ms ease;
+  }
+
+  .admin-tpl-btn:hover {
+    background: var(--sj-paper-wash);
+  }
+
+  .admin-tpl-btn-title {
+    overflow: hidden;
+    font-size: 12px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-tpl-btn-sub {
+    overflow: hidden;
+    margin-top: 2px;
+    color: var(--sj-ink-faint);
+    font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-drawer-section {
+    border-top: 1px solid var(--sj-line);
+    padding: 20px 26px;
+  }
+
+  .admin-drawer-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .admin-drawer-section-title {
+    margin: 0;
+    color: var(--sj-ink);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  .admin-drawer-section-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sj-ink-soft);
+    font-size: 12px;
+  }
+
+  .admin-drawer-row {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .admin-drawer-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .admin-dfield {
+    display: block;
+    min-width: 0;
+  }
+
+  .admin-dfield-grow {
+    flex: 1;
+  }
+
+  .admin-dfield-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--sj-ink-soft);
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .admin-dfield-hint {
+    margin-top: 5px;
+    color: var(--sj-ink-faint);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .admin-dinput,
+  .admin-dselect {
+    box-sizing: border-box;
+    width: 100%;
+    height: 38px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--sj-paper);
+    box-shadow: inset 0 0 0 1px var(--sj-line-strong);
+    padding: 0 12px;
+    outline: none;
+    color: var(--sj-ink);
+    font-size: 13.5px;
+    font-family: var(--sj-font-sans);
+  }
+
+  .admin-dinput.mono {
+    font-family: var(--sj-font-mono);
+  }
+
+  .admin-dinput:focus,
+  .admin-dselect:focus {
+    box-shadow: inset 0 0 0 1.5px var(--sj-ink);
+  }
+
+  .admin-dinput:disabled {
+    color: var(--sj-ink-faint);
+  }
+
+  .admin-dselect-wrap {
+    position: relative;
+  }
+
+  .admin-dselect {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 32px;
+    cursor: pointer;
+  }
+
+  .admin-dselect-wrap svg {
+    position: absolute;
+    top: 12px;
+    right: 11px;
+    width: 14px;
+    height: 14px;
+    color: var(--sj-ink-faint);
+    pointer-events: none;
+  }
+
+  .admin-est-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-radius: 9px;
+    padding: 11px 14px;
+    background: var(--sj-paper-sunken);
+    color: var(--sj-ink-soft);
+    font-size: 12px;
+  }
+
+  .admin-est-box .mono {
+    color: var(--sj-ink);
+    font-family: var(--sj-font-mono);
+  }
+
+  .admin-est-box .sep {
+    color: var(--sj-ink-ghost);
+  }
+
+  .admin-adv-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 14px;
+    border: 0;
+    border-radius: 9px;
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    background: transparent;
+    padding: 10px 12px;
+    color: var(--sj-ink-soft);
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: background 140ms ease;
+  }
+
+  .admin-adv-toggle:hover {
+    background: var(--sj-paper-wash);
+  }
+
+  .admin-adv-toggle-label {
+    flex: 1;
+    text-align: left;
+  }
+
+  .admin-adv-toggle svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .admin-adv-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px 4px 2px;
+  }
+
+  .admin-drawer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    border: 0;
+    border-radius: 8px;
+    padding: 0 14px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+  }
+
+  .admin-drawer-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .admin-drawer-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .admin-drawer-btn-primary {
+    background: var(--sj-ink);
+    color: var(--sj-paper);
+  }
+
+  .admin-drawer-btn-ghost {
+    background: var(--sj-paper-raised);
+    box-shadow: inset 0 0 0 1px var(--sj-line-strong);
+    color: var(--sj-ink);
+  }
+
+  .admin-drawer-btn-ghost:hover {
+    background: var(--sj-paper-wash);
   }
 
   .admin-model-drawer [data-slot="dialog-title"] {
@@ -853,6 +1303,626 @@
   [data-slot="dialog-overlay"] {
     background: rgba(43, 42, 40, 0.22);
     backdrop-filter: blur(1.5px);
+  }
+
+  /* dialog titles are headings → 600 like every other title in the system.
+     shadcn's DialogTitle ships `font-medium` (500) and the dialog renders in a
+     portal outside .admin-shell, so this needs to be a top-level !important. */
+  [data-slot="dialog-title"] {
+    font-weight: 600 !important;
+    color: var(--sj-ink);
+  }
+
+  /* ---- design Card primitive (plain markup, no shadcn slot conflicts) ---- */
+  .admin-card {
+    overflow: hidden;
+    border-radius: var(--sj-r-l);
+    background: var(--sj-paper-raised);
+    box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
+  }
+
+  .admin-card.padded {
+    padding: 8px 0 4px;
+  }
+
+  /* single-row card header: title block on the left, action on the right */
+  .admin-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 22px 14px;
+  }
+
+  .admin-card-head-title {
+    margin: 0;
+    color: var(--sj-ink);
+    font-size: 14.5px;
+    font-weight: 600;
+  }
+
+  .admin-card-head-desc {
+    margin: 5px 0 0;
+    color: var(--sj-ink-faint);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  /* quiet text link with trailing chevron (设计 linkBtn) */
+  .admin-link-btn {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 3px;
+    border: 0;
+    background: transparent;
+    padding: 4px 2px;
+    color: var(--sj-ink-soft);
+    font: inherit;
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 140ms ease;
+  }
+
+  .admin-link-btn:hover {
+    color: var(--sj-ink);
+  }
+
+  .admin-link-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* footer note row inside a card */
+  .admin-card-foot {
+    overflow: hidden;
+    border-top: 1px solid var(--sj-line);
+    padding: 12px 24px;
+    color: var(--sj-ink-faint);
+    font-family: var(--sj-font-mono);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* tables sit flush inside .admin-card — drop the trailing row hairline so
+     the pager / footer top-border isn't doubled */
+  .admin-card [data-slot="table"] tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* in-card pager (设计 Pager) */
+  .admin-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-top: 1px solid var(--sj-line);
+    padding: 12px 24px;
+  }
+
+  .admin-pager-label {
+    color: var(--sj-ink-faint);
+    font-size: 12px;
+  }
+
+  .admin-pager-btn {
+    height: 30px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--sj-paper);
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    padding: 0 14px;
+    color: var(--sj-ink-soft);
+    font: inherit;
+    font-size: 12.5px;
+    transition: background 140ms ease, color 140ms ease;
+  }
+
+  .admin-pager-btn:hover:not(:disabled) {
+    background: var(--sj-paper-wash);
+    color: var(--sj-ink);
+  }
+
+  .admin-pager-btn:disabled {
+    color: var(--sj-ink-ghost);
+    cursor: default;
+  }
+
+  /* card-internal search bar (设计 SearchBar) */
+  .admin-search-card {
+    padding: 14px 20px 4px;
+  }
+
+  .admin-search-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    border-radius: 9px;
+    background: var(--sj-paper);
+    box-shadow: inset 0 0 0 1px var(--sj-line-strong);
+    padding: 0 13px;
+    color: var(--sj-ink-faint);
+  }
+
+  .admin-search-box input {
+    flex: 1;
+    min-width: 0;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+    outline: none;
+    color: var(--sj-ink);
+    font-size: 13.5px;
+  }
+
+  .admin-search-box input:focus-visible {
+    box-shadow: none;
+  }
+
+  /* email-cell avatar box */
+  .admin-user-avatar {
+    display: flex;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--sj-paper-sunken);
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    color: var(--sj-ink-soft);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  /* billing cards (设计 BillingCard / Field) */
+  .admin-billing-card {
+    border-radius: var(--sj-r-l);
+    background: var(--sj-paper-raised);
+    box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
+    padding: 22px 24px;
+  }
+
+  .admin-billing-card h3 {
+    margin: 0;
+    color: var(--sj-ink);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .admin-billing-desc {
+    margin: 7px 0 20px;
+    max-width: 620px;
+    color: var(--sj-ink-soft);
+    font-size: 12.5px;
+    line-height: 1.7;
+  }
+
+  .admin-billing-fields {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+
+  .admin-field-label {
+    height: 17px;
+    margin-bottom: 7px;
+    color: var(--sj-ink-soft);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 17px;
+  }
+
+  .admin-field-box {
+    display: flex;
+    align-items: center;
+    height: 38px;
+    border-radius: 9px;
+    background: var(--sj-paper);
+    box-shadow: inset 0 0 0 1px var(--sj-line-strong);
+    padding: 0 12px;
+  }
+
+  .admin-field-box:focus-within {
+    box-shadow: inset 0 0 0 1.5px var(--sj-ink);
+  }
+
+  .admin-field-box input {
+    flex: 1;
+    min-width: 0;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+    outline: none;
+    color: var(--sj-ink);
+    font-size: 13.5px;
+  }
+
+  .admin-field-box input:focus-visible {
+    box-shadow: none;
+  }
+
+  .admin-field-suffix {
+    margin-left: 8px;
+    color: var(--sj-ink-faint);
+    font-size: 12px;
+  }
+
+  .admin-field-hint {
+    margin-top: 6px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  /* ---- status chip (设计 StatusChip) — tone via ink depth, not red/green ---- */
+  .admin-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .admin-chip-dot {
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+  }
+
+  .admin-chip-moss {
+    color: var(--sj-moss);
+  }
+
+  .admin-chip-moss .admin-chip-dot {
+    background: var(--sj-moss);
+  }
+
+  .admin-chip-ink {
+    color: var(--sj-ink);
+  }
+
+  .admin-chip-ink .admin-chip-dot {
+    background: var(--sj-ink);
+  }
+
+  .admin-chip-neutral {
+    color: var(--sj-ink-soft);
+  }
+
+  .admin-chip-neutral .admin-chip-dot {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--sj-ink-faint);
+  }
+
+  .admin-chip-warn {
+    border-radius: 6px;
+    padding: 2px 9px;
+    background: var(--adm-warn-wash);
+    box-shadow: inset 0 0 0 1px var(--adm-warn-line);
+    color: var(--adm-warn-ink);
+    font-size: 11.5px;
+  }
+
+  .admin-chip-warn .admin-chip-dot {
+    background: var(--adm-warn-ink);
+  }
+
+  .admin-chip-raw {
+    margin-left: 1px;
+    color: var(--sj-ink-faint);
+    font-family: var(--sj-font-mono);
+    font-size: 10.5px;
+    opacity: 0.7;
+  }
+
+  .admin-chip-warn .admin-chip-raw {
+    color: var(--adm-warn-ink);
+  }
+
+  /* mono tabular number cell (设计 Num) */
+  .admin-num {
+    color: var(--sj-ink);
+    font-family: var(--sj-font-mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .admin-num-strong {
+    font-weight: 600;
+  }
+
+  .admin-num-faint {
+    color: var(--sj-ink-faint);
+  }
+
+  /* ---- grid data table (设计 DataTable) ---- */
+  .admin-dt-head,
+  .admin-dt-row {
+    display: grid;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .admin-dt-head {
+    padding: 10px 24px 11px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+
+  .admin-dt-row {
+    border-top: 1px solid var(--sj-line);
+    padding: 14px 24px;
+    transition: background 120ms ease;
+  }
+
+  .admin-dt-row-click {
+    cursor: pointer;
+  }
+
+  .admin-dt-row-click:hover {
+    background: var(--sj-paper-wash);
+  }
+
+  .admin-dt-cell {
+    min-width: 0;
+  }
+
+  .admin-dt-cell-right {
+    text-align: right;
+  }
+
+  .admin-dt-chevron {
+    color: var(--sj-ink-faint);
+    opacity: 0.35;
+    transition: opacity 120ms ease;
+  }
+
+  .admin-dt-row:hover .admin-dt-chevron {
+    opacity: 1;
+  }
+
+  /* ---- inline toggle switch (设计 Toggle, size s) ---- */
+  .admin-toggle {
+    position: relative;
+    width: 30px;
+    height: 18px;
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 9px;
+    padding: 0;
+    background: var(--sj-line-strong);
+    cursor: pointer;
+    transition: background 180ms ease;
+  }
+
+  .admin-toggle[data-on="true"] {
+    background: var(--sj-ink);
+  }
+
+  .admin-toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: var(--sj-shadow-1);
+    transition: left 180ms cubic-bezier(0.3, 0.8, 0.4, 1);
+  }
+
+  .admin-toggle[data-on="true"] .admin-toggle-knob {
+    left: 14px;
+  }
+
+  /* ---- vendor monogram (设计 Monogram) ---- */
+  .admin-monogram {
+    display: flex;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--sj-paper-sunken);
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    color: var(--sj-ink-soft);
+    font-family: var(--sj-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  /* ---- hairline pill (设计 Pill) — tier / provider tags ---- */
+  .admin-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 8px;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px var(--sj-line);
+    color: var(--sj-ink-soft);
+    font-size: 11.5px;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+
+  .admin-pill-ink {
+    box-shadow: inset 0 0 0 1px var(--sj-line-strong);
+    color: var(--sj-ink);
+  }
+
+  .admin-pill-faint {
+    color: var(--sj-ink-faint);
+  }
+
+  /* ---- key chip (设计 KeyChip) ---- */
+  .admin-keychip-on {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--sj-moss);
+    font-size: 12px;
+  }
+
+  .admin-keychip-off {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 6px;
+    padding: 2px 9px;
+    background: var(--adm-warn-wash);
+    box-shadow: inset 0 0 0 1px var(--adm-warn-line);
+    color: var(--adm-warn-ink);
+    font-size: 11.5px;
+  }
+
+  .admin-keychip-off svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* ---- rate cell (设计 RateCell) ---- */
+  .admin-rate {
+    font-family: var(--sj-font-mono);
+    line-height: 1.45;
+  }
+
+  .admin-rate-main {
+    color: var(--sj-ink);
+    font-size: 12.5px;
+  }
+
+  .admin-rate-main .faint {
+    color: var(--sj-ink-faint);
+  }
+
+  .admin-rate-main .sep {
+    margin: 0 6px;
+    color: var(--sj-ink-ghost);
+  }
+
+  .admin-rate-base {
+    margin-top: 2px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+  }
+
+  /* ---- model catalog grid (设计 ModelRow) ---- */
+  .admin-model-grid-head,
+  .admin-model-grid-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.5fr) minmax(240px, 1.7fr) 150px 184px 104px;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .admin-model-grid-head {
+    padding: 0 20px 10px;
+    color: var(--sj-ink-faint);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+  }
+
+  .admin-model-grid-row {
+    padding: 13px 20px;
+    border-top: 1px solid var(--sj-line);
+    transition: background 120ms ease;
+  }
+
+  .admin-model-grid-row:hover {
+    background: var(--sj-paper-wash);
+  }
+
+  .admin-model-grid-row.disabled {
+    opacity: 0.5;
+  }
+
+  .admin-model-name {
+    overflow: hidden;
+    color: var(--sj-ink);
+    font-size: 13.5px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-model-id,
+  .admin-model-upstream {
+    overflow: hidden;
+    color: var(--sj-ink-faint);
+    font-family: var(--sj-font-mono);
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-model-upstream {
+    margin-top: 3px;
+  }
+
+  .admin-model-upstream-name {
+    overflow: hidden;
+    color: var(--sj-ink);
+    font-family: var(--sj-font-mono);
+    font-size: 12.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .admin-model-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .admin-model-grid-row:hover .admin-model-actions,
+  .admin-model-grid-row:focus-within .admin-model-actions {
+    opacity: 1;
+  }
+
+  .admin-icon-action {
+    display: flex;
+    width: 30px;
+    height: 30px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--sj-ink-soft);
+    cursor: pointer;
+    transition: background 140ms ease, color 140ms ease;
+  }
+
+  .admin-icon-action:hover {
+    background: var(--sj-paper-wash);
+    color: var(--sj-ink);
+  }
+
+  .admin-icon-action.danger {
+    color: var(--adm-warn-ink);
+  }
+
+  .admin-icon-action svg {
+    width: 15px;
+    height: 15px;
   }
 
   @media (max-width: 900px) {

@@ -27,14 +27,14 @@ describe('admin web app', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
 
-    expect(await screen.findByText('运营概览')).toBeInTheDocument()
+    expect(await screen.findByText('近期动态')).toBeInTheDocument()
     expect((await screen.findAllByText('admin@example.com')).length).toBeGreaterThan(0)
     expect(screen.queryByText((content) => content.includes('order_1'))).not.toBeInTheDocument()
     expect(screen.queryByText((content) => content.includes('deepseek-v4-flash'))).not.toBeInTheDocument()
 
     selectAdminTab('订单')
     expect(await screen.findByText((content) => content.includes('order_1'))).toBeInTheDocument()
-    expect(screen.queryByText('运营概览')).not.toBeInTheDocument()
+    expect(screen.queryByText('近期动态')).not.toBeInTheDocument()
 
     selectAdminTab('模型')
     expect(await screen.findByText((content) => content.includes('deepseek-v4-flash'))).toBeInTheDocument()
@@ -72,7 +72,7 @@ describe('admin web app', () => {
     fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
-    await screen.findByText('运营概览')
+    await screen.findByText('近期动态')
     selectAdminTab('用户')
 
     // The list is a table; click a user row to open the detail dialog.
@@ -99,13 +99,13 @@ describe('admin web app', () => {
     fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
-    await screen.findByText('运营概览')
+    await screen.findByText('近期动态')
 
     selectAdminTab('订单')
     expect(await screen.findByText((content) => content.includes('sub_test_123'))).toBeInTheDocument()
 
     selectAdminTab('审计')
-    expect(await screen.findByText('admin.user_status_update')).toBeInTheDocument()
+    expect(await screen.findByText('更新用户状态')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /删除|修改|重试/ })).not.toBeInTheDocument()
   })
 
@@ -116,7 +116,7 @@ describe('admin web app', () => {
     fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
-    await screen.findByText('运营概览')
+    await screen.findByText('近期动态')
 
     selectAdminTab('Agent')
     expect(await screen.findByText((content) => content.includes('run_1'))).toBeInTheDocument()
@@ -131,13 +131,13 @@ describe('admin web app', () => {
     fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
-    await screen.findByText('运营概览')
+    await screen.findByText('近期动态')
 
     selectAdminTab('Agent')
     fireEvent.click(await screen.findByRole('button', { name: '追踪' }))
 
     expect(await screen.findByText('Run Trace')).toBeInTheDocument()
-    expect(await screen.findByText((content) => content.includes('usage_settle'))).toBeInTheDocument()
+    expect(await screen.findByText((content) => content.includes('用量结算'))).toBeInTheDocument()
   })
 
   it('creates chat models with an arbitrary model id instead of fixed fast/deep slots', async () => {
@@ -147,13 +147,13 @@ describe('admin web app', () => {
     fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
     fireEvent.click(screen.getByText('登录'))
-    await screen.findByText('运营概览')
+    await screen.findByText('近期动态')
 
     selectAdminTab('模型')
     fireEvent.click(await screen.findByText('新增模型'))
 
     const modelID = await screen.findByLabelText('模型 ID')
-    expect(screen.getByText('常用模板')).toBeInTheDocument()
+    expect(screen.getByText('① 从模板开始')).toBeInTheDocument()
     expect(screen.queryByText('chat.fast · 快速对话模型')).not.toBeInTheDocument()
     expect(screen.queryByText('chat.deep · 深度对话模型')).not.toBeInTheDocument()
 

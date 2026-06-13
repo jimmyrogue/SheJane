@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdminAPI,
   type AdminBillingLevers,
@@ -43,9 +43,17 @@ export function useModelConfigManager({
   const [catalogQuery, setCatalogQuery] = useState('')
   const [vendorFilter, setVendorFilter] = useState('all')
 
+  // Open the create drawer only when the nonce actually changes (i.e. the user
+  // clicked 新增模型) — NOT on mount. This component lives in a Tabs panel that
+  // remounts every time the 模型 tab is re-entered; seeding the ref with the
+  // current nonce keeps a remount from auto-opening the drawer.
+  const lastCreateNonce = useRef(createRequestNonce)
   useEffect(() => {
-    if (createRequestNonce > 0) {
-      openCreate()
+    if (createRequestNonce !== lastCreateNonce.current) {
+      lastCreateNonce.current = createRequestNonce
+      if (createRequestNonce > 0) {
+        openCreate()
+      }
     }
   }, [createRequestNonce])
 

@@ -1,12 +1,10 @@
 import Loader2 from 'lucide-react/dist/esm/icons/loader-2'
 import Search from 'lucide-react/dist/esm/icons/search'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { AdminAgentRun, AdminAgentRunTrace } from '@/shared/api/client'
-import { ActivityList, DetailItem, EmptyTableRow, StatusBadge } from '../components/ui-helpers'
+import { ActivityList, DataGrid, type DataGridColumn, DetailItem, StatusBadge } from '../components/ui-helpers'
 import { formatDateTime, formatNumber, formatSignedNumber } from '../shared/format'
+import { originLabel, runModeLabel, statusLabel, txTypeLabel } from '../shared/labels'
 
 export function AgentRunsCard({
   runs,
@@ -17,62 +15,61 @@ export function AgentRunsCard({
   traceLoadingId: string
   onOpenTrace: (runId: string) => Promise<void>
 }) {
+  const columns: Array<DataGridColumn<AdminAgentRun>> = [
+    {
+      label: 'Run',
+      width: 'minmax(160px, 1.1fr)',
+      render: (run) => (
+        <div className="min-w-0">
+          <div className="admin-mono truncate" style={{ fontSize: '12.5px', color: 'var(--sj-ink)' }}>{run.id}</div>
+          <div className="truncate" style={{ marginTop: 2, fontSize: '11px', color: 'var(--sj-ink-faint)' }}>{originLabel(run.origin)} · {runModeLabel(run.mode)}</div>
+        </div>
+      ),
+    },
+    { label: '用户', width: 'minmax(150px, 1fr)', render: (run) => <div className="truncate" style={{ fontSize: '13px' }}>{run.user_email || run.user_id}</div> },
+    {
+      label: '摘要',
+      width: 'minmax(200px, 1.6fr)',
+      render: (run) => (
+        <div className="min-w-0">
+          <div className="truncate" style={{ fontSize: '13px', color: 'var(--sj-ink)' }}>{run.goal_summary || '用户任务'}</div>
+          <div className="truncate" style={{ marginTop: 2, fontSize: '11px', color: 'var(--sj-ink-faint)' }}>附件 {run.attachments?.length ?? 0} · 过期 {formatDateTime(run.expires_at)}</div>
+        </div>
+      ),
+    },
+    { label: '状态', width: '120px', render: (run) => <StatusBadge status={run.status} /> },
+    { label: '更新时间', width: '150px', render: (run) => <span style={{ fontSize: '12.5px', color: 'var(--sj-ink-soft)', whiteSpace: 'nowrap' }}>{formatDateTime(run.updated_at)}</span> },
+    {
+      label: '',
+      width: '70px',
+      align: 'right',
+      render: (run) => (
+        <button
+          type="button"
+          className="admin-link-btn"
+          style={{ width: '100%', justifyContent: 'flex-end', gap: 5 }}
+          disabled={traceLoadingId === run.id}
+          onClick={() => void onOpenTrace(run.id)}
+        >
+          {traceLoadingId === run.id ? <Loader2 className="size-3 animate-spin" /> : <Search className="size-3" />}
+          追踪
+        </button>
+      ),
+    },
+  ]
+
   return (
-    <Card id="agent-runs" className="min-w-0">
-      <CardHeader>
-        <CardTitle>Agent Runs</CardTitle>
-        <CardDescription>只读观察云端兼容 run 的状态、用户、模式和摘要，不展示完整用户输入。</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Run</TableHead>
-              <TableHead>用户</TableHead>
-              <TableHead>摘要</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>更新时间</TableHead>
-              <TableHead className="text-right">追踪</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {runs.length ? (
-              runs.slice(0, 10).map((run) => (
-                <TableRow key={run.id}>
-                  <TableCell>
-                    <div className="max-w-32 truncate font-medium">{run.id}</div>
-                    <div className="text-xs text-muted-foreground">{run.origin} · {run.mode}</div>
-                  </TableCell>
-                  <TableCell className="max-w-36 truncate">{run.user_email || run.user_id}</TableCell>
-                  <TableCell className="max-w-72 truncate">
-                    <div>{run.goal_summary || '用户任务'}</div>
-                    <div className="text-xs text-muted-foreground">附件 {run.attachments?.length ?? 0} · 过期 {formatDateTime(run.expires_at)}</div>
-                  </TableCell>
-                  <TableCell><StatusBadge status={run.status} /></TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDateTime(run.updated_at)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" disabled={traceLoadingId === run.id} onClick={() => void onOpenTrace(run.id)}>
-                      {traceLoadingId === run.id ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-                      追踪
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <EmptyTableRow columns={6} label="暂无 Agent Runs" />
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <section id="agent-runs" className="admin-card min-w-0">
+      <DataGrid columns={columns} rows={runs.slice(0, 10)} getRowKey={(run) => run.id} empty="暂无 Agent Runs" />
+    </section>
   )
 }
 
 export function AgentTraceDialog({ trace, onClose }: { trace: AdminAgentRunTrace | null; onClose: () => void }) {
   const eventItems = trace?.events.slice(-8).map((event) => `#${event.seq} ${event.event_type} · ${formatDateTime(event.created_at)}`) ?? []
-  const llmItems = trace?.llm_calls.slice(0, 8).map((call) => `${call.provider}/${call.model} · ${call.status} · ${formatNumber(call.credits_cost)} credits`) ?? []
-  const toolItems = trace?.tool_calls.slice(0, 8).map((call) => `${call.tool} · ${call.status} · ${formatNumber(call.credits_cost)} credits`) ?? []
-  const walletItems = trace?.wallet_transactions.slice(0, 8).map((tx) => `${tx.type} · ${formatSignedNumber(tx.amount)} credits · ${formatDateTime(tx.created_at)}`) ?? []
+  const llmItems = trace?.llm_calls.slice(0, 8).map((call) => `${call.provider}/${call.model} · ${statusLabel(call.status)} · ${formatNumber(call.credits_cost)} 额度`) ?? []
+  const toolItems = trace?.tool_calls.slice(0, 8).map((call) => `${call.tool} · ${statusLabel(call.status)} · ${formatNumber(call.credits_cost)} 额度`) ?? []
+  const walletItems = trace?.wallet_transactions.slice(0, 8).map((tx) => `${txTypeLabel(tx.type)} · ${formatSignedNumber(tx.amount)} 额度 · ${formatDateTime(tx.created_at)}`) ?? []
 
   return (
     <Dialog open={Boolean(trace)} onOpenChange={(open) => { if (!open) onClose() }}>
@@ -85,8 +82,8 @@ export function AgentTraceDialog({ trace, onClose }: { trace: AdminAgentRunTrace
             </DialogHeader>
             <div className="grid gap-3 md:grid-cols-4">
               <DetailItem label="用户" value={trace.run.user_email || trace.run.user_id} />
-              <DetailItem label="状态" value={trace.run.status} />
-              <DetailItem label="模型" value={trace.run.mode} />
+              <DetailItem label="状态" value={statusLabel(trace.run.status)} />
+              <DetailItem label="模式" value={runModeLabel(trace.run.mode)} />
               <DetailItem label="更新时间" value={formatDateTime(trace.run.updated_at)} />
             </div>
             <div className="grid gap-3 md:grid-cols-4">

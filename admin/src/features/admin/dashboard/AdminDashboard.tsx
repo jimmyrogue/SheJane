@@ -70,8 +70,8 @@ export function AdminDashboard({ api, auth, onLogout }: { api: AdminAPI; auth: A
           <div className="flex min-w-0 items-center gap-3">
             <div className="min-w-0">
               <h1 className="sr-only">管理后台</h1>
-              <h2 className="truncate text-lg font-semibold tracking-normal">{activeNav?.label ?? '管理后台'}</h2>
-              <p className="truncate text-sm text-muted-foreground">{activeNav?.description ?? '用户、额度、订单和模型状态的独立管理面板'}</p>
+              <h2 className="truncate font-semibold">{activeNav?.label ?? '管理后台'}</h2>
+              <p className="truncate text-muted-foreground">{activeNav?.description ?? '用户、额度、订单和模型状态的独立管理面板'}</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2.5">

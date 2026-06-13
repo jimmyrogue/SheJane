@@ -1,17 +1,44 @@
 import Ban from 'lucide-react/dist/esm/icons/ban'
+import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right'
 import Coins from 'lucide-react/dist/esm/icons/coins'
 import Search from 'lucide-react/dist/esm/icons/search'
 import UserCheck from 'lucide-react/dist/esm/icons/user-check'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { AdminUserDetail, AdminUserSummary } from '@/shared/api/client'
-import { ActivityList, DetailItem, EmptyTableRow, Pagination, StatusBadge } from '../components/ui-helpers'
+import { ActivityList, DataGrid, type DataGridColumn, DetailItem, EmptyTableRow, Pagination, StatusBadge } from '../components/ui-helpers'
 import { formatCurrency, formatNumber } from '../shared/format'
+import { roleLabel, statusLabel, txTypeLabel } from '../shared/labels'
+
+const USER_COLUMNS: Array<DataGridColumn<AdminUserSummary>> = [
+  {
+    label: '邮箱',
+    width: 'minmax(240px, 2fr)',
+    render: (item) => (
+      <div className="flex min-w-0 items-center gap-[11px]">
+        <span className="admin-user-avatar">{item.user.email.charAt(0)}</span>
+        <span className="min-w-0 truncate" style={{ fontSize: '13.5px', fontWeight: 500 }}>{item.user.email}</span>
+      </div>
+    ),
+  },
+  { label: '状态', width: '120px', render: (item) => <StatusBadge status={item.user.status} /> },
+  {
+    label: '调用',
+    width: '110px',
+    align: 'right',
+    render: (item) => <span className={`admin-num${item.calls_count ? '' : ' admin-num-faint'}`}>{item.calls_count.toLocaleString()}</span>,
+  },
+  {
+    label: '额度消耗',
+    width: '140px',
+    align: 'right',
+    render: (item) => <span className={`admin-num${item.credits_cost ? ' admin-num-strong' : ' admin-num-faint'}`}>{formatNumber(item.credits_cost)}</span>,
+  },
+  { label: '', width: '40px', align: 'right', render: () => <ChevronRight className="admin-dt-chevron size-3.5" /> },
+]
 
 export function UsersPanel({
   users,
@@ -49,72 +76,28 @@ export function UsersPanel({
   onUpdateStatus: (status: 'active' | 'disabled') => Promise<void>
 }) {
   return (
-    <Card id="users" className="min-w-0">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <CardTitle>用户</CardTitle>
-            <CardDescription>搜索用户，点击任一行查看信息、钱包与用量。</CardDescription>
-          </div>
-          <Badge variant="secondary">第 {page + 1} 页</Badge>
+    <section id="users" className="admin-card min-w-0">
+      <form
+        className="admin-search-card"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void onSearch()
+        }}
+      >
+        <div className="admin-search-box">
+          <Search className="size-4" />
+          <input value={query} placeholder="搜索邮箱或名称…" aria-label="搜索邮箱或名称" onChange={(event) => onQueryChange(event.target.value)} />
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void onSearch()
-          }}
-        >
-          <Input value={query} placeholder="搜索邮箱或名称" onChange={(event) => onQueryChange(event.target.value)} />
-          <Button type="submit" variant="outline" size="icon" aria-label="搜索用户">
-            <Search className="size-4" />
-          </Button>
-        </form>
-
-        <div className="overflow-hidden rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>邮箱</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead className="text-right">调用</TableHead>
-                <TableHead className="text-right">额度消耗</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.length ? (
-                users.map((item) => (
-                  <TableRow
-                    key={item.user.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={item.user.email}
-                    className="cursor-pointer"
-                    onClick={() => void onOpenUser(item.user.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        void onOpenUser(item.user.id)
-                      }
-                    }}
-                  >
-                    <TableCell className="max-w-60 truncate font-medium">{item.user.email}</TableCell>
-                    <TableCell><StatusBadge status={item.user.status} /></TableCell>
-                    <TableCell className="text-right tabular-nums">{item.calls_count}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatNumber(item.credits_cost)}</TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <EmptyTableRow columns={4} label="暂无用户" />
-              )}
-            </TableBody>
-          </Table>
-        </div>
-
-        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
-      </CardContent>
+      </form>
+      <DataGrid
+        columns={USER_COLUMNS}
+        rows={users}
+        getRowKey={(item) => item.user.id}
+        rowLabel={(item) => item.user.email}
+        onRowClick={(item) => void onOpenUser(item.user.id)}
+        empty="暂无用户"
+      />
+      <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
 
       <Dialog open={Boolean(selectedUser)} onOpenChange={(open) => { if (!open) onCloseUser() }}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
@@ -137,7 +120,7 @@ export function UsersPanel({
           ) : null}
         </DialogContent>
       </Dialog>
-    </Card>
+    </section>
   )
 }
 
@@ -167,7 +150,7 @@ function UserDetailBody({
       </div>
       <div className="grid gap-3 md:grid-cols-4">
         <DetailItem label="邮箱" value={selectedUser.user.email} />
-        <DetailItem label="角色" value={selectedUser.user.role} />
+        <DetailItem label="角色" value={roleLabel(selectedUser.user.role)} />
         <DetailItem label="本月剩余" value={formatNumber(selectedUser.wallet?.monthly_remaining ?? 0)} />
         <DetailItem label="额外额度" value={formatNumber(selectedUser.wallet?.extra_credits_balance ?? 0)} />
       </div>
@@ -252,8 +235,8 @@ function UserDetailBody({
         </Table>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${tx.type} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
-        <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${order.status}`)} />
+        <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${txTypeLabel(tx.type)} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
+        <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${statusLabel(order.status)}`)} />
       </div>
     </div>
   )

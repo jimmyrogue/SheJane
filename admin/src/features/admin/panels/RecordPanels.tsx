@@ -1,8 +1,79 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { AdminAuditLog, AdminOrder, AdminToolCall } from '@/shared/api/client'
-import { EmptyTableRow, Pagination, StatusBadge } from '../components/ui-helpers'
+import { DataGrid, type DataGridColumn, Pagination, StatusBadge } from '../components/ui-helpers'
 import { formatCurrency, formatDateTime, formatMetadata, formatNumber } from '../shared/format'
+import { actorLabel, auditActionLabel, targetTypeLabel } from '../shared/labels'
+
+const TOOL_COLUMNS: Array<DataGridColumn<AdminToolCall>> = [
+  {
+    label: '工具',
+    width: 'minmax(180px, 1.4fr)',
+    render: (call) => (
+      <div className="min-w-0">
+        <div className="admin-mono truncate" style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--sj-ink)' }}>{call.tool}</div>
+        <div className="truncate" style={{ marginTop: 2, fontSize: '11.5px', color: 'var(--sj-ink-faint)' }}>
+          {call.provider} · {call.units || 0} unit{call.error_code ? ` · ${call.error_code}` : ''}
+        </div>
+      </div>
+    ),
+  },
+  { label: '用户', width: 'minmax(160px, 1fr)', render: (call) => <div className="truncate" style={{ fontSize: '13px' }}>{call.user_email ?? call.user_id}</div> },
+  { label: '状态', width: '120px', render: (call) => <StatusBadge status={call.status} /> },
+  { label: '额度', width: '80px', align: 'right', render: (call) => <span className="admin-num">{formatNumber(call.credits_cost)}</span> },
+  {
+    label: 'Run',
+    width: 'minmax(220px, 1.4fr)',
+    render: (call) => (
+      <div className="min-w-0">
+        <div className="admin-mono truncate" style={{ fontSize: '12.5px', color: 'var(--sj-ink-soft)' }}>{call.run_id || '-'}</div>
+        <div className="truncate" style={{ marginTop: 2, fontSize: '11px', color: 'var(--sj-ink-faint)' }}>{formatDateTime(call.started_at)}</div>
+      </div>
+    ),
+  },
+]
+
+const ORDER_COLUMNS: Array<DataGridColumn<AdminOrder>> = [
+  { label: '订单', width: 'minmax(260px, 2fr)', render: (order) => <div className="admin-mono truncate" style={{ fontSize: '12.5px', color: 'var(--sj-ink)' }}>{order.id}</div> },
+  { label: '用户', width: 'minmax(160px, 1fr)', render: (order) => <div className="truncate" style={{ fontSize: '13px' }}>{order.user_email ?? order.user_id ?? 'unknown'}</div> },
+  { label: '金额', width: '110px', align: 'right', render: (order) => <span className="admin-num admin-num-strong">{formatCurrency(order.amount_cny)}</span> },
+  { label: '状态', width: '130px', render: (order) => <StatusBadge status={order.status} /> },
+  { label: '订阅', width: '120px', align: 'right', render: (order) => <div className="truncate" style={{ fontSize: '13px', color: 'var(--sj-ink-faint)' }}>{order.stripe_subscription_id || '-'}</div> },
+]
+
+const AUDIT_COLUMNS: Array<DataGridColumn<AdminAuditLog>> = [
+  {
+    label: '动作',
+    width: 'minmax(220px, 1.5fr)',
+    render: (log) => (
+      <div className="min-w-0">
+        <div className="truncate" style={{ fontSize: '13px', fontWeight: 500, color: 'var(--sj-ink)' }}>{auditActionLabel(log.action)}</div>
+        <div className="admin-mono truncate" style={{ marginTop: 2, fontSize: '11px', color: 'var(--sj-ink-faint)' }}>{formatMetadata(log.metadata)}</div>
+      </div>
+    ),
+  },
+  {
+    label: '对象',
+    width: 'minmax(200px, 1.4fr)',
+    render: (log) => (
+      <div className="flex min-w-0 items-center gap-[7px]">
+        <span className="admin-pill admin-pill-faint shrink-0">{log.target_type ? targetTypeLabel(log.target_type) : '-'}</span>
+        <span className="admin-mono truncate" style={{ fontSize: '11.5px', color: 'var(--sj-ink-soft)' }}>{log.target_id || '-'}</span>
+      </div>
+    ),
+  },
+  {
+    label: '操作者',
+    width: 'minmax(150px, 1fr)',
+    render: (log) => {
+      const isSystem = !log.actor_user_id || log.actor_user_id === 'system'
+      return isSystem ? (
+        <span className="admin-pill">{actorLabel(log.actor_user_id)}</span>
+      ) : (
+        <div className="admin-mono truncate" style={{ fontSize: '11.5px', color: 'var(--sj-ink-faint)' }}>{log.actor_user_id}</div>
+      )
+    },
+  },
+  { label: '时间', width: '160px', render: (log) => <span style={{ fontSize: '12.5px', color: 'var(--sj-ink-soft)', whiteSpace: 'nowrap' }}>{formatDateTime(log.created_at)}</span> },
+]
 
 export function ToolCallsCard({
   calls,
@@ -16,50 +87,10 @@ export function ToolCallsCard({
   onChangePage: (nextPage: number) => Promise<void>
 }) {
   return (
-    <Card id="tool-calls" className="min-w-0">
-      <CardHeader>
-        <CardTitle>工具调用</CardTitle>
-        <CardDescription>非 LLM 第三方服务调用记录，只读展示扣费、provider 和失败原因。</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>工具</TableHead>
-              <TableHead>用户</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead className="text-right">额度</TableHead>
-              <TableHead>Run</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {calls.length ? (
-              calls.map((call) => (
-                <TableRow key={call.request_id}>
-                  <TableCell>
-                    <div className="font-medium">{call.tool}</div>
-                    <div className="text-xs text-muted-foreground">{call.provider} · {call.units || 0} unit</div>
-                  </TableCell>
-                  <TableCell className="max-w-36 truncate">{call.user_email ?? call.user_id}</TableCell>
-                  <TableCell>
-                    <StatusBadge status={call.status} />
-                    {call.error_code ? <div className="mt-1 max-w-44 truncate text-xs text-muted-foreground">{call.error_code}</div> : null}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
-                  <TableCell className="max-w-44 truncate">
-                    <div>{call.run_id || '-'}</div>
-                    <div className="text-xs text-muted-foreground">{formatDateTime(call.started_at)}</div>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <EmptyTableRow columns={5} label="暂无工具调用记录" />
-            )}
-          </TableBody>
-        </Table>
-        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
-      </CardContent>
-    </Card>
+    <section id="tool-calls" className="admin-card min-w-0">
+      <DataGrid columns={TOOL_COLUMNS} rows={calls} getRowKey={(call) => call.request_id} empty="暂无工具调用记录" />
+      <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
+    </section>
   )
 }
 
@@ -75,42 +106,13 @@ export function OrdersCard({
   onChangePage: (nextPage: number) => Promise<void>
 }) {
   return (
-    <Card id="orders" className="min-w-0">
-      <CardHeader>
-        <CardTitle>订单</CardTitle>
-        <CardDescription>订单只读展示，不提供手工改状态入口。</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>订单</TableHead>
-              <TableHead>用户</TableHead>
-              <TableHead>金额</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>订阅</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {orders.length ? (
-              orders.map((order) => (
-                <TableRow key={order.id}>
-                  <TableCell className="max-w-32 truncate">{order.id}</TableCell>
-                  <TableCell className="max-w-36 truncate">{order.user_email ?? order.user_id ?? 'unknown'}</TableCell>
-                  <TableCell>{formatCurrency(order.amount_cny)}</TableCell>
-                  <TableCell><StatusBadge status={order.status} /></TableCell>
-                  <TableCell className="max-w-40 truncate">{order.stripe_subscription_id || '-'}</TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <EmptyTableRow columns={5} label="暂无订单" />
-            )}
-          </TableBody>
-        </Table>
-        {orders[0] ? <p className="truncate text-xs text-muted-foreground">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · 钱包 {orders[0].wallet_status || '-'} · {formatDateTime(orders[0].created_at)}</p> : null}
-        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
-      </CardContent>
-    </Card>
+    <section id="orders" className="admin-card min-w-0">
+      <DataGrid columns={ORDER_COLUMNS} rows={orders} getRowKey={(order) => order.id} empty="暂无订单" />
+      {orders[0] ? (
+        <div className="admin-card-foot">Stripe session: {orders[0].stripe_checkout_session_id || 'mock'} · 钱包 {orders[0].wallet_status || '-'} · {formatDateTime(orders[0].created_at)}</div>
+      ) : null}
+      <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
+    </section>
   )
 }
 
@@ -126,41 +128,9 @@ export function AuditCard({
   onChangePage: (nextPage: number) => Promise<void>
 }) {
   return (
-    <Card id="audit" className="min-w-0">
-      <CardHeader>
-        <CardTitle>审计</CardTitle>
-        <CardDescription>只读展示后台操作和关键账务事件。</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>动作</TableHead>
-              <TableHead>对象</TableHead>
-              <TableHead>操作者</TableHead>
-              <TableHead>时间</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {logs.length ? (
-              logs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <div className="font-medium">{log.action}</div>
-                    <div className="max-w-72 truncate text-xs text-muted-foreground">{formatMetadata(log.metadata)}</div>
-                  </TableCell>
-                  <TableCell className="max-w-40 truncate">{log.target_type || '-'} · {log.target_id || '-'}</TableCell>
-                  <TableCell className="max-w-32 truncate">{log.actor_user_id || 'system'}</TableCell>
-                  <TableCell className="whitespace-nowrap">{formatDateTime(log.created_at)}</TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <EmptyTableRow columns={4} label="暂无审计记录" />
-            )}
-          </TableBody>
-        </Table>
-        <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
-      </CardContent>
-    </Card>
+    <section id="audit" className="admin-card min-w-0">
+      <DataGrid columns={AUDIT_COLUMNS} rows={logs} getRowKey={(log) => log.id} empty="暂无审计记录" />
+      <Pagination page={page} hasMore={hasMore} onChangePage={onChangePage} />
+    </section>
   )
 }

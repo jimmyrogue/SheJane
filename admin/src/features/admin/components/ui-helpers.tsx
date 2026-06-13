@@ -1,23 +1,19 @@
 import type { ReactNode } from 'react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
 import { TableCell, TableRow } from '@/components/ui/table'
 import { formatNumber } from '../shared/format'
+import { statusLabel } from '../shared/labels'
 import { PAGE_SIZE } from '../shared/sections'
 
 export function MetricCard({ icon, label, value, helper }: { icon: ReactNode; label: string; value: number; helper: string }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardDescription>{label}</CardDescription>
-        <div className="text-muted-foreground">{icon}</div>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold tabular-nums">{formatNumber(value)}</div>
-        <p className="mt-1 text-xs text-muted-foreground">{helper}</p>
-      </CardContent>
-    </Card>
+    <div className="admin-kpi-card">
+      <div className="admin-kpi-head">
+        <span className="admin-kpi-label">{label}</span>
+        <span className="admin-kpi-icon">{icon}</span>
+      </div>
+      <div className="admin-kpi-value">{formatNumber(value)}</div>
+      <div className="admin-kpi-sub">{helper}</div>
+    </div>
   )
 }
 
@@ -87,14 +83,14 @@ export function Pagination({
   onChangePage: (nextPage: number) => Promise<void> | void
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <Button variant="outline" size="sm" disabled={page <= 0} onClick={() => void onChangePage(page - 1)}>
+    <div className="admin-pager">
+      <button type="button" className="admin-pager-btn" disabled={page <= 0} onClick={() => void onChangePage(page - 1)}>
         上一页
-      </Button>
-      <span className="text-xs text-muted-foreground">第 {page + 1} 页 · 每页 {PAGE_SIZE} 条</span>
-      <Button variant="outline" size="sm" disabled={!hasMore} onClick={() => void onChangePage(page + 1)}>
+      </button>
+      <span className="admin-pager-label">第 {page + 1} 页 · 每页 {PAGE_SIZE} 条</span>
+      <button type="button" className="admin-pager-btn" disabled={!hasMore} onClick={() => void onChangePage(page + 1)}>
         下一页
-      </Button>
+      </button>
     </div>
   )
 }
@@ -129,7 +125,92 @@ export function EmptyTableRow({ columns, label }: { columns: number; label: stri
   )
 }
 
+const MOSS_STATUS = new Set(['active', 'online', 'done', 'completed', 'succeeded', 'success', 'paid', 'settled'])
+const WARN_STATUS = new Set(['failed', 'error', 'past_due', 'canceled', 'cancelled', 'unpaid', 'refunded', 'expired'])
+const INK_STATUS = new Set(['processing', 'running', 'queued', 'reserved'])
+
 export function StatusBadge({ status }: { status: string }) {
-  const variant = status === 'disabled' || status === 'failed' || status === 'past_due' || status === 'canceled' || status === 'unpaid' ? 'destructive' : status === 'active' || status === 'paid' || status === 'succeeded' || status === 'success' ? 'default' : 'secondary'
-  return <Badge variant={variant}>{status}</Badge>
+  const tone = MOSS_STATUS.has(status) ? 'moss' : WARN_STATUS.has(status) ? 'warn' : INK_STATUS.has(status) ? 'ink' : 'neutral'
+  return (
+    <span className={`admin-chip admin-chip-${tone}`}>
+      <span className="admin-chip-dot" />
+      {statusLabel(status)}
+    </span>
+  )
+}
+
+export type DataGridColumn<T> = {
+  label: string
+  width: string
+  align?: 'right'
+  render: (row: T) => ReactNode
+}
+
+export function DataGrid<T>({
+  columns,
+  rows,
+  getRowKey,
+  onRowClick,
+  rowLabel,
+  empty,
+}: {
+  columns: Array<DataGridColumn<T>>
+  rows: T[]
+  getRowKey: (row: T) => string
+  onRowClick?: (row: T) => void
+  rowLabel?: (row: T) => string
+  empty: string
+}) {
+  const template = columns.map((column) => column.width).join(' ')
+  const clickable = Boolean(onRowClick)
+  return (
+    <div>
+      <div className="admin-dt-head" style={{ gridTemplateColumns: template }}>
+        {columns.map((column, index) => (
+          <span key={index} className={column.align === 'right' ? 'admin-dt-cell-right' : undefined}>
+            {column.label}
+          </span>
+        ))}
+      </div>
+      {rows.length ? (
+        rows.map((row) => (
+          <div
+            key={getRowKey(row)}
+            className={`admin-dt-row${clickable ? ' admin-dt-row-click' : ''}`}
+            style={{ gridTemplateColumns: template }}
+            role={clickable ? 'button' : undefined}
+            tabIndex={clickable ? 0 : undefined}
+            aria-label={rowLabel?.(row)}
+            onClick={clickable ? () => onRowClick?.(row) : undefined}
+            onKeyDown={
+              clickable
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onRowClick?.(row)
+                    }
+                  }
+                : undefined
+            }
+          >
+            {columns.map((column, index) => (
+              <div key={index} className={`admin-dt-cell${column.align === 'right' ? ' admin-dt-cell-right' : ''}`}>
+                {column.render(row)}
+              </div>
+            ))}
+          </div>
+        ))
+      ) : (
+        <div className="admin-empty-inline">{empty}</div>
+      )}
+    </div>
+  )
+}
+
+export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
+  return (
+    <button type="button" className="admin-toggle" data-on={on} aria-pressed={on} aria-label={label} onClick={onClick}>
+      <span className="admin-toggle-knob" />
+    </button>
+  )
 }
