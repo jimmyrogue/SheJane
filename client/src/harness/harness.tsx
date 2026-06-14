@@ -62,9 +62,75 @@ const activeConvo: Conversation = {
   updatedAt: iso(now - 5 * 60_000),
   messages: [
     msg('m1', 'user', '帮我把 Q2 的营收数据整理成汇报，老板要看完成率和趋势。', now - 90 * 60_000),
-    msg('m2', 'assistant', richReply, now - 88 * 60_000),
+    {
+      ...msg('m2', 'assistant', richReply, now - 88 * 60_000),
+      creditsCost: 9383,
+      runMode: { requested: '自动', resolved: 'DeepSeek Flash', reason: '需要整理数据并生成汇报骨架。' },
+      agentEvents: [
+        { type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' },
+        { type: 'tool.completed', label: '工具完成：运行命令', tool: 'shell.run' },
+        { type: 'tool.completed', label: '工具完成：运行命令', tool: 'shell.run' },
+      ],
+    },
+    {
+      ...msg('m2-paused', 'assistant', '', now - 8 * 60_000),
+      status: 'streaming',
+      runId: 'run-paused',
+      runOrigin: 'local',
+      runMode: { requested: '自动', resolved: 'DeepSeek Flash', reason: '正在恢复本地执行上下文。' },
+      agentEvents: [
+        {
+          type: 'tool.requested',
+          label: '调用工具：生成图片',
+          tool: 'image.generate',
+          toolDetail: {
+            kind: 'text',
+            text: '一只可爱的橘色小猫，毛茸茸的，大眼睛，坐在草地上，阳光温暖，高清写实风格',
+          },
+        },
+        {
+          type: 'run.waiting',
+          label: '任务已暂停',
+          handoffLedgerState: 'missing',
+          handoffLedgerMessage: 'Progress ledger missing for handoff.',
+        },
+      ],
+    },
     msg('m3', 'user', '很好。汇总这件事以后每个月都要做，帮我写一个能自己跑的脚本。', now - 6 * 60_000),
-    msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是飞书多维表还是导出的 xlsx？', now - 5 * 60_000),
+    {
+      ...msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是飞书多维表还是导出的 xlsx？', now - 5 * 60_000),
+      creditsCost: 4210,
+      runMode: { resolved: 'deepseek-v4-pro', reason: '' },
+      agentEvents: [{ type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' }],
+    },
+  ],
+}
+
+const providerErrorLabel = 'model provider is not configured (missing API key or base URL): missing API key or base URL · 需要你处理'
+
+const providerErrorConvo: Conversation = {
+  id: 'c-provider-error',
+  title: '配置失败预览',
+  archived: false,
+  createdAt: iso(now - HOUR),
+  updatedAt: iso(now - 19 * 60_000),
+  messages: [
+    msg('m-provider-user', 'user', '帮我生成一张可爱小猫图片。', now - 20 * 60_000),
+    {
+      ...msg('m-provider-assistant', 'assistant', providerErrorLabel, now - 19 * 60_000),
+      status: 'error',
+      runId: 'run-provider-error',
+      runOrigin: 'local',
+      runMode: { resolved: 'DeepSeek V4 Flash', reason: '' },
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: providerErrorLabel,
+          failureCategory: 'configuration',
+          failureActionKind: 'user_action',
+        },
+      ],
+    },
   ],
 }
 
@@ -115,6 +181,7 @@ const mockChatModels: ModelOption[] = [
 const noop = () => {}
 const params = new URLSearchParams(location.search)
 const view = params.get('view') ?? 'chat'
+const harnessCase = params.get('case') ?? ''
 const useEmptyConversation = params.get('conversation') === 'empty'
 const initialSidebarCollapsed = params.get('collapsed') === '1'
 const initialMode = (params.get('model') || 'auto') as ChatMode
@@ -156,9 +223,11 @@ function Shell() {
               ? 'today'
               : 'chat',
   )
-  const displayedConversation = useEmptyConversation
-    ? { ...activeConvo, id: 'c-empty', title: '新对话', messages: [] }
-    : activeConvo
+  const displayedConversation = harnessCase === 'provider-error'
+    ? providerErrorConvo
+    : useEmptyConversation
+      ? { ...activeConvo, id: 'c-empty', title: '新对话', messages: [] }
+      : activeConvo
 
   useEffect(() => {
     return () => {
@@ -316,7 +385,16 @@ function Shell() {
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+type HarnessWindow = Window & {
+  __shejaneHarnessRoot?: ReturnType<typeof ReactDOM.createRoot>
+}
+
+const rootEl = document.getElementById('root')!
+const harnessWindow = window as HarnessWindow
+const root = harnessWindow.__shejaneHarnessRoot ?? ReactDOM.createRoot(rootEl)
+harnessWindow.__shejaneHarnessRoot = root
+
+root.render(
   <StrictMode>
     <I18nProvider>
       <TooltipProvider>

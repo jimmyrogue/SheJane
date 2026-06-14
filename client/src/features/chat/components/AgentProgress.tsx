@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconCreditCard, IconFolderPlus, IconRefresh, IconReload, IconStethoscope, IconChevronDown, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
+import { IconAlertCircle, IconChevronDown, IconChevronRight, IconCreditCard, IconFolderPlus, IconInfoCircle, IconRefresh, IconReload, IconStethoscope, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
@@ -22,6 +22,7 @@ interface AgentProgressState {
   tone: ProgressTone
   label: string
   detail?: string
+  failureMessage?: string
   failureAction?: FailureActionCTA
   pendingPermission?: PendingPermission
   sourcesCount: number
@@ -86,7 +87,20 @@ export function AgentProgress({
       : []
   const showTaskList = inFlightTasks.length >= 2
   const hasDiagnosticsFailureAction = progress.failureAction?.action === 'diagnostics' && Boolean(onFailureAction)
-  const canExpand = Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !hasDiagnosticsFailureAction)
+  const isHandoffWarning = Boolean(latestHandoffWarningEvent(events) && ACTIVE_RUN_STATUSES.has(message.status))
+  const isNoticeCard = isHandoffWarning || progress.tone === 'failed'
+  const canExpand = !isNoticeCard && Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !hasDiagnosticsFailureAction)
+  const hasNoticeBody = isNoticeCard && Boolean(
+    detail?.text ||
+    progress.failureMessage ||
+    progress.detail ||
+    progress.failureAction ||
+    (progress.diagnosticsRunID && onOpenDiagnostics),
+  )
+  const headerCanToggle = canExpand || hasNoticeBody
+  const NoticeTitleIcon = isNoticeCard
+    ? progress.tone === 'failed' ? IconAlertCircle : IconInfoCircle
+    : undefined
 
   // The leading status dot we used to show next to the headline was
   // pure ornament — the tone is already reflected in the label
@@ -101,10 +115,14 @@ export function AgentProgress({
   // target text doesn't visually shake.
   const summaryInner = (
     <>
+      {!isNoticeCard ? <span className="agent-progress-status-dot" aria-hidden="true" /> : null}
+      {NoticeTitleIcon ? (
+        <NoticeTitleIcon className="agent-progress-notice-title-icon" size={14} aria-hidden="true" />
+      ) : null}
       <span className="name" key={headline.label}>{headline.label}</span>
       {detail ? (
         <>
-          <span className="agent-progress-sep" aria-hidden="true">·</span>
+          {!isNoticeCard ? <span className="agent-progress-sep" aria-hidden="true">·</span> : null}
           {detail.showWebIcon ? (
             <IconWorld className="agent-progress-target-icon" size={12} aria-hidden="true" />
           ) : null}
@@ -113,23 +131,37 @@ export function AgentProgress({
           </span>
         </>
       ) : null}
-      {canExpand ? <IconChevronDown className="tool-card-caret" aria-hidden="true" /> : null}
+      {headerCanToggle ? (
+        expanded ? (
+          <IconChevronDown className="tool-card-caret" aria-hidden="true" />
+        ) : (
+          <IconChevronRight className="tool-card-caret" aria-hidden="true" />
+        )
+      ) : null}
     </>
   )
 
   return (
     <div
-      className={cn('tool-card agent-progress mt-4', `agent-progress-${progress.tone}`)}
+      className={cn(
+        'tool-card agent-progress mt-4',
+        `agent-progress-${progress.tone}`,
+        isNoticeCard ? 'agent-progress-notice-card' : 'agent-progress-tool-card',
+      )}
       data-state={progress.tone}
       data-expanded={expanded}
     >
-      {canExpand ? (
+      {headerCanToggle ? (
         <button
           type="button"
           className="tool-card-header agent-progress-summary"
           aria-expanded={expanded}
-          aria-controls={bodyId}
-          aria-label={expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}
+          aria-controls={headerCanToggle ? bodyId : undefined}
+          aria-label={
+            isNoticeCard
+              ? expanded ? t('agent.collapseDetails') : t('agent.expandDetails')
+              : expanded ? t('agent.collapseSteps') : t('agent.expandSteps')
+          }
           onClick={() => setExpanded((value) => !value)}
         >
           {summaryInner}
@@ -143,6 +175,17 @@ export function AgentProgress({
         </div>
       )}
 
+      {isNoticeCard && expanded ? (
+        <AgentProgressNoticeBody
+          bodyId={bodyId}
+          progress={progress}
+          targetDetail={detail}
+          message={message}
+          onFailureAction={onFailureAction}
+          onOpenDiagnostics={onOpenDiagnostics}
+        />
+      ) : null}
+
       {/* Per-subagent list, shown whenever ≥2 `task` dispatches are
        *  in flight. The header above carries "派发 · 4 个子任务进行中";
        *  this list shows each subtask on its own line with a short
@@ -151,7 +194,7 @@ export function AgentProgress({
        *  during an active run — does NOT depend on the expand button,
        *  because the user wanted at-a-glance visibility of progress
        *  across parallel subagents. */}
-      {showTaskList ? (
+      {!isNoticeCard && showTaskList ? (
         <ul
           className="agent-progress-tasks"
           aria-label={t('agent.task.inFlight', { count: inFlightTasks.length })}
@@ -173,11 +216,11 @@ export function AgentProgress({
         </ul>
       ) : null}
 
-      {progress.detail ? (
+      {!isNoticeCard && progress.detail ? (
         <p className="agent-progress-detail">{progress.detail}</p>
       ) : null}
 
-      {progress.failureAction && onFailureAction ? (
+      {!isNoticeCard && progress.failureAction && onFailureAction ? (
         <div className="agent-progress-actions">
           <Button
             className="agent-progress-action"
@@ -197,7 +240,7 @@ export function AgentProgress({
        *  noise the user didn't need — the headline above already says
        *  what's happening in plain language; diagnostics is the
        *  escape hatch for when something feels wrong. */}
-      {expanded && canExpand ? (
+      {!isNoticeCard && expanded && canExpand ? (
         <div className="tool-card-results agent-progress-results" id={bodyId} aria-label={t('agent.summary')}>
           <Button
             className="agent-progress-action"
@@ -208,6 +251,80 @@ export function AgentProgress({
           >
             <IconDownload size={13} />
             {t('agent.diagnostics')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function AgentProgressNoticeBody({
+  bodyId,
+  progress,
+  targetDetail,
+  message,
+  onOpenDiagnostics,
+  onFailureAction,
+}: {
+  bodyId: string
+  progress: AgentProgressState
+  targetDetail?: AgentToolDetail
+  message: ChatMessage
+  onOpenDiagnostics?: (runID: string) => void
+  onFailureAction?: (action: AgentFailureAction, message: ChatMessage) => void
+}) {
+  const { t } = useI18n()
+  const showDiagnosticsDownload = Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !progress.failureAction)
+
+  if (!targetDetail?.text && !progress.failureMessage && !progress.detail && !progress.failureAction && !showDiagnosticsDownload) {
+    return null
+  }
+
+  return (
+    <div className="agent-progress-notice-body" id={bodyId}>
+      {targetDetail?.text ? (
+        <div className="agent-progress-notice-target-full" title={targetDetail.tooltip ?? targetDetail.text}>
+          {targetDetail.text}
+        </div>
+      ) : null}
+
+      {progress.failureMessage ? (
+        <div className="agent-progress-notice-raw">
+          {progress.failureMessage}
+        </div>
+      ) : null}
+
+      {progress.detail ? (
+        <div className="agent-progress-notice-line">
+          <span>{progress.detail}</span>
+        </div>
+      ) : null}
+
+      {progress.failureAction && onFailureAction ? (
+        <div className="agent-progress-notice-actions agent-progress-actions">
+          <Button
+            className="agent-progress-action"
+            size="sm"
+            variant="outline"
+            onClick={() => onFailureAction(progress.failureAction!.action, message)}
+          >
+            {failureActionIcon(progress.failureAction.action)}
+            {progress.failureAction.label}
+          </Button>
+        </div>
+      ) : null}
+
+      {showDiagnosticsDownload ? (
+        <div className="agent-progress-notice-actions agent-progress-actions">
+          <Button
+            className="agent-progress-action"
+            size="sm"
+            variant="outline"
+            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID! })}
+            onClick={() => onOpenDiagnostics!(progress.diagnosticsRunID!)}
+          >
+            <IconDownload size={13} aria-hidden="true" />
+            {t('agent.downloadDiagnostics')}
           </Button>
         </div>
       ) : null}
@@ -475,7 +592,8 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
   if (latestFailure || message.status === 'error') {
     return {
       tone: 'failed',
-      label: latestFailure?.label || message.content || t('agent.failed'),
+      label: failureTitle(latestFailure, t),
+      failureMessage: failureMessage(latestFailure, message, t),
       detail: failureGuidance(latestFailure, t)
         || (sourcesCount || artifacts.length ? t('agent.failedDetail') : undefined),
       failureAction: failureActionCTA(latestFailure, t),
@@ -527,6 +645,29 @@ function findPendingPermission(events: AgentTimelineItem[], t: Translator): Pend
     }
   }
   return undefined
+}
+
+function failureTitle(event: AgentTimelineItem | undefined, t: Translator): string {
+  if (event?.failureCategory) {
+    return t(failureCategoryLabelKey(event.failureCategory))
+  }
+  if (event?.failureActionKind) {
+    return t(failureActionKindLabelKey(event.failureActionKind))
+  }
+  return t('agent.failed')
+}
+
+function failureMessage(
+  event: AgentTimelineItem | undefined,
+  message: ChatMessage,
+  t: Translator,
+): string | undefined {
+  const value = (event?.label || message.content || '').trim()
+  if (!value) {
+    return undefined
+  }
+  const cleaned = stripKnownSuffix(value, failureActionKindSuffixes(t)).trim()
+  return cleaned || undefined
 }
 
 function failureGuidance(
@@ -601,6 +742,54 @@ function failureActionIcon(action: AgentFailureAction) {
     case 'diagnostics':
       return <IconStethoscope size={13} aria-hidden="true" />
   }
+}
+
+function failureCategoryLabelKey(category: string): Parameters<Translator>[0] {
+  switch (category) {
+    case 'transient':
+      return 'diagnostics.failureCategory.transient'
+    case 'auth':
+      return 'diagnostics.failureCategory.auth'
+    case 'quota':
+      return 'diagnostics.failureCategory.quota'
+    case 'permission':
+      return 'diagnostics.failureCategory.permission'
+    case 'configuration':
+      return 'diagnostics.failureCategory.configuration'
+    case 'workspace':
+      return 'diagnostics.failureCategory.workspace'
+    case 'validation':
+      return 'diagnostics.failureCategory.validation'
+    case 'fatal':
+      return 'diagnostics.failureCategory.fatal'
+    default:
+      return 'diagnostics.failureCategory.unknown'
+  }
+}
+
+function failureActionKindLabelKey(actionKind: NonNullable<AgentTimelineItem['failureActionKind']>): Parameters<Translator>[0] {
+  switch (actionKind) {
+    case 'retry':
+      return 'diagnostics.failureActionKind.retry'
+    case 'user_action':
+      return 'diagnostics.failureActionKind.user_action'
+    case 'repair':
+      return 'diagnostics.failureActionKind.repair'
+    case 'operator_action':
+      return 'diagnostics.failureActionKind.operator_action'
+    case 'inspect':
+      return 'diagnostics.failureActionKind.inspect'
+  }
+}
+
+function failureActionKindSuffixes(t: Translator): string[] {
+  return [
+    t('diagnostics.failureActionKind.retry'),
+    t('diagnostics.failureActionKind.user_action'),
+    t('diagnostics.failureActionKind.repair'),
+    t('diagnostics.failureActionKind.operator_action'),
+    t('diagnostics.failureActionKind.inspect'),
+  ].map((label) => ` · ${label}`)
 }
 
 function failureCategoryActionKey(category: string): Parameters<Translator>[0] {
@@ -748,6 +937,15 @@ function stripKnownPrefix(value: string, prefixes: string[]): string {
   for (const prefix of prefixes) {
     if (value.startsWith(prefix)) {
       return value.slice(prefix.length)
+    }
+  }
+  return value
+}
+
+function stripKnownSuffix(value: string, suffixes: string[]): string {
+  for (const suffix of suffixes) {
+    if (value.endsWith(suffix)) {
+      return value.slice(0, -suffix.length)
     }
   }
   return value

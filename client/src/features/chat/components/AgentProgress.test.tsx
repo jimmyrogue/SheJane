@@ -43,7 +43,7 @@ describe('AgentProgress', () => {
   })
 
   it('surfaces missing handoff ledger risk while waiting without restoring inline approval controls', () => {
-    renderAgentProgress(
+    const { container } = renderAgentProgress(
       <AgentProgress
         message={message({
           status: 'waiting_permission',
@@ -63,7 +63,13 @@ describe('AgentProgress', () => {
     )
 
     expect(screen.getByText('暂停交接需要注意')).toBeInTheDocument()
+    expect(screen.queryByText('暂停前缺少进展账本，恢复时上下文可能不完整。')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下载诊断' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('暂停前缺少进展账本，恢复时上下文可能不完整。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载诊断' })).toBeInTheDocument()
+    expect(container.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
+    expect(container.querySelector('.agent-progress-status-dot')).not.toBeInTheDocument()
     expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
@@ -269,7 +275,7 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
   })
 
-  it('shows the latest run failure label as the failed headline', () => {
+  it('keeps long failure text out of the collapsed headline', () => {
     const current = message({
       status: 'error',
       agentEvents: [
@@ -286,8 +292,11 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('missing API key · 需要你处理')).toBeInTheDocument()
+    expect(screen.getByText('任务失败')).toBeInTheDocument()
+    expect(screen.queryByText('missing API key')).not.toBeInTheDocument()
     expect(screen.queryByText('读取 1 个文件')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('missing API key')).toBeInTheDocument()
   })
 
   it('shows localized next action guidance for user-action failures', () => {
@@ -312,7 +321,11 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('cloud session required · 需要你处理')).toBeInTheDocument()
+    expect(screen.getByText('登录状态')).toBeInTheDocument()
+    expect(screen.queryByText('cloud session required')).not.toBeInTheDocument()
+    expect(screen.queryByText('请重新登录或刷新本地云端会话，然后重试。')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('cloud session required')).toBeInTheDocument()
     expect(screen.getByText('请重新登录或刷新本地云端会话，然后重试。')).toBeInTheDocument()
   })
 
@@ -323,7 +336,7 @@ describe('AgentProgress', () => {
       agentEvents: [
         {
           type: 'run.failed',
-          label: 'model provider is not configured · 需要你处理',
+          label: 'model provider is not configured (missing API key or base URL): missing API key or base URL · 需要你处理',
           failureCategory: 'configuration',
           failureActionKind: 'user_action',
         },
@@ -339,6 +352,11 @@ describe('AgentProgress', () => {
       />,
     )
 
+    expect(screen.getByText('配置缺失')).toBeInTheDocument()
+    expect(screen.queryByText('model provider is not configured (missing API key or base URL): missing API key or base URL')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看诊断' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('model provider is not configured (missing API key or base URL): missing API key or base URL')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '查看诊断' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '诊断' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '展开步骤' })).not.toBeInTheDocument()
@@ -367,6 +385,7 @@ describe('AgentProgress', () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     fireEvent.click(screen.getByRole('button', { name: '充值' }))
     expect(onFailureAction).toHaveBeenCalledWith('recharge', current)
   })
@@ -394,6 +413,7 @@ describe('AgentProgress', () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     expect(onFailureAction).toHaveBeenCalledWith('retry', current)
   })
@@ -421,6 +441,7 @@ describe('AgentProgress', () => {
       />,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     fireEvent.click(screen.getByRole('button', { name: '尝试修复' }))
     expect(onFailureAction).toHaveBeenCalledWith('repair', current)
   })
@@ -442,7 +463,8 @@ describe('AgentProgress', () => {
 
     expect(progress).toMatchObject({
       tone: 'failed',
-      label: 'RuntimeError · 需要运维处理',
+      label: '需要运维处理',
+      failureMessage: 'RuntimeError',
       detail: '请检查本地日志或实现错误，修复后再重试。',
     })
   })
@@ -619,7 +641,23 @@ describe('AgentProgress', () => {
           agentEvents: [{ type: 'tool.failed', label: '工具失败：搜索网页' }],
         }),
       ),
-    ).toMatchObject({ tone: 'failed', label: '工具失败：搜索网页' })
+    ).toMatchObject({ tone: 'failed', label: '任务失败', failureMessage: '工具失败：搜索网页' })
+
+    expect(
+      deriveAgentProgress(
+        message({
+          status: 'error',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'model provider is not configured · 需要你处理',
+              failureCategory: 'configuration',
+              failureActionKind: 'user_action',
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ tone: 'failed', label: '配置缺失', failureMessage: 'model provider is not configured' })
 
     expect(
       deriveAgentProgress(

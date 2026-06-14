@@ -2345,8 +2345,23 @@ select {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  gap: 10px;
+  min-height: 28px;
   padding: 4px 0;
   color: var(--sj-seal);
+}
+
+.thinking-mark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.thinking-label {
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 13px;
+  line-height: 1;
 }
 
 .thinking-pulse {
@@ -4835,8 +4850,8 @@ button:active {
  * NEVER rendered — only this lightweight pill is. Unmounts
  * automatically when streaming ends.
  *
- * Distinct from `.thinking-indicator` (the per-conversation logo +
- * elapsed-time + token-count indicator in ThinkingIndicator.tsx). */
+ * Distinct from `.thinking-indicator` (the ambient brand-mark cue in
+ * ThinkingIndicator.tsx). */
 .message-reasoning-pill {
   display: inline-flex;
   align-items: center;
@@ -4872,10 +4887,9 @@ button:active {
   left: 0;
   display: flex;
   align-items: center;
-  /* Tighter gap so the copy button and timestamp read as a single
-   * compact strip rather than two floating elements. */
-  gap: 2px;
-  height: 24px;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 26px;
   margin-top: 4px;
   color: var(--text-tertiary);
   font-size: 11px;
@@ -4925,8 +4939,8 @@ button:active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -4937,8 +4951,8 @@ button:active {
 }
 
 .message-meta-action:hover {
-  background: var(--surface-2, rgba(120, 120, 130, 0.12));
-  color: var(--text-primary);
+  background: var(--sj-paper-wash, #EFEDE7);
+  color: var(--sj-ink, #2B2A28);
 }
 
 .message-meta-action:active {
@@ -5028,10 +5042,10 @@ button:active {
  * padding so it doesn't touch the adjacent icon. Tabular nums keeps
  * the digits from jittering as the relative time updates. */
 .message-meta-time {
-  color: var(--text-tertiary);
-  font-size: 11px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
-  padding: 0 6px;
+  padding: 0;
   line-height: 1;
   /* Same fix as .message-meta-mode — inline text would otherwise show
    * the I-beam cursor and read as editable. The timestamp is purely
@@ -5039,15 +5053,21 @@ button:active {
   cursor: default;
 }
 
-/* Per-turn usage chip (tokens · credits · tool calls). Informational. */
+/* Per-turn usage chip (credits · tool calls). Informational. */
 .message-meta-usage {
-  color: var(--text-tertiary);
-  font-size: 11px;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
-  padding: 0 6px;
+  padding: 0;
   line-height: 1;
   cursor: default;
   white-space: nowrap;
+}
+
+.message-meta-dot {
+  color: var(--sj-ink-faint, #A8A39A);
+  opacity: 0.65;
+  cursor: default;
 }
 
 /* ── Billing dialogs ── */
@@ -5750,6 +5770,29 @@ button:active {
   text-align: left;
 }
 
+.agent-progress-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--sj-moss, #5E7A6E);
+}
+
+.agent-progress[data-state="working"] .agent-progress-status-dot,
+.agent-progress[data-state="permission"] .agent-progress-status-dot {
+  background: var(--sj-seal, #B3532F);
+  animation: agent-progress-status-pulse 1.2s ease-in-out infinite;
+}
+
+.agent-progress[data-state="failed"] .agent-progress-status-dot {
+  background: var(--accent-danger-text, #B3532F);
+}
+
+@keyframes agent-progress-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 button.agent-progress-summary {
   cursor: pointer;
   transition: color 120ms ease;
@@ -5945,6 +5988,7 @@ button.agent-progress-summary:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .tool-card-caret,
+  .agent-progress-status-dot,
   .agent-progress-working .agent-progress-summary .name::after,
   .agent-progress-permission .agent-progress-summary .name::after,
   .agent-progress-task-desc::after {
@@ -6555,20 +6599,35 @@ button.agent-progress-summary:focus-visible {
 .message-meta-mode {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   height: 24px;
+  max-width: min(260px, 56vw);
   padding: 0 8px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
   border-radius: 6px;
-  background: var(--surface-2, rgba(120, 120, 130, 0.08));
-  color: var(--text-tertiary);
-  font-size: 11px;
+  background: transparent;
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11.5px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   white-space: nowrap;
   /* `<span>` containing text defaults to the I-beam text-selection
    * cursor, which makes the badge look like an editable field. It's
    * informational (Radix Tooltip shows the reason on hover) and not
    * clickable, so revert to the regular arrow. */
   cursor: default;
+}
+
+.message-meta-mode-icon {
+  flex: 0 0 auto;
+  color: var(--sj-seal, #B3532F);
+}
+
+.message-meta-mode-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-chip {
@@ -9757,17 +9816,158 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress.tool-card {
-  max-width: 100%;
+  width: fit-content;
+  max-width: min(470px, 100%);
   margin-top: 18px;
   border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
+  border-radius: var(--sj-r-m, 10px);
+  overflow: hidden;
   background: var(--sj-paper-raised, #FFFFFF);
+  padding: 0;
+  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
+}
+
+.agent-progress-notice-card.tool-card {
+  max-width: min(540px, 100%);
+  background: var(--sj-paper-sunken, #F3F1EC);
+}
+
+.agent-progress .agent-progress-summary {
+  width: 100%;
+  max-width: 100%;
+  gap: 8px;
   padding: 8px 12px;
-  box-shadow: var(--sj-shadow-1, 0 4px 12px rgba(38, 37, 34, 0.06));
+  transition: background 150ms ease, color 120ms ease;
 }
 
 .agent-progress-summary {
   color: var(--sj-ink-soft, #6F6B63);
+}
+
+.agent-progress .agent-progress-summary:hover {
+  background: var(--sj-paper-wash, #EFEDE7);
+}
+
+.agent-progress[data-expanded="true"] .tool-card-caret {
+  transform: none;
+}
+
+.agent-progress .tool-card-header .name {
+  font-size: 12.5px;
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.agent-progress-tool-card .tool-card-header .name {
+  font-weight: 400;
+}
+
+.agent-progress-notice-card .agent-progress-summary {
+  gap: 8px;
+  padding: 9px 12px;
+}
+
+.agent-progress-notice-card[data-expanded="true"] .agent-progress-summary {
+  align-items: center;
+}
+
+.agent-progress-notice-card .tool-card-header .name {
+  flex: 0 1 auto;
+  font-weight: 500;
+}
+
+.agent-progress-notice-title-icon {
+  flex: 0 0 auto;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.agent-progress-failed .agent-progress-notice-title-icon {
+  color: var(--accent-danger-text, #B3532F);
+}
+
+.agent-progress-notice-card .agent-progress-target {
+  color: var(--sj-ink-soft, #6F6B63);
+}
+
+.agent-progress-notice-body {
+  border-top: 0.5px solid var(--sj-line, #E8E5DE);
+  padding: 10px 12px 11px;
+  max-height: min(260px, 45vh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sj-line-strong, #D9D5CC) transparent;
+}
+
+.agent-progress-notice-primary,
+.agent-progress-notice-raw,
+.agent-progress-notice-target-full {
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12.5px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-progress-notice-primary {
+  font-weight: 500;
+}
+
+.agent-progress-notice-raw {
+  padding-left: 22px;
+}
+
+.agent-progress-notice-target-full {
+  padding-left: 22px;
+}
+
+.agent-progress-notice-primary + .agent-progress-notice-target-full,
+.agent-progress-notice-target-full + .agent-progress-notice-raw,
+.agent-progress-notice-raw + .agent-progress-notice-line,
+.agent-progress-notice-target-full + .agent-progress-notice-line,
+.agent-progress-notice-primary + .agent-progress-notice-line {
+  margin-top: 8px;
+}
+
+.agent-progress-notice-line {
+  display: flex;
+  align-items: flex-start;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding-left: 22px;
+}
+
+.agent-progress-notice-line span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-progress-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 22px;
+}
+
+.agent-progress-notice-actions .agent-progress-action,
+.agent-progress-actions .agent-progress-action,
+.agent-progress-results .agent-progress-action {
+  width: fit-content;
+  min-height: 27px;
+  border: 0.5px solid var(--sj-line-strong, #D9D5CC);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.agent-progress-notice-actions .agent-progress-action:hover,
+.agent-progress-actions .agent-progress-action:hover,
+.agent-progress-results .agent-progress-action:hover {
+  background: var(--sj-paper-wash, #EFEDE7);
+  color: var(--sj-ink, #2B2A28);
 }
 
 .empty-state {

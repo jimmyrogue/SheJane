@@ -38,6 +38,7 @@ describe('ThinkingIndicator', () => {
     const indicator = container.querySelector('.thinking-indicator')
     expect(indicator).toBeInTheDocument()
     expect(container.querySelector('.thinking-pulse')).toBeInTheDocument()
+    expect(indicator).toHaveTextContent('正在思考…')
   })
 
   it('renders the pulsing icon for the pending status as well', () => {

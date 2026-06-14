@@ -147,9 +147,10 @@ export interface ChatMessage {
    *  `status === 'streaming'` triggers the ephemeral "Thinking…"
    *  indicator above the bubble. */
   reasoning?: string
-  /** Set when an Auto mode resolved to a concrete model. UI uses this to show
-   *  a small "自动/更快/更强 → Pro" badge in the message meta row so the user
-   *  can see what the auto-router decided. */
+  /** UI model badge for the completed turn. Auto runs update this from
+   *  `model.selected` ("自动/更快/更强 → Pro"); concrete model picks store
+   *  their selected model ID directly so every assistant turn can surface
+   *  the model used. */
   runMode?: {
     /** User-facing label for the Auto sentinel, if provided by the cloud. */
     requested?: string

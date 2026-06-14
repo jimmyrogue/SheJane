@@ -4,6 +4,7 @@ import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type TranslationKey, type Translator } from '../../shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from '../../shared/local-data/localConversations'
+import { isAutoMode } from '../../shared/modelMode'
 import type {
   AgentQuestionItem,
   AgentPlanTodo,
@@ -130,6 +131,12 @@ export function createChatStore(deps: ChatStoreDeps) {
         content: '',
         createdAt: timestamp,
         status: 'streaming',
+      }
+      if (!isAutoMode(input.mode)) {
+        assistantMessage.runMode = {
+          resolved: input.mode,
+          reason: '',
+        }
       }
 
       const priorMessages = conversation.messages

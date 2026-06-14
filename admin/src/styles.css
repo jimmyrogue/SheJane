@@ -210,9 +210,12 @@
     box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
   }
 
-  .admin-auth-avatar [data-slot="avatar-fallback"] {
-    background: var(--sj-ink);
-    color: var(--sj-paper);
+  .admin-auth-logo {
+    display: block;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 10px;
   }
 
   .admin-shell {
@@ -268,8 +271,11 @@
   }
 
   .admin-brand-mark {
-    color: var(--sj-ink);
+    display: block;
+    width: 26px;
+    height: 26px;
     flex-shrink: 0;
+    object-fit: contain;
   }
 
   .admin-brand-title {

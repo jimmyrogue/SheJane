@@ -3,12 +3,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy, IconExternalLink, IconPencil, IconRefresh, IconTrash } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconExternalLink, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { formatMessageTime, useI18n } from '@/shared/i18n/i18n'
+import { formatMessageTime, useI18n, type Translator } from '@/shared/i18n/i18n'
 import { fileIconFor } from '@/shared/files/fileIcons'
 import type { AgentTimelineItem, ChatMessage, CloudOfficeAttachmentRef, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
@@ -156,6 +156,7 @@ export function MessageBubble({
       ? t('message.waitingInput')
       : ''
   const content = message.content || waitingText
+  const hideDuplicateFailureContent = isAssistant && isDuplicateFailureContent(message)
   // Action affordances appear on settled turns only (not mid-stream).
   const settled = message.status === 'done' || message.status === 'error'
   const canRegenerate = isAssistant && settled && Boolean(onRegenerate)
@@ -168,13 +169,7 @@ export function MessageBubble({
   // Token counts are tracked on the message but deliberately NOT shown —
   // the hover meta row was getting noisy and credits already convey cost.
   const toolCalls = (message.agentEvents ?? []).filter((event) => event.type === 'tool.completed').length
-  const usageParts: string[] = []
-  if (message.creditsCost) {
-    usageParts.push(t('agent.usageCredits', { count: String(message.creditsCost) }))
-  }
-  if (toolCalls > 0) {
-    usageParts.push(t('agent.usageTools', { count: String(toolCalls) }))
-  }
+  const usageParts = buildUsageParts(message, toolCalls, locale, t)
   const showUsage = isAssistant && settled && usageParts.length > 0
   const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
   const messageTime = formatMessageTime(message.createdAt, locale, t)
@@ -224,7 +219,7 @@ export function MessageBubble({
             ) : waitingText ? (
               <p className="whitespace-pre-wrap break-words">{waitingText}</p>
             ) : null
-          ) : (
+          ) : hideDuplicateFailureContent ? null : (
             <MarkdownContent
               content={content}
               normalizeHeadings
@@ -306,40 +301,13 @@ export function MessageBubble({
               <IconTrash size={13} aria-hidden="true" />
             </button>
           ) : null}
-          {isAssistant && message.runMode ? (
-            (() => {
-              const badge = (
-                <span className="message-meta-mode">
-                  {t('composer.mode.autoBadge', {
-                    requested: message.runMode.requested?.trim() || t('composer.mode.auto'),
-                    resolved: message.runMode.resolved,
-                  })}
-                </span>
-              )
-              // Wrap in a real Radix tooltip ONLY when the auto router
-              // gave us a reason — otherwise the badge is purely
-              // informational and the help-cursor + empty tooltip
-              // combo we shipped first felt broken (cursor implied
-              // "click me", nothing happened).
-              const reason = message.runMode.reason?.trim()
-              if (!reason) {
-                return badge
-              }
-              return (
-                <Tooltip>
-                  <TooltipTrigger asChild>{badge}</TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={4}>
-                    {reason}
-                  </TooltipContent>
-                </Tooltip>
-              )
-            })()
-          ) : null}
+          {isAssistant ? <ModelModeBadge runMode={message.runMode} /> : null}
           {showUsage ? (
             <span className="message-meta-usage" title={t('agent.usageTooltip')}>
               {usageParts.join(' · ')}
             </span>
           ) : null}
+          {showUsage && messageTime ? <span className="message-meta-dot" aria-hidden="true">·</span> : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
         </div>
       </div>
@@ -356,8 +324,8 @@ export function MessageBubble({
  *  component is unmounted by its caller.
  *
  *  Named "ReasoningPill" — distinct from the file-level
- *  ThinkingIndicator (in ThinkingIndicator.tsx), which is the
- *  per-conversation logo + elapsed-time + token-count indicator. */
+ *  ThinkingIndicator (in ThinkingIndicator.tsx), which is the ambient
+ *  brand-mark breathing cue for an active assistant turn. */
 function ReasoningPill() {
   const { t } = useI18n()
   return (
@@ -366,6 +334,87 @@ function ReasoningPill() {
       <span>{t('message.reasoningStreaming')}</span>
     </div>
   )
+}
+
+function ModelModeBadge({ runMode }: { runMode?: ChatMessage['runMode'] }) {
+  const { t } = useI18n()
+  if (!runMode?.resolved?.trim()) {
+    return null
+  }
+  const reason = runMode.reason?.trim()
+  const requested = runMode.requested?.trim()
+  const label = requested || reason
+    ? t('composer.mode.autoBadge', {
+        requested: requested || t('composer.mode.auto'),
+        resolved: runMode.resolved,
+      })
+    : runMode.resolved
+  const badge = (
+    <span className="message-meta-mode">
+      <IconSparkles className="message-meta-mode-icon" size={11} aria-hidden="true" />
+      <span className="message-meta-mode-label">{label}</span>
+    </span>
+  )
+  if (!reason) {
+    return badge
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{badge}</TooltipTrigger>
+      <TooltipContent side="top" sideOffset={4}>
+        {reason}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function isDuplicateFailureContent(message: ChatMessage): boolean {
+  if (message.role !== 'assistant' || message.status !== 'error') {
+    return false
+  }
+  const content = normalizeFailureText(message.content)
+  if (!content) {
+    return false
+  }
+  return (message.agentEvents ?? []).some((event) => {
+    if (event.type !== 'run.failed' && event.type !== 'tool.failed' && event.verificationStatus !== 'failed') {
+      return false
+    }
+    return sameFailureText(content, normalizeFailureText(event.label))
+  })
+}
+
+function sameFailureText(content: string, label: string): boolean {
+  if (!content || !label) {
+    return false
+  }
+  return content === label || label.startsWith(`${content} · `) || content.startsWith(`${label} · `)
+}
+
+function normalizeFailureText(value: string | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function buildUsageParts(
+  message: ChatMessage,
+  toolCalls: number,
+  locale: string,
+  t: Translator,
+): string[] {
+  const parts: string[] = []
+  if (typeof message.creditsCost === 'number' && message.creditsCost > 0) {
+    parts.push(t('agent.usageCredits', { count: formatUsageNumber(message.creditsCost, locale) }))
+  }
+  if (toolCalls > 0) {
+    parts.push(t('agent.usageTools', { count: formatUsageNumber(toolCalls, locale) }))
+  }
+  return parts
+}
+
+function formatUsageNumber(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function MarkdownContent({

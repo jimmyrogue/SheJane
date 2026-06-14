@@ -615,7 +615,7 @@ describe('user client shell', () => {
     })
   })
 
-  it('shows the local run.failed error in the assistant bubble and progress when no answer streamed', async () => {
+  it('shows a pure local run.failed error only once in the progress card', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
     window.shejaneDesktop = {
@@ -643,10 +643,14 @@ describe('user client shell', () => {
     })
     await settleStreamRender()
 
+    expect(screen.getByText('任务失败')).toBeInTheDocument()
+    expect(screen.queryByText('missing API key')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     const failureTexts = await screen.findAllByText('missing API key')
-    expect(failureTexts.length).toBeGreaterThanOrEqual(2)
-    expect(failureTexts.some((node) => node.closest('.message-content'))).toBe(true)
-    expect(failureTexts.some((node) => node.closest('.agent-progress-summary'))).toBe(true)
+    expect(failureTexts).toHaveLength(1)
+    expect(failureTexts.some((node) => node.closest('.message-content'))).toBe(false)
+    expect(failureTexts.some((node) => node.closest('.agent-progress-notice-body'))).toBe(true)
   })
 
   it('opens top-up checkout from a quota failure action', async () => {
@@ -731,6 +735,7 @@ describe('user client shell', () => {
     })
     await settleStreamRender()
 
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     const rechargeButton = (await screen.findAllByRole('button', { name: '充值' })).find((button) =>
       button.closest('.agent-progress-actions'),
     )
@@ -1244,6 +1249,7 @@ describe('user client shell', () => {
     await awaitSignedIn()
     await selectConversationForTest('修复去重任务', 'invalid tool arguments')
 
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     const repairButton = await screen.findByRole('button', { name: '尝试修复' })
     fireEvent.click(repairButton)
     fireEvent.click(repairButton)
@@ -2081,13 +2087,26 @@ async function openAccountMenu(): Promise<void> {
 }
 
 async function selectConversationForTest(title: string, readyText: string): Promise<void> {
+  void readyText
   fireEvent.click(await screen.findByRole('button', { name: title }))
-  await screen.findByText(readyText)
+  await waitFor(() => {
+    const toolbarTitle = document.querySelector('.chat-toolbar-title')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+    expect(toolbarTitle).toContain(title)
+  })
 }
 
 async function clickFailureAction(label: string): Promise<void> {
-  const buttons = await screen.findAllByRole('button', { name: label })
-  const action = buttons.find((button) => button.closest('.agent-progress-actions'))
+  let buttons = screen.queryAllByRole('button', { name: label })
+  let action = buttons.find((button) => button.closest('.agent-progress-actions'))
+  if (!action) {
+    const expand = screen.queryAllByRole('button', { name: '展开详情' }).find((button) =>
+      button.closest('.agent-progress-notice-card'),
+    )
+    expect(expand).toBeTruthy()
+    fireEvent.click(expand!)
+    buttons = await screen.findAllByRole('button', { name: label })
+    action = buttons.find((button) => button.closest('.agent-progress-actions'))
+  }
   expect(action).toBeTruthy()
   fireEvent.click(action!)
 }

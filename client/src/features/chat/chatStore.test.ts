@@ -191,6 +191,28 @@ describe('chat store', () => {
     expect(conversation.messages[1].runMode).toEqual({ requested: '更强', resolved: '深度', reason: '能力优先' })
   })
 
+  it('stores the concrete model id for non-Auto turns', async () => {
+    const localData = new LocalConversationStore('shejane-chat-test-modelsel-concrete')
+    const api: ChatAPI = {
+      createAgentRun: async (request) => {
+        expect(request.mode).toBe('deepseek-v4-pro')
+        return { id: 'run-concrete', status: 'queued', mode: 'deepseek-v4-pro' }
+      },
+      streamAgentRun: async (_runID, handlers) => {
+        handlers.onDelta('好的')
+        return { requestId: 'req-concrete', inputTokens: 1, outputTokens: 2, creditsCost: 3 }
+      },
+      runCloudToolLoop: async () => {
+        throw new Error('not used')
+      },
+    }
+    const chat = createChatStore({ localData, api, now: () => '2026-05-10T00:00:00.000Z' })
+
+    const conversation = await chat.sendMessage({ content: '分析一下', mode: 'deepseek-v4-pro', scene: 'chat' })
+
+    expect(conversation.messages[1].runMode).toEqual({ resolved: 'deepseek-v4-pro', reason: '' })
+  })
+
   it('shows a specific rate-limit message with retry-after guidance', async () => {
     const localData = new LocalConversationStore('shejane-chat-test-rate-limit')
     const api: ChatAPI = {

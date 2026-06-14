@@ -208,6 +208,36 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
   })
 
+  it('shows the concrete model badge on a settled assistant turn', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            runMode: { resolved: 'deepseek-v4-pro', reason: '' },
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('deepseek-v4-pro')).toBeInTheDocument()
+  })
+
+  it('hides assistant content when it duplicates the failure timeline label', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            status: 'error',
+            content: 'missing API key',
+            agentEvents: [{ type: 'run.failed', label: 'missing API key · 需要你处理' }],
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.queryByText('missing API key')).not.toBeInTheDocument()
+  })
+
   it('omits the usage chip when there is no usage data', () => {
     render(
       <I18nProvider>
