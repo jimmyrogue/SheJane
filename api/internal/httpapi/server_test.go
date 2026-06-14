@@ -645,6 +645,129 @@ func TestAdminLLMCallsExposeRunID(t *testing.T) {
 	}
 }
 
+func TestBillingActivitiesGroupRunLedgerAndUsageDetails(t *testing.T) {
+	server, memory := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.MonthlyCredits = 100_000
+	})
+	token := registerAndTokenWithEmail(t, server, "billing-activity@example.com")
+	user := currentUser(t, server, token)
+	ctx := context.Background()
+	runID := "run_6670d0df3951463ea7af7ec243257941"
+
+	failedReservation, err := memory.ReserveUsage(ctx, user.ID, 100_000, 300, billing.ReservationMeta{
+		UserID:    user.ID,
+		RequestID: "req-claude",
+		RunID:     runID,
+		Mode:      "claude-opus-4-8",
+	})
+	if err != nil {
+		t.Fatalf("reserve failed call: %v", err)
+	}
+	if err := memory.CreateLLMCall(ctx, store.LLMCallRecord{
+		RequestID:     "req-claude",
+		UserID:        user.ID,
+		WalletID:      failedReservation.WalletID,
+		ReservationID: failedReservation.ID,
+		RunID:         runID,
+		Mode:          "claude-opus-4-8",
+		Model:         "claude-opus-4-8",
+		Provider:      "anthropic-claude",
+		Status:        "streaming",
+	}); err != nil {
+		t.Fatalf("create failed llm call: %v", err)
+	}
+	if err := memory.ReleaseUsage(ctx, user.ID, failedReservation.ID); err != nil {
+		t.Fatalf("release failed call: %v", err)
+	}
+	if err := memory.FinishLLMCall(ctx, "req-claude", "failed", 0, 0, 0, "anthropic rejected params"); err != nil {
+		t.Fatalf("finish failed llm call: %v", err)
+	}
+
+	fallbackReservation, err := memory.ReserveUsage(ctx, user.ID, 100_000, 22_451, billing.ReservationMeta{
+		UserID:    user.ID,
+		RequestID: "req-deepseek",
+		RunID:     runID,
+		Mode:      "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("reserve fallback call: %v", err)
+	}
+	if err := memory.CreateLLMCall(ctx, store.LLMCallRecord{
+		RequestID:     "req-deepseek",
+		UserID:        user.ID,
+		WalletID:      fallbackReservation.WalletID,
+		ReservationID: fallbackReservation.ID,
+		RunID:         runID,
+		Mode:          "deepseek-v4-flash",
+		Model:         "deepseek-v4-flash",
+		Provider:      "deepseek-v4",
+		Status:        "streaming",
+	}); err != nil {
+		t.Fatalf("create fallback llm call: %v", err)
+	}
+	if err := memory.SettleUsage(ctx, user.ID, fallbackReservation.ID, 5_827); err != nil {
+		t.Fatalf("settle fallback call: %v", err)
+	}
+	if err := memory.FinishLLMCall(ctx, "req-deepseek", "done", 1000, 500, 5_827, ""); err != nil {
+		t.Fatalf("finish fallback llm call: %v", err)
+	}
+
+	toolReservation, err := memory.ReserveUsage(ctx, user.ID, 100_000, 20, billing.ReservationMeta{
+		UserID:    user.ID,
+		RequestID: "req-tool",
+		Mode:      "tool",
+	})
+	if err != nil {
+		t.Fatalf("reserve tool call: %v", err)
+	}
+	if _, _, err := memory.CreateExternalToolCall(ctx, store.ExternalToolCallRecord{
+		RequestID:     "req-tool",
+		UserID:        user.ID,
+		WalletID:      toolReservation.WalletID,
+		ReservationID: toolReservation.ID,
+		RunID:         runID,
+		ToolCallID:    "call_search",
+		Tool:          "web.search",
+		Provider:      "tavily",
+		Status:        "running",
+	}); err != nil {
+		t.Fatalf("create tool call: %v", err)
+	}
+	if err := memory.SettleUsage(ctx, user.ID, toolReservation.ID, 20); err != nil {
+		t.Fatalf("settle tool call: %v", err)
+	}
+	if err := memory.FinishExternalToolCall(ctx, "req-tool", "done", 1, 20, "", "", "ok", nil); err != nil {
+		t.Fatalf("finish tool call: %v", err)
+	}
+
+	activities := billingActivities(t, server, token)
+	var runActivity *store.BillingActivity
+	for i := range activities {
+		if activities[i].RunID == runID {
+			runActivity = &activities[i]
+			break
+		}
+	}
+	if runActivity == nil {
+		t.Fatalf("missing run billing activity: %#v", activities)
+	}
+	if runActivity.ReservedCredits != 22_771 || runActivity.SettledCredits != 5_847 || runActivity.ReleasedCredits != 16_924 || runActivity.NetCredits != 5_847 {
+		t.Fatalf("activity totals = reserve:%d settle:%d release:%d net:%d", runActivity.ReservedCredits, runActivity.SettledCredits, runActivity.ReleasedCredits, runActivity.NetCredits)
+	}
+	if len(runActivity.LLMCalls) != 2 || len(runActivity.ToolCalls) != 1 {
+		t.Fatalf("activity details llm=%d tool=%d, want 2/1: %#v", len(runActivity.LLMCalls), len(runActivity.ToolCalls), runActivity)
+	}
+	if runActivity.LLMCalls[0].Provider != "anthropic-claude" || runActivity.LLMCalls[0].Status != "failed" {
+		t.Fatalf("first llm call should preserve failed provider: %#v", runActivity.LLMCalls)
+	}
+	if runActivity.LLMCalls[1].Provider != "deepseek-v4" || runActivity.LLMCalls[1].CreditsCost != 5_827 {
+		t.Fatalf("fallback llm call should preserve actual cost: %#v", runActivity.LLMCalls)
+	}
+	if runActivity.ToolCalls[0].Tool != "web.search" || runActivity.ToolCalls[0].CreditsCost != 20 {
+		t.Fatalf("tool call should be included: %#v", runActivity.ToolCalls)
+	}
+}
+
 func TestAgentToolCapabilitiesRequireAuthAndHideUnconfiguredTavily(t *testing.T) {
 	server := newTestServer(t)
 
@@ -1797,6 +1920,22 @@ func walletTransactions(t *testing.T, server http.Handler, token string) []billi
 	var body apiResponse[[]billing.Transaction]
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode transactions response: %v", err)
+	}
+	return body.Data
+}
+
+func billingActivities(t *testing.T, server http.Handler, token string) []store.BillingActivity {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/activities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("billing activities status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[[]store.BillingActivity]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode billing activities response: %v", err)
 	}
 	return body.Data
 }

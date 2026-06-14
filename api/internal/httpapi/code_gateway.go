@@ -207,6 +207,7 @@ func (s *Server) runCodeExecute(ctx context.Context, user store.User, input code
 	reservation, err := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, worstCaseCredits, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     input.RunID,
 		Mode:      "tool",
 	})
 	if err != nil {

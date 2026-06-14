@@ -118,6 +118,7 @@ func (s *Server) runPdfInspect(ctx context.Context, user store.User, in pdfInspe
 	reservation, resErr := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, pdfInspectCreditsCost, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     in.RunID,
 		Mode:      "tool",
 	})
 	if resErr != nil {

@@ -8,9 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { AdminUserDetail, AdminUserSummary } from '@/shared/api/client'
+import type { AdminLLMCall, AdminToolCall, AdminUserDetail, AdminUserSummary } from '@/shared/api/client'
 import { ActivityList, DataGrid, type DataGridColumn, DetailItem, EmptyTableRow, Pagination, StatusBadge } from '../components/ui-helpers'
-import { formatCurrency, formatNumber } from '../shared/format'
+import { formatCurrency, formatDateTime, formatNumber } from '../shared/format'
 import { roleLabel, statusLabel, txTypeLabel } from '../shared/labels'
 
 const USER_COLUMNS: Array<DataGridColumn<AdminUserSummary>> = [
@@ -192,10 +192,13 @@ function UserDetailBody({
             {selectedUser.calls.length ? (
               selectedUser.calls.slice(0, 20).map((call) => (
                 <TableRow key={call.request_id}>
-                  <TableCell className="max-w-40 truncate">{call.provider}/{call.model}</TableCell>
+                  <TableCell className="max-w-56">
+                    <div className="truncate" title={`${call.provider}/${call.model}`}>{call.provider}/{call.model}</div>
+                    <CallErrorLine call={call} />
+                  </TableCell>
                   <TableCell><StatusBadge status={call.status} /></TableCell>
                   <TableCell className="max-w-36 truncate text-muted-foreground">{call.run_id || '-'}</TableCell>
-                  <TableCell className="max-w-40 truncate text-muted-foreground">{call.started_at ?? '-'}</TableCell>
+                  <TableCell className="max-w-40 truncate text-muted-foreground">{formatDateTime(call.started_at)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
                 </TableRow>
               ))
@@ -221,9 +224,12 @@ function UserDetailBody({
             {selectedUser.tool_calls?.length ? (
               selectedUser.tool_calls.slice(0, 20).map((call) => (
                 <TableRow key={call.request_id}>
-                  <TableCell className="max-w-40 truncate">{call.tool}{call.provider ? ` · ${call.provider}` : ''}</TableCell>
+                  <TableCell className="max-w-56">
+                    <div className="truncate" title={`${call.tool}${call.provider ? ` · ${call.provider}` : ''}`}>{call.tool}{call.provider ? ` · ${call.provider}` : ''}</div>
+                    <CallErrorLine call={call} />
+                  </TableCell>
                   <TableCell><StatusBadge status={call.status} /></TableCell>
-                  <TableCell className="max-w-40 truncate text-muted-foreground">{call.started_at ?? '-'}</TableCell>
+                  <TableCell className="max-w-40 truncate text-muted-foreground">{formatDateTime(call.started_at)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(call.units)}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatNumber(call.credits_cost)}</TableCell>
                 </TableRow>
@@ -238,6 +244,18 @@ function UserDetailBody({
         <ActivityList title="最近账本" items={selectedUser.transactions.slice(0, 4).map((tx) => `${txTypeLabel(tx.type)} ${tx.amount} · 余额 ${tx.extra_balance_after}`)} />
         <ActivityList title="最近订单" items={selectedUser.orders.slice(0, 4).map((order) => `${order.id} · ${formatCurrency(order.amount_cny)} · ${statusLabel(order.status)}`)} />
       </div>
+    </div>
+  )
+}
+
+function CallErrorLine({ call }: { call: AdminLLMCall | AdminToolCall }) {
+  const text = call.error_message || call.error_code
+  if (!text) {
+    return null
+  }
+  return (
+    <div className="mt-1 truncate text-xs text-destructive" title={text}>
+      {text}
     </div>
   )
 }

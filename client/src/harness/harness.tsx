@@ -24,7 +24,7 @@ import { SpendHistoryDialog } from '@/features/billing/SpendHistoryDialog'
 import { TodayView } from '@/features/today/TodayView'
 import type { ChatMode, Conversation, ChatMessage } from '@/shared/local-data/types'
 import type { ModelOption } from '@/features/chat/components/ModeSelector'
-import type { UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
+import type { BillingActivity, UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
 import type { AgentSettings, InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 
 const HOUR = 3600_000
@@ -65,6 +65,8 @@ const activeConvo: Conversation = {
     {
       ...msg('m2', 'assistant', richReply, now - 88 * 60_000),
       creditsCost: 9383,
+      runId: 'run-harness-success',
+      runOrigin: 'local',
       runMode: { requested: '自动', resolved: 'DeepSeek Flash', reason: '需要整理数据并生成汇报骨架。' },
       agentEvents: [
         { type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' },
@@ -134,6 +136,38 @@ const providerErrorConvo: Conversation = {
   ],
 }
 
+const activeToolFailureConvo: Conversation = {
+  id: 'c-tool-failed-active',
+  title: '工具失败但继续执行',
+  archived: false,
+  createdAt: iso(now - HOUR),
+  updatedAt: iso(now - 3 * 60_000),
+  messages: [
+    msg('m-tool-failed-user', 'user', '搜索 Claude fable5 的最新新闻。', now - 4 * 60_000),
+    {
+      ...msg('m-tool-failed-assistant', 'assistant', '好的，我来搜一下相关消息，并继续整理后续线索。', now - 3 * 60_000),
+      status: 'streaming',
+      runId: 'run-tool-failed-active',
+      runOrigin: 'local',
+      runMode: { resolved: 'DeepSeek V4 Flash', reason: '' },
+      agentEvents: [
+        {
+          type: 'tool.requested',
+          label: '调用工具：读取网页',
+          tool: 'web.fetch',
+          target: 'https://example.com/news',
+        },
+        {
+          type: 'tool.failed',
+          label: '工具失败：读取网页',
+          tool: 'web.fetch',
+          target: 'https://example.com/news',
+        },
+      ],
+    },
+  ],
+}
+
 const conversations: Conversation[] = [
   activeConvo,
   { id: 'c2', title: '整理本周周报', archived: false, createdAt: iso(now - 3 * HOUR), updatedAt: iso(now - 40 * 60_000), messages: [] },
@@ -152,6 +186,85 @@ const mockTransactions: WalletTransaction[] = [
   { id: 'tx1', wallet_id: 'w1', type: 'usage_settle', amount: -1280, monthly_used_after: 1280, extra_balance_after: 35190, description: 'deepseek-fast · 工具运行', created_at: iso(now - 2 * HOUR) },
   { id: 'tx2', wallet_id: 'w1', type: 'subscription_grant', amount: 9000, monthly_used_after: 0, extra_balance_after: 36470, description: '月度订阅', created_at: iso(now - DAY) },
   { id: 'tx3', wallet_id: 'w1', type: 'usage_settle', amount: -460, monthly_used_after: 1740, extra_balance_after: 35190, description: '文档解析', created_at: iso(now - 2 * DAY) },
+]
+
+const mockBillingActivities: BillingActivity[] = [
+  {
+    id: 'run:run_6670d0df3951463ea7af7ec243257941',
+    kind: 'usage',
+    run_id: 'run_6670d0df3951463ea7af7ec243257941',
+    reserved_credits: 22471,
+    settled_credits: 5847,
+    released_credits: 16624,
+    net_credits: 5847,
+    llm_calls: [
+      {
+        request_id: 'req-claude',
+        user_id: 'u1',
+        wallet_id: 'w1',
+        reservation_id: 'res-claude',
+        run_id: 'run_6670d0df3951463ea7af7ec243257941',
+        mode: 'claude-opus-4-8',
+        scene: 'agent_local',
+        model: 'claude-opus-4-8',
+        provider: 'anthropic-claude',
+        input_tokens: 0,
+        output_tokens: 0,
+        credits_cost: 0,
+        status: 'failed',
+        error_message: 'temperature is not supported by this model',
+        started_at: iso(now - 2 * HOUR),
+      },
+      {
+        request_id: 'req-deepseek',
+        user_id: 'u1',
+        wallet_id: 'w1',
+        reservation_id: 'res-deepseek',
+        run_id: 'run_6670d0df3951463ea7af7ec243257941',
+        mode: 'deepseek-v4-flash',
+        scene: 'agent_local',
+        model: 'deepseek-v4-flash',
+        provider: 'deepseek-v4',
+        input_tokens: 1200,
+        output_tokens: 620,
+        credits_cost: 5827,
+        status: 'done',
+        started_at: iso(now - 2 * HOUR + 500),
+      },
+    ],
+    tool_calls: [
+      {
+        request_id: 'req-tool',
+        user_id: 'u1',
+        wallet_id: 'w1',
+        reservation_id: 'res-tool',
+        run_id: 'run_6670d0df3951463ea7af7ec243257941',
+        tool_call_id: 'call-search',
+        tool: 'web.search',
+        provider: 'tavily',
+        units: 1,
+        credits_cost: 20,
+        status: 'done',
+        started_at: iso(now - 2 * HOUR + 1000),
+      },
+    ],
+    transactions: [mockTransactions[0]],
+    created_at: iso(now - 2 * HOUR),
+    updated_at: iso(now - 2 * HOUR + 1000),
+  },
+  {
+    id: 'tx2',
+    kind: 'ledger',
+    reserved_credits: 0,
+    settled_credits: 0,
+    released_credits: 0,
+    net_credits: 0,
+    llm_calls: [],
+    tool_calls: [],
+    transactions: [mockTransactions[1]],
+    created_at: mockTransactions[1].created_at,
+    updated_at: mockTransactions[1].created_at,
+  },
 ]
 
 const agentSettings: Required<AgentSettings> = {
@@ -225,9 +338,11 @@ function Shell() {
   )
   const displayedConversation = harnessCase === 'provider-error'
     ? providerErrorConvo
-    : useEmptyConversation
-      ? { ...activeConvo, id: 'c-empty', title: '新对话', messages: [] }
-      : activeConvo
+    : harnessCase === 'tool-failed-active'
+      ? activeToolFailureConvo
+      : useEmptyConversation
+        ? { ...activeConvo, id: 'c-empty', title: '新对话', messages: [] }
+        : activeConvo
 
   useEffect(() => {
     return () => {
@@ -377,7 +492,7 @@ function Shell() {
           <SpendHistoryDialog
             open={spendHistoryOpen}
             onOpenChange={setSpendHistoryOpen}
-            fetchTransactions={async () => mockTransactions}
+            fetchActivities={async () => mockBillingActivities}
           />
         </div>
       </div>

@@ -109,7 +109,11 @@ export function ActivityList({ title, items }: { title: string; items: string[] 
     <div className="rounded-lg border bg-background p-3">
       <div className="mb-3 text-sm font-medium">{title}</div>
       <div className="grid gap-2">
-        {items.length ? items.map((item, index) => <div className="truncate text-xs text-muted-foreground" key={`${item}-${index}`}>{item}</div>) : <div className="text-xs text-muted-foreground">暂无数据</div>}
+        {items.length ? items.map((item, index) => (
+          <div className="truncate text-xs text-muted-foreground" title={item} key={`${item}-${index}`}>
+            {item}
+          </div>
+        )) : <div className="text-xs text-muted-foreground">暂无数据</div>}
       </div>
     </div>
   )

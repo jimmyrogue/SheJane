@@ -266,7 +266,7 @@ describe('user client shell', () => {
 
     expect(await screen.findByRole('dialog', { name: '消费记录' })).toBeInTheDocument()
     expect(await screen.findByText('注册赠送')).toBeInTheDocument()
-    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/transactions'))).toBe(true)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/activities'))).toBe(true)
   })
 
   it('exports local data directly from the settings page', async () => {
@@ -2416,10 +2416,10 @@ function mockFetch(
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
-	    if (url.endsWith('/api/v1/auth/register')) {
-	      return jsonResponse({
-	        code: 0,
-	        message: 'ok',
+    if (url.endsWith('/api/v1/auth/register')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
         data: {
           access_token: `${role}-token`,
           user: {
@@ -2430,21 +2430,53 @@ function mockFetch(
             status: 'active',
             email_verified: options.emailVerified ?? true,
           },
-	        },
-	      })
-	    }
-	    if (url.endsWith('/api/v1/auth/logout')) {
-	      return jsonResponse({ code: 0, message: 'ok', data: null })
-	    }
-	    if (url.endsWith('/api/v1/auth/email/verify-request')) {
-	      return jsonResponse({ code: 0, message: 'ok', data: { sent: true } })
-	    }
+        },
+      })
+    }
+    if (url.endsWith('/api/v1/auth/logout')) {
+      return jsonResponse({ code: 0, message: 'ok', data: null })
+    }
+    if (url.endsWith('/api/v1/auth/email/verify-request')) {
+      return jsonResponse({ code: 0, message: 'ok', data: { sent: true } })
+    }
     if (url.endsWith('/api/v1/auth/email/verify-confirm')) {
       return jsonResponse({ code: 0, message: 'ok', data: { verified: true } })
     }
     if (url.endsWith('/api/v1/billing/balance')) {
       const wallet = typeof options.balance === 'function' ? options.balance() : options.balance ?? balance
       return jsonResponse({ code: 0, message: 'ok', data: wallet })
+    }
+    if (url.endsWith('/api/v1/billing/activities')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: [
+          {
+            id: 'tx:signup',
+            kind: 'ledger',
+            reserved_credits: 0,
+            settled_credits: 0,
+            released_credits: 0,
+            net_credits: 0,
+            llm_calls: [],
+            tool_calls: [],
+            transactions: [
+              {
+                id: 'tx-signup',
+                wallet_id: 'wallet-1',
+                type: 'signup_grant',
+                amount: 1000,
+                monthly_used_after: 0,
+                extra_balance_after: 1000,
+                description: 'signup bonus',
+                created_at: '2026-06-10T00:00:00Z',
+              },
+            ],
+            created_at: '2026-06-10T00:00:00Z',
+            updated_at: '2026-06-10T00:00:00Z',
+          },
+        ],
+      })
     }
     if (url.endsWith('/api/v1/billing/transactions')) {
       return jsonResponse({

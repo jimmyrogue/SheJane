@@ -28,7 +28,7 @@ export function formatDateTime(value?: string) {
   if (!value) {
     return '-'
   }
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+  return new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })
 }
 
 export function formatMetadata(value: string) {

@@ -163,12 +163,11 @@ export function MessageBubble({
   const canEdit = !isAssistant && Boolean(onEditResend)
   const canDelete = settled && Boolean(onDelete)
 
-  // Per-turn usage chip: credits · tool-calls, shown on a settled assistant
-  // turn when any are known. Credits come from the run's llm.usage events
-  // (local) or the stream result (cloud); tool-calls from the timeline.
-  // Token counts are tracked on the message but deliberately NOT shown —
-  // the hover meta row was getting noisy and credits already convey cost.
-  const toolCalls = (message.agentEvents ?? []).filter((event) => event.type === 'tool.completed').length
+  // Per-turn usage chip: show credits only for plain model turns. Once tools
+  // are involved, the truthful user-facing bill is the ledger activity
+  // (reserve -> settle -> refund) because model fallback and tool billing can
+  // span several reservations inside one run.
+  const toolCalls = (message.agentEvents ?? []).filter((event) => event.type === 'tool.completed' || event.type === 'tool.failed').length
   const usageParts = buildUsageParts(message, toolCalls, locale, t)
   const showUsage = isAssistant && settled && usageParts.length > 0
   const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
@@ -402,7 +401,7 @@ function buildUsageParts(
   t: Translator,
 ): string[] {
   const parts: string[] = []
-  if (typeof message.creditsCost === 'number' && message.creditsCost > 0) {
+  if (toolCalls === 0 && typeof message.creditsCost === 'number' && message.creditsCost > 0) {
     parts.push(t('agent.usageCredits', { count: formatUsageNumber(message.creditsCost, locale) }))
   }
   if (toolCalls > 0) {

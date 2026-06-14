@@ -220,6 +220,7 @@ func (s *Server) agentToolExecute(w http.ResponseWriter, r *http.Request, user s
 	reservation, err := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, creditsCost, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     body.RunID,
 		Mode:      "tool",
 	})
 	if err != nil {

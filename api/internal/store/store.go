@@ -149,6 +149,22 @@ type AdminAgentRun struct {
 	UserEmail string `json:"user_email"`
 }
 
+type BillingActivity struct {
+	ID              string                   `json:"id"`
+	Kind            string                   `json:"kind"`
+	RunID           string                   `json:"run_id,omitempty"`
+	ReservationIDs  []string                 `json:"reservation_ids,omitempty"`
+	ReservedCredits int64                    `json:"reserved_credits"`
+	SettledCredits  int64                    `json:"settled_credits"`
+	ReleasedCredits int64                    `json:"released_credits"`
+	NetCredits      int64                    `json:"net_credits"`
+	LLMCalls        []LLMCallRecord          `json:"llm_calls"`
+	ToolCalls       []ExternalToolCallRecord `json:"tool_calls"`
+	Transactions    []billing.Transaction    `json:"transactions"`
+	CreatedAt       time.Time                `json:"created_at"`
+	UpdatedAt       time.Time                `json:"updated_at"`
+}
+
 type PaymentOrder struct {
 	ID                   string    `json:"id"`
 	WalletID             string    `json:"wallet_id"`
@@ -321,6 +337,7 @@ type Store interface {
 	// (WalletByUser does NOT hydrate the wallet's transaction slice on the
 	// Postgres path — callers needing the ledger must use this.)
 	WalletTransactions(ctx context.Context, userID string) ([]billing.Transaction, error)
+	BillingActivities(ctx context.Context, userID string, limit int) ([]BillingActivity, error)
 	ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error)
 	SettleUsage(ctx context.Context, userID string, reservationID string, actualCredits int64) error
 	ReleaseUsage(ctx context.Context, userID string, reservationID string) error

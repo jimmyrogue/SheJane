@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/billing/subscription", s.requireAuth(s.subscription))
 	s.mux.HandleFunc("GET /api/v1/billing/usage", s.requireAuth(s.usage))
 	s.mux.HandleFunc("GET /api/v1/billing/transactions", s.requireAuth(s.transactions))
+	s.mux.HandleFunc("GET /api/v1/billing/activities", s.requireAuth(s.billingActivities))
 	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
 	s.mux.HandleFunc("POST /api/v1/payment/webhook", s.paymentWebhook)
 	s.mux.HandleFunc("POST /api/v1/chat/completions", s.requireAuth(s.chatCompletions))
@@ -512,6 +513,15 @@ func (s *Server) transactions(w http.ResponseWriter, r *http.Request, user store
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse[[]billing.Transaction]{Code: 0, Message: "ok", Data: txs})
+}
+
+func (s *Server) billingActivities(w http.ResponseWriter, r *http.Request, user store.User) {
+	activities, err := s.app.Store.BillingActivities(r.Context(), user.ID, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "读取账务活动失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[[]store.BillingActivity]{Code: 0, Message: "ok", Data: activities})
 }
 
 func (s *Server) subscriptionCheckout(w http.ResponseWriter, r *http.Request, user store.User) {

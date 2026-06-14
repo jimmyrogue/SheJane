@@ -69,6 +69,7 @@ export interface AdminLLMCall {
   output_tokens: number
   credits_cost: number
   status: string
+  error_code?: string
   error_message?: string
   started_at: string
   finished_at?: string

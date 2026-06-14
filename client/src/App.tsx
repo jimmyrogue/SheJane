@@ -336,7 +336,7 @@ function AppContent() {
   const api = useMemo(() => new SheJaneAPI(), [])
   // Stable reference so SpendHistoryDialog's fetch-on-open effect doesn't
   // re-run on every parent render.
-  const fetchSpendHistory = useMemo(() => () => api.transactions(), [api])
+  const fetchSpendHistory = useMemo(() => () => api.billingActivities(), [api])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const [auth, setAuth] = useState<AuthPayload | null>(null)
   // Per-user IndexedDB so switching accounts in the same Electron window does
@@ -2981,7 +2981,7 @@ function AppContent() {
           <SpendHistoryDialog
             open={spendHistoryOpen}
             onOpenChange={setSpendHistoryOpen}
-            fetchTransactions={fetchSpendHistory}
+            fetchActivities={fetchSpendHistory}
           />
           <RechargeDialog
             open={rechargeDialogOpen}

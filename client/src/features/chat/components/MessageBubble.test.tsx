@@ -190,7 +190,23 @@ describe('MessageBubble meta', () => {
     expect(screen.getByRole('button', { name: '删除' })).toBeDisabled()
   })
 
-  it('shows a per-turn usage chip on a settled assistant turn', () => {
+  it('shows credits on a settled plain model turn', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            tokens: 1234,
+            creditsCost: 3,
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('3 积分')).toBeInTheDocument()
+    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
+  })
+
+  it('shows only tool count when a settled assistant turn used tools', () => {
     render(
       <I18nProvider>
         <MessageBubble
@@ -202,10 +218,26 @@ describe('MessageBubble meta', () => {
         />
       </I18nProvider>,
     )
-    // Token counts are tracked on the message but intentionally not shown —
-    // the chip is credits · tool-calls only.
-    expect(screen.getByText('3 积分 · 1 次工具')).toBeInTheDocument()
+    expect(screen.getByText('1 次工具')).toBeInTheDocument()
+    expect(screen.queryByText('3 积分')).not.toBeInTheDocument()
     expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
+  })
+
+  it('treats failed tools as tool usage in the settled usage chip', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            tokens: 1234,
+            creditsCost: 3,
+            agentEvents: [{ type: 'tool.failed', label: '工具失败：读取网页' }],
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('1 次工具')).toBeInTheDocument()
+    expect(screen.queryByText('3 积分')).not.toBeInTheDocument()
   })
 
   it('shows the concrete model badge on a settled assistant turn', () => {

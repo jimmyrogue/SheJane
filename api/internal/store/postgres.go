@@ -262,6 +262,40 @@ func (s *PostgresStore) WalletTransactions(ctx context.Context, userID string) (
 	return s.walletTransactionsByWallet(ctx, walletID, 200)
 }
 
+func (s *PostgresStore) BillingActivities(ctx context.Context, userID string, limit int) ([]BillingActivity, error) {
+	var walletID string
+	err := s.db.QueryRowContext(ctx, `SELECT id::text FROM wallets WHERE user_id=$1`, userID).Scan(&walletID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []BillingActivity{}, nil
+		}
+		return nil, err
+	}
+
+	transactions, err := s.walletTransactionsByWalletWithRun(ctx, walletID, 300)
+	if err != nil {
+		return nil, err
+	}
+	adminLLMCalls, err := s.AdminLLMCalls(ctx, AdminListOptions{UserID: userID, Limit: 300})
+	if err != nil {
+		return nil, err
+	}
+	adminToolCalls, err := s.AdminExternalToolCalls(ctx, AdminListOptions{UserID: userID, Limit: 300})
+	if err != nil {
+		return nil, err
+	}
+
+	llmCalls := make([]LLMCallRecord, 0, len(adminLLMCalls))
+	for _, call := range adminLLMCalls {
+		llmCalls = append(llmCalls, call.LLMCallRecord)
+	}
+	toolCalls := make([]ExternalToolCallRecord, 0, len(adminToolCalls))
+	for _, call := range adminToolCalls {
+		toolCalls = append(toolCalls, call.ExternalToolCallRecord)
+	}
+	return buildBillingActivities(transactions, llmCalls, toolCalls, limit), nil
+}
+
 func (s *PostgresStore) ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1443,6 +1477,10 @@ func (s *PostgresStore) AdminWalletTransactionsByRun(ctx context.Context, runID 
 		FROM wallet_transactions tx
 		JOIN usage_reservations r ON r.id = tx.reservation_id
 		WHERE r.run_id=$1
+			OR EXISTS (
+				SELECT 1 FROM external_tool_call_records c
+				WHERE c.reservation_id=tx.reservation_id AND c.run_id=$1
+			)
 		ORDER BY tx.created_at DESC
 		LIMIT $2
 	`, runID, limit)
@@ -1676,6 +1714,33 @@ func (s *PostgresStore) walletTransactionsByWallet(ctx context.Context, walletID
 	for rows.Next() {
 		var tx billing.Transaction
 		if err := rows.Scan(&tx.ID, &tx.WalletID, &tx.ReservationID, &tx.Type, &tx.Amount, &tx.MonthlyUsedAfter, &tx.ExtraBalanceAfter, &tx.Description, &tx.IdempotencyKey, &tx.CreatedAt); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, tx)
+	}
+	return transactions, rows.Err()
+}
+
+func (s *PostgresStore) walletTransactionsByWalletWithRun(ctx context.Context, walletID string, limit int) ([]billingTransactionWithRun, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tx.id::text, tx.wallet_id::text, COALESCE(tx.reservation_id::text, ''), tx.type, tx.amount,
+			tx.monthly_used_after, tx.extra_balance_after, COALESCE(tx.description, ''), COALESCE(tx.idempotency_key, ''), tx.created_at,
+			COALESCE(r.run_id, '')
+		FROM wallet_transactions tx
+		LEFT JOIN usage_reservations r ON r.id = tx.reservation_id
+		WHERE tx.wallet_id=$1
+		ORDER BY tx.created_at DESC
+		LIMIT $2
+	`, walletID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	transactions := make([]billingTransactionWithRun, 0)
+	for rows.Next() {
+		var tx billingTransactionWithRun
+		if err := rows.Scan(&tx.ID, &tx.WalletID, &tx.ReservationID, &tx.Type, &tx.Amount, &tx.MonthlyUsedAfter, &tx.ExtraBalanceAfter, &tx.Description, &tx.IdempotencyKey, &tx.CreatedAt, &tx.RunID); err != nil {
 			return nil, err
 		}
 		transactions = append(transactions, tx)

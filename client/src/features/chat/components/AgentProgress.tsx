@@ -63,9 +63,12 @@ export function AgentProgress({
   }
   const bodyId = `agent-progress-body-${message.id}`
   // While the run is active: the current action + its concrete target
-  // ("正在打开 weather.com"). Once finished: an aggregated tally of what was
-  // done ("读取 3 个文件 · 运行 2 条命令"). Never success/failure or step count.
-  const headline = progress.tone === 'failed'
+  // ("正在打开 weather.com"). Once finished: the card headline carries the
+  // terminal state, and the expanded body carries the aggregate work tally.
+  const successSummary = progress.tone === 'done'
+    ? summaryHeadline(events, message, t).label
+    : undefined
+  const headline = progress.tone === 'failed' || progress.tone === 'done'
     ? { label: progress.label }
     : summaryHeadline(events, message, t)
   // Prefer the rich `toolDetail` shape when present (set by
@@ -88,17 +91,18 @@ export function AgentProgress({
   const showTaskList = inFlightTasks.length >= 2
   const hasDiagnosticsFailureAction = progress.failureAction?.action === 'diagnostics' && Boolean(onFailureAction)
   const isHandoffWarning = Boolean(latestHandoffWarningEvent(events) && ACTIVE_RUN_STATUSES.has(message.status))
-  const isNoticeCard = isHandoffWarning || progress.tone === 'failed'
+  const isNoticeCard = isHandoffWarning || progress.tone === 'failed' || progress.tone === 'done'
   const canExpand = !isNoticeCard && Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !hasDiagnosticsFailureAction)
   const hasNoticeBody = isNoticeCard && Boolean(
     detail?.text ||
+    successSummary ||
     progress.failureMessage ||
     progress.detail ||
     progress.failureAction ||
     (progress.diagnosticsRunID && onOpenDiagnostics),
   )
   const headerCanToggle = canExpand || hasNoticeBody
-  const NoticeTitleIcon = isNoticeCard
+  const NoticeTitleIcon = isNoticeCard && progress.tone !== 'done'
     ? progress.tone === 'failed' ? IconAlertCircle : IconInfoCircle
     : undefined
 
@@ -115,7 +119,7 @@ export function AgentProgress({
   // target text doesn't visually shake.
   const summaryInner = (
     <>
-      {!isNoticeCard ? <span className="agent-progress-status-dot" aria-hidden="true" /> : null}
+      {!isNoticeCard || progress.tone === 'done' ? <span className="agent-progress-status-dot" aria-hidden="true" /> : null}
       {NoticeTitleIcon ? (
         <NoticeTitleIcon className="agent-progress-notice-title-icon" size={14} aria-hidden="true" />
       ) : null}
@@ -180,6 +184,7 @@ export function AgentProgress({
           bodyId={bodyId}
           progress={progress}
           targetDetail={detail}
+          successSummary={successSummary}
           message={message}
           onFailureAction={onFailureAction}
           onOpenDiagnostics={onOpenDiagnostics}
@@ -262,6 +267,7 @@ function AgentProgressNoticeBody({
   bodyId,
   progress,
   targetDetail,
+  successSummary,
   message,
   onOpenDiagnostics,
   onFailureAction,
@@ -269,6 +275,7 @@ function AgentProgressNoticeBody({
   bodyId: string
   progress: AgentProgressState
   targetDetail?: AgentToolDetail
+  successSummary?: string
   message: ChatMessage
   onOpenDiagnostics?: (runID: string) => void
   onFailureAction?: (action: AgentFailureAction, message: ChatMessage) => void
@@ -276,7 +283,7 @@ function AgentProgressNoticeBody({
   const { t } = useI18n()
   const showDiagnosticsDownload = Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !progress.failureAction)
 
-  if (!targetDetail?.text && !progress.failureMessage && !progress.detail && !progress.failureAction && !showDiagnosticsDownload) {
+  if (!targetDetail?.text && !successSummary && !progress.failureMessage && !progress.detail && !progress.failureAction && !showDiagnosticsDownload) {
     return null
   }
 
@@ -291,6 +298,12 @@ function AgentProgressNoticeBody({
       {progress.failureMessage ? (
         <div className="agent-progress-notice-raw">
           {progress.failureMessage}
+        </div>
+      ) : null}
+
+      {successSummary ? (
+        <div className="agent-progress-notice-line">
+          <span>{successSummary}</span>
         </div>
       ) : null}
 
@@ -317,14 +330,14 @@ function AgentProgressNoticeBody({
       {showDiagnosticsDownload ? (
         <div className="agent-progress-notice-actions agent-progress-actions">
           <Button
-            className="agent-progress-action"
-            size="sm"
+            className="agent-progress-action agent-progress-icon-action"
+            size="icon-xs"
             variant="outline"
+            aria-label={t('agent.downloadDiagnostics')}
             title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID! })}
             onClick={() => onOpenDiagnostics!(progress.diagnosticsRunID!)}
           >
-            <IconDownload size={13} aria-hidden="true" />
-            {t('agent.downloadDiagnostics')}
+            <IconDownload size={12} aria-hidden="true" />
           </Button>
         </div>
       ) : null}
@@ -588,7 +601,15 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
     }
   }
 
-  const latestFailure = [...events].reverse().find((event) => event.type === 'run.failed' || event.type === 'tool.failed' || event.verificationStatus === 'failed')
+  const isActive = ACTIVE_RUN_STATUSES.has(message.status)
+  const latestRunFailure = [...events].reverse().find((event) => event.type === 'run.failed')
+  const latestStatusFailure = message.status === 'error'
+    ? [...events].reverse().find((event) => event.type === 'run.failed' || event.type === 'tool.failed' || event.verificationStatus === 'failed')
+    : undefined
+  const latestVerificationFailure = !isActive
+    ? [...events].reverse().find((event) => event.verificationStatus === 'failed')
+    : undefined
+  const latestFailure = latestRunFailure || latestStatusFailure || latestVerificationFailure
   if (latestFailure || message.status === 'error') {
     return {
       tone: 'failed',
@@ -606,9 +627,10 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
 
   const latestCompletion = [...events].reverse().find((event) => event.type === 'run.completed' || event.type === 'run.canceled')
   if (latestCompletion || message.status === 'done') {
+    const canceled = latestCompletion?.type === 'run.canceled'
     return {
-      tone: latestCompletion?.type === 'run.canceled' ? 'idle' : 'done',
-      label: latestCompletion?.label || t('agent.completed'),
+      tone: canceled ? 'idle' : 'done',
+      label: canceled ? (latestCompletion?.label || t('agent.completed')) : t('agent.completed'),
       detail: completionDetail(sourcesCount, artifacts.length, t),
       sourcesCount,
       artifactsCount: artifacts.length,
@@ -836,6 +858,7 @@ function isProgressEvent(event: AgentTimelineItem): boolean {
     'tool.requested',
     'tool.started',
     'tool.completed',
+    'tool.failed',
     'browser.observed',
     'source.collected',
     'ui.action.requested',

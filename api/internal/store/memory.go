@@ -295,6 +295,39 @@ func (s *MemoryStore) WalletTransactions(ctx context.Context, userID string) ([]
 	return txs, nil
 }
 
+func (s *MemoryStore) BillingActivities(ctx context.Context, userID string, limit int) ([]BillingActivity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	wallet, ok := s.wallets[userID]
+	if !ok {
+		return []BillingActivity{}, nil
+	}
+	reservationRuns := make(map[string]string)
+	llmCalls := s.llmCallsByUserLocked(userID, 300)
+	for _, record := range llmCalls {
+		if record.ReservationID != "" && record.RunID != "" {
+			reservationRuns[record.ReservationID] = record.RunID
+		}
+	}
+	toolCalls := s.toolCallsByUserLocked(userID, 300)
+	for _, record := range toolCalls {
+		if record.ReservationID != "" && record.RunID != "" {
+			reservationRuns[record.ReservationID] = record.RunID
+		}
+	}
+
+	txs := wallet.Transactions()
+	transactions := make([]billingTransactionWithRun, 0, len(txs))
+	for _, tx := range txs {
+		transactions = append(transactions, billingTransactionWithRun{
+			Transaction: tx,
+			RunID:       reservationRuns[tx.ReservationID],
+		})
+	}
+	return buildBillingActivities(transactions, llmCalls, toolCalls, limit), nil
+}
+
 func (s *MemoryStore) ReserveUsage(ctx context.Context, userID string, monthlyCredits int64, estimatedCredits int64, meta billing.ReservationMeta) (*billing.Reservation, error) {
 	wallet, err := s.EnsureWallet(ctx, userID, monthlyCredits)
 	if err != nil {

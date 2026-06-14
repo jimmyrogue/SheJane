@@ -68,13 +68,14 @@ describe('AgentProgress', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('暂停前缺少进展账本，恢复时上下文可能不完整。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '下载诊断' })).toBeInTheDocument()
+    expect(screen.queryByText('下载诊断')).not.toBeInTheDocument()
     expect(container.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
     expect(container.querySelector('.agent-progress-status-dot')).not.toBeInTheDocument()
     expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('collapses to an aggregated headline; expanding exposes only the diagnostics escape hatch', () => {
+  it('uses the compact notice-card style for a completed run and keeps diagnostics in the drawer', () => {
     // The expanded body used to dump a per-step list + source/artifact
     // tallies + a "view artifact" button. Users found it noisy and
     // mostly irrelevant — leaks internal events like graph.node /
@@ -100,21 +101,29 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Finished: an aggregated tally, no success/failure word or step count.
-    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
+    // Finished: the headline is a terminal-state label; the aggregate work
+    // tally moves into the compact drawer so success and failure share the
+    // same card structure.
+    expect(screen.getByText('执行成功')).toBeInTheDocument()
+    expect(screen.queryByText('读取 1 个文件')).not.toBeInTheDocument()
     expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
+    expect(document.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
+    expect(document.querySelector('.agent-progress-tool-card')).not.toBeInTheDocument()
     // None of the removed UI should be present anywhere — even collapsed.
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
 
     // Source/artifact tallies and per-step list are gone for good —
     // the only thing in the expanded drawer is the diagnostics button.
+    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByText('生成 1 个 Artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
+    expect(screen.queryByText('下载诊断')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载诊断' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByTitle('查看诊断 run-local'))
     expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
@@ -201,6 +210,37 @@ describe('AgentProgress', () => {
     expect(screen.getByText('搜索网页')).toBeInTheDocument()
   })
 
+  it('does not mark an active run as failed when one tool attempt fails', () => {
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'streaming',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：读取网页', tool: 'web.fetch', target: 'https://example.com/news' },
+            { type: 'tool.failed', label: '工具失败：读取网页', tool: 'web.fetch', target: 'https://example.com/news' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('任务失败')).not.toBeInTheDocument()
+    expect(screen.getByText('读取网页')).toBeInTheDocument()
+    expect(screen.getByText('https://example.com/news')).toBeInTheDocument()
+  })
+
+  it('keeps an active tool failure in the working progress state', () => {
+    expect(
+      deriveAgentProgress(
+        message({
+          status: 'streaming',
+          agentEvents: [{ type: 'tool.failed', label: '工具失败：读取网页', tool: 'web.fetch' }],
+        }),
+      ),
+    ).toMatchObject({ tone: 'working', label: '工具失败：读取网页' })
+  })
+
   it('prefers an in-flight tool over a completed sibling for the headline', () => {
     // 3 parallel tools, 2 done, 1 still running. The live headline
     // must point at the one still running, not the completed ones.
@@ -225,9 +265,7 @@ describe('AgentProgress', () => {
     expect(screen.getByText('README.md')).toBeInTheDocument()
   })
 
-  it('still shows "已完成 X" as the final headline once the run is actually done', () => {
-    // The fix above only applies during active runs — once the run is
-    // finished the latest activity is correctly framed as completed.
+  it('shows completed work inside the compact success drawer once the run is done', () => {
     renderAgentProgress(
       <AgentProgress
         message={message({
@@ -243,7 +281,9 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Aggregated count wins when present:
+    expect(screen.getByText('执行成功')).toBeInTheDocument()
+    expect(screen.queryByText('搜索 1 次')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('搜索 1 次')).toBeInTheDocument()
   })
 

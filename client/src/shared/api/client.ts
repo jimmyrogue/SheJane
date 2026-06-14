@@ -133,6 +133,61 @@ export interface WalletTransaction {
   created_at: string
 }
 
+export interface BillingLLMCall {
+  request_id: string
+  user_id: string
+  wallet_id: string
+  reservation_id?: string
+  run_id?: string
+  mode: string
+  scene: string
+  model: string
+  provider: string
+  input_tokens: number
+  output_tokens: number
+  credits_cost: number
+  status: string
+  error_code?: string
+  error_message?: string
+  started_at: string
+  finished_at?: string
+}
+
+export interface BillingToolCall {
+  request_id: string
+  user_id: string
+  wallet_id: string
+  reservation_id?: string
+  run_id?: string
+  tool_call_id?: string
+  tool: string
+  provider: string
+  units: number
+  credits_cost: number
+  status: string
+  error_code?: string
+  error_message?: string
+  idempotency_key?: string
+  started_at: string
+  finished_at?: string
+}
+
+export interface BillingActivity {
+  id: string
+  kind: 'usage' | 'ledger' | string
+  run_id?: string
+  reservation_ids?: string[]
+  reserved_credits: number
+  settled_credits: number
+  released_credits: number
+  net_credits: number
+  llm_calls: BillingLLMCall[]
+  tool_calls: BillingToolCall[]
+  transactions: WalletTransaction[]
+  created_at: string
+  updated_at: string
+}
+
 export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'failed' | 'deleted'
 
 export interface UserDocument {
@@ -313,6 +368,10 @@ export class SheJaneAPI implements ChatAPI {
 
   async transactions(): Promise<WalletTransaction[]> {
     return this.get<WalletTransaction[]>('/api/v1/billing/transactions')
+  }
+
+  async billingActivities(): Promise<BillingActivity[]> {
+    return this.get<BillingActivity[]>('/api/v1/billing/activities')
   }
 
   async createSubscriptionCheckout(): Promise<{ checkout_url: string }> {

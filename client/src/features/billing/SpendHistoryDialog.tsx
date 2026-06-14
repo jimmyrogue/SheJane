@@ -1,21 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
-import type { WalletTransaction } from '@/shared/api/client'
+import type { BillingActivity, BillingLLMCall } from '@/shared/api/client'
 
 type HistoryFilter = 'all' | 'usage' | 'topup'
 
 export function SpendHistoryDialog({
   open,
   onOpenChange,
-  fetchTransactions,
+  fetchActivities,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  fetchTransactions: () => Promise<WalletTransaction[]>
+  fetchActivities: () => Promise<BillingActivity[]>
 }) {
   const { t, locale } = useI18n()
-  const [transactions, setTransactions] = useState<WalletTransaction[] | null>(null)
+  const [activities, setActivities] = useState<BillingActivity[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [filter, setFilter] = useState<HistoryFilter>('all')
 
@@ -24,12 +24,12 @@ export function SpendHistoryDialog({
       return
     }
     let cancelled = false
-    setTransactions(null)
+    setActivities(null)
     setFailed(false)
-    fetchTransactions()
+    fetchActivities()
       .then((items) => {
         if (!cancelled) {
-          setTransactions(items)
+          setActivities(items)
         }
       })
       .catch(() => {
@@ -40,19 +40,22 @@ export function SpendHistoryDialog({
     return () => {
       cancelled = true
     }
-  }, [open, fetchTransactions])
+  }, [open, fetchActivities])
 
-  const filteredTransactions = useMemo(() => {
-    if (!transactions) return []
-    if (filter === 'usage') return transactions.filter((tx) => tx.amount < 0)
-    if (filter === 'topup') return transactions.filter((tx) => tx.amount > 0)
-    return transactions
-  }, [transactions, filter])
+  const filteredActivities = useMemo(() => {
+    if (!activities) return []
+    if (filter === 'usage') return activities.filter(isUsageActivity)
+    if (filter === 'topup') return activities.filter((activity) => !isUsageActivity(activity) && activityDisplayAmount(activity) > 0)
+    return activities
+  }, [activities, filter])
 
   const recentSpend = useMemo(
-    () => (transactions ?? []).reduce((sum, tx) => (tx.amount < 0 ? sum + Math.abs(tx.amount) : sum), 0),
-    [transactions],
+    () => (activities ?? []).reduce((sum, activity) => (
+      isUsageActivity(activity) && isWithinRecentWindow(activity) ? sum + activity.settled_credits : sum
+    ), 0),
+    [activities],
   )
+  const exportRows = activities ?? []
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,30 +88,14 @@ export function SpendHistoryDialog({
 
           {failed ? (
             <p className="spend-history-empty">{t('billing.history.error')}</p>
-          ) : transactions === null ? (
+          ) : activities === null ? (
             <p className="spend-history-empty">{t('billing.history.loading')}</p>
-          ) : filteredTransactions.length === 0 ? (
+          ) : filteredActivities.length === 0 ? (
             <p className="spend-history-empty">{t('billing.history.empty')}</p>
           ) : (
             <ul className="spend-history-list">
-              {filteredTransactions.map((tx) => (
-                <li key={tx.id} className="spend-history-row">
-                  <span className={`spend-history-icon${tx.amount > 0 ? ' positive' : ''}`} aria-hidden="true">
-                    {tx.amount > 0 ? '+' : '-'}
-                  </span>
-                  <div className="spend-history-main">
-                    <span className="spend-history-type">{transactionTypeLabel(tx.type, t)}</span>
-                    <span className="spend-history-desc">
-                      {tx.description
-                        ? `${tx.description} · ${formatTimestamp(tx.created_at, locale)}`
-                        : formatTimestamp(tx.created_at, locale)}
-                    </span>
-                  </div>
-                  <span className={tx.amount < 0 ? 'spend-history-amount negative' : 'spend-history-amount positive'}>
-                    {tx.amount > 0 ? '+' : ''}
-                    {formatCredits(tx.amount)}
-                  </span>
-                </li>
+              {filteredActivities.map((activity) => (
+                <SpendActivityRow key={activity.id} activity={activity} locale={locale} t={t} />
               ))}
             </ul>
           )}
@@ -119,8 +106,8 @@ export function SpendHistoryDialog({
           <button
             type="button"
             className="settings-inline-button"
-            disabled={!transactions?.length}
-            onClick={() => exportTransactions(transactions ?? [])}
+            disabled={!exportRows.length}
+            onClick={() => exportActivities(exportRows)}
           >
             {t('billing.history.export')}
           </button>
@@ -128,6 +115,93 @@ export function SpendHistoryDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function SpendActivityRow({ activity, locale, t }: { activity: BillingActivity; locale: string; t: Translator }) {
+  const amount = activityDisplayAmount(activity)
+  const positive = amount > 0
+  const zero = amount === 0
+  return (
+    <li className={`spend-history-row${isUsageActivity(activity) ? ' spend-history-row-usage' : ''}`}>
+      <span className={`spend-history-icon${positive ? ' positive' : ''}`} aria-hidden="true">
+        {positive ? '+' : zero ? '·' : '-'}
+      </span>
+      <div className="spend-history-main">
+        <span className="spend-history-type">{activityTitle(activity, t)}</span>
+        <span className="spend-history-desc">{activityDescription(activity, locale, t)}</span>
+        {isUsageActivity(activity) ? (
+          <div className="spend-history-metrics" aria-label={t('billing.history.breakdownAria')}>
+            <span><b>{t('billing.history.reserved')}</b>{formatCredits(activity.reserved_credits)}</span>
+            <span><b>{t('billing.history.actual')}</b>{formatCredits(activity.settled_credits)}</span>
+            <span><b>{t('billing.history.refunded')}</b>{formatCredits(activity.released_credits)}</span>
+          </div>
+        ) : null}
+      </div>
+      <span className={amount < 0 ? 'spend-history-amount negative' : 'spend-history-amount positive'}>
+        {amount > 0 ? '+' : ''}
+        {formatCredits(amount)}
+      </span>
+    </li>
+  )
+}
+
+function isUsageActivity(activity: BillingActivity) {
+  return activity.kind === 'usage' || activity.reserved_credits > 0 || activity.settled_credits > 0 || activity.released_credits > 0
+}
+
+function isWithinRecentWindow(activity: BillingActivity) {
+  const timestamp = Date.parse(activity.updated_at || activity.created_at)
+  if (Number.isNaN(timestamp)) {
+    return true
+  }
+  return timestamp >= Date.now() - 30 * 24 * 60 * 60 * 1000
+}
+
+function activityDisplayAmount(activity: BillingActivity) {
+  if (isUsageActivity(activity)) {
+    return -activity.settled_credits
+  }
+  return activity.transactions.reduce((sum, tx) => sum + tx.amount, 0)
+}
+
+function activityTitle(activity: BillingActivity, t: Translator): string {
+  if (isUsageActivity(activity)) {
+    const call = preferredLLMCall(activity.llm_calls)
+    if (call) {
+      return `${t('billing.history.usageRun')} · ${call.provider}/${call.model || call.mode}`
+    }
+    const tool = activity.tool_calls[0]
+    if (tool) {
+      return `${t('billing.history.usageRun')} · ${tool.tool}`
+    }
+    return t('billing.history.usageRun')
+  }
+  const tx = activity.transactions[0]
+  return tx ? transactionTypeLabel(tx.type, t) : t('billing.history.accountChange')
+}
+
+function activityDescription(activity: BillingActivity, locale: string, t: Translator): string {
+  const parts = [formatTimestamp(activity.updated_at || activity.created_at, locale)]
+  if (activity.run_id) {
+    parts.push(`${t('billing.history.run')} ${shortID(activity.run_id)}`)
+  }
+  if (activity.llm_calls.length > 0) {
+    parts.push(t('billing.history.modelCount', { count: activity.llm_calls.length }))
+  }
+  if (activity.tool_calls.length > 0) {
+    parts.push(t('billing.history.toolCount', { count: activity.tool_calls.length }))
+  }
+  if (!isUsageActivity(activity)) {
+    const desc = activity.transactions.map((tx) => tx.description).find(Boolean)
+    if (desc) {
+      parts.unshift(desc)
+    }
+  }
+  return parts.join(' · ')
+}
+
+function preferredLLMCall(calls: BillingLLMCall[]): BillingLLMCall | undefined {
+  return calls.find((call) => call.status === 'done' || call.credits_cost > 0) ?? calls[0]
 }
 
 function transactionTypeLabel(type: string, t: Translator): string {
@@ -169,10 +243,43 @@ function formatTimestamp(iso: string, locale: string): string {
   })
 }
 
-function exportTransactions(transactions: WalletTransaction[]) {
+function shortID(value: string): string {
+  if (value.length <= 14) {
+    return value
+  }
+  return `${value.slice(0, 8)}...${value.slice(-4)}`
+}
+
+function exportActivities(activities: BillingActivity[]) {
   const rows = [
-    ['id', 'type', 'amount', 'description', 'created_at'],
-    ...transactions.map((tx) => [tx.id, tx.type, String(tx.amount), tx.description, tx.created_at]),
+    [
+      'activity_id',
+      'kind',
+      'run_id',
+      'reserved_credits',
+      'settled_credits',
+      'released_credits',
+      'net_credits',
+      'models',
+      'tools',
+      'transaction_ids',
+      'created_at',
+      'updated_at',
+    ],
+    ...activities.map((activity) => [
+      activity.id,
+      activity.kind,
+      activity.run_id ?? '',
+      String(activity.reserved_credits),
+      String(activity.settled_credits),
+      String(activity.released_credits),
+      String(activity.net_credits),
+      activity.llm_calls.map((call) => `${call.provider}/${call.model || call.mode}:${call.status}:${call.credits_cost}`).join('; '),
+      activity.tool_calls.map((call) => `${call.tool}/${call.provider}:${call.status}:${call.credits_cost}`).join('; '),
+      activity.transactions.map((tx) => tx.id).join('; '),
+      activity.created_at,
+      activity.updated_at,
+    ]),
   ]
   const csv = rows.map((row) => row.map(csvCell).join(',')).join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })

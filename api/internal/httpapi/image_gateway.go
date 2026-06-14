@@ -144,6 +144,7 @@ func (s *Server) runBilledImage(
 	reservation, err := s.app.Store.ReserveUsage(ctx, user.ID, s.app.Config.MonthlyCredits, creditsCost, billing.ReservationMeta{
 		UserID:    user.ID,
 		RequestID: requestID,
+		RunID:     runID,
 		Mode:      "image",
 	})
 	if err != nil {

@@ -5085,6 +5085,10 @@ button:active {
   box-shadow: var(--sj-shadow-3, 0 8px 28px rgba(43, 42, 40, 0.10));
 }
 
+.spend-history-dialog {
+  max-width: min(720px, calc(100vw - 32px));
+}
+
 .billing-modal-header {
   padding: 18px 20px 16px;
   border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
@@ -5227,10 +5231,14 @@ button:active {
 
 .spend-history-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   padding: 11px 0;
   border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+}
+
+.spend-history-row-usage {
+  padding: 13px 0;
 }
 
 .spend-history-row:last-child {
@@ -5263,8 +5271,11 @@ button:active {
 }
 
 .spend-history-type {
+  overflow: hidden;
   color: var(--sj-ink, #2B2A28);
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .spend-history-desc {
@@ -5275,8 +5286,36 @@ button:active {
   white-space: nowrap;
 }
 
+.spend-history-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.spend-history-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 7px;
+  background: var(--sj-paper-sunken, #F3F1EC);
+  padding: 3px 7px;
+  color: var(--sj-ink, #2B2A28);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.spend-history-metrics b {
+  color: var(--sj-ink-faint, #A8A39A);
+  font-weight: 500;
+}
+
 .spend-history-amount {
   flex: none;
+  margin-top: 5px;
   color: var(--sj-ink, #2B2A28);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
@@ -5413,6 +5452,14 @@ button:active {
   .recharge-package-grid,
   .recharge-pay-grid {
     grid-template-columns: 1fr;
+  }
+
+  .spend-history-row {
+    gap: 9px;
+  }
+
+  .spend-history-amount {
+    font-size: 12px;
   }
 }
 
@@ -9819,10 +9866,10 @@ button.settings-row-button:focus-visible,
 
 .agent-progress.tool-card {
   width: fit-content;
-  max-width: min(470px, 100%);
-  margin-top: 18px;
+  max-width: min(420px, 100%);
+  margin-top: 12px;
   border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: var(--sj-r-m, 10px);
+  border-radius: 8px;
   overflow: hidden;
   background: var(--sj-paper-raised, #FFFFFF);
   padding: 0;
@@ -9830,15 +9877,15 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress-notice-card.tool-card {
-  max-width: min(540px, 100%);
+  max-width: min(420px, 100%);
   background: var(--sj-paper-sunken, #F3F1EC);
 }
 
 .agent-progress .agent-progress-summary {
   width: 100%;
   max-width: 100%;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 6px 10px;
   transition: background 150ms ease, color 120ms ease;
 }
 
@@ -9855,7 +9902,7 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress .tool-card-header .name {
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--sj-ink-soft, #6F6B63);
 }
 
@@ -9864,8 +9911,8 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress-notice-card .agent-progress-summary {
-  gap: 8px;
-  padding: 9px 12px;
+  gap: 6px;
+  padding: 6px 10px;
 }
 
 .agent-progress-notice-card[data-expanded="true"] .agent-progress-summary {
@@ -9878,6 +9925,8 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress-notice-title-icon {
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
   color: var(--sj-ink-faint, #A8A39A);
 }
@@ -9892,19 +9941,48 @@ button.settings-row-button:focus-visible,
 
 .agent-progress-notice-body {
   border-top: 0.5px solid var(--sj-line, #E8E5DE);
-  padding: 10px 12px 11px;
-  max-height: min(260px, 45vh);
+  padding: 7px 10px 8px;
+  max-height: min(220px, 42vh);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--sj-line-strong, #D9D5CC) transparent;
+}
+
+.agent-progress-notice-card[data-state="done"] .agent-progress-notice-body {
+  display: flex;
+  max-height: none;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 5px 10px 6px;
+}
+
+.agent-progress-notice-card[data-state="done"] .agent-progress-notice-line {
+  min-width: 0;
+  padding-left: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.agent-progress-notice-card[data-state="done"] .agent-progress-notice-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-progress-notice-card[data-state="done"] .agent-progress-notice-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding-left: 0;
 }
 
 .agent-progress-notice-primary,
 .agent-progress-notice-raw,
 .agent-progress-notice-target-full {
   color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12.5px;
-  line-height: 1.65;
+  font-size: 11.5px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -9914,11 +9992,11 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress-notice-raw {
-  padding-left: 22px;
+  padding-left: 18px;
 }
 
 .agent-progress-notice-target-full {
-  padding-left: 22px;
+  padding-left: 18px;
 }
 
 .agent-progress-notice-primary + .agent-progress-notice-target-full,
@@ -9926,16 +10004,16 @@ button.settings-row-button:focus-visible,
 .agent-progress-notice-raw + .agent-progress-notice-line,
 .agent-progress-notice-target-full + .agent-progress-notice-line,
 .agent-progress-notice-primary + .agent-progress-notice-line {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .agent-progress-notice-line {
   display: flex;
   align-items: flex-start;
   color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12.5px;
-  line-height: 1.6;
-  padding-left: 22px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding-left: 18px;
 }
 
 .agent-progress-notice-line span {
@@ -9947,22 +10025,29 @@ button.settings-row-button:focus-visible,
 .agent-progress-notice-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-  padding-left: 22px;
+  gap: 6px;
+  margin-top: 7px;
+  padding-left: 18px;
 }
 
 .agent-progress-notice-actions .agent-progress-action,
 .agent-progress-actions .agent-progress-action,
 .agent-progress-results .agent-progress-action {
   width: fit-content;
-  min-height: 27px;
+  min-height: 24px;
   border: 0.5px solid var(--sj-line-strong, #D9D5CC);
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
+}
+
+.agent-progress-notice-actions .agent-progress-icon-action {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
 }
 
 .agent-progress-notice-actions .agent-progress-action:hover,

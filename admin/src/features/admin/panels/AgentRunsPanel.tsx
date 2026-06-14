@@ -67,7 +67,7 @@ export function AgentRunsCard({
 
 export function AgentTraceDialog({ trace, onClose }: { trace: AdminAgentRunTrace | null; onClose: () => void }) {
   const eventItems = trace?.events.slice(-8).map((event) => `#${event.seq} ${event.event_type} · ${formatDateTime(event.created_at)}`) ?? []
-  const llmItems = trace?.llm_calls.slice(0, 8).map((call) => `${call.provider}/${call.model} · ${statusLabel(call.status)} · ${formatNumber(call.credits_cost)} 额度`) ?? []
+  const llmItems = trace?.llm_calls.slice(0, 8).map(llmTraceItem) ?? []
   const toolItems = trace?.tool_calls.slice(0, 8).map((call) => `${call.tool} · ${statusLabel(call.status)} · ${formatNumber(call.credits_cost)} 额度`) ?? []
   const walletItems = trace?.wallet_transactions.slice(0, 8).map((tx) => `${txTypeLabel(tx.type)} · ${formatSignedNumber(tx.amount)} 额度 · ${formatDateTime(tx.created_at)}`) ?? []
 
@@ -97,4 +97,14 @@ export function AgentTraceDialog({ trace, onClose }: { trace: AdminAgentRunTrace
       </DialogContent>
     </Dialog>
   )
+}
+
+function llmTraceItem(call: AdminAgentRunTrace['llm_calls'][number]) {
+  const error = call.error_message || call.error_code
+  return [
+    `${call.provider}/${call.model}`,
+    statusLabel(call.status),
+    `${formatNumber(call.credits_cost)} 额度`,
+    error,
+  ].filter(Boolean).join(' · ')
 }

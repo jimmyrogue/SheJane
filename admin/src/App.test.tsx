@@ -13,6 +13,8 @@ const balance = {
   status: 'active',
 }
 
+const anthropicFailureMessage = 'anthropic-claude returned status 400: {"type":"error","error":{"type":"invalid_request_error","message":"temperature is not supported by this model"}}'
+
 describe('admin web app', () => {
   afterEach(() => {
     cleanup()
@@ -92,6 +94,24 @@ describe('admin web app', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/users/admin-1/credits/adjust'))).toBe(true)
   })
 
+  it('shows failed LLM call details and formats timestamps in Shanghai time', async () => {
+    mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('近期动态')
+    selectAdminTab('用户')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'admin@example.com' }))
+
+    expect(await screen.findByText('anthropic-claude/claude-opus-4-8')).toBeInTheDocument()
+    expect(screen.getByText(anthropicFailureMessage)).toBeInTheDocument()
+    expect(screen.getByText('2026/6/14 18:52:31')).toBeInTheDocument()
+    expect(screen.queryByText('2026-06-14T10:52:31.675404Z')).not.toBeInTheDocument()
+  })
+
   it('shows subscription ids in orders and renders audit logs read-only', async () => {
     mockFetch('admin')
 
@@ -137,6 +157,7 @@ describe('admin web app', () => {
     fireEvent.click(await screen.findByRole('button', { name: '追踪' }))
 
     expect(await screen.findByText('Run Trace')).toBeInTheDocument()
+    expect(await screen.findByText((content) => content.includes(anthropicFailureMessage))).toBeInTheDocument()
     expect(await screen.findByText((content) => content.includes('用量结算'))).toBeInTheDocument()
   })
 
@@ -309,7 +330,25 @@ function mockFetch(role: 'admin' | 'user') {
             created_at: '2026-05-10T00:00:00Z',
           },
           wallet: balance,
-          calls: [],
+          calls: [
+            {
+              request_id: 'llm_req_failed',
+              user_id: 'admin-1',
+              user_email: 'admin@example.com',
+              run_id: 'run_6670d0df3951463ea7af7ec243257941',
+              mode: 'claude-opus-4-8',
+              scene: 'agent_local',
+              model: 'claude-opus-4-8',
+              provider: 'anthropic-claude',
+              input_tokens: 0,
+              output_tokens: 0,
+              credits_cost: 0,
+              status: 'failed',
+              error_message: anthropicFailureMessage,
+              started_at: '2026-06-14T10:52:31.675404Z',
+            },
+          ],
+          tool_calls: [],
           orders: [],
           transactions: [],
         },
@@ -419,7 +458,24 @@ function mockFetch(role: 'admin' | 'user') {
               created_at: '2026-05-10T00:01:00Z',
             },
           ],
-          llm_calls: [],
+          llm_calls: [
+            {
+              request_id: 'llm_req_trace_failed',
+              user_id: 'user-1',
+              user_email: 'user@example.com',
+              run_id: 'run_1',
+              mode: 'claude-opus-4-8',
+              scene: 'agent_local',
+              model: 'claude-opus-4-8',
+              provider: 'anthropic-claude',
+              input_tokens: 0,
+              output_tokens: 0,
+              credits_cost: 0,
+              status: 'failed',
+              error_message: anthropicFailureMessage,
+              started_at: '2026-06-14T10:52:31.675404Z',
+            },
+          ],
           tool_calls: [],
           wallet_transactions: [
             {
