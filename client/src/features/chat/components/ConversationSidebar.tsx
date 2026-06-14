@@ -221,16 +221,18 @@ export function ConversationSidebar({
         >
           <span>{conversation.title}</span>
         </Button>
-        <span className="conversation-time" aria-hidden="true">
-          {formatRelativeTime(conversation.updatedAt, locale, t)}
+        <span className="conversation-row-meta">
+          <ConversationStatusIndicator
+            status={conversationSidebarStatus(
+              conversation,
+              conversation.id === activeID,
+              seenConversationVersions[conversation.id],
+            )}
+          />
+          <span className="conversation-time" aria-hidden="true">
+            {formatRelativeTime(conversation.updatedAt, locale, t)}
+          </span>
         </span>
-        <ConversationStatusIndicator
-          status={conversationSidebarStatus(
-            conversation,
-            conversation.id === activeID,
-            seenConversationVersions[conversation.id],
-          )}
-        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

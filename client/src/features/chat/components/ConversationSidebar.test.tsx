@@ -11,7 +11,7 @@ describe('ConversationSidebar', () => {
   })
 
   it('marks inactive completed, paused, and failed chats while showing running chats as loading', () => {
-    renderSidebar([
+    const { container } = renderSidebar([
       conversation('done-inactive', '完成的后台任务', 'done'),
       conversation('permission-inactive', '等待授权的后台任务', 'waiting_permission'),
       conversation('input-inactive', '等待回答的后台任务', 'waiting_input'),
@@ -23,6 +23,15 @@ describe('ConversationSidebar', () => {
     expect(screen.getAllByLabelText('需要用户操作')).toHaveLength(4)
     expect(screen.getByLabelText('对话正在执行')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '当前打开的完成任务' })).toBeInTheDocument()
+
+    const runningRow = screen.getByRole('button', { name: '正在执行的后台任务' }).closest('.conversation-row')
+    const runningMeta = runningRow?.querySelector('.conversation-row-meta')
+    const runningStatus = screen.getByLabelText('对话正在执行')
+    const runningTime = runningRow?.querySelector('.conversation-time')
+    expect(runningMeta).toContainElement(runningStatus)
+    expect(runningMeta).toContainElement(runningTime as HTMLElement)
+    expect(runningStatus.compareDocumentPosition(runningTime as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelectorAll('.conversation-row-meta')).toHaveLength(6)
   })
 
   it('clears the attention dot after the user opens that chat once', () => {
