@@ -176,9 +176,6 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className="message-bubble-inner">
-        {isAssistant && message.reasoning && message.status === 'streaming' ? (
-          <ReasoningPill />
-        ) : null}
         <div className="message-content">
           {editing ? (
             <div className="message-edit">
@@ -311,27 +308,6 @@ export function MessageBubble({
         </div>
       </div>
     </article>
-  )
-}
-
-/** Ephemeral "thinking…" pill shown above the assistant bubble ONLY
- *  while the model is streaming AND has emitted reasoning_content
- *  (DeepSeek thinking mode, o1-style CoT). The reasoning text itself
- *  is never rendered to the user — it's accumulated on
- *  `message.reasoning` only for backend round-trip to subsequent LLM
- *  calls (DeepSeek API requires it back). Once streaming ends, this
- *  component is unmounted by its caller.
- *
- *  Named "ReasoningPill" — distinct from the file-level
- *  ThinkingIndicator (in ThinkingIndicator.tsx), which is the ambient
- *  brand-mark breathing cue for an active assistant turn. */
-function ReasoningPill() {
-  const { t } = useI18n()
-  return (
-    <div className="message-reasoning-pill" role="status" aria-live="polite">
-      <span className="message-reasoning-dot" aria-hidden="true" />
-      <span>{t('message.reasoningStreaming')}</span>
-    </div>
   )
 }
 

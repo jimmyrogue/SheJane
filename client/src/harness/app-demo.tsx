@@ -32,8 +32,8 @@ const balance = {
 }
 
 const models = [
-  { id: 'deepseek-pro', label: 'DeepSeek Pro', description: '深度推理，适合复杂任务', priority: 1 },
-  { id: 'deepseek-chat', label: 'DeepSeek Chat', description: '快速回答，适合简单任务', priority: 2 },
+  { id: 'deepseek-pro', label: 'DeepSeek Pro', description: '深度推理，适合复杂任务', priority: 1, input_price_per_million_cny: 4, output_price_per_million_cny: 16, cached_input_price_per_million_cny: 2, cache_write_price_per_million_cny: 4 },
+  { id: 'deepseek-chat', label: 'DeepSeek Chat', description: '快速回答，适合简单任务', priority: 2, input_price_per_million_cny: 1, output_price_per_million_cny: 2, cached_input_price_per_million_cny: 1, cache_write_price_per_million_cny: 1 },
 ]
 
 const realFetch = globalThis.fetch.bind(globalThis)

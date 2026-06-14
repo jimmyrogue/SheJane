@@ -59,13 +59,17 @@ const (
 // No secrets (provider_kind / base_url / api_key are NOT exposed). Served by
 // GET /api/v1/models and fed to the Auto router as candidate context.
 type ChatModelInfo struct {
-	ID             string `json:"id"` // stable model id; persisted in legacy slot column
-	Label          string `json:"label"`
-	Description    string `json:"description,omitempty"`
-	Vendor         string `json:"vendor,omitempty"`
-	VendorInfo     string `json:"vendor_info,omitempty"`
-	CapabilityTier string `json:"capability_tier,omitempty"`
-	Priority       int    `json:"priority"`
+	ID                            string  `json:"id"` // stable model id; persisted in legacy slot column
+	Label                         string  `json:"label"`
+	Description                   string  `json:"description,omitempty"`
+	Vendor                        string  `json:"vendor,omitempty"`
+	VendorInfo                    string  `json:"vendor_info,omitempty"`
+	CapabilityTier                string  `json:"capability_tier,omitempty"`
+	InputPricePerMillionCNY       float64 `json:"input_price_per_million_cny"`
+	OutputPricePerMillionCNY      float64 `json:"output_price_per_million_cny"`
+	CachedInputPricePerMillionCNY float64 `json:"cached_input_price_per_million_cny"`
+	CacheWritePricePerMillionCNY  float64 `json:"cache_write_price_per_million_cny"`
+	Priority                      int     `json:"priority"`
 }
 
 type resolved struct {
@@ -277,34 +281,39 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			}
 			continue
 		}
+		billing := llm.ModelBilling{
+			CreditMultiplier:              normalizeMultiplier(cfg.CreditMultiplier),
+			InputCreditMultiplier:         cfg.InputCreditMultiplier,
+			OutputCreditMultiplier:        cfg.OutputCreditMultiplier,
+			CachedInputCreditMultiplier:   cfg.CachedInputCreditMultiplier,
+			CacheWriteCreditMultiplier:    cfg.CacheWriteCreditMultiplier,
+			InputPricePerMillionCNY:       cfg.InputPricePerMillionCNY,
+			OutputPricePerMillionCNY:      cfg.OutputPricePerMillionCNY,
+			CachedInputPricePerMillionCNY: cfg.CachedInputPricePerMillionCNY,
+			CacheWritePricePerMillionCNY:  cfg.CacheWritePricePerMillionCNY,
+		}.Normalized()
 		next[cfg.Slot] = resolved{
 			provider:   r.buildProvider(cfg),
 			model:      cfg.ModelName,
 			multiplier: normalizeMultiplier(cfg.CreditMultiplier),
-			billing: llm.ModelBilling{
-				CreditMultiplier:              normalizeMultiplier(cfg.CreditMultiplier),
-				InputCreditMultiplier:         cfg.InputCreditMultiplier,
-				OutputCreditMultiplier:        cfg.OutputCreditMultiplier,
-				CachedInputCreditMultiplier:   cfg.CachedInputCreditMultiplier,
-				CacheWriteCreditMultiplier:    cfg.CacheWriteCreditMultiplier,
-				InputPricePerMillionCNY:       cfg.InputPricePerMillionCNY,
-				OutputPricePerMillionCNY:      cfg.OutputPricePerMillionCNY,
-				CachedInputPricePerMillionCNY: cfg.CachedInputPricePerMillionCNY,
-				CacheWritePricePerMillionCNY:  cfg.CacheWritePricePerMillionCNY,
-			}.Normalized(),
+			billing:    billing,
 		}
 		label := cfg.DisplayName
 		if strings.TrimSpace(label) == "" {
 			label = cfg.Slot
 		}
 		catalog = append(catalog, ChatModelInfo{
-			ID:             cfg.Slot,
-			Label:          label,
-			Description:    cfg.Description,
-			Vendor:         strings.TrimSpace(cfg.Vendor),
-			VendorInfo:     strings.TrimSpace(cfg.VendorInfo),
-			CapabilityTier: NormalizeCapabilityTier(cfg.CapabilityTier),
-			Priority:       cfg.Priority,
+			ID:                            cfg.Slot,
+			Label:                         label,
+			Description:                   cfg.Description,
+			Vendor:                        strings.TrimSpace(cfg.Vendor),
+			VendorInfo:                    strings.TrimSpace(cfg.VendorInfo),
+			CapabilityTier:                NormalizeCapabilityTier(cfg.CapabilityTier),
+			InputPricePerMillionCNY:       billing.InputPricePerMillionCNY,
+			OutputPricePerMillionCNY:      billing.OutputPricePerMillionCNY,
+			CachedInputPricePerMillionCNY: billing.CachedInputPricePerMillionCNY,
+			CacheWritePricePerMillionCNY:  billing.CacheWritePricePerMillionCNY,
+			Priority:                      cfg.Priority,
 		})
 	}
 	// Highest priority first; stable id tiebreak. Drives the picker order,

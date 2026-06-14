@@ -258,6 +258,10 @@ export interface ChatModelInfo {
   vendor?: string
   vendor_info?: string
   capability_tier?: string
+  input_price_per_million_cny?: number
+  output_price_per_million_cny?: number
+  cached_input_price_per_million_cny?: number
+  cache_write_price_per_million_cny?: number
   priority: number
 }
 

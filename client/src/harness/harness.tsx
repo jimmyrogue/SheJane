@@ -147,6 +147,7 @@ const activeToolFailureConvo: Conversation = {
     {
       ...msg('m-tool-failed-assistant', 'assistant', '好的，我来搜一下相关消息，并继续整理后续线索。', now - 3 * 60_000),
       status: 'streaming',
+      reasoning: 'Need to search and continue with the fallback model.',
       runId: 'run-tool-failed-active',
       runOrigin: 'local',
       runMode: { resolved: 'DeepSeek V4 Flash', reason: '' },
@@ -285,10 +286,10 @@ const mockServers: McpServerInfo[] = [
 ]
 
 const mockChatModels: ModelOption[] = [
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', vendor_info: '深度求索，推理能力与性价比突出。', capability_tier: 'fast', description: '速度优先' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vendor: 'DeepSeek', vendor_info: '深度求索，推理能力与性价比突出。', capability_tier: 'max', description: '复杂推理' },
-  { id: 'mimo-v2-5', label: 'Mimo V2.5', vendor: 'Xiaomi', vendor_info: '小米模型，适合快速问答与编码辅助。', capability_tier: 'balanced', description: '代码生成' },
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', vendor: 'Claude', vendor_info: 'Anthropic 出品，擅长写作、代码与长文理解。', capability_tier: 'max', description: '复杂推理和长文' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', vendor_info: '深度求索，推理能力与性价比突出。', capability_tier: 'fast', description: '速度优先', input_price_per_million_cny: 1, output_price_per_million_cny: 2, cached_input_price_per_million_cny: 1, cache_write_price_per_million_cny: 1 },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vendor: 'DeepSeek', vendor_info: '深度求索，推理能力与性价比突出。', capability_tier: 'max', description: '复杂推理', input_price_per_million_cny: 4, output_price_per_million_cny: 16, cached_input_price_per_million_cny: 2, cache_write_price_per_million_cny: 4 },
+  { id: 'mimo-v2-5', label: 'Mimo V2.5', vendor: 'Xiaomi', vendor_info: '小米模型，适合快速问答与编码辅助。', capability_tier: 'balanced', description: '代码生成', input_price_per_million_cny: 8, output_price_per_million_cny: 12, cached_input_price_per_million_cny: 8, cache_write_price_per_million_cny: 8 },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', vendor: 'Claude', vendor_info: 'Anthropic 出品，擅长写作、代码与长文理解。', capability_tier: 'max', description: '复杂推理和长文', input_price_per_million_cny: 80, output_price_per_million_cny: 160, cached_input_price_per_million_cny: 8, cache_write_price_per_million_cny: 100 },
 ]
 
 const noop = () => {}

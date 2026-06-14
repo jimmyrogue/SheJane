@@ -138,7 +138,7 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 		return rec
 	}
 
-	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","vendor":"ChatGPT","vendor_info":"OpenAI 出品，通用能力全面。","capability_tier":"max","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"enabled":true}`)
+	valid := post(`{"slot":"gpt-4o","capability":"chat","provider_kind":"openai-compatible","display_name":"GPT-4o","vendor":"ChatGPT","vendor_info":"OpenAI 出品，通用能力全面。","capability_tier":"max","description":"通用强模型","priority":80,"base_url":"https://api.openai.com/v1","model_name":"gpt-4o","api_key":"sk-test","credit_multiplier":2.5,"input_price_per_million_cny":20,"output_price_per_million_cny":80,"cached_input_price_per_million_cny":2,"cache_write_price_per_million_cny":25,"enabled":true}`)
 	if valid.Code != http.StatusOK {
 		t.Fatalf("valid arbitrary chat model id status = %d, want 200; body = %s", valid.Code, valid.Body.String())
 	}
@@ -162,12 +162,13 @@ func TestAdminModelConfigModelIDValidation(t *testing.T) {
 	}
 	found := false
 	for _, model := range modelsBody.Data.Models {
-		if model.ID == "gpt-4o" && model.Label == "GPT-4o" && model.Vendor == "ChatGPT" && model.VendorInfo == "OpenAI 出品，通用能力全面。" && model.CapabilityTier == "max" {
+		if model.ID == "gpt-4o" && model.Label == "GPT-4o" && model.Vendor == "ChatGPT" && model.VendorInfo == "OpenAI 出品，通用能力全面。" && model.CapabilityTier == "max" &&
+			model.InputPricePerMillionCNY == 20 && model.OutputPricePerMillionCNY == 80 && model.CachedInputPricePerMillionCNY == 2 && model.CacheWritePricePerMillionCNY == 25 {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("GET /models missing gpt-4o/GPT-4o catalog metadata; body = %s", modelsRec.Body.String())
+		t.Fatalf("GET /models missing gpt-4o/GPT-4o catalog metadata and token prices; body = %s", modelsRec.Body.String())
 	}
 
 	for _, tc := range []struct {

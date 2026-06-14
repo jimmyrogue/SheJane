@@ -2347,6 +2347,7 @@ select {
   justify-content: flex-start;
   gap: 10px;
   min-height: 28px;
+  margin-top: 18px;
   padding: 4px 0;
   color: var(--sj-seal);
 }
@@ -4847,43 +4848,6 @@ button:active {
   position: relative;
 }
 
-/* Ephemeral "Thinking…" pill (DeepSeek `reasoning_content`, o1-style
- * CoT). Shown only while the assistant message is streaming and the
- * model has emitted reasoning tokens. The reasoning content itself is
- * NEVER rendered — only this lightweight pill is. Unmounts
- * automatically when streaming ends.
- *
- * Distinct from `.thinking-indicator` (the ambient brand-mark cue in
- * ThinkingIndicator.tsx). */
-.message-reasoning-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  padding: 2px 0;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-tertiary);
-  letter-spacing: 0.01em;
-}
-.message-reasoning-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: reasoning-dot 1.2s ease-in-out infinite;
-}
-@keyframes reasoning-dot {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .message-reasoning-dot {
-    animation: none;
-    opacity: 0.7;
-  }
-}
-
 .message-meta {
   position: absolute;
   top: 100%;
@@ -6561,6 +6525,19 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-primary);
   line-height: 1.2;
 }
+.composer-mode-model-label-row {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+}
+.composer-mode-model-label-row .composer-mode-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .composer-mode-item-hint {
   font-size: 11.5px;
   color: var(--text-tertiary);
@@ -6632,6 +6609,62 @@ button.agent-progress-summary:focus-visible {
   color: var(--text-secondary);
   outline: none;
   background: var(--surface-2, rgba(120, 120, 130, 0.12));
+}
+.composer-mode-price-info-trigger {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--sj-ink-faint, #A8A39A);
+  cursor: help;
+}
+.composer-mode-price-info-trigger.is-muted {
+  opacity: 0.55;
+}
+.composer-mode-price-info-trigger:hover,
+.composer-mode-price-info-trigger:focus-visible {
+  color: var(--sj-ink-soft, #6F6B63);
+  outline: none;
+  background: var(--surface-2, rgba(120, 120, 130, 0.12));
+}
+.composer-mode-price-tooltip {
+  display: grid;
+  min-width: 174px;
+  gap: 4px;
+}
+.composer-mode-price-tooltip-title {
+  color: currentColor;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.composer-mode-price-tooltip-unit {
+  font-size: 10.5px;
+  line-height: 1.2;
+  opacity: 0.72;
+}
+.composer-mode-price-tooltip-rows {
+  display: grid;
+  gap: 3px;
+  padding-top: 2px;
+}
+.composer-mode-price-tooltip-row {
+  display: grid;
+  grid-template-columns: auto max-content;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+.composer-mode-price-tooltip-row span:first-child {
+  opacity: 0.72;
+}
+.composer-mode-price-tooltip-row span:last-child {
+  color: currentColor;
+  font-variant-numeric: tabular-nums;
 }
 .composer-mode-tier-indicator {
   color: var(--text-tertiary);

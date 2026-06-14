@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useI18n } from '@/shared/i18n/i18n'
+import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
 import { autoModeForIntent, autoModeLabelKey, isAutoMode, type AutoIntent } from '@/shared/modelMode'
 
@@ -27,6 +27,10 @@ export interface ModelOption {
   vendor?: string
   vendor_info?: string
   capability_tier?: string
+  input_price_per_million_cny?: number
+  output_price_per_million_cny?: number
+  cached_input_price_per_million_cny?: number
+  cache_write_price_per_million_cny?: number
 }
 
 /**
@@ -45,7 +49,7 @@ export function ModeSelector({
   onChange: (next: ChatMode) => void
   disabled?: boolean
 }) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<'intent' | 'models'>('intent')
 
@@ -114,7 +118,10 @@ export function ModeSelector({
         onSelect={() => selectModel(model)}
       >
         <span className="composer-mode-item-text">
-          <span className="composer-mode-item-label">{model.label}</span>
+          <span className="composer-mode-model-label-row">
+            <span className="composer-mode-item-label">{model.label}</span>
+            <ModelPriceInfo model={model} locale={locale} />
+          </span>
         </span>
         <span className="composer-mode-item-side">
           {tier ? <span className="composer-mode-tier-indicator">{tier}</span> : null}
@@ -228,6 +235,75 @@ export function ModeSelector({
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+function ModelPriceInfo({ model, locale }: { model: ModelOption; locale: string }) {
+  const { t } = useI18n()
+  const rows = modelPriceRows(model, locale, t)
+  const configured = hasConfiguredModelPrice(model)
+  const label = `${model.label} ${t('composer.mode.priceTooltipTitle')}: ${rows.map((row) => `${row.label} ${row.value}`).join('，')}`
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={`composer-mode-price-info-trigger${configured ? '' : ' is-muted'}`}
+          aria-label={label}
+          title={label}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <IconInfoCircle size={12} strokeWidth={1.8} aria-hidden="true" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={6} className="composer-mode-price-tooltip">
+        <span className="composer-mode-price-tooltip-title">{t('composer.mode.priceTooltipTitle')}</span>
+        <span className="composer-mode-price-tooltip-unit">¥ / 1M tokens</span>
+        <span className="composer-mode-price-tooltip-rows">
+          {rows.map((row) => (
+            <span className="composer-mode-price-tooltip-row" key={row.label}>
+              <span>{row.label}</span>
+              <span>{row.value}</span>
+            </span>
+          ))}
+        </span>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function modelPriceRows(model: ModelOption, locale: string, t: Translator) {
+  const input = positivePrice(model.input_price_per_million_cny)
+  const output = positivePrice(model.output_price_per_million_cny)
+  const cacheRead = positivePrice(model.cached_input_price_per_million_cny) ?? input
+  const cacheWrite = positivePrice(model.cache_write_price_per_million_cny) ?? input
+  return [
+    { label: t('composer.mode.priceInput'), value: formatModelPrice(input, locale, t) },
+    { label: t('composer.mode.priceOutput'), value: formatModelPrice(output, locale, t) },
+    { label: t('composer.mode.priceCacheRead'), value: formatModelPrice(cacheRead, locale, t) },
+    { label: t('composer.mode.priceCacheWrite'), value: formatModelPrice(cacheWrite, locale, t) },
+  ]
+}
+
+function hasConfiguredModelPrice(model: ModelOption): boolean {
+  return Boolean(
+    positivePrice(model.input_price_per_million_cny) ||
+    positivePrice(model.output_price_per_million_cny) ||
+    positivePrice(model.cached_input_price_per_million_cny) ||
+    positivePrice(model.cache_write_price_per_million_cny),
+  )
+}
+
+function positivePrice(value?: number): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+function formatModelPrice(value: number | undefined, locale: string, t: Translator): string {
+  if (typeof value !== 'number') {
+    return t('composer.mode.priceNotConfigured')
+  }
+  return `¥${new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    maximumFractionDigits: 4,
+  }).format(value)}`
 }
 
 function groupModelsByVendor(models: ModelOption[]): Array<{ vendor: string; vendorInfo: string; models: ModelOption[] }> {

@@ -1,4 +1,4 @@
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { Conversation } from '@/shared/local-data/types'
@@ -30,6 +30,13 @@ describe('ChatThread streaming display cache', () => {
       vi.advanceTimersByTime(90)
     })
     expect(document.body).toHaveTextContent('第二段。')
+  })
+
+  it('shows only the bottom thinking indicator while reasoning is streaming', () => {
+    renderThread(conversationWithReasoningAnswer())
+
+    expect(screen.getAllByText('正在思考…')).toHaveLength(1)
+    expect(document.querySelector('.thinking-indicator')).toBeInTheDocument()
   })
 })
 
@@ -79,6 +86,33 @@ function conversationWithStreamingAnswer(content: string): Conversation {
         id: 'msg-assistant',
         role: 'assistant',
         content,
+        createdAt: '2026-05-10T00:00:01Z',
+        status: 'streaming',
+      },
+    ],
+  }
+}
+
+function conversationWithReasoningAnswer(): Conversation {
+  return {
+    id: 'conv-reasoning',
+    title: '思考任务',
+    archived: false,
+    createdAt: '2026-05-10T00:00:00Z',
+    updatedAt: '2026-05-10T00:00:00Z',
+    messages: [
+      {
+        id: 'msg-user',
+        role: 'user',
+        content: '帮我查一下新闻',
+        createdAt: '2026-05-10T00:00:00Z',
+        status: 'done',
+      },
+      {
+        id: 'msg-assistant',
+        role: 'assistant',
+        content: '',
+        reasoning: 'Need to search first.',
         createdAt: '2026-05-10T00:00:01Z',
         status: 'streaming',
       },

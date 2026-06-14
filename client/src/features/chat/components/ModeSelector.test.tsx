@@ -6,10 +6,10 @@ import { I18nProvider } from '@/shared/i18n/i18n'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
-  { id: 'gpt-4o', label: 'GPT-4o', vendor: 'ChatGPT', capability_tier: 'max', description: '通用强模型' },
-  { id: 'claude-sonnet', label: 'Claude Sonnet', vendor: 'Claude', capability_tier: 'reasoning', description: '复杂推理和长文' },
-  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', capability_tier: 'fast', description: '速度快、成本低' },
-  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vendor: 'DeepSeek', capability_tier: 'max', description: '复杂推理' },
+  { id: 'gpt-4o', label: 'GPT-4o', vendor: 'ChatGPT', capability_tier: 'max', description: '通用强模型', input_price_per_million_cny: 12, output_price_per_million_cny: 48, cached_input_price_per_million_cny: 1.5, cache_write_price_per_million_cny: 12 },
+  { id: 'claude-sonnet', label: 'Claude Sonnet', vendor: 'Claude', capability_tier: 'reasoning', description: '复杂推理和长文', input_price_per_million_cny: 24, output_price_per_million_cny: 120 },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', vendor: 'DeepSeek', capability_tier: 'fast', description: '速度快、成本低', input_price_per_million_cny: 1, output_price_per_million_cny: 2 },
+  { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', vendor: 'DeepSeek', capability_tier: 'max', description: '复杂推理', input_price_per_million_cny: 4, output_price_per_million_cny: 16 },
 ]
 
 function renderSelector(mode: string, onChange = vi.fn()) {
@@ -128,6 +128,18 @@ describe('ModeSelector (catalog-driven)', () => {
 
     const info = await screen.findByLabelText('数据库里的 DeepSeek 厂商简介')
     expect(info).toHaveAttribute('title', '数据库里的 DeepSeek 厂商简介')
+  })
+
+  it('shows model token prices from the catalog in an icon tooltip trigger', async () => {
+    renderSelector('auto')
+    openMenu()
+    fireEvent.click(await screen.findByText('选择具体模型'))
+
+    const gptPrice = await screen.findByLabelText('GPT-4o 模型价格: 输入 ¥12，输出 ¥48，缓存命中 ¥1.5，缓存写入 ¥12')
+    expect(gptPrice).toHaveClass('composer-mode-price-info-trigger')
+
+    // Cache prices fall back to input price when the catalog leaves them empty.
+    expect(screen.getByLabelText('Claude Sonnet 模型价格: 输入 ¥24，输出 ¥120，缓存命中 ¥24，缓存写入 ¥24')).toBeInTheDocument()
   })
 
   it('maps intent shortcuts to Auto intent sentinel modes', async () => {
