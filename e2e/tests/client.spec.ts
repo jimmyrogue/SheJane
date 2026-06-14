@@ -120,9 +120,9 @@ test.describe('client simulated user flows', () => {
     await expect(page.getByText('收集来源：Example Source')).toHaveCount(0)
     await expect(page.getByText('https://example.com/source')).toHaveCount(0)
 
-    // Diagnostics is the run-result escape hatch: expand the agent-progress row,
-    // then open the diagnostics panel via the single 诊断 entry.
-    await page.getByRole('button', { name: '展开步骤' }).click()
+    // Diagnostics is the run-result escape hatch: expand the compact success
+    // details row, then open the diagnostics panel via the icon action.
+    await page.getByRole('button', { name: '展开详情' }).click()
     await page.getByTitle('查看诊断 local-run').click()
     await expect(page.getByText('任务诊断：local-run')).toBeVisible()
     await expect(page.getByText('verification.completed')).toBeVisible()

@@ -1394,6 +1394,16 @@ describe('user client shell', () => {
 	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
 	  fireEvent.click(screen.getByText('创建账号'))
 	  await awaitSignedIn()
+	  await waitFor(() => {
+	    expect(
+	      calls.filter(
+	        (call) =>
+	          call.url === 'http://127.0.0.1:17371/local/v1/session' &&
+	          call.init?.method === 'POST' &&
+	          call.init.body === JSON.stringify({ cloud_base_url: 'http://localhost:8080', access_token: 'user-token' }),
+	      ),
+	    ).toHaveLength(1)
+	  })
 	  await selectConversationForTest('会话恢复任务', 'cloud session still expired')
 
 	  await clickFailureAction('刷新会话')
