@@ -26,6 +26,10 @@ export interface ModelConfigForm {
   output_credit_multiplier: string
   cached_input_credit_multiplier: string
   cache_write_credit_multiplier: string
+  input_price_per_million_cny: string
+  output_price_per_million_cny: string
+  cached_input_price_per_million_cny: string
+  cache_write_price_per_million_cny: string
   price_per_call_cny: string
   enabled: boolean
   api_key: string
@@ -94,6 +98,10 @@ export function emptyModelForm(): ModelConfigForm {
     output_credit_multiplier: '1',
     cached_input_credit_multiplier: '',
     cache_write_credit_multiplier: '1',
+    input_price_per_million_cny: '',
+    output_price_per_million_cny: '',
+    cached_input_price_per_million_cny: '',
+    cache_write_price_per_million_cny: '',
     price_per_call_cny: '0',
     enabled: true,
     api_key: '',

@@ -12,6 +12,10 @@ import { CAPABILITY_OPTIONS, CAPABILITY_TIER_OPTIONS, IMAGE_DEFAULT_MODEL_ID, PR
 import { MODEL_PRESETS } from './presets'
 import type { ModelConfigManager } from './types'
 
+function formatPrice(value: number) {
+  return Number.isFinite(value) ? Number(value.toFixed(4)).toString() : '0'
+}
+
 function DField({ id, label, hint, grow, width, children }: { id?: string; label: string; hint?: string; grow?: boolean; width?: number; children: ReactNode }) {
   return (
     <div className={`admin-dfield${grow ? ' admin-dfield-grow' : ''}`} style={!grow && width ? { width, flexShrink: 0 } : undefined}>
@@ -68,9 +72,10 @@ export function ModelConfigDialog({ manager }: { manager: ModelConfigManager }) 
   const set = (key: string, value: string | boolean) => manager.setForm({ ...form, [key]: value } as typeof form)
   const close = () => manager.setDialogOpen(false)
 
-  const inMult = Number(form.input_credit_multiplier || form.credit_multiplier || 0)
-  const outMult = Number(form.output_credit_multiplier || form.credit_multiplier || 0)
-  const baseEst = Math.round(((inMult + outMult) / 2) * 100) / 100
+  const inputPrice = Number(form.input_price_per_million_cny || 0)
+  const outputPrice = Number(form.output_price_per_million_cny || 0)
+  const priceConfigured = inputPrice > 0 && outputPrice > 0
+  const averagePrice = priceConfigured ? (inputPrice + outputPrice) / 2 : 0
 
   const onCapabilityChange = (capability: string) => {
     const slot = capability === 'image'
@@ -88,7 +93,7 @@ export function ModelConfigDialog({ manager }: { manager: ModelConfigManager }) 
           <div className="min-w-0">
             <DialogTitle className="admin-drawer-title">{isEdit ? '编辑模型' : '新增模型'}</DialogTitle>
             <DialogDescription className="admin-drawer-desc">
-              {isEdit ? '改动保存后即时生效；API key 留空保持原值。' : '先选模板，再补连接与费率。三步即可上线。'}
+              {isEdit ? '改动保存后即时生效；API key 留空保持原值。' : '先选模板，再补连接与价格。三步即可上线。'}
             </DialogDescription>
           </div>
           <button type="button" className="admin-icon-action" aria-label="关闭" onClick={close}>
@@ -175,30 +180,41 @@ export function ModelConfigDialog({ manager }: { manager: ModelConfigManager }) 
             <div className="admin-drawer-section-head">
               <h3 className="admin-drawer-section-title">{isEdit ? '计费' : '④ 计费'}</h3>
             </div>
-            <div className="admin-drawer-row">
-              <DField id="mc-input-mult" label="输入费率" grow>
-                <DInput id="mc-input-mult" value={form.input_credit_multiplier} onChange={(value) => set('input_credit_multiplier', value)} placeholder="DeepSeek Pro = 1" mono />
-              </DField>
-              <DField id="mc-output-mult" label="输出费率" grow>
-                <DInput id="mc-output-mult" value={form.output_credit_multiplier} onChange={(value) => set('output_credit_multiplier', value)} placeholder="通常高于输入费率" mono />
-              </DField>
-            </div>
-            <div className="admin-est-box">
-              <span className="mono">base ≈ ×{baseEst}</span>
-              <span className="sep">·</span>
-              <span>利润由全局加价系数统一处理</span>
-            </div>
-            {isImage ? (
+            {!isImage ? (
+              <>
+                <div className="admin-drawer-row">
+                  <DField id="mc-input-price" label="输入单价" grow hint="供应商成本价，¥ / 1M tokens">
+                    <DInput id="mc-input-price" value={form.input_price_per_million_cny} onChange={(value) => set('input_price_per_million_cny', value)} placeholder="20" mono />
+                  </DField>
+                  <DField id="mc-output-price" label="输出单价" grow hint="供应商成本价，¥ / 1M tokens">
+                    <DInput id="mc-output-price" value={form.output_price_per_million_cny} onChange={(value) => set('output_price_per_million_cny', value)} placeholder="80" mono />
+                  </DField>
+                </div>
+                <div className="admin-drawer-row">
+                  <DField id="mc-cache-read-price" label="缓存命中输入" grow hint="可选，留空沿用输入单价">
+                    <DInput id="mc-cache-read-price" value={form.cached_input_price_per_million_cny} onChange={(value) => set('cached_input_price_per_million_cny', value)} placeholder="2" mono />
+                  </DField>
+                  <DField id="mc-cache-write-price" label="缓存写入输入" grow hint="可选，留空沿用输入单价">
+                    <DInput id="mc-cache-write-price" value={form.cache_write_price_per_million_cny} onChange={(value) => set('cache_write_price_per_million_cny', value)} placeholder="20" mono />
+                  </DField>
+                </div>
+                <div className="admin-est-box">
+                  <span className="mono">{priceConfigured ? `avg ¥${formatPrice(averagePrice)} / 1M` : 'legacy multiplier fallback'}</span>
+                  <span className="sep">·</span>
+                  <span>最终扣费再乘以全局加价系数并换算 credits</span>
+                </div>
+              </>
+            ) : (
               <div style={{ marginTop: 14 }}>
                 <DField id="mc-price" label="每次金额（¥）">
                   <DInput id="mc-price" value={form.price_per_call_cny} onChange={(value) => set('price_per_call_cny', value)} placeholder="生图按每张图片金额换算 credits" mono />
                 </DField>
               </div>
-            ) : null}
+            )}
 
             <button type="button" className="admin-adv-toggle" onClick={() => setAdvanced((open) => !open)}>
               <Sliders />
-              <span className="admin-adv-toggle-label">高级参数 · 缓存、排序、兼容兜底</span>
+              <span className="admin-adv-toggle-label">高级参数 · 旧倍率、排序、兼容兜底</span>
               {advanced ? <ChevronDown /> : <ChevronRight />}
             </button>
             {advanced ? (
@@ -212,11 +228,19 @@ export function ModelConfigDialog({ manager }: { manager: ModelConfigManager }) 
                   </DField>
                 </div>
                 <div className="admin-drawer-row">
-                  <DField id="mc-cache-read" label="缓存命中费率" grow>
-                    <DInput id="mc-cache-read" value={form.cached_input_credit_multiplier} onChange={(value) => set('cached_input_credit_multiplier', value)} placeholder="留空=沿用输入费率" mono />
+                  <DField id="mc-input-mult" label="输入倍率" grow>
+                    <DInput id="mc-input-mult" value={form.input_credit_multiplier} onChange={(value) => set('input_credit_multiplier', value)} placeholder="legacy = 1" mono />
                   </DField>
-                  <DField id="mc-cache-write" label="缓存写入费率" grow>
-                    <DInput id="mc-cache-write" value={form.cache_write_credit_multiplier} onChange={(value) => set('cache_write_credit_multiplier', value)} placeholder="留空=沿用输入费率" mono />
+                  <DField id="mc-output-mult" label="输出倍率" grow>
+                    <DInput id="mc-output-mult" value={form.output_credit_multiplier} onChange={(value) => set('output_credit_multiplier', value)} placeholder="通常高于输入倍率" mono />
+                  </DField>
+                </div>
+                <div className="admin-drawer-row">
+                  <DField id="mc-cache-read" label="缓存命中倍率" grow>
+                    <DInput id="mc-cache-read" value={form.cached_input_credit_multiplier} onChange={(value) => set('cached_input_credit_multiplier', value)} placeholder="留空=沿用输入倍率" mono />
+                  </DField>
+                  <DField id="mc-cache-write" label="缓存写入倍率" grow>
+                    <DInput id="mc-cache-write" value={form.cache_write_credit_multiplier} onChange={(value) => set('cache_write_credit_multiplier', value)} placeholder="留空=沿用输入倍率" mono />
                   </DField>
                 </div>
                 <DField id="mc-desc" label="Auto 路由描述">

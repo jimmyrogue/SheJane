@@ -326,11 +326,24 @@
     color: var(--sj-ink);
   }
 
+  .admin-sidebar [data-slot="sidebar-menu-button"]:focus,
+  .admin-sidebar [data-slot="sidebar-menu-button"]:focus-visible {
+    /* shadcn's sidebar primitive adds `focus-visible:ring-2`; in this admin
+       nav it reads as a selected tab border when Shift/Tab focus lands here. */
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
   .admin-sidebar [data-slot="sidebar-menu-button"][data-active="true"] {
     background: var(--sj-paper-raised) !important;
     box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line);
     color: var(--sj-ink);
     font-weight: 500;
+  }
+
+  .admin-sidebar [data-slot="sidebar-menu-button"][data-active="true"]:focus,
+  .admin-sidebar [data-slot="sidebar-menu-button"][data-active="true"]:focus-visible {
+    box-shadow: var(--sj-shadow-1), inset 0 0 0 1px var(--sj-line) !important;
   }
 
   .admin-sidebar [data-slot="sidebar-menu-button"][data-active="true"] svg {
@@ -892,12 +905,15 @@
     padding-top: 14px;
   }
 
-  .admin-model-table-card .admin-catalog-tools {
-    padding: 0 20px;
+  .admin-model-grid-scroll {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
-  .admin-model-table-card [data-slot="table"] {
-    min-width: 900px;
+  .admin-model-grid-content {
+    width: max-content;
+    min-width: 100%;
   }
 
   .admin-model-table-card [data-slot="table-header"] tr {
@@ -1655,9 +1671,22 @@
   }
 
   /* ---- grid data table (设计 DataTable) ---- */
+  .admin-dt-scroll {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .admin-dt-content {
+    width: max-content;
+    min-width: 100%;
+  }
+
   .admin-dt-head,
   .admin-dt-row {
     display: grid;
+    grid-template-columns: var(--admin-dt-columns);
+    min-width: 100%;
     align-items: center;
     gap: 16px;
   }
@@ -1833,6 +1862,7 @@
   .admin-model-grid-row {
     display: grid;
     grid-template-columns: minmax(220px, 1.5fr) minmax(240px, 1.7fr) 150px 184px 104px;
+    min-width: 100%;
     align-items: center;
     gap: 16px;
   }
@@ -1938,22 +1968,30 @@
 
     .admin-sidebar {
       width: 100% !important;
+      height: auto !important;
       min-height: auto;
+      flex-shrink: 0;
       border-right: 0;
       border-bottom: 1px solid var(--sj-line);
     }
 
+    .admin-page-shell {
+      min-height: 0;
+      flex: 1 1 auto;
+    }
+
     .admin-sidebar [data-slot="sidebar-content"] {
+      flex: 0 0 auto !important;
       overflow-x: auto;
     }
 
     .admin-sidebar [data-slot="sidebar-menu"] {
-      flex-direction: row;
+      flex-direction: row !important;
       width: max-content;
     }
 
     .admin-sidebar [data-slot="sidebar-footer"] {
-      display: none;
+      display: none !important;
     }
 
     .admin-topbar {

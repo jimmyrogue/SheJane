@@ -228,6 +228,10 @@ func TestAdminModelConfigPersistsTokenPricingFields(t *testing.T) {
 		"output_credit_multiplier":2,
 		"cached_input_credit_multiplier":0.1,
 		"cache_write_credit_multiplier":1.25,
+		"input_price_per_million_cny":20,
+		"output_price_per_million_cny":80,
+		"cached_input_price_per_million_cny":2,
+		"cache_write_price_per_million_cny":25,
 		"enabled":true
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(payload))
@@ -246,5 +250,35 @@ func TestAdminModelConfigPersistsTokenPricingFields(t *testing.T) {
 	if body.Data.InputCreditMultiplier != 0.5 || body.Data.OutputCreditMultiplier != 2 ||
 		body.Data.CachedInputCreditMultiplier != 0.1 || body.Data.CacheWriteCreditMultiplier != 1.25 {
 		t.Fatalf("pricing fields = %+v, want input/output/cache fields persisted", body.Data)
+	}
+	if body.Data.InputPricePerMillionCNY != 20 || body.Data.OutputPricePerMillionCNY != 80 ||
+		body.Data.CachedInputPricePerMillionCNY != 2 || body.Data.CacheWritePricePerMillionCNY != 25 {
+		t.Fatalf("CNY token prices = %+v, want per-million prices persisted", body.Data)
+	}
+}
+
+func TestAdminModelConfigRejectsNegativeCNYTokenPrices(t *testing.T) {
+	server, _ := newTestServerAndStore(t, func(cfg *config.Config) {
+		cfg.AdminEmails = []string{"admin@example.com"}
+	})
+	token := registerAndTokenWithEmail(t, server, "admin@example.com")
+
+	payload := `{
+		"slot":"bad-price",
+		"capability":"chat",
+		"provider_kind":"mock",
+		"model_name":"bad-price",
+		"credit_multiplier":1,
+		"input_price_per_million_cny":-0.01,
+		"output_price_per_million_cny":80,
+		"enabled":true
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
 	}
 }

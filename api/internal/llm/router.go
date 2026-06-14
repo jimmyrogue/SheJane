@@ -8,15 +8,19 @@ import "strings"
 // the default model id).
 type ModelResolveFunc func(modelID string) (provider Provider, model string, multiplier float64, ok bool)
 
-// ModelBilling describes token-level credit multipliers for one catalog model.
-// All values are cost ratios relative to the DeepSeek Pro baseline (1.0).
-// Zero token-level fields mean "fall back to CreditMultiplier".
+// ModelBilling describes token-level billing for one catalog model. New rows
+// can use supplier prices in CNY per 1M tokens; legacy rows keep cost ratios
+// relative to the DeepSeek Pro baseline (1.0).
 type ModelBilling struct {
-	CreditMultiplier            float64
-	InputCreditMultiplier       float64
-	OutputCreditMultiplier      float64
-	CachedInputCreditMultiplier float64
-	CacheWriteCreditMultiplier  float64
+	CreditMultiplier              float64
+	InputCreditMultiplier         float64
+	OutputCreditMultiplier        float64
+	CachedInputCreditMultiplier   float64
+	CacheWriteCreditMultiplier    float64
+	InputPricePerMillionCNY       float64
+	OutputPricePerMillionCNY      float64
+	CachedInputPricePerMillionCNY float64
+	CacheWritePricePerMillionCNY  float64
 }
 
 type ModelBillingFunc func(modelID string) (billing ModelBilling, ok bool)
@@ -139,8 +143,18 @@ func (b ModelBilling) Normalized() ModelBilling {
 	if b.CacheWriteCreditMultiplier <= 0 {
 		b.CacheWriteCreditMultiplier = b.InputCreditMultiplier
 	}
+	if b.CachedInputPricePerMillionCNY <= 0 {
+		b.CachedInputPricePerMillionCNY = b.InputPricePerMillionCNY
+	}
+	if b.CacheWritePricePerMillionCNY <= 0 {
+		b.CacheWritePricePerMillionCNY = b.InputPricePerMillionCNY
+	}
 	b.CreditMultiplier = legacy
 	return b
+}
+
+func (b ModelBilling) HasCNYPrices() bool {
+	return b.InputPricePerMillionCNY > 0 && b.OutputPricePerMillionCNY > 0
 }
 
 func (b ModelBilling) LegacyMultiplier() float64 {

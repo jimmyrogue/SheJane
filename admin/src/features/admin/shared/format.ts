@@ -12,6 +12,10 @@ export function formatMultiplier(value: number) {
   return Number.isFinite(value) ? Number(value.toFixed(4)).toString() : '0'
 }
 
+export function formatCNYPerMillion(value: number) {
+  return Number.isFinite(value) ? `¥${Number(value.toFixed(4))}` : '¥0'
+}
+
 export function formatCapabilityTier(value?: string) {
   return CAPABILITY_TIER_OPTIONS.find((option) => option.value === value)?.label ?? '均衡'
 }

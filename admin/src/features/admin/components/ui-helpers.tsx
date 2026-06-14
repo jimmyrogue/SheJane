@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { TableCell, TableRow } from '@/components/ui/table'
 import { formatNumber } from '../shared/format'
 import { statusLabel } from '../shared/labels'
@@ -163,46 +163,48 @@ export function DataGrid<T>({
 }) {
   const template = columns.map((column) => column.width).join(' ')
   const clickable = Boolean(onRowClick)
+  const gridStyle = { '--admin-dt-columns': template } as CSSProperties
   return (
-    <div>
-      <div className="admin-dt-head" style={{ gridTemplateColumns: template }}>
-        {columns.map((column, index) => (
-          <span key={index} className={column.align === 'right' ? 'admin-dt-cell-right' : undefined}>
-            {column.label}
-          </span>
-        ))}
-      </div>
-      {rows.length ? (
-        rows.map((row) => (
-          <div
-            key={getRowKey(row)}
-            className={`admin-dt-row${clickable ? ' admin-dt-row-click' : ''}`}
-            style={{ gridTemplateColumns: template }}
-            role={clickable ? 'button' : undefined}
-            tabIndex={clickable ? 0 : undefined}
-            aria-label={rowLabel?.(row)}
-            onClick={clickable ? () => onRowClick?.(row) : undefined}
-            onKeyDown={
-              clickable
-                ? (event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      onRowClick?.(row)
+    <div data-slot="data-grid-scroll" className="admin-dt-scroll">
+      <div data-slot="data-grid-content" className="admin-dt-content" style={gridStyle}>
+        <div className="admin-dt-head">
+          {columns.map((column, index) => (
+            <span key={index} className={column.align === 'right' ? 'admin-dt-cell-right' : undefined}>
+              {column.label}
+            </span>
+          ))}
+        </div>
+        {rows.length ? (
+          rows.map((row) => (
+            <div
+              key={getRowKey(row)}
+              className={`admin-dt-row${clickable ? ' admin-dt-row-click' : ''}`}
+              role={clickable ? 'button' : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              aria-label={rowLabel?.(row)}
+              onClick={clickable ? () => onRowClick?.(row) : undefined}
+              onKeyDown={
+                clickable
+                  ? (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        onRowClick?.(row)
+                      }
                     }
-                  }
-                : undefined
-            }
-          >
-            {columns.map((column, index) => (
-              <div key={index} className={`admin-dt-cell${column.align === 'right' ? ' admin-dt-cell-right' : ''}`}>
-                {column.render(row)}
-              </div>
-            ))}
-          </div>
-        ))
-      ) : (
-        <div className="admin-empty-inline">{empty}</div>
-      )}
+                  : undefined
+              }
+            >
+              {columns.map((column, index) => (
+                <div key={index} className={`admin-dt-cell${column.align === 'right' ? ' admin-dt-cell-right' : ''}`}>
+                  {column.render(row)}
+                </div>
+              ))}
+            </div>
+          ))
+        ) : (
+          <div className="admin-empty-inline">{empty}</div>
+        )}
+      </div>
     </div>
   )
 }

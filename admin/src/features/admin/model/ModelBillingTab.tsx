@@ -24,8 +24,8 @@ function BillingField({
   placeholder?: string
 }) {
   return (
-    <label htmlFor={id} className="block" style={{ width }}>
-      <div className="admin-field-label">{label}</div>
+    <div className="block" style={{ width }}>
+      <label htmlFor={id} className="admin-field-label">{label}</label>
       <div className="admin-field-box">
         <input
           id={id}
@@ -37,7 +37,7 @@ function BillingField({
         {suffix ? <span className="admin-field-suffix">{suffix}</span> : null}
       </div>
       {hint ? <div className="admin-field-hint">{hint}</div> : null}
-    </label>
+    </div>
   )
 }
 
@@ -47,7 +47,7 @@ export function ModelBillingTab({ manager }: { manager: ModelConfigManager }) {
       <section className="admin-billing-card">
         <h3>计费参数</h3>
         <p className="admin-billing-desc">
-          全局加价系数即产品固定利润（1.15 = 全线加价 15%，建议 1.10–1.20）。最终扣费 = 输入 tokens × 输入费率 + 输出 tokens × 输出费率，再乘以加价系数。基准每 token 成本仅用于把生图等「按次金额」模型换算成 credits。
+          全局加价系数即产品固定利润（1.15 = 全线加价 15%，建议 1.10–1.20）。文本模型按每百万 token 的 CNY 成本价计费，乘以加价系数后，再按每百万 token 金额换算扣除。
         </p>
         <div className="admin-billing-fields">
           <BillingField
@@ -62,12 +62,12 @@ export function ModelBillingTab({ manager }: { manager: ModelConfigManager }) {
           />
           <BillingField
             id="rate-value"
-            label="基准每 token 成本"
+            label="每百万 token 金额"
             value={manager.rateInput}
             onChange={manager.setRateInput}
-            placeholder="DeepSeek-Pro 每 token 成本，留空=不启用生图"
-            hint="按次金额 ÷ 此成本 ÷ 加价系数"
-            suffix={manager.rateCurrency || 'cny'}
+            placeholder="例如 20"
+            hint="默认 20，保存后自动换算"
+            suffix={`${manager.rateCurrency || 'cny'} / 1M`}
             mono
             width={230}
           />

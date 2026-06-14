@@ -26,6 +26,9 @@ export function OverviewPanel({
   const configuredKeyCount = modelConfigs.filter((cfg) => cfg.api_key_configured).length
   const hasMissingKeys = modelConfigs.some((cfg) => !cfg.api_key_configured)
   const recentLogs = auditLogs.slice(0, 6)
+  const creditAnchorPerMillion = creditRate?.currency_per_credit
+    ? Number((creditRate.currency_per_credit * 1_000_000).toFixed(6)).toString()
+    : '0'
 
   return (
     <section id="overview" className="flex flex-col gap-[18px]">
@@ -79,7 +82,7 @@ export function OverviewPanel({
             <GlanceRow label="模型目录" value={`${modelConfigs.length} 个 · 启用 ${enabledModelCount}`} />
             <GlanceRow warn={hasMissingKeys} label="Key 配置" value={`${configuredKeyCount} / ${modelConfigs.length || 0}`} />
             <GlanceRow mono label="全局加价系数" value={creditRate ? String(creditRate.markup_factor || 1.15) : '1.15'} />
-            <GlanceRow mono label="基准 token 成本" value={creditRate ? `${creditRate.currency_per_credit || 0} ${creditRate.currency || 'cny'}` : '-'} />
+            <GlanceRow mono label="每百万 token 金额" value={creditRate ? `${creditAnchorPerMillion} ${creditRate.currency || 'cny'}` : '-'} />
             <GlanceRow label="默认模型" value="自动" last />
           </div>
         </section>

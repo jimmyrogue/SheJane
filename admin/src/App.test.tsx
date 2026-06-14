@@ -161,6 +161,8 @@ describe('admin web app', () => {
     fireEvent.change(screen.getByLabelText('显示名'), { target: { value: 'GPT-4o' } })
     fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.openai.com/v1' } })
     fireEvent.change(screen.getByLabelText('上游模型名'), { target: { value: 'gpt-4o' } })
+    fireEvent.change(screen.getByLabelText('输入单价'), { target: { value: '35' } })
+    fireEvent.change(screen.getByLabelText('输出单价'), { target: { value: '105' } })
     fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -177,6 +179,34 @@ describe('admin web app', () => {
       model_name: 'gpt-4o',
       input_credit_multiplier: 1,
       output_credit_multiplier: 1,
+      input_price_per_million_cny: 35,
+      output_price_per_million_cny: 105,
+    })
+  })
+
+  it('saves the global credit anchor as a per-million token amount', async () => {
+    const calls = mockFetch('admin')
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('邮箱'), { target: { value: 'admin@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('登录'))
+    await screen.findByText('近期动态')
+
+    selectAdminTab('模型')
+    fireEvent.click(await screen.findByRole('button', { name: '全局计费' }))
+
+    const anchor = await screen.findByLabelText('每百万 token 金额')
+    expect(anchor).toHaveValue('100')
+    fireEvent.change(anchor, { target: { value: '20' } })
+    fireEvent.click(screen.getAllByRole('button', { name: '保存' })[0])
+
+    expect(await screen.findByText('计费参数已更新并即时生效')).toBeInTheDocument()
+    const saveCall = calls.find((call) => call.url.endsWith('/api/v1/admin/settings/credit-rate') && call.init?.method === 'PUT')
+    expect(JSON.parse(String(saveCall?.init?.body))).toMatchObject({
+      markup_factor: 1.15,
+      currency_per_credit: 0.00002,
+      currency: 'cny',
     })
   })
 
@@ -446,6 +476,10 @@ function mockFetch(role: 'admin' | 'user') {
             output_credit_multiplier: 0.1,
             cached_input_credit_multiplier: 0,
             cache_write_credit_multiplier: 0.1,
+            input_price_per_million_cny: 2,
+            output_price_per_million_cny: 2,
+            cached_input_price_per_million_cny: 0,
+            cache_write_price_per_million_cny: 2,
             price_per_call_cny: 0,
             enabled: true,
             params: {},

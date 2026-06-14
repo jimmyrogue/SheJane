@@ -18,27 +18,31 @@ const modelConfigIDMaxLen = 40
 // adminModelConfigView is the API shape for a model config. It deliberately
 // omits the encrypted API key and only reports whether one is configured.
 type adminModelConfigView struct {
-	ID                          string         `json:"id"`
-	Slot                        string         `json:"slot"`
-	Capability                  string         `json:"capability"`
-	ProviderKind                string         `json:"provider_kind"`
-	DisplayName                 string         `json:"display_name"`
-	Vendor                      string         `json:"vendor"`
-	VendorInfo                  string         `json:"vendor_info"`
-	CapabilityTier              string         `json:"capability_tier"`
-	Description                 string         `json:"description"`
-	Priority                    int            `json:"priority"`
-	BaseURL                     string         `json:"base_url"`
-	ModelName                   string         `json:"model_name"`
-	CreditMultiplier            float64        `json:"credit_multiplier"`
-	InputCreditMultiplier       float64        `json:"input_credit_multiplier"`
-	OutputCreditMultiplier      float64        `json:"output_credit_multiplier"`
-	CachedInputCreditMultiplier float64        `json:"cached_input_credit_multiplier"`
-	CacheWriteCreditMultiplier  float64        `json:"cache_write_credit_multiplier"`
-	Enabled                     bool           `json:"enabled"`
-	Params                      map[string]any `json:"params"`
-	APIKeyConfigured            bool           `json:"api_key_configured"`
-	UpdatedAt                   string         `json:"updated_at"`
+	ID                            string         `json:"id"`
+	Slot                          string         `json:"slot"`
+	Capability                    string         `json:"capability"`
+	ProviderKind                  string         `json:"provider_kind"`
+	DisplayName                   string         `json:"display_name"`
+	Vendor                        string         `json:"vendor"`
+	VendorInfo                    string         `json:"vendor_info"`
+	CapabilityTier                string         `json:"capability_tier"`
+	Description                   string         `json:"description"`
+	Priority                      int            `json:"priority"`
+	BaseURL                       string         `json:"base_url"`
+	ModelName                     string         `json:"model_name"`
+	CreditMultiplier              float64        `json:"credit_multiplier"`
+	InputCreditMultiplier         float64        `json:"input_credit_multiplier"`
+	OutputCreditMultiplier        float64        `json:"output_credit_multiplier"`
+	CachedInputCreditMultiplier   float64        `json:"cached_input_credit_multiplier"`
+	CacheWriteCreditMultiplier    float64        `json:"cache_write_credit_multiplier"`
+	InputPricePerMillionCNY       float64        `json:"input_price_per_million_cny"`
+	OutputPricePerMillionCNY      float64        `json:"output_price_per_million_cny"`
+	CachedInputPricePerMillionCNY float64        `json:"cached_input_price_per_million_cny"`
+	CacheWritePricePerMillionCNY  float64        `json:"cache_write_price_per_million_cny"`
+	Enabled                       bool           `json:"enabled"`
+	Params                        map[string]any `json:"params"`
+	APIKeyConfigured              bool           `json:"api_key_configured"`
+	UpdatedAt                     string         `json:"updated_at"`
 }
 
 func toModelConfigView(c store.ModelConfig) adminModelConfigView {
@@ -47,27 +51,31 @@ func toModelConfigView(c store.ModelConfig) adminModelConfigView {
 		params = map[string]any{}
 	}
 	return adminModelConfigView{
-		ID:                          c.ID,
-		Slot:                        c.Slot,
-		Capability:                  c.Capability,
-		ProviderKind:                c.ProviderKind,
-		DisplayName:                 c.DisplayName,
-		Vendor:                      c.Vendor,
-		VendorInfo:                  c.VendorInfo,
-		CapabilityTier:              c.CapabilityTier,
-		Description:                 c.Description,
-		Priority:                    c.Priority,
-		BaseURL:                     c.BaseURL,
-		ModelName:                   c.ModelName,
-		CreditMultiplier:            c.CreditMultiplier,
-		InputCreditMultiplier:       c.InputCreditMultiplier,
-		OutputCreditMultiplier:      c.OutputCreditMultiplier,
-		CachedInputCreditMultiplier: c.CachedInputCreditMultiplier,
-		CacheWriteCreditMultiplier:  c.CacheWriteCreditMultiplier,
-		Enabled:                     c.Enabled,
-		Params:                      params,
-		APIKeyConfigured:            strings.TrimSpace(c.APIKeyEncrypted) != "",
-		UpdatedAt:                   c.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		ID:                            c.ID,
+		Slot:                          c.Slot,
+		Capability:                    c.Capability,
+		ProviderKind:                  c.ProviderKind,
+		DisplayName:                   c.DisplayName,
+		Vendor:                        c.Vendor,
+		VendorInfo:                    c.VendorInfo,
+		CapabilityTier:                c.CapabilityTier,
+		Description:                   c.Description,
+		Priority:                      c.Priority,
+		BaseURL:                       c.BaseURL,
+		ModelName:                     c.ModelName,
+		CreditMultiplier:              c.CreditMultiplier,
+		InputCreditMultiplier:         c.InputCreditMultiplier,
+		OutputCreditMultiplier:        c.OutputCreditMultiplier,
+		CachedInputCreditMultiplier:   c.CachedInputCreditMultiplier,
+		CacheWriteCreditMultiplier:    c.CacheWriteCreditMultiplier,
+		InputPricePerMillionCNY:       c.InputPricePerMillionCNY,
+		OutputPricePerMillionCNY:      c.OutputPricePerMillionCNY,
+		CachedInputPricePerMillionCNY: c.CachedInputPricePerMillionCNY,
+		CacheWritePricePerMillionCNY:  c.CacheWritePricePerMillionCNY,
+		Enabled:                       c.Enabled,
+		Params:                        params,
+		APIKeyConfigured:              strings.TrimSpace(c.APIKeyEncrypted) != "",
+		UpdatedAt:                     c.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -83,19 +91,23 @@ type modelConfigInput struct {
 	CapabilityTier string `json:"capability_tier"`
 	// Description / Priority are pointers so a partial PATCH that omits them
 	// preserves the stored value (rather than zeroing the seeded catalog data).
-	Description                 *string        `json:"description"`
-	Priority                    *int           `json:"priority"`
-	BaseURL                     string         `json:"base_url"`
-	ModelName                   string         `json:"model_name"`
-	CreditMultiplier            float64        `json:"credit_multiplier"`
-	InputCreditMultiplier       *float64       `json:"input_credit_multiplier"`
-	OutputCreditMultiplier      *float64       `json:"output_credit_multiplier"`
-	CachedInputCreditMultiplier *float64       `json:"cached_input_credit_multiplier"`
-	CacheWriteCreditMultiplier  *float64       `json:"cache_write_credit_multiplier"`
-	PricePerCallCNY             float64        `json:"price_per_call_cny"`
-	Enabled                     *bool          `json:"enabled"`
-	Params                      map[string]any `json:"params"`
-	APIKey                      string         `json:"api_key"`
+	Description                   *string        `json:"description"`
+	Priority                      *int           `json:"priority"`
+	BaseURL                       string         `json:"base_url"`
+	ModelName                     string         `json:"model_name"`
+	CreditMultiplier              float64        `json:"credit_multiplier"`
+	InputCreditMultiplier         *float64       `json:"input_credit_multiplier"`
+	OutputCreditMultiplier        *float64       `json:"output_credit_multiplier"`
+	CachedInputCreditMultiplier   *float64       `json:"cached_input_credit_multiplier"`
+	CacheWriteCreditMultiplier    *float64       `json:"cache_write_credit_multiplier"`
+	InputPricePerMillionCNY       *float64       `json:"input_price_per_million_cny"`
+	OutputPricePerMillionCNY      *float64       `json:"output_price_per_million_cny"`
+	CachedInputPricePerMillionCNY *float64       `json:"cached_input_price_per_million_cny"`
+	CacheWritePricePerMillionCNY  *float64       `json:"cache_write_price_per_million_cny"`
+	PricePerCallCNY               float64        `json:"price_per_call_cny"`
+	Enabled                       *bool          `json:"enabled"`
+	Params                        map[string]any `json:"params"`
+	APIKey                        string         `json:"api_key"`
 }
 
 func (s *Server) adminListModelConfigs(w http.ResponseWriter, r *http.Request, user store.User) {
@@ -228,6 +240,22 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 	if !ok {
 		return store.ModelConfig{}, false
 	}
+	inputPrice, ok := modelConfigOptionalPrice(w, input.InputPricePerMillionCNY, existing.InputPricePerMillionCNY, "输入 ¥/1M token 价格")
+	if !ok {
+		return store.ModelConfig{}, false
+	}
+	outputPrice, ok := modelConfigOptionalPrice(w, input.OutputPricePerMillionCNY, existing.OutputPricePerMillionCNY, "输出 ¥/1M token 价格")
+	if !ok {
+		return store.ModelConfig{}, false
+	}
+	cachedInputPrice, ok := modelConfigOptionalPrice(w, input.CachedInputPricePerMillionCNY, existing.CachedInputPricePerMillionCNY, "缓存命中输入 ¥/1M token 价格")
+	if !ok {
+		return store.ModelConfig{}, false
+	}
+	cacheWritePrice, ok := modelConfigOptionalPrice(w, input.CacheWritePricePerMillionCNY, existing.CacheWritePricePerMillionCNY, "缓存写入 ¥/1M token 价格")
+	if !ok {
+		return store.ModelConfig{}, false
+	}
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
@@ -255,30 +283,45 @@ func (s *Server) buildModelConfigFromInput(w http.ResponseWriter, input modelCon
 		priority = *input.Priority
 	}
 	return store.ModelConfig{
-		Slot:                        slot,
-		Capability:                  capability,
-		ProviderKind:                providerKind,
-		DisplayName:                 strings.TrimSpace(input.DisplayName),
-		Vendor:                      vendor,
-		VendorInfo:                  vendorInfo,
-		CapabilityTier:              capabilityTier,
-		Description:                 description,
-		Priority:                    priority,
-		BaseURL:                     strings.TrimSpace(input.BaseURL),
-		ModelName:                   strings.TrimSpace(input.ModelName),
-		APIKeyEncrypted:             apiKeyEncrypted,
-		CreditMultiplier:            multiplier,
-		InputCreditMultiplier:       inputMultiplier,
-		OutputCreditMultiplier:      outputMultiplier,
-		CachedInputCreditMultiplier: cachedInputMultiplier,
-		CacheWriteCreditMultiplier:  cacheWriteMultiplier,
-		PricePerCallCNY:             input.PricePerCallCNY,
-		Enabled:                     enabled,
-		Params:                      params,
+		Slot:                          slot,
+		Capability:                    capability,
+		ProviderKind:                  providerKind,
+		DisplayName:                   strings.TrimSpace(input.DisplayName),
+		Vendor:                        vendor,
+		VendorInfo:                    vendorInfo,
+		CapabilityTier:                capabilityTier,
+		Description:                   description,
+		Priority:                      priority,
+		BaseURL:                       strings.TrimSpace(input.BaseURL),
+		ModelName:                     strings.TrimSpace(input.ModelName),
+		APIKeyEncrypted:               apiKeyEncrypted,
+		CreditMultiplier:              multiplier,
+		InputCreditMultiplier:         inputMultiplier,
+		OutputCreditMultiplier:        outputMultiplier,
+		CachedInputCreditMultiplier:   cachedInputMultiplier,
+		CacheWriteCreditMultiplier:    cacheWriteMultiplier,
+		InputPricePerMillionCNY:       inputPrice,
+		OutputPricePerMillionCNY:      outputPrice,
+		CachedInputPricePerMillionCNY: cachedInputPrice,
+		CacheWritePricePerMillionCNY:  cacheWritePrice,
+		PricePerCallCNY:               input.PricePerCallCNY,
+		Enabled:                       enabled,
+		Params:                        params,
 	}, true
 }
 
 func modelConfigOptionalMultiplier(w http.ResponseWriter, input *float64, existing float64, label string) (float64, bool) {
+	if input == nil {
+		return existing, true
+	}
+	if *input < 0 {
+		writeError(w, http.StatusBadRequest, 40201, label+"不能为负")
+		return 0, false
+	}
+	return *input, true
+}
+
+func modelConfigOptionalPrice(w http.ResponseWriter, input *float64, existing float64, label string) (float64, bool) {
 	if input == nil {
 		return existing, true
 	}
@@ -344,8 +387,8 @@ func (s *Server) adminDeleteModelConfig(w http.ResponseWriter, r *http.Request, 
 }
 
 // creditRateView carries the two global billing knobs: the fixed markup
-// factor (the product's core margin) and the baseline DeepSeek-V4-Pro
-// per-token cost used to convert money-billed models into credits.
+// factor (the product's core margin) and the CNY amount represented by one
+// credit.
 type creditRateView struct {
 	MarkupFactor      float64 `json:"markup_factor"`
 	CurrencyPerCredit float64 `json:"currency_per_credit"`
@@ -382,7 +425,7 @@ func (s *Server) adminSetCreditRate(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if body.CurrencyPerCredit < 0 {
-		writeError(w, http.StatusBadRequest, 40201, "基准每 token 成本不能为负")
+		writeError(w, http.StatusBadRequest, 40201, "每百万 token 金额不能为负")
 		return
 	}
 	if strings.TrimSpace(body.Currency) == "" {

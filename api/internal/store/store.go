@@ -255,8 +255,14 @@ type ModelConfig struct {
 	OutputCreditMultiplier      float64 `json:"output_credit_multiplier"`
 	CachedInputCreditMultiplier float64 `json:"cached_input_credit_multiplier"`
 	CacheWriteCreditMultiplier  float64 `json:"cache_write_credit_multiplier"`
-	PricePerCallCNY             float64 `json:"price_per_call_cny"`
-	Enabled                     bool    `json:"enabled"`
+	// CNY prices are supplier costs per 1M tokens. When input/output prices
+	// are both configured, they supersede the legacy relative multipliers.
+	InputPricePerMillionCNY       float64 `json:"input_price_per_million_cny"`
+	OutputPricePerMillionCNY      float64 `json:"output_price_per_million_cny"`
+	CachedInputPricePerMillionCNY float64 `json:"cached_input_price_per_million_cny"`
+	CacheWritePricePerMillionCNY  float64 `json:"cache_write_price_per_million_cny"`
+	PricePerCallCNY               float64 `json:"price_per_call_cny"`
+	Enabled                       bool    `json:"enabled"`
 	// Priority orders the catalog (higher first), breaks Auto-router ties, and
 	// selects the default model (highest-priority enabled chat row) when none
 	// or an unknown model is requested. Admin-configured.

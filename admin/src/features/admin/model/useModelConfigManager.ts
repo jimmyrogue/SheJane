@@ -9,6 +9,13 @@ import {
 import { IMAGE_DEFAULT_MODEL_ID } from './model-options'
 import { emptyModelForm, type ModelConfigForm, type ModelPreset, type ModelTab } from './types'
 
+function formatFormNumber(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  return Number(value.toFixed(6)).toString()
+}
+
+const currencyPerCreditScale = 1_000_000
+
 export function useModelConfigManager({
   configs,
   creditRate,
@@ -60,7 +67,7 @@ export function useModelConfigManager({
   useEffect(() => {
     if (creditRate) {
       setMarkupInput(creditRate.markup_factor ? String(creditRate.markup_factor) : '1.15')
-      setRateInput(creditRate.currency_per_credit ? String(creditRate.currency_per_credit) : '')
+      setRateInput(creditRate.currency_per_credit ? formatFormNumber(creditRate.currency_per_credit * currencyPerCreditScale) : '')
       setRateCurrency(creditRate.currency || 'cny')
     }
   }, [creditRate])
@@ -83,6 +90,15 @@ export function useModelConfigManager({
   }
 
   function openEdit(cfg: AdminModelConfig) {
+    const cnyPerMillionCredit = (creditRate?.currency_per_credit ?? 0) * 1_000_000
+    const priceOrDerived = (price: number | undefined, multiplier: number | undefined, fallbackMultiplier: number | undefined) => {
+      if (price && price > 0) return formatFormNumber(price)
+      if (cnyPerMillionCredit > 0) {
+        const effectiveMultiplier = multiplier || fallbackMultiplier || 0
+        if (effectiveMultiplier > 0) return formatFormNumber(cnyPerMillionCredit * effectiveMultiplier)
+      }
+      return ''
+    }
     setEditingId(cfg.id)
     setEditingHasKey(cfg.api_key_configured)
     setForm({
@@ -102,6 +118,14 @@ export function useModelConfigManager({
       output_credit_multiplier: String(cfg.output_credit_multiplier || cfg.credit_multiplier || 1),
       cached_input_credit_multiplier: cfg.cached_input_credit_multiplier ? String(cfg.cached_input_credit_multiplier) : '',
       cache_write_credit_multiplier: String(cfg.cache_write_credit_multiplier || cfg.input_credit_multiplier || cfg.credit_multiplier || 1),
+      input_price_per_million_cny: priceOrDerived(cfg.input_price_per_million_cny, cfg.input_credit_multiplier, cfg.credit_multiplier),
+      output_price_per_million_cny: priceOrDerived(cfg.output_price_per_million_cny, cfg.output_credit_multiplier, cfg.credit_multiplier),
+      cached_input_price_per_million_cny: priceOrDerived(
+        cfg.cached_input_price_per_million_cny,
+        cfg.cached_input_credit_multiplier || cfg.input_credit_multiplier,
+        cfg.credit_multiplier,
+      ),
+      cache_write_price_per_million_cny: priceOrDerived(cfg.cache_write_price_per_million_cny, cfg.cache_write_credit_multiplier || cfg.input_credit_multiplier, cfg.credit_multiplier),
       price_per_call_cny: String(cfg.price_per_call_cny ?? 0),
       enabled: cfg.enabled,
       api_key: '',
@@ -131,6 +155,16 @@ export function useModelConfigManager({
       }
       return n
     }
+    const parseCNYPrice = (raw: string, label: string): number | null => {
+      const trimmed = raw.trim()
+      if (!trimmed) return 0
+      const n = Number(trimmed)
+      if (!Number.isFinite(n) || n < 0) {
+        onNotice(`${label}必须是非负数字；留空或 0 表示不启用价格字段`)
+        return null
+      }
+      return n
+    }
     const modelID = form.capability === 'image' ? IMAGE_DEFAULT_MODEL_ID : form.slot.trim()
     if (!modelID || !form.provider_kind.trim()) {
       onNotice('模型 ID 与 provider_kind 必填')
@@ -148,6 +182,18 @@ export function useModelConfigManager({
     if (cachedInputMultiplier === null) return
     const cacheWriteMultiplier = parseTokenMultiplier(form.cache_write_credit_multiplier, '缓存写入 token 倍率')
     if (cacheWriteMultiplier === null) return
+    const inputPrice = parseCNYPrice(form.input_price_per_million_cny, '输入 ¥/1M token 价格')
+    if (inputPrice === null) return
+    const outputPrice = parseCNYPrice(form.output_price_per_million_cny, '输出 ¥/1M token 价格')
+    if (outputPrice === null) return
+    if ((inputPrice > 0 && outputPrice <= 0) || (outputPrice > 0 && inputPrice <= 0)) {
+      onNotice('输入和输出 ¥/1M token 价格需要同时填写；否则请都留空并使用旧倍率兜底')
+      return
+    }
+    const cachedInputPrice = parseCNYPrice(form.cached_input_price_per_million_cny, '缓存命中输入 ¥/1M token 价格')
+    if (cachedInputPrice === null) return
+    const cacheWritePrice = parseCNYPrice(form.cache_write_price_per_million_cny, '缓存写入 ¥/1M token 价格')
+    if (cacheWritePrice === null) return
     const payload: ModelConfigInput = {
       slot: modelID,
       capability: form.capability.trim() || 'chat',
@@ -165,6 +211,10 @@ export function useModelConfigManager({
       output_credit_multiplier: outputMultiplier,
       cached_input_credit_multiplier: cachedInputMultiplier,
       cache_write_credit_multiplier: cacheWriteMultiplier,
+      input_price_per_million_cny: inputPrice,
+      output_price_per_million_cny: outputPrice,
+      cached_input_price_per_million_cny: cachedInputPrice,
+      cache_write_price_per_million_cny: cacheWritePrice,
       price_per_call_cny: Number(form.price_per_call_cny) || 0,
       enabled: form.enabled,
     }
@@ -219,12 +269,16 @@ export function useModelConfigManager({
     }
     const value = Number(rateInput || 0)
     if (!Number.isFinite(value) || value < 0) {
-      onNotice('基准每 token 成本不能为负')
+      onNotice('每百万 token 金额不能为负')
       return
     }
     setRateSaving(true)
     try {
-      await api.adminSetCreditRate({ markup_factor: markup, currency_per_credit: value, currency: rateCurrency.trim() || 'cny' })
+      await api.adminSetCreditRate({
+        markup_factor: markup,
+        currency_per_credit: value / currencyPerCreditScale,
+        currency: rateCurrency.trim() || 'cny',
+      })
       await onReload()
       onNotice('计费参数已更新并即时生效')
     } catch (caught) {

@@ -13,6 +13,10 @@ const modelConfigColumns = `id::text, slot, capability, provider_kind, display_n
 	COALESCE(output_credit_multiplier, 0)::double precision,
 	COALESCE(cached_input_credit_multiplier, 0)::double precision,
 	COALESCE(cache_write_credit_multiplier, 0)::double precision,
+	COALESCE(input_price_per_million_cny, 0)::double precision,
+	COALESCE(output_price_per_million_cny, 0)::double precision,
+	COALESCE(cached_input_price_per_million_cny, 0)::double precision,
+	COALESCE(cache_write_price_per_million_cny, 0)::double precision,
 	price_per_call_cny::double precision, enabled,
 	COALESCE(params, '{}'::jsonb)::text, created_at, updated_at, COALESCE(updated_by::text, ''),
 	COALESCE(description, ''), COALESCE(priority, 0)`
@@ -26,6 +30,8 @@ func scanModelConfig(scanner interface{ Scan(...any) error }) (ModelConfig, erro
 		&cfg.ModelName, &cfg.APIKeyEncrypted, &cfg.CreditMultiplier,
 		&cfg.InputCreditMultiplier, &cfg.OutputCreditMultiplier,
 		&cfg.CachedInputCreditMultiplier, &cfg.CacheWriteCreditMultiplier,
+		&cfg.InputPricePerMillionCNY, &cfg.OutputPricePerMillionCNY,
+		&cfg.CachedInputPricePerMillionCNY, &cfg.CacheWritePricePerMillionCNY,
 		&cfg.PricePerCallCNY, &cfg.Enabled,
 		&paramsRaw, &cfg.CreatedAt, &cfg.UpdatedAt, &cfg.UpdatedBy,
 		&cfg.Description, &cfg.Priority,
@@ -120,14 +126,17 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 			INSERT INTO model_configs
 				(slot, capability, provider_kind, display_name, vendor, vendor_info, capability_tier, base_url, model_name,
 				 api_key_encrypted, credit_multiplier, input_credit_multiplier, output_credit_multiplier,
-				 cached_input_credit_multiplier, cache_write_credit_multiplier, price_per_call_cny, enabled,
-				 params, updated_by, description, priority)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, NULLIF($19,'')::uuid, $20, $21)
+				 cached_input_credit_multiplier, cache_write_credit_multiplier,
+				 input_price_per_million_cny, output_price_per_million_cny,
+				 cached_input_price_per_million_cny, cache_write_price_per_million_cny,
+				 price_per_call_cny, enabled, params, updated_by, description, priority)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, NULLIF($23,'')::uuid, $24, $25)
 			RETURNING `+modelConfigColumns+`
 		`, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.Vendor, cfg.VendorInfo, cfg.CapabilityTier,
 			cfg.BaseURL, cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier, cfg.OutputCreditMultiplier,
-			cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier, cfg.PricePerCallCNY, cfg.Enabled,
-			encodeParams(cfg.Params), actorUserID,
+			cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier,
+			cfg.InputPricePerMillionCNY, cfg.OutputPricePerMillionCNY, cfg.CachedInputPricePerMillionCNY, cfg.CacheWritePricePerMillionCNY,
+			cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID,
 			cfg.Description, cfg.Priority))
 	} else {
 		saved, err = scanModelConfig(tx.QueryRowContext(ctx, `
@@ -137,15 +146,17 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 				model_name=$10, api_key_encrypted=$11, credit_multiplier=$12,
 				input_credit_multiplier=$13, output_credit_multiplier=$14,
 				cached_input_credit_multiplier=$15, cache_write_credit_multiplier=$16,
-				price_per_call_cny=$17, enabled=$18, params=$19, updated_at=NOW(),
-				updated_by=NULLIF($20,'')::uuid, description=$21, priority=$22
+				input_price_per_million_cny=$17, output_price_per_million_cny=$18,
+				cached_input_price_per_million_cny=$19, cache_write_price_per_million_cny=$20,
+				price_per_call_cny=$21, enabled=$22, params=$23, updated_at=NOW(),
+				updated_by=NULLIF($24,'')::uuid, description=$25, priority=$26
 			WHERE id=$1
 			RETURNING `+modelConfigColumns+`
 		`, cfg.ID, cfg.Slot, cfg.Capability, cfg.ProviderKind, cfg.DisplayName, cfg.Vendor,
 			cfg.VendorInfo, cfg.CapabilityTier, cfg.BaseURL, cfg.ModelName, cfg.APIKeyEncrypted, cfg.CreditMultiplier, cfg.InputCreditMultiplier,
 			cfg.OutputCreditMultiplier, cfg.CachedInputCreditMultiplier, cfg.CacheWriteCreditMultiplier,
-			cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description,
-			cfg.Priority))
+			cfg.InputPricePerMillionCNY, cfg.OutputPricePerMillionCNY, cfg.CachedInputPricePerMillionCNY, cfg.CacheWritePricePerMillionCNY,
+			cfg.PricePerCallCNY, cfg.Enabled, encodeParams(cfg.Params), actorUserID, cfg.Description, cfg.Priority))
 	}
 	if err != nil {
 		return ModelConfig{}, mapNotFound(err)
@@ -155,7 +166,8 @@ func (s *PostgresStore) UpsertModelConfig(ctx context.Context, actorUserID strin
 		"slot": saved.Slot, "provider_kind": saved.ProviderKind, "vendor": saved.Vendor, "vendor_info": saved.VendorInfo, "model_name": saved.ModelName,
 		"capability_tier":   saved.CapabilityTier,
 		"credit_multiplier": saved.CreditMultiplier, "input_credit_multiplier": saved.InputCreditMultiplier,
-		"output_credit_multiplier": saved.OutputCreditMultiplier, "enabled": saved.Enabled,
+		"output_credit_multiplier": saved.OutputCreditMultiplier, "input_price_per_million_cny": saved.InputPricePerMillionCNY,
+		"output_price_per_million_cny": saved.OutputPricePerMillionCNY, "enabled": saved.Enabled,
 	}); err != nil {
 		return ModelConfig{}, err
 	}

@@ -35,8 +35,8 @@ const (
 	cacheTTL = 30 * time.Second
 
 	// BillingSettingsKey is the app_settings row holding the global billing
-	// knobs (JSON): markup_factor and currency_per_credit (= the baseline
-	// DeepSeek-V4-Pro per-token cost, used to price money-billed models).
+	// knobs (JSON): markup_factor and currency_per_credit (= CNY represented
+	// by one credit, used to convert money-priced usage into credits).
 	BillingSettingsKey = "credit.currency_per_credit"
 
 	// BillingLeversKey is the app_settings row holding the admin-tunable
@@ -129,9 +129,8 @@ func (r *Registry) Markup() float64 {
 	return r.markup
 }
 
-// CurrencyPerCredit returns the baseline DeepSeek-V4-Pro per-token cost (¥),
-// used only to convert money-priced models (image) into credits. ok is false
-// when it has not been configured.
+// CurrencyPerCredit returns the CNY amount represented by one credit. ok is
+// false when it has not been configured.
 func (r *Registry) CurrencyPerCredit() (float64, bool) {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()
@@ -283,11 +282,15 @@ func (r *Registry) refreshIfStale(ctx context.Context) {
 			model:      cfg.ModelName,
 			multiplier: normalizeMultiplier(cfg.CreditMultiplier),
 			billing: llm.ModelBilling{
-				CreditMultiplier:            normalizeMultiplier(cfg.CreditMultiplier),
-				InputCreditMultiplier:       cfg.InputCreditMultiplier,
-				OutputCreditMultiplier:      cfg.OutputCreditMultiplier,
-				CachedInputCreditMultiplier: cfg.CachedInputCreditMultiplier,
-				CacheWriteCreditMultiplier:  cfg.CacheWriteCreditMultiplier,
+				CreditMultiplier:              normalizeMultiplier(cfg.CreditMultiplier),
+				InputCreditMultiplier:         cfg.InputCreditMultiplier,
+				OutputCreditMultiplier:        cfg.OutputCreditMultiplier,
+				CachedInputCreditMultiplier:   cfg.CachedInputCreditMultiplier,
+				CacheWriteCreditMultiplier:    cfg.CacheWriteCreditMultiplier,
+				InputPricePerMillionCNY:       cfg.InputPricePerMillionCNY,
+				OutputPricePerMillionCNY:      cfg.OutputPricePerMillionCNY,
+				CachedInputPricePerMillionCNY: cfg.CachedInputPricePerMillionCNY,
+				CacheWritePricePerMillionCNY:  cfg.CacheWritePricePerMillionCNY,
 			}.Normalized(),
 		}
 		label := cfg.DisplayName

@@ -88,7 +88,7 @@ make smoke-stripe-webhook
 - `Auto` and the `auto.` prefix are reserved. The Go API resolves `auto`, `auto.fast`, and `auto.smart` once per run through `POST /api/v1/models/resolve` and emits `model.selected`; the latter two are Auto intent sentinels, not concrete model IDs.
 - Do not reintroduce fast/deep UX or daemon-side model classifiers. `chat.fast` and `chat.deep` are seed IDs, not fixed product tiers.
 - Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
-- Text model billing is relative to DeepSeek Pro = 1. Configure input and output token multipliers separately; legacy `credit_multiplier` is only the fallback when split fields are unset. Global markup remains the product margin knob.
+- Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields. Legacy input/output token multipliers and `credit_multiplier` remain fallback only. Global markup remains the product margin knob.
 - Keep model catalog behavior behind `api/internal/modelreg.Registry` and store changes behind `api/internal/store.Store`; memory and Postgres implementations must stay in lockstep.
 
 ## Stripe Billing Notes

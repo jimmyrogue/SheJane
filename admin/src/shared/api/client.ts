@@ -149,6 +149,10 @@ export interface AdminModelConfig {
   output_credit_multiplier: number
   cached_input_credit_multiplier: number
   cache_write_credit_multiplier: number
+  input_price_per_million_cny: number
+  output_price_per_million_cny: number
+  cached_input_price_per_million_cny: number
+  cache_write_price_per_million_cny: number
   price_per_call_cny: number
   enabled: boolean
   params: Record<string, unknown>
@@ -173,6 +177,10 @@ export interface ModelConfigInput {
   output_credit_multiplier?: number
   cached_input_credit_multiplier?: number
   cache_write_credit_multiplier?: number
+  input_price_per_million_cny?: number
+  output_price_per_million_cny?: number
+  cached_input_price_per_million_cny?: number
+  cache_write_price_per_million_cny?: number
   price_per_call_cny: number
   enabled: boolean
   params?: Record<string, unknown>

@@ -378,12 +378,19 @@ func (a *App) markupFactor() float64 {
 	return a.Registry.Markup()
 }
 
+func (a *App) currencyPerCredit() (float64, bool) {
+	if a.Registry == nil {
+		return 0, false
+	}
+	return a.Registry.CurrencyPerCredit()
+}
+
 // EstimateCredits estimates the up-front reservation. request.Model carries the
 // resolved catalog model id (set by the entrypoint via Router.SelectModel), so
-// the multiplier is the per-model ratio × global markup.
+// it can use the same price-first billing rules as final settlement.
 func (a *App) EstimateCredits(request llm.ChatRequest) int64 {
 	tokens := llm.EstimateRequestTokens(request)
-	credits := applyMultiplier(int64(tokens), a.Router.MultiplierForModel(request.Model)*a.markupFactor())
+	credits := a.usageCreditsForTokens(request.Model, tokens, 0)
 	if credits < 300 {
 		return 300
 	}
@@ -400,10 +407,18 @@ func (a *App) UsageCredits(modelID string, totalTokens int) int64 {
 	return credits
 }
 
-// UsageCreditsForTokens converts settled chat usage to credits using separate
-// input/output cost multipliers. Multipliers are relative to the DeepSeek Pro
-// baseline (1.0) and the global markup is applied once on the blended cost.
+// UsageCreditsForTokens converts settled chat usage to credits. CNY per-1M
+// token prices win when configured; legacy multipliers remain the fallback.
+// The global markup is applied once on the blended cost.
 func (a *App) UsageCreditsForTokens(modelID string, inputTokens int, outputTokens int) int64 {
+	credits := a.usageCreditsForTokens(modelID, inputTokens, outputTokens)
+	if credits < 1 {
+		return 1
+	}
+	return credits
+}
+
+func (a *App) usageCreditsForTokens(modelID string, inputTokens int, outputTokens int) int64 {
 	if inputTokens < 0 {
 		inputTokens = 0
 	}
@@ -411,12 +426,22 @@ func (a *App) UsageCreditsForTokens(modelID string, inputTokens int, outputToken
 		outputTokens = 0
 	}
 	billing := a.Router.BillingForModel(modelID)
-	raw := float64(inputTokens)*billing.InputCreditMultiplier + float64(outputTokens)*billing.OutputCreditMultiplier
-	credits := int64(math.Ceil(raw * a.markupFactor()))
-	if credits < 1 {
-		return 1
+	if billing.HasCNYPrices() {
+		if currency, ok := a.currencyPerCredit(); ok && currency > 0 {
+			rawCNY := priceForTokens(inputTokens, billing.InputPricePerMillionCNY) +
+				priceForTokens(outputTokens, billing.OutputPricePerMillionCNY)
+			return int64(math.Ceil((rawCNY * a.markupFactor()) / currency))
+		}
 	}
-	return credits
+	raw := float64(inputTokens)*billing.InputCreditMultiplier + float64(outputTokens)*billing.OutputCreditMultiplier
+	return int64(math.Ceil(raw * a.markupFactor()))
+}
+
+func priceForTokens(tokens int, pricePerMillionCNY float64) float64 {
+	if tokens <= 0 || pricePerMillionCNY <= 0 {
+		return 0
+	}
+	return (float64(tokens) / 1_000_000) * pricePerMillionCNY
 }
 
 func applyMultiplier(tokens int64, multiplier float64) int64 {

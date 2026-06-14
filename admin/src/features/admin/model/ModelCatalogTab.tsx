@@ -4,7 +4,7 @@ import Search from 'lucide-react/dist/esm/icons/search'
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2'
 import type { AdminModelConfig } from '@/shared/api/client'
 import { FilterChip, Toggle } from '../components/ui-helpers'
-import { formatCapabilityTier, formatMultiplier } from '../shared/format'
+import { formatCapabilityTier, formatCNYPerMillion, formatMultiplier } from '../shared/format'
 import type { ModelStats } from './types'
 
 const VENDOR_GLYPH: Record<string, string> = {
@@ -35,6 +35,7 @@ function ModelRow({
 }) {
   const inRate = cfg.input_credit_multiplier || cfg.credit_multiplier
   const outRate = cfg.output_credit_multiplier || cfg.credit_multiplier
+  const hasCNYPrice = cfg.input_price_per_million_cny > 0 && cfg.output_price_per_million_cny > 0
   const baseHost = (cfg.base_url || '').replace(/^https?:\/\//, '') || 'default'
 
   return (
@@ -58,14 +59,29 @@ function ModelRow({
           <span className="truncate">{baseHost}</span>
         </div>
       </div>
-      {/* Token 费率 */}
+      {/* Token 价格 */}
       <div className="admin-rate">
-        <div className="admin-rate-main">
-          <span className="faint">in</span> ×{formatMultiplier(inRate)}
-          <span className="sep">·</span>
-          <span className="faint">out</span> ×{formatMultiplier(outRate)}
-        </div>
-        <div className="admin-rate-base">base ×{formatMultiplier(cfg.credit_multiplier)}</div>
+        {hasCNYPrice ? (
+          <>
+            <div className="admin-rate-main">
+              <span className="faint">in</span> {formatCNYPerMillion(cfg.input_price_per_million_cny)}
+              <span className="sep">·</span>
+              <span className="faint">out</span> {formatCNYPerMillion(cfg.output_price_per_million_cny)}
+            </div>
+            <div className="admin-rate-base">
+              cache {formatCNYPerMillion(cfg.cached_input_price_per_million_cny || cfg.input_price_per_million_cny)} / 1M
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="admin-rate-main">
+              <span className="faint">in</span> ×{formatMultiplier(inRate)}
+              <span className="sep">·</span>
+              <span className="faint">out</span> ×{formatMultiplier(outRate)}
+            </div>
+            <div className="admin-rate-base">legacy base ×{formatMultiplier(cfg.credit_multiplier)}</div>
+          </>
+        )}
       </div>
       {/* 状态 */}
       <div className="flex flex-col items-start gap-2">
@@ -142,27 +158,31 @@ export function ModelCatalogTab({
       </div>
 
       <div className="admin-model-table-card">
-        <div className="admin-model-grid-head">
-          <span>模型</span>
-          <span>上游连接</span>
-          <span>Token 费率</span>
-          <span>状态</span>
-          <span className="text-right">操作</span>
-        </div>
-        <div>
-          {visibleConfigs.length ? (
-            visibleConfigs.map((cfg) => (
-              <ModelRow
-                key={cfg.id}
-                cfg={cfg}
-                onOpenEdit={onOpenEdit}
-                onToggleEnabled={onToggleEnabled}
-                onRemoveConfig={onRemoveConfig}
-              />
-            ))
-          ) : (
-            <div className="admin-empty-inline">{configs.length ? '没有匹配的模型' : '暂无模型配置（首次启动会从 env 自动播种）'}</div>
-          )}
+        <div className="admin-model-grid-scroll">
+          <div className="admin-model-grid-content">
+            <div className="admin-model-grid-head">
+              <span>模型</span>
+              <span>上游连接</span>
+              <span>Token 价格</span>
+              <span>状态</span>
+              <span className="text-right">操作</span>
+            </div>
+            <div>
+              {visibleConfigs.length ? (
+                visibleConfigs.map((cfg) => (
+                  <ModelRow
+                    key={cfg.id}
+                    cfg={cfg}
+                    onOpenEdit={onOpenEdit}
+                    onToggleEnabled={onToggleEnabled}
+                    onRemoveConfig={onRemoveConfig}
+                  />
+                ))
+              ) : (
+                <div className="admin-empty-inline">{configs.length ? '没有匹配的模型' : '暂无模型配置（首次启动会从 env 自动播种）'}</div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

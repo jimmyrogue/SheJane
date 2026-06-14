@@ -81,32 +81,38 @@ func TestStoreConformance(t *testing.T) {
 func conformModelCatalog(t *testing.T, s Store) {
 	ctx := context.Background()
 	saved, err := s.UpsertModelConfig(ctx, "", ModelConfig{
-		Slot:             "chat.deepseek-v4",
-		Capability:       "chat",
-		ProviderKind:     "deepseek-v4",
-		DisplayName:      "DeepSeek V4",
-		Vendor:           "DeepSeek",
-		VendorInfo:       "深度求索，推理能力与性价比突出。",
-		CapabilityTier:   "reasoning",
-		Description:      "通用快速模型",
-		ModelName:        "deepseek-v4",
-		CreditMultiplier: 1,
-		Priority:         50,
-		Enabled:          true,
+		Slot:                          "chat.deepseek-v4",
+		Capability:                    "chat",
+		ProviderKind:                  "deepseek-v4",
+		DisplayName:                   "DeepSeek V4",
+		Vendor:                        "DeepSeek",
+		VendorInfo:                    "深度求索，推理能力与性价比突出。",
+		CapabilityTier:                "reasoning",
+		Description:                   "通用快速模型",
+		ModelName:                     "deepseek-v4",
+		CreditMultiplier:              1,
+		InputPricePerMillionCNY:       20,
+		OutputPricePerMillionCNY:      80,
+		CachedInputPricePerMillionCNY: 2,
+		CacheWritePricePerMillionCNY:  25,
+		Priority:                      50,
+		Enabled:                       true,
 	})
 	if err != nil {
 		t.Fatalf("UpsertModelConfig: %v", err)
 	}
-	if saved.Description != "通用快速模型" || saved.Priority != 50 || saved.Vendor != "DeepSeek" || saved.VendorInfo != "深度求索，推理能力与性价比突出。" || saved.CapabilityTier != "reasoning" {
-		t.Fatalf("upsert returned description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want catalog fields", saved.Description, saved.Priority, saved.Vendor, saved.VendorInfo, saved.CapabilityTier)
+	if saved.Description != "通用快速模型" || saved.Priority != 50 || saved.Vendor != "DeepSeek" || saved.VendorInfo != "深度求索，推理能力与性价比突出。" || saved.CapabilityTier != "reasoning" ||
+		saved.InputPricePerMillionCNY != 20 || saved.OutputPricePerMillionCNY != 80 || saved.CachedInputPricePerMillionCNY != 2 || saved.CacheWritePricePerMillionCNY != 25 {
+		t.Fatalf("upsert returned %+v, want catalog fields and CNY token prices", saved)
 	}
 
 	got, err := s.GetModelConfig(ctx, saved.ID)
 	if err != nil {
 		t.Fatalf("GetModelConfig: %v", err)
 	}
-	if got.Description != "通用快速模型" || got.Priority != 50 || got.Vendor != "DeepSeek" || got.VendorInfo != "深度求索，推理能力与性价比突出。" || got.CapabilityTier != "reasoning" {
-		t.Fatalf("get returned description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want catalog fields", got.Description, got.Priority, got.Vendor, got.VendorInfo, got.CapabilityTier)
+	if got.Description != "通用快速模型" || got.Priority != 50 || got.Vendor != "DeepSeek" || got.VendorInfo != "深度求索，推理能力与性价比突出。" || got.CapabilityTier != "reasoning" ||
+		got.InputPricePerMillionCNY != 20 || got.OutputPricePerMillionCNY != 80 || got.CachedInputPricePerMillionCNY != 2 || got.CacheWritePricePerMillionCNY != 25 {
+		t.Fatalf("get returned %+v, want catalog fields and CNY token prices", got)
 	}
 
 	// Update priority/description and confirm persistence.
@@ -115,6 +121,10 @@ func conformModelCatalog(t *testing.T, s Store) {
 	got.Vendor = "ChatGPT"
 	got.VendorInfo = "OpenAI 出品，通用能力全面。"
 	got.CapabilityTier = "balanced"
+	got.InputPricePerMillionCNY = 15
+	got.OutputPricePerMillionCNY = 60
+	got.CachedInputPricePerMillionCNY = 1.5
+	got.CacheWritePricePerMillionCNY = 18
 	if _, err := s.UpsertModelConfig(ctx, "", got); err != nil {
 		t.Fatalf("UpsertModelConfig (update): %v", err)
 	}
@@ -122,8 +132,9 @@ func conformModelCatalog(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatalf("GetModelConfig (reload): %v", err)
 	}
-	if reloaded.Priority != 10 || reloaded.Description != "降级" || reloaded.Vendor != "ChatGPT" || reloaded.VendorInfo != "OpenAI 出品，通用能力全面。" || reloaded.CapabilityTier != "balanced" {
-		t.Fatalf("reloaded description=%q priority=%d vendor=%q vendor_info=%q tier=%q, want updated catalog fields", reloaded.Description, reloaded.Priority, reloaded.Vendor, reloaded.VendorInfo, reloaded.CapabilityTier)
+	if reloaded.Priority != 10 || reloaded.Description != "降级" || reloaded.Vendor != "ChatGPT" || reloaded.VendorInfo != "OpenAI 出品，通用能力全面。" || reloaded.CapabilityTier != "balanced" ||
+		reloaded.InputPricePerMillionCNY != 15 || reloaded.OutputPricePerMillionCNY != 60 || reloaded.CachedInputPricePerMillionCNY != 1.5 || reloaded.CacheWritePricePerMillionCNY != 18 {
+		t.Fatalf("reloaded %+v, want updated catalog fields and CNY token prices", reloaded)
 	}
 
 	list, err := s.ListModelConfigs(ctx, "chat")

@@ -44,8 +44,8 @@ type imageEditInput struct {
 }
 
 // imageCreditsPerImage converts a money-per-call price into credits using the
-// registry-cached baseline cost and the global markup. ok is false when the
-// baseline cost has not been configured (image billing then refuses).
+// registry-cached credit CNY value and the global markup. ok is false when the
+// value has not been configured (image billing then refuses).
 func (s *Server) imageCreditsPerImage(pricePerCall float64) (int64, bool) {
 	baseCost, ok := s.app.Registry.CurrencyPerCredit()
 	if !ok {
@@ -126,7 +126,7 @@ func (s *Server) runBilledImage(
 	}
 	perImage, ok := s.imageCreditsPerImage(pricePerCall)
 	if !ok {
-		return toolError("image_billing_not_configured", "图像计费未配置：请先在管理后台设置「基准每 token 成本」。"), http.StatusBadRequest
+		return toolError("image_billing_not_configured", "图像计费未配置：请先在管理后台设置「每百万 token 金额」。"), http.StatusBadRequest
 	}
 
 	n = clampImageCount(n)
