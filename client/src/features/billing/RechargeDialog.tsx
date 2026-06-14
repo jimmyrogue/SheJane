@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,21 +9,7 @@ import {
 import { useI18n } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
 
-type PayMethod = 'wechat' | 'alipay'
-
-interface RechargePackage {
-  id: string
-  credits: number
-  price: number
-  bonus?: number
-}
-
-const rechargePackages: RechargePackage[] = [
-  { id: 'p1', credits: 50_000, price: 50 },
-  { id: 'p2', credits: 120_000, price: 100, bonus: 20_000 },
-  { id: 'p3', credits: 300_000, price: 240, bonus: 60_000 },
-  { id: 'p4', credits: 650_000, price: 500, bonus: 150_000 },
-]
+const presetAmounts = [10, 20, 50]
 
 function formatCredits(value: number): string {
   return Math.max(0, Math.round(value)).toLocaleString()
@@ -42,21 +28,21 @@ export function RechargeDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   balance?: WalletBalance | null
-  onConfirm: () => Promise<void> | void
+  onConfirm: (amount: number) => Promise<void> | void
 }) {
   const { t } = useI18n()
-  const [selectedPackageID, setSelectedPackageID] = useState('p2')
-  const [payMethod, setPayMethod] = useState<PayMethod>('wechat')
+  const [amountInput, setAmountInput] = useState('20')
   const [confirming, setConfirming] = useState(false)
-  const selectedPackage = useMemo(
-    () => rechargePackages.find((item) => item.id === selectedPackageID) ?? rechargePackages[1],
-    [selectedPackageID],
-  )
+  const amount = Number(amountInput)
+  const validAmount = Number.isInteger(amount) && amount >= 5 && amount <= 500
 
   const confirm = async () => {
+    if (!validAmount) {
+      return
+    }
     setConfirming(true)
     try {
-      await onConfirm()
+      await onConfirm(amount)
       onOpenChange(false)
     } finally {
       setConfirming(false)
@@ -76,43 +62,29 @@ export function RechargeDialog({
         <div className="billing-modal-body">
           <section className="recharge-section">
             <div className="billing-section-label">{t('billing.recharge.amountSection')}</div>
-            <div className="recharge-package-grid">
-              {rechargePackages.map((item) => (
+            <label className="recharge-amount-field">
+              <span>{t('billing.recharge.amountLabel')}</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={5}
+                max={500}
+                step={1}
+                value={amountInput}
+                aria-invalid={!validAmount}
+                onChange={(event) => setAmountInput(event.target.value)}
+              />
+            </label>
+            <div className="recharge-preset-grid" aria-label={t('billing.recharge.presetLabel')}>
+              {presetAmounts.map((item) => (
                 <button
-                  key={item.id}
+                  key={item}
                   type="button"
-                  className={`recharge-package${selectedPackageID === item.id ? ' selected' : ''}`}
-                  aria-pressed={selectedPackageID === item.id}
-                  onClick={() => setSelectedPackageID(item.id)}
+                  className={`recharge-preset${amountInput === String(item) ? ' selected' : ''}`}
+                  aria-pressed={amountInput === String(item)}
+                  onClick={() => setAmountInput(String(item))}
                 >
-                  <span className="recharge-package-credits">
-                    {t('billing.recharge.credits', { credits: formatCredits(item.credits) })}
-                  </span>
-                  <span className="recharge-package-price">¥{item.price}</span>
-                  {item.bonus ? (
-                    <span className="recharge-package-bonus">
-                      {t('billing.recharge.bonus', { bonus: formatCredits(item.bonus) })}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="recharge-section">
-            <div className="billing-section-label">{t('billing.recharge.paySection')}</div>
-            <div className="recharge-pay-grid">
-              {(['wechat', 'alipay'] as const).map((method) => (
-                <button
-                  key={method}
-                  type="button"
-                  className={`recharge-pay-option${payMethod === method ? ' selected' : ''}`}
-                  aria-pressed={payMethod === method}
-                  onClick={() => setPayMethod(method)}
-                >
-                  <span className="recharge-pay-glyph">{method === 'wechat' ? '微' : '支'}</span>
-                  <span>{t(`billing.recharge.pay.${method}`)}</span>
-                  <span className="recharge-pay-radio" aria-hidden="true" />
+                  ${item}
                 </button>
               ))}
             </div>
@@ -124,11 +96,10 @@ export function RechargeDialog({
         <div className="billing-modal-footer">
           <span>
             {t('billing.recharge.footer', {
-              price: selectedPackage.price,
-              credits: formatCredits(selectedPackage.credits),
+              amount: validAmount ? amount : amountInput || '0',
             })}
           </span>
-          <button type="button" className="settings-primary-button" disabled={confirming} onClick={confirm}>
+          <button type="button" className="settings-primary-button" disabled={confirming || !validAmount} onClick={confirm}>
             {confirming ? t('billing.recharge.confirming') : t('billing.recharge.confirm')}
           </button>
         </div>

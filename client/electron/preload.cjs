@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
     logout: () => invokeAuth('shejane:auth-logout'),
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('shejane:select-workspace-directory'),
+  openExternal: (url) => ipcRenderer.invoke('shejane:open-external', url),
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
   setWindowButtonPosition: (position) => ipcRenderer.invoke('shejane:set-window-button-position', position),
   notify: (payload) => ipcRenderer.invoke('shejane:notify', payload),
@@ -49,5 +50,10 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
     const wrapped = () => handler()
     ipcRenderer.on('shejane:new-chat', wrapped)
     return () => ipcRenderer.removeListener('shejane:new-chat', wrapped)
+  },
+  onDeepLink: (handler) => {
+    const wrapped = (_event, url) => handler(url)
+    ipcRenderer.on('shejane:deep-link', wrapped)
+    return () => ipcRenderer.removeListener('shejane:deep-link', wrapped)
   },
 })

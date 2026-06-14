@@ -228,7 +228,11 @@ describe('user client shell', () => {
 
   it('opens the recharge dialog from settings and confirms the Stripe checkout', async () => {
     const calls = mockFetch('user')
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      openExternal,
+    }
 
     render(<App />)
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
@@ -241,14 +245,19 @@ describe('user client shell', () => {
     fireEvent.click(await screen.findByText('充值'))
 
     expect(await screen.findByRole('dialog', { name: '充值' })).toBeInTheDocument()
-    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/checkout'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: '确认充值' }))
 
     await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(true),
+      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/checkout'))).toBe(true),
     )
+    const checkoutCall = calls.find((call) => call.url.endsWith('/api/v1/billing/checkout'))
+    expect(JSON.parse(String(checkoutCall?.init?.body ?? '{}'))).toMatchObject({
+      amount: 20,
+      return_target: 'electron',
+    })
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
   })
 
@@ -656,9 +665,10 @@ describe('user client shell', () => {
   it('opens top-up checkout from a quota failure action', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     const calls = mockFetch('user', { localRunStream })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -693,17 +703,18 @@ describe('user client shell', () => {
     await clickFailureAction('充值')
 
     await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toBe(true),
+      expect(calls.some((call) => call.url.endsWith('/api/v1/billing/checkout'))).toBe(true),
     )
-    expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer')
+    expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test')
   })
 
   it('opens only one checkout session when the same quota recovery action is clicked twice', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     const calls = mockFetch('user', { localRunStream })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -744,8 +755,8 @@ describe('user client shell', () => {
     fireEvent.click(rechargeButton!)
 
     await waitFor(() => {
-      expect(calls.filter((call) => call.url.endsWith('/api/v1/billing/subscription/checkout'))).toHaveLength(1)
-      expect(openSpy).toHaveBeenCalledTimes(1)
+      expect(calls.filter((call) => call.url.endsWith('/api/v1/billing/checkout'))).toHaveLength(1)
+      expect(openExternal).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -787,9 +798,10 @@ describe('user client shell', () => {
       status: 'active',
     }
     const calls = mockFetch('user', { balance: () => emptyWallet })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -807,7 +819,7 @@ describe('user client shell', () => {
     await clickFailureAction('充值')
 
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
     expect(await screen.findByText('充值页面已打开，完成后可重试刚才的任务')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
@@ -862,9 +874,10 @@ describe('user client shell', () => {
     }
     let currentWallet = emptyWallet
     const calls = mockFetch('user', { balance: () => currentWallet })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -883,7 +896,7 @@ describe('user client shell', () => {
     await clickFailureAction('充值')
 
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
     expect(await screen.findByText('充值已完成，可重试刚才的任务')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
@@ -949,9 +962,10 @@ describe('user client shell', () => {
     }
     let currentWallet = emptyWallet
     const calls = mockFetch('user', { balance: () => currentWallet })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -968,7 +982,7 @@ describe('user client shell', () => {
 
     await clickFailureAction('充值')
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
     expect(await screen.findByText('充值页面已打开，完成后可重试刚才的任务')).toBeInTheDocument()
 
@@ -1021,9 +1035,10 @@ describe('user client shell', () => {
       status: 'active',
     }
     const calls = mockFetch('user', { balance: () => emptyWallet })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -1040,7 +1055,7 @@ describe('user client shell', () => {
 
     await clickFailureAction('充值')
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -1097,9 +1112,10 @@ describe('user client shell', () => {
     }
     let currentWallet = emptyWallet
     const calls = mockFetch('user', { balance: () => currentWallet })
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
       platform: 'darwin',
+      openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
         token: 'local-token',
@@ -1116,7 +1132,7 @@ describe('user client shell', () => {
 
     await clickFailureAction('充值')
     await waitFor(() =>
-      expect(openSpy).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test', '_blank', 'noopener,noreferrer'),
+      expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
     currentWallet = paidWallet
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -2506,8 +2522,18 @@ function mockFetch(
         ],
       })
     }
-    if (url.endsWith('/api/v1/billing/subscription/checkout')) {
-      return jsonResponse({ code: 0, message: 'ok', data: { checkout_url: 'https://stripe.example.com/checkout/sess_test' } })
+    if (url.endsWith('/api/v1/billing/checkout')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          checkout_url: 'https://stripe.example.com/checkout/sess_test',
+          stripe_checkout_session_id: 'cs_test',
+          amount: 10,
+          currency: 'usd',
+          credits: 500000,
+        },
+      })
     }
     if (url.endsWith('/api/v1/models')) {
       return jsonResponse({

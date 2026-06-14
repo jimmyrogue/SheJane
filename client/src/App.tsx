@@ -760,6 +760,31 @@ function AppContent() {
       .catch(() => undefined)
   }, [api, authClient])
 
+  useEffect(() => {
+    const unsubscribe = window.shejaneDesktop?.onDeepLink?.((rawURL) => {
+      let parsed: URL
+      try {
+        parsed = new URL(rawURL)
+      } catch {
+        return
+      }
+      if (parsed.protocol !== 'shejane:' || parsed.hostname !== 'billing') {
+        return
+      }
+      if (parsed.pathname === '/success') {
+        setNotice(t('billing.recharge.returnSuccess'))
+        if (auth) {
+          void api.balance().then(setBalance).catch(() => undefined)
+        }
+        return
+      }
+      if (parsed.pathname === '/cancel') {
+        setNotice(t('billing.recharge.returnCancel'))
+      }
+    })
+    return unsubscribe
+  }, [api, auth, t])
+
   // One-shot: if the app was opened from an email verification link
   // (CLIENT_BASE_URL/verify?token=…), confirm it. The endpoint is
   // unauthenticated, so this works signed-in or out. On success we clear the
@@ -2545,12 +2570,24 @@ function AppContent() {
     sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
   }
 
-  // Open the Stripe checkout / top-up page. The cloud API returns a
-  // checkout_url (a real Stripe session when configured, a dev success
-  // stub otherwise); window.open is intercepted by the Electron main
-  // process (setWindowOpenHandler → shell.openExternal) so it lands in
-  // the user's default browser, and works normally on the web.
-  async function startRecharge(recoveryTarget?: RecoveryTarget) {
+  // Open the Stripe one-time top-up page. Credits are granted only by
+  // the Stripe webhook after payment completion.
+  async function openBillingCheckoutURL(checkoutURL: string) {
+    const bridge = window.shejaneDesktop
+    if (bridge?.openExternal) {
+      await bridge.openExternal(checkoutURL)
+      return
+    }
+    if (bridge) {
+      window.open(checkoutURL, '_blank', 'noopener,noreferrer')
+      return
+    }
+    window.location.href = checkoutURL
+  }
+
+  async function startRecharge(amountOrRecoveryTarget?: number | RecoveryTarget, nextRecoveryTarget?: RecoveryTarget) {
+    const amount = typeof amountOrRecoveryTarget === 'number' ? amountOrRecoveryTarget : 10
+    const recoveryTarget = typeof amountOrRecoveryTarget === 'number' ? nextRecoveryTarget : amountOrRecoveryTarget
     const recoveryKey = recoveryTarget ? recoveryTargetKey(recoveryTarget) : undefined
     if (recoveryKey && recoveryRechargeInFlightRef.current.has(recoveryKey)) {
       setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
@@ -2561,11 +2598,14 @@ function AppContent() {
     }
     const walletBeforeCheckout = balance
     try {
-      const { checkout_url } = await api.createSubscriptionCheckout()
+      const { checkout_url } = await api.createBillingCheckout({
+        amount,
+        returnTarget: window.shejaneDesktop ? 'electron' : 'web',
+      })
       if (!checkout_url) {
         throw new Error('missing checkout url')
       }
-      window.open(checkout_url, '_blank', 'noopener,noreferrer')
+      await openBillingCheckoutURL(checkout_url)
       if (recoveryTarget) {
         setNotice(t('app.notice.checkoutOpenedWithRetry'), {
           duration: 8000,
@@ -2987,7 +3027,7 @@ function AppContent() {
             open={rechargeDialogOpen}
             onOpenChange={setRechargeDialogOpen}
             balance={balance}
-            onConfirm={() => startRecharge()}
+            onConfirm={(amount) => startRecharge(amount)}
           />
           <Dialog open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
             <DialogContent className="keyboard-shortcuts-dialog sm:max-w-[420px]">

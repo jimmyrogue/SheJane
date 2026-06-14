@@ -32,29 +32,44 @@ function renderDialog(props: Partial<React.ComponentProps<typeof RechargeDialog>
 }
 
 describe('RechargeDialog', () => {
-  it('shows packages, balance, and the selected package footer', () => {
+  it('shows USD amount controls and the current balance', () => {
     renderDialog()
 
     expect(screen.getByRole('dialog', { name: '充值' })).toBeInTheDocument()
     expect(screen.getByText('当前余额 70,000 积分')).toBeInTheDocument()
-    expect(screen.getByText('120,000 积分')).toBeInTheDocument()
-    expect(screen.getByText('实付 ¥100 到账 120,000 积分')).toBeInTheDocument()
+    expect(screen.getByLabelText('金额（USD）')).toHaveValue(20)
+    expect(screen.getByRole('button', { name: '$10' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '$20' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '$50' })).toBeInTheDocument()
+    expect(screen.getByText('Stripe Checkout · $20 USD')).toBeInTheDocument()
   })
 
-  it('updates the footer when another package is selected', () => {
+  it('updates the amount when a preset is selected', () => {
     renderDialog()
 
-    fireEvent.click(screen.getByRole('button', { name: /300,000 积分/ }))
-    expect(screen.getByText('实付 ¥240 到账 300,000 积分')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '$50' }))
+    expect(screen.getByLabelText('金额（USD）')).toHaveValue(50)
+    expect(screen.getByText('Stripe Checkout · $50 USD')).toBeInTheDocument()
   })
 
-  it('confirms through the existing checkout callback and closes', async () => {
+  it('passes the selected integer amount to the checkout callback and closes', async () => {
     const onConfirm = vi.fn(async () => undefined)
     const onOpenChange = vi.fn()
     renderDialog({ onConfirm, onOpenChange })
 
+    fireEvent.change(screen.getByLabelText('金额（USD）'), { target: { value: '35' } })
     fireEvent.click(screen.getByRole('button', { name: '确认充值' }))
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(35))
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('requires an integer amount between 5 and 500', () => {
+    renderDialog()
+
+    fireEvent.change(screen.getByLabelText('金额（USD）'), { target: { value: '4' } })
+    expect(screen.getByRole('button', { name: '确认充值' })).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('金额（USD）'), { target: { value: '10.5' } })
+    expect(screen.getByRole('button', { name: '确认充值' })).toBeDisabled()
   })
 })

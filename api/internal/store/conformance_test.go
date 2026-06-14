@@ -52,7 +52,7 @@ func truncateAllTables(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`TRUNCATE users, wallets, refresh_tokens, password_reset_tokens,
 		email_verification_tokens, payment_orders, wallet_transactions, stripe_events,
-		audit_logs, usage_reservations, agent_runs, agent_events, documents,
+		billing_transactions, credit_ledger, audit_logs, usage_reservations, agent_runs, agent_events, documents,
 		llm_call_records, external_tool_call_records, sandbox_sessions
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
@@ -70,6 +70,7 @@ func TestStoreConformance(t *testing.T) {
 			t.Run("email verification", func(t *testing.T) { conformEmailVerification(t, f.newStore(t)) })
 			t.Run("signup credits idempotent", func(t *testing.T) { conformSignupCredits(t, f.newStore(t)) })
 			t.Run("subscription lifecycle", func(t *testing.T) { conformSubscription(t, f.newStore(t)) })
+			t.Run("billing top-up lifecycle", func(t *testing.T) { conformBillingTopUp(t, f.newStore(t)) })
 			t.Run("model catalog fields", func(t *testing.T) { conformModelCatalog(t, f.newStore(t)) })
 		})
 	}
@@ -352,5 +353,88 @@ func conformSubscription(t *testing.T, s Store) {
 	}
 	if snap2.Status != "canceled" {
 		t.Errorf("status after revoke = %q, want canceled", snap2.Status)
+	}
+}
+
+func conformBillingTopUp(t *testing.T, s Store) {
+	ctx := context.Background()
+	u := mustUser(t, s, "topup-conf@example.com")
+	if _, err := s.EnsureWallet(ctx, u.ID, 0); err != nil {
+		t.Fatalf("EnsureWallet: %v", err)
+	}
+	tx, err := s.CreateBillingTopUp(ctx, BillingTransaction{
+		UserID:          u.ID,
+		StripeSessionID: "cs_topup_conf",
+		Amount:          10,
+		Currency:        "usd",
+		Credits:         500_000,
+		Status:          "pending",
+	})
+	if err != nil {
+		t.Fatalf("CreateBillingTopUp: %v", err)
+	}
+	if tx.ID == "" {
+		t.Fatal("CreateBillingTopUp returned empty id")
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.ApplyBillingTopUp(ctx, BillingTopUpCompletion{
+			UserID:                u.ID,
+			StripeSessionID:       "cs_topup_conf",
+			StripePaymentIntentID: "pi_topup_conf",
+			Amount:                10,
+			Currency:              "usd",
+			Credits:               500_000,
+			RawEventID:            "evt_topup_conf",
+		}); err != nil {
+			t.Fatalf("ApplyBillingTopUp #%d: %v", i, err)
+		}
+	}
+	wallet, err := s.WalletByUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("WalletByUser: %v", err)
+	}
+	if got := wallet.Snapshot().ExtraCreditsBalance; got != 500_000 {
+		t.Fatalf("extra credits = %d, want 500000", got)
+	}
+	txs, err := s.WalletTransactions(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("WalletTransactions: %v", err)
+	}
+	grants := 0
+	for _, tx := range txs {
+		if tx.Type == "recharge_grant" {
+			grants++
+		}
+	}
+	if grants != 1 {
+		t.Fatalf("recharge_grant entries = %d, want 1", grants)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.RevokeBillingTopUp(ctx, BillingTopUpReversal{
+			StripePaymentIntentID: "pi_topup_conf",
+			RawEventID:            "evt_topup_refund_conf",
+		}); err != nil {
+			t.Fatalf("RevokeBillingTopUp #%d: %v", i, err)
+		}
+	}
+	wallet, err = s.WalletByUser(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("WalletByUser after refund: %v", err)
+	}
+	if got := wallet.Snapshot().ExtraCreditsBalance; got != 0 {
+		t.Fatalf("extra credits after refund = %d, want 0", got)
+	}
+	txs, err = s.WalletTransactions(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("WalletTransactions after refund: %v", err)
+	}
+	refunds := 0
+	for _, tx := range txs {
+		if tx.Type == "recharge_refund" {
+			refunds++
+		}
+	}
+	if refunds != 1 {
+		t.Fatalf("recharge_refund entries = %d, want 1", refunds)
 	}
 }

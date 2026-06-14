@@ -44,7 +44,7 @@ const TX_TYPE: Record<string, string> = {
   usage_reserve: '额度预扣', usage_settle: '用量结算', usage_release: '额度释放',
   topup: '充值', topup_grant: '充值发放', subscription_grant: '订阅发放',
   monthly_grant: '月度发放', signup_grant: '注册赠送', trial_grant: '试用赠送',
-  refund: '退款', admin_adjust: '管理员调整', admin_credit_adjust: '管理员调整',
+  refund: '退款', recharge_refund: '充值退款', admin_adjust: '管理员调整', admin_credit_adjust: '管理员调整',
 }
 
 export function statusLabel(value: string): string {

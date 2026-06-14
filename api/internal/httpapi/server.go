@@ -2,14 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -17,6 +15,8 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	stripe "github.com/stripe/stripe-go/v85"
+	"github.com/stripe/stripe-go/v85/webhook"
 
 	"github.com/coldflame/shejane/api/internal/app"
 	"github.com/coldflame/shejane/api/internal/billing"
@@ -96,6 +96,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/billing/usage", s.requireAuth(s.usage))
 	s.mux.HandleFunc("GET /api/v1/billing/transactions", s.requireAuth(s.transactions))
 	s.mux.HandleFunc("GET /api/v1/billing/activities", s.requireAuth(s.billingActivities))
+	s.mux.HandleFunc("POST /api/v1/billing/checkout", s.requireAuth(s.billingCheckout))
+	s.mux.HandleFunc("POST /api/billing/checkout", s.requireAuth(s.billingCheckout))
 	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
 	s.mux.HandleFunc("POST /api/v1/payment/webhook", s.paymentWebhook)
 	s.mux.HandleFunc("POST /api/v1/chat/completions", s.requireAuth(s.chatCompletions))
@@ -524,6 +526,81 @@ func (s *Server) billingActivities(w http.ResponseWriter, r *http.Request, user 
 	writeJSON(w, http.StatusOK, apiResponse[[]store.BillingActivity]{Code: 0, Message: "ok", Data: activities})
 }
 
+func (s *Server) billingCheckout(w http.ResponseWriter, r *http.Request, user store.User) {
+	var body struct {
+		Amount       int    `json:"amount"`
+		ReturnTarget string `json:"return_target"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Amount < 5 || body.Amount > 500 {
+		writeError(w, http.StatusBadRequest, 40201, "充值金额必须是 5 到 500 的整数美元")
+		return
+	}
+	if body.ReturnTarget == "" {
+		body.ReturnTarget = "web"
+	}
+	if body.ReturnTarget != "web" && body.ReturnTarget != "electron" {
+		writeError(w, http.StatusBadRequest, 40201, "回跳目标无效")
+		return
+	}
+	if strings.TrimSpace(s.app.Config.StripeSecretKey) == "" || s.app.StripeCheckout == nil {
+		writeError(w, http.StatusServiceUnavailable, 50301, "Stripe 充值未配置")
+		return
+	}
+
+	credits, ok := s.checkoutCreditsForAmount(body.Amount)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+		return
+	}
+	successURL, cancelURL := s.checkoutReturnURLs(body.ReturnTarget)
+	metadata := map[string]string{
+		"user_id": user.ID,
+		"amount":  strconv.Itoa(body.Amount),
+		"credits": strconv.FormatInt(credits, 10),
+	}
+	stripeSession, err := s.app.StripeCheckout.CreateCheckoutSession(r.Context(), app.StripeCheckoutRequest{
+		UserID:      user.ID,
+		Email:       user.Email,
+		AmountCents: int64(body.Amount) * 100,
+		Currency:    "usd",
+		Credits:     credits,
+		ProductName: "SheJane Credits",
+		SuccessURL:  successURL,
+		CancelURL:   cancelURL,
+		Metadata:    metadata,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, 50201, "创建 Stripe Checkout 失败")
+		return
+	}
+	tx, err := s.app.Store.CreateBillingTopUp(r.Context(), store.BillingTransaction{
+		UserID:          user.ID,
+		StripeSessionID: stripeSession.ID,
+		Amount:          body.Amount,
+		Currency:        "usd",
+		Credits:         credits,
+		Status:          "pending",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, 50001, "创建充值交易失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]any]{
+		Code:    0,
+		Message: "ok",
+		Data: map[string]any{
+			"checkout_url":               stripeSession.URL,
+			"stripe_checkout_session_id": tx.StripeSessionID,
+			"amount":                     tx.Amount,
+			"currency":                   tx.Currency,
+			"credits":                    tx.Credits,
+		},
+	})
+}
+
 func (s *Server) subscriptionCheckout(w http.ResponseWriter, r *http.Request, user store.User) {
 	wallet, err := s.app.Store.EnsureWallet(r.Context(), user.ID, s.app.Config.MonthlyCredits)
 	if err != nil {
@@ -565,7 +642,11 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 40201, "无效的 webhook")
 		return
 	}
-	if s.app.Config.StripeWebhookSecret != "" && !verifyStripeSignature(payload, r.Header.Get("Stripe-Signature"), s.app.Config.StripeWebhookSecret) {
+	if strings.TrimSpace(s.app.Config.StripeWebhookSecret) == "" {
+		writeError(w, http.StatusServiceUnavailable, 50301, "Stripe webhook 未配置")
+		return
+	}
+	if err := webhook.ValidatePayload(payload, r.Header.Get("Stripe-Signature"), s.app.Config.StripeWebhookSecret); err != nil {
 		writeError(w, http.StatusBadRequest, 40101, "Stripe 签名验证失败")
 		return
 	}
@@ -598,10 +679,16 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) processStripeEvent(ctx context.Context, event stripeWebhookEvent) error {
-	object := event.Data.Object
+	var object stripeWebhookObject
+	if err := json.Unmarshal(event.Data.Object, &object); err != nil {
+		return err
+	}
 	periodEnd := object.periodEndTime()
 	switch event.Type {
 	case "checkout.session.completed":
+		if object.Subscription.String() == "" {
+			return s.processStripeTopUpCheckout(ctx, event, object)
+		}
 		err := s.app.Store.MarkSubscriptionPaid(ctx, object.ID, object.Subscription.String(), event.ID, s.app.Config.MonthlyCredits, periodEnd)
 		if errors.Is(err, store.ErrNotFound) {
 			slog.Warn("stripe checkout session did not match local order", "event_id", event.ID, "session_id", object.ID)
@@ -627,6 +714,15 @@ func (s *Server) processStripeEvent(ctx context.Context, event stripeWebhookEven
 		// monthly allotment. Pay-as-you-go extra credits are kept (option A).
 		return s.revokeStripeSubscription(ctx, event.ID, object.ID)
 	case "charge.refunded", "charge.dispute.created":
+		if object.PaymentIntent.String() != "" {
+			err := s.revokeStripeTopUp(ctx, event.ID, object.PaymentIntent.String())
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+		}
 		// A refund or chargeback on a subscription charge should claw back the
 		// monthly credits too. Stripe's charge/dispute objects don't carry the
 		// subscription id directly (it lives two hops away via the invoice), so
@@ -644,6 +740,59 @@ func (s *Server) processStripeEvent(ctx context.Context, event stripeWebhookEven
 		slog.Info("stripe event ignored", "event_id", event.ID, "event_type", event.Type)
 		return nil
 	}
+}
+
+func (s *Server) processStripeTopUpCheckout(ctx context.Context, event stripeWebhookEvent, object stripeWebhookObject) error {
+	var session stripe.CheckoutSession
+	if err := json.Unmarshal(event.Data.Object, &session); err != nil {
+		return err
+	}
+	if string(session.PaymentStatus) != "paid" && object.PaymentStatus != "paid" {
+		slog.Info("stripe top-up checkout ignored before payment", "event_id", event.ID, "session_id", object.ID, "payment_status", session.PaymentStatus)
+		return nil
+	}
+	userID := strings.TrimSpace(session.Metadata["user_id"])
+	amount, amountErr := strconv.Atoi(strings.TrimSpace(session.Metadata["amount"]))
+	credits, creditsErr := strconv.ParseInt(strings.TrimSpace(session.Metadata["credits"]), 10, 64)
+	if userID == "" || amountErr != nil || creditsErr != nil || amount <= 0 || credits <= 0 {
+		slog.Warn("stripe top-up checkout missing or invalid metadata", "event_id", event.ID, "session_id", object.ID)
+		return nil
+	}
+	paymentIntentID := object.PaymentIntent.String()
+	if paymentIntentID == "" && session.PaymentIntent != nil {
+		paymentIntentID = session.PaymentIntent.ID
+	}
+	currency := string(session.Currency)
+	if currency == "" {
+		currency = "usd"
+	}
+	currency = strings.ToLower(currency)
+	err := s.app.Store.ApplyBillingTopUp(ctx, store.BillingTopUpCompletion{
+		UserID:                userID,
+		StripeSessionID:       object.ID,
+		StripePaymentIntentID: paymentIntentID,
+		Amount:                amount,
+		Currency:              currency,
+		Credits:               credits,
+		RawEventID:            event.ID,
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Warn("stripe top-up checkout did not match local pending transaction", "event_id", event.ID, "session_id", object.ID)
+		return nil
+	}
+	return err
+}
+
+func (s *Server) revokeStripeTopUp(ctx context.Context, eventID string, paymentIntentID string) error {
+	err := s.app.Store.RevokeBillingTopUp(ctx, store.BillingTopUpReversal{
+		StripePaymentIntentID: paymentIntentID,
+		RawEventID:            eventID,
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		slog.Warn("stripe top-up refund/dispute did not match local paid transaction", "event_id", eventID, "stripe_payment_intent_id", paymentIntentID)
+		return err
+	}
+	return err
 }
 
 func (s *Server) revokeStripeSubscription(ctx context.Context, eventID string, subscriptionID string) error {
@@ -1639,13 +1788,14 @@ type stripeWebhookEvent struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 	Data struct {
-		Object stripeWebhookObject `json:"object"`
+		Object json.RawMessage `json:"object"`
 	} `json:"data"`
 }
 
 type stripeWebhookObject struct {
 	ID               string   `json:"id"`
 	Subscription     stripeID `json:"subscription"`
+	PaymentIntent    stripeID `json:"payment_intent"`
 	Status           string   `json:"status"`
 	PaymentStatus    string   `json:"payment_status"`
 	BillingReason    string   `json:"billing_reason"`
@@ -1794,6 +1944,52 @@ func (s *Server) createStripeCheckout(ctx context.Context, user store.User, orde
 		return "", "", err
 	}
 	return decoded.ID, decoded.URL, nil
+}
+
+func (s *Server) checkoutCreditsForAmount(amount int) (int64, bool) {
+	currencyPerCredit, ok := s.app.Registry.CurrencyPerCredit()
+	if !ok || currencyPerCredit <= 0 {
+		return 0, false
+	}
+	credits := int64(math.Round(float64(amount) / currencyPerCredit))
+	if credits < 1 {
+		credits = 1
+	}
+	return credits, true
+}
+
+func (s *Server) checkoutReturnURLs(returnTarget string) (string, string) {
+	if returnTarget == "electron" {
+		base := strings.TrimRight(strings.TrimSpace(s.app.Config.AppElectronURLScheme), "/")
+		if base == "" {
+			base = "shejane://billing"
+		}
+		if strings.HasSuffix(base, "/success") {
+			root := strings.TrimSuffix(base, "/success")
+			return addSessionIDTemplate(base), root + "/cancel"
+		}
+		if strings.HasSuffix(base, "/cancel") {
+			root := strings.TrimSuffix(base, "/cancel")
+			return addSessionIDTemplate(root + "/success"), base
+		}
+		return addSessionIDTemplate(base + "/success"), base + "/cancel"
+	}
+	base := strings.TrimRight(strings.TrimSpace(s.app.Config.AppWebURL), "/")
+	if base == "" {
+		base = strings.TrimRight(s.app.Config.ClientBaseURL, "/")
+	}
+	return base + "/billing/success?session_id={CHECKOUT_SESSION_ID}", base + "/billing/cancel"
+}
+
+func addSessionIDTemplate(rawURL string) string {
+	if strings.Contains(rawURL, "{CHECKOUT_SESSION_ID}") {
+		return rawURL
+	}
+	separator := "?"
+	if strings.Contains(rawURL, "?") {
+		separator = "&"
+	}
+	return rawURL + separator + "session_id={CHECKOUT_SESSION_ID}"
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
@@ -2065,36 +2261,6 @@ func corsOrigin(requestOrigin string, configuredOrigins ...string) string {
 	default:
 		return fallback
 	}
-}
-
-func verifyStripeSignature(payload []byte, signatureHeader string, secret string) bool {
-	parts := strings.Split(signatureHeader, ",")
-	var timestamp string
-	var signature string
-	for _, part := range parts {
-		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
-		if len(keyValue) != 2 {
-			continue
-		}
-		switch keyValue[0] {
-		case "t":
-			timestamp = keyValue[1]
-		case "v1":
-			signature = keyValue[1]
-		}
-	}
-	if timestamp == "" || signature == "" {
-		return false
-	}
-	if parsed, err := strconv.ParseInt(timestamp, 10, 64); err != nil || time.Since(time.Unix(parsed, 0)) > 5*time.Minute {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(timestamp))
-	mac.Write([]byte("."))
-	mac.Write(payload)
-	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
 type contextKeyRequestID struct{}

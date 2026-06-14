@@ -5,6 +5,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +16,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coldflame/shejane/api/internal/app"
 	"github.com/coldflame/shejane/api/internal/billing"
@@ -21,6 +25,8 @@ import (
 	"github.com/coldflame/shejane/api/internal/llm"
 	"github.com/coldflame/shejane/api/internal/store"
 )
+
+const testStripeWebhookSecret = "whsec_test_secret"
 
 type captureMailer struct {
 	calls         int
@@ -1434,6 +1440,150 @@ func TestAdminAdjustsExtraCreditsWithTransactionAndAudit(t *testing.T) {
 	}
 }
 
+type fakeStripeCheckoutClient struct {
+	requests []app.StripeCheckoutRequest
+	err      error
+}
+
+func (f *fakeStripeCheckoutClient) CreateCheckoutSession(ctx context.Context, request app.StripeCheckoutRequest) (app.StripeCheckoutSession, error) {
+	f.requests = append(f.requests, request)
+	if f.err != nil {
+		return app.StripeCheckoutSession{}, f.err
+	}
+	return app.StripeCheckoutSession{
+		ID:  "cs_topup_test_123",
+		URL: "https://stripe.example.com/checkout/cs_topup_test_123",
+	}, nil
+}
+
+func TestBillingCheckoutCreatesStripePaymentSession(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithOptions(t, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+		cfg.AppWebURL = "https://app.example.com"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "topup@example.com")
+	user := currentUser(t, server, token)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(`{"amount":10,"return_target":"web"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[struct {
+		CheckoutURL     string `json:"checkout_url"`
+		StripeSessionID string `json:"stripe_checkout_session_id"`
+		Amount          int    `json:"amount"`
+		Currency        string `json:"currency"`
+		Credits         int64  `json:"credits"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout response: %v", err)
+	}
+	if body.Data.CheckoutURL != "https://stripe.example.com/checkout/cs_topup_test_123" {
+		t.Fatalf("checkout url = %q", body.Data.CheckoutURL)
+	}
+	if body.Data.StripeSessionID != "cs_topup_test_123" {
+		t.Fatalf("stripe session id = %q", body.Data.StripeSessionID)
+	}
+	if body.Data.Amount != 10 || body.Data.Currency != "usd" {
+		t.Fatalf("amount/currency = %d/%s, want 10/usd", body.Data.Amount, body.Data.Currency)
+	}
+	if body.Data.Credits != 500_000 {
+		t.Fatalf("credits = %d, want 500000 from default 20 cny/1M anchor", body.Data.Credits)
+	}
+	if len(fakeStripe.requests) != 1 {
+		t.Fatalf("stripe requests = %d, want 1", len(fakeStripe.requests))
+	}
+	stripeReq := fakeStripe.requests[0]
+	if stripeReq.AmountCents != 1000 || stripeReq.Currency != "usd" || stripeReq.ProductName != "SheJane Credits" {
+		t.Fatalf("stripe request money/product = %#v", stripeReq)
+	}
+	if stripeReq.Metadata["user_id"] != user.ID || stripeReq.Metadata["amount"] != "10" || stripeReq.Metadata["credits"] != "500000" {
+		t.Fatalf("stripe metadata = %#v", stripeReq.Metadata)
+	}
+	if !strings.Contains(stripeReq.SuccessURL, "https://app.example.com/billing/success") || !strings.Contains(stripeReq.SuccessURL, "{CHECKOUT_SESSION_ID}") {
+		t.Fatalf("web success url = %q", stripeReq.SuccessURL)
+	}
+	if stripeReq.CancelURL != "https://app.example.com/billing/cancel" {
+		t.Fatalf("web cancel url = %q", stripeReq.CancelURL)
+	}
+}
+
+func TestBillingCheckoutRejectsInvalidAmountsAndUserID(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndTokenWithEmail(t, server, "invalid-topup@example.com")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "below minimum", body: `{"amount":4}`},
+		{name: "above maximum", body: `{"amount":501}`},
+		{name: "decimal", body: `{"amount":10.5}`},
+		{name: "client supplied user id", body: `{"amount":10,"user_id":"someone-else"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("checkout status = %d, want 400, body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestBillingCheckoutSupportsElectronReturnURLsAndAlias(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithOptions(t, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+		cfg.AppElectronURLScheme = "shejane://billing"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "electron-topup@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/billing/checkout", strings.NewReader(`{"amount":20,"return_target":"electron"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if len(fakeStripe.requests) != 1 {
+		t.Fatalf("stripe requests = %d, want 1", len(fakeStripe.requests))
+	}
+	if fakeStripe.requests[0].SuccessURL != "shejane://billing/success?session_id={CHECKOUT_SESSION_ID}" {
+		t.Fatalf("electron success url = %q", fakeStripe.requests[0].SuccessURL)
+	}
+	if fakeStripe.requests[0].CancelURL != "shejane://billing/cancel" {
+		t.Fatalf("electron cancel url = %q", fakeStripe.requests[0].CancelURL)
+	}
+}
+
+func TestBillingCheckoutRequiresStripeKey(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndTokenWithEmail(t, server, "missing-stripe-key@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(`{"amount":10}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("checkout status = %d, want 503, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestStripeCheckoutCompletedStoresSubscriptionAndIsIdempotent(t *testing.T) {
 	server := newTestServerWithConfig(t, func(cfg *config.Config) {
 		cfg.AdminEmails = []string{"admin@example.com"}
@@ -1489,7 +1639,27 @@ func TestStripeCheckoutCompletedStoresSubscriptionAndIsIdempotent(t *testing.T) 
 
 func TestStripeWebhookRejectsMissingEventIdentity(t *testing.T) {
 	server := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(`{"data":{"object":{"id":"cs_missing_event"}}}`))
+	payload := `{"data":{"object":{"id":"cs_missing_event"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(payload))
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("webhook status = %d, want 400, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStripeWebhookRejectsMissingSignature(t *testing.T) {
+	server := newTestServer(t)
+	payload := stripeEvent("evt_unsigned", "checkout.session.completed", map[string]any{
+		"id":             "cs_unsigned",
+		"payment_status": "paid",
+		"status":         "complete",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 
@@ -1497,6 +1667,115 @@ func TestStripeWebhookRejectsMissingEventIdentity(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("webhook status = %d, want 400, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestStripeCheckoutCompletedAppliesTopUpCreditsOnce(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithOptions(t, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "paid-topup@example.com")
+	user := currentUser(t, server, token)
+	checkout := createBillingCheckout(t, server, token, 10, "web")
+
+	payload := stripeEvent("evt_topup_paid_1", "checkout.session.completed", map[string]any{
+		"id":             checkout.StripeSessionID,
+		"payment_intent": "pi_topup_1",
+		"payment_status": "paid",
+		"status":         "complete",
+		"metadata": map[string]string{
+			"user_id": user.ID,
+			"amount":  "10",
+			"credits": "500000",
+		},
+	})
+	postStripeWebhook(t, server, payload)
+	postStripeWebhook(t, server, payload)
+
+	balance := billingBalance(t, server, token)
+	if balance.ExtraCreditsBalance != 500_000 {
+		t.Fatalf("extra credits = %d, want 500000", balance.ExtraCreditsBalance)
+	}
+	grants := 0
+	for _, tx := range walletTransactions(t, server, token) {
+		if tx.Type == "recharge_grant" {
+			grants++
+		}
+	}
+	if grants != 1 {
+		t.Fatalf("recharge grants = %d, want 1", grants)
+	}
+}
+
+func TestStripeChargeRefundedRevokesTopUpCreditsOnce(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithOptions(t, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "refunded-topup@example.com")
+	user := currentUser(t, server, token)
+	checkout := createBillingCheckout(t, server, token, 10, "web")
+
+	postStripeWebhook(t, server, stripeEvent("evt_topup_refund_paid", "checkout.session.completed", map[string]any{
+		"id":             checkout.StripeSessionID,
+		"payment_intent": "pi_topup_refund",
+		"payment_status": "paid",
+		"status":         "complete",
+		"metadata": map[string]string{
+			"user_id": user.ID,
+			"amount":  "10",
+			"credits": "500000",
+		},
+	}))
+	postStripeWebhook(t, server, stripeEvent("evt_topup_refunded", "charge.refunded", map[string]any{
+		"id":             "ch_topup_refund",
+		"payment_intent": "pi_topup_refund",
+	}))
+	postStripeWebhook(t, server, stripeEvent("evt_topup_disputed_after_refund", "charge.dispute.created", map[string]any{
+		"id":             "dp_topup_refund",
+		"payment_intent": "pi_topup_refund",
+	}))
+
+	balance := billingBalance(t, server, token)
+	if balance.ExtraCreditsBalance != 0 {
+		t.Fatalf("extra credits after refund = %d, want 0", balance.ExtraCreditsBalance)
+	}
+	refunds := 0
+	for _, tx := range walletTransactions(t, server, token) {
+		if tx.Type == "recharge_refund" {
+			refunds++
+		}
+	}
+	if refunds != 1 {
+		t.Fatalf("recharge refunds = %d, want 1", refunds)
+	}
+}
+
+func TestStripeCheckoutCompletedWithMismatchedMetadataDoesNotGrant(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithOptions(t, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "mismatch-topup@example.com")
+	user := currentUser(t, server, token)
+	checkout := createBillingCheckout(t, server, token, 10, "web")
+
+	postStripeWebhook(t, server, stripeEvent("evt_topup_mismatch_1", "checkout.session.completed", map[string]any{
+		"id":             checkout.StripeSessionID,
+		"payment_intent": "pi_topup_mismatch",
+		"payment_status": "paid",
+		"status":         "complete",
+		"metadata": map[string]string{
+			"user_id": user.ID,
+			"amount":  "10",
+			"credits": "499999",
+		},
+	}))
+
+	balance := billingBalance(t, server, token)
+	if balance.ExtraCreditsBalance != 0 {
+		t.Fatalf("extra credits after mismatched metadata = %d, want 0", balance.ExtraCreditsBalance)
 	}
 }
 
@@ -1733,15 +2012,21 @@ func newTestServerWithConfig(t *testing.T, mutate func(*config.Config)) http.Han
 
 func newTestServerAndStore(t *testing.T, mutate func(*config.Config)) (http.Handler, *store.MemoryStore) {
 	t.Helper()
+	return newTestServerWithOptions(t, mutate)
+}
+
+func newTestServerWithOptions(t *testing.T, mutate func(*config.Config), opts ...app.Option) (http.Handler, *store.MemoryStore) {
+	t.Helper()
 	cfg := config.Default()
 	cfg.JWTSecret = "test-secret"
 	cfg.MockLLM = true
 	cfg.MonthlyCredits = 10_000
+	cfg.StripeWebhookSecret = testStripeWebhookSecret
 	if mutate != nil {
 		mutate(&cfg)
 	}
 	memory := store.NewMemoryStore()
-	service := app.New(cfg, memory)
+	service := app.New(cfg, memory, opts...)
 	return NewServer(service), memory
 }
 
@@ -1855,6 +2140,34 @@ func createSubscriptionCheckout(t *testing.T, server http.Handler, token string)
 	return body.Data
 }
 
+type billingCheckoutTestResponse struct {
+	CheckoutURL     string `json:"checkout_url"`
+	StripeSessionID string `json:"stripe_checkout_session_id"`
+	Amount          int    `json:"amount"`
+	Currency        string `json:"currency"`
+	Credits         int64  `json:"credits"`
+}
+
+func createBillingCheckout(t *testing.T, server http.Handler, token string, amount int, returnTarget string) billingCheckoutTestResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(fmt.Sprintf(`{"amount":%d,"return_target":%q}`, amount, returnTarget)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[billingCheckoutTestResponse]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout response: %v", err)
+	}
+	if body.Data.StripeSessionID == "" || body.Data.CheckoutURL == "" {
+		t.Fatalf("checkout response missing session/url: %#v", body.Data)
+	}
+	return body.Data
+}
+
 func usageRecords(t *testing.T, server http.Handler, token string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/usage", nil)
@@ -1871,6 +2184,7 @@ func postStripeWebhook(t *testing.T, server http.Handler, payload string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/webhook", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Stripe-Signature", stripeSignatureHeader(payload))
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusOK {
@@ -1890,6 +2204,15 @@ func stripeEvent(eventID string, eventType string, object map[string]any) string
 		panic(err)
 	}
 	return string(payload)
+}
+
+func stripeSignatureHeader(payload string) string {
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	mac := hmac.New(sha256.New, []byte(testStripeWebhookSecret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write([]byte(payload))
+	return "t=" + timestamp + ",v1=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func billingBalance(t *testing.T, server http.Handler, token string) billing.WalletSnapshot {

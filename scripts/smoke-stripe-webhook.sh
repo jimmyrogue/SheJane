@@ -5,7 +5,6 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
 RUN_ID="$(date +%s)_$$"
 EMAIL="${SMOKE_EMAIL:-stripe-smoke+${RUN_ID}@shejane.local}"
 PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
-SUBSCRIPTION_ID="${SMOKE_STRIPE_SUBSCRIPTION_ID:-sub_smoke_${RUN_ID}}"
 TMP_DIR="$(mktemp -d)"
 
 load_env_secret() {
@@ -89,18 +88,18 @@ NODE
   fi
 }
 
-assert_subscription_status() {
+assert_extra_balance() {
   local token="$1"
-  local expected_status="$2"
+  local expected_balance="$2"
   local response
   response="$(
     curl -fsS "${API_BASE_URL}/api/v1/billing/balance" \
       -H "Authorization: Bearer ${token}"
   )"
-  local status
-  status="$(json_field "$response" "data.status")"
-  if [[ "$status" != "$expected_status" ]]; then
-    echo "Expected wallet status ${expected_status}, got ${status}" >&2
+  local balance
+  balance="$(json_field "$response" "data.extra_credits_balance")"
+  if [[ "$balance" != "$expected_balance" ]]; then
+    echo "Expected extra credits balance ${expected_balance}, got ${balance}" >&2
     echo "$response" >&2
     exit 1
   fi
@@ -109,6 +108,10 @@ assert_subscription_status() {
 require_command curl
 require_command node
 load_env_secret
+if [[ -z "${STRIPE_WEBHOOK_SECRET:-}" ]]; then
+  echo "STRIPE_WEBHOOK_SECRET is required for the Stripe webhook smoke" >&2
+  exit 1
+fi
 
 echo "Checking API health at ${API_BASE_URL}"
 curl -fsS "${API_BASE_URL}/health" >"${TMP_DIR}/health.json"
@@ -120,28 +123,48 @@ AUTH_RESPONSE="$(
     --data "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"name\":\"Stripe Smoke\"}"
 )"
 ACCESS_TOKEN="$(json_field "$AUTH_RESPONSE" "data.access_token")"
+USER_ID="$(json_field "$AUTH_RESPONSE" "data.user.id")"
 
-echo "Creating local subscription checkout"
-CHECKOUT_RESPONSE="$(
-  curl -fsS -X POST "${API_BASE_URL}/api/v1/billing/subscription/checkout" \
+BALANCE_BEFORE_RESPONSE="$(
+  curl -fsS "${API_BASE_URL}/api/v1/billing/balance" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}"
 )"
+EXTRA_BEFORE="$(json_field "$BALANCE_BEFORE_RESPONSE" "data.extra_credits_balance")"
+
+echo "Creating top-up checkout"
+CHECKOUT_RESPONSE="$(
+  curl -fsS -X POST "${API_BASE_URL}/api/v1/billing/checkout" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data '{"amount":10,"return_target":"web"}'
+)"
 SESSION_ID="$(json_field "$CHECKOUT_RESPONSE" "data.stripe_checkout_session_id")"
+AMOUNT="$(json_field "$CHECKOUT_RESPONSE" "data.amount")"
+CREDITS="$(json_field "$CHECKOUT_RESPONSE" "data.credits")"
+EXPECTED_BALANCE="$((EXTRA_BEFORE + CREDITS))"
+
+CHECKOUT_OBJECT="$(USER_ID="$USER_ID" SESSION_ID="$SESSION_ID" AMOUNT="$AMOUNT" CREDITS="$CREDITS" RUN_ID="$RUN_ID" node <<'NODE'
+process.stdout.write(JSON.stringify({
+  id: process.env.SESSION_ID,
+  payment_intent: `pi_smoke_${process.env.RUN_ID}`,
+  payment_status: 'paid',
+  status: 'complete',
+  currency: 'usd',
+  metadata: {
+    user_id: process.env.USER_ID,
+    amount: process.env.AMOUNT,
+    credits: process.env.CREDITS,
+  },
+}));
+NODE
+)"
 
 echo "Posting checkout.session.completed for ${SESSION_ID}"
-post_event "evt_smoke_checkout_${RUN_ID}" "checkout.session.completed" "{\"id\":\"${SESSION_ID}\",\"subscription\":\"${SUBSCRIPTION_ID}\",\"payment_status\":\"paid\",\"status\":\"complete\"}"
-assert_subscription_status "$ACCESS_TOKEN" "active"
+post_event "evt_smoke_checkout_${RUN_ID}" "checkout.session.completed" "$CHECKOUT_OBJECT"
+assert_extra_balance "$ACCESS_TOKEN" "$EXPECTED_BALANCE"
 
-echo "Posting invoice.paid renewal for ${SUBSCRIPTION_ID}"
-post_event "evt_smoke_invoice_paid_${RUN_ID}" "invoice.paid" "{\"id\":\"in_smoke_paid_${RUN_ID}\",\"subscription\":\"${SUBSCRIPTION_ID}\",\"billing_reason\":\"subscription_cycle\",\"period_end\":1780000000}"
-assert_subscription_status "$ACCESS_TOKEN" "active"
-
-echo "Posting invoice.payment_failed for ${SUBSCRIPTION_ID}"
-post_event "evt_smoke_invoice_failed_${RUN_ID}" "invoice.payment_failed" "{\"id\":\"in_smoke_failed_${RUN_ID}\",\"subscription\":\"${SUBSCRIPTION_ID}\"}"
-assert_subscription_status "$ACCESS_TOKEN" "past_due"
-
-echo "Posting customer.subscription.deleted for ${SUBSCRIPTION_ID}"
-post_event "evt_smoke_subscription_deleted_${RUN_ID}" "customer.subscription.deleted" "{\"id\":\"${SUBSCRIPTION_ID}\",\"status\":\"canceled\"}"
-assert_subscription_status "$ACCESS_TOKEN" "canceled"
+echo "Posting duplicate checkout.session.completed for ${SESSION_ID}"
+post_event "evt_smoke_checkout_duplicate_${RUN_ID}" "checkout.session.completed" "$CHECKOUT_OBJECT"
+assert_extra_balance "$ACCESS_TOKEN" "$EXPECTED_BALANCE"
 
 echo "Stripe webhook smoke finished"

@@ -43,7 +43,8 @@ type App struct {
 	E2BSessions *e2b.SessionManager
 	// Mailer sends transactional email (password reset). A LogMailer when
 	// RESEND_API_KEY is unset (dev/test logs the link).
-	Mailer mailer.Mailer
+	Mailer         mailer.Mailer
+	StripeCheckout StripeCheckoutClient
 }
 
 type AuthResult struct {
@@ -65,6 +66,7 @@ type appOptions struct {
 	documentStorage documents.ObjectStorage
 	e2bOptions      *e2b.Options
 	mailer          mailer.Mailer
+	stripeCheckout  StripeCheckoutClient
 }
 
 // WithMailer overrides the email sender. Tests inject a capturing/log mailer
@@ -89,6 +91,12 @@ func WithE2BOptions(opts e2b.Options) Option {
 func WithDocumentObjectStorage(storage documents.ObjectStorage) Option {
 	return func(options *appOptions) {
 		options.documentStorage = storage
+	}
+}
+
+func WithStripeCheckoutClient(client StripeCheckoutClient) Option {
+	return func(options *appOptions) {
+		options.stripeCheckout = client
 	}
 }
 
@@ -181,14 +189,20 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 		mail = mailer.New(cfg.ResendAPIKey, cfg.MailFromAddress, cfg.MailFromName)
 	}
 
+	stripeCheckout := options.stripeCheckout
+	if stripeCheckout == nil && strings.TrimSpace(cfg.StripeSecretKey) != "" {
+		stripeCheckout = NewStripeCheckoutClient(cfg.StripeSecretKey)
+	}
+
 	return &App{
-		Config:      cfg,
-		Store:       st,
-		Router:      router,
-		Registry:    registry,
-		Documents:   documentService,
-		E2BSessions: e2bSessions,
-		Mailer:      mail,
+		Config:         cfg,
+		Store:          st,
+		Router:         router,
+		Registry:       registry,
+		Documents:      documentService,
+		E2BSessions:    e2bSessions,
+		Mailer:         mail,
+		StripeCheckout: stripeCheckout,
 	}
 }
 

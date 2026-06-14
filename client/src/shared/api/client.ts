@@ -188,6 +188,14 @@ export interface BillingActivity {
   updated_at: string
 }
 
+export interface BillingCheckoutResponse {
+  checkout_url: string
+  stripe_checkout_session_id: string
+  amount: number
+  currency: 'usd' | string
+  credits: number
+}
+
 export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'failed' | 'deleted'
 
 export interface UserDocument {
@@ -378,9 +386,12 @@ export class SheJaneAPI implements ChatAPI {
     return this.get<BillingActivity[]>('/api/v1/billing/activities')
   }
 
-  async createSubscriptionCheckout(): Promise<{ checkout_url: string }> {
-    const order = await this.post<{ checkout_url: string }>('/api/v1/billing/subscription/checkout', {}, true)
-    return { checkout_url: order.checkout_url }
+  async createBillingCheckout(input: { amount: number; returnTarget: 'web' | 'electron' }): Promise<BillingCheckoutResponse> {
+    return this.post<BillingCheckoutResponse>(
+      '/api/v1/billing/checkout',
+      { amount: input.amount, return_target: input.returnTarget },
+      true,
+    )
   }
 
   async listDocuments(): Promise<UserDocument[]> {

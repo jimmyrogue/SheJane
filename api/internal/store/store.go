@@ -178,6 +178,44 @@ type PaymentOrder struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
+type BillingTransaction struct {
+	ID                    string    `json:"id"`
+	UserID                string    `json:"user_id"`
+	StripeSessionID       string    `json:"stripe_session_id"`
+	StripePaymentIntentID string    `json:"stripe_payment_intent_id"`
+	Amount                int       `json:"amount"`
+	Currency              string    `json:"currency"`
+	Credits               int64     `json:"credits"`
+	Status                string    `json:"status"`
+	RawEventID            string    `json:"raw_event_id"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type BillingTopUpCompletion struct {
+	UserID                string
+	StripeSessionID       string
+	StripePaymentIntentID string
+	Amount                int
+	Currency              string
+	Credits               int64
+	RawEventID            string
+}
+
+type BillingTopUpReversal struct {
+	StripePaymentIntentID string
+	RawEventID            string
+}
+
+type CreditLedgerEntry struct {
+	ID            string    `json:"id"`
+	UserID        string    `json:"user_id"`
+	TransactionID string    `json:"transaction_id"`
+	Delta         int64     `json:"delta"`
+	Reason        string    `json:"reason"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AdminListOptions struct {
 	Query  string
 	UserID string
@@ -397,6 +435,9 @@ type Store interface {
 
 	CreatePaymentOrder(ctx context.Context, order PaymentOrder) (PaymentOrder, error)
 	PaymentOrdersByWallet(ctx context.Context, walletID string) ([]PaymentOrder, error)
+	CreateBillingTopUp(ctx context.Context, tx BillingTransaction) (BillingTransaction, error)
+	ApplyBillingTopUp(ctx context.Context, completion BillingTopUpCompletion) error
+	RevokeBillingTopUp(ctx context.Context, reversal BillingTopUpReversal) error
 	MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
 	MarkSubscriptionRenewed(ctx context.Context, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error
 	UpdateSubscriptionStatus(ctx context.Context, stripeSubscriptionID string, status string, periodEnd time.Time) error

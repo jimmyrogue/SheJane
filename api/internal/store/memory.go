@@ -30,6 +30,8 @@ type MemoryStore struct {
 	agentEvents     map[string][]AgentEvent
 	documents       map[string]documents.Document
 	orders          map[string]PaymentOrder
+	billingTxs      map[string]BillingTransaction
+	creditLedger    []CreditLedgerEntry
 	stripeEvents    map[string]bool
 	auditLogs       []AuditLog
 	modelConfigs    map[string]ModelConfig
@@ -51,6 +53,8 @@ func NewMemoryStore() *MemoryStore {
 		agentEvents:     make(map[string][]AgentEvent),
 		documents:       make(map[string]documents.Document),
 		orders:          make(map[string]PaymentOrder),
+		billingTxs:      make(map[string]BillingTransaction),
+		creditLedger:    make([]CreditLedgerEntry, 0),
 		stripeEvents:    make(map[string]bool),
 		auditLogs:       make([]AuditLog, 0),
 		modelConfigs:    make(map[string]ModelConfig),
@@ -846,6 +850,154 @@ func (s *MemoryStore) PaymentOrdersByWallet(ctx context.Context, walletID string
 		return orders[i].CreatedAt.After(orders[j].CreatedAt)
 	})
 	return orders, nil
+}
+
+func (s *MemoryStore) CreateBillingTopUp(ctx context.Context, tx BillingTransaction) (BillingTransaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.usersByID[tx.UserID]; !ok {
+		return BillingTransaction{}, ErrNotFound
+	}
+	if tx.ID == "" {
+		tx.ID = newID("billing")
+	}
+	if tx.Currency == "" {
+		tx.Currency = "usd"
+	}
+	if tx.Status == "" {
+		tx.Status = "pending"
+	}
+	if tx.CreatedAt.IsZero() {
+		tx.CreatedAt = time.Now().UTC()
+	}
+	if tx.UpdatedAt.IsZero() {
+		tx.UpdatedAt = tx.CreatedAt
+	}
+	for _, existing := range s.billingTxs {
+		if existing.StripeSessionID == tx.StripeSessionID {
+			return BillingTransaction{}, ErrAlreadyExists
+		}
+	}
+	s.billingTxs[tx.ID] = tx
+	return tx, nil
+}
+
+func (s *MemoryStore) ApplyBillingTopUp(ctx context.Context, completion BillingTopUpCompletion) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var tx BillingTransaction
+	var txID string
+	for id, existing := range s.billingTxs {
+		if existing.StripeSessionID == completion.StripeSessionID {
+			tx = existing
+			txID = id
+			break
+		}
+	}
+	if txID == "" {
+		return ErrNotFound
+	}
+	if tx.Status == "paid" {
+		return nil
+	}
+	if tx.UserID != completion.UserID || tx.Amount != completion.Amount || tx.Currency != completion.Currency || tx.Credits != completion.Credits {
+		return ErrNotFound
+	}
+	wallet, ok := s.wallets[tx.UserID]
+	if !ok {
+		wallet = billing.NewWallet(newID("wallet"), 0, 0)
+		wallet.UserID = tx.UserID
+		s.wallets[tx.UserID] = wallet
+	}
+	idempotencyKey := "stripe_checkout:" + completion.StripeSessionID
+	if walletHasIdempotencyKey(wallet, idempotencyKey) {
+		tx.Status = "paid"
+		tx.RawEventID = completion.RawEventID
+		tx.StripePaymentIntentID = completion.StripePaymentIntentID
+		tx.UpdatedAt = time.Now().UTC()
+		s.billingTxs[txID] = tx
+		return nil
+	}
+	if err := wallet.ApplyRechargeGrant(completion.Credits, "Stripe Checkout credits purchased", idempotencyKey); err != nil {
+		return err
+	}
+	s.creditLedger = append(s.creditLedger, CreditLedgerEntry{
+		ID:            newID("credit"),
+		UserID:        tx.UserID,
+		TransactionID: tx.ID,
+		Delta:         completion.Credits,
+		Reason:        "stripe_checkout",
+		CreatedAt:     time.Now().UTC(),
+	})
+	tx.Status = "paid"
+	tx.RawEventID = completion.RawEventID
+	tx.StripePaymentIntentID = completion.StripePaymentIntentID
+	tx.UpdatedAt = time.Now().UTC()
+	s.billingTxs[txID] = tx
+	s.appendAuditLocked("", "billing.recharge_paid", "user", tx.UserID, "stripe checkout completed", map[string]any{
+		"event_id":                   completion.RawEventID,
+		"stripe_checkout_session_id": completion.StripeSessionID,
+		"credits":                    completion.Credits,
+	})
+	return nil
+}
+
+func (s *MemoryStore) RevokeBillingTopUp(ctx context.Context, reversal BillingTopUpReversal) error {
+	paymentIntentID := strings.TrimSpace(reversal.StripePaymentIntentID)
+	if paymentIntentID == "" {
+		return ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var tx BillingTransaction
+	var txID string
+	for id, existing := range s.billingTxs {
+		if existing.StripePaymentIntentID == paymentIntentID {
+			tx = existing
+			txID = id
+			break
+		}
+	}
+	if txID == "" {
+		return ErrNotFound
+	}
+	if tx.Status != "paid" {
+		return nil
+	}
+	wallet, ok := s.wallets[tx.UserID]
+	if !ok {
+		wallet = billing.NewWallet(newID("wallet"), 0, 0)
+		wallet.UserID = tx.UserID
+		s.wallets[tx.UserID] = wallet
+	}
+	idempotencyKey := "stripe_topup_refund:" + paymentIntentID
+	if !walletHasIdempotencyKey(wallet, idempotencyKey) {
+		if err := wallet.RevokeRechargeGrant(tx.Credits, "Stripe top-up refunded or disputed", idempotencyKey); err != nil {
+			return err
+		}
+		s.creditLedger = append(s.creditLedger, CreditLedgerEntry{
+			ID:            newID("credit"),
+			UserID:        tx.UserID,
+			TransactionID: tx.ID,
+			Delta:         -tx.Credits,
+			Reason:        "stripe_refund",
+			CreatedAt:     time.Now().UTC(),
+		})
+	}
+	tx.Status = "refunded"
+	tx.RawEventID = reversal.RawEventID
+	tx.UpdatedAt = time.Now().UTC()
+	s.billingTxs[txID] = tx
+	s.appendAuditLocked("", "billing.recharge_refunded", "user", tx.UserID, "stripe top-up refunded or disputed", map[string]any{
+		"event_id":                   reversal.RawEventID,
+		"stripe_checkout_session_id": tx.StripeSessionID,
+		"stripe_payment_intent_id":   paymentIntentID,
+		"credits":                    -tx.Credits,
+	})
+	return nil
 }
 
 func (s *MemoryStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {

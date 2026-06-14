@@ -199,7 +199,7 @@ smoke-real-llm: ## Real LLM provider smoke (needs MOCK_LLM=false + a real key)
 eval: ## Run the agent eval suite vs a RUNNING daemon (needs MOCK_LLM=false + SHEJANE_EVAL_TOKEN)
 	cd local-host/python && uv run python -m local_host.eval
 
-smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify subscription lifecycle
+smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify one-time top-up credit grant
 	./scripts/smoke-stripe-webhook.sh
 
 smoke-s3-document: ## Presigned upload to real S3 + best-effort cleanup

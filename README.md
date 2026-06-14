@@ -65,7 +65,7 @@ rates, and audit logs.
   `.pptx` outlines and PDFs (Chromium viewer), with download.
 - **Cloud control plane** — JWT auth, a credit ledger (reserve → settle →
   release), LLM routing (DeepSeek / OpenAI-compatible / Anthropic), Stripe
-  subscription billing, and S3-backed document storage.
+  pay-as-you-go credit top-ups, and S3-backed document storage.
 - **Local-first history** — chat lives in the browser (IndexedDB); the
   backend stores usage metadata + billing, not full chat bodies.
 - **Secret boundary by design** — platform-paid provider keys live only in

@@ -916,6 +916,170 @@ func (s *PostgresStore) PaymentOrdersByWallet(ctx context.Context, walletID stri
 	return orders, rows.Err()
 }
 
+func (s *PostgresStore) CreateBillingTopUp(ctx context.Context, tx BillingTransaction) (BillingTransaction, error) {
+	if tx.Status == "" {
+		tx.Status = "pending"
+	}
+	if tx.Currency == "" {
+		tx.Currency = "usd"
+	}
+	if tx.CreatedAt.IsZero() {
+		tx.CreatedAt = time.Now().UTC()
+	}
+	tx.UpdatedAt = tx.CreatedAt
+	err := s.db.QueryRowContext(ctx, `
+		INSERT INTO billing_transactions (
+			user_id, stripe_session_id, stripe_payment_intent_id, amount, currency, credits, status, raw_event_id, created_at, updated_at
+		) VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, NULLIF($8, ''), $9, $9)
+		RETURNING id::text, created_at, updated_at
+	`, tx.UserID, tx.StripeSessionID, tx.StripePaymentIntentID, tx.Amount, tx.Currency, tx.Credits, tx.Status, tx.RawEventID, tx.CreatedAt).
+		Scan(&tx.ID, &tx.CreatedAt, &tx.UpdatedAt)
+	return tx, err
+}
+
+func (s *PostgresStore) ApplyBillingTopUp(ctx context.Context, completion BillingTopUpCompletion) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	var billingTx BillingTransaction
+	err = tx.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text, stripe_session_id, COALESCE(stripe_payment_intent_id, ''),
+			amount, currency, credits, status, COALESCE(raw_event_id, ''), created_at, updated_at
+		FROM billing_transactions
+		WHERE stripe_session_id=$1
+		FOR UPDATE
+	`, completion.StripeSessionID).Scan(
+		&billingTx.ID, &billingTx.UserID, &billingTx.StripeSessionID, &billingTx.StripePaymentIntentID,
+		&billingTx.Amount, &billingTx.Currency, &billingTx.Credits, &billingTx.Status, &billingTx.RawEventID,
+		&billingTx.CreatedAt, &billingTx.UpdatedAt,
+	)
+	if err != nil {
+		return mapNotFound(err)
+	}
+	if billingTx.Status == "paid" {
+		return tx.Commit()
+	}
+	if billingTx.UserID != completion.UserID ||
+		billingTx.Amount != completion.Amount ||
+		billingTx.Currency != completion.Currency ||
+		billingTx.Credits != completion.Credits {
+		return ErrNotFound
+	}
+
+	if err := ensureWalletTx(ctx, tx, billingTx.UserID, 0); err != nil {
+		return err
+	}
+	wallet, err := selectWalletTx(ctx, tx, billingTx.UserID, true)
+	if err != nil {
+		return err
+	}
+	wallet.ExtraCreditsBalance += completion.Credits
+	if _, err := tx.ExecContext(ctx, `UPDATE wallets SET extra_credits_balance=$1, updated_at=NOW() WHERE id=$2`, wallet.ExtraCreditsBalance, wallet.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE billing_transactions
+		SET status='paid',
+			stripe_payment_intent_id=COALESCE(NULLIF($2, ''), stripe_payment_intent_id),
+			raw_event_id=COALESCE(NULLIF($3, ''), raw_event_id),
+			updated_at=NOW()
+		WHERE id=$1
+	`, billingTx.ID, completion.StripePaymentIntentID, completion.RawEventID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO credit_ledger (user_id, transaction_id, delta, reason)
+		VALUES ($1, $2, $3, 'stripe_checkout')
+		ON CONFLICT (transaction_id, reason) DO NOTHING
+	`, billingTx.UserID, billingTx.ID, completion.Credits); err != nil {
+		return err
+	}
+	if err := insertWalletTransaction(ctx, tx, wallet.ID, "", "recharge_grant", completion.Credits, wallet.MonthlyCreditsUsed, wallet.ExtraCreditsBalance, "Stripe Checkout credits purchased", "stripe_checkout:"+completion.StripeSessionID); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.recharge_paid", "user", billingTx.UserID, map[string]any{
+		"event_id":                   completion.RawEventID,
+		"stripe_checkout_session_id": completion.StripeSessionID,
+		"credits":                    completion.Credits,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) RevokeBillingTopUp(ctx context.Context, reversal BillingTopUpReversal) error {
+	paymentIntentID := strings.TrimSpace(reversal.StripePaymentIntentID)
+	if paymentIntentID == "" {
+		return ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+
+	var billingTx BillingTransaction
+	err = tx.QueryRowContext(ctx, `
+		SELECT id::text, user_id::text, stripe_session_id, COALESCE(stripe_payment_intent_id, ''),
+			amount, currency, credits, status, COALESCE(raw_event_id, ''), created_at, updated_at
+		FROM billing_transactions
+		WHERE stripe_payment_intent_id=$1
+		FOR UPDATE
+	`, paymentIntentID).Scan(
+		&billingTx.ID, &billingTx.UserID, &billingTx.StripeSessionID, &billingTx.StripePaymentIntentID,
+		&billingTx.Amount, &billingTx.Currency, &billingTx.Credits, &billingTx.Status, &billingTx.RawEventID,
+		&billingTx.CreatedAt, &billingTx.UpdatedAt,
+	)
+	if err != nil {
+		return mapNotFound(err)
+	}
+	if billingTx.Status != "paid" {
+		return tx.Commit()
+	}
+	if err := ensureWalletTx(ctx, tx, billingTx.UserID, 0); err != nil {
+		return err
+	}
+	wallet, err := selectWalletTx(ctx, tx, billingTx.UserID, true)
+	if err != nil {
+		return err
+	}
+	wallet.ExtraCreditsBalance -= billingTx.Credits
+	if _, err := tx.ExecContext(ctx, `UPDATE wallets SET extra_credits_balance=$1, updated_at=NOW() WHERE id=$2`, wallet.ExtraCreditsBalance, wallet.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE billing_transactions
+		SET status='refunded',
+			raw_event_id=COALESCE(NULLIF($2, ''), raw_event_id),
+			updated_at=NOW()
+		WHERE id=$1
+	`, billingTx.ID, reversal.RawEventID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO credit_ledger (user_id, transaction_id, delta, reason)
+		VALUES ($1, $2, $3, 'stripe_refund')
+		ON CONFLICT (transaction_id, reason) DO NOTHING
+	`, billingTx.UserID, billingTx.ID, -billingTx.Credits); err != nil {
+		return err
+	}
+	if err := insertWalletTransaction(ctx, tx, wallet.ID, "", "recharge_refund", -billingTx.Credits, wallet.MonthlyCreditsUsed, wallet.ExtraCreditsBalance, "Stripe top-up refunded or disputed", "stripe_topup_refund:"+paymentIntentID); err != nil {
+		return err
+	}
+	if err := insertAuditLog(ctx, tx, "", "billing.recharge_refunded", "user", billingTx.UserID, map[string]any{
+		"event_id":                   reversal.RawEventID,
+		"stripe_checkout_session_id": billingTx.StripeSessionID,
+		"stripe_payment_intent_id":   paymentIntentID,
+		"credits":                    -billingTx.Credits,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) MarkSubscriptionPaid(ctx context.Context, stripeSessionID string, stripeSubscriptionID string, eventID string, monthlyCredits int64, periodEnd time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

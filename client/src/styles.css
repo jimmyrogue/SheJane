@@ -5298,105 +5298,66 @@ button:active {
   margin-top: 18px;
 }
 
-.recharge-package-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.recharge-package {
+.recharge-amount-field {
   display: flex;
-  min-height: 86px;
   flex-direction: column;
-  align-items: flex-start;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 10px;
-  background: var(--sj-paper-raised, #FFFFFF);
-  padding: 12px;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
-}
-
-.recharge-package:hover {
-  border-color: var(--sj-line-strong, #D9D5CC);
-  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
-}
-
-.recharge-package.selected {
-  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 42%, var(--sj-line, #E8E5DE));
-  background: color-mix(in srgb, var(--sj-seal, #B3532F) 5%, var(--sj-paper-raised, #FFFFFF));
-}
-
-.recharge-package-credits {
-  color: var(--sj-ink, #2B2A28);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.recharge-package-price {
-  margin-top: 4px;
+  gap: 7px;
+  margin-top: 8px;
   color: var(--sj-ink-soft, #6F6B63);
   font-size: 12px;
+  font-weight: 500;
 }
 
-.recharge-package-bonus {
-  margin-top: auto;
-  color: var(--sj-seal, #B3532F);
-  font-size: 11.5px;
-}
-
-.recharge-pay-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.recharge-pay-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
+.recharge-amount-field input {
+  width: 100%;
+  height: 44px;
   border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--sj-paper-raised, #FFFFFF);
+  color: var(--sj-ink, #2B2A28);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
   padding: 0 12px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.recharge-amount-field input:focus {
+  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 45%, var(--sj-line, #E8E5DE));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sj-seal, #B3532F) 10%, transparent);
+}
+
+.recharge-amount-field input[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 58%, var(--sj-line, #E8E5DE));
+}
+
+.recharge-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.recharge-preset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
   color: var(--sj-ink, #2B2A28);
   font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
 }
 
-.recharge-pay-option.selected {
-  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 36%, var(--sj-line, #E8E5DE));
-}
-
-.recharge-pay-glyph {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: var(--sj-paper-sunken, #F3F1EC);
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-}
-
-.recharge-pay-radio {
-  display: block;
-  width: 10px;
-  height: 10px;
-  margin-left: auto;
-  border: 1px solid var(--sj-line-strong, #D9D5CC);
-  border-radius: 50%;
-}
-
-.recharge-pay-option.selected .recharge-pay-radio {
-  border-color: var(--sj-seal, #B3532F);
-  background: var(--sj-seal, #B3532F);
-  box-shadow: inset 0 0 0 2px var(--sj-paper-raised, #FFFFFF);
+.recharge-preset:hover,
+.recharge-preset.selected {
+  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 42%, var(--sj-line, #E8E5DE));
+  background: color-mix(in srgb, var(--sj-seal, #B3532F) 5%, var(--sj-paper-raised, #FFFFFF));
 }
 
 .recharge-note {
@@ -5413,8 +5374,7 @@ button:active {
     flex-direction: column;
   }
 
-  .recharge-package-grid,
-  .recharge-pay-grid {
+  .recharge-preset-grid {
     grid-template-columns: 1fr;
   }
 

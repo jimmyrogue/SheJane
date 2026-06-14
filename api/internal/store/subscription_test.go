@@ -122,3 +122,56 @@ func TestMarkSubscriptionPaidIsIdempotentAtLedger(t *testing.T) {
 		t.Fatalf("monthly limit = %d, want 9000 (single grant)", snap.MonthlyCreditLimit)
 	}
 }
+
+func TestApplyBillingTopUpIsIdempotentAtLedger(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "topup@example.com", "hash", "Top Up")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	wallet, err := s.EnsureWallet(ctx, user.ID, 0)
+	if err != nil {
+		t.Fatalf("EnsureWallet: %v", err)
+	}
+	startingExtra := wallet.Snapshot().ExtraCreditsBalance
+	tx, err := s.CreateBillingTopUp(ctx, BillingTransaction{
+		UserID:          user.ID,
+		StripeSessionID: "cs_topup_1",
+		Amount:          10,
+		Currency:        "usd",
+		Credits:         500_000,
+		Status:          "pending",
+	})
+	if err != nil {
+		t.Fatalf("CreateBillingTopUp: %v", err)
+	}
+	if tx.ID == "" {
+		t.Fatal("CreateBillingTopUp returned empty id")
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := s.ApplyBillingTopUp(ctx, BillingTopUpCompletion{
+			UserID:                user.ID,
+			StripeSessionID:       "cs_topup_1",
+			StripePaymentIntentID: "pi_topup_1",
+			Amount:                10,
+			Currency:              "usd",
+			Credits:               500_000,
+			RawEventID:            "evt_topup_same",
+		}); err != nil {
+			t.Fatalf("ApplyBillingTopUp #%d: %v", i, err)
+		}
+	}
+
+	w, err := s.WalletByUser(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("WalletByUser: %v", err)
+	}
+	if got := w.Snapshot().ExtraCreditsBalance; got != startingExtra+500_000 {
+		t.Fatalf("extra credits = %d, want %d", got, startingExtra+500_000)
+	}
+	if count, _ := countTxByType(w, "recharge_grant"); count != 1 {
+		t.Fatalf("recharge_grant entries after duplicate events = %d, want 1", count)
+	}
+}

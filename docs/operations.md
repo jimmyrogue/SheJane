@@ -8,7 +8,7 @@ SheJane 长期采用 Local Agent Harness + Cloud Control Plane。普通用户 cl
 
 - 用户与额度：PostgreSQL 是唯一真实来源；后台可启用/禁用用户，可调整 `extra_credits_balance`。
 - 模型调用：后端保存调用 metadata、provider、model、token 与 credits，不保存完整聊天正文；后台只读展示调用记录。
-- 支付与订阅：后台只读展示订单、Stripe session/subscription 和钱包订阅状态；真实支付、退款、补单仍由 Stripe Dashboard 管理。
+- 支付与充值：后台只读展示订单、Stripe session 和钱包账本；真实支付、退款、补单仍由 Stripe Dashboard 管理。
 - 模型/provider：后台「模型配置」页可**新增/编辑/启停/删除** chat 模型、provider、上游模型名、输入/输出 ¥/1M token 成本价、生图每次金额，并设置全局计费参数（加价系数 + 每百万 token 金额）；保存即时生效，**不再依赖 `.env` 重启**。API key 加密存储（`CONFIG_ENCRYPTION_KEY`）且永不回显，仅显示「key 已配置」。`.env` 的 provider 变量仅作**首次空库的种子**。
 - 审计：账号状态变更、额外额度调整和关键账务 webhook 都会写入 `audit_logs`，额度调整还会写入 `wallet_transactions(type=admin_adjust)`。
 - Local Agent Harness：完整路线见根目录 [`spec.md`](../spec.md)。云端负责账号、额度、模型网关、文档服务、admin 和审计；Local Harness 负责 12 个 harness 组件、本地工具、文件、终端、浏览器、IDE、本地 MCP、checkpoint 和 artifact。
@@ -115,21 +115,19 @@ make smoke-real-llm
 
 > 历史兼容：`FAST_PROVIDER_KIND` / `DEEP_PROVIDER_KIND` 仍可显式选 `deepseek-v4` / `openai-compatible` / `anthropic`，仅影响**首启种子**；未设置时 `https://api.deepseek.com` 自动按 `deepseek-v4`，其它 OpenAI 兼容地址按通用兼容模式。
 
-## Stripe 订阅与 Webhook
+## Stripe 按量充值与 Webhook
 
-Stripe Checkout 使用 `mode=subscription` 和 `STRIPE_PRICE_ID` 创建订阅 checkout。生产环境需要在 Stripe Workbench 配置 webhook endpoint：
+Stripe Checkout 使用 `mode=payment` 和动态 `price_data` 创建一次性充值 checkout。前端调用 `POST /api/v1/billing/checkout`（兼容别名 `POST /api/billing/checkout`），请求体只传 `{ "amount": 10, "return_target": "web" | "electron" }`；后端从 JWT 取 `user_id`，创建 Stripe Session，并把 `user_id` / `amount` / `credits` 写入 metadata。生产环境需要在 Stripe Workbench 配置 webhook endpoint：
 
 ```text
 POST https://你的 API 域名/api/v1/payment/webhook
 ```
 
-建议至少订阅这些事件：
+必须订阅：
 
-- `checkout.session.completed`：保存 subscription ID，订单标记为 `paid`，发放本月额度。
-- `invoice.paid` / `invoice.payment_succeeded`：续费成功后重置本月已用额度并发放新周期额度。
-- `invoice.payment_failed`：同步钱包状态为 `past_due`。
-- `customer.subscription.updated`：同步 Stripe subscription 状态。
-- `customer.subscription.deleted`：同步钱包状态为 `canceled`。
+- `checkout.session.completed`：验证签名后，根据 session metadata 和本地 pending transaction 给 `wallets.extra_credits_balance` 入账。
+
+旧 subscription / invoice / customer.subscription 分支仍保留用于历史兼容，但新购买路径不再调用 `/api/v1/billing/subscription/checkout`。
 
 本地合成 webhook smoke：
 
@@ -148,8 +146,9 @@ make smoke-stripe-webhook
 账本规则：
 
 - Stripe event ID 先进入 `stripe_events`，处理成功后写 `processed_at`；重复事件不会重复发放额度。
-- 月额度只通过 subscription grant/renewal 重置，人工后台只允许调整 `extra_credits_balance`。
-- `wallet_transactions.idempotency_key` 会记录 `stripe:<event_id>`，便于排查重复投递。
+- `billing_transactions.stripe_session_id` 全局唯一，同一个 Checkout Session 只能入账一次。
+- `credit_ledger(transaction_id, reason)` 唯一，入账时与 `billing_transactions` 更新、`wallet_transactions(type=recharge_grant)` 插入、`wallets.extra_credits_balance` 增加在同一个数据库事务内完成；充值退款/拒付 webhook 会按 `payment_intent` 幂等写入 `wallet_transactions(type=recharge_refund)` 并扣回对应积分。
+- `wallet_transactions.idempotency_key` 会记录 `stripe_checkout:<session_id>`，便于排查重复投递。
 - 后台订单和审计页只读，不提供手动改订单、补单、退款、删除审计或重放 webhook 的入口。
 
 ## 文档上传、Agentic Chat 与 S3
@@ -435,7 +434,7 @@ RUN_EXTERNAL_SMOKE=1 make smoke-external
 `RUN_EXTERNAL_SMOKE=1 make smoke-external` 会串联：
 
 - `make smoke-real-llm`：要求 API 已用 `MOCK_LLM=false` 和真实 provider key 启动。
-- `make smoke-stripe-webhook`：合成 Stripe webhook 并验证订阅状态生命周期。
+- `make smoke-stripe-webhook`：创建一次性充值 checkout，合成 Stripe webhook，并验证 credits 入账幂等。
 - `make smoke-s3-document`：创建文档 presigned upload，向真实 S3 PUT 一个小 PDF source object，并通过文档删除接口做 best-effort 清理。
 
 Nightly External Smoke 在 GitHub Actions 中会把缺失配置显式降级为 warning：
@@ -668,7 +667,7 @@ make deploy
 > **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
 >
 > - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** `chat.fast`/`chat.deep` 只在「空表首启」时从 env 播种；若首启时 provider key 为空，会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再重写这两行），只能去后台「模型配置」逐模型配置改。推荐模型模板会按缺失补齐但默认停用，不会替代真实 key 配置。生产环境中 `CONFIG_ENCRYPTION_KEY` 未设或仍是弱占位值会让 API 启动失败；开发环境仍允许明文以便本地调试。
-> - **（开计费时）`STRIPE_PRICE_ID` / `STRIPE_SECRET_KEY` 不能留空** —— 否则结账走 dev 假成功路径（伪造 `dev_` 会话、不扣款、不发 webhook、不发放 credits），前端却显示「订阅成功」。不开计费可忽略。
+> - **（开计费时）`STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` 不能留空** —— checkout 需要 Stripe secret 创建真实 Session，webhook 没有签名密钥会拒绝处理；`APP_WEB_URL` 可显式覆盖网页回跳地址，`APP_ELECTRON_URL_SCHEME` 用于桌面端 deep link。
 > - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 
 常用：
@@ -702,8 +701,8 @@ make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需
 - `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`MOCK_LLM=false`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名（与浏览器 Origin 精确一致、无尾斜杠）。
 - `CONFIG_ENCRYPTION_KEY` 已设为强随机 passphrase，且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐模型配置改）。
 - `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
-- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET`、`STRIPE_PRICE_ID` 已在部署平台 secret 中配置，不写入仓库（任一缺失会让结账走 dev 假成功路径）。
-- Stripe webhook endpoint 已订阅事件列表，Dashboard 中最近一次投递为 2xx。
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET` 已在部署平台 secret 中配置，不写入仓库；`APP_WEB_URL` / `APP_ELECTRON_URL_SCHEME` 已按生产域名与桌面 deep link 设置。
+- Stripe webhook endpoint 已订阅 `checkout.session.completed`，Dashboard 中最近一次投递为 2xx。
 - 忘记密码 + 邮箱验证邮件:`RESEND_API_KEY` + `MAIL_FROM_ADDRESS`(Resend 已验证的发件域名)已配置;否则 API 只把链接打到日志、不真正发信。重置链接指向 `CLIENT_BASE_URL/reset?token=`,验证链接指向 `CLIENT_BASE_URL/verify?token=`(都在网页端落地)。邮箱验证为 advisory(横幅提示,不拦登录);迁移会把已有用户回填为已验证。
 - 数据库备份方案已就位：`make deploy-backup` 能跑通且产物已拷到异地（持久卷不是备份）。
 - `make ci` 通过；本地或预发环境按需跑过 `RUN_EXTERNAL_SMOKE=1 make smoke-external`。

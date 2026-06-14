@@ -11,13 +11,15 @@ import (
 type Config struct {
 	Environment string
 
-	HTTPAddr        string
-	AppBaseURL      string
-	ClientBaseURL   string
-	AdminBaseURL    string
-	JWTSecret       string
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
+	HTTPAddr             string
+	AppBaseURL           string
+	AppWebURL            string
+	AppElectronURLScheme string
+	ClientBaseURL        string
+	AdminBaseURL         string
+	JWTSecret            string
+	AccessTokenTTL       time.Duration
+	RefreshTokenTTL      time.Duration
 	// Password-reset email. ResendAPIKey empty → a LogMailer logs the reset
 	// link instead of sending (dev/test). MailFromAddress must be a
 	// Resend-verified sender for real delivery. Reset links are built from
@@ -151,6 +153,8 @@ func Default() Config {
 		Environment:                   "development",
 		HTTPAddr:                      ":8080",
 		AppBaseURL:                    "http://localhost:8080",
+		AppWebURL:                     "",
+		AppElectronURLScheme:          "shejane://billing",
 		ClientBaseURL:                 "http://localhost:5173",
 		AdminBaseURL:                  "http://localhost:5174",
 		JWTSecret:                     "dev-change-me",
@@ -216,6 +220,8 @@ func Load() Config {
 	cfg.HTTPAddr = getEnv("HTTP_ADDR", cfg.HTTPAddr)
 	cfg.AppBaseURL = getEnv("APP_BASE_URL", cfg.AppBaseURL)
 	cfg.ClientBaseURL = getEnv("CLIENT_BASE_URL", cfg.ClientBaseURL)
+	cfg.AppWebURL = getEnv("APP_WEB_URL", cfg.ClientBaseURL)
+	cfg.AppElectronURLScheme = getEnv("APP_ELECTRON_URL_SCHEME", cfg.AppElectronURLScheme)
 	cfg.AdminBaseURL = getEnv("ADMIN_BASE_URL", cfg.AdminBaseURL)
 	cfg.JWTSecret = getEnv("JWT_SECRET", cfg.JWTSecret)
 	cfg.ResendAPIKey = getEnv("RESEND_API_KEY", cfg.ResendAPIKey)

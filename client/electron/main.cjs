@@ -51,6 +51,17 @@ function systemDesktopLocale() {
   return normalizeDesktopLocale(Intl.DateTimeFormat().resolvedOptions().locale)
 }
 const appIconPath = path.join(__dirname, 'assets/app-icon.png')
+function isAllowedExternalURL(rawURL) {
+  if (typeof rawURL !== 'string' || rawURL.length === 0) {
+    return false
+  }
+  try {
+    const parsed = new URL(rawURL)
+    return ['http:', 'https:', 'shejane:'].includes(parsed.protocol)
+  } catch {
+    return false
+  }
+}
 // Tray/menu-bar icons are platform-specific:
 // - macOS wants a black + transparent template mask so the system can tint it.
 // - Windows/Linux use a small full-color app icon so dark taskbars still read.
@@ -72,6 +83,7 @@ let tray = null
 let daemonProcess = null
 let daemonURL = null
 let daemonToken = null
+let pendingDeepLinkURL = null
 const appWindowButtonPosition = { x: 29, y: 27 }
 const authWindowButtonPosition = { x: 29, y: 20 }
 
@@ -111,7 +123,9 @@ function createWindow() {
   suppressWindowMenuForPlatform(window, process.platform)
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isAllowedExternalURL(url)) {
+      shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 
@@ -137,6 +151,11 @@ function createWindow() {
   } else {
     window.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+  window.webContents.once('did-finish-load', () => {
+    if (pendingDeepLinkURL) {
+      window.webContents.send('shejane:deep-link', pendingDeepLinkURL)
+    }
+  })
 }
 
 function showOrCreateMainWindow() {
@@ -156,6 +175,26 @@ function requestNewChat() {
   if (mainWindow) {
     mainWindow.webContents.send('shejane:new-chat')
   }
+}
+
+function handleDeepLink(rawURL) {
+  if (!isAllowedExternalURL(rawURL)) {
+    return
+  }
+  pendingDeepLinkURL = rawURL
+  showOrCreateMainWindow()
+  if (mainWindow) {
+    mainWindow.webContents.send('shejane:deep-link', rawURL)
+  }
+}
+
+function registerDeepLinkProtocol() {
+  const scheme = 'shejane'
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(scheme, process.execPath, [path.resolve(process.argv[1])])
+    return
+  }
+  app.setAsDefaultProtocolClient(scheme)
 }
 
 function configureApplicationMenu() {
@@ -198,6 +237,25 @@ function applyDesktopLocale(locale) {
 }
 
 app.setName(currentAppName())
+registerDeepLinkProtocol()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const deepLink = argv.find((arg) => typeof arg === 'string' && arg.startsWith('shejane://'))
+    if (deepLink) {
+      handleDeepLink(deepLink)
+      return
+    }
+    showOrCreateMainWindow()
+  })
+}
+
+app.on('open-url', (event, rawURL) => {
+  event.preventDefault()
+  handleDeepLink(rawURL)
+})
 
 // The cloud API the main-process auth bridge (register/login/refresh) talks to.
 // Must match the renderer's build-time VITE_API_BASE_URL or auth cookies bind to
@@ -447,6 +505,18 @@ ipcMain.handle('shejane:select-workspace-directory', async () => {
     return undefined
   }
   return result.filePaths[0]
+})
+
+ipcMain.handle('shejane:open-external', async (_event, rawURL) => {
+  if (!isAllowedExternalURL(rawURL)) {
+    return 'unsupported url protocol'
+  }
+  try {
+    await shell.openExternal(rawURL)
+    return 'ok'
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
 })
 
 ipcMain.handle('shejane:open-file-with-default-app', async (_event, filePath) => {

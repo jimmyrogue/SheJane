@@ -256,6 +256,30 @@ func (w *Wallet) AdjustExtraCredits(delta int64, reason string, idempotencyKey s
 	return nil
 }
 
+func (w *Wallet) ApplyRechargeGrant(amount int64, reason string, idempotencyKey string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if amount <= 0 {
+		return nil
+	}
+	w.ExtraCreditsBalance += amount
+	w.appendTransactionLocked("recharge_grant", "", amount, reason, idempotencyKey)
+	return nil
+}
+
+func (w *Wallet) RevokeRechargeGrant(amount int64, reason string, idempotencyKey string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if amount <= 0 {
+		return nil
+	}
+	w.ExtraCreditsBalance -= amount
+	w.appendTransactionLocked("recharge_refund", "", -amount, reason, idempotencyKey)
+	return nil
+}
+
 // RevokeSubscriptionCredits drops the wallet back to the free tier when a
 // subscription is canceled, refunded, or disputed. Only the unused MONTHLY
 // allotment is clawed back; pay-as-you-go extra credits are deliberately left

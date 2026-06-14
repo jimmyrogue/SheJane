@@ -220,6 +220,10 @@ function transactionTypeLabel(type: string, t: Translator): string {
       return t('billing.txType.adminAdjust')
     case 'signup_grant':
       return t('billing.txType.signupGrant')
+    case 'recharge_grant':
+      return t('billing.txType.rechargeGrant')
+    case 'recharge_refund':
+      return t('billing.txType.rechargeRefund')
     default:
       return type
   }
