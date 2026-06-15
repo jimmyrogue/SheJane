@@ -194,6 +194,31 @@ export interface BillingCheckoutResponse {
   amount: number
   currency: 'usd' | string
   credits: number
+  checkout_mode?: 'amount' | 'credits' | string
+  usd_cny_rate?: number
+}
+
+export interface BillingCheckoutOption {
+  amount: number
+  credits: number
+}
+
+export interface BillingCheckoutCreditOption {
+  credits: number
+  amount: number
+}
+
+export interface BillingCheckoutOptions {
+  currency: 'usd' | string
+  min_amount: number
+  max_amount: number
+  credits_per_usd: number
+  currency_per_credit: number
+  usd_cny_rate?: number
+  fx_rate_source?: string
+  presets: BillingCheckoutOption[]
+  amount_presets?: BillingCheckoutOption[]
+  credit_presets?: BillingCheckoutCreditOption[]
 }
 
 export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'failed' | 'deleted'
@@ -386,10 +411,18 @@ export class SheJaneAPI implements ChatAPI {
     return this.get<BillingActivity[]>('/api/v1/billing/activities')
   }
 
-  async createBillingCheckout(input: { amount: number; returnTarget: 'web' | 'electron' }): Promise<BillingCheckoutResponse> {
+  async billingCheckoutOptions(): Promise<BillingCheckoutOptions> {
+    return this.get<BillingCheckoutOptions>('/api/v1/billing/checkout/options')
+  }
+
+  async createBillingCheckout(input: { amount?: number; credits?: number; returnTarget: 'web' | 'electron' }): Promise<BillingCheckoutResponse> {
     return this.post<BillingCheckoutResponse>(
       '/api/v1/billing/checkout',
-      { amount: input.amount, return_target: input.returnTarget },
+      {
+        ...(input.amount !== undefined ? { amount: input.amount } : {}),
+        ...(input.credits !== undefined ? { credits: input.credits } : {}),
+        return_target: input.returnTarget,
+      },
       true,
     )
   }

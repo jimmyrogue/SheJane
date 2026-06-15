@@ -117,7 +117,7 @@ make smoke-real-llm
 
 ## Stripe 按量充值与 Webhook
 
-Stripe Checkout 使用 `mode=payment` 和动态 `price_data` 创建一次性充值 checkout。前端调用 `POST /api/v1/billing/checkout`（兼容别名 `POST /api/billing/checkout`），请求体只传 `{ "amount": 10, "return_target": "web" | "electron" }`；后端从 JWT 取 `user_id`，创建 Stripe Session，并把 `user_id` / `amount` / `credits` 写入 metadata。生产环境需要在 Stripe Workbench 配置 webhook endpoint：
+Stripe Checkout 使用 `mode=payment` 和动态 `price_data` 创建一次性充值 checkout。前端可先读 `GET /api/v1/billing/checkout/options` 展示 `$1-$500` 金额对应的 credits 预览；积分包只是预设金额入口，最终发放 credits 一律按 Stripe 实收 USD 金额、`BILLING_USD_CNY_RATE` 和后台「每百万 token 金额」换算，不包含独立折扣档。真正创建 checkout 时调用 `POST /api/v1/billing/checkout`（兼容别名 `POST /api/billing/checkout`），请求体只传 `{ "amount": 10, "return_target": "web" | "electron" }`；后端从 JWT 取 `user_id`，创建 Stripe Session，并把 `user_id` / `amount` / `credits` 写入 metadata。生产环境需要在 Stripe Workbench 配置 webhook endpoint：
 
 ```text
 POST https://你的 API 域名/api/v1/payment/webhook
@@ -667,7 +667,7 @@ make deploy
 > **首启前必须就位（否则会播成 mock / 明文 / 假结账）：**
 >
 > - **provider key 和 `CONFIG_ENCRYPTION_KEY` 必须在第一次 `make deploy` 之前就写进 `.env`。** `chat.fast`/`chat.deep` 只在「空表首启」时从 env 播种；若首启时 provider key 为空，会播成 **mock（假回复）**，之后再往 `.env` 加 key **无效**（表非空不再重写这两行），只能去后台「模型配置」逐模型配置改。推荐模型模板会按缺失补齐但默认停用，不会替代真实 key 配置。生产环境中 `CONFIG_ENCRYPTION_KEY` 未设或仍是弱占位值会让 API 启动失败；开发环境仍允许明文以便本地调试。
-> - **（开计费时）`STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` 不能留空** —— checkout 需要 Stripe secret 创建真实 Session，webhook 没有签名密钥会拒绝处理；`APP_WEB_URL` 可显式覆盖网页回跳地址，`APP_ELECTRON_URL_SCHEME` 用于桌面端 deep link。
+> - **（开计费时）`STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` 不能留空** —— checkout 需要 Stripe secret 创建真实 Session，webhook 没有签名密钥会拒绝处理；`BILLING_USD_CNY_RATE` 是 USD 充值反推 credits 的参考汇率/fallback，需定期更新或接入汇率任务；`APP_WEB_URL` 可显式覆盖网页回跳地址，`APP_ELECTRON_URL_SCHEME` 用于桌面端 deep link。
 > - `IMAGE_TAG` 在 `.env` 钉到具体版本；否则后续某次裸 `make deploy` 会漂回 `latest`。
 
 常用：
@@ -701,7 +701,7 @@ make deploy-restore BACKUP=<文件>    # 从某个 .sql.gz 覆盖当前库（需
 - `JWT_SECRET` 已替换为强随机值，`COOKIE_SECURE=true`，`MOCK_LLM=false`，`CLIENT_BASE_URL` 和 `ADMIN_BASE_URL` 是真实 HTTPS 域名（与浏览器 Origin 精确一致、无尾斜杠）。
 - `CONFIG_ENCRYPTION_KEY` 已设为强随机 passphrase，且 provider key 在**首次 `make deploy` 前**已入 `.env`（否则模型注册表会播成 mock，只能后台逐模型配置改）。
 - `POSTGRES_PASSWORD` 已从默认 `shejane` 改掉；`IMAGE_TAG` 已在 `.env` 钉到具体发布版本（非 `latest`）。
-- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET` 已在部署平台 secret 中配置，不写入仓库；`APP_WEB_URL` / `APP_ELECTRON_URL_SCHEME` 已按生产域名与桌面 deep link 设置。
+- `STRIPE_SECRET_KEY`、`STRIPE_WEBHOOK_SECRET` 已在部署平台 secret 中配置，不写入仓库；`BILLING_USD_CNY_RATE` 已按当前参考汇率设置（或由运维任务更新）；`APP_WEB_URL` / `APP_ELECTRON_URL_SCHEME` 已按生产域名与桌面 deep link 设置。
 - Stripe webhook endpoint 已订阅 `checkout.session.completed`，Dashboard 中最近一次投递为 2xx。
 - 忘记密码 + 邮箱验证邮件:`RESEND_API_KEY` + `MAIL_FROM_ADDRESS`(Resend 已验证的发件域名)已配置;否则 API 只把链接打到日志、不真正发信。重置链接指向 `CLIENT_BASE_URL/reset?token=`,验证链接指向 `CLIENT_BASE_URL/verify?token=`(都在网页端落地)。邮箱验证为 advisory(横幅提示,不拦登录);迁移会把已有用户回填为已验证。
 - 数据库备份方案已就位：`make deploy-backup` 能跑通且产物已拷到异地（持久卷不是备份）。

@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { BillingActivity, WalletTransaction } from '@/shared/api/client'
 import { SpendHistoryDialog } from './SpendHistoryDialog'
@@ -38,10 +39,13 @@ function activity(overrides: Partial<BillingActivity> = {}): BillingActivity {
   }
 }
 
-function renderDialog(fetchActivities: () => Promise<BillingActivity[]>) {
+function renderDialog(
+  fetchActivities: () => Promise<BillingActivity[]>,
+  props: Partial<ComponentProps<typeof SpendHistoryDialog>> = {},
+) {
   return render(
     <I18nProvider>
-      <SpendHistoryDialog open onOpenChange={vi.fn()} fetchActivities={fetchActivities} />
+      <SpendHistoryDialog open onOpenChange={vi.fn()} fetchActivities={fetchActivities} {...props} />
     </I18nProvider>,
   )
 }
@@ -177,6 +181,25 @@ describe('SpendHistoryDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '充值' }))
     expect(screen.queryByText('对话使用')).not.toBeInTheDocument()
     expect(screen.getByText('订阅发放')).toBeInTheDocument()
+  })
+
+  it('can open directly on the top-up filter', async () => {
+    renderDialog(async () => [
+      activity({
+        id: 'run:usage',
+        kind: 'usage',
+        settled_credits: 12,
+        transactions: [tx({ id: 'a', type: 'usage_settle', amount: -12 })],
+      }),
+      activity({
+        id: 'tx:grant',
+        transactions: [tx({ id: 'b', type: 'recharge_grant', amount: 9000, description: 'Stripe Checkout credits purchased' })],
+      }),
+    ], { initialFilter: 'topup' })
+
+    expect(await screen.findByText('充值到账')).toBeInTheDocument()
+    expect(screen.queryByText('对话使用')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '充值' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('shows an empty state when there are no transactions', async () => {

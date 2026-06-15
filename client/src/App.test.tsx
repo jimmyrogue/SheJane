@@ -226,7 +226,7 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
   })
 
-  it('opens the recharge dialog from settings and confirms the Stripe checkout', async () => {
+  it('opens the recharge dialog from settings, shows payment progress, and opens top-up history after completion', async () => {
     const calls = mockFetch('user')
     const openExternal = vi.fn(async () => 'ok')
     window.shejaneDesktop = {
@@ -245,6 +245,9 @@ describe('user client shell', () => {
     fireEvent.click(await screen.findByText('充值'))
 
     expect(await screen.findByRole('dialog', { name: '充值' })).toBeInTheDocument()
+    await waitFor(() =>
+      expect(calls.filter((call) => call.url.endsWith('/api/v1/billing/checkout/options')).length).toBeGreaterThanOrEqual(2),
+    )
     expect(calls.some((call) => call.url.endsWith('/api/v1/billing/checkout'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: '确认充值' }))
 
@@ -253,12 +256,21 @@ describe('user client shell', () => {
     )
     const checkoutCall = calls.find((call) => call.url.endsWith('/api/v1/billing/checkout'))
     expect(JSON.parse(String(checkoutCall?.init?.body ?? '{}'))).toMatchObject({
-      amount: 20,
+      amount: 1,
       return_target: 'electron',
     })
     await waitFor(() =>
       expect(openExternal).toHaveBeenCalledWith('https://stripe.example.com/checkout/sess_test'),
     )
+    expect(await screen.findByRole('dialog', { name: '充值中' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '已完成' }))
+
+    const historyDialog = await screen.findByRole('dialog', { name: '消费记录' })
+    expect(historyDialog).toBeInTheDocument()
+    expect(within(historyDialog).getByRole('button', { name: '充值' })).toHaveAttribute('aria-pressed', 'true')
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/billing/balance')).length).toBeGreaterThanOrEqual(2)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/billing/activities'))).toBe(true)
   })
 
   it('opens spend history directly from the settings page', async () => {
@@ -2472,6 +2484,37 @@ function mockFetch(
       const wallet = typeof options.balance === 'function' ? options.balance() : options.balance ?? balance
       return jsonResponse({ code: 0, message: 'ok', data: wallet })
     }
+    if (url.endsWith('/api/v1/billing/checkout/options')) {
+      return jsonResponse({
+        code: 0,
+        message: 'ok',
+        data: {
+          currency: 'usd',
+          min_amount: 1,
+          max_amount: 500,
+          credits_per_usd: 1_127_250,
+          currency_per_credit: 0.000006,
+          usd_cny_rate: 6.7635,
+          presets: [
+            { amount: 1, credits: 1_127_250 },
+            { amount: 10, credits: 11_272_500 },
+            { amount: 20, credits: 22_545_000 },
+            { amount: 50, credits: 56_362_500 },
+          ],
+          amount_presets: [
+            { amount: 1, credits: 1_127_250 },
+            { amount: 10, credits: 11_272_500 },
+            { amount: 20, credits: 22_545_000 },
+            { amount: 50, credits: 56_362_500 },
+          ],
+          credit_presets: [
+            { amount: 1, credits: 1_127_250 },
+            { amount: 5, credits: 5_636_250 },
+            { amount: 9, credits: 10_145_250 },
+          ],
+        },
+      })
+    }
     if (url.endsWith('/api/v1/billing/activities')) {
       return jsonResponse({
         code: 0,
@@ -2529,9 +2572,11 @@ function mockFetch(
         data: {
           checkout_url: 'https://stripe.example.com/checkout/sess_test',
           stripe_checkout_session_id: 'cs_test',
-          amount: 10,
+          amount: 1,
           currency: 'usd',
-          credits: 500000,
+          credits: 1_127_250,
+          checkout_mode: 'amount',
+          usd_cny_rate: 6.7635,
         },
       })
     }

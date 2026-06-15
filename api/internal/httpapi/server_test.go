@@ -10,10 +10,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/coldflame/shejane/api/internal/config"
 	"github.com/coldflame/shejane/api/internal/documents"
 	"github.com/coldflame/shejane/api/internal/llm"
+	"github.com/coldflame/shejane/api/internal/modelreg"
 	"github.com/coldflame/shejane/api/internal/store"
 )
 
@@ -1493,8 +1496,8 @@ func TestBillingCheckoutCreatesStripePaymentSession(t *testing.T) {
 	if body.Data.Amount != 10 || body.Data.Currency != "usd" {
 		t.Fatalf("amount/currency = %d/%s, want 10/usd", body.Data.Amount, body.Data.Currency)
 	}
-	if body.Data.Credits != 500_000 {
-		t.Fatalf("credits = %d, want 500000 from default 20 cny/1M anchor", body.Data.Credits)
+	if body.Data.Credits != 3_381_750 {
+		t.Fatalf("credits = %d, want 3381750 from default 20 cny/1M anchor and USD/CNY rate", body.Data.Credits)
 	}
 	if len(fakeStripe.requests) != 1 {
 		t.Fatalf("stripe requests = %d, want 1", len(fakeStripe.requests))
@@ -1503,7 +1506,7 @@ func TestBillingCheckoutCreatesStripePaymentSession(t *testing.T) {
 	if stripeReq.AmountCents != 1000 || stripeReq.Currency != "usd" || stripeReq.ProductName != "SheJane Credits" {
 		t.Fatalf("stripe request money/product = %#v", stripeReq)
 	}
-	if stripeReq.Metadata["user_id"] != user.ID || stripeReq.Metadata["amount"] != "10" || stripeReq.Metadata["credits"] != "500000" {
+	if stripeReq.Metadata["user_id"] != user.ID || stripeReq.Metadata["amount"] != "10" || stripeReq.Metadata["credits"] != "3381750" || stripeReq.Metadata["checkout_mode"] != "amount" {
 		t.Fatalf("stripe metadata = %#v", stripeReq.Metadata)
 	}
 	if !strings.Contains(stripeReq.SuccessURL, "https://app.example.com/billing/success") || !strings.Contains(stripeReq.SuccessURL, "{CHECKOUT_SESSION_ID}") {
@@ -1511,6 +1514,190 @@ func TestBillingCheckoutCreatesStripePaymentSession(t *testing.T) {
 	}
 	if stripeReq.CancelURL != "https://app.example.com/billing/cancel" {
 		t.Fatalf("web cancel url = %q", stripeReq.CancelURL)
+	}
+}
+
+func TestBillingCheckoutUsesConfiguredCreditRate(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithBillingSettings(t, `{"markup_factor":1.15,"currency_per_credit":0.000006}`, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+		cfg.AppWebURL = "https://app.example.com"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "topup-configured-rate@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(`{"amount":10,"return_target":"web"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[struct {
+		Amount  int   `json:"amount"`
+		Credits int64 `json:"credits"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout response: %v", err)
+	}
+	if body.Data.Amount != 10 || body.Data.Credits != 11_272_500 {
+		t.Fatalf("checkout amount/credits = %d/%d, want 10/11272500 from configured 6 cny/1M anchor and USD/CNY rate", body.Data.Amount, body.Data.Credits)
+	}
+	if len(fakeStripe.requests) != 1 {
+		t.Fatalf("stripe requests = %d, want 1", len(fakeStripe.requests))
+	}
+	if fakeStripe.requests[0].Metadata["credits"] != "11272500" {
+		t.Fatalf("stripe credits metadata = %#v", fakeStripe.requests[0].Metadata)
+	}
+}
+
+func TestBillingCheckoutCreatesTokenFirstStripePaymentSession(t *testing.T) {
+	fakeStripe := &fakeStripeCheckoutClient{}
+	server, _ := newTestServerWithBillingSettings(t, `{"markup_factor":1.15,"currency_per_credit":0.000006}`, func(cfg *config.Config) {
+		cfg.StripeSecretKey = "sk_test_123"
+		cfg.AppWebURL = "https://app.example.com"
+	}, app.WithStripeCheckoutClient(fakeStripe))
+	token := registerAndTokenWithEmail(t, server, "topup-token-first@example.com")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/checkout", strings.NewReader(`{"credits":5000000,"return_target":"web"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[struct {
+		Amount       int     `json:"amount"`
+		Credits      int64   `json:"credits"`
+		CheckoutMode string  `json:"checkout_mode"`
+		USDToCNYRate float64 `json:"usd_cny_rate"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout response: %v", err)
+	}
+	if body.Data.Amount != 5 || body.Data.Credits != 5_636_250 || body.Data.CheckoutMode != "credits" {
+		t.Fatalf("checkout quote = %#v, want $5 normalized to 5636250 credits", body.Data)
+	}
+	if body.Data.USDToCNYRate != 6.7635 {
+		t.Fatalf("usd_cny_rate = %f, want 6.7635", body.Data.USDToCNYRate)
+	}
+	if len(fakeStripe.requests) != 1 {
+		t.Fatalf("stripe requests = %d, want 1", len(fakeStripe.requests))
+	}
+	stripeReq := fakeStripe.requests[0]
+	if stripeReq.AmountCents != 500 || stripeReq.Metadata["credits"] != "5636250" || stripeReq.Metadata["checkout_mode"] != "credits" {
+		t.Fatalf("stripe request = %#v", stripeReq)
+	}
+}
+
+func TestBillingCheckoutOptionsReturnsCreditQuotes(t *testing.T) {
+	server := newTestServer(t)
+	token := registerAndTokenWithEmail(t, server, "topup-options@example.com")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/checkout/options", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout options status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[struct {
+		Currency        string  `json:"currency"`
+		MinAmount       int     `json:"min_amount"`
+		MaxAmount       int     `json:"max_amount"`
+		CreditsPerUSD   float64 `json:"credits_per_usd"`
+		CurrencyPerUnit float64 `json:"currency_per_credit"`
+		USDToCNYRate    float64 `json:"usd_cny_rate"`
+		Presets         []struct {
+			Amount  int   `json:"amount"`
+			Credits int64 `json:"credits"`
+		} `json:"presets"`
+		CreditPresets []struct {
+			Amount  int   `json:"amount"`
+			Credits int64 `json:"credits"`
+		} `json:"credit_presets"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout options response: %v", err)
+	}
+	if body.Data.Currency != "usd" || body.Data.MinAmount != 1 || body.Data.MaxAmount != 500 {
+		t.Fatalf("checkout options basics = %#v", body.Data)
+	}
+	if math.Abs(body.Data.CreditsPerUSD-338_175) > 0.001 || body.Data.CurrencyPerUnit != 0.00002 || body.Data.USDToCNYRate != 6.7635 {
+		t.Fatalf("checkout options rate = %f/%f/%f, want 338175/0.00002/6.7635", body.Data.CreditsPerUSD, body.Data.CurrencyPerUnit, body.Data.USDToCNYRate)
+	}
+	if len(body.Data.Presets) != 4 {
+		t.Fatalf("presets = %#v", body.Data.Presets)
+	}
+	wantCredits := map[int]int64{1: 338_175, 10: 3_381_750, 20: 6_763_500, 50: 16_908_750}
+	for _, preset := range body.Data.Presets {
+		if preset.Credits != wantCredits[preset.Amount] {
+			t.Fatalf("preset %#v, want credits %d", preset, wantCredits[preset.Amount])
+		}
+	}
+	wantCreditPresets := map[int]int64{1: 338_175, 3: 1_014_525, 15: 5_072_625, 30: 10_145_250}
+	if len(body.Data.CreditPresets) != len(wantCreditPresets) {
+		t.Fatalf("credit presets = %#v", body.Data.CreditPresets)
+	}
+	for _, preset := range body.Data.CreditPresets {
+		if preset.Credits != wantCreditPresets[preset.Amount] {
+			t.Fatalf("credit preset %#v, want credits %d", preset, wantCreditPresets[preset.Amount])
+		}
+	}
+}
+
+func TestBillingCheckoutOptionsUsesConfiguredCreditRate(t *testing.T) {
+	server, _ := newTestServerWithBillingSettings(t, `{"markup_factor":1.15,"currency_per_credit":0.000006}`, nil)
+	token := registerAndTokenWithEmail(t, server, "topup-options-configured-rate@example.com")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/billing/checkout/options", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("checkout options status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body apiResponse[struct {
+		CreditsPerUSD   float64 `json:"credits_per_usd"`
+		CurrencyPerUnit float64 `json:"currency_per_credit"`
+		USDToCNYRate    float64 `json:"usd_cny_rate"`
+		Presets         []struct {
+			Amount  int   `json:"amount"`
+			Credits int64 `json:"credits"`
+		} `json:"presets"`
+		CreditPresets []struct {
+			Amount  int   `json:"amount"`
+			Credits int64 `json:"credits"`
+		} `json:"credit_presets"`
+	}]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode checkout options response: %v", err)
+	}
+	if math.Abs(body.Data.CreditsPerUSD-1_127_250) > 0.001 || math.Abs(body.Data.CurrencyPerUnit-0.000006) > 0.0000000001 || body.Data.USDToCNYRate != 6.7635 {
+		t.Fatalf("checkout options rate = %f/%f/%f, want 1127250/0.000006/6.7635", body.Data.CreditsPerUSD, body.Data.CurrencyPerUnit, body.Data.USDToCNYRate)
+	}
+	wantCredits := map[int]int64{1: 1_127_250, 10: 11_272_500, 20: 22_545_000, 50: 56_362_500}
+	if len(body.Data.Presets) != len(wantCredits) {
+		t.Fatalf("presets = %#v", body.Data.Presets)
+	}
+	for _, preset := range body.Data.Presets {
+		if preset.Credits != wantCredits[preset.Amount] {
+			t.Fatalf("preset %#v, want credits %d", preset, wantCredits[preset.Amount])
+		}
+	}
+	wantCreditPresets := map[int]int64{1: 1_127_250, 5: 5_636_250, 9: 10_145_250}
+	if len(body.Data.CreditPresets) != len(wantCreditPresets) {
+		t.Fatalf("credit presets = %#v", body.Data.CreditPresets)
+	}
+	for _, preset := range body.Data.CreditPresets {
+		if preset.Credits != wantCreditPresets[preset.Amount] {
+			t.Fatalf("credit preset %#v, want credits %d", preset, wantCreditPresets[preset.Amount])
+		}
 	}
 }
 
@@ -1522,9 +1709,12 @@ func TestBillingCheckoutRejectsInvalidAmountsAndUserID(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "below minimum", body: `{"amount":4}`},
+		{name: "below minimum", body: `{"amount":0}`},
 		{name: "above maximum", body: `{"amount":501}`},
 		{name: "decimal", body: `{"amount":10.5}`},
+		{name: "missing amount and credits", body: `{}`},
+		{name: "both amount and credits", body: `{"amount":10,"credits":1000000}`},
+		{name: "invalid credits", body: `{"credits":0}`},
 		{name: "client supplied user id", body: `{"amount":10,"user_id":"someone-else"}`},
 	}
 	for _, tc := range cases {
@@ -1687,15 +1877,15 @@ func TestStripeCheckoutCompletedAppliesTopUpCreditsOnce(t *testing.T) {
 		"metadata": map[string]string{
 			"user_id": user.ID,
 			"amount":  "10",
-			"credits": "500000",
+			"credits": strconv.FormatInt(checkout.Credits, 10),
 		},
 	})
 	postStripeWebhook(t, server, payload)
 	postStripeWebhook(t, server, payload)
 
 	balance := billingBalance(t, server, token)
-	if balance.ExtraCreditsBalance != 500_000 {
-		t.Fatalf("extra credits = %d, want 500000", balance.ExtraCreditsBalance)
+	if balance.ExtraCreditsBalance != checkout.Credits {
+		t.Fatalf("extra credits = %d, want %d", balance.ExtraCreditsBalance, checkout.Credits)
 	}
 	grants := 0
 	for _, tx := range walletTransactions(t, server, token) {
@@ -1725,7 +1915,7 @@ func TestStripeChargeRefundedRevokesTopUpCreditsOnce(t *testing.T) {
 		"metadata": map[string]string{
 			"user_id": user.ID,
 			"amount":  "10",
-			"credits": "500000",
+			"credits": strconv.FormatInt(checkout.Credits, 10),
 		},
 	}))
 	postStripeWebhook(t, server, stripeEvent("evt_topup_refunded", "charge.refunded", map[string]any{
@@ -2026,6 +2216,24 @@ func newTestServerWithOptions(t *testing.T, mutate func(*config.Config), opts ..
 		mutate(&cfg)
 	}
 	memory := store.NewMemoryStore()
+	service := app.New(cfg, memory, opts...)
+	return NewServer(service), memory
+}
+
+func newTestServerWithBillingSettings(t *testing.T, billingSettings string, mutate func(*config.Config), opts ...app.Option) (http.Handler, *store.MemoryStore) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MockLLM = true
+	cfg.MonthlyCredits = 10_000
+	cfg.StripeWebhookSecret = testStripeWebhookSecret
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	memory := store.NewMemoryStore()
+	if _, err := memory.SetAppSetting(context.Background(), "admin", modelreg.BillingSettingsKey, billingSettings); err != nil {
+		t.Fatalf("set billing settings: %v", err)
+	}
 	service := app.New(cfg, memory, opts...)
 	return NewServer(service), memory
 }

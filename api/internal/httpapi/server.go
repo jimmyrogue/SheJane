@@ -30,6 +30,22 @@ const refreshCookieName = "shejane_refresh"
 
 const apiContentSecurityPolicy = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
+const (
+	billingTopUpMinAmount = 1
+	billingTopUpMaxAmount = 500
+)
+
+var (
+	billingTopUpPresetAmounts = []int{1, 10, 20, 50}
+	billingTopUpPresetCredits = []int64{100_000, 1_000_000, 5_000_000, 10_000_000}
+)
+
+type checkoutPricing struct {
+	CurrencyPerCredit float64
+	USDToCNYRate      float64
+	CreditsPerUSD     float64
+}
+
 type Server struct {
 	app *app.App
 	mux *http.ServeMux
@@ -96,6 +112,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/billing/usage", s.requireAuth(s.usage))
 	s.mux.HandleFunc("GET /api/v1/billing/transactions", s.requireAuth(s.transactions))
 	s.mux.HandleFunc("GET /api/v1/billing/activities", s.requireAuth(s.billingActivities))
+	s.mux.HandleFunc("GET /api/v1/billing/checkout/options", s.requireAuth(s.billingCheckoutOptions))
 	s.mux.HandleFunc("POST /api/v1/billing/checkout", s.requireAuth(s.billingCheckout))
 	s.mux.HandleFunc("POST /api/billing/checkout", s.requireAuth(s.billingCheckout))
 	s.mux.HandleFunc("POST /api/v1/billing/subscription/checkout", s.requireAuth(s.subscriptionCheckout))
@@ -526,16 +543,75 @@ func (s *Server) billingActivities(w http.ResponseWriter, r *http.Request, user 
 	writeJSON(w, http.StatusOK, apiResponse[[]store.BillingActivity]{Code: 0, Message: "ok", Data: activities})
 }
 
+func (s *Server) billingCheckoutOptions(w http.ResponseWriter, r *http.Request, user store.User) {
+	pricing, ok := s.checkoutPricing()
+	if !ok {
+		writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+		return
+	}
+	amountPresets := make([]map[string]any, 0, len(billingTopUpPresetAmounts))
+	for _, amount := range billingTopUpPresetAmounts {
+		credits, ok := s.checkoutCreditsForAmount(amount)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+		amountPresets = append(amountPresets, map[string]any{
+			"amount":  amount,
+			"credits": credits,
+		})
+	}
+	creditPresets := make([]map[string]any, 0, len(billingTopUpPresetCredits))
+	seenCreditPresetAmounts := map[int]bool{}
+	for _, credits := range billingTopUpPresetCredits {
+		amount, ok := s.checkoutAmountForCredits(credits)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+		if seenCreditPresetAmounts[amount] {
+			continue
+		}
+		seenCreditPresetAmounts[amount] = true
+		finalCredits, ok := s.checkoutCreditsForAmount(amount)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+		creditPresets = append(creditPresets, map[string]any{
+			"credits": finalCredits,
+			"amount":  amount,
+		})
+	}
+	writeJSON(w, http.StatusOK, apiResponse[map[string]any]{
+		Code:    0,
+		Message: "ok",
+		Data: map[string]any{
+			"currency":            "usd",
+			"min_amount":          billingTopUpMinAmount,
+			"max_amount":          billingTopUpMaxAmount,
+			"credits_per_usd":     pricing.CreditsPerUSD,
+			"currency_per_credit": pricing.CurrencyPerCredit,
+			"usd_cny_rate":        pricing.USDToCNYRate,
+			"fx_rate_source":      "configured",
+			"credit_presets":      creditPresets,
+			"amount_presets":      amountPresets,
+			"presets":             amountPresets,
+		},
+	})
+}
+
 func (s *Server) billingCheckout(w http.ResponseWriter, r *http.Request, user store.User) {
 	var body struct {
-		Amount       int    `json:"amount"`
+		Amount       *int   `json:"amount"`
+		Credits      *int64 `json:"credits"`
 		ReturnTarget string `json:"return_target"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Amount < 5 || body.Amount > 500 {
-		writeError(w, http.StatusBadRequest, 40201, "充值金额必须是 5 到 500 的整数美元")
+	if (body.Amount == nil && body.Credits == nil) || (body.Amount != nil && body.Credits != nil) {
+		writeError(w, http.StatusBadRequest, 40201, "请选择积分包或输入金额")
 		return
 	}
 	if body.ReturnTarget == "" {
@@ -545,26 +621,68 @@ func (s *Server) billingCheckout(w http.ResponseWriter, r *http.Request, user st
 		writeError(w, http.StatusBadRequest, 40201, "回跳目标无效")
 		return
 	}
-	if strings.TrimSpace(s.app.Config.StripeSecretKey) == "" || s.app.StripeCheckout == nil {
-		writeError(w, http.StatusServiceUnavailable, 50301, "Stripe 充值未配置")
-		return
-	}
 
-	credits, ok := s.checkoutCreditsForAmount(body.Amount)
+	checkoutMode := "amount"
+	amount := 0
+	var credits int64
+	if body.Amount != nil {
+		amount = *body.Amount
+		if amount < billingTopUpMinAmount || amount > billingTopUpMaxAmount {
+			writeError(w, http.StatusBadRequest, 40201, "充值金额必须是 1 到 500 的整数美元")
+			return
+		}
+		var ok bool
+		credits, ok = s.checkoutCreditsForAmount(amount)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+	} else {
+		checkoutMode = "credits"
+		credits = *body.Credits
+		if credits <= 0 {
+			writeError(w, http.StatusBadRequest, 40201, "积分数量必须大于 0")
+			return
+		}
+		var ok bool
+		amount, ok = s.checkoutAmountForCredits(credits)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+		if amount > billingTopUpMaxAmount {
+			writeError(w, http.StatusBadRequest, 40201, "积分包金额超过 500 美元")
+			return
+		}
+		normalizedCredits, ok := s.checkoutCreditsForAmount(amount)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
+			return
+		}
+		credits = normalizedCredits
+	}
+	pricing, ok := s.checkoutPricing()
 	if !ok {
 		writeError(w, http.StatusInternalServerError, 50001, "积分换算未配置")
 		return
 	}
+	if strings.TrimSpace(s.app.Config.StripeSecretKey) == "" || s.app.StripeCheckout == nil {
+		writeError(w, http.StatusServiceUnavailable, 50301, "Stripe 充值未配置")
+		return
+	}
 	successURL, cancelURL := s.checkoutReturnURLs(body.ReturnTarget)
 	metadata := map[string]string{
-		"user_id": user.ID,
-		"amount":  strconv.Itoa(body.Amount),
-		"credits": strconv.FormatInt(credits, 10),
+		"user_id":             user.ID,
+		"amount":              strconv.Itoa(amount),
+		"credits":             strconv.FormatInt(credits, 10),
+		"checkout_mode":       checkoutMode,
+		"usd_cny_rate":        strconv.FormatFloat(pricing.USDToCNYRate, 'f', -1, 64),
+		"currency_per_credit": strconv.FormatFloat(pricing.CurrencyPerCredit, 'f', -1, 64),
 	}
 	stripeSession, err := s.app.StripeCheckout.CreateCheckoutSession(r.Context(), app.StripeCheckoutRequest{
 		UserID:      user.ID,
 		Email:       user.Email,
-		AmountCents: int64(body.Amount) * 100,
+		AmountCents: int64(amount) * 100,
 		Currency:    "usd",
 		Credits:     credits,
 		ProductName: "SheJane Credits",
@@ -579,7 +697,7 @@ func (s *Server) billingCheckout(w http.ResponseWriter, r *http.Request, user st
 	tx, err := s.app.Store.CreateBillingTopUp(r.Context(), store.BillingTransaction{
 		UserID:          user.ID,
 		StripeSessionID: stripeSession.ID,
-		Amount:          body.Amount,
+		Amount:          amount,
 		Currency:        "usd",
 		Credits:         credits,
 		Status:          "pending",
@@ -597,6 +715,8 @@ func (s *Server) billingCheckout(w http.ResponseWriter, r *http.Request, user st
 			"amount":                     tx.Amount,
 			"currency":                   tx.Currency,
 			"credits":                    tx.Credits,
+			"checkout_mode":              checkoutMode,
+			"usd_cny_rate":               pricing.USDToCNYRate,
 		},
 	})
 }
@@ -1946,16 +2066,47 @@ func (s *Server) createStripeCheckout(ctx context.Context, user store.User, orde
 	return decoded.ID, decoded.URL, nil
 }
 
-func (s *Server) checkoutCreditsForAmount(amount int) (int64, bool) {
+func (s *Server) checkoutPricing() (checkoutPricing, bool) {
 	currencyPerCredit, ok := s.app.Registry.CurrencyPerCredit()
 	if !ok || currencyPerCredit <= 0 {
+		return checkoutPricing{}, false
+	}
+	rate := s.app.Config.BillingUSDToCNYRate
+	if rate <= 0 {
+		return checkoutPricing{}, false
+	}
+	return checkoutPricing{
+		CurrencyPerCredit: currencyPerCredit,
+		USDToCNYRate:      rate,
+		CreditsPerUSD:     rate / currencyPerCredit,
+	}, true
+}
+
+func (s *Server) checkoutCreditsForAmount(amount int) (int64, bool) {
+	pricing, ok := s.checkoutPricing()
+	if !ok {
 		return 0, false
 	}
-	credits := int64(math.Round(float64(amount) / currencyPerCredit))
+	credits := int64(math.Round(float64(amount) * pricing.CreditsPerUSD))
 	if credits < 1 {
 		credits = 1
 	}
 	return credits, true
+}
+
+func (s *Server) checkoutAmountForCredits(credits int64) (int, bool) {
+	if credits <= 0 {
+		return 0, false
+	}
+	pricing, ok := s.checkoutPricing()
+	if !ok {
+		return 0, false
+	}
+	amount := int(math.Ceil((float64(credits) * pricing.CurrencyPerCredit) / pricing.USDToCNYRate))
+	if amount < billingTopUpMinAmount {
+		amount = billingTopUpMinAmount
+	}
+	return amount, true
 }
 
 func (s *Server) checkoutReturnURLs(returnTarget string) (string, string) {

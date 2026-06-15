@@ -19,12 +19,13 @@ import { ConnectionsView } from '@/features/connections/ConnectionsView'
 import { SkillsView } from '@/features/skills/SkillsView'
 import { MCPView } from '@/features/mcp/MCPView'
 import { RechargeDialog } from '@/features/billing/RechargeDialog'
+import { RechargePendingDialog } from '@/features/billing/RechargePendingDialog'
 import { SettingsView } from '@/features/settings/SettingsView'
-import { SpendHistoryDialog } from '@/features/billing/SpendHistoryDialog'
+import { SpendHistoryDialog, type HistoryFilter } from '@/features/billing/SpendHistoryDialog'
 import { TodayView } from '@/features/today/TodayView'
 import type { ChatMode, Conversation, ChatMessage } from '@/shared/local-data/types'
 import type { ModelOption } from '@/features/chat/components/ModeSelector'
-import type { BillingActivity, UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
+import type { BillingActivity, BillingCheckoutOptions, UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
 import type { AgentSettings, InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
 
 const HOUR = 3600_000
@@ -183,6 +184,32 @@ const balance: WalletBalance = {
   monthly_remaining: 0, extra_credits_balance: 35190, period_end: iso(now + 20 * DAY), status: 'active',
 }
 
+const mockCheckoutOptions: BillingCheckoutOptions = {
+  currency: 'usd',
+  min_amount: 1,
+  max_amount: 500,
+  credits_per_usd: 1_127_250,
+  currency_per_credit: 0.000006,
+  usd_cny_rate: 6.7635,
+  presets: [
+    { amount: 1, credits: 1_127_250 },
+    { amount: 10, credits: 11_272_500 },
+    { amount: 20, credits: 22_545_000 },
+    { amount: 50, credits: 56_362_500 },
+  ],
+  amount_presets: [
+    { amount: 1, credits: 1_127_250 },
+    { amount: 10, credits: 11_272_500 },
+    { amount: 20, credits: 22_545_000 },
+    { amount: 50, credits: 56_362_500 },
+  ],
+  credit_presets: [
+    { amount: 1, credits: 1_127_250 },
+    { amount: 5, credits: 5_636_250 },
+    { amount: 9, credits: 10_145_250 },
+  ],
+}
+
 const mockTransactions: WalletTransaction[] = [
   { id: 'tx1', wallet_id: 'w1', type: 'usage_settle', amount: -1280, monthly_used_after: 1280, extra_balance_after: 35190, description: 'deepseek-fast · 工具运行', created_at: iso(now - 2 * HOUR) },
   { id: 'tx2', wallet_id: 'w1', type: 'subscription_grant', amount: 9000, monthly_used_after: 0, extra_balance_after: 36470, description: '月度订阅', created_at: iso(now - DAY) },
@@ -323,7 +350,9 @@ function Shell() {
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const sidebarMotionTimerRef = useRef<number>()
   const [rechargeOpen, setRechargeOpen] = useState(false)
+  const [rechargePendingOpen, setRechargePendingOpen] = useState(false)
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
+  const [spendHistoryInitialFilter, setSpendHistoryInitialFilter] = useState<HistoryFilter>('all')
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>(
     view === 'skills'
       ? 'skills'
@@ -440,7 +469,10 @@ function Shell() {
               agentSettings={agentSettings}
               onAgentSettingsChange={noop}
               onRecharge={() => setRechargeOpen(true)}
-              onShowSpendHistory={() => setSpendHistoryOpen(true)}
+              onShowSpendHistory={() => {
+                setSpendHistoryInitialFilter('all')
+                setSpendHistoryOpen(true)
+              }}
               onLogout={noop}
               onImportLocalData={noop}
               onExportLocalData={noop}
@@ -489,11 +521,27 @@ function Shell() {
               </div>
             </section>
           )}
-          <RechargeDialog open={rechargeOpen} onOpenChange={setRechargeOpen} balance={balance} onConfirm={noop} />
+          <RechargeDialog
+            open={rechargeOpen}
+            onOpenChange={setRechargeOpen}
+            balance={balance}
+            checkoutOptions={mockCheckoutOptions}
+            onConfirm={() => setRechargePendingOpen(true)}
+          />
+          <RechargePendingDialog
+            open={rechargePendingOpen}
+            onOpenChange={setRechargePendingOpen}
+            onComplete={() => {
+              setRechargePendingOpen(false)
+              setSpendHistoryInitialFilter('topup')
+              setSpendHistoryOpen(true)
+            }}
+          />
           <SpendHistoryDialog
             open={spendHistoryOpen}
             onOpenChange={setSpendHistoryOpen}
             fetchActivities={async () => mockBillingActivities}
+            initialFilter={spendHistoryInitialFilter}
           />
         </div>
       </div>

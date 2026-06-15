@@ -139,6 +139,35 @@ describe('SheJaneAPI mid-session token refresh', () => {
     await expect(api.balance()).rejects.toBeInstanceOf(APIError)
   })
 
+  it('loads billing checkout options for top-up credit previews', async () => {
+    const api = new SheJaneAPI('http://test')
+    api.setAccessToken('token')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      code: 0,
+      data: {
+        currency: 'usd',
+        min_amount: 1,
+        max_amount: 500,
+        credits_per_usd: 1_127_250,
+        currency_per_credit: 0.000006,
+        usd_cny_rate: 6.7635,
+        presets: [{ amount: 1, credits: 1_127_250 }],
+        credit_presets: [{ amount: 1, credits: 1_127_250 }],
+      },
+    }))
+
+    await expect(api.billingCheckoutOptions()).resolves.toMatchObject({
+      currency: 'usd',
+      credits_per_usd: 1_127_250,
+      usd_cny_rate: 6.7635,
+      presets: [{ amount: 1, credits: 1_127_250 }],
+      credit_presets: [{ amount: 1, credits: 1_127_250 }],
+    })
+    expect(fetchMock).toHaveBeenCalledWith('http://test/api/v1/billing/checkout/options', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer token' }),
+    }))
+  })
+
   it('emits model.selected when the LLM stream falls back to another model', async () => {
     const api = new SheJaneAPI('http://test')
     api.setAccessToken('tok')

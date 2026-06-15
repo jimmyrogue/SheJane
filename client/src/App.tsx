@@ -24,6 +24,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   SheJaneAPI,
   type AuthPayload,
+  type BillingCheckoutOptions,
   type ChatModelInfo,
   type UserDocument,
   type WalletBalance,
@@ -41,8 +42,9 @@ import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
-import { RechargeDialog } from './features/billing/RechargeDialog'
-import { SpendHistoryDialog } from './features/billing/SpendHistoryDialog'
+import { RechargeDialog, type RechargeCheckoutInput } from './features/billing/RechargeDialog'
+import { RechargePendingDialog } from './features/billing/RechargePendingDialog'
+import { SpendHistoryDialog, type HistoryFilter } from './features/billing/SpendHistoryDialog'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
@@ -374,10 +376,14 @@ function AppContent() {
   const [attachedDocumentIDs, setAttachedDocumentIDs] = useState<string[]>([])
   const [attachedPreviews, setAttachedPreviews] = useState<Record<string, string | undefined>>({})
   const [balance, setBalance] = useState<WalletBalance | null>(null)
+  const [billingCheckoutOptions, setBillingCheckoutOptions] = useState<BillingCheckoutOptions | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
+  const [spendHistoryInitialFilter, setSpendHistoryInitialFilter] = useState<HistoryFilter>('all')
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false)
+  const [rechargePendingOpen, setRechargePendingOpen] = useState(false)
+  const [rechargeCompletionChecking, setRechargeCompletionChecking] = useState(false)
   const [emailBannerDismissed, setEmailBannerDismissed] = useState(false)
   const [emailVerifySent, setEmailVerifySent] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -726,6 +732,7 @@ function AppContent() {
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
     setDocuments([])
+    setBillingCheckoutOptions(null)
   }, [auth?.user?.id])
 
   // Let the API client silently renew an expired access token mid-session
@@ -759,6 +766,40 @@ function AppContent() {
       })
       .catch(() => undefined)
   }, [api, authClient])
+
+  useEffect(() => {
+    if (!auth) {
+      return
+    }
+    let cancelled = false
+    api.billingCheckoutOptions()
+      .then((options) => {
+        if (!cancelled) {
+          setBillingCheckoutOptions(options)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [api, auth?.user?.id])
+
+  useEffect(() => {
+    if (!auth || !rechargeDialogOpen) {
+      return
+    }
+    let cancelled = false
+    api.billingCheckoutOptions()
+      .then((options) => {
+        if (!cancelled) {
+          setBillingCheckoutOptions(options)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [api, auth?.user?.id, rechargeDialogOpen])
 
   useEffect(() => {
     const unsubscribe = window.shejaneDesktop?.onDeepLink?.((rawURL) => {
@@ -2585,9 +2626,14 @@ function AppContent() {
     window.location.href = checkoutURL
   }
 
-  async function startRecharge(amountOrRecoveryTarget?: number | RecoveryTarget, nextRecoveryTarget?: RecoveryTarget) {
-    const amount = typeof amountOrRecoveryTarget === 'number' ? amountOrRecoveryTarget : 10
-    const recoveryTarget = typeof amountOrRecoveryTarget === 'number' ? nextRecoveryTarget : amountOrRecoveryTarget
+  function openSpendHistory(filter: HistoryFilter = 'all') {
+    setSpendHistoryInitialFilter(filter)
+    setSpendHistoryOpen(true)
+  }
+
+  async function startRecharge(inputOrRecoveryTarget?: RechargeCheckoutInput | RecoveryTarget, nextRecoveryTarget?: RecoveryTarget) {
+    const checkoutInput = isRechargeCheckoutInput(inputOrRecoveryTarget) ? inputOrRecoveryTarget : { amount: 10 }
+    const recoveryTarget = isRechargeCheckoutInput(inputOrRecoveryTarget) ? nextRecoveryTarget : inputOrRecoveryTarget
     const recoveryKey = recoveryTarget ? recoveryTargetKey(recoveryTarget) : undefined
     if (recoveryKey && recoveryRechargeInFlightRef.current.has(recoveryKey)) {
       setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
@@ -2599,7 +2645,7 @@ function AppContent() {
     const walletBeforeCheckout = balance
     try {
       const { checkout_url } = await api.createBillingCheckout({
-        amount,
+        ...checkoutInput,
         returnTarget: window.shejaneDesktop ? 'electron' : 'web',
       })
       if (!checkout_url) {
@@ -2612,6 +2658,8 @@ function AppContent() {
           action: rechargeRetryAction(recoveryTarget, walletBeforeCheckout),
         })
         startCheckoutRecoveryWatcher(recoveryTarget, walletBeforeCheckout)
+      } else {
+        setRechargePendingOpen(true)
       }
     } catch {
       setNotice(t('billing.rechargeFailed'))
@@ -2619,6 +2667,20 @@ function AppContent() {
       if (recoveryKey) {
         recoveryRechargeInFlightRef.current.delete(recoveryKey)
       }
+    }
+  }
+
+  async function confirmRechargeCompleted() {
+    setRechargeCompletionChecking(true)
+    try {
+      const walletAfter = await api.balance()
+      setBalance(walletAfter)
+      setRechargePendingOpen(false)
+      openSpendHistory('topup')
+    } catch {
+      setNotice(t('app.notice.checkoutStatusCheckFailed'))
+    } finally {
+      setRechargeCompletionChecking(false)
     }
   }
 
@@ -2783,7 +2845,7 @@ function AppContent() {
                 writeAgentSettings(next)
               }}
               onRecharge={() => setRechargeDialogOpen(true)}
-              onShowSpendHistory={() => setSpendHistoryOpen(true)}
+              onShowSpendHistory={() => openSpendHistory()}
               onLogout={() => {
                 void authClient.logout().finally(() => setAuth(null))
               }}
@@ -3022,12 +3084,20 @@ function AppContent() {
             open={spendHistoryOpen}
             onOpenChange={setSpendHistoryOpen}
             fetchActivities={fetchSpendHistory}
+            initialFilter={spendHistoryInitialFilter}
           />
           <RechargeDialog
             open={rechargeDialogOpen}
             onOpenChange={setRechargeDialogOpen}
             balance={balance}
-            onConfirm={(amount) => startRecharge(amount)}
+            checkoutOptions={billingCheckoutOptions}
+            onConfirm={(input) => startRecharge(input)}
+          />
+          <RechargePendingDialog
+            open={rechargePendingOpen}
+            onOpenChange={setRechargePendingOpen}
+            onComplete={confirmRechargeCompleted}
+            checking={rechargeCompletionChecking}
           />
           <Dialog open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
             <DialogContent className="keyboard-shortcuts-dialog sm:max-w-[420px]">
@@ -3314,6 +3384,13 @@ function totalCredits(balance: WalletBalance): number {
 
 function recoveryTargetKey(target: RecoveryTarget): string {
   return `${target.conversationID}:${target.assistantMessageID}`
+}
+
+function isRechargeCheckoutInput(value: RechargeCheckoutInput | RecoveryTarget | undefined): value is RechargeCheckoutInput {
+  if (!value) {
+    return false
+  }
+  return 'amount' in value || 'credits' in value
 }
 
 function walletShowsRechargeCompletion(before: WalletBalance | null, after: WalletBalance): boolean {

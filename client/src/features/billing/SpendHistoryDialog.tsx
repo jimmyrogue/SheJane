@@ -3,27 +3,30 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { BillingActivity, BillingLLMCall } from '@/shared/api/client'
 
-type HistoryFilter = 'all' | 'usage' | 'topup'
+export type HistoryFilter = 'all' | 'usage' | 'topup'
 
 export function SpendHistoryDialog({
   open,
   onOpenChange,
   fetchActivities,
+  initialFilter = 'all',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   fetchActivities: () => Promise<BillingActivity[]>
+  initialFilter?: HistoryFilter
 }) {
   const { t, locale } = useI18n()
   const [activities, setActivities] = useState<BillingActivity[] | null>(null)
   const [failed, setFailed] = useState(false)
-  const [filter, setFilter] = useState<HistoryFilter>('all')
+  const [filter, setFilter] = useState<HistoryFilter>(initialFilter)
 
   useEffect(() => {
     if (!open) {
       return
     }
     let cancelled = false
+    setFilter(initialFilter)
     setActivities(null)
     setFailed(false)
     fetchActivities()
@@ -40,7 +43,7 @@ export function SpendHistoryDialog({
     return () => {
       cancelled = true
     }
-  }, [open, fetchActivities])
+  }, [open, fetchActivities, initialFilter])
 
   const filteredActivities = useMemo(() => {
     if (!activities) return []

@@ -5298,6 +5298,35 @@ button:active {
   margin-top: 18px;
 }
 
+.recharge-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sj-paper-muted, #F7F3EA) 76%, var(--sj-paper-raised, #FFFFFF));
+  padding: 4px;
+}
+
+.recharge-mode-toggle button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.recharge-mode-toggle button.active {
+  background: var(--sj-paper-raised, #FFFFFF);
+  color: var(--sj-ink, #2B2A28);
+  box-shadow: 0 3px 10px rgba(43, 42, 40, 0.06);
+}
+
 .recharge-amount-field {
   display: flex;
   flex-direction: column;
@@ -5331,27 +5360,92 @@ button:active {
   border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 58%, var(--sj-line, #E8E5DE));
 }
 
+.recharge-credit-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 10px;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: var(--sj-paper-raised, #FFFFFF);
+  padding: 10px 12px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+}
+
+.recharge-credit-preview strong {
+  color: var(--sj-ink, #2B2A28);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.recharge-credit-preview.invalid {
+  grid-template-columns: auto minmax(0, 1fr);
+  color: var(--sj-seal, #B3532F);
+}
+
+.recharge-credit-preview.invalid strong {
+  display: none;
+}
+
 .recharge-preset-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
 
+.recharge-credit-preset-grid {
+  margin-top: 10px;
+}
+
+.recharge-empty-state {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: 54px;
+  place-items: center;
+  border: 0.5px dashed var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sj-paper-muted, #F7F3EA) 66%, transparent);
+  color: var(--sj-ink-muted, #706B63);
+  font-size: 12px;
+  text-align: center;
+}
+
 .recharge-preset {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
+  gap: 3px;
+  min-height: 54px;
   border: 0.5px solid var(--sj-line, #E8E5DE);
   border-radius: 8px;
   background: var(--sj-paper-raised, #FFFFFF);
   color: var(--sj-ink, #2B2A28);
-  font-size: 13px;
-  font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
+  padding: 8px 6px;
   transition: border-color 150ms ease, background 150ms ease;
+}
+
+.recharge-preset-amount {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.recharge-preset-credits {
+  color: var(--sj-ink-faint, #A8A39A);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .recharge-preset:hover,
@@ -5367,6 +5461,39 @@ button:active {
   line-height: 1.55;
 }
 
+.recharge-pending-dialog {
+  max-width: 420px;
+}
+
+.recharge-pending-body {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.recharge-pending-body p {
+  margin: 0;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.recharge-pending-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border: 0.5px solid color-mix(in srgb, var(--sj-seal, #B3532F) 35%, var(--sj-line, #E8E5DE));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sj-seal, #B3532F) 8%, var(--sj-paper-raised, #FFFFFF));
+  color: var(--sj-seal, #B3532F);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 560px) {
   .billing-modal-footer,
   .spend-history-summary {
@@ -5375,6 +5502,10 @@ button:active {
   }
 
   .recharge-preset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .recharge-pending-body {
     grid-template-columns: 1fr;
   }
 

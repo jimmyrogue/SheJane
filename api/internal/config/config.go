@@ -64,6 +64,11 @@ type Config struct {
 	StripeSecretKey     string
 	StripeWebhookSecret string
 	StripePriceID       string
+	// BillingUSDToCNYRate is the reference FX rate used to quote USD top-ups
+	// against the admin-configured CNY-per-credit anchor. Operators can pin it
+	// from env; future providers can update this source without changing the
+	// checkout/webhook contract.
+	BillingUSDToCNYRate float64
 
 	AWSRegion          string
 	AWSAccessKeyID     string
@@ -181,6 +186,7 @@ func Default() Config {
 		StripeWebhookSecret:           "",
 		StripeSecretKey:               "",
 		StripePriceID:                 "",
+		BillingUSDToCNYRate:           6.7635,
 		DeepProviderBaseURL:           "",
 		DeepProviderAPIKey:            "",
 		FastProviderAPIKey:            "",
@@ -250,6 +256,7 @@ func Load() Config {
 	cfg.StripeSecretKey = getEnv("STRIPE_SECRET_KEY", cfg.StripeSecretKey)
 	cfg.StripeWebhookSecret = getEnv("STRIPE_WEBHOOK_SECRET", cfg.StripeWebhookSecret)
 	cfg.StripePriceID = getEnv("STRIPE_PRICE_ID", cfg.StripePriceID)
+	cfg.BillingUSDToCNYRate = getEnvFloat("BILLING_USD_CNY_RATE", cfg.BillingUSDToCNYRate)
 	cfg.AWSRegion = getEnv("AWS_REGION", cfg.AWSRegion)
 	cfg.AWSAccessKeyID = getEnv("AWS_ACCESS_KEY_ID", cfg.AWSAccessKeyID)
 	cfg.AWSSecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", cfg.AWSSecretAccessKey)
