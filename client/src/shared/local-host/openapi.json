@@ -33,6 +33,35 @@
         "title": "CancelRunResponse",
         "type": "object"
       },
+      "ClearLocalLarkCacheResponse": {
+        "properties": {
+          "cleared": {
+            "const": true,
+            "default": true,
+            "title": "Cleared",
+            "type": "boolean"
+          },
+          "deleted_messages": {
+            "title": "Deleted Messages",
+            "type": "integer"
+          },
+          "deleted_sources": {
+            "title": "Deleted Sources",
+            "type": "integer"
+          },
+          "deleted_todos": {
+            "title": "Deleted Todos",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted_sources",
+          "deleted_messages",
+          "deleted_todos"
+        ],
+        "title": "ClearLocalLarkCacheResponse",
+        "type": "object"
+      },
       "ClearMemoryResponse": {
         "description": "DELETE /local/v1/memory — wipes the agent's long-term notes.\n\nReported back so the renderer can show \"cleared N memories\" toast\ninstead of a generic \"done\" message.",
         "properties": {
@@ -1033,6 +1062,38 @@
         "title": "LatestCheckpoint",
         "type": "object"
       },
+      "ListLocalLarkSourcesResponse": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/LocalLarkSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "title": "ListLocalLarkSourcesResponse",
+        "type": "object"
+      },
+      "ListLocalTodosResponse": {
+        "properties": {
+          "todos": {
+            "items": {
+              "$ref": "#/components/schemas/LocalTodoItem"
+            },
+            "title": "Todos",
+            "type": "array"
+          }
+        },
+        "required": [
+          "todos"
+        ],
+        "title": "ListLocalTodosResponse",
+        "type": "object"
+      },
       "ListRunsResponse": {
         "properties": {
           "runs": {
@@ -1167,6 +1228,342 @@
           "connected"
         ],
         "title": "LocalCloudSession",
+        "type": "object"
+      },
+      "LocalLarkConnectResponse": {
+        "properties": {
+          "authorization_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorization Url"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/LocalLarkConnection"
+          },
+          "connector": {
+            "$ref": "#/components/schemas/LocalLarkConnectorStatus"
+          },
+          "device_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Code"
+          }
+        },
+        "required": [
+          "connection",
+          "connector"
+        ],
+        "title": "LocalLarkConnectResponse",
+        "type": "object"
+      },
+      "LocalLarkConnection": {
+        "properties": {
+          "account_label": {
+            "default": "",
+            "title": "Account Label",
+            "type": "string"
+          },
+          "auth_mode": {
+            "const": "lark_cli",
+            "default": "lark_cli",
+            "title": "Auth Mode",
+            "type": "string"
+          },
+          "auto_sync_enabled": {
+            "default": false,
+            "title": "Auto Sync Enabled",
+            "type": "boolean"
+          },
+          "auto_sync_interval_minutes": {
+            "default": 5,
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Auto Sync Interval Minutes",
+            "type": "integer"
+          },
+          "cloud_extraction_enabled": {
+            "default": true,
+            "title": "Cloud Extraction Enabled",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "data_retention_days": {
+            "default": 7,
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Data Retention Days",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_auto_synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Auto Synced At"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_error_code": {
+            "default": "",
+            "title": "Last Error Code",
+            "type": "string"
+          },
+          "provider": {
+            "const": "lark",
+            "default": "lark",
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "disconnected",
+              "needs_auth",
+              "connected",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tenant_label": {
+            "default": "",
+            "title": "Tenant Label",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalLarkConnection",
+        "type": "object"
+      },
+      "LocalLarkConnectorStatus": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "executable_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executable Path"
+          },
+          "source": {
+            "enum": [
+              "bundled",
+              "system",
+              "missing"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "available",
+          "source"
+        ],
+        "title": "LocalLarkConnectorStatus",
+        "type": "object"
+      },
+      "LocalLarkPreviewCandidate": {
+        "properties": {
+          "confidence": {
+            "default": 0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "now",
+              "today",
+              "later",
+              "fyi"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "redacted_text": {
+            "title": "Redacted Text",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_label": {
+            "default": "",
+            "title": "Source Label",
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "p2p",
+              "group",
+              "thread"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "suggested_action": {
+            "enum": [
+              "reply",
+              "schedule",
+              "create_task",
+              "review",
+              "none"
+            ],
+            "title": "Suggested Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "source_id",
+          "source_type",
+          "redacted_text",
+          "priority",
+          "suggested_action"
+        ],
+        "title": "LocalLarkPreviewCandidate",
+        "type": "object"
+      },
+      "LocalLarkSource": {
+        "properties": {
+          "connection_id": {
+            "title": "Connection Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_label": {
+            "default": "",
+            "title": "Display Label",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_message_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message Time"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "provider_source_id_hash": {
+            "title": "Provider Source Id Hash",
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "p2p",
+              "group",
+              "thread"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "sync_enabled": {
+            "default": false,
+            "title": "Sync Enabled",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "connection_id",
+          "provider_source_id_hash",
+          "source_type",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalLarkSource",
+        "type": "object"
+      },
+      "LocalLarkStatus": {
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/LocalLarkConnection"
+          },
+          "connector": {
+            "$ref": "#/components/schemas/LocalLarkConnectorStatus"
+          }
+        },
+        "required": [
+          "connection",
+          "connector"
+        ],
+        "title": "LocalLarkStatus",
         "type": "object"
       },
       "LocalRun": {
@@ -1503,6 +1900,128 @@
           "updated_at"
         ],
         "title": "LocalScheduledRun",
+        "type": "object"
+      },
+      "LocalTodoItem": {
+        "properties": {
+          "confidence": {
+            "default": 0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "evidence_preview": {
+            "default": "",
+            "title": "Evidence Preview",
+            "type": "string"
+          },
+          "extraction_provider": {
+            "default": "rules",
+            "enum": [
+              "rules",
+              "cloud_redacted",
+              "local_model"
+            ],
+            "title": "Extraction Provider",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "now",
+              "today",
+              "later",
+              "fyi"
+            ],
+            "title": "Priority",
+            "type": "string"
+          },
+          "provider": {
+            "const": "lark",
+            "default": "lark",
+            "title": "Provider",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_message_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Message Ids",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "completed",
+              "dismissed",
+              "snoozed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "suggested_action": {
+            "default": "none",
+            "enum": [
+              "reply",
+              "schedule",
+              "create_task",
+              "review",
+              "none"
+            ],
+            "title": "Suggested Action",
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "priority",
+          "status",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalTodoItem",
         "type": "object"
       },
       "LocalWorkspaceAuthorization": {
@@ -1869,6 +2388,56 @@
         "title": "PlanApprovalResolution",
         "type": "object"
       },
+      "PreviewLocalLarkRequest": {
+        "properties": {
+          "limit": {
+            "default": 100,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "PreviewLocalLarkRequest",
+        "type": "object"
+      },
+      "PreviewLocalLarkResponse": {
+        "properties": {
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/LocalLarkPreviewCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "processed_messages": {
+            "title": "Processed Messages",
+            "type": "integer"
+          },
+          "provider": {
+            "const": "lark",
+            "default": "lark",
+            "title": "Provider",
+            "type": "string"
+          },
+          "skipped_messages": {
+            "title": "Skipped Messages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "processed_messages",
+          "candidate_count",
+          "skipped_messages",
+          "candidates"
+        ],
+        "title": "PreviewLocalLarkResponse",
+        "type": "object"
+      },
       "QuestionAnswer": {
         "properties": {
           "answered": {
@@ -1891,6 +2460,35 @@
           "resumed"
         ],
         "title": "QuestionAnswer",
+        "type": "object"
+      },
+      "QuoteLocalTodoRequest": {
+        "properties": {
+          "include_evidence": {
+            "default": true,
+            "title": "Include Evidence",
+            "type": "boolean"
+          }
+        },
+        "title": "QuoteLocalTodoRequest",
+        "type": "object"
+      },
+      "QuoteLocalTodoResponse": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "todo_id": {
+            "title": "Todo Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "todo_id",
+          "text"
+        ],
+        "title": "QuoteLocalTodoResponse",
         "type": "object"
       },
       "ResolvePermissionRequest": {
@@ -2075,6 +2673,217 @@
         "title": "SkillWriteResponse",
         "type": "object"
       },
+      "SyncLocalLarkRequest": {
+        "properties": {
+          "extraction_provider": {
+            "default": "cloud_redacted",
+            "enum": [
+              "rules",
+              "cloud_redacted",
+              "local_model"
+            ],
+            "title": "Extraction Provider",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "model": {
+            "default": "auto",
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "title": "SyncLocalLarkRequest",
+        "type": "object"
+      },
+      "SyncLocalLarkResponse": {
+        "properties": {
+          "created_todos": {
+            "title": "Created Todos",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "extraction_provider": {
+            "default": "cloud_redacted",
+            "enum": [
+              "rules",
+              "cloud_redacted",
+              "local_model"
+            ],
+            "title": "Extraction Provider",
+            "type": "string"
+          },
+          "processed_messages": {
+            "title": "Processed Messages",
+            "type": "integer"
+          },
+          "provider": {
+            "const": "lark",
+            "default": "lark",
+            "title": "Provider",
+            "type": "string"
+          },
+          "skipped_messages": {
+            "title": "Skipped Messages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "processed_messages",
+          "created_todos",
+          "skipped_messages"
+        ],
+        "title": "SyncLocalLarkResponse",
+        "type": "object"
+      },
+      "UpdateLocalLarkConnectionRequest": {
+        "properties": {
+          "auto_sync_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Sync Enabled"
+          },
+          "auto_sync_interval_minutes": {
+            "anyOf": [
+              {
+                "maximum": 60.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Sync Interval Minutes"
+          },
+          "cloud_extraction_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Extraction Enabled"
+          },
+          "data_retention_days": {
+            "anyOf": [
+              {
+                "maximum": 30.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Retention Days"
+          }
+        },
+        "title": "UpdateLocalLarkConnectionRequest",
+        "type": "object"
+      },
+      "UpdateLocalLarkSourceRequest": {
+        "properties": {
+          "display_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Label"
+          },
+          "sync_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Enabled"
+          }
+        },
+        "title": "UpdateLocalLarkSourceRequest",
+        "type": "object"
+      },
+      "UpdateLocalTodoItemRequest": {
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "enum": [
+                  "now",
+                  "today",
+                  "later",
+                  "fyi"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "completed",
+                  "dismissed",
+                  "snoozed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "title": "UpdateLocalTodoItemRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2179,6 +2988,277 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/local/v1/lark/cache": {
+      "delete": {
+        "operationId": "clear_lark_cache_local_v1_lark_cache_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearLocalLarkCacheResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Lark Cache"
+      }
+    },
+    "/local/v1/lark/connect": {
+      "post": {
+        "operationId": "connect_lark_local_v1_lark_connect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLarkConnectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Connect Lark"
+      }
+    },
+    "/local/v1/lark/connection": {
+      "patch": {
+        "operationId": "update_lark_connection_local_v1_lark_connection_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLocalLarkConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLarkConnection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Lark Connection"
+      }
+    },
+    "/local/v1/lark/disconnect": {
+      "post": {
+        "operationId": "disconnect_lark_local_v1_lark_disconnect_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLarkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Disconnect Lark"
+      }
+    },
+    "/local/v1/lark/preview": {
+      "post": {
+        "operationId": "preview_lark_candidates_local_v1_lark_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewLocalLarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewLocalLarkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Lark Candidates"
+      }
+    },
+    "/local/v1/lark/sources": {
+      "get": {
+        "operationId": "list_lark_sources_local_v1_lark_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLocalLarkSourcesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Lark Sources"
+      }
+    },
+    "/local/v1/lark/sources/discover": {
+      "post": {
+        "operationId": "discover_lark_sources_local_v1_lark_sources_discover_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLocalLarkSourcesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Discover Lark Sources"
+      }
+    },
+    "/local/v1/lark/sources/{source_id}": {
+      "patch": {
+        "operationId": "update_lark_source_local_v1_lark_sources__source_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLocalLarkSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLarkSource"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Lark Source"
+      }
+    },
+    "/local/v1/lark/status": {
+      "get": {
+        "operationId": "lark_status_local_v1_lark_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalLarkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Lark Status"
+      }
+    },
+    "/local/v1/lark/sync": {
+      "post": {
+        "operationId": "sync_lark_local_v1_lark_sync_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncLocalLarkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncLocalLarkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Lark"
       }
     },
     "/local/v1/mcp-servers": {
@@ -3315,6 +4395,144 @@
           }
         },
         "summary": "Update Local Skill"
+      }
+    },
+    "/local/v1/todos": {
+      "get": {
+        "operationId": "list_todos_local_v1_todos_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "default": "lark",
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLocalTodosResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Todos"
+      }
+    },
+    "/local/v1/todos/{todo_id}": {
+      "patch": {
+        "operationId": "update_todo_item_local_v1_todos__todo_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "todo_id",
+            "required": true,
+            "schema": {
+              "title": "Todo Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLocalTodoItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalTodoItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Todo Item"
+      }
+    },
+    "/local/v1/todos/{todo_id}/quote": {
+      "post": {
+        "operationId": "quote_todo_item_local_v1_todos__todo_id__quote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "todo_id",
+            "required": true,
+            "schema": {
+              "title": "Todo Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteLocalTodoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteLocalTodoResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Quote Todo Item"
       }
     },
     "/local/v1/tools": {

@@ -22,6 +22,24 @@ export type LocalArtifact = Schemas['LocalArtifact']
 export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
+export type LocalLarkConnection = Schemas['LocalLarkConnection']
+export type LocalLarkConnectResponse = Schemas['LocalLarkConnectResponse']
+export type LocalLarkConnectorStatus = Schemas['LocalLarkConnectorStatus']
+export type LocalLarkPreviewCandidate = Schemas['LocalLarkPreviewCandidate']
+export type LocalLarkSource = Schemas['LocalLarkSource']
+export type LocalLarkStatus = Schemas['LocalLarkStatus']
+export type LocalTodoItem = Schemas['LocalTodoItem']
+export type PreviewLocalLarkRequest = Partial<Schemas['PreviewLocalLarkRequest']>
+export type PreviewLocalLarkResponse = Schemas['PreviewLocalLarkResponse']
+export type ClearLocalLarkCacheResponse = Schemas['ClearLocalLarkCacheResponse']
+export type QuoteLocalTodoRequest = Partial<Schemas['QuoteLocalTodoRequest']>
+export type QuoteLocalTodoResponse = Schemas['QuoteLocalTodoResponse']
+type GeneratedSyncLocalLarkRequest = Schemas['SyncLocalLarkRequest']
+export type SyncLocalLarkRequest = Partial<GeneratedSyncLocalLarkRequest>
+export type SyncLocalLarkResponse = Schemas['SyncLocalLarkResponse']
+export type UpdateLocalLarkConnectionRequest = Schemas['UpdateLocalLarkConnectionRequest']
+export type UpdateLocalLarkSourceRequest = Schemas['UpdateLocalLarkSourceRequest']
+export type UpdateLocalTodoItemRequest = Schemas['UpdateLocalTodoItemRequest']
 export type CancelRunResponse = Schemas['CancelRunResponse']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
@@ -459,6 +477,172 @@ export async function clearLocalCloudSession(config: LocalHostConfig, fetcher: F
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<LocalCloudSession>(response)
+}
+
+export async function getLocalLarkStatus(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkStatus> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/status`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalLarkStatus>(response)
+}
+
+export async function listLocalLarkSources(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkSource[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/sources`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ sources?: LocalLarkSource[] }>(response)
+  return body.sources ?? []
+}
+
+export async function discoverLocalLarkSources(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkSource[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/sources/discover`, {
+    method: 'POST',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ sources?: LocalLarkSource[] }>(response)
+  return body.sources ?? []
+}
+
+export async function updateLocalLarkSource(
+  sourceID: string,
+  input: UpdateLocalLarkSourceRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkSource> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/sources/${encodeURIComponent(sourceID)}`, {
+    method: 'PATCH',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<LocalLarkSource>(response)
+}
+
+export async function updateLocalLarkConnection(
+  input: UpdateLocalLarkConnectionRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkConnection> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/connection`, {
+    method: 'PATCH',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<LocalLarkConnection>(response)
+}
+
+export async function listLocalTodos(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalTodoItem[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/todos?provider=lark`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ todos?: LocalTodoItem[] }>(response)
+  return body.todos ?? []
+}
+
+export async function updateLocalTodoItem(
+  todoID: string,
+  input: UpdateLocalTodoItemRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalTodoItem> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/todos/${encodeURIComponent(todoID)}`, {
+    method: 'PATCH',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<LocalTodoItem>(response)
+}
+
+export async function quoteLocalTodoItem(
+  todoID: string,
+  input: QuoteLocalTodoRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<QuoteLocalTodoResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/todos/${encodeURIComponent(todoID)}/quote`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<QuoteLocalTodoResponse>(response)
+}
+
+export async function connectLocalLark(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkConnectResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/connect`, {
+    method: 'POST',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalLarkConnectResponse>(response)
+}
+
+export async function disconnectLocalLark(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalLarkStatus> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/disconnect`, {
+    method: 'POST',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalLarkStatus>(response)
+}
+
+export async function syncLocalLark(
+  input: SyncLocalLarkRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<SyncLocalLarkResponse> {
+  const body: GeneratedSyncLocalLarkRequest = {
+    limit: input.limit ?? 100,
+    extraction_provider: input.extraction_provider ?? 'cloud_redacted',
+    model: input.model ?? 'auto',
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/sync`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<SyncLocalLarkResponse>(response)
+}
+
+export async function previewLocalLark(
+  input: PreviewLocalLarkRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PreviewLocalLarkResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/preview`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ limit: input.limit ?? 100 }),
+  })
+  return decodeLocalResponse<PreviewLocalLarkResponse>(response)
+}
+
+export async function clearLocalLarkCache(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<ClearLocalLarkCacheResponse> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/lark/cache`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<ClearLocalLarkCacheResponse>(response)
 }
 
 export async function listLocalRuns(config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalRun[]> {

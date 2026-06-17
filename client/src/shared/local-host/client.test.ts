@@ -14,20 +14,33 @@ import {
   getLocalSkillFile,
   updateLocalSkill,
   deleteLocalSkill,
+  connectLocalLark,
+  clearLocalLarkCache,
+  discoverLocalLarkSources,
+  disconnectLocalLark,
+  getLocalLarkStatus,
   cancelLocalSchedule,
   createLocalSchedule,
+  listLocalLarkSources,
   listLocalRuns,
   listLocalSchedules,
+  listLocalTodos,
   markLocalScheduleNotified,
   probeLocalHost,
+  previewLocalLark,
+  quoteLocalTodoItem,
   revokeLocalWorkspace,
   resolveLocalPermission,
   setLocalCloudSession,
   clearLocalCloudSession,
   forkLocalRun,
   streamLocalRun,
+  syncLocalLark,
   injectLocalRunInstruction,
   resolveLocalPlanApproval,
+  updateLocalLarkSource,
+  updateLocalLarkConnection,
+  updateLocalTodoItem,
 } from './client'
 
 describe('desktop local host client', () => {
@@ -490,6 +503,258 @@ describe('desktop local host client', () => {
     )
   })
 
+  it('reads and updates local Lark connector todo APIs', async () => {
+    const statusPayload = {
+      connection: {
+        id: 'lark_conn_1',
+        provider: 'lark',
+        status: 'disconnected',
+        tenant_label: '',
+        account_label: '',
+        auth_mode: 'lark_cli',
+        cloud_extraction_enabled: false,
+        last_checked_at: null,
+        last_error_code: '',
+        created_at: '2026-06-15T00:00:00Z',
+        updated_at: '2026-06-15T00:00:00Z',
+      },
+      connector: {
+        available: false,
+        source: 'missing',
+        executable_path: null,
+      },
+    }
+    const sourcePayload = {
+      id: 'lark_src_1',
+      connection_id: 'lark_conn_1',
+      provider_source_id_hash: 'hash_1',
+      source_type: 'group',
+      display_label: 'Project Alpha',
+      sync_enabled: true,
+      last_synced_at: null,
+      last_message_time: null,
+      created_at: '2026-06-15T00:00:00Z',
+      updated_at: '2026-06-15T00:00:00Z',
+    }
+    const todoPayload = {
+      id: 'todo_1',
+      provider: 'lark',
+      source_id: 'lark_src_1',
+      source_message_ids: ['msg_1'],
+      priority: 'today',
+      status: 'open',
+      title: '确认项目排期',
+      summary: '',
+      suggested_action: 'reply',
+      due_at: null,
+      confidence: 0.82,
+      extraction_provider: 'rules',
+      evidence_preview: '请今天确认一下排期',
+      created_at: '2026-06-15T00:00:00Z',
+      updated_at: '2026-06-15T00:00:00Z',
+    }
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(statusPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sources: [sourcePayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...sourcePayload, sync_enabled: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ todos: [todoPayload] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...todoPayload, status: 'completed' }), { status: 200 }))
+
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(getLocalLarkStatus(config, fetcher)).resolves.toMatchObject({ connection: { id: 'lark_conn_1' } })
+    await expect(listLocalLarkSources(config, fetcher)).resolves.toHaveLength(1)
+    await expect(updateLocalLarkSource('lark_src_1', { sync_enabled: false }, config, fetcher)).resolves.toMatchObject({
+      sync_enabled: false,
+    })
+    await expect(listLocalTodos(config, fetcher)).resolves.toHaveLength(1)
+    await expect(updateLocalTodoItem('todo_1', { status: 'completed' }, config, fetcher)).resolves.toMatchObject({
+      status: 'completed',
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/lark/status',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:17371/local/v1/lark/sources/lark_src_1',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ sync_enabled: false }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      'http://127.0.0.1:17371/local/v1/todos?provider=lark',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      5,
+      'http://127.0.0.1:17371/local/v1/todos/todo_1',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ status: 'completed' }) }),
+    )
+  })
+
+  it('discovers local Lark sources without triggering a message sync', async () => {
+    const sourcePayload = {
+      id: 'lark_src_1',
+      connection_id: 'lark_conn_1',
+      provider_source_id_hash: 'hash_1',
+      source_type: 'group',
+      display_label: '项目群',
+      sync_enabled: false,
+      last_synced_at: null,
+      last_message_time: null,
+      created_at: '2026-06-15T00:00:00Z',
+      updated_at: '2026-06-15T00:00:00Z',
+    }
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sources: [sourcePayload] }), { status: 200 }),
+    )
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(discoverLocalLarkSources(config, fetcher)).resolves.toEqual([sourcePayload])
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/lark/sources/discover',
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+  })
+
+  it('quotes a local todo through the protected local host API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          todo_id: 'todo_1',
+          text: '确认项目排期\n摘要：请今天确认。\n来源：请今天确认 [email] 的排期',
+        }),
+        { status: 200 },
+      ),
+    )
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(quoteLocalTodoItem('todo_1', {}, config, fetcher)).resolves.toEqual({
+      todo_id: 'todo_1',
+      text: '确认项目排期\n摘要：请今天确认。\n来源：请今天确认 [email] 的排期',
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/todos/todo_1/quote',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({}) }),
+    )
+  })
+
+  it('updates local Lark connection preferences through the protected API', async () => {
+    const payload = {
+      id: 'lark_conn_1',
+      provider: 'lark',
+      status: 'connected',
+      tenant_label: 'ColdFlame',
+      account_label: 'Jane',
+      auth_mode: 'lark_cli',
+      cloud_extraction_enabled: true,
+      last_checked_at: '2026-06-15T00:00:00Z',
+      last_error_code: '',
+      created_at: '2026-06-15T00:00:00Z',
+      updated_at: '2026-06-15T00:00:00Z',
+    }
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(updateLocalLarkConnection({ cloud_extraction_enabled: true }, config, fetcher)).resolves.toMatchObject({
+      cloud_extraction_enabled: true,
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/lark/connection',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ cloud_extraction_enabled: true }),
+      }),
+    )
+  })
+
+  it('starts and disconnects local Lark auth through protected APIs', async () => {
+    const connectPayload = {
+      connection: {
+        id: 'lark_conn_1',
+        provider: 'lark',
+        status: 'needs_auth',
+        tenant_label: '',
+        account_label: '',
+        auth_mode: 'lark_cli',
+        cloud_extraction_enabled: false,
+        last_checked_at: '2026-06-15T00:00:00Z',
+        last_error_code: '',
+        created_at: '2026-06-15T00:00:00Z',
+        updated_at: '2026-06-15T00:00:00Z',
+      },
+      connector: {
+        available: true,
+        source: 'system',
+        executable_path: '/fake/lark-cli',
+      },
+      authorization_url: 'https://accounts.example.test/auth',
+      device_code: 'dev-1',
+    }
+    const disconnectPayload = {
+      connection: { ...connectPayload.connection, status: 'disconnected' },
+      connector: connectPayload.connector,
+    }
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(connectPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(disconnectPayload), { status: 200 }))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(connectLocalLark(config, fetcher)).resolves.toMatchObject({
+      authorization_url: 'https://accounts.example.test/auth',
+      connection: { status: 'needs_auth' },
+    })
+    await expect(disconnectLocalLark(config, fetcher)).resolves.toMatchObject({
+      connection: { status: 'disconnected' },
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/lark/connect',
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/lark/disconnect',
+      expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+  })
+
+  it('runs cloud-redacted Lark sync by default through the protected API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          provider: 'lark',
+          extraction_provider: 'cloud_redacted',
+          processed_messages: 2,
+          created_todos: 1,
+          skipped_messages: 1,
+        }),
+        { status: 200 },
+      ),
+    )
+
+    await expect(syncLocalLark({ limit: 50 }, { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toEqual({
+      provider: 'lark',
+      extraction_provider: 'cloud_redacted',
+      processed_messages: 2,
+      created_todos: 1,
+      skipped_messages: 1,
+    })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/lark/sync',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+        body: JSON.stringify({ limit: 50, extraction_provider: 'cloud_redacted', model: 'auto' }),
+      }),
+    )
+  })
+
   it('streams local run events and returns completion metadata', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -918,6 +1183,59 @@ describe('desktop local host client', () => {
       4,
       'http://127.0.0.1:17371/local/v1/schedules/sched-2',
       expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
+  it('previews redacted Lark candidates and clears local Lark cache', async () => {
+    const previewPayload = {
+      provider: 'lark',
+      processed_messages: 1,
+      candidate_count: 1,
+      skipped_messages: 0,
+      candidates: [
+        {
+          message_id: 'msg_1',
+          source_id: 'lark_src_1',
+          source_label: '合同群',
+          source_type: 'p2p',
+          redacted_text: '请今天联系 [email] 确认合同',
+          priority: 'today',
+          suggested_action: 'reply',
+          confidence: 0.8,
+        },
+      ],
+    }
+    const clearPayload = {
+      cleared: true,
+      deleted_sources: 1,
+      deleted_messages: 1,
+      deleted_todos: 1,
+    }
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(previewPayload), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(clearPayload), { status: 200 }))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(previewLocalLark({ limit: 20 }, config, fetcher)).resolves.toEqual(previewPayload)
+    await expect(clearLocalLarkCache(config, fetcher)).resolves.toEqual(clearPayload)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/lark/preview',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+        body: JSON.stringify({ limit: 20 }),
+      }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/lark/cache',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+      }),
     )
   })
 })

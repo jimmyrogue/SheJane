@@ -24,6 +24,7 @@ const {
   trayMenuTemplateForPlatform,
   windowMenuOptionsForPlatform,
 } = require('./menu.cjs')
+const { writeDesktopSmokeConfig } = require('./smoke-support.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 const dockLangFile =
@@ -346,6 +347,7 @@ async function startBundledDaemon() {
       SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
       SHEJANE_LOCAL_HOST_PORT: String(port),
       SHEJANE_LOCAL_HOST_TOKEN: daemonToken,
+      SHEJANE_LOCAL_DESKTOP_RESOURCES_PATH: process.resourcesPath,
       SHEJANE_CLOUD_BASE_URL: apiBaseURL(),
       PYTHONUNBUFFERED: '1',
     }),
@@ -370,7 +372,14 @@ async function startBundledDaemon() {
 
   if (!(await waitForHealth(daemonURL))) {
     dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startTimeout'))
+    return
   }
+  writeDesktopSmokeConfig({
+    baseURL: daemonURL,
+    token: daemonToken,
+    resourcesPath: process.resourcesPath,
+    daemonPid: daemonProcess?.pid || 0,
+  })
 }
 
 function stopBundledDaemon() {

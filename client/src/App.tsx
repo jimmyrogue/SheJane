@@ -2826,9 +2826,10 @@ function AppContent() {
               }}
             />
           ) : mainView === 'connections' ? (
-            <ConnectionsView />
+            <ConnectionsView localHostConfig={localHostConfig} />
           ) : mainView === 'today' ? (
             <TodayView
+              localHostConfig={localHostConfig}
               onQuoteToChat={(text) => {
                 setDraft((current) => (current ? `${current}\n${text}` : text))
                 setMainView('chat')

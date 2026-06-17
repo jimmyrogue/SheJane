@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # Browser
     browser_headless: bool = True
 
+    # Electron passes process.resourcesPath here in packaged desktop builds so
+    # local-host can resolve bundled native connector executables outside asar.
+    desktop_resources_path: Path | None = Field(
+        default=None,
+        alias="SHEJANE_LOCAL_DESKTOP_RESOURCES_PATH",
+    )
+
     # Subagents (Phase 6'+ — deepagents SubAgentMiddleware)
     enable_subagents: bool = True
 

@@ -14,13 +14,15 @@ Tables in this file:
 - `local_steering`    — user instructions queued into an active run
 - `local_plan_approvals` — pending / resolved plan-mode approvals
 - `local_scheduled_runs` — local-only delayed run requests
+- `local_lark_*`      — local-only Lark connector metadata, sources, messages, todos
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -160,11 +162,111 @@ CREATE TABLE IF NOT EXISTS local_plan_approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_local_plan_approvals_run_status
     ON local_plan_approvals(run_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS local_lark_connections (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'lark',
+    status TEXT NOT NULL DEFAULT 'disconnected',
+    tenant_label TEXT NOT NULL DEFAULT '',
+    account_label TEXT NOT NULL DEFAULT '',
+    auth_mode TEXT NOT NULL DEFAULT 'lark_cli',
+    cloud_extraction_enabled INTEGER NOT NULL DEFAULT 1,
+    data_retention_days INTEGER NOT NULL DEFAULT 7,
+    auto_sync_enabled INTEGER NOT NULL DEFAULT 0,
+    auto_sync_interval_minutes INTEGER NOT NULL DEFAULT 5,
+    last_checked_at TEXT,
+    last_auto_synced_at TEXT,
+    last_error_code TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(provider)
+);
+
+CREATE TABLE IF NOT EXISTS local_lark_sources (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    provider_source_id_hash TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    display_label TEXT NOT NULL DEFAULT '',
+    sync_enabled INTEGER NOT NULL DEFAULT 0,
+    last_synced_at TEXT,
+    last_message_time TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (connection_id) REFERENCES local_lark_connections(id),
+    UNIQUE(connection_id, provider_source_id_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_local_lark_sources_connection
+    ON local_lark_sources(connection_id, sync_enabled, updated_at);
+
+CREATE TABLE IF NOT EXISTS local_lark_messages (
+    id TEXT PRIMARY KEY,
+    connection_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    provider_message_id_hash TEXT NOT NULL,
+    sender_hash TEXT NOT NULL DEFAULT '',
+    message_type TEXT NOT NULL DEFAULT 'text',
+    text TEXT NOT NULL DEFAULT '',
+    redacted_text TEXT NOT NULL DEFAULT '',
+    created_at_lark TEXT,
+    received_at TEXT NOT NULL,
+    raw_json_path TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (connection_id) REFERENCES local_lark_connections(id),
+    FOREIGN KEY (source_id) REFERENCES local_lark_sources(id),
+    UNIQUE(connection_id, provider_message_id_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_local_lark_messages_source_time
+    ON local_lark_messages(source_id, created_at_lark);
+
+CREATE TABLE IF NOT EXISTS local_todo_items (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'lark',
+    source_id TEXT,
+    source_message_ids TEXT NOT NULL DEFAULT '[]',
+    priority TEXT NOT NULL DEFAULT 'today',
+    status TEXT NOT NULL DEFAULT 'open',
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    suggested_action TEXT NOT NULL DEFAULT 'none',
+    due_at TEXT,
+    confidence REAL NOT NULL DEFAULT 0,
+    extraction_provider TEXT NOT NULL DEFAULT 'rules',
+    evidence_preview TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_id) REFERENCES local_lark_sources(id)
+);
+CREATE INDEX IF NOT EXISTS idx_local_todo_items_provider_status_priority
+    ON local_todo_items(provider, status, priority, updated_at);
 """
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _clamp_lark_retention_days(value: int | None) -> int:
+    if value is None:
+        return 7
+    return max(1, min(30, int(value)))
+
+
+def _clamp_lark_auto_sync_interval_minutes(value: int | None) -> int:
+    if value is None:
+        return 5
+    return max(1, min(60, int(value)))
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _new_id(prefix: str) -> str:
@@ -180,6 +282,43 @@ def _decode_plan_approval_record(record: dict[str, Any]) -> dict[str, Any]:
         **record,
         "todos": todos if isinstance(todos, list) else [],
     }
+
+
+def _decode_lark_connection(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **record,
+        "cloud_extraction_enabled": bool(record.get("cloud_extraction_enabled")),
+        "data_retention_days": _clamp_lark_retention_days(
+            int(record.get("data_retention_days") or 7)
+        ),
+        "auto_sync_enabled": bool(record.get("auto_sync_enabled")),
+        "auto_sync_interval_minutes": _clamp_lark_auto_sync_interval_minutes(
+            int(record.get("auto_sync_interval_minutes") or 5)
+        ),
+    }
+
+
+def _decode_lark_source(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **record,
+        "sync_enabled": bool(record.get("sync_enabled")),
+    }
+
+
+def _decode_todo_item(record: dict[str, Any]) -> dict[str, Any]:
+    try:
+        message_ids = json.loads(str(record.get("source_message_ids") or "[]"))
+    except json.JSONDecodeError:
+        message_ids = []
+    return {
+        **record,
+        "source_message_ids": message_ids if isinstance(message_ids, list) else [],
+        "confidence": float(record.get("confidence") or 0),
+    }
+
+
+def _decode_lark_message(record: dict[str, Any]) -> dict[str, Any]:
+    return dict(record)
 
 
 class LocalStore:
@@ -214,9 +353,479 @@ class LocalStore:
             await conn.execute(
                 "ALTER TABLE local_runs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
             )
+        cursor = await conn.execute("PRAGMA table_info(local_lark_connections)")
+        lark_columns = {row[1] for row in await cursor.fetchall()}
+        if "data_retention_days" not in lark_columns:
+            await conn.execute(
+                "ALTER TABLE local_lark_connections "
+                "ADD COLUMN data_retention_days INTEGER NOT NULL DEFAULT 7"
+            )
+        if "auto_sync_enabled" not in lark_columns:
+            await conn.execute(
+                "ALTER TABLE local_lark_connections "
+                "ADD COLUMN auto_sync_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+        if "auto_sync_interval_minutes" not in lark_columns:
+            await conn.execute(
+                "ALTER TABLE local_lark_connections "
+                "ADD COLUMN auto_sync_interval_minutes INTEGER NOT NULL DEFAULT 5"
+            )
+        if "last_auto_synced_at" not in lark_columns:
+            await conn.execute(
+                "ALTER TABLE local_lark_connections ADD COLUMN last_auto_synced_at TEXT"
+            )
 
     async def close(self) -> None:
         await self._conn.close()
+
+    # --- lark connector ---
+
+    async def ensure_lark_connection(self) -> dict[str, Any]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_lark_connections WHERE provider = ?", ("lark",)
+        )
+        row = await cursor.fetchone()
+        if row is not None:
+            return _decode_lark_connection(dict(row))
+
+        now = _now()
+        record = {
+            "id": _new_id("lark_conn"),
+            "provider": "lark",
+            "status": "disconnected",
+            "tenant_label": "",
+            "account_label": "",
+            "auth_mode": "lark_cli",
+            "cloud_extraction_enabled": 1,
+            "data_retention_days": 7,
+            "auto_sync_enabled": 0,
+            "auto_sync_interval_minutes": 5,
+            "last_checked_at": None,
+            "last_auto_synced_at": None,
+            "last_error_code": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            await self._conn.execute(
+                "INSERT INTO local_lark_connections (id, provider, status, tenant_label, "
+                "account_label, auth_mode, cloud_extraction_enabled, data_retention_days, "
+                "auto_sync_enabled, auto_sync_interval_minutes, last_checked_at, "
+                "last_auto_synced_at, last_error_code, created_at, updated_at) VALUES "
+                "(:id, :provider, :status, :tenant_label, :account_label, :auth_mode, "
+                ":cloud_extraction_enabled, :data_retention_days, :auto_sync_enabled, "
+                ":auto_sync_interval_minutes, :last_checked_at, :last_auto_synced_at, "
+                ":last_error_code, :created_at, :updated_at)",
+                record,
+            )
+            await self._conn.commit()
+        except aiosqlite.IntegrityError:
+            cursor = await self._conn.execute(
+                "SELECT * FROM local_lark_connections WHERE provider = ?", ("lark",)
+            )
+            row = await cursor.fetchone()
+            if row is not None:
+                return _decode_lark_connection(dict(row))
+            raise
+        return _decode_lark_connection(record)
+
+    async def update_lark_connection(
+        self,
+        *,
+        status: str | None = None,
+        tenant_label: str | None = None,
+        account_label: str | None = None,
+        cloud_extraction_enabled: bool | None = None,
+        data_retention_days: int | None = None,
+        auto_sync_enabled: bool | None = None,
+        auto_sync_interval_minutes: int | None = None,
+        last_checked_at: str | None = None,
+        last_auto_synced_at: str | None = None,
+        last_error_code: str | None = None,
+    ) -> dict[str, Any]:
+        connection = await self.ensure_lark_connection()
+        values: dict[str, Any] = {"id": connection["id"], "updated_at": _now()}
+        assignments = ["updated_at = :updated_at"]
+        if status is not None:
+            values["status"] = status
+            assignments.append("status = :status")
+        if tenant_label is not None:
+            values["tenant_label"] = tenant_label
+            assignments.append("tenant_label = :tenant_label")
+        if account_label is not None:
+            values["account_label"] = account_label
+            assignments.append("account_label = :account_label")
+        if cloud_extraction_enabled is not None:
+            values["cloud_extraction_enabled"] = int(cloud_extraction_enabled)
+            assignments.append("cloud_extraction_enabled = :cloud_extraction_enabled")
+        if data_retention_days is not None:
+            values["data_retention_days"] = _clamp_lark_retention_days(data_retention_days)
+            assignments.append("data_retention_days = :data_retention_days")
+        if auto_sync_enabled is not None:
+            values["auto_sync_enabled"] = int(auto_sync_enabled)
+            assignments.append("auto_sync_enabled = :auto_sync_enabled")
+        if auto_sync_interval_minutes is not None:
+            values["auto_sync_interval_minutes"] = _clamp_lark_auto_sync_interval_minutes(
+                auto_sync_interval_minutes
+            )
+            assignments.append("auto_sync_interval_minutes = :auto_sync_interval_minutes")
+        if last_checked_at is not None:
+            values["last_checked_at"] = last_checked_at
+            assignments.append("last_checked_at = :last_checked_at")
+        if last_auto_synced_at is not None:
+            values["last_auto_synced_at"] = last_auto_synced_at
+            assignments.append("last_auto_synced_at = :last_auto_synced_at")
+        if last_error_code is not None:
+            values["last_error_code"] = last_error_code
+            assignments.append("last_error_code = :last_error_code")
+        await self._conn.execute(
+            f"UPDATE local_lark_connections SET {', '.join(assignments)} WHERE id = :id",
+            values,
+        )
+        await self._conn.commit()
+        updated = await self.ensure_lark_connection()
+        return updated
+
+    async def list_lark_sources(self) -> list[dict[str, Any]]:
+        connection = await self.ensure_lark_connection()
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_lark_sources WHERE connection_id = ? "
+            "ORDER BY sync_enabled DESC, display_label COLLATE NOCASE ASC, updated_at DESC",
+            (connection["id"],),
+        )
+        return [_decode_lark_source(dict(row)) for row in await cursor.fetchall()]
+
+    async def get_lark_source(self, source_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_lark_sources WHERE id = ?", (source_id,)
+        )
+        row = await cursor.fetchone()
+        return _decode_lark_source(dict(row)) if row else None
+
+    async def upsert_lark_source(
+        self,
+        *,
+        provider_source_id_hash: str,
+        source_type: str,
+        display_label: str = "",
+        sync_enabled: bool | None = False,
+    ) -> dict[str, Any]:
+        connection = await self.ensure_lark_connection()
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_lark_sources WHERE connection_id = ? "
+            "AND provider_source_id_hash = ?",
+            (connection["id"], provider_source_id_hash),
+        )
+        row = await cursor.fetchone()
+        now = _now()
+        if row is not None:
+            assignments = ["source_type = ?", "display_label = ?"]
+            params: list[Any] = [source_type, display_label]
+            if sync_enabled is not None:
+                assignments.append("sync_enabled = ?")
+                params.append(int(sync_enabled))
+            assignments.append("updated_at = ?")
+            params.extend([now, row["id"]])
+            await self._conn.execute(
+                f"UPDATE local_lark_sources SET {', '.join(assignments)} WHERE id = ?",
+                tuple(params),
+            )
+            await self._conn.commit()
+            updated = await self.get_lark_source(str(row["id"]))
+            assert updated is not None
+            return updated
+
+        record = {
+            "id": _new_id("lark_src"),
+            "connection_id": connection["id"],
+            "provider_source_id_hash": provider_source_id_hash,
+            "source_type": source_type,
+            "display_label": display_label,
+            "sync_enabled": int(bool(sync_enabled)),
+            "last_synced_at": None,
+            "last_message_time": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_lark_sources (id, connection_id, provider_source_id_hash, "
+            "source_type, display_label, sync_enabled, last_synced_at, last_message_time, "
+            "created_at, updated_at) VALUES (:id, :connection_id, :provider_source_id_hash, "
+            ":source_type, :display_label, :sync_enabled, :last_synced_at, "
+            ":last_message_time, :created_at, :updated_at)",
+            record,
+        )
+        await self._conn.commit()
+        return _decode_lark_source(record)
+
+    async def update_lark_source(
+        self,
+        source_id: str,
+        *,
+        display_label: str | None = None,
+        sync_enabled: bool | None = None,
+    ) -> dict[str, Any] | None:
+        existing = await self.get_lark_source(source_id)
+        if existing is None:
+            return None
+        values: dict[str, Any] = {"id": source_id, "updated_at": _now()}
+        assignments = ["updated_at = :updated_at"]
+        if display_label is not None:
+            values["display_label"] = display_label
+            assignments.append("display_label = :display_label")
+        if sync_enabled is not None:
+            values["sync_enabled"] = int(sync_enabled)
+            assignments.append("sync_enabled = :sync_enabled")
+        await self._conn.execute(
+            f"UPDATE local_lark_sources SET {', '.join(assignments)} WHERE id = :id",
+            values,
+        )
+        await self._conn.commit()
+        return await self.get_lark_source(source_id)
+
+    async def create_lark_message(
+        self,
+        *,
+        source_id: str,
+        provider_message_id_hash: str,
+        sender_hash: str = "",
+        message_type: str = "text",
+        text: str = "",
+        redacted_text: str = "",
+        created_at_lark: str | None = None,
+        raw_json_path: str = "",
+    ) -> dict[str, Any]:
+        source = await self.get_lark_source(source_id)
+        if source is None:
+            raise ValueError("lark source not found")
+        now = _now()
+        record = {
+            "id": _new_id("lark_msg"),
+            "connection_id": source["connection_id"],
+            "source_id": source_id,
+            "provider_message_id_hash": provider_message_id_hash,
+            "sender_hash": sender_hash,
+            "message_type": message_type,
+            "text": text,
+            "redacted_text": redacted_text,
+            "created_at_lark": created_at_lark,
+            "received_at": now,
+            "raw_json_path": raw_json_path,
+        }
+        try:
+            await self._conn.execute(
+                "INSERT INTO local_lark_messages (id, connection_id, source_id, "
+                "provider_message_id_hash, sender_hash, message_type, text, redacted_text, "
+                "created_at_lark, received_at, raw_json_path) VALUES (:id, :connection_id, "
+                ":source_id, :provider_message_id_hash, :sender_hash, :message_type, :text, "
+                ":redacted_text, :created_at_lark, :received_at, :raw_json_path)",
+                record,
+            )
+            await self._conn.commit()
+        except aiosqlite.IntegrityError:
+            cursor = await self._conn.execute(
+                "SELECT * FROM local_lark_messages WHERE connection_id = ? "
+                "AND provider_message_id_hash = ?",
+                (source["connection_id"], provider_message_id_hash),
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            return _decode_lark_message(dict(row))
+        return _decode_lark_message(record)
+
+    async def list_lark_messages_for_sync(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT m.*, s.source_type, s.display_label, s.sync_enabled "
+            "FROM local_lark_messages m "
+            "JOIN local_lark_sources s ON s.id = m.source_id "
+            "WHERE s.sync_enabled = 1 "
+            "ORDER BY COALESCE(m.created_at_lark, m.received_at) DESC "
+            "LIMIT ?",
+            (limit,),
+        )
+        return [_decode_lark_message(dict(row)) for row in await cursor.fetchall()]
+
+    async def clear_lark_cache(self) -> dict[str, int]:
+        deleted_todos = await self._count_rows("local_todo_items", "provider = ?", ("lark",))
+        deleted_messages = await self._count_rows("local_lark_messages")
+        deleted_sources = await self._count_rows("local_lark_sources")
+        raw_artifact_paths = await self._lark_raw_artifact_paths()
+        await self._conn.execute("DELETE FROM local_todo_items WHERE provider = ?", ("lark",))
+        await self._conn.execute("DELETE FROM local_lark_messages")
+        await self._conn.execute("DELETE FROM local_lark_sources")
+        await self._conn.commit()
+        self._delete_lark_raw_artifacts(raw_artifact_paths)
+        return {
+            "deleted_sources": deleted_sources,
+            "deleted_messages": deleted_messages,
+            "deleted_todos": deleted_todos,
+        }
+
+    async def prune_lark_messages(
+        self,
+        *,
+        retention_days: int | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        connection = await self.ensure_lark_connection()
+        days = _clamp_lark_retention_days(
+            retention_days
+            if retention_days is not None
+            else int(connection.get("data_retention_days") or 7)
+        )
+        cutoff = (now or datetime.now(UTC)).astimezone(UTC) - timedelta(days=days)
+        cursor = await self._conn.execute(
+            "SELECT id, created_at_lark, received_at, raw_json_path FROM local_lark_messages"
+        )
+        stale_ids: list[str] = []
+        raw_artifact_paths: list[str] = []
+        for row in await cursor.fetchall():
+            record = dict(row)
+            timestamp = _parse_iso_datetime(
+                str(record.get("created_at_lark") or record.get("received_at") or "")
+            )
+            if timestamp is None or timestamp >= cutoff:
+                continue
+            stale_ids.append(str(record["id"]))
+            raw_json_path = str(record.get("raw_json_path") or "")
+            if raw_json_path:
+                raw_artifact_paths.append(raw_json_path)
+        if not stale_ids:
+            return 0
+        await self._conn.executemany(
+            "DELETE FROM local_lark_messages WHERE id = ?",
+            [(message_id,) for message_id in stale_ids],
+        )
+        await self._conn.commit()
+        self._delete_lark_raw_artifacts(raw_artifact_paths)
+        return len(stale_ids)
+
+    async def _lark_raw_artifact_paths(self) -> list[str]:
+        cursor = await self._conn.execute(
+            "SELECT raw_json_path FROM local_lark_messages WHERE raw_json_path <> ''"
+        )
+        return [str(row[0]) for row in await cursor.fetchall() if row[0]]
+
+    def _delete_lark_raw_artifacts(self, raw_artifact_paths: list[str]) -> None:
+        data_root = self.db_path.parent.resolve()
+        for raw_path in raw_artifact_paths:
+            with suppress(OSError, RuntimeError):
+                path = Path(raw_path).expanduser().resolve()
+                if not path.is_relative_to(data_root) or not path.is_file():
+                    continue
+                path.unlink()
+
+    async def _count_rows(
+        self,
+        table: str,
+        where: str = "",
+        params: tuple[Any, ...] = (),
+    ) -> int:
+        query = f"SELECT COUNT(*) FROM {table}"
+        if where:
+            query += f" WHERE {where}"
+        cursor = await self._conn.execute(query, params)
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    async def todo_for_source_message_id(self, message_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_todo_items WHERE provider = ?",
+            ("lark",),
+        )
+        for row in await cursor.fetchall():
+            todo = _decode_todo_item(dict(row))
+            if message_id in todo.get("source_message_ids", []):
+                return todo
+        return None
+
+    async def create_todo_item(
+        self,
+        *,
+        title: str,
+        source_id: str | None = None,
+        source_message_ids: list[str] | None = None,
+        priority: str = "today",
+        status: str = "open",
+        summary: str = "",
+        suggested_action: str = "none",
+        due_at: str | None = None,
+        confidence: float = 0,
+        extraction_provider: str = "rules",
+        evidence_preview: str = "",
+    ) -> dict[str, Any]:
+        now = _now()
+        record = {
+            "id": _new_id("todo"),
+            "provider": "lark",
+            "source_id": source_id,
+            "source_message_ids": json.dumps(source_message_ids or [], ensure_ascii=False),
+            "priority": priority,
+            "status": status,
+            "title": title,
+            "summary": summary,
+            "suggested_action": suggested_action,
+            "due_at": due_at,
+            "confidence": confidence,
+            "extraction_provider": extraction_provider,
+            "evidence_preview": evidence_preview,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self._conn.execute(
+            "INSERT INTO local_todo_items (id, provider, source_id, source_message_ids, "
+            "priority, status, title, summary, suggested_action, due_at, confidence, "
+            "extraction_provider, evidence_preview, created_at, updated_at) VALUES "
+            "(:id, :provider, :source_id, :source_message_ids, :priority, :status, "
+            ":title, :summary, :suggested_action, :due_at, :confidence, "
+            ":extraction_provider, :evidence_preview, :created_at, :updated_at)",
+            record,
+        )
+        await self._conn.commit()
+        return _decode_todo_item(record)
+
+    async def get_todo_item(self, todo_id: str) -> dict[str, Any] | None:
+        cursor = await self._conn.execute("SELECT * FROM local_todo_items WHERE id = ?", (todo_id,))
+        row = await cursor.fetchone()
+        return _decode_todo_item(dict(row)) if row else None
+
+    async def list_todo_items(self, *, provider: str = "lark") -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_todo_items WHERE provider = ? ORDER BY "
+            "CASE priority WHEN 'now' THEN 0 WHEN 'today' THEN 1 "
+            "WHEN 'later' THEN 2 ELSE 3 END, updated_at DESC",
+            (provider,),
+        )
+        return [_decode_todo_item(dict(row)) for row in await cursor.fetchall()]
+
+    async def update_todo_item(
+        self,
+        todo_id: str,
+        *,
+        priority: str | None = None,
+        status: str | None = None,
+        due_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        existing = await self.get_todo_item(todo_id)
+        if existing is None:
+            return None
+        values: dict[str, Any] = {"id": todo_id, "updated_at": _now()}
+        assignments = ["updated_at = :updated_at"]
+        if priority is not None:
+            values["priority"] = priority
+            assignments.append("priority = :priority")
+        if status is not None:
+            values["status"] = status
+            assignments.append("status = :status")
+        if due_at is not None:
+            values["due_at"] = due_at
+            assignments.append("due_at = :due_at")
+        await self._conn.execute(
+            f"UPDATE local_todo_items SET {', '.join(assignments)} WHERE id = :id",
+            values,
+        )
+        await self._conn.commit()
+        return await self.get_todo_item(todo_id)
 
     # --- workspaces ---
 

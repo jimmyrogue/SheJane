@@ -20,9 +20,12 @@
     "test": "vitest",
     "test:contract": "vitest run --config vitest.contract.config.ts",
     "electron": "../scripts/run-branded-electron.sh electron/main.cjs",
+    "prepare:connectors": "node electron/connectors/prepare-connectors.mjs",
+    "verify:connectors": "node electron/connectors/verify-connectors.mjs",
+    "smoke:packaged-lark": "node electron/connectors/smoke-packaged-lark.mjs",
     "build:desktop": "tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build",
-    "dist": "npm run build:desktop && electron-builder",
-    "dist:dir": "npm run build:desktop && electron-builder --dir"
+    "dist": "npm run build:desktop && npm run prepare:connectors && npm run verify:connectors && electron-builder",
+    "dist:dir": "npm run build:desktop && npm run prepare:connectors && npm run verify:connectors && electron-builder --dir"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",
