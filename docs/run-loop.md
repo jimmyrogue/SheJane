@@ -205,7 +205,8 @@
   │       state = canceled  + event: run.canceled                                       │
   │                                                                                     │
   │     Exception                                                                       │
-  │       state = failed    + event: run.failed { error, type, retryable, action_kind } │
+  │       state = failed    + event: run.failed { error, type, retryable,               │
+  │                                             action_kind, recovery_action }          │
   │                                                                                     │
   │     finally:                                                                        │
   │       queue.put(None)   ← stream sentinel                                          │
@@ -301,7 +302,7 @@
 | Filesystem sandbox | `FilesystemMiddleware` + backend | `test_agent_builder` |
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |
-| 错误分类诊断 | `handoff.failure` 将最近 `run.failed` / `tool.failed` 归类并标记 recoverable / retryable / action_kind / suggested action；同一模块也输出 runtime retry decision（`should_retry` / `delay_s` / fail-fast reason） | `test_runs_http` / `test_failure_policy` |
+| 错误分类诊断 | `handoff.failure` 将最近 `run.failed` / `tool.failed` 归类并标记 recoverable / retryable / action_kind / recovery_action / suggested action；同一模块也输出 runtime retry decision（`should_retry` / `delay_s` / fail-fast reason） | `test_runs_http` / `test_failure_policy` |
 | 模型错误 durable failure | 云端 `llm.error` 抛 `BackendLLMError`，模型重试和 `handoff.failure` 共用 `failure_policy.build_retry_decision`；重试耗尽后写入结构化 `run.failed` | `test_backend_llm` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |
@@ -311,6 +312,16 @@
 | Resume | POST /resume → Command(resume=) | `test_runs_http` |
 | 检查点持久化 | `AsyncSqliteSaver` per superstep；diagnostics 暴露最近 checkpoint 的安全摘要，不暴露 messages 正文 | `test_agent_builder` / `test_runs_http` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
+
+### Failure recovery contract
+
+SheJane follows the same split as LangGraph's fault-tolerance model:
+
+- **Runtime layer** decides retryability and recovery shape. `failure_policy` maps structured failure payloads to `category`, `action_kind`, `retryable`, and the UI-facing `recovery_action`.
+- **Persistent layer** stores failure provenance in `run.failed` / `tool.failed` events and diagnostics handoff. Checkpoints remain the resume anchor for interrupted work; failed runs remain inspectable.
+- **UI layer** derives CTAs from persisted events. It may deduplicate clicks and show restart reminders, but it must not invent recovery semantics or auto-run after restart.
+
+`waiting_permission` and `waiting_input` are pause states produced by LangGraph interrupts. They are intentionally not `run.failed`, and recovery buttons must not replace the permission/question/plan-approval resume flow.
 
 ---
 

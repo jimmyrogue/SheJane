@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { AgentTimelineItem, AgentToolDetail, ChatMessage } from '@/shared/local-data/types'
+import { failureRecoveryAction, type AgentFailureAction } from '../recovery'
 
 type ProgressTone = 'working' | 'permission' | 'done' | 'failed' | 'idle'
-export type AgentFailureAction = 'retry' | 'repair' | 'recharge' | 'refresh_session' | 'workspace' | 'diagnostics'
+export type { AgentFailureAction } from '../recovery'
 
 interface PendingPermission {
   requestID: string
@@ -724,28 +725,24 @@ function failureActionCTA(
   event: AgentTimelineItem | undefined,
   t: Translator,
 ): FailureActionCTA | undefined {
-  if (!event) {
-    return undefined
-  }
-  if (event.failureActionKind === 'retry') {
-    return { action: 'retry', label: t('agent.failureAction.retry') }
-  }
-  if (event.failureActionKind === 'repair') {
-    return { action: 'repair', label: t('agent.failureAction.repair') }
-  }
-  switch (event.failureCategory) {
-    case 'quota':
-      return { action: 'recharge', label: t('agent.failureAction.recharge') }
-    case 'auth':
-      return { action: 'refresh_session', label: t('agent.failureAction.refreshSession') }
+  const action = failureRecoveryAction(event)
+  return action ? { action, label: failureActionLabel(action, t) } : undefined
+}
+
+function failureActionLabel(action: AgentFailureAction, t: Translator): string {
+  switch (action) {
+    case 'retry':
+      return t('agent.failureAction.retry')
+    case 'repair':
+      return t('agent.failureAction.repair')
+    case 'recharge':
+      return t('agent.failureAction.recharge')
+    case 'refresh_session':
+      return t('agent.failureAction.refreshSession')
     case 'workspace':
-      return { action: 'workspace', label: t('agent.failureAction.chooseWorkspace') }
-    case 'configuration':
-    case 'fatal':
-    case 'unknown':
-      return { action: 'diagnostics', label: t('agent.failureAction.openDiagnostics') }
-    default:
-      return undefined
+      return t('agent.failureAction.chooseWorkspace')
+    case 'diagnostics':
+      return t('agent.failureAction.openDiagnostics')
   }
 }
 

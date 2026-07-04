@@ -22,6 +22,7 @@ from local_host.server import LarkAutoSyncDispatcher, create_app
 from local_host.store.sqlite import LocalStore
 
 HEADERS = {"Authorization": "Bearer tok"}
+_FROZEN_LARK_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
 LARK_IM_SCOPE_ARG = " ".join(
     [
         "im:chat:read",
@@ -31,6 +32,20 @@ LARK_IM_SCOPE_ARG = " ".join(
         "contact:user.base:readonly",
     ]
 )
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return _FROZEN_LARK_NOW.replace(tzinfo=None)
+        return _FROZEN_LARK_NOW.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_lark_store_now(monkeypatch) -> None:
+    monkeypatch.setattr("local_host.store.sqlite.datetime", _FrozenDatetime)
+    monkeypatch.setattr("local_host.server.datetime", _FrozenDatetime)
 
 
 def _stable_lark_hash(kind: str, value: str) -> str:

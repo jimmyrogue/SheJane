@@ -16,7 +16,18 @@ unit tests into networked trace ingestion and can produce rate-limit noise.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_skills_disk_scan_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep agent tests from inheriting the developer's real skill library."""
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp_path / "empty-skills"))
 
 
 @pytest.fixture(autouse=True)

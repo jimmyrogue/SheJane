@@ -142,6 +142,49 @@ describe('user client shell', () => {
     })
   })
 
+  it('surfaces a restart recovery notice for persisted failed assistant messages', async () => {
+    const localData = new LocalConversationStore('shejane-local:user-1')
+    await localData.save({
+      id: 'conv-recoverable-failure',
+      title: '失败任务',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'msg-user-failed', role: 'user', content: '继续任务', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-assistant-failed',
+          role: 'assistant',
+          content: 'rate limited',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'error',
+          runId: 'run-failed',
+          runOrigin: 'local',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'rate limited · 可重试',
+              failureCategory: 'transient',
+              failureActionKind: 'retry',
+              failureRecoveryAction: 'retry',
+            },
+          ],
+        },
+      ],
+    })
+    mockFetch('user')
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+
+    await awaitSignedIn()
+    expect(await screen.findByText('有任务上次失败后仍可恢复，已为你保留在原对话里')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开对话' })).toBeInTheDocument()
+  })
+
   it('lets users resize the sidebar within fixed bounds and persists the width', async () => {
     mockFetch('user')
 

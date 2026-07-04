@@ -88,6 +88,7 @@ def client(monkeypatch) -> TestClient:
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp / "empty-skills"))
 
     def handler(request: httpx.Request) -> httpx.Response:
         # Mock backend returns a clean text response with no tool calls.
@@ -517,6 +518,7 @@ def test_run_failed_payload_includes_failure_policy_for_generic_exceptions() -> 
     assert payload["recoverable"] is False
     assert payload["retryable"] is False
     assert payload["action_kind"] == "operator_action"
+    assert payload["recovery_action"] == "diagnostics"
     assert "implementation" in payload["suggested_action"]
 
 
@@ -914,6 +916,7 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
     assert failure["recoverable"] is True
     assert failure["retryable"] is False
     assert failure["action_kind"] == "user_action"
+    assert failure["recovery_action"] == "recharge"
     assert "credits" in failure["suggested_action"]
 
 
@@ -1148,6 +1151,7 @@ def test_run_diagnostics_classifies_transient_failures(client: TestClient) -> No
     assert failure["recoverable"] is True
     assert failure["retryable"] is True
     assert failure["action_kind"] == "retry"
+    assert failure["recovery_action"] == "retry"
     assert "Retry" in failure["suggested_action"]
 
 
@@ -1156,6 +1160,7 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(tmp / "empty-skills"))
 
     def handler(request: httpx.Request) -> httpx.Response:
         return _stream_response(
@@ -1214,6 +1219,7 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
         assert failed_payload["retryable"] is True
         assert failed_payload["category"] == "transient"
         assert failed_payload["action_kind"] == "retry"
+        assert failed_payload["recovery_action"] == "retry"
         assert "Retry" in failed_payload["suggested_action"]
 
         diag = client.get(
@@ -1226,6 +1232,7 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
         assert failure["code"] == "rate_limit"
         assert failure["recoverable"] is True
         assert failure["retryable"] is True
+        assert failure["recovery_action"] == "retry"
         assert failure["source_event_type"] == "run.failed"
 
 

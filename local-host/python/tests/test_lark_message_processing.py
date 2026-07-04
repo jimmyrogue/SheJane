@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -24,6 +25,21 @@ from local_host.lark.normalize import normalize_lark_message
 from local_host.server import create_app
 
 HEADERS = {"Authorization": "Bearer tok"}
+_FROZEN_LARK_NOW = datetime(2026, 6, 16, 12, 0, tzinfo=UTC)
+
+
+class _FrozenDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return _FROZEN_LARK_NOW.replace(tzinfo=None)
+        return _FROZEN_LARK_NOW.astimezone(tz)
+
+
+@pytest.fixture(autouse=True)
+def _freeze_lark_store_now(monkeypatch) -> None:
+    monkeypatch.setattr("local_host.store.sqlite.datetime", _FrozenDatetime)
+    monkeypatch.setattr("local_host.server.datetime", _FrozenDatetime)
 
 
 class FakeLarkRunner:

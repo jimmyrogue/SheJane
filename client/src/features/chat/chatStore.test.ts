@@ -580,6 +580,7 @@ describe('chat store', () => {
           category: 'configuration',
           retryable: false,
           action_kind: 'user_action',
+          recovery_action: 'diagnostics',
           suggested_action: 'Configure the missing key, then retry.',
         },
       }),
@@ -588,6 +589,7 @@ describe('chat store', () => {
       failureCategory: 'configuration',
       failureRetryable: false,
       failureActionKind: 'user_action',
+      failureRecoveryAction: 'diagnostics',
       failureSuggestedAction: 'Configure the missing key, then retry.',
     })
   })

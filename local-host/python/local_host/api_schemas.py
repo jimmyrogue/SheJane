@@ -552,6 +552,9 @@ class DiagnosticsFailure(BaseModel):
     recoverable: bool
     retryable: bool
     action_kind: Literal["retry", "user_action", "repair", "operator_action", "inspect"]
+    recovery_action: Literal[
+        "retry", "repair", "recharge", "refresh_session", "workspace", "diagnostics"
+    ]
     code: str | None = None
     message: str
     source_event_type: str

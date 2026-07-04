@@ -37,9 +37,22 @@ import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
-import type { AgentFailureAction } from './features/chat/components/AgentProgress'
 import { Composer } from './features/chat/components/Composer'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
+import { recentRecoverableFailures } from './features/chat/recoverableFailures'
+import {
+  beginRecoveryAction,
+  createRecoveryState,
+  endRecoveryAction,
+  latestRunFailureEvent,
+  nextRepairAttempt,
+  nextRetryAttempt,
+  queueCloudSessionRecovery,
+  recoveryTargetKey,
+  takeCloudSessionRecovery,
+  type AgentFailureAction,
+  type RecoveryTarget,
+} from './features/chat/recovery'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
 import { RechargeDialog, type RechargeCheckoutInput } from './features/billing/RechargeDialog'
@@ -120,16 +133,6 @@ interface LocalHarnessRunOptions {
   parentRunId?: string
   metadata?: LocalRunMetadata
   initialAgentEvents?: AgentTimelineItem[]
-}
-
-interface RecoveryTarget {
-  conversationID: string
-  assistantMessageID: string
-}
-
-interface PendingCloudSessionRecoveryTarget {
-  target: RecoveryTarget
-  userID?: string
 }
 
 // v7 — dropped the codeExec field. Cloud code execution is now always
@@ -353,12 +356,10 @@ function AppContent() {
   const activeIDRef = useRef<string | undefined>()
   const activeCloudToolLoopRunIdRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
-  const recoveryRetryInFlightRef = useRef<Set<string>>(new Set())
-  const recoveryRepairInFlightRef = useRef<Set<string>>(new Set())
-  const recoveryRechargeInFlightRef = useRef<Set<string>>(new Set())
+  const recoveryStateRef = useRef(createRecoveryState())
+  const startupRecoveryNoticeShownRef = useRef(false)
   const checkoutRecoveryTimerRef = useRef<number>()
   const checkoutRecoveryGenerationRef = useRef(0)
-  const pendingCloudSessionRecoveryTargetRef = useRef<PendingCloudSessionRecoveryTarget>()
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
   const sidebarMotionTimerRef = useRef<number>()
 
@@ -717,11 +718,27 @@ function AppContent() {
       }
       setConversations(items)
       setActiveConversationID(items[0]?.id)
+      const [failure] = auth?.user?.id && !startupRecoveryNoticeShownRef.current
+        ? recentRecoverableFailures(items, 1)
+        : []
+      if (failure) {
+        startupRecoveryNoticeShownRef.current = true
+        setNotice(t('app.notice.recoverableFailureAfterRestart'), {
+          duration: 8000,
+          action: {
+            label: t('agent.failureAction.openChat'),
+            onClick: () => {
+              setActiveConversationID(failure.target.conversationID)
+              setMainView('chat')
+            },
+          },
+        })
+      }
     })
     return () => {
       disposed = true
     }
-  }, [localData, t])
+  }, [auth?.user?.id, localData, t])
 
   // Reset transient session state when the signed-in user changes, so leftovers
   // from the previous account (draft, attached doc, etc.) don't bleed across.
@@ -948,16 +965,10 @@ function AppContent() {
     if (!localCloudSession?.connected) {
       return
     }
-    const pendingRecovery = pendingCloudSessionRecoveryTargetRef.current
-    if (!pendingRecovery) {
+    const recoveryTarget = takeCloudSessionRecovery(recoveryStateRef.current, auth?.user?.id)
+    if (!recoveryTarget) {
       return
     }
-    if (pendingRecovery.userID && pendingRecovery.userID !== auth?.user?.id) {
-      pendingCloudSessionRecoveryTargetRef.current = undefined
-      return
-    }
-    pendingCloudSessionRecoveryTargetRef.current = undefined
-    const recoveryTarget = pendingRecovery.target
     setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
       duration: 8000,
       action: recoveryRetryAction(recoveryTarget),
@@ -1236,25 +1247,18 @@ function AppContent() {
   }
 
   function queueCloudSessionRecoveryTarget(target?: RecoveryTarget) {
-    if (target) {
-      pendingCloudSessionRecoveryTargetRef.current = {
-        target,
-        userID: auth?.user?.id,
-      }
-    }
+    queueCloudSessionRecovery(recoveryStateRef.current, target, auth?.user?.id)
   }
 
   async function retryRecoveryTarget(target: RecoveryTarget) {
-    const key = recoveryTargetKey(target)
-    if (recoveryRetryInFlightRef.current.has(key)) {
+    if (!beginRecoveryAction(recoveryStateRef.current, 'retry', target)) {
       setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
       return
     }
-    recoveryRetryInFlightRef.current.add(key)
     try {
       await regenerateMessageInConversation(target.conversationID, target.assistantMessageID)
     } finally {
-      recoveryRetryInFlightRef.current.delete(key)
+      endRecoveryAction(recoveryStateRef.current, 'retry', target)
     }
   }
 
@@ -1389,12 +1393,10 @@ function AppContent() {
   }
 
   async function repairRecoveryTarget(target: RecoveryTarget) {
-    const key = recoveryTargetKey(target)
-    if (recoveryRepairInFlightRef.current.has(key)) {
+    if (!beginRecoveryAction(recoveryStateRef.current, 'repair', target)) {
       setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
       return
     }
-    recoveryRepairInFlightRef.current.add(key)
     try {
       const conversation = await localData.get(target.conversationID)
       if (!conversation) {
@@ -1449,7 +1451,7 @@ function AppContent() {
         target.conversationID,
       )
     } finally {
-      recoveryRepairInFlightRef.current.delete(key)
+      endRecoveryAction(recoveryStateRef.current, 'repair', target)
     }
   }
 
@@ -1473,7 +1475,7 @@ function AppContent() {
       )
       setLocalCloudSessionState(session)
       if (session.connected) {
-        pendingCloudSessionRecoveryTargetRef.current = undefined
+        takeCloudSessionRecovery(recoveryStateRef.current, auth?.user?.id)
         if (recoveryTarget) {
           setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
             duration: 8000,
@@ -2634,13 +2636,10 @@ function AppContent() {
   async function startRecharge(inputOrRecoveryTarget?: RechargeCheckoutInput | RecoveryTarget, nextRecoveryTarget?: RecoveryTarget) {
     const checkoutInput = isRechargeCheckoutInput(inputOrRecoveryTarget) ? inputOrRecoveryTarget : { amount: 10 }
     const recoveryTarget = isRechargeCheckoutInput(inputOrRecoveryTarget) ? nextRecoveryTarget : inputOrRecoveryTarget
-    const recoveryKey = recoveryTarget ? recoveryTargetKey(recoveryTarget) : undefined
-    if (recoveryKey && recoveryRechargeInFlightRef.current.has(recoveryKey)) {
+    const recoveryStarted = recoveryTarget ? beginRecoveryAction(recoveryStateRef.current, 'recharge', recoveryTarget) : false
+    if (recoveryTarget && !recoveryStarted) {
       setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
       return
-    }
-    if (recoveryKey) {
-      recoveryRechargeInFlightRef.current.add(recoveryKey)
     }
     const walletBeforeCheckout = balance
     try {
@@ -2664,8 +2663,8 @@ function AppContent() {
     } catch {
       setNotice(t('billing.rechargeFailed'))
     } finally {
-      if (recoveryKey) {
-        recoveryRechargeInFlightRef.current.delete(recoveryKey)
+      if (recoveryTarget && recoveryStarted) {
+        endRecoveryAction(recoveryStateRef.current, 'recharge', recoveryTarget)
       }
     }
   }
@@ -3383,10 +3382,6 @@ function totalCredits(balance: WalletBalance): number {
   return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
 }
 
-function recoveryTargetKey(target: RecoveryTarget): string {
-  return `${target.conversationID}:${target.assistantMessageID}`
-}
-
 function isRechargeCheckoutInput(value: RechargeCheckoutInput | RecoveryTarget | undefined): value is RechargeCheckoutInput {
   if (!value) {
     return false
@@ -3410,24 +3405,6 @@ function walletShowsRechargeCompletion(before: WalletBalance | null, after: Wall
     return true
   }
   return after.plan_code !== before.plan_code && after.plan_code !== 'free_trial'
-}
-
-function nextRepairAttempt(message: ChatMessage): number {
-  const attempts = (message.agentEvents ?? [])
-    .map((event) => event.repairAttempt)
-    .filter((attempt): attempt is number => typeof attempt === 'number' && Number.isFinite(attempt))
-  return Math.max(0, ...attempts) + 1
-}
-
-function nextRetryAttempt(message: ChatMessage): number {
-  const attempts = (message.agentEvents ?? [])
-    .map((event) => event.retryAttempt)
-    .filter((attempt): attempt is number => typeof attempt === 'number' && Number.isFinite(attempt))
-  return Math.max(0, ...attempts) + 1
-}
-
-function latestRunFailureEvent(message: ChatMessage): AgentTimelineItem | undefined {
-  return [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')
 }
 
 /** Token from an email-verification link (CLIENT_BASE_URL/verify?token=…).

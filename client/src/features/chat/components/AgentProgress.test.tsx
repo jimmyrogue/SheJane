@@ -458,6 +458,34 @@ describe('AgentProgress', () => {
     expect(onFailureAction).toHaveBeenCalledWith('retry', current)
   })
 
+  it('offers retry for permission failures so the user can grant again', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'permission denied · 需要你处理',
+          failureCategory: 'permission',
+          failureActionKind: 'user_action',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onFailureAction).toHaveBeenCalledWith('retry', current)
+  })
+
   it('offers a distinct repair action for repairable validation failures', () => {
     const onFailureAction = vi.fn()
     const current = message({

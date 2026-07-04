@@ -1487,7 +1487,14 @@ def _run_failed_payload(exc: Exception) -> dict[str, Any]:
     else:
         payload = {"error": str(exc), "type": type(exc).__name__}
     classification = classify_failure_payload("run.failed", payload)
-    for key in ("category", "recoverable", "retryable", "action_kind", "suggested_action"):
+    for key in (
+        "category",
+        "recoverable",
+        "retryable",
+        "action_kind",
+        "recovery_action",
+        "suggested_action",
+    ):
         payload.setdefault(key, classification[key])
     if classification.get("code"):
         payload.setdefault("error_code", classification["code"])

@@ -739,6 +739,7 @@ function runFailedTimelineItem(
   t: Translator,
 ): AgentTimelineItem {
   const failureActionKind = knownFailureActionKind(payload.action_kind)
+  const failureRecoveryAction = knownFailureRecoveryAction(payload.recovery_action)
   const failureCategory = stringValue(payload.category)
   const failureSuggestedAction = stringValue(payload.suggested_action)
   const rawRetryable = payload.retryable
@@ -752,7 +753,22 @@ function runFailedTimelineItem(
     ...(failureCategory ? { failureCategory } : {}),
     ...(failureRetryable !== undefined ? { failureRetryable } : {}),
     ...(failureActionKind ? { failureActionKind } : {}),
+    ...(failureRecoveryAction ? { failureRecoveryAction } : {}),
     ...(failureSuggestedAction ? { failureSuggestedAction } : {}),
+  }
+}
+
+function knownFailureRecoveryAction(value: unknown): AgentTimelineItem['failureRecoveryAction'] | undefined {
+  switch (value) {
+    case 'retry':
+    case 'repair':
+    case 'recharge':
+    case 'refresh_session':
+    case 'workspace':
+    case 'diagnostics':
+      return value
+    default:
+      return undefined
   }
 }
 

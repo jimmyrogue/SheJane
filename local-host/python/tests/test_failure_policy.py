@@ -97,6 +97,24 @@ def test_failure_policy_exposes_action_kind_for_policy_layers() -> None:
         assert failure["action_kind"] == expected
 
 
+def test_failure_policy_exposes_recovery_action_for_ui() -> None:
+    cases = [
+        ("retry", {"error_code": "rate_limit", "message": "provider returned 429"}),
+        ("recharge", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
+        ("refresh_session", {"error_code": "cloud_session_required", "message": "login first"}),
+        ("workspace", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
+        ("retry", {"error_code": "permission_denied", "message": "permission denied"}),
+        ("repair", {"error_code": "validation_failed", "message": "invalid tool arguments"}),
+        ("diagnostics", {"error_code": "missing_api_key", "message": "api key missing"}),
+        ("diagnostics", {"error_code": "RuntimeError", "message": "RuntimeError: boom"}),
+        ("diagnostics", {"error_code": "unknown_failure", "message": "unexpected failure"}),
+    ]
+
+    for expected, payload in cases:
+        failure = classify_failure_payload("run.failed", payload)
+        assert failure["recovery_action"] == expected
+
+
 def test_workspace_failures_take_precedence_over_generic_permission_words() -> None:
     workspace = classify_failure_payload(
         "tool.failed",

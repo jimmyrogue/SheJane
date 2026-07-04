@@ -427,6 +427,18 @@
             "title": "Recoverable",
             "type": "boolean"
           },
+          "recovery_action": {
+            "enum": [
+              "retry",
+              "repair",
+              "recharge",
+              "refresh_session",
+              "workspace",
+              "diagnostics"
+            ],
+            "title": "Recovery Action",
+            "type": "string"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -456,6 +468,7 @@
           "recoverable",
           "retryable",
           "action_kind",
+          "recovery_action",
           "message",
           "source_event_type",
           "suggested_action"

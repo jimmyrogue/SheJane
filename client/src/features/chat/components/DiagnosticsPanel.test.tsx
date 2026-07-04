@@ -52,6 +52,7 @@ describe('DiagnosticsPanel', () => {
           recoverable: true,
           retryable: false,
           action_kind: 'user_action',
+          recovery_action: 'refresh_session',
           code: 'cloud_session_required',
           message: 'cloud session required',
           source_event_type: 'run.failed',

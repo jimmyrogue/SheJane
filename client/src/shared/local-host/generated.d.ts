@@ -1045,6 +1045,11 @@ export interface components {
             message: string;
             /** Recoverable */
             recoverable: boolean;
+            /**
+             * Recovery Action
+             * @enum {string}
+             */
+            recovery_action: "retry" | "repair" | "recharge" | "refresh_session" | "workspace" | "diagnostics";
             /** Retryable */
             retryable: boolean;
             /** Source Event Type */

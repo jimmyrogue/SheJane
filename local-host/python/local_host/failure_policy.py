@@ -140,6 +140,7 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
         "recoverable": recoverable,
         "retryable": retryable,
         "action_kind": action_kind,
+        "recovery_action": _recovery_action(category, action_kind),
         "code": code,
         "message": message,
         "source_event_type": event_type,
@@ -230,6 +231,22 @@ def _action_kind(category: str, *, retryable: bool) -> str:
     if category == "fatal":
         return "operator_action"
     return "inspect"
+
+
+def _recovery_action(category: str, action_kind: str) -> str:
+    if action_kind == "retry":
+        return "retry"
+    if action_kind == "repair":
+        return "repair"
+    if category == "quota":
+        return "recharge"
+    if category == "auth":
+        return "refresh_session"
+    if category == "workspace":
+        return "workspace"
+    if category == "permission":
+        return "retry"
+    return "diagnostics"
 
 
 def _bounded_backoff_seconds(
