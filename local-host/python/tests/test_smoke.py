@@ -267,6 +267,41 @@ def test_web_fetch_rejects_loopback_ssrf() -> None:
     assert "private" in out["error"] or "loopback" in out["error"]
 
 
+def test_web_fetch_rejects_redirect_to_loopback(monkeypatch: Any) -> None:
+    import asyncio
+
+    import httpx
+
+    from local_host.tools import web as web_module
+    from local_host.tools.web import web_fetch
+
+    def resolve_safe(hostname: str) -> tuple[bool, str]:
+        if hostname == "public.example":
+            return True, ""
+        return False, f"refusing private/loopback address 127.0.0.1 for {hostname}"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "public.example":
+            return httpx.Response(
+                302,
+                headers={"Location": "http://127.0.0.1:8080/admin"},
+                request=request,
+            )
+        return httpx.Response(200, text="internal admin", request=request)
+
+    class PatchedAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs["transport"] = httpx.MockTransport(handler)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(web_module, "_resolve_safe", resolve_safe)
+    monkeypatch.setattr(web_module.httpx, "AsyncClient", PatchedAsyncClient)
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/start"}))
+    assert out["ok"] == "false"
+    assert "loopback" in out["error"]
+
+
 def test_web_fetch_rejects_invalid_method() -> None:
     import asyncio
 
@@ -323,8 +358,9 @@ def test_task_verify_mixed_pass_fail(tmp_path: Path) -> None:
         )
     )
     assert out["ok"] == "false"
-    assert out["pass_count"] == "1"
-    assert out["fail_count"] == "2"
+    assert out["pass_count"] == "0"
+    assert out["fail_count"] == "3"
+    assert out["results"][1]["detail"] == "unsupported kind: shell_exit_code"
 
 
 def test_task_verify_empty_checks_rejected() -> None:

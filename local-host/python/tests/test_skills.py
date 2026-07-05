@@ -262,11 +262,13 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     tmp_path: Path, monkeypatch
 ) -> None:
     """When `skills_enabled=True`, every resolved skill root should be
-    forwarded to deepagents' `create_deep_agent(skills=...)`. deepagents'
-    SkillsMiddleware reads SKILL.md from those paths through the shared
-    FilesystemBackend, which only works when the backend is NOT in
-    virtual_mode — see the regression in run diagnostics 2026-05-24,
-    where virtual_mode silently blocked every absolute skill path."""
+    forwarded to deepagents' `create_deep_agent(skills=...)`.
+
+    The workspace backend stays in virtual mode for path containment, while
+    absolute skill roots are exposed through explicit virtual routes.
+    """
+    from deepagents.backends import CompositeBackend, FilesystemBackend
+
     import local_host.agent.builder as builder_mod
     from local_host.agent.builder import build_agent, open_checkpointer
 
@@ -309,10 +311,15 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     skills = captured["skills"]
     assert isinstance(skills, list) and len(skills) >= 1
     assert any(str(shejane) in s for s in skills)
-    # virtual_mode=True would silently break absolute-path skill reads
-    # — pin the invariant so a future refactor that flips this fails.
     backend = captured["backend"]
-    assert getattr(backend, "virtual_mode", True) is False
+    assert isinstance(backend, CompositeBackend)
+    assert isinstance(backend.default, FilesystemBackend)
+    assert backend.default.virtual_mode is True
+    workspace_route = str(tmp_path.resolve()).rstrip("/") + "/"
+    skill_route = str(shejane.resolve()).rstrip("/") + "/"
+    assert workspace_route in backend.routes
+    assert skill_route in backend.routes
+    assert backend.routes[skill_route].virtual_mode is True
 
 
 def test_build_agent_passes_none_when_skills_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -363,9 +370,10 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
     tmp_path: Path, monkeypatch
 ) -> None:
     """When the client doesn't pass `workspace_path` (chat without a
-    project), the backend should still get a real `root_dir` instead
-    of `virtual_mode=True`. That's load-bearing for SkillsMiddleware —
-    a virtual backend silently breaks absolute skill paths."""
+    project), the backend should still get a real scratch root, but keep
+    virtual path containment enabled."""
+    from deepagents.backends import CompositeBackend, FilesystemBackend
+
     import local_host.agent.builder as builder_mod
     from local_host.agent.builder import build_agent, open_checkpointer
 
@@ -400,11 +408,14 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
 
     asyncio.run(run())
     backend = captured["backend"]
-    assert getattr(backend, "virtual_mode", True) is False
+    assert isinstance(backend, CompositeBackend)
+    assert isinstance(backend.default, FilesystemBackend)
+    assert backend.default.virtual_mode is True
     # cwd should resolve to the auto-created scratch dir under tmp_path.
     scratch = (tmp_path / ".shejane" / "workspace").resolve()
     assert scratch.is_dir()
-    assert backend.cwd == scratch
+    assert backend.default.cwd == scratch
+    assert str(scratch).rstrip("/") + "/" in backend.routes
 
 
 # Re-export under a stable name so the async helpers above don't fight

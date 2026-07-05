@@ -15,7 +15,7 @@
 # expiry / renewal-failure notifications. Override per-deploy with the
 # ACME_EMAIL env var; ignored for the localhost internal-CA fallback.
 {
-	email {$ACME_EMAIL:tliang92@gmail.com}
+	email {$ACME_EMAIL:admin@example.com}
 }
 
 (security_headers) {

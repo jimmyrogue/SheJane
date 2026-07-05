@@ -15,7 +15,7 @@ import ipaddress
 import logging
 import socket
 from typing import Annotated, Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from langchain_core.runnables import RunnableConfig
@@ -28,6 +28,7 @@ log = logging.getLogger("local_host.tools.web")
 ALLOWED_SCHEMES = {"http", "https"}
 DEFAULT_TIMEOUT_S = 15.0
 MAX_RESPONSE_BYTES = 2_000_000  # ~2 MB cap
+MAX_REDIRECTS = 5
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -57,6 +58,15 @@ def _resolve_safe(hostname: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _validate_fetch_url(url: str) -> tuple[bool, str]:
+    parts = urlsplit(url)
+    if parts.scheme not in ALLOWED_SCHEMES:
+        return False, f"scheme {parts.scheme!r} not allowed"
+    if not parts.hostname:
+        return False, "missing hostname"
+    return _resolve_safe(parts.hostname)
+
+
 @tool("web.fetch")
 async def web_fetch(
     url: str,
@@ -79,29 +89,41 @@ async def web_fetch(
     if method not in {"GET", "POST"}:
         return {"ok": "false", "error": f"method {method!r} not allowed"}
 
-    parts = urlsplit(url)
-    if parts.scheme not in ALLOWED_SCHEMES:
-        return {"ok": "false", "error": f"scheme {parts.scheme!r} not allowed"}
-    if not parts.hostname:
-        return {"ok": "false", "error": "missing hostname"}
-
-    ok, reason = _resolve_safe(parts.hostname)
-    if not ok:
-        return {"ok": "false", "error": reason}
-
-    headers = {}
-    if method == "POST":
-        headers["Content-Type"] = content_type
-
     try:
         async with httpx.AsyncClient(
             timeout=DEFAULT_TIMEOUT_S,
-            follow_redirects=True,
+            follow_redirects=False,
         ) as client:
-            if method == "GET":
-                resp = await client.get(url, headers=headers)
-            else:
-                resp = await client.post(url, headers=headers, content=body.encode("utf-8"))
+            current_url = url
+            current_method = method
+            current_body = body
+            for redirect_count in range(MAX_REDIRECTS + 1):
+                ok, reason = _validate_fetch_url(current_url)
+                if not ok:
+                    return {"ok": "false", "error": reason}
+
+                headers = {}
+                content = None
+                if current_method == "POST":
+                    headers["Content-Type"] = content_type
+                    content = current_body.encode("utf-8")
+
+                resp = await client.request(
+                    current_method,
+                    current_url,
+                    headers=headers,
+                    content=content,
+                )
+                location = resp.headers.get("location")
+                if resp.status_code in {301, 302, 303, 307, 308} and location:
+                    if redirect_count >= MAX_REDIRECTS:
+                        return {"ok": "false", "error": "too many redirects"}
+                    current_url = urljoin(str(resp.url), location)
+                    if resp.status_code in {301, 302, 303}:
+                        current_method = "GET"
+                        current_body = ""
+                    continue
+                break
             content = resp.content[:MAX_RESPONSE_BYTES]
             truncated = len(resp.content) > MAX_RESPONSE_BYTES
             return {

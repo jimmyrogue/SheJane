@@ -87,7 +87,7 @@ type MetadataStore interface {
 	DocumentsByUser(ctx context.Context, userID string) ([]Document, error)
 	DocumentByID(ctx context.Context, userID string, documentID string) (Document, error)
 	MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (Document, error)
-	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (Document, error)
+	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string, expiresAt time.Time) (Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (Document, error)
 	// SetDocumentMetadata persists pdfinfo-style structured metadata
 	// alongside the existing text extraction. See store.Store for

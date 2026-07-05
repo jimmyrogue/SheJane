@@ -825,7 +825,7 @@ class RunCoordinator:
                 steering_emit=emit_steering_event,
             )
             config = {
-                "configurable": {"thread_id": run_id},
+                "configurable": {"thread_id": run_id, "workspace_root": workspace_path or ""},
                 "callbacks": build_callbacks(),
             }
             if resume_payload is not None:

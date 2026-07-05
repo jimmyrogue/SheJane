@@ -61,7 +61,7 @@ func (s *Service) CreateUpload(ctx context.Context, userID string, filename stri
 		SizeBytes:       sizeBytes,
 		Status:          StatusUploading,
 		SourceObjectKey: s.objectKey(userID, documentID, "source"+ext),
-		ExpiresAt:       now.Add(s.config.TTL),
+		ExpiresAt:       now.Add(s.config.PresignTTL),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -81,17 +81,22 @@ func (s *Service) CompleteUpload(ctx context.Context, userID string, documentID 
 	if err != nil {
 		return Document{}, err
 	}
+	now := s.config.Now().UTC()
+	if document.IsExpired(now) {
+		return s.fail(ctx, userID, documentID, ErrExpired)
+	}
 	info, err := s.objects.HeadObject(ctx, document.SourceObjectKey)
 	if err != nil {
 		return s.fail(ctx, userID, documentID, err)
 	}
+	readyExpiresAt := now.Add(s.config.TTL)
 	if info.SizeBytes <= 0 || info.SizeBytes > s.config.MaxBytes {
 		return s.fail(ctx, userID, documentID, ErrTooLarge)
 	}
 	if IsImageContentType(document.ContentType) {
 		// Images carry no extractable text; they are consumed directly by
 		// image.edit via ReadSource. Mark ready with no text object.
-		return s.store.MarkDocumentReady(ctx, userID, documentID, "")
+		return s.store.MarkDocumentReady(ctx, userID, documentID, "", readyExpiresAt)
 	}
 	data, err := s.objects.GetObject(ctx, document.SourceObjectKey)
 	if err != nil {
@@ -105,7 +110,7 @@ func (s *Service) CompleteUpload(ctx context.Context, userID string, documentID 
 	if err := s.objects.PutObject(ctx, textKey, "text/plain; charset=utf-8", []byte(text)); err != nil {
 		return s.fail(ctx, userID, documentID, err)
 	}
-	ready, err := s.store.MarkDocumentReady(ctx, userID, documentID, textKey)
+	ready, err := s.store.MarkDocumentReady(ctx, userID, documentID, textKey, readyExpiresAt)
 	if err != nil {
 		return ready, err
 	}
@@ -291,7 +296,10 @@ func (s *Service) fail(ctx context.Context, userID string, documentID string, ca
 	if err != nil {
 		return Document{}, err
 	}
-	if errors.Is(cause, ErrTooLarge) || errors.Is(cause, ErrUnsupportedType) {
+	if errors.Is(cause, ErrTooLarge) || errors.Is(cause, ErrUnsupportedType) || errors.Is(cause, ErrExpired) {
+		if document.SourceObjectKey != "" {
+			_ = s.objects.DeleteObject(ctx, document.SourceObjectKey)
+		}
 		return document, cause
 	}
 	return document, cause

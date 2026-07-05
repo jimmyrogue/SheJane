@@ -65,6 +65,19 @@ func TestExtractTextRejectsUnsupportedAndTruncates(t *testing.T) {
 	}
 }
 
+func TestExtractTextRejectsOversizedOOXMLPart(t *testing.T) {
+	hugeText := strings.Repeat("x", maxOOXMLPartBytes+1)
+	_, err := ExtractText(
+		"huge.docx",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		minimalDocxForExtract(hugeText),
+		60_000,
+	)
+	if err == nil || !strings.Contains(err.Error(), "xml part too large") {
+		t.Fatalf("err = %v, want xml part too large", err)
+	}
+}
+
 func minimalDocxForExtract(text string) []byte {
 	return zipBytes(map[string]string{
 		"word/document.xml": `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>` + text + `</w:t></w:r></w:p></w:body></w:document>`,

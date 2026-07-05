@@ -415,7 +415,7 @@ type Store interface {
 	DocumentsByUser(ctx context.Context, userID string) ([]documents.Document, error)
 	DocumentByID(ctx context.Context, userID string, documentID string) (documents.Document, error)
 	MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error)
-	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error)
+	MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string, expiresAt time.Time) (documents.Document, error)
 	MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error)
 	// SetDocumentMetadata replaces the document's `metadata` jsonb
 	// column with the supplied map. Used by the documents service

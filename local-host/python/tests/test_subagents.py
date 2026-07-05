@@ -191,6 +191,7 @@ def test_backend_factory_uses_workspace_root(tmp_path: Path) -> None:
 
     backend = build_subagent_backend(str(tmp_path))
     assert isinstance(backend, FilesystemBackend)
+    assert backend.virtual_mode is True
 
 
 def test_backend_factory_falls_back_to_virtual_when_no_workspace() -> None:
@@ -200,6 +201,7 @@ def test_backend_factory_falls_back_to_virtual_when_no_workspace() -> None:
 
     backend = build_subagent_backend(None)
     assert isinstance(backend, FilesystemBackend)
+    assert backend.virtual_mode is True
 
 
 # --- task tool is present on the compiled agent ---

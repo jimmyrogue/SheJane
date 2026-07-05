@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
     ContextEditingMiddleware,
@@ -89,6 +89,7 @@ DESTRUCTIVE_TOOLS: dict[str, bool] = {
     "execute": True,  # deepagents shell-equivalent
     "open.url": True,
     "open.file": True,
+    "clipboard.read": True,
     "clipboard.write": True,
     "browser.task": True,  # agentic browser can do anything
     "image.generate": True,  # paid + side-effecting
@@ -162,6 +163,73 @@ def _resolve_skills_dirs() -> list[Path]:
         if candidate.is_dir():
             out.append(candidate)
     return out
+
+
+def _agent_backend_routes(
+    *,
+    skills_dirs: list[Path],
+    memory_sources: list[str] | None,
+    workspace_root: Path,
+) -> dict[str, FilesystemBackend]:
+    """Return explicit filesystem routes that may live outside workspace.
+
+    The main backend runs in `virtual_mode=True`, so absolute paths outside
+    the selected workspace are blocked by default. SkillsMiddleware and
+    MemoryMiddleware still need to read configured source directories; route
+    only those exact roots through their own virtual backends.
+    """
+    roots: list[Path] = [path.expanduser() for path in skills_dirs]
+    for source in memory_sources or []:
+        path = Path(source).expanduser()
+        roots.append(path if path.is_dir() else path.parent)
+
+    routes: dict[str, FilesystemBackend] = {}
+    for root in roots:
+        backend_root = root.resolve(strict=False)
+        backend = FilesystemBackend(
+            root_dir=backend_root,
+            virtual_mode=True,
+            max_file_size_mb=10,
+        )
+        for route in _absolute_route_keys(root):
+            routes[route] = backend
+    return routes
+
+
+def _absolute_route_keys(path: Path) -> list[str]:
+    expanded = path.expanduser()
+    raw = expanded if expanded.is_absolute() else expanded.absolute()
+    resolved = expanded.resolve(strict=False)
+    keys = {
+        str(raw).rstrip("/") + "/",
+        str(resolved).rstrip("/") + "/",
+    }
+    return sorted(keys)
+
+
+def _build_agent_backend(
+    *,
+    effective_workspace: str,
+    skills_dirs: list[Path],
+    memory_sources: list[str] | None,
+):
+    workspace_root = Path(effective_workspace).expanduser().resolve()
+    default = FilesystemBackend(
+        root_dir=workspace_root,
+        virtual_mode=True,
+        max_file_size_mb=10,
+    )
+    routes: dict[str, FilesystemBackend] = {}
+    for route in _absolute_route_keys(Path(effective_workspace)):
+        routes[route] = default
+    routes.update(
+        _agent_backend_routes(
+            skills_dirs=skills_dirs,
+            memory_sources=memory_sources,
+            workspace_root=workspace_root,
+        )
+    )
+    return CompositeBackend(default=default, routes=routes)
 
 
 async def open_checkpointer(
@@ -504,33 +572,30 @@ async def build_agent(
 
     model = _build_chat_model(settings, run_id, mode)
 
+    skills_dirs = _resolve_skills_dirs() if skills_enabled else []
+    skills_arg = [str(d) for d in skills_dirs] if skills_dirs else None
+    memory_arg = _resolve_memory_sources(settings)
+
     # FilesystemBackend serves three deepagents subsystems at once:
     #   - FilesystemMiddleware tools (ls / read_file / write_file / edit_file)
     #   - `execute` shell tool (run commands inside the sandbox)
     #   - SubAgentMiddleware (subagents share this scratch area)
     #   - SkillsMiddleware (reads `<skill-dir>/SKILL.md`)
     #
-    # We deliberately never use `virtual_mode=True`. virtual_mode blocks
-    # every absolute path, which silently breaks SkillsMiddleware — it
-    # tries to read `/Users/<u>/.shejane/skills/<name>/SKILL.md` and gets
-    # nothing back, so the system prompt's "Skills System" section
-    # renders "no skills available" even when the user has skills
-    # installed (real-world bug from run diagnostics 2026-05-24).
-    #
-    # With `virtual_mode=False` (default), `root_dir` only affects how
-    # relative paths resolve; absolute paths pass through unchanged,
-    # which is what we want for skill loading. When the user has no
-    # project selected (`workspace_root` is None), we fall back to a
-    # default scratch dir under `~/.shejane/workspace/` so the agent
-    # still has a real cwd to write into instead of an unwritable
-    # virtual FS.
+    # The default backend runs in virtual mode so the selected workspace
+    # is a real path boundary. Skills and configured memory sources can
+    # still live elsewhere, but only through explicit per-root routes.
     if workspace_root:
         effective_workspace = workspace_root
     else:
         scratch = Path.home() / ".shejane" / "workspace"
         scratch.mkdir(parents=True, exist_ok=True)
         effective_workspace = str(scratch)
-    backend = FilesystemBackend(root_dir=effective_workspace, max_file_size_mb=10)
+    backend = _build_agent_backend(
+        effective_workspace=effective_workspace,
+        skills_dirs=skills_dirs,
+        memory_sources=memory_arg,
+    )
 
     memory_namespace = memory_namespace_for_workspace(workspace_root)
     middleware = _custom_middleware(
@@ -583,14 +648,9 @@ async def build_agent(
     if extra_middleware:
         middleware.extend(extra_middleware)
 
-    skills_dirs = _resolve_skills_dirs() if skills_enabled else []
-    skills_arg = [str(d) for d in skills_dirs] if skills_dirs else None
-
     subagents_arg = (
         build_subagents(main_tools=tools, main_model=model) if settings.enable_subagents else None
     )
-
-    memory_arg = _resolve_memory_sources(settings)
 
     # Layer 30-55 of the prompt stack — developer instructions, task,
     # skills hint, run state, runtime context. See context_builder.py for

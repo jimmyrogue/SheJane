@@ -161,7 +161,7 @@ def _deepagents_filesystem_tools(workspace_root: str | None = None) -> list[Base
     without adding duplicate tools to build_tools().
     """
     root = workspace_root or str(Path.home() / ".shejane" / "workspace")
-    backend = FilesystemBackend(root_dir=root, max_file_size_mb=10)
+    backend = FilesystemBackend(root_dir=root, virtual_mode=True, max_file_size_mb=10)
     return list(FilesystemMiddleware(backend=backend).tools)
 
 

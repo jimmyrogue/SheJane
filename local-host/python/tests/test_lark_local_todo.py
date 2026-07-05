@@ -865,6 +865,76 @@ def test_lark_auto_sync_dispatcher_runs_due_cloud_sync(monkeypatch) -> None:
     assert connection["last_auto_synced_at"] is not None
 
 
+def test_lark_auto_sync_uses_rules_when_cloud_extraction_disabled(monkeypatch) -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="jdl-lark-auto-sync-rules-"))
+    os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
+    monkeypatch.setenv("PATH", "")
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_BASE_URL="http://localhost:8080",
+        SHEJANE_CLOUD_TOKEN="cloud-jwt",
+        data_dir=tmp,
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("cloud extractor should not be called")
+
+    monkeypatch.setattr(
+        "local_host.lark.extractors.httpx.AsyncClient", _patched_async_client(handler)
+    )
+    runner = FakeLarkRunner(
+        ConnectorCommandResult(
+            returncode=0,
+            stdout='{"items":[{"chat_id":"oc_alpha","name":"Project Alpha","chat_type":"group"}]}',
+            stderr="",
+        ),
+        ConnectorCommandResult(
+            returncode=0,
+            stdout=(
+                '{"items":[{"message_id":"om_auto_1","msg_type":"text",'
+                '"sender":{"id":"ou_sender"},'
+                '"body":{"content":"{\\"text\\":\\"请今天确认 Project Alpha 排期\\"}"},'
+                '"create_time":"2026-06-15T09:00:00+08:00"}]}'
+            ),
+            stderr="",
+        ),
+    )
+    app = create_app(settings)
+    app.state.lark_connector_factory = lambda: LarkConnector(
+        LarkConnectorStatus(available=True, source="system", executable_path="/fake/lark-cli"),
+        runner=runner,
+    )
+
+    with TestClient(app) as c:
+        store = c.app.state.store
+        c.portal.call(
+            lambda: store.update_lark_connection(
+                status="connected",
+                cloud_extraction_enabled=False,
+                auto_sync_enabled=True,
+                auto_sync_interval_minutes=1,
+            )
+        )
+        c.portal.call(
+            lambda: store.upsert_lark_source(
+                provider_source_id_hash=_stable_lark_hash("source", "oc_alpha"),
+                source_type="group",
+                display_label="Project Alpha",
+                sync_enabled=True,
+            )
+        )
+        dispatcher = LarkAutoSyncDispatcher(c.app, poll_interval_seconds=0.1)
+        ran = c.portal.call(lambda: dispatcher.tick(now=datetime(2026, 6, 15, 10, 0, tzinfo=UTC)))
+        todos_resp = c.get("/local/v1/todos?provider=lark", headers=HEADERS)
+
+    assert ran is True
+    todos = todos_resp.json()["todos"]
+    assert len(todos) == 1
+    assert todos[0]["extraction_provider"] == "rules"
+
+
 def test_lark_sync_marks_connection_needs_auth_when_cli_scopes_are_missing(monkeypatch) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-lark-sync-auth-"))
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"

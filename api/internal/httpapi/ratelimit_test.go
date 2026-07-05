@@ -28,8 +28,10 @@ func TestClientIP(t *testing.T) {
 	cases := []struct {
 		name, xff, xreal, remote, want string
 	}{
-		{"x-forwarded-for first hop", "203.0.113.7, 70.0.0.1", "", "10.0.0.1:5", "203.0.113.7"},
-		{"x-real-ip fallback", "", "203.0.113.9", "10.0.0.1:5", "203.0.113.9"},
+		{"x-forwarded-for from private proxy", "203.0.113.7, 70.0.0.1", "", "10.0.0.1:5", "203.0.113.7"},
+		{"x-real-ip from loopback proxy", "", "203.0.113.9", "127.0.0.1:5", "203.0.113.9"},
+		{"spoofed x-forwarded-for from public client ignored", "198.51.100.1", "", "203.0.113.5:4321", "203.0.113.5"},
+		{"spoofed x-real-ip from public client ignored", "", "198.51.100.2", "203.0.113.5:4321", "203.0.113.5"},
 		{"remote addr fallback", "", "", "203.0.113.5:4321", "203.0.113.5"},
 	}
 	for _, c := range cases {

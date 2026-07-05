@@ -779,15 +779,15 @@ func (s *PostgresStore) DocumentByID(ctx context.Context, userID string, documen
 }
 
 func (s *PostgresStore) MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (documents.Document, error) {
-	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusProcessing, "", "", true)
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusProcessing, "", "", true, time.Time{})
 }
 
-func (s *PostgresStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error) {
-	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusReady, textObjectKey, "", true)
+func (s *PostgresStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string, expiresAt time.Time) (documents.Document, error) {
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusReady, textObjectKey, "", true, expiresAt)
 }
 
 func (s *PostgresStore) MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (documents.Document, error) {
-	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusFailed, "", truncateString(errorMessage, 500), false)
+	return s.updateDocumentStatus(ctx, userID, documentID, documents.StatusFailed, "", truncateString(errorMessage, 500), false, time.Time{})
 }
 
 // SetDocumentMetadata persists the structured metadata extracted at
@@ -1844,12 +1844,13 @@ func insertAuditLog(ctx context.Context, tx *sql.Tx, actorUserID string, action 
 	return err
 }
 
-func (s *PostgresStore) updateDocumentStatus(ctx context.Context, userID string, documentID string, status string, textObjectKey string, errorMessage string, clearError bool) (documents.Document, error) {
+func (s *PostgresStore) updateDocumentStatus(ctx context.Context, userID string, documentID string, status string, textObjectKey string, errorMessage string, clearError bool, expiresAt time.Time) (documents.Document, error) {
 	query := `
 		UPDATE documents
 		SET status=$3,
 			text_object_key=COALESCE(NULLIF($4, ''), text_object_key),
 			error_message=CASE WHEN $6 THEN NULL ELSE NULLIF($5, '') END,
+			expires_at=CASE WHEN $7::timestamptz IS NULL THEN expires_at ELSE $7 END,
 			updated_at=NOW()
 		WHERE user_id=$1 AND id=$2 AND status <> 'deleted'
 		RETURNING id::text, user_id::text, original_name, content_type, size_bytes, status,
@@ -1857,7 +1858,11 @@ func (s *PostgresStore) updateDocumentStatus(ctx context.Context, userID string,
 			expires_at, created_at, updated_at,
 			COALESCE(metadata, '{}'::jsonb)::text
 	`
-	return scanDocument(s.db.QueryRowContext(ctx, query, userID, documentID, status, textObjectKey, errorMessage, clearError))
+	var expires any
+	if !expiresAt.IsZero() {
+		expires = expiresAt
+	}
+	return scanDocument(s.db.QueryRowContext(ctx, query, userID, documentID, status, textObjectKey, errorMessage, clearError, expires))
 }
 
 func (s *PostgresStore) walletTransactionsByWallet(ctx context.Context, walletID string, limit int) ([]billing.Transaction, error) {

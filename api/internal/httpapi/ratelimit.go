@@ -72,22 +72,32 @@ func (rl *rateLimiter) allow(key string) bool {
 	return true
 }
 
-// clientIP extracts the originating client IP, trusting the proxy headers
-// set by our own reverse proxy (Caddy), which is the only public ingress
-// to the API in production. Falls back to the transport remote address.
+// clientIP extracts the originating client IP. Forwarded headers are trusted
+// only when the immediate peer is a local/private reverse proxy; direct public
+// clients cannot rotate limiter keys by spoofing X-Forwarded-For.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// The left-most entry is the original client; the rest are proxies.
-		if first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0]); first != "" {
-			return first
-		}
-	}
-	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
-		return xr
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if isTrustedProxyRemote(host) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// The left-most entry is the original client; the rest are proxies.
+			if first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0]); first != "" {
+				return first
+			}
+		}
+		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+			return xr
+		}
 	}
 	return host
+}
+
+func isTrustedProxyRemote(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }

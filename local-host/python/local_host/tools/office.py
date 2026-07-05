@@ -26,9 +26,8 @@ All write tools also use an atomic write pattern: write to
 valid OOXML file, then `os.replace(tmp, target)`. A mid-write failure
 leaves `target` exactly as it was (the last known-good edit).
 
-Path safety: the daemon trusts the agent to pass paths that came out
-of `workspace.open`. We do extension + existence checks here; the
-fs middleware enforces the workspace-membership rule for fs.* tools.
+Path safety: when tools run inside an agent run, paths must resolve under
+the run's authorized workspace root from the LangGraph config.
 """
 
 from __future__ import annotations
@@ -44,6 +43,7 @@ from typing import Any
 from docx import Document as DocxDocument
 from docx.document import Document as DocxDocumentType
 from docx.text.paragraph import Paragraph as DocxParagraph
+from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import tool
 from markitdown import MarkItDown
 from openpyxl import load_workbook
@@ -83,6 +83,19 @@ _EDITED_INFIX = "edited"
 # ═══════════════════════════════════════════════════════════════════════
 
 
+def _workspace_root_from_config() -> str | None:
+    try:
+        config = ensure_config()
+    except Exception:
+        return None
+    configurable = config.get("configurable") if isinstance(config, dict) else None
+    if not isinstance(configurable, dict):
+        return None
+    if "workspace_root" not in configurable:
+        return None
+    return str(configurable.get("workspace_root") or "").strip()
+
+
 def _validate_path(path: str) -> tuple[str | None, str | None, str | None]:
     """Resolve and validate the file path.
 
@@ -92,6 +105,17 @@ def _validate_path(path: str) -> tuple[str | None, str | None, str | None]:
     if not path:
         return None, None, "path required"
     resolved = os.path.abspath(os.path.expanduser(path))
+    workspace_root = _workspace_root_from_config()
+    if workspace_root is not None:
+        if not workspace_root:
+            return None, None, "no workspace open"
+        root = Path(os.path.abspath(os.path.expanduser(workspace_root))).resolve()
+        candidate = Path(resolved).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None, None, f"path outside workspace: {candidate}"
+        resolved = str(candidate)
     if not os.path.isfile(resolved):
         return None, None, f"file not found: {resolved}"
     ext = Path(resolved).suffix.lower()

@@ -72,7 +72,9 @@ pre-commit:
     # but the example file path is easy to typo.
     no-env-files:
       run: |
-        if echo "{staged_files}" | tr ' ' '\n' | grep -E '^\.env$|/\.env$|\.env\.local$'; then
+        blocked=$(echo "{staged_files}" | tr ' ' '\n' | grep -E '(^|/)\.env($|\.)' | grep -vE '(^|/)\.env\.example$' || true)
+        if [ -n "$blocked" ]; then
+          echo "$blocked" >&2
           echo "❌ refusing to commit .env (only .env.example is tracked)" >&2
           exit 1
         fi

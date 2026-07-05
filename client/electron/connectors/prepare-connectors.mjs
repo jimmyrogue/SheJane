@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { verifyConnectorResources } from './verify-connectors.mjs'
@@ -30,6 +30,10 @@ export async function prepareConnectorResources({
       continue
     }
     const relPath = typeof target.path === 'string' ? target.path : ''
+    if (!isSafeRelativePath(relPath)) {
+      errors.push(`invalid connector binary path: ${relPath || '<empty>'}`)
+      continue
+    }
     if (await binaryMatchesManifest(rootDir, relPath, target.binarySha256)) {
       continue
     }
@@ -80,11 +84,17 @@ async function readManifest(manifestPath, errors) {
 }
 
 async function binaryMatchesManifest(rootDir, relPath, expectedHash) {
-  if (!relPath || !/^[a-f0-9]{64}$/.test(String(expectedHash || '').toLowerCase())) return false
+  if (!isSafeRelativePath(relPath) || !/^[a-f0-9]{64}$/.test(String(expectedHash || '').toLowerCase())) return false
   const absolutePath = resolve(rootDir, relPath)
   if (!existsSync(absolutePath)) return false
   const fileStat = await stat(absolutePath).catch(() => null)
   return Boolean(fileStat?.isFile()) && (await sha256File(absolutePath)) === String(expectedHash).toLowerCase()
+}
+
+function isSafeRelativePath(value) {
+  if (!value || isAbsolute(value)) return false
+  const normalized = normalize(value)
+  return normalized === value && !normalized.startsWith('..') && !relative('.', normalized).startsWith('..')
 }
 
 async function downloadArchiveFromURL(target, archivePath) {

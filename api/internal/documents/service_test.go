@@ -70,15 +70,49 @@ func (f *fakeMetadataStore) DocumentByID(ctx context.Context, userID string, doc
 }
 
 func (f *fakeMetadataStore) MarkDocumentProcessing(ctx context.Context, userID string, documentID string) (Document, error) {
-	panic("not implemented in tests")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.documents[documentID]
+	if !ok || doc.UserID != userID || doc.Status == StatusDeleted {
+		return Document{}, ErrAlreadyDeleted
+	}
+	doc.Status = StatusProcessing
+	doc.ErrorMessage = ""
+	doc.UpdatedAt = time.Now().UTC()
+	f.documents[documentID] = doc
+	return doc, nil
 }
 
-func (f *fakeMetadataStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (Document, error) {
-	panic("not implemented in tests")
+func (f *fakeMetadataStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string, expiresAt time.Time) (Document, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.documents[documentID]
+	if !ok || doc.UserID != userID || doc.Status == StatusDeleted {
+		return Document{}, ErrAlreadyDeleted
+	}
+	doc.Status = StatusReady
+	doc.TextObjectKey = textObjectKey
+	if !expiresAt.IsZero() {
+		doc.ExpiresAt = expiresAt
+	}
+	doc.ErrorMessage = ""
+	doc.UpdatedAt = time.Now().UTC()
+	f.documents[documentID] = doc
+	return doc, nil
 }
 
 func (f *fakeMetadataStore) MarkDocumentFailed(ctx context.Context, userID string, documentID string, errorMessage string) (Document, error) {
-	panic("not implemented in tests")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.documents[documentID]
+	if !ok || doc.UserID != userID || doc.Status == StatusDeleted {
+		return Document{}, ErrAlreadyDeleted
+	}
+	doc.Status = StatusFailed
+	doc.ErrorMessage = errorMessage
+	doc.UpdatedAt = time.Now().UTC()
+	f.documents[documentID] = doc
+	return doc, nil
 }
 
 func (f *fakeMetadataStore) SetDocumentMetadata(ctx context.Context, userID string, documentID string, metadata map[string]any) (Document, error) {
@@ -172,6 +206,81 @@ func (s *failingObjectStorage) DeleteObject(ctx context.Context, key string) err
 		return err
 	}
 	return s.inner.DeleteObject(ctx, key)
+}
+
+func TestFailDeletesRejectedSourceObject(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeMetadataStore()
+	objs := newFailingObjectStorage()
+	svc := NewService(store, objs, ServiceConfig{})
+	doc := Document{
+		ID:              "doc-too-large",
+		UserID:          "alice",
+		Status:          StatusProcessing,
+		SourceObjectKey: "documents/alice/doc-too-large/source.docx",
+	}
+	store.seed(doc)
+	if err := objs.PutObject(ctx, doc.SourceObjectKey, "application/octet-stream", []byte("oversized")); err != nil {
+		t.Fatalf("seed source object: %v", err)
+	}
+
+	if _, err := svc.fail(ctx, "alice", doc.ID, ErrTooLarge); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("fail err = %v, want ErrTooLarge", err)
+	}
+	if _, err := objs.HeadObject(ctx, doc.SourceObjectKey); err == nil {
+		t.Fatal("source object still exists after too-large failure")
+	}
+}
+
+func TestCreateUploadUsesPresignTTLUntilCompletion(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	store := newFakeMetadataStore()
+	svc := NewService(store, NewMemoryObjectStorage(), ServiceConfig{
+		Now:        func() time.Time { return now },
+		TTL:        7 * 24 * time.Hour,
+		PresignTTL: 15 * time.Minute,
+	})
+
+	upload, err := svc.CreateUpload(ctx, "alice", "brief.pdf", "application/pdf", 123)
+	if err != nil {
+		t.Fatalf("CreateUpload: %v", err)
+	}
+	if got, want := upload.Document.ExpiresAt, now.Add(15*time.Minute); !got.Equal(want) {
+		t.Fatalf("upload expires_at = %s, want %s", got, want)
+	}
+}
+
+func TestCompleteUploadRejectsExpiredUploadAndDeletesSource(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	store := newFakeMetadataStore()
+	objs := newFailingObjectStorage()
+	svc := NewService(store, objs, ServiceConfig{
+		Now:        func() time.Time { return now },
+		TTL:        7 * 24 * time.Hour,
+		PresignTTL: 15 * time.Minute,
+	})
+	doc := Document{
+		ID:              "expired-upload",
+		UserID:          "alice",
+		OriginalName:    "brief.pdf",
+		ContentType:     "application/pdf",
+		Status:          StatusUploading,
+		SourceObjectKey: "documents/alice/expired-upload/source.pdf",
+		ExpiresAt:       now.Add(-time.Minute),
+	}
+	store.seed(doc)
+	if err := objs.PutObject(ctx, doc.SourceObjectKey, "application/pdf", minimalPDF("old upload")); err != nil {
+		t.Fatalf("seed source object: %v", err)
+	}
+
+	if _, err := svc.CompleteUpload(ctx, "alice", doc.ID); !errors.Is(err, ErrExpired) {
+		t.Fatalf("CompleteUpload err = %v, want ErrExpired", err)
+	}
+	if _, err := objs.HeadObject(ctx, doc.SourceObjectKey); err == nil {
+		t.Fatal("source object still exists after expired upload failure")
+	}
 }
 
 // buildReaperFixture wires Service over a fake store + object storage

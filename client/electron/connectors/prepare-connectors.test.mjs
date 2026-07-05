@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { prepareConnectorResources } from './prepare-connectors.mjs'
@@ -86,5 +86,34 @@ describe('prepareConnectorResources', () => {
 
     expect(result.ok).toBe(false)
     expect(result.errors[0]).toContain('archive checksum mismatch for lark-cli-1.0.53-darwin-arm64.tar.gz')
+  })
+
+  it('rejects traversal target paths before downloading or copying', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shejane-connectors-'))
+    const outside = resolve(dirname(root), 'outside-lark-cli')
+    const manifestPath = await writeManifest(root, {
+      id: 'darwin-arm64',
+      required: true,
+      path: '../outside-lark-cli',
+      archive: 'lark-cli-1.0.53-darwin-arm64.tar.gz',
+      downloadUrl: 'https://example.test/lark-cli.tar.gz',
+      archiveSha256: sha256('official archive'),
+      binarySha256: sha256('darwin lark cli'),
+    })
+
+    const result = await prepareConnectorResources({
+      rootDir: root,
+      manifestPath,
+      downloadArchive: async () => {
+        throw new Error('download should not run')
+      },
+      extractArchive: async () => {
+        throw new Error('extract should not run')
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.errors[0]).toContain('invalid connector binary path')
+    await expect(readFile(outside, 'utf8')).rejects.toThrow()
   })
 })

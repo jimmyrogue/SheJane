@@ -137,6 +137,34 @@ def test_office_read_empty_path_returns_error() -> None:
     assert result["error"] == "path required"
 
 
+def test_office_read_rejects_paths_outside_run_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    outside_doc = _make_docx(outside)
+
+    result = office_read.invoke(
+        {"path": str(outside_doc)},
+        config={"configurable": {"workspace_root": str(workspace)}},
+    )
+
+    assert result["ok"] == "false"
+    assert "outside workspace" in result["error"]
+
+
+def test_office_read_rejects_paths_when_run_has_no_workspace(tmp_path: Path) -> None:
+    path = _make_docx(tmp_path)
+
+    result = office_read.invoke(
+        {"path": str(path)},
+        config={"configurable": {"workspace_root": ""}},
+    )
+
+    assert result["ok"] == "false"
+    assert result["error"] == "no workspace open"
+
+
 def test_office_outline_docx_lists_headings(tmp_path: Path) -> None:
     """office.outline on .docx surfaces heading text + paragraph/table counts."""
     path = _make_docx(tmp_path)

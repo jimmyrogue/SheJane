@@ -1831,8 +1831,12 @@ async def _sync_lark_once(
     candidate_groups = _merge_lark_todo_candidate_groups(candidates)
     skipped += len(candidates) - len(candidate_groups)
     candidates = [candidate for candidate, _message_ids in candidate_groups]
+    connection = await store.ensure_lark_connection()
+    extraction_provider = body.extraction_provider
+    if not connection.get("cloud_extraction_enabled") and extraction_provider == "cloud_redacted":
+        extraction_provider = "rules"
     extractor = _lark_todo_extractor(
-        body.extraction_provider,
+        extraction_provider,
         settings=app.state.settings,
         model=body.model,
     )

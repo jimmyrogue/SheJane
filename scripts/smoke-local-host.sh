@@ -48,10 +48,16 @@ require_command uv
 echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL}"
 (
   cd local-host/python
-  SHEJANE_LOCAL_HOST_ADDR="$HOST" \
-    SHEJANE_LOCAL_HOST_PORT="$PORT" \
-    SHEJANE_LOCAL_HOST_TOKEN="$TOKEN" \
-    PYTHONUNBUFFERED=1 \
+  env -i \
+    "PATH=$PATH" \
+    "HOME=$HOME" \
+    "USER=${USER:-}" \
+    "TMPDIR=${TMPDIR:-/tmp}" \
+    "SHELL=${SHELL:-/bin/zsh}" \
+    "SHEJANE_LOCAL_HOST_ADDR=$HOST" \
+    "SHEJANE_LOCAL_HOST_PORT=$PORT" \
+    "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
+    "PYTHONUNBUFFERED=1" \
     uv run python -m local_host >"${TMP_DIR}/local-host.log" 2>&1
 ) &
 PID="$!"

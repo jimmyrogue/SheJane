@@ -715,7 +715,7 @@ func (s *MemoryStore) MarkDocumentProcessing(ctx context.Context, userID string,
 	return document, nil
 }
 
-func (s *MemoryStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string) (documents.Document, error) {
+func (s *MemoryStore) MarkDocumentReady(ctx context.Context, userID string, documentID string, textObjectKey string, expiresAt time.Time) (documents.Document, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -725,6 +725,9 @@ func (s *MemoryStore) MarkDocumentReady(ctx context.Context, userID string, docu
 	}
 	document.Status = documents.StatusReady
 	document.TextObjectKey = textObjectKey
+	if !expiresAt.IsZero() {
+		document.ExpiresAt = expiresAt
+	}
 	document.ErrorMessage = ""
 	document.UpdatedAt = time.Now().UTC()
 	s.documents[document.ID] = document

@@ -205,6 +205,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 - 上传和解析不扣额度；文档问答扣额度。
 - 本阶段支持同一提问附加多个上传文档，并把每个文档的抽取文本注入同一个云端 agent run；仍不做向量库、团队文档库或 Local Host 本地文件读取。附件与工具的组合策略见 `docs/document-tool-policy.md`。
 - 提取文本只保留前 `DOCUMENT_TEXT_LIMIT` 字符，避免超长 prompt 失控。
+- Browser 上传使用 S3 presigned PUT。`uploading` 记录只保留 presigned URL 窗口（默认 15 分钟），完成上传后才延长到 `DOCUMENT_TTL_HOURS`；API 会在创建上传记录和完成上传时检查 `DOCUMENT_MAX_BYTES`，并在完成阶段发现超限/不支持类型/过期时 best-effort 删除 source object。但超限 PUT 本身已经到达 S3，生产 bucket 仍应保留 Lifecycle 规则、对象大小监控和成本告警。
 - 文档默认 7 天过期；当前没有后台手工延长或恢复入口。
 - Agent Run 事件默认 7 天过期；当前没有后台重放、修改、取消已完成 run 的入口。
 
@@ -607,16 +608,16 @@ docker compose up --build -d
 - 调用记录：全局只读列表，可按 API 参数扩展过滤。
 - 订单记录：全局只读列表，显示订单 ID、用户、金额、状态、Stripe session、创建时间。
 - 审计日志：只读展示后台操作和关键账务事件，不提供删除、修改或重放入口。
-- 模型状态：只读展示 provider、base URL、model、mock/real 状态、API key 是否配置。
+- 模型状态/配置：展示 provider、base URL、model、mock/real 状态、API key 是否配置；管理员可在模型配置页写入或替换 provider API key，API 只保存加密值（生产必须设置 `CONFIG_ENCRYPTION_KEY`）并且响应只回显 `api_key_configured` 布尔值。
 
 当前不支持：
 
-- 不在后台保存、展示或修改 provider API key。
+- 不在后台明文展示、导出或日志打印 provider API key；留空保存会保留原 key，删除/轮换必须走模型配置表单或数据库运维流程。
 - 不手工修改订单状态，不做退款、补单或支付对账写操作。
 - 不修改月额度、已用额度、plan code、订阅状态。
 - 不做团队/组织后台、成员邀请、团队额度池或发票管理。
 
-Provider key 不进入后台，是为了降低浏览器泄露、日志泄露和误操作风险。密钥继续由 `.env`、部署平台 secret 和供应商控制台管理；后台只显示布尔状态，便于判断当前 API 是否可能走真实 provider。
+Provider key 会通过后台模型配置表单进入 API 并加密落库，但不会从 API 响应返回给浏览器，也不应出现在日志、诊断导出或文档示例中。`.env` / 部署平台 secret 仍可作为首次空库种子和静态兜底；生产部署必须配置 `CONFIG_ENCRYPTION_KEY`，后台只显示布尔状态，便于判断当前 API 是否可能走真实 provider。
 
 ## 生产部署（GHCR 镜像 + docker-compose.prod.yml）
 

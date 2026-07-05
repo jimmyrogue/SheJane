@@ -271,7 +271,7 @@ def build_subagent_backend(workspace_root: str | None) -> FilesystemBackend:
     daemon data dir.
     """
     if workspace_root:
-        return FilesystemBackend(root_dir=workspace_root, max_file_size_mb=10)
+        return FilesystemBackend(root_dir=workspace_root, virtual_mode=True, max_file_size_mb=10)
     # No authorized workspace — subagents get a virtual in-memory FS so
     # they can't accidentally touch real disk paths.
     return FilesystemBackend(virtual_mode=True, max_file_size_mb=10)

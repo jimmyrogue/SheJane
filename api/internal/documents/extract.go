@@ -25,6 +25,11 @@ import (
 // still being a hard upper bound.
 const popplerTimeout = 30 * time.Second
 
+const (
+	maxOOXMLPartBytes = 4 * 1024 * 1024
+	maxXLSXSheets     = 64
+)
+
 // pdftotextPath / pdfinfoPath are exposed as package vars so tests
 // can swap them to "" and exercise the Go-native fallback path
 // without depending on Poppler being installed in CI. Production
@@ -251,6 +256,9 @@ func extractXLSX(data []byte) (string, error) {
 	sheets := make([]*zip.File, 0)
 	for _, file := range reader.File {
 		if strings.HasPrefix(file.Name, "xl/worksheets/sheet") && filepath.Ext(file.Name) == ".xml" {
+			if len(sheets) >= maxXLSXSheets {
+				return "", fmt.Errorf("xlsx contains too many worksheets")
+			}
 			sheets = append(sheets, file)
 		}
 	}
@@ -279,12 +287,12 @@ func zipFile(reader *zip.Reader, name string) *zip.File {
 }
 
 func xmlText(file *zip.File, textTags map[string]bool, breakTags map[string]bool) (string, error) {
-	handle, err := file.Open()
+	handle, limited, err := openLimitedZipXML(file)
 	if err != nil {
 		return "", err
 	}
 	defer handle.Close()
-	decoder := xml.NewDecoder(handle)
+	decoder := xml.NewDecoder(limited)
 	var builder strings.Builder
 	capturing := false
 	for {
@@ -312,16 +320,19 @@ func xmlText(file *zip.File, textTags map[string]bool, breakTags map[string]bool
 			}
 		}
 	}
+	if limited.N == 0 {
+		return "", fmt.Errorf("xml part too large: %s", file.Name)
+	}
 	return builder.String(), nil
 }
 
 func xlsxSharedStrings(file *zip.File) ([]string, error) {
-	handle, err := file.Open()
+	handle, limited, err := openLimitedZipXML(file)
 	if err != nil {
 		return nil, err
 	}
 	defer handle.Close()
-	decoder := xml.NewDecoder(handle)
+	decoder := xml.NewDecoder(limited)
 	stringsList := make([]string, 0)
 	var current strings.Builder
 	capturing := false
@@ -357,16 +368,19 @@ func xlsxSharedStrings(file *zip.File) ([]string, error) {
 			}
 		}
 	}
+	if limited.N == 0 {
+		return nil, fmt.Errorf("xml part too large: %s", file.Name)
+	}
 	return stringsList, nil
 }
 
 func xlsxSheetText(file *zip.File, sharedStrings []string) (string, error) {
-	handle, err := file.Open()
+	handle, limited, err := openLimitedZipXML(file)
 	if err != nil {
 		return "", err
 	}
 	defer handle.Close()
-	decoder := xml.NewDecoder(handle)
+	decoder := xml.NewDecoder(limited)
 	var builder strings.Builder
 	var cellType string
 	var cellValue strings.Builder
@@ -433,7 +447,21 @@ func xlsxSheetText(file *zip.File, sharedStrings []string) (string, error) {
 			}
 		}
 	}
+	if limited.N == 0 {
+		return "", fmt.Errorf("xml part too large: %s", file.Name)
+	}
 	return builder.String(), nil
+}
+
+func openLimitedZipXML(file *zip.File) (io.ReadCloser, *io.LimitedReader, error) {
+	if file.UncompressedSize64 > uint64(maxOOXMLPartBytes) {
+		return nil, nil, fmt.Errorf("xml part too large: %s", file.Name)
+	}
+	handle, err := file.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	return handle, &io.LimitedReader{R: handle, N: maxOOXMLPartBytes + 1}, nil
 }
 
 func normalizeWhitespace(text string) string {

@@ -7,15 +7,13 @@ Examples:
     {"checks": [{"kind": "file_exists", "path": "./out.json"}]}
     {"checks": [
         {"kind": "file_contains", "path": "./out.txt", "substring": "ok"},
-        {"kind": "shell_exit_code", "command": "ls /tmp", "expected": 0}
+        {"kind": "url_reachable", "url": "http://127.0.0.1:5173"}
     ]}
 """
 
 from __future__ import annotations
 
-import asyncio
 import os
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +25,6 @@ SUPPORTED_KINDS = {
     "file_contains",
     "file_matches_size",
     "url_reachable",
-    "shell_exit_code",
 }
 
 
@@ -82,30 +79,11 @@ async def _check_url_reachable(check: dict[str, Any]) -> tuple[bool, str]:
         return False, f"HEAD failed: {exc}"
 
 
-async def _check_shell_exit(check: dict[str, Any]) -> tuple[bool, str]:
-    command = check.get("command", "")
-    expected = int(check.get("expected", 0))
-    if not command:
-        return False, "missing 'command'"
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *shlex.split(command),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        rc = await asyncio.wait_for(proc.wait(), timeout=10.0)
-    except (TimeoutError, FileNotFoundError, ValueError) as exc:
-        return False, f"{type(exc).__name__}: {exc}"
-    ok = rc == expected
-    return ok, f"`{command}` exited {rc} (expected {expected})"
-
-
 _DISPATCH = {
     "file_exists": _check_file_exists,
     "file_contains": _check_file_contains,
     "file_matches_size": _check_file_size,
     "url_reachable": _check_url_reachable,
-    "shell_exit_code": _check_shell_exit,
 }
 
 
@@ -116,7 +94,7 @@ async def task_verify(checks: list[dict[str, Any]]) -> dict[str, Any]:
     Args:
         checks: list of dicts, each with a `kind` key naming one of:
                 file_exists, file_contains, file_matches_size,
-                url_reachable, shell_exit_code. Other keys depend on kind.
+                url_reachable. Other keys depend on kind.
 
     Returns:
         {ok: "true"|"false", results: [{kind, ok, detail}, ...], pass_count, fail_count}
