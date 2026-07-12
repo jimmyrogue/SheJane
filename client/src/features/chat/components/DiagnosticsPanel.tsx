@@ -33,11 +33,13 @@ export function DiagnosticsPanel({
   onClose,
   onExport,
   onForkCheckpoint,
+  checkpointForking = false,
 }: {
   diagnostics: LocalRunDiagnostics | null
   onClose: () => void
   onExport: () => void
   onForkCheckpoint?: (runID: string, checkpointID: string) => void
+  checkpointForking?: boolean
 }) {
   const { t } = useI18n()
   const handoffNextActions = diagnostics?.handoff ? localizedNextActions(t, diagnostics.handoff) : []
@@ -98,6 +100,7 @@ export function DiagnosticsPanel({
                     type="button"
                     size="sm"
                     variant="outline"
+                    disabled={checkpointForking}
                     onClick={() => onForkCheckpoint(diagnostics.run.id, diagnostics.latest_checkpoint!.id)}
                   >
                     <IconGitBranch size={14} />

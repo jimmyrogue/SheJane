@@ -1451,6 +1451,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 client_message_id=body.client_message_id,
                 assistant_message_id=body.assistant_message_id,
                 thread_id=body.thread_id,
+                protocol_version=body.protocol_version,
+                required_capabilities=body.required_capabilities,
                 checkpoint_id=checkpoint_id,
                 goal=body.goal,
                 user_input=body.user_input,
@@ -1470,6 +1472,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except CommandConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RunAdmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

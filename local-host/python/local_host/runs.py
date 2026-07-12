@@ -772,6 +772,8 @@ class RunCoordinator:
         client_message_id: str,
         assistant_message_id: str,
         thread_id: str,
+        protocol_version: int,
+        required_capabilities: list[str],
         checkpoint_id: str,
         goal: str | None = None,
         user_input: str,
@@ -792,6 +794,8 @@ class RunCoordinator:
         command_payload = {
             "type": "run.fork",
             "source_run_id": source_run_id,
+            "protocol_version": protocol_version,
+            "required_capabilities": sorted(set(required_capabilities)),
             "checkpoint_id": checkpoint_id.strip(),
             "thread_id": thread_id,
             "assistant_message_id": assistant_message_id,
@@ -810,6 +814,18 @@ class RunCoordinator:
         )
         if accepted is not None:
             return accepted
+
+        if protocol_version != RUNTIME_PROTOCOL_VERSION:
+            raise RunAdmissionError(
+                "protocol_version_unsupported",
+                f"runtime protocol version {protocol_version} is not supported",
+            )
+        missing = sorted(set(required_capabilities) - runtime_capabilities(self.settings))
+        if missing:
+            raise RunAdmissionError(
+                "capability_unavailable",
+                f"runtime capabilities are unavailable: {', '.join(missing)}",
+            )
 
         source = await self.store.get_run_for_principal(
             principal_id=principal_id,

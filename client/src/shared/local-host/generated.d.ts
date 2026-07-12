@@ -1278,6 +1278,10 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
+            /** Protocol Version */
+            protocol_version: number;
+            /** Required Capabilities */
+            required_capabilities: string[];
             /** Thread Id */
             thread_id: string;
             /** Thread Metadata */

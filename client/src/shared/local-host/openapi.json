@@ -1376,6 +1376,20 @@
             ],
             "title": "Metadata"
           },
+          "protocol_version": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Protocol Version",
+            "type": "integer"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Required Capabilities",
+            "type": "array"
+          },
           "thread_id": {
             "maxLength": 128,
             "minLength": 1,
@@ -1430,6 +1444,8 @@
           "client_message_id",
           "assistant_message_id",
           "thread_id",
+          "protocol_version",
+          "required_capabilities",
           "checkpoint_id",
           "user_input"
         ],

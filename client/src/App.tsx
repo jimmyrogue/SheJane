@@ -126,6 +126,8 @@ import {
   type LocalHostProbe,
   type LocalPlanApprovalDecision,
   type LocalPermissionScope,
+  LOCAL_RUNTIME_PROTOCOL_VERSION,
+  type PendingRunForkCommand,
   type PendingRunStartCommand,
   type PendingRunCancelCommand,
   type PendingQuestionAnswerCommand,
@@ -386,6 +388,7 @@ function AppContent() {
   const permissionDecisionsInFlightRef = useRef(new Set<string>())
   const planDecisionsInFlightRef = useRef(new Set<string>())
   const toolReconciliationsInFlightRef = useRef(new Set<string>())
+  const checkpointForksInFlightRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -403,6 +406,7 @@ function AppContent() {
   const [balance, setBalance] = useState<WalletBalance | null>(null)
   const [billingCheckoutOptions, setBillingCheckoutOptions] = useState<BillingCheckoutOptions | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [checkpointForking, setCheckpointForking] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
   const [spendHistoryInitialFilter, setSpendHistoryInitialFilter] = useState<HistoryFilter>('all')
@@ -2771,10 +2775,48 @@ function AppContent() {
       setNotice(t('app.notice.localHostDisconnected'))
       return
     }
+    const key = `${runID}:${checkpointID}`
+    if (checkpointForksInFlightRef.current.has(key)) return
+    checkpointForksInFlightRef.current.add(key)
+    setCheckpointForking(true)
+    try {
+      await forkLocalRunFromCheckpointOnce(runID, checkpointID, localHostConfig)
+    } finally {
+      checkpointForksInFlightRef.current.delete(key)
+      setCheckpointForking(false)
+    }
+  }
+
+  async function forkLocalRunFromCheckpointOnce(
+    runID: string,
+    checkpointID: string,
+    config: LocalHostConfig,
+  ) {
+    const [pendingCommands, conversations] = await Promise.all([
+      localData.listPendingRuntimeCommands(),
+      localData.list(),
+    ])
+    const existingFork = pendingCommands.find((command) =>
+      command.type === 'run.fork' &&
+      !command.canceledAt &&
+      command.input.sourceRunId === runID &&
+      command.input.checkpointId === checkpointID,
+    )
+    if (existingFork) {
+      navigationVersionRef.current += 1
+      setPendingWorkspace(undefined)
+      setPendingProject(undefined)
+      setActiveConversationID(existingFork.input.threadId)
+      setMainView('chat')
+      setRunDiagnostics(null)
+      setPendingCommandDeliveryVersion((version) => version + 1)
+      await refreshConversations(existingFork.input.threadId)
+      return
+    }
     const sourceDiagnostics = runDiagnostics?.run.id === runID ? runDiagnostics : null
     const forkGoal = sourceDiagnostics?.run.goal || localRuns.find((run) => run.id === runID)?.goal
     const timestamp = new Date().toISOString()
-    const sourceConversation = (await localData.list()).find((conversation) =>
+    const sourceConversation = conversations.find((conversation) =>
       conversation.messages.some((message) => message.runId === runID),
     )
     const userContent = t('app.notice.checkpointForkUserMessage', {
@@ -2802,52 +2844,66 @@ function AppContent() {
       role: 'assistant',
       content: '',
       createdAt: timestamp,
-      status: 'streaming',
+      status: 'pending',
       runOrigin: 'local',
       agentEvents: [],
     }
+    const pendingCommand: PendingRunForkCommand = {
+      type: 'run.fork',
+      commandId,
+      createdAt: timestamp,
+      input: {
+        sourceRunId: runID,
+        protocolVersion: LOCAL_RUNTIME_PROTOCOL_VERSION,
+        requiredCapabilities: [
+          'agent.run',
+          'agent.stream',
+          'hitl',
+          ...(sourceConversation?.workspace?.path ? ['workspace.files'] : []),
+        ],
+        clientMessageId: userMessage.id,
+        assistantMessageId: assistantMessage.id,
+        threadId: conversation.id,
+        checkpointId: checkpointID,
+        goal: forkGoal,
+        userInput: userContent,
+        threadTitle: conversation.title,
+        threadMetadata: {
+          archived: false,
+          pinned: false,
+          project: conversation.project,
+          workspace: conversation.workspace,
+        },
+      },
+    }
+    conversation.messages = [userMessage, assistantMessage]
     try {
       setNotice('')
-      const run = await forkLocalRun(
-        runID,
-        {
-          commandId,
-          clientMessageId: userMessage.id,
-          assistantMessageId: assistantMessage.id,
-          threadId: conversation.id,
-          checkpointId: checkpointID,
-          goal: forkGoal,
-          userInput: userContent,
-          threadTitle: conversation.title,
-          threadMetadata: {
-            archived: false,
-            pinned: false,
-            project: conversation.project,
-            workspace: conversation.workspace,
-          },
-        },
-        localHostConfig,
-      )
-      setLocalRuns((items) => upsertLocalRun(items, run))
-      const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(conversation.id)
-      storeRuntimeThreadIDs(nextRuntimeThreadIDs)
-      runtimeThreadIDsRef.current = nextRuntimeThreadIDs
-      assistantMessage.runId = run.id
-      conversation.messages = [...conversation.messages, userMessage, assistantMessage]
-      conversation.updatedAt = timestamp
-      await localData.save(conversation)
+      await localData.saveWithPendingRuntimeCommand(conversation, pendingCommand)
       navigationVersionRef.current += 1
       setPendingWorkspace(undefined)
       setPendingProject(undefined)
       setActiveConversationID(conversation.id)
       setMainView('chat')
       setRunDiagnostics(null)
+      await refreshConversations(conversation.id)
+      const run = await forkLocalRun(commandId, pendingCommand.input, config)
+      const keepConversation = await settleDeliveredLocalRunCommand(
+        pendingCommand,
+        run,
+        config,
+      )
+      if (!keepConversation) return
+      setLocalRuns((items) => upsertLocalRun(items, run))
+      Object.assign(assistantMessage, { runId: run.id, status: 'streaming' as const })
+      conversation.updatedAt = timestamp
+      await localData.save(conversation)
 
       const renderContext = createConversationRenderContext()
       scheduleConversationRender(conversation, renderContext)
       const seenEventIDs = new Set<string>()
       const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalRun(run.id, localHostConfig, {
+      await streamLocalRun(run.id, config, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2860,7 +2916,7 @@ function AppContent() {
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, renderContext)
       try {
-        const snapshot = await getLocalThreadSnapshot(conversation.id, localHostConfig)
+        const snapshot = await getLocalThreadSnapshot(conversation.id, config)
         Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
         scheduleConversationRender(conversation, renderContext)
       } catch {
@@ -2869,7 +2925,9 @@ function AppContent() {
       await localData.save(conversation)
       await refreshConversationsAfterStream(conversation.id, renderContext)
     } catch (error) {
+      setPendingCommandDeliveryVersion((version) => version + 1)
       setNotice(error instanceof Error ? error.message : t('app.notice.checkpointForkFailed'))
+      await refreshConversations(conversation.id)
     }
   }
 
@@ -3653,6 +3711,7 @@ function AppContent() {
               onClose={() => setRunDiagnostics(null)}
               onExport={exportCurrentRunDiagnostics}
               onForkCheckpoint={(runID, checkpointID) => void forkLocalRunFromCheckpoint(runID, checkpointID)}
+              checkpointForking={checkpointForking}
             />
 
             <AlertDialog

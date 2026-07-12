@@ -12,7 +12,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -25,12 +25,14 @@ from local_host.server import RequestBodyLimitMiddleware, create_app
 from tests.helpers import run_command
 
 
-def fork_command(checkpoint_id: str, *, suffix: str, goal: str | None = None) -> dict[str, str]:
+def fork_command(checkpoint_id: str, *, suffix: str, goal: str | None = None) -> dict[str, Any]:
     payload = {
         "command_id": f"cmd_fork_{suffix}",
         "client_message_id": f"msg_fork_user_{suffix}",
         "assistant_message_id": f"msg_fork_assistant_{suffix}",
         "thread_id": f"thread_fork_{suffix}",
+        "protocol_version": 1,
+        "required_capabilities": ["agent.run", "agent.stream", "hitl"],
         "checkpoint_id": checkpoint_id,
         "user_input": f"Retry from checkpoint {checkpoint_id}",
         "thread_title": "Forked conversation",
@@ -1145,6 +1147,32 @@ def test_fork_run_missing_checkpoint_returns_404(client: TestClient) -> None:
 
     assert fork.status_code == 404
     assert fork.json()["detail"] == "checkpoint not found"
+
+
+def test_fork_rejects_incompatible_protocol_and_capabilities(client: TestClient) -> None:
+    source = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command("source task"),
+    )
+    assert source.status_code == 200
+    endpoint = f"/local/v1/runs/{source.json()['id']}/fork"
+    headers = {"Authorization": "Bearer tok"}
+
+    bad_protocol = fork_command("unused", suffix="bad_protocol")
+    bad_protocol["protocol_version"] = 999
+    missing_capability = fork_command("unused", suffix="missing_capability")
+    missing_capability["required_capabilities"] = ["future.capability"]
+
+    protocol_response = client.post(endpoint, headers=headers, json=bad_protocol)
+    capability_response = client.post(endpoint, headers=headers, json=missing_capability)
+
+    assert protocol_response.status_code == 409
+    assert protocol_response.json()["detail"]["code"] == "protocol_version_unsupported"
+    assert capability_response.status_code == 409
+    assert capability_response.json()["detail"]["code"] == "capability_unavailable"
+    runs = client.get("/local/v1/runs", headers=headers)
+    assert [run["id"] for run in runs.json()["runs"]] == [source.json()["id"]]
 
 
 def test_fork_run_from_checkpoint_creates_child_branch_head(client: TestClient) -> None:

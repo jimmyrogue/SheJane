@@ -36,6 +36,7 @@ export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt
 export type ResolvePermissionCommandReceipt = Schemas['ResolvePermissionCommandReceipt']
 export type PlanResolveCommandReceipt = Schemas['PlanResolveCommandReceipt']
 export type ToolReconcileCommandReceipt = Schemas['ToolReconcileCommandReceipt']
+export type ForkRunRequest = Schemas['ForkRunRequest']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -286,6 +287,27 @@ export interface PendingRunStartCommand extends PendingRuntimeCommandBase {
   input: CreateLocalRunInput
 }
 
+export interface ForkLocalRunInput {
+  sourceRunId: string
+  protocolVersion: number
+  requiredCapabilities: string[]
+  clientMessageId: string
+  assistantMessageId: string
+  threadId: string
+  checkpointId: string
+  goal?: string
+  userInput: string
+  threadTitle?: string
+  threadMetadata?: Record<string, unknown>
+  userItemMetadata?: Record<string, unknown>
+  metadata?: LocalRunMetadata
+}
+
+export interface PendingRunForkCommand extends PendingRuntimeCommandBase {
+  type: 'run.fork'
+  input: ForkLocalRunInput
+}
+
 export interface PendingRunCancelCommand extends PendingRuntimeCommandBase {
   type: 'run.cancel'
   input: { runId: string; threadId: string }
@@ -336,6 +358,7 @@ export interface PendingToolReconcileCommand extends PendingRuntimeCommandBase {
 
 export type PendingRuntimeCommand =
   | PendingRunStartCommand
+  | PendingRunForkCommand
   | PendingRunCancelCommand
   | PendingQuestionAnswerCommand
   | PendingPermissionResolveCommand
@@ -467,6 +490,8 @@ async function deliverRuntimeCommand(
   switch (command.type) {
     case 'run.start':
       return createLocalRun(command.input, config, fetcher)
+    case 'run.fork':
+      return forkLocalRun(command.commandId, command.input, config, fetcher)
     case 'run.cancel':
       return cancelLocalRunCommand(command.commandId, command.input.runId, config, fetcher)
     case 'question.answer':
@@ -507,39 +532,30 @@ async function deliverRuntimeCommand(
 }
 
 export async function forkLocalRun(
-  runID: string,
-  input: {
-    commandId: string
-    clientMessageId: string
-    assistantMessageId: string
-    threadId: string
-    checkpointId: string
-    goal?: string
-    userInput: string
-    threadTitle?: string
-    threadMetadata?: Record<string, unknown>
-    userItemMetadata?: Record<string, unknown>
-    metadata?: LocalRunMetadata
-  },
+  commandID: string,
+  input: ForkLocalRunInput,
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
 ): Promise<LocalRun> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/fork`, {
+  const body: ForkRunRequest = {
+    command_id: commandID,
+    client_message_id: input.clientMessageId,
+    assistant_message_id: input.assistantMessageId,
+    thread_id: input.threadId,
+    protocol_version: input.protocolVersion,
+    required_capabilities: input.requiredCapabilities,
+    checkpoint_id: input.checkpointId,
+    goal: input.goal || undefined,
+    user_input: input.userInput,
+    thread_title: input.threadTitle,
+    thread_metadata: input.threadMetadata,
+    user_item_metadata: input.userItemMetadata,
+    metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(input.sourceRunId)}/fork`, {
     method: 'POST',
     headers: localHeaders(config, true),
-    body: JSON.stringify({
-      command_id: input.commandId,
-      client_message_id: input.clientMessageId,
-      assistant_message_id: input.assistantMessageId,
-      thread_id: input.threadId,
-      checkpoint_id: input.checkpointId,
-      goal: input.goal || undefined,
-      user_input: input.userInput,
-      thread_title: input.threadTitle,
-      thread_metadata: input.threadMetadata,
-      user_item_metadata: input.userItemMetadata,
-      metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
-    }),
+    body: JSON.stringify(body),
   })
   return decodeLocalResponse<LocalRun>(response)
 }

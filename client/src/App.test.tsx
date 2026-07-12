@@ -2381,6 +2381,83 @@ describe('user client shell', () => {
     })
   })
 
+  it('persists a checkpoint fork before delivery and keeps it after transport failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-fork-source',
+      title: '分叉来源',
+      archived: false,
+      createdAt: '2026-06-12T00:00:00.000Z',
+      updatedAt: '2026-06-12T00:00:01.000Z',
+      messages: [
+        { id: 'msg-fork-source-user', role: 'user', content: '检查配置', createdAt: '2026-06-12T00:00:00.000Z', status: 'done' },
+        {
+          id: 'msg-fork-source-assistant',
+          role: 'assistant',
+          content: 'missing API key',
+          createdAt: '2026-06-12T00:00:01.000Z',
+          status: 'error',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'run.failed',
+            label: 'missing API key · 需要你处理',
+            failureCategory: 'configuration',
+            failureActionKind: 'user_action',
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { localRunForkFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+    await selectConversationForTest('分叉来源', 'missing API key')
+    await clickFailureAction('查看诊断')
+
+    const forkButton = await screen.findByRole('button', { name: '从这里重试' })
+    fireEvent.click(forkButton)
+    fireEvent.click(forkButton)
+
+    let firstCommandID = ''
+    await waitFor(async () => {
+      const commands = await localData.listPendingRuntimeCommands()
+      expect(commands).toHaveLength(1)
+      const [command] = commands
+      firstCommandID = command.commandId
+      expect(command).toMatchObject({
+        type: 'run.fork',
+        input: {
+          sourceRunId: 'local-run',
+          protocolVersion: 1,
+          requiredCapabilities: ['agent.run', 'agent.stream', 'hitl'],
+          checkpointId: 'checkpoint-local',
+        },
+      })
+    })
+    await selectConversationForTest('分叉来源', 'missing API key')
+    await clickFailureAction('查看诊断')
+    fireEvent.click(await screen.findByRole('button', { name: '从这里重试' }))
+    await waitFor(async () => {
+      const commands = await localData.listPendingRuntimeCommands()
+      expect(commands).toHaveLength(1)
+      expect(commands[0]?.commandId).toBe(firstCommandID)
+      expect(await localData.list()).toHaveLength(2)
+    })
+    const forkCalls = calls.filter((call) => call.url.endsWith('/local/v1/runs/local-run/fork'))
+    expect(forkCalls.length).toBeGreaterThan(0)
+    const bodies = forkCalls.map((call) => String(call.init?.body))
+    expect(new Set(bodies).size).toBe(1)
+  })
+
   it('fires the completion notification on a successful local run', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
@@ -2875,6 +2952,7 @@ function mockFetch(
 	    localThreadTerminal?: { content: string; status: 'completed' | 'failed'; eventType: 'run.completed' | 'run.failed' }
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
 	    localRunCreateFailures?: number
+	    localRunForkFailures?: number
 	    questionAnswerFailures?: number
 	    permissionDecisionFailures?: number
 	    planDecisionFailures?: number
@@ -2893,6 +2971,7 @@ function mockFetch(
 	  const localSchedules = options.localSchedules ?? []
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
 	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
+	  let localRunForkFailures = options.localRunForkFailures ?? 0
 	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
 	  let permissionDecisionFailures = options.permissionDecisionFailures ?? 0
 	  let planDecisionFailures = options.planDecisionFailures ?? 0
@@ -2983,6 +3062,23 @@ function mockFetch(
           status: 'queued',
           created_at: '2026-05-11T00:00:00Z',
           updated_at: '2026-05-11T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/fork' && init?.method === 'POST') {
+      if (localRunForkFailures > 0) {
+        localRunForkFailures -= 1
+        throw new TypeError('connection reset')
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'local-fork-run',
+          goal: '运行本地检查',
+          status: 'queued',
+          parent_run_id: 'local-run',
+          created_at: '2026-06-13T00:00:00Z',
+          updated_at: '2026-06-13T00:00:00Z',
         }),
         { status: 201, headers: { 'Content-Type': 'application/json' } },
       )

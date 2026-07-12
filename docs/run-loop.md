@@ -39,6 +39,12 @@
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
   │                                                                                  │
+  │  POST /local/v1/runs/{source_run_id}/fork                                        │
+  │       ├─ Renderer 先在同一待发队列保存 run.fork 和新对话临时投影                │
+  │       ├─ 请求携带协议版本与所需能力；不兼容时不写入任何分支状态                 │
+  │       ├─ Runtime 原子写命令、分支对话、消息、Run、作业和稳定回执                │
+  │       └─ 断网或重启后复用同一待发分支，不改写旧分支                            │
+  │                                                                                  │
   │  POST /local/v1/commands  （支持取消和四类等待决定）                             │
   │       ├─ Renderer 先把命令写入同一个 IndexedDB 待发队列                         │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
@@ -338,7 +344,7 @@
 | Run budget clamps | Settings/env 和 per-run Advanced 覆盖都限制 model calls、tool retries 和 search limit 的安全范围 | `test_advanced_overrides` |
 | 模型重试防重复 | 不装配通用 `ModelRetryMiddleware`，错误直接交给运行时结束路径 | `test_agent_builder` |
 | 步上限 | `before_model` 计数 | `test_middleware` |
-| 上下文压缩 | Runtime 把已接纳历史原样交给 Deep Agents 的令牌感知摘要；不再按消息数二次截断或生成关键词摘要。P2 完成前，client 只保留 256 条 / 750000 字符的传输安全边界 | `test_runs_http` / `conversationHistory.test` |
+| 上下文压缩 | Runtime 把已接纳历史原样交给 Deep Agents 的令牌感知摘要；不再按消息数二次截断或生成关键词摘要。旧对话首次迁入 Runtime 时，client 只保留 256 条 / 750000 字符的传输安全边界 | `test_runs_http` / `conversationHistory.test` |
 | 工具结构可见性 | 完整工具集固定属于图定义；Runtime 只在模型请求副本中按当前目标、保留历史和既有工具调用确定性隐藏无关的 Office 工具结构，并在供应商边界覆盖所有子 Agent，不改变 checkpoint 或图指纹 | `test_tool_visibility` / `test_model_ledger` / `test_agent_builder` |
 | 供应商上下文硬限制 | 每次真实模型调用前按声明窗口扣除工具结构并裁剪请求副本；剩余空间不足最小合法请求时在预留调用账本和联系供应商之前明确失败 | `test_model_ledger` |
 | 输出、时间与费用边界 | 模型资料限制最大输出，所有供应商调用有硬超时；中转服务预留并按真实用量结算额度，BYOK 记录 token 并用调用次数、输出和时间限制资源 | `test_backend_llm` / `agent_stream_test` / provider tests |
@@ -349,6 +355,8 @@
 | Output guard | `@after_model` observe-only flag for empty/refusal finals | `test_middleware` |
 | 验证回环 | `@after_model + jump_to="model"`，`task.verify` 失败后最多按 `SHEJANE_LOCAL_VERIFY_REPAIR_MAX` 重做 | `test_middleware` / `test_agent_builder` |
 | 用户确认 retry workflow | `metadata.intent=retry` → `<state>` 重试上下文；普通恢复重试携带 source run/message、attempt 和失败分类，帮助模型避免盲目重复失败路径 | `test_runs_http` / `App.test` |
+| 编辑重跑 | 复用持久 `run.start`，以当前未替换的用户消息为前置条件；Runtime 原子隐藏旧投影并创建新 Run，旧记录不删除 | `test_run_result_commit` / `App.test` |
+| 检查点分叉 | 客户端持久保存 `run.fork`；Runtime 从公开检查点创建新产品对话和明确分支头，同编号重放返回原 Run | `test_runs_http` / `client.test` / `App.test` |
 | Billing recovery observer | quota 失败打开 checkout 时，client 按 `{conversation_id, assistant_message_id}` 给 checkout 创建请求加 in-flight guard，避免同一失败消息连续点击创建多个 Stripe session；打开后静默做有界 wallet polling，只有后端余额/套餐容量改善后才刷新显式 retry 提示，不自动创建替换 run | `App.test` |
 | Auth/session recovery observer | auth 类失败点击刷新会话但尚未连上时，client 保留失败 turn 的 recovery target；后续重新登录或 token 修复触发自动 session sync 成功后，只刷新显式 retry 提示，不自动创建替换 run | `App.test` |
 | 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |

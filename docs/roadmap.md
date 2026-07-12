@@ -70,7 +70,7 @@
 | 订单退款/取消 admin 动作 | 暂缓。当前 admin 订单保持只读，符合运维边界。 |
 | 细粒度 admin RBAC | 暂缓。当前单一 admin 角色足够早期运营。 |
 | 用户可配置生命周期 Hooks | 暂缓。中间件点位（before_agent / before_model / wrap_tool_call / after_model / after_agent）已存在，缺的只是暴露成用户配置；等高级用户/企业定制需求出现再做。 |
-| Fork/Rewind 完整时间旅行 UI | 暂缓。P2 先做「从任意步重试」的最小版；完整的分支对比/并行探索 UI 等 checkpoint fork 验证后再说。 |
+| 分支对比与并行探索 UI | 暂缓。检查点分叉已经可用；不提供会改写历史的可变回退。只有用户确实需要同时比较多个分支时再增加对比界面。 |
 
 ---
 
@@ -146,7 +146,7 @@
 
 | 任务 | 实现记录 |
 |---|---|
-| 旧历史截断机制（已删除） | `max_history_turns`、daemon 二次截断和关键词摘要已删除。Runtime 使用 Deep Agents 令牌感知摘要；P2 迁移完成前 client 仅保留请求大小安全边界。 |
+| 旧历史截断机制（已删除） | `max_history_turns`、daemon 二次截断和关键词摘要已删除。Runtime 使用 Deep Agents 令牌感知摘要；client 只在旧对话首次迁入 Runtime 时保留请求大小安全边界。 |
 | 长任务交接摘要首版 | `/local/v1/runs/{id}/diagnostics` 返回 `handoff`，从状态、事件类型、权限、artifact metadata 和最近失败派生交接摘要；诊断面板展示，不暴露 artifact 正文或 checkpoint messages。 |
 | 长任务进展账本首版 | 新增 `task.progress`，agent 可主动记录验收标准、关键决策、涉及文件、验证命令、未解决风险和下一步；最新 `progress_ledger` 作为 `feature_ledger` 出现在 diagnostics 和诊断面板。 |
 | 交接账本新鲜度检查 | `handoff.ledger_state` 标记 `not_required` / `fresh` / `missing` / `stale`；需要交接的完成、失败、取消或等待权限 run 中，缺失/陈旧账本进入 blockers 和 next actions；等待中的本地 run 也会在聊天进度行提示缺失/陈旧账本风险，权限审批仍在独立 approval bar。 |

@@ -289,6 +289,13 @@ class ListThreadChangesResponse(BaseModel):
     cursor: int
 
 
+def _has_invalid_capability_name(capabilities: list[str]) -> bool:
+    return any(
+        not item or len(item) > 64 or not all(char.isalnum() or char in "._-" for char in item)
+        for item in capabilities
+    )
+
+
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -341,13 +348,7 @@ class CreateRunRequest(BaseModel):
     def persistent_payload_fits(self) -> CreateRunRequest:
         if self.assistant_message_id == self.client_message_id:
             raise ValueError("assistant_message_id must differ from client_message_id")
-        if any(
-            not isinstance(item, str)
-            or not item
-            or len(item) > 64
-            or not all(char.isalnum() or char in "._-" for char in item)
-            for item in self.required_capabilities
-        ):
+        if _has_invalid_capability_name(self.required_capabilities):
             raise ValueError("required_capabilities contains an invalid capability name")
         for field_name, value in (("settings", self.settings), ("metadata", self.metadata)):
             nodes = 0
@@ -422,6 +423,8 @@ class ForkRunRequest(BaseModel):
         min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
     )
     thread_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+    protocol_version: int = Field(ge=1, le=65_535)
+    required_capabilities: list[str] = Field(max_length=32)
     checkpoint_id: str = Field(min_length=1, max_length=256)
     goal: str | None = Field(default=None, max_length=131_072)
     user_input: str = Field(max_length=131_072)
@@ -434,6 +437,8 @@ class ForkRunRequest(BaseModel):
     def validate_client_ids(self) -> ForkRunRequest:
         if self.client_message_id == self.assistant_message_id:
             raise ValueError("client_message_id and assistant_message_id must differ")
+        if _has_invalid_capability_name(self.required_capabilities):
+            raise ValueError("required_capabilities contains an invalid capability name")
         encoded = json.dumps(
             self.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")

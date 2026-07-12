@@ -416,6 +416,69 @@ describe('desktop local host client', () => {
     )
   })
 
+  it('redelivers a persisted checkpoint fork with its original source and checkpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-fork-replayed',
+          goal: 'Continue from checkpoint',
+          status: 'queued',
+          parent_run_id: 'run-source',
+          created_at: '2026-06-13T00:00:00Z',
+          updated_at: '2026-06-13T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'run.fork',
+          commandId: 'cmd-fork-restart',
+          createdAt: '2026-06-12T00:00:00.000Z',
+          input: {
+            sourceRunId: 'run-source',
+            protocolVersion: 1,
+            requiredCapabilities: ['agent.run', 'agent.stream', 'hitl'],
+            clientMessageId: 'msg-fork-user',
+            assistantMessageId: 'msg-fork-assistant',
+            threadId: 'thread-fork',
+            checkpointId: 'checkpoint-1',
+            goal: 'Continue from checkpoint',
+            userInput: 'Continue from checkpoint',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs/run-source/fork',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          command_id: 'cmd-fork-restart',
+          client_message_id: 'msg-fork-user',
+          assistant_message_id: 'msg-fork-assistant',
+          thread_id: 'thread-fork',
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl'],
+          checkpoint_id: 'checkpoint-1',
+          goal: 'Continue from checkpoint',
+          user_input: 'Continue from checkpoint',
+        }),
+      }),
+    )
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'run.fork', commandId: 'cmd-fork-restart' }),
+      expect.objectContaining({ id: 'run-fork-replayed', parent_run_id: 'run-source' }),
+    )
+  })
+
   it('redelivers a persisted cancel command through the shared command endpoint', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -935,9 +998,11 @@ describe('desktop local host client', () => {
 
     await expect(
       forkLocalRun(
-        'run-source',
+        'cmd-fork',
         {
-          commandId: 'cmd-fork',
+          sourceRunId: 'run-source',
+          protocolVersion: 1,
+          requiredCapabilities: ['agent.run', 'agent.stream', 'hitl'],
           clientMessageId: 'msg-user',
           assistantMessageId: 'msg-assistant',
           threadId: 'conv-fork',
@@ -961,6 +1026,8 @@ describe('desktop local host client', () => {
           client_message_id: 'msg-user',
           assistant_message_id: 'msg-assistant',
           thread_id: 'conv-fork',
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl'],
           checkpoint_id: 'ckpt-1',
           goal: 'Retry from checkpoint',
           user_input: 'Retry from checkpoint ckpt-1',
