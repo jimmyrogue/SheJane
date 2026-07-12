@@ -220,6 +220,12 @@ SheJane 的目标不是让云端代替本地执行所有工具。运维上按两
 - **当前 Agent 中间件**：实际装配顺序和用户可见事件以 [`docs/run-loop.md`](run-loop.md) 为准；目标保留、替换和删除决定见 [`docs/harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md) 的 P8-P11。
 - **Admin 可见性**：后台可以观察 run 摘要、工具错误、额度消耗和订单；`GET /api/v1/admin/agent-runs/{id}/trace` 会按单个 run 聚合 run 摘要、事件、LLM 调用、Tool Gateway 调用和该 run 相关钱包流水，仍不提供浏览用户本地私有文件、完整本地 prompt 或完整工具输出的入口。
 
+### 桌面 Runtime 连接
+
+桌面发行版默认启动并管理自带 Runtime。也可以在“设置 → 运行时”选择“外部本机 Runtime”，填写 loopback 地址和配对 Token。当前只接受 `http://localhost:<端口>`、`http://127.0.0.1:<端口>` 或 `http://[::1]:<端口>`，不接受远程地址、路径、查询参数或 URL 内嵌凭据。保存前会验证认证、协议版本和必需能力，成功后重启应用生效。
+
+外部 Runtime 的 Token 由 Electron `safeStorage` 加密后写入桌面用户数据目录，配置文件以 `0600` 模式创建；Linux 的 `basic_text` 后端不视为安全凭据存储，会拒绝保存。用户新输入的 Token 会从密码输入框经一次 IPC 交给 Main；提交后，Renderer 只能看到地址、连接状态和“Token 已配置”，不能读取已保存 Token，浏览器存储也不保存它。环境变量 `SHEJANE_LOCAL_HOST_URL` 与 `SHEJANE_LOCAL_HOST_TOKEN` 仍可覆盖设置，主要用于开发；使用环境变量时，桌面设置为只读。Electron 只关闭自己启动的 Runtime，不关闭外部 Runtime。连接失败时进入离线界面，不会转发到云端任务。
+
 ### 本地模型供应商
 
 桌面设置页的“模型供应商”用于配置 Runtime 直接连接的模型服务。当前第一批只支持 OpenAI 兼容接口；本机 Ollama 一类无需密钥的服务可以关闭“需要 API Key”。供应商配置保存在本地 SQLite，API Key 只写入操作系统凭据库，不会写入数据库、Run 快照、事件或 HTTP 响应。

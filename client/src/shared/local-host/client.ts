@@ -73,6 +73,7 @@ export interface DesktopBridge {
   localHost?: {
     baseURL?: string
     session?: 'desktop'
+    ready?: boolean
   }
   /** Open a file with the OS's default application. Returns "" on
    *  success or an error message string on failure (mirrors

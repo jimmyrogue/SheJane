@@ -950,11 +950,16 @@ function AppContent() {
   }, [api, t])
 
   useEffect(() => {
+    const desktop = window.shejaneDesktop
     const config = getDesktopLocalHostConfig()
     if (!config) {
       return
     }
     setLocalHostConfig(config)
+    if (desktop?.localHost?.ready === false) {
+      setLocalHost({ online: false })
+      return
+    }
     let disposed = false
     void probeLocalHost(config.baseURL).then((probe) => {
       if (!disposed) {
@@ -3873,7 +3878,7 @@ function localHostStatusLabel(
   t: Translator,
 ): string {
   if (!localHost?.online) {
-    return t('app.localStatus.cloudOnly')
+    return t('app.localStatus.runtimeOffline')
   }
   if (!hasLocalHostAuthorization(config)) {
     return t('app.localStatus.unpaired')

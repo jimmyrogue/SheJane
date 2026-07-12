@@ -25,7 +25,7 @@ import type { WalletBalance } from '@/shared/api/client'
 import type { AdvancedAgentSettings, AgentSettings, LocalHostConfig } from '@/shared/local-host/client'
 import { ModelProvidersSettings } from './ModelProvidersSettings'
 
-type SettingsSectionID = 'account' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+type SettingsSectionID = 'account' | 'runtime' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
 
 const SETTINGS_SECTION_TOP_OFFSET = 72
 
@@ -107,6 +107,123 @@ function displayInitial(email: string): string {
   return (email.trim().charAt(0) || 'S').toUpperCase()
 }
 
+type RuntimeConnectionSummary = Awaited<ReturnType<NonNullable<NonNullable<Window['shejaneDesktop']>['runtimeConnection']>['get']>>
+
+function RuntimeConnectionSettings() {
+  const { t } = useI18n()
+  const bridge = window.shejaneDesktop?.runtimeConnection
+  const [current, setCurrent] = useState<RuntimeConnectionSummary>()
+  const [mode, setMode] = useState<'bundled' | 'external-local'>('bundled')
+  const [baseURL, setBaseURL] = useState('http://127.0.0.1:17371')
+  const [token, setToken] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!bridge) return
+    let cancelled = false
+    void bridge.get().then((connection) => {
+      if (cancelled) return
+      setCurrent(connection)
+      setMode(connection.mode)
+      if (connection.baseURL) setBaseURL(connection.baseURL)
+    }).catch((caught) => {
+      if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [bridge])
+
+  const managedByEnvironment = current?.source === 'environment'
+
+  async function saveConnection() {
+    if (!bridge || managedByEnvironment) return
+    setSaving(true)
+    setError('')
+    try {
+      await bridge.set(mode === 'bundled'
+        ? { mode: 'bundled' }
+        : {
+            mode: 'external-local',
+            baseURL,
+            ...(token.trim() ? { token: token.trim() } : {}),
+          })
+      setToken('')
+      await bridge.restartApp()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+      setSaving(false)
+    }
+  }
+
+  if (!bridge) {
+    return <SettingRow label={t('settings.runtime.unavailable')} />
+  }
+
+  return (
+    <>
+      <SettingRow
+        label={current?.state === 'ready' ? t('settings.runtime.ready') : t('settings.runtime.offline')}
+        hint={managedByEnvironment ? t('settings.runtime.environment') : current?.error || error || undefined}
+      >
+        <span className="settings-row-value">{current?.mode === 'external-local' ? t('settings.runtime.externalLocal') : t('settings.runtime.bundled')}</span>
+      </SettingRow>
+      <SettingRow label={t('settings.runtime.mode')}>
+        <Select
+          value={mode}
+          disabled={managedByEnvironment || saving}
+          onValueChange={(value) => setMode(value as 'bundled' | 'external-local')}
+        >
+          <SelectTrigger className="settings-select-trigger" aria-label={t('settings.runtime.mode')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="bundled">{t('settings.runtime.bundled')}</SelectItem>
+            <SelectItem value="external-local">{t('settings.runtime.externalLocal')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </SettingRow>
+      {mode === 'external-local' ? (
+        <>
+          <SettingRow label={t('settings.runtime.url')} hint={t('settings.runtime.urlHint')}>
+            <Input
+              type="url"
+              className="settings-text-input"
+              aria-label={t('settings.runtime.url')}
+              disabled={managedByEnvironment || saving}
+              value={baseURL}
+              onChange={(event) => setBaseURL(event.target.value)}
+            />
+          </SettingRow>
+          <SettingRow label={t('settings.runtime.token')}>
+            <Input
+              type="password"
+              className="settings-text-input"
+              aria-label={t('settings.runtime.token')}
+              autoComplete="off"
+              disabled={managedByEnvironment || saving}
+              placeholder={current?.tokenConfigured ? t('settings.runtime.tokenSaved') : t('settings.runtime.tokenRequired')}
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+            />
+          </SettingRow>
+        </>
+      ) : null}
+      <SettingRow label={error || current?.error || t('settings.runtime.applyHint')}>
+        <button
+          type="button"
+          className="settings-primary-button"
+          disabled={managedByEnvironment || saving}
+          onClick={() => void saveConnection()}
+        >
+          {saving ? t('settings.runtime.saving') : t('settings.runtime.save')}
+        </button>
+      </SettingRow>
+    </>
+  )
+}
+
 export function SettingsView({
   isDesktop = true,
   userEmail,
@@ -157,7 +274,12 @@ export function SettingsView({
   const navItems = useMemo<Array<{ id: SettingsSectionID, label: string }>>(
     () => [
       ...(userEmail ? [{ id: 'account' as const, label: t('settings.group.account') }] : []),
-      ...(isDesktop ? [{ id: 'models' as const, label: t('settings.group.models') }] : []),
+      ...(isDesktop
+        ? [
+            { id: 'runtime' as const, label: t('settings.group.runtime') },
+            { id: 'models' as const, label: t('settings.group.models') },
+          ]
+        : []),
       { id: 'agent', label: t('settings.group.agent') },
       ...(isDesktop
         ? [
@@ -287,6 +409,16 @@ export function SettingsView({
                       ) : null}
                     </div>
                   </div>
+                </SettingsSection>
+              ) : null}
+
+              {isDesktop ? (
+                <SettingsSection
+                  id="runtime"
+                  title={t('settings.group.runtime')}
+                  note={t('settings.runtime.note')}
+                >
+                  <RuntimeConnectionSettings />
                 </SettingsSection>
               ) : null}
 

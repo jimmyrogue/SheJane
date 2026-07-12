@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
       argValue('--shejane-local-host-session=') === 'desktop'
         ? 'desktop'
         : undefined,
+    ready: argValue('--shejane-local-host-ready=') === 'true',
+  },
+  runtimeConnection: {
+    get: () => ipcRenderer.invoke('shejane:runtime-connection-get'),
+    set: (input) => ipcRenderer.invoke('shejane:runtime-connection-set', input),
+    restartApp: () => ipcRenderer.invoke('shejane:restart-app'),
   },
   auth: {
     register: (input) => invokeAuth('shejane:auth-register', input),

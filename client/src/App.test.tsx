@@ -388,6 +388,29 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
   })
 
+  it('opens the desktop offline without probing a Runtime that failed Main initialization', async () => {
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: {
+        baseURL: 'http://127.0.0.1:17371',
+        session: 'desktop',
+        ready: false,
+      },
+    }
+
+    render(<App />)
+
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
+    expect(screen.getByText('Runtime 未连接，当前无法执行任务。请前往设置修复连接。')).toBeInTheDocument()
+    expect(screen.getByLabelText('Runtime 离线')).toBeInTheDocument()
+    expect(calls.some((call) => call.url.endsWith('/local/v1/health'))).toBe(false)
+    typeComposer('离线任务')
+    fireEvent.click(screen.getByText('发送'))
+    expect(calls.some((call) => call.url.endsWith('/local/v1/runs'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
+  })
+
   it('redelivers an unacknowledged Runtime command after the desktop restarts', async () => {
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     await localData.saveWithPendingRuntimeCommand(

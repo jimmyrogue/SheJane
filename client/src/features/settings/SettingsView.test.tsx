@@ -42,12 +42,47 @@ function renderSettings(props: Partial<React.ComponentProps<typeof SettingsView>
 }
 
 describe('SettingsView', () => {
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    window.shejaneDesktop = undefined
+  })
 
   it('shows the page title and the account email', () => {
     renderSettings()
     expect(screen.getByText('设置')).toBeInTheDocument()
     expect(screen.getByText('test@example.com')).toBeInTheDocument()
+  })
+
+  it('saves an authenticated external local Runtime and restarts', async () => {
+    const set = vi.fn(async () => undefined)
+    const restartApp = vi.fn(async () => undefined)
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      runtimeConnection: {
+        get: vi.fn(async () => ({
+          mode: 'external-local' as const,
+          source: 'saved' as const,
+          state: 'offline' as const,
+          baseURL: 'http://127.0.0.1:17371',
+          tokenConfigured: true,
+        })),
+        set,
+        restartApp,
+      },
+    }
+    renderSettings()
+
+    const url = await screen.findByRole('textbox', { name: 'Runtime 地址' })
+    fireEvent.change(url, { target: { value: 'http://127.0.0.1:17372' } })
+    fireEvent.change(screen.getByLabelText('配对 Token'), { target: { value: 'new-token' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存并重启' }))
+
+    await waitFor(() => expect(set).toHaveBeenCalledWith({
+      mode: 'external-local',
+      baseURL: 'http://127.0.0.1:17372',
+      token: 'new-token',
+    }))
+    expect(restartApp).toHaveBeenCalledOnce()
   })
 
   it('shows the total available credits in the account card', () => {

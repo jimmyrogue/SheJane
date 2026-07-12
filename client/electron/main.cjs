@@ -6,6 +6,7 @@ const {
   Menu,
   nativeImage,
   Notification,
+  safeStorage,
   session,
   shell,
   Tray,
@@ -25,6 +26,13 @@ const {
   waitForRuntimeProcessClose,
 } = require('./local-runtime-process.cjs')
 const { appNameForLocale, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
+const {
+  createRuntimeConnectionUpdateGate,
+  normalizeExternalRuntimeURL,
+  normalizeRuntimeToken,
+  readRuntimeConnection,
+  writeRuntimeConnection,
+} = require('./runtime-connection-store.cjs')
 const {
   configureApplicationMenuForPlatform,
   suppressWindowMenuForPlatform,
@@ -94,13 +102,17 @@ let daemonURL = null
 let daemonToken = null
 let daemonReady = false
 let daemonStopPromise = null
+let desktopInitializationComplete = false
 let runtimeSessionReady = false
+let runtimeTarget = { mode: 'bundled', source: 'default' }
+let runtimeConnectionError = null
+const runtimeConnectionUpdateGate = createRuntimeConnectionUpdateGate()
 let pendingDeepLinkURL = null
 const appWindowButtonPosition = { x: 29, y: 27 }
 const authWindowButtonPosition = { x: 29, y: 20 }
 
 function createWindow() {
-  if (!runtimeSessionReady) {
+  if (!desktopInitializationComplete) {
     return
   }
   const windowOptions = {
@@ -174,7 +186,7 @@ function createWindow() {
 }
 
 function showOrCreateMainWindow() {
-  if (!runtimeSessionReady) {
+  if (!desktopInitializationComplete) {
     return
   }
   if (mainWindow) {
@@ -328,13 +340,53 @@ function daemonEnv(extra) {
   return { ...env, ...extra }
 }
 
+function runtimeConnectionFile() {
+  return path.join(app.getPath('userData'), 'runtime-connection.json')
+}
+
+function hasRuntimeEnvironmentOverride() {
+  return Boolean(process.env.SHEJANE_LOCAL_HOST_URL || process.env.SHEJANE_LOCAL_HOST_TOKEN)
+}
+
+function loadRuntimeTarget() {
+  if (hasRuntimeEnvironmentOverride()) {
+    return {
+      mode: 'external-local',
+      source: 'environment',
+      baseURL: normalizeExternalRuntimeURL(
+        process.env.SHEJANE_LOCAL_HOST_URL || 'http://127.0.0.1:17371',
+      ),
+      token: normalizeRuntimeToken(process.env.SHEJANE_LOCAL_HOST_TOKEN),
+    }
+  }
+  const saved = readRuntimeConnection(runtimeConnectionFile(), safeStorage)
+  return saved.mode === 'external-local'
+    ? { ...saved, source: 'saved' }
+    : { mode: 'bundled', source: 'default' }
+}
+
+function publicRuntimeConnection() {
+  return {
+    mode: runtimeTarget.mode,
+    source: runtimeTarget.source,
+    state: runtimeSessionReady ? 'ready' : 'offline',
+    ...(runtimeTarget.mode === 'external-local'
+      ? {
+          baseURL: runtimeTarget.baseURL,
+          tokenConfigured: Boolean(runtimeTarget.token),
+        }
+      : {}),
+    ...(runtimeConnectionError ? { error: runtimeConnectionError } : {}),
+  }
+}
+
 function localRuntimeConnection() {
   return {
     baseURL:
       daemonURL ||
-      process.env.SHEJANE_LOCAL_HOST_URL ||
+      (runtimeTarget.mode === 'external-local' ? runtimeTarget.baseURL : null) ||
       'http://127.0.0.1:17371',
-    token: daemonToken || process.env.SHEJANE_LOCAL_HOST_TOKEN || '',
+    token: daemonToken || (runtimeTarget.mode === 'external-local' ? runtimeTarget.token : '') || '',
   }
 }
 
@@ -345,6 +397,7 @@ function localHostArgs() {
   return [
     `--shejane-local-host-url=${connection.baseURL}`,
     ...(connection.token ? ['--shejane-local-host-session=desktop'] : []),
+    `--shejane-local-host-ready=${runtimeSessionReady ? 'true' : 'false'}`,
   ]
 }
 
@@ -494,6 +547,61 @@ function registerAuthHandlers() {
   ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout(), currentLocale))
 }
 
+function registerRuntimeConnectionHandlers() {
+  ipcMain.handle('shejane:runtime-connection-get', () => publicRuntimeConnection())
+  ipcMain.handle('shejane:runtime-connection-set', async (_event, input) => {
+    if (runtimeTarget.source === 'environment') {
+      throw new Error('Runtime connection is managed by environment variables')
+    }
+    const update = runtimeConnectionUpdateGate.begin()
+    if (input?.mode === 'bundled') {
+      update.assertCurrent()
+      writeRuntimeConnection(runtimeConnectionFile(), safeStorage, { mode: 'bundled' })
+      runtimeTarget = { mode: 'bundled', source: 'default' }
+      runtimeConnectionError = null
+      return publicRuntimeConnection()
+    }
+    if (input?.mode !== 'external-local') {
+      throw new Error('Runtime connection mode is invalid')
+    }
+
+    const baseURL = normalizeExternalRuntimeURL(input.baseURL)
+    const suppliedToken = typeof input.token === 'string' && input.token.trim()
+      ? normalizeRuntimeToken(input.token)
+      : ''
+    const token = suppliedToken || (
+      runtimeTarget.mode === 'external-local' &&
+      runtimeTarget.source === 'saved' &&
+      runtimeTarget.baseURL === baseURL
+        ? runtimeTarget.token
+        : ''
+    )
+    if (!token) {
+      throw new Error('Runtime token is required')
+    }
+    const ready = await waitForRuntimeReady({
+      baseURL,
+      token: normalizeRuntimeToken(token),
+      timeoutMs: 5000,
+      signal: update.signal,
+    })
+    update.assertCurrent()
+    if (!ready) {
+      throw new Error('Runtime did not pass the authenticated protocol handshake')
+    }
+
+    const nextTarget = { mode: 'external-local', source: 'saved', baseURL, token }
+    writeRuntimeConnection(runtimeConnectionFile(), safeStorage, nextTarget)
+    runtimeTarget = nextTarget
+    runtimeConnectionError = null
+    return publicRuntimeConnection()
+  })
+  ipcMain.handle('shejane:restart-app', () => {
+    app.relaunch()
+    app.quit()
+  })
+}
+
 function setMainWindowButtonPosition(position) {
   if (process.platform !== 'darwin' || !mainWindow || typeof mainWindow.setWindowButtonPosition !== 'function') {
     return false
@@ -514,15 +622,36 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
   }
+  registerAuthHandlers()
+  registerRuntimeConnectionHandlers()
   try {
-    registerAuthHandlers()
-    // Packaged builds carry the frozen Runtime and start it themselves. Dev may
-    // point at a separately managed Runtime through the SHEJANE_LOCAL_HOST_*
-    // variables, but both paths must pass the same protocol handshake before
-    // the renderer is created.
-    const ownedProcess = app.isPackaged ? await startBundledRuntime() : null
+    runtimeTarget = loadRuntimeTarget()
+  } catch (error) {
+    if (hasRuntimeEnvironmentOverride()) {
+      runtimeTarget = {
+        mode: 'external-local',
+        source: 'environment',
+        baseURL: 'http://127.0.0.1:17371',
+        token: '',
+      }
+    }
+    runtimeConnectionError = error instanceof Error ? error.message : String(error)
+  }
+
+  try {
+    if (runtimeConnectionError) {
+      throw new Error(runtimeConnectionError)
+    }
+    // Packaged builds start the bundled Runtime only when the user has not
+    // selected an external local Runtime. Both ownership modes use the same
+    // authenticated protocol handshake.
+    const ownsRuntime = app.isPackaged && runtimeTarget.mode === 'bundled'
+    const ownedProcess = ownsRuntime ? await startBundledRuntime() : null
     const runtimeConnection = localRuntimeConnection()
-    const runtimeAvailable = app.isPackaged
+    if (runtimeConnection.token) {
+      installLocalRuntimeAuthorization(session.defaultSession.webRequest, runtimeConnection)
+    }
+    const runtimeAvailable = ownsRuntime
       ? Boolean(ownedProcess)
       : Boolean(runtimeConnection.token) && await waitForRuntimeConnection(runtimeConnection, null)
     if (
@@ -533,7 +662,7 @@ app.whenReady().then(async () => {
     }
     daemonReady = Boolean(ownedProcess)
     runtimeSessionReady = true
-    installLocalRuntimeAuthorization(session.defaultSession.webRequest, runtimeConnection)
+    runtimeConnectionError = null
     if (daemonProcess) {
       writeDesktopSmokeConfig({
         baseURL: runtimeConnection.baseURL,
@@ -542,8 +671,6 @@ app.whenReady().then(async () => {
         daemonPid: daemonProcess.pid || 0,
       })
     }
-    createWindow()
-    createTray()
   } catch (error) {
     let shutdownError = null
     try {
@@ -553,14 +680,20 @@ app.whenReady().then(async () => {
       console.error('[daemon] shutdown after failed startup failed:', caughtShutdownError)
     }
     const startupMessage = error instanceof Error ? error.message : String(error)
-    const message = shutdownError
+    runtimeConnectionError = shutdownError
       ? `${startupMessage}\n${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}`
       : startupMessage
-    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startFailed', { message }))
-    if (!daemonProcess) {
-      app.quit()
-    }
-    return
+    runtimeSessionReady = false
+  } finally {
+    desktopInitializationComplete = true
+    createWindow()
+    createTray()
+  }
+  if (runtimeConnectionError) {
+    dialog.showErrorBox(
+      currentAppName(),
+      desktopText(currentLocale, 'daemon.startFailed', { message: runtimeConnectionError }),
+    )
   }
   // Auto-update (packaged only). Downloads in the background and installs on
   // quit. Works on Windows unsigned; on macOS it no-ops until the app is signed

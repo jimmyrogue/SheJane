@@ -6,6 +6,22 @@ interface Window {
     localHost?: {
       baseURL?: string
       session?: 'desktop'
+      ready?: boolean
+    }
+    runtimeConnection?: {
+      get(): Promise<{
+        mode: 'bundled' | 'external-local'
+        source: 'default' | 'saved' | 'environment'
+        state: 'ready' | 'offline'
+        baseURL?: string
+        tokenConfigured?: boolean
+        error?: string
+      }>
+      set(input:
+        | { mode: 'bundled' }
+        | { mode: 'external-local', baseURL: string, token?: string }
+      ): Promise<unknown>
+      restartApp(): Promise<void>
     }
     auth?: {
       register(input: { email: string; password: string; name: string }): Promise<import('./shared/api/client').AuthPayload>
