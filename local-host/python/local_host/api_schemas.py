@@ -457,7 +457,7 @@ PlanApprovalDecision = Literal["approve", "modify", "reject"]
 
 class ResolvePlanApprovalRequest(BaseModel):
     decision: PlanApprovalDecision
-    instructions: str | None = None
+    instructions: str | None = Field(default=None, max_length=8192)
 
 
 class PlanApprovalResolution(BaseModel):
@@ -868,6 +868,38 @@ class ResolvePermissionCommandReceipt(BaseModel):
     resolved: Literal[True] = True
     decision: PermissionDecision
     scope: PermissionScope
+    resumed: bool
+
+
+class PlanResolveCommand(ResolvePlanApprovalRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plan.resolve"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    approval_id: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_instructions(self) -> PlanResolveCommand:
+        instructions = (self.instructions or "").strip()
+        if self.decision == "modify" and not instructions:
+            raise ValueError("instructions are required when decision is modify")
+        if self.decision != "modify" and instructions:
+            raise ValueError("instructions are only valid when decision is modify")
+        return self
+
+
+class PlanResolveCommandReceipt(BaseModel):
+    type: Literal["plan.resolve"]
+    command_id: str
+    approval_id: str
+    run_id: str
+    resolved: Literal[True] = True
+    decision: PlanApprovalDecision
+    instructions: str | None = None
     resumed: bool
 
 

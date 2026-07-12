@@ -411,6 +411,8 @@ CREATE TABLE IF NOT EXISTS local_plan_approvals (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
     tool_call_id TEXT NOT NULL,
+    wait_cycle_id TEXT,
+    interrupt_id TEXT,
     todos_json TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | modified | rejected | canceled
@@ -554,6 +556,14 @@ def _encode_payload(payload: dict[str, Any]) -> str:
         separators=(",", ":"),
         default=str,
     )
+
+
+def _json_payload(raw: Any) -> dict[str, Any]:
+    try:
+        value = json.loads(str(raw or "{}"))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _decode_plan_approval_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -750,6 +760,77 @@ class LocalStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_local_questions_interrupt "
             "ON local_questions(run_id, interrupt_id) WHERE interrupt_id IS NOT NULL"
         )
+        cursor = await conn.execute("PRAGMA table_info(local_plan_approvals)")
+        plan_columns = {row[1] for row in await cursor.fetchall()}
+        for column in ("wait_cycle_id", "interrupt_id"):
+            if column not in plan_columns:
+                await conn.execute(f"ALTER TABLE local_plan_approvals ADD COLUMN {column} TEXT")
+        await LocalStore._backfill_plan_approval_wait_identity(conn)
+
+    @staticmethod
+    async def _backfill_plan_approval_wait_identity(conn: aiosqlite.Connection) -> None:
+        plans = await (
+            await conn.execute(
+                "SELECT id, run_id, tool_call_id FROM local_plan_approvals "
+                "WHERE wait_cycle_id IS NULL OR interrupt_id IS NULL"
+            )
+        ).fetchall()
+        for plan in plans:
+            approval_events = await (
+                await conn.execute(
+                    "SELECT seq, payload_json FROM local_events WHERE run_id = ? "
+                    "AND event_type = 'plan.approval_required' ORDER BY seq",
+                    (plan[1],),
+                )
+            ).fetchall()
+            approval_seq = next(
+                (
+                    int(event[0])
+                    for event in approval_events
+                    if _json_payload(event[1]).get("request_id") == plan[0]
+                ),
+                None,
+            )
+            if approval_seq is None:
+                continue
+            waiting_events = await (
+                await conn.execute(
+                    "SELECT payload_json FROM local_events WHERE run_id = ? AND seq > ? "
+                    "AND event_type = 'run.waiting' ORDER BY seq",
+                    (plan[1], approval_seq),
+                )
+            ).fetchall()
+            identity: tuple[str, str] | None = None
+            for event in waiting_events:
+                payload = _json_payload(event[0])
+                wait_cycle_id = str(payload.get("wait_cycle_id") or "")
+                interrupts = payload.get("interrupts")
+                if not wait_cycle_id or not isinstance(interrupts, list):
+                    continue
+                candidates = [
+                    interrupt
+                    for interrupt in interrupts
+                    if isinstance(interrupt, dict)
+                    and isinstance(interrupt.get("value"), dict)
+                    and interrupt["value"].get("kind") == "plan_approval"
+                ]
+                matching = [
+                    interrupt
+                    for interrupt in candidates
+                    if interrupt["value"].get("tool_call_id") == plan[2]
+                    or interrupt.get("id") == plan[2]
+                ]
+                candidate = matching[0] if len(matching) == 1 else None
+                interrupt_id = str(candidate.get("id") or "") if candidate else ""
+                if interrupt_id:
+                    identity = (wait_cycle_id, interrupt_id)
+                    break
+            if identity is not None:
+                await conn.execute(
+                    "UPDATE local_plan_approvals SET wait_cycle_id = ?, interrupt_id = ? "
+                    "WHERE id = ?",
+                    (*identity, plan[0]),
+                )
 
     @staticmethod
     async def _ensure_tool_receipt_version_column(conn: aiosqlite.Connection) -> None:
@@ -825,6 +906,51 @@ class LocalStore:
             "CASE WHEN status = 'pending' THEN 'pending' ELSE 'resolved' END, "
             "questions_json, answers_json, created_at, answered_at FROM local_questions"
         )
+        await conn.execute(
+            "INSERT OR IGNORE INTO local_wait_candidates "
+            "(id, run_id, kind, wait_cycle_id, interrupt_id, position, status, "
+            "payload_json, decision_json, created_at, resolved_at) "
+            "SELECT id, run_id, 'plan', wait_cycle_id, interrupt_id, 0, 'pending', "
+            "todos_json, NULL, created_at, NULL FROM local_plan_approvals "
+            "WHERE status = 'pending' AND wait_cycle_id IS NOT NULL "
+            "AND interrupt_id IS NOT NULL"
+        )
+        resolved_plans = await (
+            await conn.execute(
+                "SELECT id, run_id, wait_cycle_id, interrupt_id, todos_json, status, "
+                "instructions, created_at, resolved_at FROM local_plan_approvals "
+                "WHERE status IN ('approved', 'modified', 'rejected') "
+                "AND wait_cycle_id IS NOT NULL AND interrupt_id IS NOT NULL"
+            )
+        ).fetchall()
+        for plan in resolved_plans:
+            decision = {
+                "approved": "approve",
+                "modified": "modify",
+                "rejected": "reject",
+            }[str(plan[5])]
+            await conn.execute(
+                "INSERT OR IGNORE INTO local_wait_candidates "
+                "(id, run_id, kind, wait_cycle_id, interrupt_id, position, status, "
+                "payload_json, decision_json, created_at, resolved_at) "
+                "VALUES (?, ?, 'plan', ?, ?, 0, 'resolved', ?, ?, ?, ?)",
+                (
+                    plan[0],
+                    plan[1],
+                    plan[2],
+                    plan[3],
+                    plan[4],
+                    _encode_payload(
+                        {
+                            "approval_id": plan[0],
+                            "decision": decision,
+                            "instructions": plan[6],
+                        }
+                    ),
+                    plan[7],
+                    plan[8],
+                ),
+            )
 
     @staticmethod
     async def _ensure_principal_scoped_workspaces(conn: aiosqlite.Connection) -> None:
@@ -2977,7 +3103,7 @@ class LocalStore:
                     raise WorkspaceAdmissionError(workspace_error)
 
                 if record["question_status"] == "pending":
-                    if record["run_status"] != "waiting_input":
+                    if record["run_status"] not in {"waiting_permission", "waiting_input"}:
                         raise WaitDecisionConflictError("run is not awaiting a question answer")
                     now = _now()
                     question_cursor = await conn.execute(
@@ -3153,7 +3279,7 @@ class LocalStore:
                     raise WaitDecisionConflictError("tool name cannot be changed")
 
                 if record["permission_status"] == "pending":
-                    if record["run_status"] != "waiting_permission":
+                    if record["run_status"] not in {"waiting_permission", "waiting_input"}:
                         raise WaitDecisionConflictError("run is not awaiting a permission decision")
                     now = _now()
                     permission_cursor = await conn.execute(
@@ -3252,6 +3378,177 @@ class LocalStore:
                     "(principal_id, id, command_type, client_message_id, payload_json, "
                     "response_json, run_id, created_at) "
                     "VALUES (?, ?, 'permission.resolve', '', ?, ?, ?, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        payload_json,
+                        _encode_payload(receipt),
+                        run_id,
+                        _now(),
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def request_plan_resolve_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        approval_id: str,
+        decision: str,
+        instructions: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {
+            "type": "plan.resolve",
+            "approval_id": approval_id,
+            "decision": decision,
+        }
+        if instructions is not None:
+            command_payload["instructions"] = instructions
+        payload_json = _encode_payload(command_payload)
+        status = {
+            "approve": "approved",
+            "modify": "modified",
+            "reject": "rejected",
+        }[decision]
+        resume_decision = {
+            "approval_id": approval_id,
+            "decision": decision,
+            "instructions": instructions,
+        }
+        decision_json = _encode_payload(resume_decision)
+
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plan.resolve",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+
+                record = await (
+                    await conn.execute(
+                        "SELECT p.run_id, p.wait_cycle_id, p.status AS approval_status, "
+                        "p.instructions AS approval_instructions, "
+                        "r.status AS run_status, r.principal_id, r.goal, r.user_input, r.workspace_path, "
+                        "r.mode, r.history_json, r.settings_json, r.metadata_json "
+                        "FROM local_plan_approvals p JOIN local_runs r ON r.id = p.run_id "
+                        "WHERE p.id = ? AND r.principal_id = ?",
+                        (approval_id, principal_id),
+                    )
+                ).fetchone()
+                if record is None:
+                    raise KeyError(f"unknown plan approval: {approval_id}")
+                run_id = str(record["run_id"])
+                workspace_error = await self._workspace_owner_error(
+                    conn,
+                    principal_id=principal_id,
+                    path=record["workspace_path"],
+                ) or await self._workspace_path_error(record["workspace_path"])
+                if workspace_error is not None:
+                    raise WorkspaceAdmissionError(workspace_error)
+
+                if record["approval_status"] == "pending":
+                    if record["run_status"] not in {"waiting_permission", "waiting_input"}:
+                        raise WaitDecisionConflictError(
+                            "run is not awaiting a plan approval decision"
+                        )
+                    now = _now()
+                    approval_cursor = await conn.execute(
+                        "UPDATE local_plan_approvals SET status = ?, instructions = ?, "
+                        "resolved_at = ? WHERE id = ? AND status = 'pending'",
+                        (status, instructions, now, approval_id),
+                    )
+                    wait_cursor = await conn.execute(
+                        "UPDATE local_wait_candidates SET status = 'resolved', "
+                        "decision_json = ?, resolved_at = ? "
+                        "WHERE id = ? AND status = 'pending'",
+                        (decision_json, now, approval_id),
+                    )
+                    if approval_cursor.rowcount != 1 or wait_cursor.rowcount != 1:
+                        raise WaitDecisionConflictError("plan approval was resolved concurrently")
+                    await self._append_event_uncommitted(
+                        conn,
+                        run_id,
+                        "plan.approval_resolved",
+                        payload_json=_encode_payload(
+                            {
+                                "request_id": approval_id,
+                                "decision": decision,
+                                "instructions": instructions,
+                            }
+                        ),
+                        created_at=now,
+                    )
+                elif (
+                    record["approval_status"] != status
+                    or record["approval_instructions"] != instructions
+                ):
+                    raise WaitDecisionConflictError(
+                        "plan approval was already resolved with a different decision"
+                    )
+
+                resume_payload = await self._wait_cycle_resume_payload_uncommitted(
+                    conn,
+                    run_id=run_id,
+                    wait_cycle_id=str(record["wait_cycle_id"]),
+                )
+                resumed = record["run_status"] in {
+                    "queued",
+                    "running",
+                    "completed",
+                    "failed",
+                }
+                if (
+                    record["run_status"] in {"waiting_permission", "waiting_input"}
+                    and resume_payload is not None
+                ):
+                    active_job = await (
+                        await conn.execute(
+                            "SELECT * FROM local_run_jobs WHERE run_id = ? "
+                            "AND status IN ('pending', 'leased')",
+                            (run_id,),
+                        )
+                    ).fetchone()
+                    if active_job is None:
+                        job = self._new_run_job_record(
+                            run_id=run_id,
+                            kind="resume",
+                            input_payload=self._run_job_input(dict(record)),
+                            resume_payload=resume_payload,
+                        )
+                        await self._insert_run_job(conn, job)
+                    elif active_job["kind"] != "resume":
+                        raise WaitDecisionConflictError("run already has a different active job")
+                    resumed = True
+
+                receipt = {
+                    "type": "plan.resolve",
+                    "command_id": command_id,
+                    "approval_id": approval_id,
+                    "run_id": run_id,
+                    "resolved": True,
+                    "decision": decision,
+                    "instructions": instructions,
+                    "resumed": resumed,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'plan.resolve', '', ?, ?, ?, ?)",
                     (
                         principal_id,
                         command_id,
@@ -4339,11 +4636,15 @@ class LocalStore:
         tool_call_id: str,
         todos: list[dict[str, Any]],
         summary: str = "",
+        wait_cycle_id: str | None = None,
+        interrupt_id: str | None = None,
     ) -> dict[str, Any]:
         record = {
             "id": _new_id("plan"),
             "run_id": run_id,
             "tool_call_id": tool_call_id,
+            "wait_cycle_id": wait_cycle_id,
+            "interrupt_id": interrupt_id,
             "todos_json": json.dumps(todos, ensure_ascii=False, default=str),
             "summary": summary,
             "status": "pending",
@@ -4351,13 +4652,31 @@ class LocalStore:
             "created_at": _now(),
             "resolved_at": None,
         }
+        record["wait_cycle_id"] = record["wait_cycle_id"] or record["id"]
+        record["interrupt_id"] = record["interrupt_id"] or record["id"]
         try:
             async with self.run_write_transaction(run_id) as conn:
                 await conn.execute(
                     "INSERT INTO local_plan_approvals "
-                    "(id, run_id, tool_call_id, todos_json, summary, status, instructions, created_at, resolved_at) "
-                    "VALUES (:id, :run_id, :tool_call_id, :todos_json, :summary, :status, :instructions, :created_at, :resolved_at)",
+                    "(id, run_id, tool_call_id, wait_cycle_id, interrupt_id, todos_json, "
+                    "summary, status, instructions, created_at, resolved_at) "
+                    "VALUES (:id, :run_id, :tool_call_id, :wait_cycle_id, :interrupt_id, "
+                    ":todos_json, :summary, :status, :instructions, :created_at, :resolved_at)",
                     record,
+                )
+                await conn.execute(
+                    "INSERT INTO local_wait_candidates "
+                    "(id, run_id, kind, wait_cycle_id, interrupt_id, position, status, "
+                    "payload_json, decision_json, created_at, resolved_at) "
+                    "VALUES (?, ?, 'plan', ?, ?, 0, 'pending', ?, NULL, ?, NULL)",
+                    (
+                        record["id"],
+                        run_id,
+                        record["wait_cycle_id"],
+                        record["interrupt_id"],
+                        record["todos_json"],
+                        record["created_at"],
+                    ),
                 )
         except aiosqlite.IntegrityError:
             existing = await self.get_plan_approval_by_tool_call(
@@ -4365,6 +4684,36 @@ class LocalStore:
                 tool_call_id=tool_call_id,
             )
             assert existing is not None
+            if (
+                wait_cycle_id
+                and interrupt_id
+                and (not existing.get("wait_cycle_id") or not existing.get("interrupt_id"))
+            ):
+                async with self.run_write_transaction(run_id) as conn:
+                    await conn.execute(
+                        "UPDATE local_plan_approvals SET wait_cycle_id = ?, interrupt_id = ? "
+                        "WHERE id = ?",
+                        (wait_cycle_id, interrupt_id, existing["id"]),
+                    )
+                    await conn.execute(
+                        "INSERT OR IGNORE INTO local_wait_candidates "
+                        "(id, run_id, kind, wait_cycle_id, interrupt_id, position, status, "
+                        "payload_json, decision_json, created_at, resolved_at) "
+                        "VALUES (?, ?, 'plan', ?, ?, 0, 'pending', ?, NULL, ?, NULL)",
+                        (
+                            existing["id"],
+                            run_id,
+                            wait_cycle_id,
+                            interrupt_id,
+                            existing["todos_json"],
+                            existing["created_at"],
+                        ),
+                    )
+                existing = {
+                    **existing,
+                    "wait_cycle_id": wait_cycle_id,
+                    "interrupt_id": interrupt_id,
+                }
             return existing
         return _decode_plan_approval_record(record)
 
@@ -4388,20 +4737,6 @@ class LocalStore:
         )
         row = await cursor.fetchone()
         return _decode_plan_approval_record(dict(row)) if row else None
-
-    async def resolve_plan_approval(
-        self,
-        approval_id: str,
-        *,
-        status: str,
-        instructions: str | None = None,
-    ) -> dict[str, Any] | None:
-        await self._conn.execute(
-            "UPDATE local_plan_approvals SET status = ?, instructions = ?, resolved_at = ? WHERE id = ?",
-            (status, instructions, _now(), approval_id),
-        )
-        await self._conn.commit()
-        return await self.get_plan_approval(approval_id)
 
     # --- permissions (HumanInTheLoop pause record) ---
 
@@ -4717,6 +5052,8 @@ class LocalStore:
             elif kinds == {"question"} and len(candidates) == 1:
                 resume[interrupt_id] = json.loads(str(candidates[0].get("decision_json") or "{}"))
             elif kinds == {"tool_reconciliation"} and len(candidates) == 1:
+                resume[interrupt_id] = json.loads(str(candidates[0].get("decision_json") or "{}"))
+            elif kinds == {"plan"} and len(candidates) == 1:
                 resume[interrupt_id] = json.loads(str(candidates[0].get("decision_json") or "{}"))
             else:
                 raise WaitDecisionConflictError(

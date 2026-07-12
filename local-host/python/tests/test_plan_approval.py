@@ -16,7 +16,7 @@ class _Interrupt:
         self.value = value
 
 
-async def test_plan_approval_store_get_or_create_and_resolve(tmp_path) -> None:
+async def test_plan_approval_store_get_or_create(tmp_path) -> None:
     store = await LocalStore.open(tmp_path / "local.db")
     try:
         run = await store.create_run(
@@ -46,16 +46,6 @@ async def test_plan_approval_store_get_or_create_and_resolve(tmp_path) -> None:
         assert second["todos"] == todos
         assert second["status"] == "pending"
 
-        resolved = await store.resolve_plan_approval(
-            first["id"],
-            status="modified",
-            instructions="Split the API and UI work.",
-        )
-
-        assert resolved is not None
-        assert resolved["status"] == "modified"
-        assert resolved["instructions"] == "Split the API and UI work."
-        assert resolved["resolved_at"]
     finally:
         await store.close()
 

@@ -74,6 +74,8 @@ from .api_schemas import (
     McpServerWriteResponse,
     PermissionResolution,
     PlanApprovalResolution,
+    PlanResolveCommand,
+    PlanResolveCommandReceipt,
     QuestionAnswer,
     ReconcileToolRequest,
     ResolvePermissionCommand,
@@ -1073,15 +1075,71 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post(
         "/local/v1/commands",
         response_model=(
-            CancelRunCommandReceipt | AnswerQuestionCommandReceipt | ResolvePermissionCommandReceipt
+            CancelRunCommandReceipt
+            | AnswerQuestionCommandReceipt
+            | ResolvePermissionCommandReceipt
+            | PlanResolveCommandReceipt
         ),
     )
     async def accept_command(
         request: Request,
-        body: CancelRunCommand | AnswerQuestionCommand | ResolvePermissionCommand,
+        body: (
+            CancelRunCommand | AnswerQuestionCommand | ResolvePermissionCommand | PlanResolveCommand
+        ),
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
         coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, PlanResolveCommand):
+            instructions = (body.instructions or "").strip() or None
+            command_payload: dict[str, Any] = {
+                "type": body.type,
+                "approval_id": body.approval_id,
+                "decision": body.decision,
+            }
+            if instructions is not None:
+                command_payload["instructions"] = instructions
+            try:
+                replay = await store.accepted_command_receipt(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    command_type=body.type,
+                    payload=command_payload,
+                )
+                if replay is not None:
+                    if replay.get("resumed"):
+                        coordinator.wake_jobs()
+                    return replay
+                approval = await store.get_plan_approval(body.approval_id)
+                if approval is None:
+                    raise KeyError(body.approval_id)
+                run = await _owned_run(
+                    store,
+                    principal_id=request.state.principal_id,
+                    run_id=str(approval["run_id"]),
+                    not_found_detail="plan approval not found",
+                )
+                await _authorized_workspace_path(
+                    store,
+                    principal_id=request.state.principal_id,
+                    path=run.get("workspace_path"),
+                )
+                await coordinator.reconcile_resume_head(str(approval["run_id"]))
+                receipt, _created = await store.request_plan_resolve_command(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    approval_id=body.approval_id,
+                    decision=body.decision,
+                    instructions=instructions,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="plan approval not found") from exc
+            except (CommandConflictError, WaitDecisionConflictError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except WorkspaceAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if receipt["resumed"]:
+                coordinator.wake_jobs()
+            return receipt
         if isinstance(body, ResolvePermissionCommand):
             edited_action = body.edited_action.model_dump() if body.edited_action else None
             command_payload: dict[str, Any] = {
@@ -1711,41 +1769,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if run.get("status") in _TERMINAL_RUN_STATUSES:
             raise HTTPException(status_code=409, detail="run is not awaiting a decision")
-
-        status = {
-            "approve": "approved",
-            "modify": "modified",
-            "reject": "rejected",
-        }[decision_text]
-        await store.resolve_plan_approval(
-            approval_id,
-            status=status,
-            instructions=instructions,
-        )
         coordinator: RunCoordinator = app.state.coordinator
-        await coordinator.emit_for_run(
-            record["run_id"],
-            "plan.approval_resolved",
-            {
-                "request_id": approval_id,
-                "decision": decision_text,
-                "instructions": instructions,
-            },
-        )
-        ok = await coordinator.resume_run(
-            run_id=record["run_id"],
-            decision={
-                "approval_id": approval_id,
-                "decision": decision_text,
-                "instructions": instructions,
-            },
-        )
-        return {
-            "approval_id": approval_id,
-            "resolved": True,
-            "decision": decision_text,
-            "resumed": ok,
-        }
+        await coordinator.reconcile_resume_head(str(record["run_id"]))
+        try:
+            receipt, _created = await store.request_plan_resolve_command(
+                principal_id=request.state.principal_id,
+                command_id=f"legacy_plan_{approval_id}",
+                approval_id=approval_id,
+                decision=decision_text,
+                instructions=instructions,
+            )
+        except (CommandConflictError, WaitDecisionConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except WorkspaceAdmissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if receipt["resumed"]:
+            coordinator.wake_jobs()
+        return receipt
 
     @app.get("/local/v1/artifacts/{artifact_id}", response_model=LocalArtifact)
     async def get_artifact(request: Request, artifact_id: str) -> dict[str, Any]:

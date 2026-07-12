@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -115,6 +116,41 @@ async def test_legacy_p10_tables_migrate_before_new_indexes(tmp_path: Path) -> N
         INSERT INTO local_permissions
             (id, run_id, tool_call_id, tool_name, arguments_json, status, scope, created_at)
         VALUES ('legacy-permission', 'legacy-run', 'legacy-call', 'execute', '{}', 'pending', 'once', '2026-01-01');
+        CREATE TABLE local_plan_approvals (
+            id TEXT PRIMARY KEY, run_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+            todos_json TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending', instructions TEXT,
+            created_at TEXT NOT NULL, resolved_at TEXT,
+            UNIQUE (run_id, tool_call_id)
+        );
+        INSERT INTO local_plan_approvals
+            (id, run_id, tool_call_id, todos_json, status, created_at)
+        VALUES ('legacy-plan', 'legacy-run', 'legacy-plan-call', '[]', 'pending', '2026-01-01');
+        INSERT INTO local_plan_approvals
+            (id, run_id, tool_call_id, todos_json, status, instructions, created_at, resolved_at)
+        VALUES ('legacy-plan-resolved', 'legacy-run', 'legacy-plan-resolved-call', '[]',
+            'modified', 'Add verification.', '2026-01-01', '2026-01-02');
+        INSERT INTO local_plan_approvals
+            (id, run_id, tool_call_id, todos_json, status, created_at)
+        VALUES ('legacy-plan-orphan', 'legacy-run', 'legacy-orphan-call', '[]',
+            'pending', '2026-01-01');
+        CREATE TABLE local_events (
+            id TEXT PRIMARY KEY, run_id TEXT NOT NULL, seq INTEGER NOT NULL,
+            event_type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        INSERT INTO local_events VALUES
+            ('event-plan-required', 'legacy-run', 1, 'plan.approval_required',
+             '{"request_id":"legacy-plan","tool_call_id":"legacy-plan-call"}', '2026-01-01'),
+            ('event-plan-waiting', 'legacy-run', 2, 'run.waiting',
+             '{"wait_cycle_id":"wait-legacy-plan","interrupts":[{"id":"interrupt-legacy-plan","value":{"kind":"plan_approval","tool_call_id":"legacy-plan-call"}}]}', '2026-01-01'),
+            ('event-resolved-required', 'legacy-run', 3, 'plan.approval_required',
+             '{"request_id":"legacy-plan-resolved","tool_call_id":"legacy-plan-resolved-call"}', '2026-01-01'),
+            ('event-resolved-waiting', 'legacy-run', 4, 'run.waiting',
+             '{"wait_cycle_id":"wait-legacy-resolved","interrupts":[{"id":"interrupt-legacy-resolved","value":{"kind":"plan_approval","tool_call_id":"legacy-plan-resolved-call"}}]}', '2026-01-01'),
+            ('event-orphan-required', 'legacy-run', 5, 'plan.approval_required',
+             '{"request_id":"legacy-plan-orphan","tool_call_id":"legacy-orphan-call"}', '2026-01-01'),
+            ('event-unrelated-waiting', 'legacy-run', 6, 'run.waiting',
+             '{"wait_cycle_id":"wait-unrelated","interrupts":[{"id":"interrupt-unrelated","value":{"kind":"plan_approval","tool_call_id":"another-plan-call"}}]}', '2026-01-01');
         CREATE TABLE local_tool_receipts (
             operation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
             execution_attempt_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
@@ -160,6 +196,71 @@ async def test_legacy_p10_tables_migrate_before_new_indexes(tmp_path: Path) -> N
             )
         ).fetchone()
         assert tuple(legacy_permission) == ("legacy-permission", "legacy-permission")
+        legacy_plan = await (
+            await store._conn.execute(
+                "SELECT wait_cycle_id, interrupt_id FROM local_plan_approvals WHERE id = ?",
+                ("legacy-plan",),
+            )
+        ).fetchone()
+        assert tuple(legacy_plan) == ("wait-legacy-plan", "interrupt-legacy-plan")
+        pending_candidate = await (
+            await store._conn.execute(
+                "SELECT kind, status FROM local_wait_candidates WHERE id = ?",
+                ("legacy-plan",),
+            )
+        ).fetchone()
+        assert tuple(pending_candidate) == ("plan", "pending")
+        resolved_candidate = await (
+            await store._conn.execute(
+                "SELECT status, decision_json FROM local_wait_candidates WHERE id = ?",
+                ("legacy-plan-resolved",),
+            )
+        ).fetchone()
+        assert resolved_candidate[0] == "resolved"
+        assert json.loads(resolved_candidate[1]) == {
+            "approval_id": "legacy-plan-resolved",
+            "decision": "modify",
+            "instructions": "Add verification.",
+        }
+        assert await store.wait_cycle_resume_payload(
+            run_id="legacy-run",
+            wait_cycle_id="wait-legacy-resolved",
+        ) == {
+            "interrupt-legacy-resolved": {
+                "approval_id": "legacy-plan-resolved",
+                "decision": "modify",
+                "instructions": "Add verification.",
+            }
+        }
+        orphan_plan = await (
+            await store._conn.execute(
+                "SELECT wait_cycle_id, interrupt_id FROM local_plan_approvals WHERE id = ?",
+                ("legacy-plan-orphan",),
+            )
+        ).fetchone()
+        assert tuple(orphan_plan) == (None, None)
+        orphan_candidate = await (
+            await store._conn.execute(
+                "SELECT 1 FROM local_wait_candidates WHERE id = ?",
+                ("legacy-plan-orphan",),
+            )
+        ).fetchone()
+        assert orphan_candidate is None
+        repaired = await store.create_plan_approval(
+            run_id="legacy-run",
+            tool_call_id="legacy-orphan-call",
+            todos=[],
+            wait_cycle_id="wait-repaired",
+            interrupt_id="interrupt-repaired",
+        )
+        assert repaired["id"] == "legacy-plan-orphan"
+        repaired_candidate = await (
+            await store._conn.execute(
+                "SELECT wait_cycle_id, interrupt_id FROM local_wait_candidates WHERE id = ?",
+                ("legacy-plan-orphan",),
+            )
+        ).fetchone()
+        assert tuple(repaired_candidate) == ("wait-repaired", "interrupt-repaired")
     finally:
         await store.close()
 

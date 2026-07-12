@@ -34,6 +34,7 @@ export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunCommandReceipt = Schemas['CancelRunCommandReceipt']
 export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt']
 export type ResolvePermissionCommandReceipt = Schemas['ResolvePermissionCommandReceipt']
+export type PlanResolveCommandReceipt = Schemas['PlanResolveCommandReceipt']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -311,16 +312,29 @@ export interface PendingPermissionResolveCommand extends PendingRuntimeCommandBa
   }
 }
 
+export interface PendingPlanResolveCommand extends PendingRuntimeCommandBase {
+  type: 'plan.resolve'
+  input: {
+    approvalId: string
+    decision: LocalPlanApprovalDecision
+    instructions?: string
+    runId: string
+    threadId: string
+  }
+}
+
 export type PendingRuntimeCommand =
   | PendingRunStartCommand
   | PendingRunCancelCommand
   | PendingQuestionAnswerCommand
   | PendingPermissionResolveCommand
+  | PendingPlanResolveCommand
 export type RuntimeCommandResult =
   | LocalRun
   | CancelRunCommandReceipt
   | AnswerQuestionCommandReceipt
   | ResolvePermissionCommandReceipt
+  | PlanResolveCommandReceipt
 
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
@@ -456,6 +470,15 @@ async function deliverRuntimeCommand(
         command.input.permissionId,
         command.input.decision,
         { scope: command.input.scope, editedAction: command.input.editedAction },
+        config,
+        fetcher,
+      )
+    case 'plan.resolve':
+      return resolveLocalPlanCommand(
+        command.commandId,
+        command.input.approvalId,
+        command.input.decision,
+        command.input.instructions,
         config,
         fetcher,
       )
@@ -1146,26 +1169,33 @@ export async function reconcileLocalTool(
   }
 }
 
-export async function resolveLocalPlanApproval(
-  requestID: string,
+export async function resolveLocalPlanCommand(
+  commandID: string,
+  approvalID: string,
   decision: LocalPlanApprovalDecision,
   instructions: string | undefined,
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
-): Promise<void> {
-  const body: { decision: LocalPlanApprovalDecision; instructions?: string } = { decision }
+): Promise<PlanResolveCommandReceipt> {
+  const body: Record<string, unknown> = {
+    type: 'plan.resolve',
+    command_id: commandID,
+    approval_id: approvalID,
+    decision,
+  }
   const note = instructions?.trim()
-  if (note) {
+  if (decision === 'modify' && !note) {
+    throw new Error('instructions are required for a modified plan')
+  }
+  if (decision === 'modify') {
     body.instructions = note
   }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/plans/${encodeURIComponent(requestID)}`, {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
     method: 'POST',
     headers: localHeaders(config, true),
     body: JSON.stringify(body),
   })
-  if (!response.ok) {
-    throw new Error(await localErrorMessage(response))
-  }
+  return decodeLocalResponse<PlanResolveCommandReceipt>(response)
 }
 
 export async function getLocalArtifact(artifactID: string, config: LocalHostConfig, fetcher: Fetcher = fetch): Promise<LocalArtifact> {

@@ -38,7 +38,7 @@ import {
   forkLocalRun,
   streamLocalRun,
   injectLocalRunInstruction,
-  resolveLocalPlanApproval,
+  resolveLocalPlanCommand,
   reconcileLocalTool,
 } from './client'
 
@@ -547,6 +547,57 @@ describe('desktop local host client', () => {
         commandId: 'resolve-permission-restart',
       }),
       expect.objectContaining({ type: 'permission.resolve', resumed: true }),
+    )
+  })
+
+  it('redelivers a persisted plan decision with its original instructions', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'plan.resolve',
+          command_id: 'resolve-plan-restart',
+          approval_id: 'plan-restart',
+          run_id: 'run-restart',
+          resolved: true,
+          decision: 'modify',
+          instructions: 'Add verification.',
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'plan.resolve',
+          commandId: 'resolve-plan-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: {
+            approvalId: 'plan-restart',
+            decision: 'modify',
+            instructions: 'Add verification.',
+            runId: 'run-restart',
+            threadId: 'thread-restart',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      type: 'plan.resolve',
+      command_id: 'resolve-plan-restart',
+      approval_id: 'plan-restart',
+      decision: 'modify',
+      instructions: 'Add verification.',
+    })
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'plan.resolve', commandId: 'resolve-plan-restart' }),
+      expect.objectContaining({ type: 'plan.resolve', resumed: true }),
     )
   })
 
@@ -1115,11 +1166,14 @@ describe('desktop local host client', () => {
     )
   })
 
-  it('posts plan approval decisions with optional modification instructions', async () => {
+  it('submits plan decisions through the immutable Runtime command endpoint', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
+          type: 'plan.resolve',
+          command_id: 'resolve-plan-1',
           approval_id: 'plan-1',
+          run_id: 'run-1',
           resolved: true,
           decision: 'modify',
           resumed: true,
@@ -1129,24 +1183,31 @@ describe('desktop local host client', () => {
     )
 
     await expect(
-      resolveLocalPlanApproval(
+      resolveLocalPlanCommand(
+        'resolve-plan-1',
         'plan-1',
         'modify',
         'Add a verification step.',
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
         fetcher,
       ),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ type: 'plan.resolve', resolved: true, resumed: true })
 
     expect(fetcher).toHaveBeenCalledWith(
-      'http://127.0.0.1:17371/local/v1/plans/plan-1',
+      'http://127.0.0.1:17371/local/v1/commands',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
           Authorization: 'Bearer local-token',
           'Content-Type': 'application/json',
         }),
-        body: JSON.stringify({ decision: 'modify', instructions: 'Add a verification step.' }),
+        body: JSON.stringify({
+          type: 'plan.resolve',
+          command_id: 'resolve-plan-1',
+          approval_id: 'plan-1',
+          decision: 'modify',
+          instructions: 'Add a verification step.',
+        }),
       }),
     )
   })

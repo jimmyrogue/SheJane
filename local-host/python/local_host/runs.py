@@ -2272,6 +2272,8 @@ class RunCoordinator:
                 tool_call_id=tool_call_id,
                 todos=todos,
                 summary=summary,
+                wait_cycle_id=wait_cycle_id,
+                interrupt_id=str(getattr(snap_interrupt, "id", None) or ""),
             )
             await self._enqueue(
                 wakeup,
@@ -2282,6 +2284,8 @@ class RunCoordinator:
                     "tool_call_id": tool_call_id,
                     "todos": record["todos"],
                     "summary": record["summary"],
+                    "wait_cycle_id": wait_cycle_id,
+                    "interrupt_id": record["interrupt_id"],
                 },
             )
             return

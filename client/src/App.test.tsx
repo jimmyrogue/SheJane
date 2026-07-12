@@ -1013,6 +1013,73 @@ describe('user client shell', () => {
     })
   })
 
+  it('keeps one durable plan decision pending across transport failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-plan-command',
+      title: '等待计划审批',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'plan-user', role: 'user', content: '先制定计划', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'plan-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_input',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'plan.approval_required',
+            label: '等待你批准计划',
+            planApprovalRequestId: 'plan-command',
+            planTodos: [{ content: 'Write tests', status: 'pending' }],
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { planDecisionFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    const approve = await screen.findByText('批准计划')
+    const reject = screen.getByRole('button', { name: '拒绝' })
+    fireEvent.click(approve)
+    fireEvent.click(reject)
+
+    await waitFor(() => {
+      const commands = calls.filter((call) =>
+        call.url.endsWith('/local/v1/commands') &&
+        JSON.parse(String(call.init?.body ?? '{}')).type === 'plan.resolve')
+      expect(commands.length).toBeGreaterThan(0)
+      expect(commands.map((command) => JSON.parse(String(command.init?.body ?? '{}')))).toEqual(
+        commands.map(() => ({
+          type: 'plan.resolve',
+          command_id: 'resolve_plan_plan-command',
+          approval_id: 'plan-command',
+          decision: 'approve',
+        })),
+      )
+    })
+    await waitFor(async () => {
+      expect(await localData.listPendingRuntimeCommands()).toEqual([
+        expect.objectContaining({
+          type: 'plan.resolve',
+          commandId: 'resolve_plan_plan-command',
+          input: expect.objectContaining({ decision: 'approve' }),
+        }),
+      ])
+      expect((await localData.get('conv-plan-command'))?.messages.at(-1)?.status).toBe(
+        'waiting_input',
+      )
+    })
+  })
+
   it('reports the persisted permission decision when a later click redelivers it', async () => {
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     await localData.save({
@@ -2742,6 +2809,7 @@ function mockFetch(
 	    localRunCreateFailures?: number
 	    questionAnswerFailures?: number
 	    permissionDecisionFailures?: number
+	    planDecisionFailures?: number
 	    localRunCreateGate?: Promise<void>
 	    requireRunCancelBeforeThreadDelete?: boolean
 	    runtimeThreads?: Array<Record<string, unknown>>
@@ -2758,6 +2826,7 @@ function mockFetch(
 	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
 	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
 	  let permissionDecisionFailures = options.permissionDecisionFailures ?? 0
+	  let planDecisionFailures = options.planDecisionFailures ?? 0
 	  let localRunCanceled = false
 	  let uploadCounter = 0
 	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
@@ -2860,6 +2929,8 @@ function mockFetch(
         permission_id?: string
         decision?: string
         scope?: string
+        approval_id?: string
+        instructions?: string
       }
       if (body.type === 'question.answer') {
         if (questionAnswerFailures > 0) {
@@ -2891,6 +2962,25 @@ function mockFetch(
           resolved: true,
           decision: body.decision,
           scope: body.scope,
+          resumed: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (body.type === 'plan.resolve') {
+        if (planDecisionFailures > 0) {
+          planDecisionFailures -= 1
+          throw new TypeError('connection reset')
+        }
+        return new Response(JSON.stringify({
+          type: body.type,
+          command_id: body.command_id,
+          approval_id: body.approval_id,
+          run_id: 'local-run',
+          resolved: true,
+          decision: body.decision,
+          instructions: body.instructions ?? null,
           resumed: true,
         }), {
           status: 200,

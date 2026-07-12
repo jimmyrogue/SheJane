@@ -509,6 +509,118 @@ def test_permission_resolve_command_is_idempotent_and_resumes_after_the_batch(
     assert second.json()["resumed"] is True
 
 
+def test_plan_resolve_command_is_idempotent_and_rejects_changed_instructions(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_plan() -> tuple[str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="approve a plan durably",
+            workspace_path=None,
+        )
+        approval = await store.create_plan_approval(
+            run_id=run["id"],
+            tool_call_id="call-plan-command",
+            todos=[{"content": "Write tests", "status": "pending"}],
+            summary="Write tests",
+        )
+        await store.update_run_status(run["id"], "waiting_input")
+        return str(run["id"]), str(approval["id"])
+
+    run_id, approval_id = asyncio.run(seed_plan())
+    headers = {"Authorization": "Bearer tok"}
+    command = {
+        "type": "plan.resolve",
+        "command_id": "resolve_plan_durable",
+        "approval_id": approval_id,
+        "decision": "modify",
+        "instructions": "Add verification.",
+    }
+
+    accepted = client.post("/local/v1/commands", headers=headers, json=command)
+    replay = client.post("/local/v1/commands", headers=headers, json=command)
+    conflict = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={**command, "instructions": "Skip verification."},
+    )
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json() == {
+        "type": "plan.resolve",
+        "command_id": "resolve_plan_durable",
+        "approval_id": approval_id,
+        "run_id": run_id,
+        "resolved": True,
+        "decision": "modify",
+        "instructions": "Add verification.",
+        "resumed": True,
+    }
+    assert replay.json() == accepted.json()
+    assert conflict.status_code == 409
+
+
+def test_plan_resolve_command_waits_for_other_candidates_in_the_cycle(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_wait_cycle() -> tuple[str, str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="approve and answer",
+            workspace_path=None,
+        )
+        approval = await store.create_plan_approval(
+            run_id=run["id"],
+            tool_call_id="call-plan-batch",
+            todos=[{"content": "Write tests", "status": "pending"}],
+            wait_cycle_id="mixed-batch",
+            interrupt_id="interrupt-plan",
+        )
+        permission = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call-permission-batch",
+            tool_name="execute",
+            arguments={"command": "make test"},
+            wait_cycle_id="mixed-batch",
+            interrupt_id="interrupt-permission",
+        )
+        await store.update_run_status(run["id"], "waiting_permission")
+        return str(run["id"]), str(approval["id"]), str(permission["id"])
+
+    run_id, approval_id, permission_id = asyncio.run(seed_wait_cycle())
+    headers = {"Authorization": "Bearer tok"}
+    plan = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "plan.resolve",
+            "command_id": "resolve_plan_batch",
+            "approval_id": approval_id,
+            "decision": "approve",
+        },
+    )
+    permission = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "permission.resolve",
+            "command_id": "approve_plan_batch_tool",
+            "permission_id": permission_id,
+            "decision": "approve",
+        },
+    )
+
+    assert plan.status_code == 200
+    assert plan.json()["resumed"] is False
+    assert permission.status_code == 200
+    assert permission.json()["run_id"] == run_id
+    assert permission.json()["resumed"] is True
+
+
 def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
     assert client.get("/local/v1/runtime").status_code == 401
     response = client.get(
@@ -2694,10 +2806,8 @@ def test_tool_reconciliation_is_persisted_idempotent_and_resumes(
 
 def test_plan_approval_resolution_emits_event_and_resumes(
     client: TestClient,
-    monkeypatch,
 ) -> None:
     store = client.app.state.store
-    resume_calls: list[dict] = []
 
     async def create_waiting_run() -> tuple[str, dict]:
         run = await store.create_run(
@@ -2724,14 +2834,9 @@ def test_plan_approval_resolution_emits_event_and_resumes(
         await store.update_run_status(run["id"], "waiting_input")
         return run["id"], approval
 
-    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
-        resume_calls.append({"run_id": run_id, "decision": decision})
-        return True
-
     import asyncio
 
     run_id, approval = asyncio.run(create_waiting_run())
-    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
 
     response = client.post(
         f"/local/v1/plans/{approval['id']}",
@@ -2746,16 +2851,6 @@ def test_plan_approval_resolution_emits_event_and_resumes(
         "decision": "modify",
         "resumed": True,
     }
-    assert resume_calls == [
-        {
-            "run_id": run_id,
-            "decision": {
-                "approval_id": approval["id"],
-                "decision": "modify",
-                "instructions": "Add verification.",
-            },
-        }
-    ]
     resolved = asyncio.run(store.get_plan_approval(approval["id"]))
     assert resolved["status"] == "modified"
     assert resolved["instructions"] == "Add verification."

@@ -1954,6 +1954,54 @@ export interface components {
             /** Resumed */
             resumed: boolean;
         };
+        /** PlanResolveCommand */
+        PlanResolveCommand: {
+            /** Approval Id */
+            approval_id: string;
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "modify" | "reject";
+            /** Instructions */
+            instructions?: string | null;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plan.resolve";
+        };
+        /** PlanResolveCommandReceipt */
+        PlanResolveCommandReceipt: {
+            /** Approval Id */
+            approval_id: string;
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "modify" | "reject";
+            /** Instructions */
+            instructions?: string | null;
+            /**
+             * Resolved
+             * @default true
+             * @constant
+             */
+            resolved: true;
+            /** Resumed */
+            resumed: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plan.resolve";
+        };
         /** QuestionAnswer */
         QuestionAnswer: {
             /**
@@ -2242,7 +2290,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"];
             };
         };
         responses: {
@@ -2252,7 +2300,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"];
                 };
             };
             /** @description Validation Error */

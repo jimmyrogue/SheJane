@@ -3098,6 +3098,119 @@
         "title": "PlanApprovalResolution",
         "type": "object"
       },
+      "PlanResolveCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "modify",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "type": {
+            "const": "plan.resolve",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "type",
+          "command_id",
+          "approval_id"
+        ],
+        "title": "PlanResolveCommand",
+        "type": "object"
+      },
+      "PlanResolveCommandReceipt": {
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "modify",
+              "reject"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "resolved": {
+            "const": true,
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plan.resolve",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "approval_id",
+          "run_id",
+          "decision",
+          "resumed"
+        ],
+        "title": "PlanResolveCommandReceipt",
+        "type": "object"
+      },
       "QuestionAnswer": {
         "properties": {
           "answered": {
@@ -3309,6 +3422,7 @@
           "instructions": {
             "anyOf": [
               {
+                "maxLength": 8192,
                 "type": "string"
               },
               {
@@ -3719,6 +3833,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/ResolvePermissionCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PlanResolveCommand"
                   }
                 ],
                 "title": "Body"
@@ -3741,6 +3858,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/ResolvePermissionCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PlanResolveCommandReceipt"
                     }
                   ],
                   "title": "Response Accept Command Local V1 Commands Post"

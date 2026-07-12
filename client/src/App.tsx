@@ -108,7 +108,7 @@ import {
   markLocalScheduleNotified,
   injectLocalRunInstruction,
   probeLocalHost,
-  resolveLocalPlanApproval,
+  resolveLocalPlanCommand,
   resolveLocalPermissionCommand,
   reconcileLocalTool,
   setLocalCloudSession,
@@ -130,6 +130,7 @@ import {
   type PendingRunCancelCommand,
   type PendingQuestionAnswerCommand,
   type PendingPermissionResolveCommand,
+  type PendingPlanResolveCommand,
   type PendingRuntimeCommand,
   type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
@@ -382,6 +383,7 @@ function AppContent() {
   const runtimeThreadIDsRef = useRef(new Set<string>())
   const questionAnswersInFlightRef = useRef(new Set<string>())
   const permissionDecisionsInFlightRef = useRef(new Set<string>())
+  const planDecisionsInFlightRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -1286,7 +1288,11 @@ function AppContent() {
     result: RuntimeCommandResult,
     config: LocalHostConfig,
   ): Promise<boolean> {
-    if (command.type === 'question.answer' || command.type === 'permission.resolve') {
+    if (
+      command.type === 'question.answer' ||
+      command.type === 'permission.resolve' ||
+      command.type === 'plan.resolve'
+    ) {
       await localData.deletePendingRuntimeCommand(command.commandId)
       const projected = await syncRuntimeThreadCache(config)
       setConversations((items) =>
@@ -2496,6 +2502,26 @@ function AppContent() {
     decision: LocalPlanApprovalDecision,
     instructions?: string,
   ) {
+    if (planDecisionsInFlightRef.current.has(requestID)) return
+    planDecisionsInFlightRef.current.add(requestID)
+    try {
+      await handlePlanApprovalDecisionOnce(
+        messageID,
+        requestID,
+        decision,
+        instructions,
+      )
+    } finally {
+      planDecisionsInFlightRef.current.delete(requestID)
+    }
+  }
+
+  async function handlePlanApprovalDecisionOnce(
+    messageID: string,
+    requestID: string,
+    decision: LocalPlanApprovalDecision,
+    instructions?: string,
+  ) {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
@@ -2508,17 +2534,49 @@ function AppContent() {
     }
 
     setNotice('')
+    const contentBeforeDecision = message.content
+    let commandAccepted = false
     message.status = 'streaming'
     message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
-      await resolveLocalPlanApproval(requestID, decision, instructions, localHostConfig)
+      const existing = (await localData.listPendingRuntimeCommands()).find(
+        (command): command is PendingPlanResolveCommand =>
+          command.type === 'plan.resolve' && command.input.approvalId === requestID,
+      )
+      const command = existing ?? {
+        type: 'plan.resolve' as const,
+        commandId: `resolve_plan_${requestID}`,
+        createdAt: new Date().toISOString(),
+        input: {
+          approvalId: requestID,
+          decision,
+          instructions: instructions?.trim() || undefined,
+          runId: message.runId,
+          threadId: conversation.id,
+        },
+      }
+      if (!existing) await localData.savePendingRuntimeCommand(command)
+      try {
+        await resolveLocalPlanCommand(
+          command.commandId,
+          command.input.approvalId,
+          command.input.decision,
+          command.input.instructions,
+          localHostConfig,
+        )
+        commandAccepted = true
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      } catch (error) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+        throw error
+      }
       const noticeKey =
-        decision === 'approve'
+        command.input.decision === 'approve'
           ? 'app.notice.planApproved'
-          : decision === 'modify'
+          : command.input.decision === 'modify'
             ? 'app.notice.planModified'
             : 'app.notice.planRejected'
       toast.success(t(noticeKey), { id: 'plan-approval-decision', duration: 2000 })
@@ -2535,9 +2593,9 @@ function AppContent() {
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
-      message.status = 'error'
-      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
-      setNotice(message.content)
+      message.status = commandAccepted ? 'streaming' : 'waiting_input'
+      if (!commandAccepted) message.content = contentBeforeDecision
+      setNotice(error instanceof Error ? error.message : t('app.notice.localPermissionFailed'))
       scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()
