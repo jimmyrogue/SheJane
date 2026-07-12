@@ -7,6 +7,8 @@
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
 > **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
 
+桌面发行版启动时，Electron Main 为自带 Runtime 分配本机端点和一次性配对 Token，并启动对应进程。Main 随后使用该 Token 调用 `/local/v1/runtime`；只有协议版本为 1 且具备 `agent.run`、`agent.stream` 能力时，才安装请求认证并创建 Renderer。开发环境指向外部进程时也执行同一握手，但 Electron 不拥有、也不会关闭该外部进程。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。启动失败不会回退到云端任务。
+
 ---
 
 ## 全景图

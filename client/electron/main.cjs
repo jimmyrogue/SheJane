@@ -17,6 +17,7 @@ const crypto = require('node:crypto')
 const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 const { installLocalRuntimeAuthorization } = require('./local-runtime-auth.cjs')
+const { stopRuntimeProcess, waitForRuntimeReady } = require('./local-runtime-process.cjs')
 const { appNameForLocale, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
 const {
   configureApplicationMenuForPlatform,
@@ -85,11 +86,17 @@ let tray = null
 let daemonProcess = null
 let daemonURL = null
 let daemonToken = null
+let daemonReady = false
+let daemonStopPromise = null
+let runtimeSessionReady = false
 let pendingDeepLinkURL = null
 const appWindowButtonPosition = { x: 29, y: 27 }
 const authWindowButtonPosition = { x: 29, y: 20 }
 
 function createWindow() {
+  if (!runtimeSessionReady) {
+    return
+  }
   const windowOptions = {
     width: 1220,
     height: 820,
@@ -161,6 +168,9 @@ function createWindow() {
 }
 
 function showOrCreateMainWindow() {
+  if (!runtimeSessionReady) {
+    return
+  }
   if (mainWindow) {
     if (mainWindow.isMinimized()) {
       mainWindow.restore()
@@ -332,28 +342,12 @@ function localHostArgs() {
   ]
 }
 
-async function waitForHealth(url, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${url}/local/v1/health`)
-      if (res.ok) {
-        return true
-      }
-    } catch {
-      // daemon not accepting connections yet — retry
-    }
-    await new Promise((resolve) => setTimeout(resolve, 300))
-  }
-  return false
-}
-
 async function startBundledDaemon() {
   const port = await pickFreePort()
   daemonToken = crypto.randomBytes(32).toString('hex')
   daemonURL = `http://127.0.0.1:${port}`
 
-  daemonProcess = spawn(daemonBinaryPath(), [], {
+  const child = spawn(daemonBinaryPath(), [], {
     env: daemonEnv({
       SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
       SHEJANE_LOCAL_HOST_PORT: String(port),
@@ -364,45 +358,94 @@ async function startBundledDaemon() {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
-  daemonProcess.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
-  daemonProcess.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
-  daemonProcess.on('error', (err) => {
-    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startFailed', { message: err.message }))
+  daemonProcess = child
+  child.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
+  child.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
+  child.on('error', (err) => {
+    console.error('[daemon] failed:', err && err.message)
   })
-  daemonProcess.on('exit', (code, signal) => {
-    daemonProcess = null
-    if (!app.isQuitting) {
+  child.on('exit', (code, signal) => {
+    if (daemonProcess === child) {
+      daemonProcess = null
+    }
+    const wasReady = daemonReady
+    daemonReady = false
+    runtimeSessionReady = false
+    if (wasReady && !app.isQuitting) {
       dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.exited', { code, signal }))
     }
   })
-
-  if (!(await waitForHealth(daemonURL))) {
-    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startTimeout'))
-    return
-  }
-  writeDesktopSmokeConfig({
-    baseURL: daemonURL,
-    token: daemonToken,
-    resourcesPath: process.resourcesPath,
-    daemonPid: daemonProcess?.pid || 0,
-  })
 }
 
-function stopBundledDaemon() {
-  if (!daemonProcess) {
+async function stopBundledDaemon() {
+  const child = daemonProcess
+  daemonReady = false
+  runtimeSessionReady = false
+  if (!child) {
+    daemonURL = null
+    daemonToken = null
     return
   }
-  const pid = daemonProcess.pid
-  daemonProcess = null
-  try {
-    if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
-    } else {
-      // uvicorn traps SIGTERM (CLAUDE.md invariant #4) — force-kill.
+  await stopRuntimeProcess(child, {
+    forceKill: async (pid) => {
+      if (process.platform === 'win32') {
+        try {
+          await new Promise((resolve, reject) => {
+            const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true })
+            killer.once('error', reject)
+            killer.once('exit', (code) => {
+              if (code === 0) {
+                resolve()
+                return
+              }
+              reject(new Error(`taskkill exited with code ${code}`))
+            })
+          })
+          return
+        } catch (error) {
+          console.error('[daemon] taskkill failed, falling back to process.kill:', error)
+        }
+      }
       process.kill(pid, 'SIGKILL')
-    }
-  } catch {
-    // already gone
+    },
+  })
+  if (daemonProcess === child) {
+    daemonProcess = null
+  }
+  daemonURL = null
+  daemonToken = null
+}
+
+async function waitForRuntimeConnection(connection, ownedProcess) {
+  if (!ownedProcess) {
+    return waitForRuntimeReady({
+      baseURL: connection.baseURL,
+      token: connection.token,
+    })
+  }
+  if (ownedProcess.exitCode !== null || daemonProcess !== ownedProcess) {
+    return false
+  }
+
+  const readinessController = new AbortController()
+  const readiness = waitForRuntimeReady({
+    baseURL: connection.baseURL,
+    token: connection.token,
+    signal: readinessController.signal,
+  })
+  let onStopped
+  const stopped = new Promise((resolve) => {
+    onStopped = () => resolve(false)
+    ownedProcess.once('error', onStopped)
+    ownedProcess.once('exit', onStopped)
+  })
+  try {
+    const ready = await Promise.race([readiness, stopped])
+    return ready && ownedProcess.exitCode === null && daemonProcess === ownedProcess
+  } finally {
+    readinessController.abort()
+    ownedProcess.off('error', onStopped)
+    ownedProcess.off('exit', onStopped)
   }
 }
 
@@ -440,18 +483,54 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
   }
-  registerAuthHandlers()
-  // Packaged builds carry the frozen daemon and must start it themselves;
-  // dev relies on scripts/dev-electron.sh (which also sets the env).
-  if (app.isPackaged) {
-    await startBundledDaemon()
-  }
-  const runtimeConnection = localRuntimeConnection()
-  if (runtimeConnection.token) {
+  try {
+    registerAuthHandlers()
+    // Packaged builds carry the frozen Runtime and start it themselves. Dev may
+    // point at a separately managed Runtime through the SHEJANE_LOCAL_HOST_*
+    // variables, but both paths must pass the same protocol handshake before
+    // the renderer is created.
+    if (app.isPackaged) {
+      await startBundledDaemon()
+    }
+    const runtimeConnection = localRuntimeConnection()
+    const ownedProcess = daemonProcess
+    if (
+      !runtimeConnection.token ||
+      !(await waitForRuntimeConnection(runtimeConnection, ownedProcess))
+    ) {
+      throw new Error(desktopText(currentLocale, 'daemon.startTimeout'))
+    }
+    daemonReady = Boolean(ownedProcess)
+    runtimeSessionReady = true
     installLocalRuntimeAuthorization(session.defaultSession.webRequest, runtimeConnection)
+    if (daemonProcess) {
+      writeDesktopSmokeConfig({
+        baseURL: runtimeConnection.baseURL,
+        token: runtimeConnection.token,
+        resourcesPath: process.resourcesPath,
+        daemonPid: daemonProcess.pid || 0,
+      })
+    }
+    createWindow()
+    createTray()
+  } catch (error) {
+    let shutdownError = null
+    try {
+      await stopBundledDaemon()
+    } catch (caughtShutdownError) {
+      shutdownError = caughtShutdownError
+      console.error('[daemon] shutdown after failed startup failed:', caughtShutdownError)
+    }
+    const startupMessage = error instanceof Error ? error.message : String(error)
+    const message = shutdownError
+      ? `${startupMessage}\n${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}`
+      : startupMessage
+    dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startFailed', { message }))
+    if (!daemonProcess) {
+      app.quit()
+    }
+    return
   }
-  createWindow()
-  createTray()
   // Auto-update (packaged only). Downloads in the background and installs on
   // quit. Works on Windows unsigned; on macOS it no-ops until the app is signed
   // + notarized (Phase 4) — Gatekeeper rejects unsigned updates. Lazy-required
@@ -471,9 +550,33 @@ app.whenReady().then(async () => {
 // Marker that "real quit" was requested (vs. window-close). The close
 // handler on the main window checks this flag to decide whether to hide
 // to tray or actually let the close go through.
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   app.isQuitting = true
-  stopBundledDaemon()
+  if (daemonStopPromise) {
+    event.preventDefault()
+    return
+  }
+  if (!daemonProcess) {
+    return
+  }
+  event.preventDefault()
+  daemonStopPromise = stopBundledDaemon().then(
+    () => {
+      daemonStopPromise = null
+      app.quit()
+    },
+    (error) => {
+      daemonStopPromise = null
+      app.isQuitting = false
+      console.error('[daemon] shutdown failed:', error)
+      dialog.showErrorBox(
+        currentAppName(),
+        desktopText(currentLocale, 'daemon.startFailed', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    },
+  )
 })
 
 ipcMain.handle('shejane:set-locale', async (_event, locale) => {
