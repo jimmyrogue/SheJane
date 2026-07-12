@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "SheJane (石间) end-to-end tests (Playwright).",
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
+  "author": "TAO LIANG <tliang92@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",

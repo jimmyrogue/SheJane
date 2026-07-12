@@ -168,4 +168,11 @@ report), not a public issue.
 
 ## License
 
-[Apache License 2.0](./LICENSE) · Copyright 2026 ColdFlameUs LLC.
+Copyright (c) 2026 TAO LIANG <tliang92@gmail.com>.
+
+SheJane uses a dual-license model:
+
+- Community use: [GNU Affero General Public License v3.0 only](./LICENSE) (`AGPL-3.0-only`).
+- Proprietary distribution, closed-source modification, embedding, white-labeling, or other use that does not comply with the AGPL requires a [separate commercial license](./COMMERCIAL_LICENSE.md).
+
+The SheJane name and logo are not licensed under the AGPL. See [TRADEMARKS.md](./TRADEMARKS.md). External contributions require agreement to [CLA.md](./CLA.md), and third-party components remain under the licenses listed in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

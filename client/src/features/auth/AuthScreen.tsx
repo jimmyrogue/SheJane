@@ -398,7 +398,7 @@ function AuthField({
 function AuthFooter() {
   return (
     <footer className="auth-footer">
-      <span>© 2026 ColdFlameUs LLC</span>
+      <span>© 2026 TAO LIANG</span>
     </footer>
   )
 }

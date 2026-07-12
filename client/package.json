@@ -4,8 +4,8 @@
   "version": "0.1.3",
   "private": true,
   "description": "SheJane (石间) desktop client — Electron + React agentic chat UI.",
-  "license": "Apache-2.0",
-  "author": "SheJane",
+  "license": "AGPL-3.0-only",
+  "author": "TAO LIANG <tliang92@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",

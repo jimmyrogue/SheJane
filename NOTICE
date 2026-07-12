@@ -1,11 +1,14 @@
 SheJane (石间)
-Copyright 2026 ColdFlameUs LLC
+Copyright (c) 2026 TAO LIANG <tliang92@gmail.com>
 
-This product is licensed under the Apache License, Version 2.0.
-You may obtain a copy of the License at:
+SheJane is offered under a dual-license model. You may use the original
+SheJane code under the GNU Affero General Public License version 3 only
+(AGPL-3.0-only), or under a separate commercial license issued in writing
+by TAO LIANG.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+The SheJane name, logo, and other brand assets are not licensed under the
+AGPL. See TRADEMARKS.md.
 
-"SheJane" is the project's legacy code name and persists in some
-package names, environment-variable prefixes (SHEJANE_*), and
-on-disk paths for backward compatibility.
+Third-party components remain subject to their own licenses. See
+THIRD_PARTY_NOTICES.md and the license files distributed with those
+components.

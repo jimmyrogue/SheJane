@@ -3,8 +3,11 @@
 Thanks for your interest in contributing! This guide covers the dev
 setup, the project layout, and the workflow we expect for pull requests.
 
-By contributing you agree that your contributions are licensed under
-the project's [Apache License 2.0](./LICENSE).
+SheJane uses `AGPL-3.0-only` for community releases and a separate commercial
+license. Before a pull request can be accepted, each contributor must agree to
+the [Contributor License Agreement](./CLA.md). The CLA lets TAO LIANG publish
+the contribution under both licensing paths while the contributor keeps
+ownership of their work.
 
 ## Architecture in one minute
 
@@ -56,7 +59,13 @@ If anything looks wrong, `make doctor` is the first stop.
 1. Branch off `main` (`feat/…`, `fix/…`, `chore/…`, `docs/…`).
 2. Make your change with a focused test where practical (we lean TDD for auth, wallet/ledger, Stripe, admin, SSE/chat-store, and import/export).
 3. Run the checks below until green.
-4. Open a PR against `main` and fill in the template.
+4. Open a PR against `main` and include this statement in the description:
+
+   ```text
+   I have read and agree to the SheJane Contributor License Agreement (CLA.md).
+   ```
+
+5. If the contribution belongs to an employer or another legal entity, identify it and confirm that you are authorized to contribute on its behalf.
 
 ## Tests & lint
 

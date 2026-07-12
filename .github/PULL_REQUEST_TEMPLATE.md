@@ -12,6 +12,7 @@
 
 ## Checklist
 
+- [ ] I have read and agree to the SheJane Contributor License Agreement (`CLA.md`).
 - [ ] `make lint` passes
 - [ ] `make test` passes (or the relevant focused suite)
 - [ ] If I edited `api_schemas.py` or a `response_model`, I ran `make schemas` and committed the regenerated files

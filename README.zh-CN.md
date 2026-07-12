@@ -156,4 +156,11 @@ make test-e2e    # Playwright 模拟端到端
 
 ## 许可证
 
-[Apache License 2.0](./LICENSE) · Copyright 2026 ColdFlameUs LLC。
+Copyright (c) 2026 TAO LIANG <tliang92@gmail.com>。
+
+SheJane 采用双重授权：
+
+- 社区使用：[GNU Affero General Public License v3.0 only](./LICENSE)，SPDX 标识为 `AGPL-3.0-only`。
+- 闭源分发、闭源修改、集成进专有产品、白标销售，或其他不遵守 AGPL 的使用方式，需要取得[独立商业授权](./COMMERCIAL_LICENSE.md)。
+
+AGPL 不授权 SheJane 名称和 Logo，具体规则见 [TRADEMARKS.md](./TRADEMARKS.md)。外部贡献者需要同意 [CLA.md](./CLA.md)，第三方组件继续适用 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) 中列出的各自许可证。
