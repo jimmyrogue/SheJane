@@ -64,10 +64,10 @@
   │   agent = build_agent(按结构指纹复用或编译)                                       │
   │   execution_resources = AsyncExitStack      ← 本次执行结束时关闭模型客户端         │
   │     ├─ RuntimeContext                    ← P7 注入身份、任务和本次执行依赖          │
-  │     ├─ backend factory → FilesystemBackend(workspace_root)                        │
-  │     │                                      ← FS 工具 + execute + 子代理共享沙箱    │
-  │     ├─ SkillsMiddleware sources = [skills_dir]   ← 渐进披露 md skills              │
-  │     ├─ MemoryMiddleware  sources = [AGENTS.md]   ← system prompt 注入 ✅ cap 6     │
+  │     ├─ backend factory → FilesystemBackend(授权工作区或本次执行临时目录)            │
+  │     │                                      ← 文件工具和子代理共享当前执行边界      │
+  │     ├─ SkillsMiddleware sources = [skills_dir]   ← 只读挂载，渐进披露 md skills    │
+  │     ├─ MemoryMiddleware  sources = [AGENTS.md]   ← 只读挂载，注入 system prompt    │
   │     ├─ SubAgentMiddleware subagents = [general-purpose, researcher, writer]       │
   │     ├─ ToolReviewMiddleware + ToolExecutionMiddleware                            │
   │     │   ← 主 Agent 和子 Agent 共用参数校验、人工确认和持久工具回执                │

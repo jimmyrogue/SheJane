@@ -7,9 +7,11 @@ Covers `_resolve_skills_dirs` + `_list_skill_files` + the
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from langgraph.store.memory import InMemoryStore
 
@@ -324,7 +326,26 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     skill_route = str(shejane.resolve()).rstrip("/") + "/"
     assert workspace_route in backend.routes
     assert skill_route in backend.routes
-    assert backend.routes[skill_route].virtual_mode is True
+    assert "test-skill" in backend.read(str((shejane / "test-skill" / "SKILL.md").resolve()))
+    assert backend.write(f"{skill_route}injected/SKILL.md", "unsafe").error == (
+        "read-only source: writes are not allowed"
+    )
+    assert (
+        backend.edit(
+            str((shejane / "test-skill" / "SKILL.md").resolve()),
+            "test-skill",
+            "changed",
+        ).error
+        == "read-only source: edits are not allowed"
+    )
+    assert (
+        backend.edit(
+            "/.shejane/skills/test-skill/SKILL.md",
+            "test-skill",
+            "changed",
+        ).error
+        == "read-only source: edits are not allowed"
+    )
 
 
 def test_build_agent_passes_none_when_skills_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -371,12 +392,10 @@ def test_build_agent_passes_none_when_skills_disabled(tmp_path: Path, monkeypatc
     assert captured["skills"] is None
 
 
-def test_build_agent_defaults_workspace_to_real_scratch_when_none(
+def test_build_agent_gives_no_workspace_attempts_isolated_temporary_scratch(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """When the client doesn't pass `workspace_path` (chat without a
-    project), the backend should still get a real scratch root, but keep
-    virtual path containment enabled."""
+    """No-workspace attempts must not share durable files with other runs."""
     from deepagents.backends import CompositeBackend, FilesystemBackend
 
     import local_host.agent.builder as builder_mod
@@ -385,14 +404,14 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
     monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
 
-    captured: dict[str, object] = {}
+    captured: list[object] = []
 
     def fake_create_deep_agent(**kwargs):
-        captured["backend"] = kwargs.get("backend")
+        captured.append(kwargs.get("backend"))
         return object()
 
     monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
-    runtime_context = builder_mod.RuntimeContext()
+    roots: list[Path] = []
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
@@ -400,31 +419,85 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         store = await LocalStore_open(tmp_path / "store.db")
         saver, stack = await open_checkpointer()
+        execution_stacks = [AsyncExitStack(), AsyncExitStack()]
         try:
-            await build_agent(
-                store=store,
-                checkpointer=saver,
-                agent_store=InMemoryStore(),
-                workspace_root=None,
-                run_id="r-no-workspace",
-                runtime_context=runtime_context,
-            )
+            for index, execution_stack in enumerate(execution_stacks):
+                runtime_context = builder_mod.RuntimeContext()
+                await build_agent(
+                    store=store,
+                    checkpointer=saver,
+                    agent_store=InMemoryStore(),
+                    workspace_root=None,
+                    run_id=f"r-no-workspace-{index}",
+                    execution_attempt_id=f"attempt-{index}",
+                    resource_stack=execution_stack,
+                    runtime_context=runtime_context,
+                )
+                backend_factory = captured[index]
+                assert callable(backend_factory)
+                backend = backend_factory(SimpleNamespace(context=runtime_context))
+                assert isinstance(backend, CompositeBackend)
+                assert isinstance(backend.default, FilesystemBackend)
+                assert backend.default.virtual_mode is True
+                roots.append(backend.default.cwd)
+                assert roots[-1].is_dir()
+
+            assert roots[0] != roots[1]
+            assert all((tmp_path / "data") in root.parents for root in roots)
         finally:
+            for execution_stack in execution_stacks:
+                await execution_stack.aclose()
             await store.close()
             await stack.aclose()
 
     asyncio.run(run())
-    backend_factory = captured["backend"]
-    assert callable(backend_factory)
-    backend = backend_factory(SimpleNamespace(context=runtime_context))
-    assert isinstance(backend, CompositeBackend)
-    assert isinstance(backend.default, FilesystemBackend)
-    assert backend.default.virtual_mode is True
-    # cwd should resolve to the auto-created scratch dir under tmp_path.
-    scratch = (tmp_path / ".shejane" / "workspace").resolve()
-    assert scratch.is_dir()
-    assert backend.default.cwd == scratch
-    assert str(scratch).rstrip("/") + "/" in backend.routes
+    assert all(not root.exists() for root in roots)
+
+
+def test_execution_scratch_cleanup_failure_is_not_hidden(tmp_path: Path, monkeypatch) -> None:
+    import local_host.agent.builder as builder_mod
+    from local_host.agent.builder import _execution_scratch
+
+    settings = reset_settings_for_tests(data_dir=tmp_path / "data")
+    original_rmtree = builder_mod.shutil.rmtree
+
+    async def run() -> Path:
+        stack = AsyncExitStack()
+
+        def fail_cleanup(_path: Path) -> None:
+            raise OSError("cleanup blocked")
+
+        monkeypatch.setattr(builder_mod.shutil, "rmtree", fail_cleanup)
+        root = Path(
+            _execution_scratch(
+                settings,
+                run_id="run-cleanup-failure",
+                execution_attempt_id="attempt-cleanup-failure",
+                resource_stack=stack,
+            )
+        )
+        with pytest.raises(OSError, match="cleanup blocked"):
+            await stack.aclose()
+        return root
+
+    root = asyncio.run(run())
+    assert root.exists()
+    original_rmtree(root)
+
+
+def test_execution_scratch_requires_an_owner_stack(tmp_path: Path) -> None:
+    from local_host.agent.builder import _execution_scratch
+
+    settings = reset_settings_for_tests(data_dir=tmp_path / "data")
+    with pytest.raises(RuntimeError, match="requires a resource stack"):
+        _execution_scratch(
+            settings,
+            run_id="run-without-owner",
+            execution_attempt_id="attempt-without-owner",
+            resource_stack=None,
+        )
+    parent = settings.data_dir / "execution-workspaces"
+    assert list(parent.iterdir()) == []
 
 
 # Re-export under a stable name so the async helpers above don't fight

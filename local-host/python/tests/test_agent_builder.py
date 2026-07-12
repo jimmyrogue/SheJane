@@ -201,6 +201,7 @@ async def test_cached_definition_keeps_mcp_implementations_attempt_local(
                 workspace_root=None,
                 run_id=f"run-{index}",
                 settings=settings,
+                resource_stack=stack,
                 runtime_context=contexts[index],
                 definition_cache=cache,
                 definition_cache_lock=lock,
@@ -298,6 +299,7 @@ def test_build_agent_assembles_without_workspace(tmp_path: Path, monkeypatch) ->
                 checkpointer=saver,
                 workspace_root=None,
                 run_id="t1",
+                resource_stack=stack,
             )
             assert agent is not None
             # Has the expected graph shape (compile returns CompiledStateGraph)
@@ -431,6 +433,7 @@ def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeyp
                 checkpointer=saver,
                 workspace_root=None,
                 run_id="e2e_1",
+                resource_stack=stack,
                 runtime_context=runtime_context,
             )
             config = {"configurable": {"thread_id": "e2e_1"}}

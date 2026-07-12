@@ -37,6 +37,8 @@ import ipaddress
 import json
 import logging
 import os
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -75,6 +77,7 @@ from ..store.sqlite import LocalStore
 from ..tools.mcp import build_validated_mcp_tools
 from ..tools.registry import build_tools, tool_definition
 from ..tools.runtime import RuntimeToolProxy
+from .backends import ReadOnlyBackend, ReadOnlyFileBackend
 from .context_builder import AsyncToolExecutionGate, RuntimeContext, build_default_context
 from .subagents import build_subagents
 
@@ -149,7 +152,7 @@ def _agent_backend_routes(
     skills_dirs: list[Path],
     memory_sources: list[str] | None,
     workspace_root: Path,
-) -> dict[str, FilesystemBackend]:
+) -> dict[str, Any]:
     """Return explicit filesystem routes that may live outside workspace.
 
     The main backend runs in `virtual_mode=True`, so absolute paths outside
@@ -157,21 +160,40 @@ def _agent_backend_routes(
     MemoryMiddleware still need to read configured source directories; route
     only those exact roots through their own virtual backends.
     """
-    roots: list[Path] = [path.expanduser() for path in skills_dirs]
-    for source in memory_sources or []:
-        path = Path(source).expanduser()
-        roots.append(path if path.is_dir() else path.parent)
-
-    routes: dict[str, FilesystemBackend] = {}
-    for root in roots:
+    routes: dict[str, Any] = {}
+    for root in (path.expanduser() for path in skills_dirs):
         backend_root = root.resolve(strict=False)
-        backend = FilesystemBackend(
-            root_dir=backend_root,
-            virtual_mode=True,
-            max_file_size_mb=10,
+        if workspace_root == backend_root or workspace_root.is_relative_to(backend_root):
+            raise ValueError("writable workspace cannot be nested inside a read-only skill root")
+        backend = ReadOnlyBackend(
+            FilesystemBackend(
+                root_dir=backend_root,
+                virtual_mode=True,
+                max_file_size_mb=10,
+            )
         )
         for route in _absolute_route_keys(root):
             routes[route] = backend
+        relative_route = _workspace_route(root, workspace_root, directory=True)
+        if relative_route is not None:
+            routes[relative_route] = backend
+    for source in memory_sources or []:
+        path = Path(source).expanduser()
+        if path.is_dir():
+            path = path / "AGENTS.md"
+        backend = ReadOnlyFileBackend(
+            FilesystemBackend(
+                root_dir=path.parent.resolve(strict=False),
+                virtual_mode=True,
+                max_file_size_mb=10,
+            ),
+            path.name,
+        )
+        for route in _absolute_file_route_keys(path):
+            routes[route] = backend
+        relative_route = _workspace_route(path, workspace_root, directory=False)
+        if relative_route is not None:
+            routes[relative_route] = backend
     return routes
 
 
@@ -184,6 +206,21 @@ def _absolute_route_keys(path: Path) -> list[str]:
         str(resolved).rstrip("/") + "/",
     }
     return sorted(keys)
+
+
+def _absolute_file_route_keys(path: Path) -> list[str]:
+    expanded = path.expanduser()
+    raw = expanded if expanded.is_absolute() else expanded.absolute()
+    return sorted({str(raw), str(expanded.resolve(strict=False))})
+
+
+def _workspace_route(path: Path, workspace_root: Path, *, directory: bool) -> str | None:
+    try:
+        relative = path.expanduser().resolve(strict=False).relative_to(workspace_root)
+    except ValueError:
+        return None
+    route = "/" + relative.as_posix().lstrip("/")
+    return route.rstrip("/") + "/" if directory else route
 
 
 def _build_agent_backend(
@@ -209,6 +246,28 @@ def _build_agent_backend(
         )
     )
     return CompositeBackend(default=default, routes=routes)
+
+
+def _execution_scratch(
+    settings: Settings,
+    *,
+    run_id: str,
+    execution_attempt_id: str | None,
+    resource_stack: AsyncExitStack | None,
+) -> str:
+    """Create one private filesystem root owned by this execution attempt."""
+    settings.ensure_data_dir()
+    parent = settings.data_dir / "execution-workspaces"
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    identity = f"{run_id}\0{execution_attempt_id or 'untracked'}"
+    prefix = hashlib.sha256(identity.encode()).hexdigest()[:12] + "-"
+    scratch = Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
+    scratch.chmod(0o700)
+    if resource_stack is None:
+        shutil.rmtree(scratch)
+        raise RuntimeError("no-workspace execution requires a resource stack")
+    resource_stack.callback(shutil.rmtree, scratch)
+    return str(scratch)
 
 
 def _runtime_backend(runtime: Any) -> Any:
@@ -575,6 +634,8 @@ async def build_agent(
         extra_middleware: Appended after the built-in custom stack.
     """
     settings = settings or get_settings()
+    if workspace_root is None and resource_stack is None:
+        raise RuntimeError("no-workspace execution requires a resource stack")
 
     tools = await build_tools(
         include_mcp=False,
@@ -642,9 +703,12 @@ async def build_agent(
     if workspace_root:
         effective_workspace = workspace_root
     else:
-        scratch = Path.home() / ".shejane" / "workspace"
-        scratch.mkdir(parents=True, exist_ok=True)
-        effective_workspace = str(scratch)
+        effective_workspace = _execution_scratch(
+            settings,
+            run_id=run_id,
+            execution_attempt_id=execution_attempt_id,
+            resource_stack=resource_stack,
+        )
     backend = _build_agent_backend(
         effective_workspace=effective_workspace,
         skills_dirs=skills_dirs,
@@ -880,8 +944,8 @@ def _resolve_memory_sources(settings: Settings) -> list[str] | None:
     spec = (settings.memory_sources or "").strip()
     if not spec:
         return None
-    items = [p.strip() for p in spec.split(",") if p.strip()]
-    # Expand `~` for user convenience but don't validate existence — the
-    # middleware itself logs nicely if a path is missing.
-    expanded = [str(Path(p).expanduser()) for p in items]
+    items = [Path(p.strip()).expanduser() for p in spec.split(",") if p.strip()]
+    # Deep Agents expects file paths. Preserve missing paths so its own
+    # diagnostics remain useful, but normalize existing directories.
+    expanded = [str(path / "AGENTS.md" if path.is_dir() else path) for path in items]
     return expanded or None

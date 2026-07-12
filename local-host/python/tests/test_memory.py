@@ -28,7 +28,7 @@ async def test_open_store_persists_values(tmp_path: Path) -> None:
         await stack.aclose()
 
 
-def test_resolve_memory_sources(monkeypatch) -> None:
+def test_resolve_memory_sources(monkeypatch, tmp_path: Path) -> None:
     from local_host.agent.builder import _resolve_memory_sources
 
     assert _resolve_memory_sources(Settings(SHEJANE_LOCAL_MEMORY_PATHS="")) is None
@@ -39,6 +39,51 @@ def test_resolve_memory_sources(monkeypatch) -> None:
         "/abs/b.md",
         "/spaced/c.md",
     ]
+    instruction_dir = tmp_path / "project"
+    instruction_dir.mkdir()
+    assert _resolve_memory_sources(Settings(SHEJANE_LOCAL_MEMORY_PATHS=str(instruction_dir))) == [
+        str(instruction_dir / "AGENTS.md")
+    ]
+
+
+def test_memory_instruction_sources_are_read_only_backend_routes(tmp_path: Path) -> None:
+    from local_host.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    agents_md = workspace / "AGENTS.md"
+    agents_md.write_text("trusted instructions", encoding="utf-8")
+    external = tmp_path / "external"
+    external.mkdir()
+    external_agents_md = external / "AGENTS.md"
+    external_agents_md.write_text("external instructions", encoding="utf-8")
+    external_sibling = external / "secret.txt"
+    external_sibling.write_text("SECRET_NEIGHBOR", encoding="utf-8")
+
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[str(agents_md), str(external_agents_md)],
+    )
+
+    assert "trusted instructions" in backend.read(str(agents_md.resolve()))
+    assert (
+        backend.edit(
+            str(agents_md.resolve()),
+            "trusted",
+            "tampered",
+        ).error
+        == "read-only source: edits are not allowed"
+    )
+    assert (
+        backend.edit("/AGENTS.md", "trusted", "tampered").error
+        == "read-only source: edits are not allowed"
+    )
+    matches = backend.grep_raw("SECRET_NEIGHBOR", path="/")
+    assert isinstance(matches, list)
+    assert not any(item.get("text") == "SECRET_NEIGHBOR" for item in matches)
+    assert "SECRET_NEIGHBOR" not in backend.read(str(external_sibling.resolve()))
+    assert backend.write(str((workspace / "workspace-note.md").resolve()), "allowed").error is None
 
 
 async def test_memory_write_is_explicit_and_idempotent() -> None:
