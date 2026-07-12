@@ -60,6 +60,9 @@ func (p *OpenAICompatibleProvider) Stream(ctx context.Context, request ChatReque
 			"messages": openAIMessages(request.Messages, nil, p.profile),
 			"stream":   true,
 		}
+		if request.MaxOutputTokens > 0 {
+			payload["max_tokens"] = request.MaxOutputTokens
+		}
 		if p.profile.IncludeStreamUsage {
 			payload["stream_options"] = map[string]bool{"include_usage": true}
 		}
@@ -140,6 +143,9 @@ func (p *OpenAICompatibleProvider) CompleteWithTools(ctx context.Context, reques
 		"model":    model,
 		"messages": openAIMessages(request.Messages, toolNames, p.profile),
 		"stream":   false,
+	}
+	if request.MaxOutputTokens > 0 {
+		payload["max_tokens"] = request.MaxOutputTokens
 	}
 	if p.profile.SupportsThinking && p.profile.ThinkingType != "" {
 		payload["thinking"] = map[string]string{"type": p.profile.ThinkingType}

@@ -29,7 +29,8 @@ func TestOpenAICompatibleProviderRequestsUsageInStream(t *testing.T) {
 
 	provider := NewOpenAICompatibleProvider("deepseek-fast", server.URL, "test-key")
 	chunks, errs := provider.Stream(context.Background(), ChatRequest{
-		Messages: []Message{{Role: "user", Content: "hello"}},
+		Messages:        []Message{{Role: "user", Content: "hello"}},
+		MaxOutputTokens: 2048,
 	}, "deepseek-v4-flash")
 
 	for range chunks {
@@ -44,6 +45,9 @@ func TestOpenAICompatibleProviderRequestsUsageInStream(t *testing.T) {
 	}
 	if streamOptions["include_usage"] != true {
 		t.Fatalf("stream_options.include_usage = %#v, want true", streamOptions["include_usage"])
+	}
+	if payload["max_tokens"] != float64(2048) {
+		t.Fatalf("max_tokens = %#v, want 2048", payload["max_tokens"])
 	}
 }
 

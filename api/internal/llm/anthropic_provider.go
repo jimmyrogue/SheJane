@@ -110,9 +110,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, mod
 		defer close(errs)
 
 		system, history := splitSystemMessage(request.Messages)
+		maxTokens := p.maxTokens
+		if request.MaxOutputTokens > 0 && request.MaxOutputTokens < maxTokens {
+			maxTokens = request.MaxOutputTokens
+		}
 		payload := map[string]any{
 			"model":      model,
-			"max_tokens": p.maxTokens,
+			"max_tokens": maxTokens,
 			"messages":   anthropicMessages(history, nil),
 			"stream":     true,
 		}
@@ -203,9 +207,13 @@ func (p *AnthropicProvider) Stream(ctx context.Context, request ChatRequest, mod
 func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, request ChatRequest, model string) (Completion, error) {
 	toolNames, reverseToolNames := openAIToolNameMaps(request.Tools)
 	system, history := splitSystemMessage(request.Messages)
+	maxTokens := p.maxTokens
+	if request.MaxOutputTokens > 0 && request.MaxOutputTokens < maxTokens {
+		maxTokens = request.MaxOutputTokens
+	}
 	payload := map[string]any{
 		"model":      model,
-		"max_tokens": p.maxTokens,
+		"max_tokens": maxTokens,
 		"messages":   anthropicMessages(history, toolNames),
 		"stream":     false,
 	}

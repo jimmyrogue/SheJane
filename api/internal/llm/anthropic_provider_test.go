@@ -47,6 +47,7 @@ func TestAnthropicCompleteWithToolsRoundTrip(t *testing.T) {
 			}},
 			{Role: "tool", ToolCallID: "toolu_prev", Name: "web.search", Content: "三条搜索结果……"},
 		},
+		MaxOutputTokens: 1024,
 		Tools: []ToolDefinition{{
 			Name:        "web.search",
 			Description: "搜索互联网",
@@ -61,8 +62,8 @@ func TestAnthropicCompleteWithToolsRoundTrip(t *testing.T) {
 	if captured["system"] != "你是石间" {
 		t.Errorf("system = %v, want 你是石间", captured["system"])
 	}
-	if got := captured["max_tokens"].(float64); got != 4096 {
-		t.Errorf("max_tokens = %v, want 4096 (per-row override)", got)
+	if got := captured["max_tokens"].(float64); got != 1024 {
+		t.Errorf("max_tokens = %v, want 1024 (runtime cap below per-row limit)", got)
 	}
 	tools := captured["tools"].([]any)
 	tool0 := tools[0].(map[string]any)

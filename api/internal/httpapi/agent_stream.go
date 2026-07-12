@@ -55,11 +55,12 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	// override the user-facing identity / safety contract.
 	messages = llm.InjectScenePrompt("agent_local", messages)
 	request := llm.ChatRequest{
-		Model:    modelID,
-		Stream:   true,
-		Scene:    "agent_local",
-		Messages: messages,
-		Tools:    tools,
+		Model:           modelID,
+		Stream:          true,
+		Scene:           "agent_local",
+		Messages:        messages,
+		Tools:           tools,
+		MaxOutputTokens: body.MaxOutputTokens,
 	}
 
 	requestID := requestIDFromContext(r.Context(), s.app.NewRequestID())
@@ -111,86 +112,6 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	if streamErr != nil {
 		_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, reservation.ID)
 		_ = s.app.Store.FinishLLMCall(r.Context(), requestID, "failed", inputTokens, outputTokens, 0, streamErr.Error())
-		if fallback, ok := s.app.NextChatModel(r.Context(), modelID); ok {
-			fallbackProvider, fallbackModel, fallbackModelID := s.app.Router.SelectModel(fallback.ID)
-			fallbackRequest := request
-			fallbackRequest.Model = fallbackModelID
-			fallbackRequestID := s.app.NewRequestID()
-			fallbackEstimatedCredits := s.app.EstimateCredits(fallbackRequest)
-			fallbackReservation, fallbackReserveErr := s.app.Store.ReserveUsage(r.Context(), user.ID, s.app.Config.MonthlyCredits, fallbackEstimatedCredits, billing.ReservationMeta{
-				UserID:    user.ID,
-				RequestID: fallbackRequestID,
-				RunID:     body.RunID,
-				Mode:      fallbackModelID,
-			})
-			if fallbackReserveErr == nil {
-				if err := s.app.Store.CreateLLMCall(r.Context(), store.LLMCallRecord{
-					RequestID:     fallbackRequestID,
-					UserID:        user.ID,
-					WalletID:      fallbackReservation.WalletID,
-					ReservationID: fallbackReservation.ID,
-					RunID:         body.RunID,
-					Mode:          fallbackModelID,
-					Scene:         "agent_local",
-					Model:         fallbackModel,
-					Provider:      fallbackProvider.Name(),
-					Status:        "streaming",
-					StartedAt:     time.Now().UTC(),
-				}); err != nil {
-					_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, fallbackReservation.ID)
-				} else {
-					_ = writeLLMSSEEvent(w, "llm.model_selected", map[string]any{
-						"requested_model":     modelID,
-						"resolved_model_id":   fallbackModelID,
-						"label":               fallback.Label,
-						"reason":              "上游失败后降级",
-						"source_request_id":   requestID,
-						"fallback_request_id": fallbackRequestID,
-					})
-					flushSSE(w)
-					fallbackErr, fallbackInputTokens, fallbackOutputTokens, fallbackFinishReason := s.runAgentLLMStream(r.Context(), w, fallbackProvider, fallbackRequest, fallbackModel, fallbackRequestID)
-					if fallbackErr == nil {
-						if fallbackInputTokens < 1 {
-							fallbackInputTokens = llm.EstimateRequestTokens(fallbackRequest)
-						}
-						actualCredits := s.app.UsageCreditsForTokens(fallbackModelID, fallbackInputTokens, fallbackOutputTokens)
-						if err := s.app.Store.SettleUsage(r.Context(), user.ID, fallbackReservation.ID, actualCredits); err != nil {
-							_ = s.app.Store.FinishLLMCall(r.Context(), fallbackRequestID, "failed", fallbackInputTokens, fallbackOutputTokens, 0, err.Error())
-							message := "额度结算失败"
-							if billing.IsInsufficientCredits(err) {
-								message = "额度不足，请升级或充值"
-							}
-							_ = writeLLMSSEEvent(w, "llm.error", map[string]any{
-								"request_id": fallbackRequestID,
-								"message":    message,
-							})
-							_ = writeLLMSSEEvent(w, "llm.done", map[string]any{
-								"request_id":    fallbackRequestID,
-								"finish_reason": "error",
-							})
-							flushSSE(w)
-							return
-						}
-						_ = s.app.Store.FinishLLMCall(r.Context(), fallbackRequestID, "done", fallbackInputTokens, fallbackOutputTokens, actualCredits, "")
-						_ = writeLLMSSEEvent(w, "llm.usage", map[string]any{
-							"input_tokens":  fallbackInputTokens,
-							"output_tokens": fallbackOutputTokens,
-							"credits_cost":  actualCredits,
-						})
-						_ = writeLLMSSEEvent(w, "llm.done", map[string]any{
-							"request_id":    fallbackRequestID,
-							"finish_reason": fallbackFinishReason,
-						})
-						flushSSE(w)
-						return
-					}
-					_ = s.app.Store.ReleaseUsage(r.Context(), user.ID, fallbackReservation.ID)
-					_ = s.app.Store.FinishLLMCall(r.Context(), fallbackRequestID, "failed", fallbackInputTokens, fallbackOutputTokens, 0, fallbackErr.Error())
-					streamErr = fallbackErr
-					requestID = fallbackRequestID
-				}
-			}
-		}
 		_ = writeLLMSSEEvent(w, "llm.error", map[string]any{
 			"request_id": requestID,
 			"message":    streamErr.Error(),
@@ -338,7 +259,8 @@ func writeLLMSSEEvent(w io.Writer, event string, payload map[string]any) error {
 // agentLLMStream. Kept identical so the Python sidecar can switch transports
 // without touching its request builder.
 type agentLLMBody struct {
-	RunID string `json:"run_id"`
+	RunID           string `json:"run_id"`
+	MaxOutputTokens int    `json:"max_output_tokens"`
 	// Model is the catalog model id, or "auto"/"" for the default. (Replaces
 	// the old fast/deep "mode" — the daemon now forwards the user's model.)
 	Model    string `json:"model"`
@@ -375,6 +297,12 @@ func decodeAgentLLMBody(w http.ResponseWriter, r *http.Request) (*agentLLMBody, 
 	if len(body.Messages) == 0 {
 		writeError(w, http.StatusBadRequest, 40201, "消息不能为空")
 		return nil, fmt.Errorf("empty messages")
+	}
+	if body.MaxOutputTokens == 0 {
+		body.MaxOutputTokens = 8192
+	} else if body.MaxOutputTokens < 128 || body.MaxOutputTokens > 1_000_000 {
+		writeError(w, http.StatusBadRequest, 40201, "模型输出上限无效")
+		return nil, fmt.Errorf("invalid max_output_tokens")
 	}
 	return body, nil
 }

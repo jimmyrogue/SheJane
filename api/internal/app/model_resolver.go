@@ -167,18 +167,6 @@ func (a *App) ResolveAutoModelWithIntent(ctx context.Context, goal string, inten
 	return fallback, autoResolveFallbackReason(normalizedIntent, difficulty, goal)
 }
 
-// NextChatModel returns the next ranked chat model after a failing model. It is
-// intentionally conservative: one hop only, same enabled catalog, ranked by the
-// same health/cost/priority score Auto uses.
-func (a *App) NextChatModel(ctx context.Context, currentID string) (modelreg.ChatModelInfo, bool) {
-	for _, candidate := range a.rankAutoCandidates(ctx, a.Registry.ListChatModels()) {
-		if candidate.ID != currentID {
-			return candidate, true
-		}
-	}
-	return modelreg.ChatModelInfo{}, false
-}
-
 type autoRouteStats struct {
 	calls      int
 	failures   int

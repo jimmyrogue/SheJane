@@ -42,6 +42,27 @@ func TestAgentLLMStreamRejectsEmptyMessages(t *testing.T) {
 	}
 }
 
+func TestAgentLLMStreamRejectsInvalidOutputBudget(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	server := NewServer(app.New(cfg, store.NewMemoryStore()))
+	token := registerAndToken(t, server)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/agent/llm/stream",
+		strings.NewReader(`{"model":"chat.fast","max_output_tokens":127,"messages":[{"role":"user","content":"hi"}]}`),
+	)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
 func TestAgentLLMStreamEmitsDeltaUsageAndDoneAndSettlesCredits(t *testing.T) {
 	server := newTestServer(t)
 	token := registerAndToken(t, server)
@@ -130,7 +151,7 @@ func TestRunAgentLLMStreamEmitsReasoningOnlyChunks(t *testing.T) {
 	})
 }
 
-func TestAgentLLMStreamFallsBackToNextCandidateOnProviderFailure(t *testing.T) {
+func TestAgentLLMStreamDoesNotSwitchModelOnProviderFailure(t *testing.T) {
 	cfg := config.Default()
 	cfg.JWTSecret = "test-secret"
 	cfg.MockLLM = true
@@ -174,7 +195,7 @@ func TestAgentLLMStreamFallsBackToNextCandidateOnProviderFailure(t *testing.T) {
 	server := NewServer(application)
 	token := registerAndToken(t, server)
 
-	body := `{"run_id":"local-run-fallback","model":"bad-model","messages":[{"role":"user","content":"hello"}]}`
+	body := `{"run_id":"local-run-no-fallback","model":"bad-model","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -185,25 +206,25 @@ func TestAgentLLMStreamFallsBackToNextCandidateOnProviderFailure(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	events := parseSSEEvents(t, recorder.Body.String())
-	mustHaveEvent(t, events, "llm.model_selected", func(payload map[string]any) bool {
-		return payload["requested_model"] == "bad-model" &&
-			payload["resolved_model_id"] == "good-model" &&
-			payload["reason"] == "上游失败后降级"
+	mustHaveEvent(t, events, "llm.error", func(payload map[string]any) bool {
+		return payload["request_id"] != "" && payload["message"] != ""
 	})
-	mustHaveEvent(t, events, "llm.delta", func(payload map[string]any) bool {
-		content, _ := payload["content_delta"].(string)
-		return strings.Contains(content, "fallback ok")
+	mustHaveEvent(t, events, "llm.done", func(payload map[string]any) bool {
+		return payload["finish_reason"] == "error"
 	})
 	for _, ev := range events {
-		if ev.event == "llm.error" {
-			t.Fatalf("unexpected llm.error after fallback: %s", ev.raw)
+		if ev.event == "llm.model_selected" {
+			t.Fatalf("provider failure silently selected another model: %s", ev.raw)
 		}
 	}
 	calls := usageRecords(t, server, token)
-	for _, want := range []string{`"mode":"bad-model"`, `"status":"failed"`, `"mode":"good-model"`, `"status":"done"`} {
+	for _, want := range []string{`"mode":"bad-model"`, `"status":"failed"`} {
 		if !strings.Contains(calls, want) {
-			t.Fatalf("usage records missing %q after fallback: %s", want, calls)
+			t.Fatalf("usage records missing %q after failure: %s", want, calls)
 		}
+	}
+	if strings.Contains(calls, `"mode":"good-model"`) {
+		t.Fatalf("provider failure created a fallback model call: %s", calls)
 	}
 }
 

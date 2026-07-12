@@ -20,6 +20,7 @@ type ChatRequest struct {
 	ClientMessageID      string           `json:"client_message_id"`
 	Scene                string           `json:"scene"`
 	OrganizationID       string           `json:"organization_id,omitempty"`
+	MaxOutputTokens      int              `json:"max_output_tokens,omitempty"`
 }
 
 type ToolDefinition struct {
