@@ -5,6 +5,7 @@ All env vars use the `SHEJANE_LOCAL_` prefix.
 
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,20 @@ class Settings(BaseSettings):
     host: str = Field(default="127.0.0.1", alias="SHEJANE_LOCAL_HOST_ADDR")
     port: int = Field(default=17371, alias="SHEJANE_LOCAL_HOST_PORT")
     pairing_token: str = Field(default="", alias="SHEJANE_LOCAL_HOST_TOKEN")
+
+    @field_validator("host")
+    @classmethod
+    def require_loopback_host(cls, value: str) -> str:
+        host = value.strip()
+        if host.lower() == "localhost":
+            return "localhost"
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError as exc:
+            raise ValueError("Runtime listener must use an explicit loopback host") from exc
+        if not address.is_loopback:
+            raise ValueError("Runtime listener must use an explicit loopback host")
+        return str(address)
 
     # Storage
     data_dir: Path = Field(default=Path.home() / ".shejane" / "local-host")

@@ -7,7 +7,7 @@
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
 > **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
 
-桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点和一次性配对 Token，并启动对应进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。两种模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败不会回退云端任务，而是创建离线桌面界面，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
+桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点和一次性配对 Token，并启动对应进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。Runtime 配置本身也拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败不会回退云端任务，而是创建离线桌面界面，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
 
 ---
 

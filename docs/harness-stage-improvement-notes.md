@@ -89,7 +89,20 @@
 
 自带 Runtime 正常退出时先收到 `SIGTERM`，在有限的资源清理时间后才会被强制结束。Main 选择空闲端口到 Runtime 绑定之间仍有很短的系统窗口，但配对 Token 保证其他进程不会被误认；只有托管子进程明确报告“地址已占用”并退出时，Main 才重新分配端口。所有尝试共享同一个 30 秒启动期限；配置错误、依赖错误和仍存活却未就绪的进程都不会盲目重启。外部 Runtime 没有进程所有权，Electron 不会停止它。
 
-连接失败或版本不兼容时，桌面端进入明确的离线状态并保留本地界面，不创建云端任务；用户可以在设置中修正外部连接或切回自带 Runtime 后重启。P1 尚未完成的范围只剩远程 Runtime：安全传输、设备身份、凭证过期与撤销，以及断线重连。远程能力不应复用本机配对 Token。
+连接失败或版本不兼容时，桌面端进入明确的离线状态并保留本地界面，不创建云端任务；用户可以在设置中修正外部连接或切回自带 Runtime 后重启。**P1 在当前桌面与本机产品边界内已完成。** 远程安全传输、设备身份、凭证撤销和断线重连属于未来独立网关与移动客户端项目；远程能力不复用本机配对 Token，也不通过放宽 Runtime 监听地址实现。
+
+### 远程 Runtime 的安全边界
+
+结论：**现在不实现远程接入，当前桌面版 P1 不受它阻塞。** 等移动端或托管 Runtime 正式立项时，再实现一个独立的远程接入网关；不要把公网认证、设备管理和中继能力塞进 Runtime 内核。
+
+- Runtime 只监听回环地址，不直接绑定私网或公网地址。受控私网、隧道或远程网关必须在同机代理 loopback 服务。远程客户端只连接网关，网关负责公网 TLS、限流、配对、设备凭证、撤销和连接转发；Runtime 仍负责 P3 的资源授权，网关不拥有任务、对话和检查点状态。这是根据当前产品边界作出的工程取舍。LangGraph 的自托管服务也没有默认认证，需要部署者自行实现认证和逐资源授权；其官方示例把身份提供方、Agent 服务和客户端分开描述，而不是把“可以远程调用”当成安全入口。[LangGraph 认证与访问控制](https://docs.langchain.com/langsmith/auth)
+- 用户自行远程访问的第一种可支持方式，是把现有协议放在用户管理的私网隧道后面。Tailscale Serve 只向同一私网开放服务，继承访问规则，并建议被代理服务只监听本机；Funnel 则把服务公开到互联网，而且不提供 Serve 的身份头，因此不能单独作为 Runtime 的认证边界。[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) · [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)
+- WireGuard 可以提供加密隧道、对等设备公钥身份和网络漫游，但官方明确把密钥分发与配置下发留给上层。因此它可以作为传输层选项，不能替代 SheJane 的设备配对、授权和撤销记录。[WireGuard 概念说明](https://www.wireguard.com/)
+- 移动端是具备浏览器的原生应用。有账号体系或托管网关时，正式登录应使用系统浏览器中的授权码流程和 PKCE；纯自托管配对不必为此引入 OAuth 服务，可以由本机用户确认一次性挑战后登记设备公钥。设备授权流程只适合没有浏览器或输入受限的设备，规范明确说明它不用于替代智能手机上的浏览器授权；将来只有无键盘终端确有需求时才采用该流程。[RFC 8252：原生应用 OAuth](https://datatracker.ietf.org/doc/html/rfc8252) · [RFC 8628：设备授权](https://datatracker.ietf.org/doc/html/rfc8628)
+- 每台远程设备生成独立密钥并建立独立设备记录，不复制本机长期 Bearer Token。配对只交换短期、一次性挑战并要求用户确认设备；之后签发短期、限定 Runtime 受众和最小权限的访问令牌。移动和桌面公共客户端优先使用 DPoP 将令牌绑定到设备密钥；托管网关与 Runtime 之间如果跨主机，可使用 mTLS，规模化工作负载再考虑 SPIFFE。mTLS 和 DPoP 都能限制被盗令牌的重放；SPIFFE 的短期 SVID 更适合工作负载身份，不适合充当消费者设备配对系统。[RFC 8705：mTLS 绑定令牌](https://datatracker.ietf.org/doc/html/rfc8705) · [RFC 9449：DPoP](https://datatracker.ietf.org/doc/html/rfc9449) · [SPIFFE 概念](https://spiffe.io/docs/latest/spiffe-about/spiffe-concepts/)
+- 撤销以设备为单位：禁止该设备继续换取令牌，撤销其刷新令牌，并让短期访问令牌尽快自然失效。公共客户端的刷新令牌必须绑定发送方或轮换；刷新令牌必须可撤销。断线重连先刷新身份会话，再复用 P4 已有的快照和事件游标恢复，不另建远程任务状态机。[RFC 9700：OAuth 安全最佳实践](https://datatracker.ietf.org/doc/html/rfc9700) · [RFC 7009：令牌撤销](https://datatracker.ietf.org/doc/html/rfc7009)
+
+未来实施顺序：先定义网关向 Runtime 传递的内部身份声明和受信传输边界；再完成一次性配对、设备登记、短期 DPoP 令牌、刷新轮换和单设备撤销；有账号体系时才增加授权码加 PKCE；最后增加中继发现与移动端重连。用户自建的 Tailscale 或 WireGuard 接入可以更早作为高级选项，但不作为默认产品依赖。
 
 ## P2：客户端提交命令
 
