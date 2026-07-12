@@ -1218,7 +1218,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "tool_review" | "question" | "tool_reconciliation";
+            kind: "tool_review" | "question" | "plan" | "tool_reconciliation";
             /** Resolved At */
             resolved_at?: string | null;
             /**
@@ -2172,6 +2172,50 @@ export interface components {
         SkillWriteResponse: {
             skill: components["schemas"]["SkillFile"];
         };
+        /** ToolReconcileCommand */
+        ToolReconcileCommand: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirmed_completed" | "retry_not_executed" | "abort";
+            /** Operation Id */
+            operation_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "tool.reconcile";
+        };
+        /** ToolReconcileCommandReceipt */
+        ToolReconcileCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirmed_completed" | "retry_not_executed" | "abort";
+            /** Operation Id */
+            operation_id: string;
+            /**
+             * Resolved
+             * @default true
+             * @constant
+             */
+            resolved: true;
+            /** Resumed */
+            resumed: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "tool.reconcile";
+        };
         /** ToolReconciliationResolution */
         ToolReconciliationResolution: {
             /**
@@ -2290,7 +2334,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"];
             };
         };
         responses: {
@@ -2300,7 +2344,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"];
                 };
             };
             /** @description Validation Error */

@@ -88,6 +88,8 @@ from .api_schemas import (
     SkillFile,
     SkillWriteRequest,
     SkillWriteResponse,
+    ToolReconcileCommand,
+    ToolReconcileCommandReceipt,
     ToolReconciliationResolution,
     UpdateLocalThreadRequest,
     UpsertLocalModelProviderRequest,
@@ -1079,16 +1081,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             | AnswerQuestionCommandReceipt
             | ResolvePermissionCommandReceipt
             | PlanResolveCommandReceipt
+            | ToolReconcileCommandReceipt
         ),
     )
     async def accept_command(
         request: Request,
         body: (
-            CancelRunCommand | AnswerQuestionCommand | ResolvePermissionCommand | PlanResolveCommand
+            CancelRunCommand
+            | AnswerQuestionCommand
+            | ResolvePermissionCommand
+            | PlanResolveCommand
+            | ToolReconcileCommand
         ),
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
         coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, ToolReconcileCommand):
+            command_payload = {
+                "type": body.type,
+                "operation_id": body.operation_id,
+                "decision": body.decision,
+            }
+            try:
+                replay = await store.accepted_command_receipt(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    command_type=body.type,
+                    payload=command_payload,
+                )
+                if replay is not None:
+                    if replay.get("resumed"):
+                        coordinator.wake_jobs()
+                    return replay
+                reconciliation = await store.get_wait_candidate(body.operation_id)
+                if reconciliation is None or reconciliation.get("kind") != "tool_reconciliation":
+                    raise KeyError(body.operation_id)
+                run = await _owned_run(
+                    store,
+                    principal_id=request.state.principal_id,
+                    run_id=str(reconciliation["run_id"]),
+                    not_found_detail="tool reconciliation not found",
+                )
+                await _authorized_workspace_path(
+                    store,
+                    principal_id=request.state.principal_id,
+                    path=run.get("workspace_path"),
+                )
+                await coordinator.reconcile_resume_head(str(reconciliation["run_id"]))
+                results = await _tool_reconciliation_results(
+                    store,
+                    operation_id=body.operation_id,
+                    decision=body.decision,
+                )
+                receipt, _created = await store.request_tool_reconcile_command(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    operation_id=body.operation_id,
+                    decision=body.decision,
+                    **results,
+                )
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=404, detail="tool reconciliation not found"
+                ) from exc
+            except (CommandConflictError, WaitDecisionConflictError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except WorkspaceAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if receipt["resumed"]:
+                coordinator.wake_jobs()
+            return receipt
         if isinstance(body, PlanResolveCommand):
             instructions = (body.instructions or "").strip() or None
             command_payload: dict[str, Any] = {
@@ -1662,6 +1724,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         body: ReconcileToolRequest,
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
+        command_id = f"legacy_reconcile_{operation_id}"
+        try:
+            replay = await store.accepted_command_receipt(
+                principal_id=request.state.principal_id,
+                command_id=command_id,
+                command_type="tool.reconcile",
+                payload={
+                    "type": "tool.reconcile",
+                    "operation_id": operation_id,
+                    "decision": body.decision,
+                },
+            )
+        except CommandConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if replay is not None:
+            if replay.get("resumed"):
+                app.state.coordinator.wake_jobs()
+            return replay
         record = await store.get_wait_candidate(operation_id)
         if record is None or record.get("kind") != "tool_reconciliation":
             raise HTTPException(status_code=404, detail="tool reconciliation not found")
@@ -1678,67 +1758,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if run.get("status") in _TERMINAL_RUN_STATUSES:
             raise HTTPException(status_code=409, detail="run is not awaiting a decision")
-        already_resolved = record.get("status") != "pending"
-        payload = _json_object(record.get("payload_json"))
-        current_receipt = await store.get_tool_receipt(operation_id)
-        prior_operation_id = str(payload.get("prior_operation_id") or operation_id)
-        prior_receipt = await store.get_tool_receipt(prior_operation_id)
-        if current_receipt is None or prior_receipt is None:
-            raise HTTPException(status_code=409, detail="tool reconciliation receipt is missing")
-        current_result = (
-            _tool_reconciliation_result(current_receipt, body.decision)
-            if body.decision != "retry_not_executed"
-            else None
-        )
-        prior_result = _tool_reconciliation_result(
-            prior_receipt,
-            "abort" if body.decision == "retry_not_executed" else body.decision,
-        )
-        try:
-            await store.resolve_tool_reconciliation(
-                operation_id,
-                decision=body.decision,
-                current_result_json=current_result,
-                current_result_hash=(
-                    hashlib.sha256(current_result.encode()).hexdigest()
-                    if current_result is not None
-                    else None
-                ),
-                prior_result_json=prior_result,
-                prior_result_hash=hashlib.sha256(prior_result.encode()).hexdigest(),
-            )
-        except WaitDecisionConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator
-        if not already_resolved:
-            await coordinator.emit_for_run(
-                str(record["run_id"]),
-                "tool.reconciliation_resolved",
-                {
-                    "request_id": operation_id,
-                    "operation_id": operation_id,
-                    "decision": body.decision,
-                },
+        await coordinator.reconcile_resume_head(str(record["run_id"]))
+        try:
+            results = await _tool_reconciliation_results(
+                store,
+                operation_id=operation_id,
+                decision=body.decision,
             )
-        resume_payload = await store.wait_cycle_resume_payload(
-            run_id=str(record["run_id"]),
-            wait_cycle_id=str(record["wait_cycle_id"]),
-        )
-        ok = bool(
-            resume_payload is not None
-            and await _ensure_resume_job(
-                store=store,
-                coordinator=coordinator,
-                run_id=str(record["run_id"]),
-                decision=resume_payload,
+            receipt, _created = await store.request_tool_reconcile_command(
+                principal_id=request.state.principal_id,
+                command_id=command_id,
+                operation_id=operation_id,
+                decision=body.decision,
+                **results,
             )
-        )
-        return {
-            "operation_id": operation_id,
-            "resolved": True,
-            "decision": body.decision,
-            "resumed": ok,
-        }
+        except (CommandConflictError, WaitDecisionConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except WorkspaceAdmissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if receipt["resumed"]:
+            coordinator.wake_jobs()
+        return receipt
 
     @app.post("/local/v1/plans/{approval_id}", response_model=PlanApprovalResolution)
     async def resolve_plan_approval(
@@ -2389,6 +2430,42 @@ def _json_object(value: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+async def _tool_reconciliation_results(
+    store: LocalStore,
+    *,
+    operation_id: str,
+    decision: str,
+) -> dict[str, str | None]:
+    record = await store.get_wait_candidate(operation_id)
+    if record is None or record.get("kind") != "tool_reconciliation":
+        raise KeyError(operation_id)
+    payload = _json_object(record.get("payload_json"))
+    current_receipt = await store.get_tool_receipt(operation_id)
+    prior_operation_id = str(payload.get("prior_operation_id") or operation_id)
+    prior_receipt = await store.get_tool_receipt(prior_operation_id)
+    if current_receipt is None or prior_receipt is None:
+        raise WaitDecisionConflictError("tool reconciliation receipt is missing")
+    current_result = (
+        _tool_reconciliation_result(current_receipt, decision)
+        if decision != "retry_not_executed"
+        else None
+    )
+    prior_result = _tool_reconciliation_result(
+        prior_receipt,
+        "abort" if decision == "retry_not_executed" else decision,
+    )
+    return {
+        "current_result_json": current_result,
+        "current_result_hash": (
+            hashlib.sha256(current_result.encode()).hexdigest()
+            if current_result is not None
+            else None
+        ),
+        "prior_result_json": prior_result,
+        "prior_result_hash": hashlib.sha256(prior_result.encode()).hexdigest(),
+    }
 
 
 def _tool_reconciliation_result(receipt: dict[str, Any], decision: str) -> str:

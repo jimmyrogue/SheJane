@@ -354,7 +354,7 @@ CREATE TABLE IF NOT EXISTS local_permission_grant_uses (
 CREATE TABLE IF NOT EXISTS local_wait_candidates (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,
-    kind TEXT NOT NULL,                  -- tool_review | question | tool_reconciliation
+    kind TEXT NOT NULL,                  -- tool_review | question | plan | tool_reconciliation
     wait_cycle_id TEXT NOT NULL,
     interrupt_id TEXT NOT NULL,
     position INTEGER NOT NULL DEFAULT 0,
@@ -3564,6 +3564,158 @@ class LocalStore:
                 await conn.rollback()
                 raise
 
+    async def request_tool_reconcile_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        operation_id: str,
+        decision: str,
+        current_result_json: str | None,
+        current_result_hash: str | None,
+        prior_result_json: str,
+        prior_result_hash: str,
+    ) -> tuple[dict[str, Any], bool]:
+        payload_json = _encode_payload(
+            {
+                "type": "tool.reconcile",
+                "operation_id": operation_id,
+                "decision": decision,
+            }
+        )
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="tool.reconcile",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+
+                record = await (
+                    await conn.execute(
+                        "SELECT c.*, r.status AS run_status, r.principal_id, r.goal, "
+                        "r.user_input, r.workspace_path, r.mode, r.history_json, "
+                        "r.settings_json, r.metadata_json "
+                        "FROM local_wait_candidates c JOIN local_runs r ON r.id = c.run_id "
+                        "WHERE c.id = ? AND c.kind = 'tool_reconciliation' "
+                        "AND r.principal_id = ?",
+                        (operation_id, principal_id),
+                    )
+                ).fetchone()
+                if record is None:
+                    raise KeyError(f"unknown tool reconciliation: {operation_id}")
+                run_id = str(record["run_id"])
+                workspace_error = await self._workspace_owner_error(
+                    conn,
+                    principal_id=principal_id,
+                    path=record["workspace_path"],
+                ) or await self._workspace_path_error(record["workspace_path"])
+                if workspace_error is not None:
+                    raise WorkspaceAdmissionError(workspace_error)
+                if record["status"] == "pending" and record["run_status"] not in {
+                    "waiting_permission",
+                    "waiting_input",
+                }:
+                    raise WaitDecisionConflictError(
+                        "run is not awaiting a tool reconciliation decision"
+                    )
+
+                updated, newly_resolved = await self._resolve_tool_reconciliation_uncommitted(
+                    conn,
+                    candidate_id=operation_id,
+                    decision=decision,
+                    current_result_json=current_result_json,
+                    current_result_hash=current_result_hash,
+                    prior_result_json=prior_result_json,
+                    prior_result_hash=prior_result_hash,
+                )
+                now = _now()
+                if newly_resolved:
+                    await self._append_event_uncommitted(
+                        conn,
+                        run_id,
+                        "tool.reconciliation_resolved",
+                        payload_json=_encode_payload(
+                            {
+                                "request_id": operation_id,
+                                "operation_id": operation_id,
+                                "decision": decision,
+                            }
+                        ),
+                        created_at=now,
+                    )
+
+                resume_payload = await self._wait_cycle_resume_payload_uncommitted(
+                    conn,
+                    run_id=run_id,
+                    wait_cycle_id=str(updated["wait_cycle_id"]),
+                )
+                resumed = record["run_status"] in {
+                    "queued",
+                    "running",
+                    "completed",
+                    "failed",
+                }
+                if (
+                    record["run_status"] in {"waiting_permission", "waiting_input"}
+                    and resume_payload is not None
+                ):
+                    active_job = await (
+                        await conn.execute(
+                            "SELECT * FROM local_run_jobs WHERE run_id = ? "
+                            "AND status IN ('pending', 'leased')",
+                            (run_id,),
+                        )
+                    ).fetchone()
+                    if active_job is None:
+                        job = self._new_run_job_record(
+                            run_id=run_id,
+                            kind="resume",
+                            input_payload=self._run_job_input(dict(record)),
+                            resume_payload=resume_payload,
+                        )
+                        await self._insert_run_job(conn, job)
+                    elif active_job["kind"] != "resume":
+                        raise WaitDecisionConflictError("run already has a different active job")
+                    resumed = True
+
+                receipt = {
+                    "type": "tool.reconcile",
+                    "command_id": command_id,
+                    "operation_id": operation_id,
+                    "run_id": run_id,
+                    "resolved": True,
+                    "decision": decision,
+                    "resumed": resumed,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'tool.reconcile', '', ?, ?, ?, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        payload_json,
+                        _encode_payload(receipt),
+                        run_id,
+                        now,
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
     async def _request_run_cancel_uncommitted(
         self,
         conn: aiosqlite.Connection,
@@ -5302,108 +5454,146 @@ class LocalStore:
         record = await self.get_wait_candidate(candidate_id)
         if record is None or record.get("kind") != "tool_reconciliation":
             return None
-        decision_json = json.dumps({"decision": decision}, separators=(",", ":"))
-        if record.get("status") != "pending":
-            if str(record.get("decision_json") or "") != decision_json:
+        current_run_id = str(record["run_id"])
+        async with self.run_write_transaction(current_run_id) as conn:
+            updated, _resolved = await self._resolve_tool_reconciliation_uncommitted(
+                conn,
+                candidate_id=candidate_id,
+                decision=decision,
+                current_result_json=current_result_json,
+                current_result_hash=current_result_hash,
+                prior_result_json=prior_result_json,
+                prior_result_hash=prior_result_hash,
+            )
+            return updated
+
+    @staticmethod
+    async def _resolve_tool_reconciliation_uncommitted(
+        conn: aiosqlite.Connection,
+        *,
+        candidate_id: str,
+        decision: str,
+        current_result_json: str | None,
+        current_result_hash: str | None,
+        prior_result_json: str,
+        prior_result_hash: str,
+    ) -> tuple[dict[str, Any], bool]:
+        record = await (
+            await conn.execute(
+                "SELECT * FROM local_wait_candidates WHERE id = ?",
+                (candidate_id,),
+            )
+        ).fetchone()
+        if record is None or record["kind"] != "tool_reconciliation":
+            raise KeyError(candidate_id)
+        decision_json = _encode_payload({"decision": decision})
+        if record["status"] != "pending":
+            if str(record["decision_json"] or "") != decision_json:
                 raise WaitDecisionConflictError(
                     "tool reconciliation was already resolved differently"
                 )
-            return record
-        payload = json.loads(str(record.get("payload_json") or "{}"))
+            return dict(record), False
+        payload = _json_payload(record["payload_json"])
         prior_operation_id = str(payload.get("prior_operation_id") or candidate_id)
         current_run_id = str(record["run_id"])
-        async with self.run_write_transaction(current_run_id) as conn:
-            current_receipt = await (
+        current_receipt = await (
+            await conn.execute(
+                "SELECT * FROM local_tool_receipts WHERE operation_id = ? AND run_id = ?",
+                (candidate_id, current_run_id),
+            )
+        ).fetchone()
+        prior_receipt = await (
+            await conn.execute(
+                "SELECT * FROM local_tool_receipts WHERE operation_id = ?",
+                (prior_operation_id,),
+            )
+        ).fetchone()
+        if current_receipt is None or prior_receipt is None:
+            raise WaitDecisionConflictError("tool reconciliation receipt is missing")
+        prior_run_id = str(prior_receipt["run_id"])
+        if prior_run_id != current_run_id:
+            ancestor = await (
                 await conn.execute(
-                    "SELECT * FROM local_tool_receipts WHERE operation_id = ? AND run_id = ?",
-                    (candidate_id, current_run_id),
+                    "WITH RECURSIVE lineage(id, owner, depth) AS ("
+                    "SELECT parent_run_id, principal_id, 0 FROM local_runs "
+                    "WHERE id = ? AND parent_run_id IS NOT NULL UNION ALL "
+                    "SELECT parent.parent_run_id, lineage.owner, lineage.depth + 1 "
+                    "FROM local_runs AS parent JOIN lineage ON parent.id = lineage.id "
+                    "WHERE parent.principal_id = lineage.owner "
+                    "AND parent.parent_run_id IS NOT NULL AND lineage.depth < 64"
+                    ") SELECT 1 FROM lineage JOIN local_runs AS ancestor "
+                    "ON ancestor.id = lineage.id AND ancestor.principal_id = lineage.owner "
+                    "WHERE lineage.id = ? LIMIT 1",
+                    (current_run_id, prior_run_id),
                 )
             ).fetchone()
-            prior_receipt = await (
-                await conn.execute(
-                    "SELECT * FROM local_tool_receipts WHERE operation_id = ?",
-                    (prior_operation_id,),
+            if ancestor is None:
+                raise WaitDecisionConflictError(
+                    "tool reconciliation source is not an owned ancestor"
                 )
-            ).fetchone()
-            if current_receipt is None or prior_receipt is None:
-                raise WaitDecisionConflictError("tool reconciliation receipt is missing")
-            prior_run_id = str(prior_receipt["run_id"])
-            if prior_run_id != current_run_id:
-                ancestor = await (
-                    await conn.execute(
-                        "WITH RECURSIVE lineage(id, owner, depth) AS ("
-                        "SELECT parent_run_id, principal_id, 0 FROM local_runs "
-                        "WHERE id = ? AND parent_run_id IS NOT NULL UNION ALL "
-                        "SELECT parent.parent_run_id, lineage.owner, lineage.depth + 1 "
-                        "FROM local_runs AS parent JOIN lineage ON parent.id = lineage.id "
-                        "WHERE parent.principal_id = lineage.owner "
-                        "AND parent.parent_run_id IS NOT NULL AND lineage.depth < 64"
-                        ") SELECT 1 FROM lineage JOIN local_runs AS ancestor "
-                        "ON ancestor.id = lineage.id AND ancestor.principal_id = lineage.owner "
-                        "WHERE lineage.id = ? LIMIT 1",
-                        (current_run_id, prior_run_id),
-                    )
-                ).fetchone()
-                if ancestor is None:
-                    raise WaitDecisionConflictError(
-                        "tool reconciliation source is not an owned ancestor"
-                    )
-            now = _now()
-            prior_status = "completed" if decision == "confirmed_completed" else "failed"
-            prior_cursor = await conn.execute(
-                "UPDATE local_tool_receipts SET status = ?, result_json = ?, result_hash = ?, "
-                "error_type = ?, completed_at = ?, updated_at = ? "
-                "WHERE operation_id = ? AND status = 'outcome_unknown'",
+        now = _now()
+        prior_status = "completed" if decision == "confirmed_completed" else "failed"
+        prior_cursor = await conn.execute(
+            "UPDATE local_tool_receipts SET status = ?, result_json = ?, result_hash = ?, "
+            "error_type = ?, completed_at = ?, updated_at = ? "
+            "WHERE operation_id = ? AND status = 'outcome_unknown'",
+            (
+                prior_status,
+                prior_result_json,
+                prior_result_hash,
+                None if prior_status == "completed" else "ReconciledByUser",
+                now,
+                now,
+                prior_operation_id,
+            ),
+        )
+        if prior_cursor.rowcount != 1:
+            raise WaitDecisionConflictError(
+                "tool reconciliation source is no longer outcome_unknown"
+            )
+        if prior_operation_id == candidate_id and decision == "retry_not_executed":
+            await conn.execute(
+                "UPDATE local_tool_receipts SET status = 'prepared', result_json = NULL, "
+                "result_hash = NULL, error_type = NULL, completed_at = NULL, updated_at = ? "
+                "WHERE operation_id = ?",
+                (now, candidate_id),
+            )
+        elif prior_operation_id != candidate_id and decision != "retry_not_executed":
+            current_status = "completed" if decision == "confirmed_completed" else "failed"
+            current_cursor = await conn.execute(
+                "UPDATE local_tool_receipts SET status = ?, result_json = ?, "
+                "result_hash = ?, error_type = ?, completed_at = ?, updated_at = ? "
+                "WHERE operation_id = ? AND run_id = ? AND status = 'prepared'",
                 (
-                    prior_status,
-                    prior_result_json,
-                    prior_result_hash,
-                    None if prior_status == "completed" else "ReconciledByUser",
+                    current_status,
+                    current_result_json,
+                    current_result_hash,
+                    None if current_status == "completed" else "ReconciledByUser",
                     now,
                     now,
-                    prior_operation_id,
+                    candidate_id,
+                    current_run_id,
                 ),
             )
-            if prior_cursor.rowcount != 1:
+            if current_cursor.rowcount != 1:
                 raise WaitDecisionConflictError(
-                    "tool reconciliation source is no longer outcome_unknown"
+                    "current tool reconciliation receipt is no longer prepared"
                 )
-            if prior_operation_id == candidate_id and decision == "retry_not_executed":
-                await conn.execute(
-                    "UPDATE local_tool_receipts SET status = 'prepared', result_json = NULL, "
-                    "result_hash = NULL, error_type = NULL, completed_at = NULL, updated_at = ? "
-                    "WHERE operation_id = ?",
-                    (now, candidate_id),
-                )
-            elif prior_operation_id != candidate_id and decision != "retry_not_executed":
-                current_status = "completed" if decision == "confirmed_completed" else "failed"
-                current_cursor = await conn.execute(
-                    "UPDATE local_tool_receipts SET status = ?, result_json = ?, "
-                    "result_hash = ?, error_type = ?, completed_at = ?, updated_at = ? "
-                    "WHERE operation_id = ? AND run_id = ? AND status = 'prepared'",
-                    (
-                        current_status,
-                        current_result_json,
-                        current_result_hash,
-                        None if current_status == "completed" else "ReconciledByUser",
-                        now,
-                        now,
-                        candidate_id,
-                        current_run_id,
-                    ),
-                )
-                if current_cursor.rowcount != 1:
-                    raise WaitDecisionConflictError(
-                        "current tool reconciliation receipt is no longer prepared"
-                    )
-            cursor = await conn.execute(
-                "UPDATE local_wait_candidates SET status = 'resolved', decision_json = ?, "
-                "resolved_at = ? WHERE id = ? AND status = 'pending'",
-                (decision_json, _now(), candidate_id),
+        cursor = await conn.execute(
+            "UPDATE local_wait_candidates SET status = 'resolved', decision_json = ?, "
+            "resolved_at = ? WHERE id = ? AND status = 'pending'",
+            (decision_json, now, candidate_id),
+        )
+        if cursor.rowcount != 1:
+            raise WaitDecisionConflictError("tool reconciliation was resolved concurrently")
+        updated = await (
+            await conn.execute(
+                "SELECT * FROM local_wait_candidates WHERE id = ?",
+                (candidate_id,),
             )
-            if cursor.rowcount != 1:
-                raise WaitDecisionConflictError("tool reconciliation was resolved concurrently")
-        return await self.get_wait_candidate(candidate_id)
+        ).fetchone()
+        assert updated is not None
+        return dict(updated), True
 
     # --- artifacts ---
 

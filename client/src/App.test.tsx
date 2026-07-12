@@ -1013,6 +1013,74 @@ describe('user client shell', () => {
     })
   })
 
+  it('keeps one durable tool reconciliation pending across transport failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-reconciliation-command',
+      title: '等待工具对账',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'reconciliation-user', role: 'user', content: '执行外部操作', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'reconciliation-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_permission',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'tool.reconciliation_required',
+            label: '需要核对工具结果',
+            permissionRequestId: 'toolop-command',
+            permissionTool: '运行命令',
+            permissionToolName: 'execute',
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { toolReconciliationFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    const completed = await screen.findByText('已确认执行成功')
+    const abort = screen.getByText('停止，不再尝试')
+    fireEvent.click(completed)
+    fireEvent.click(abort)
+
+    await waitFor(() => {
+      const commands = calls.filter((call) =>
+        call.url.endsWith('/local/v1/commands') &&
+        JSON.parse(String(call.init?.body ?? '{}')).type === 'tool.reconcile')
+      expect(commands.length).toBeGreaterThan(0)
+      expect(commands.map((command) => JSON.parse(String(command.init?.body ?? '{}')))).toEqual(
+        commands.map(() => ({
+          type: 'tool.reconcile',
+          command_id: 'reconcile_toolop-command',
+          operation_id: 'toolop-command',
+          decision: 'confirmed_completed',
+        })),
+      )
+    })
+    await waitFor(async () => {
+      expect(await localData.listPendingRuntimeCommands()).toEqual([
+        expect.objectContaining({
+          type: 'tool.reconcile',
+          commandId: 'reconcile_toolop-command',
+          input: expect.objectContaining({ decision: 'confirmed_completed' }),
+        }),
+      ])
+      expect((await localData.get('conv-reconciliation-command'))?.messages.at(-1)?.status).toBe(
+        'waiting_permission',
+      )
+    })
+  })
+
   it('keeps one durable plan decision pending across transport failure', async () => {
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     await localData.save({
@@ -2810,6 +2878,7 @@ function mockFetch(
 	    questionAnswerFailures?: number
 	    permissionDecisionFailures?: number
 	    planDecisionFailures?: number
+	    toolReconciliationFailures?: number
 	    localRunCreateGate?: Promise<void>
 	    requireRunCancelBeforeThreadDelete?: boolean
 	    runtimeThreads?: Array<Record<string, unknown>>
@@ -2827,6 +2896,7 @@ function mockFetch(
 	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
 	  let permissionDecisionFailures = options.permissionDecisionFailures ?? 0
 	  let planDecisionFailures = options.planDecisionFailures ?? 0
+	  let toolReconciliationFailures = options.toolReconciliationFailures ?? 0
 	  let localRunCanceled = false
 	  let uploadCounter = 0
 	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
@@ -2930,6 +3000,7 @@ function mockFetch(
         decision?: string
         scope?: string
         approval_id?: string
+        operation_id?: string
         instructions?: string
       }
       if (body.type === 'question.answer') {
@@ -2981,6 +3052,24 @@ function mockFetch(
           resolved: true,
           decision: body.decision,
           instructions: body.instructions ?? null,
+          resumed: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (body.type === 'tool.reconcile') {
+        if (toolReconciliationFailures > 0) {
+          toolReconciliationFailures -= 1
+          throw new TypeError('connection reset')
+        }
+        return new Response(JSON.stringify({
+          type: body.type,
+          command_id: body.command_id,
+          operation_id: body.operation_id,
+          run_id: 'local-run',
+          resolved: true,
+          decision: body.decision,
           resumed: true,
         }), {
           status: 200,

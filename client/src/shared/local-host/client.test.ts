@@ -39,7 +39,7 @@ import {
   streamLocalRun,
   injectLocalRunInstruction,
   resolveLocalPlanCommand,
-  reconcileLocalTool,
+  reconcileLocalToolCommand,
 } from './client'
 
 const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
@@ -160,19 +160,33 @@ describe('desktop local host client', () => {
     )
   })
 
-  it('posts an explicit tool reconciliation decision', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
-    await reconcileLocalTool(
+  it('submits tool reconciliation through the immutable Runtime command endpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      type: 'tool.reconcile',
+      command_id: 'reconcile-tool-1',
+      operation_id: 'toolop-1',
+      run_id: 'run-1',
+      resolved: true,
+      decision: 'retry_not_executed',
+      resumed: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    await expect(reconcileLocalToolCommand(
+      'reconcile-tool-1',
       'toolop-1',
       'retry_not_executed',
       { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       fetcher,
-    )
+    )).resolves.toMatchObject({ type: 'tool.reconcile', resumed: true })
     expect(fetcher).toHaveBeenCalledWith(
-      'http://127.0.0.1:17371/local/v1/tool-reconciliations/toolop-1',
+      'http://127.0.0.1:17371/local/v1/commands',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ decision: 'retry_not_executed' }),
+        body: JSON.stringify({
+          type: 'tool.reconcile',
+          command_id: 'reconcile-tool-1',
+          operation_id: 'toolop-1',
+          decision: 'retry_not_executed',
+        }),
       }),
     )
   })
@@ -598,6 +612,54 @@ describe('desktop local host client', () => {
     expect(acknowledge).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'plan.resolve', commandId: 'resolve-plan-restart' }),
       expect.objectContaining({ type: 'plan.resolve', resumed: true }),
+    )
+  })
+
+  it('redelivers a persisted tool reconciliation with its original decision', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'tool.reconcile',
+          command_id: 'reconcile-tool-restart',
+          operation_id: 'toolop-restart',
+          run_id: 'run-restart',
+          resolved: true,
+          decision: 'abort',
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'tool.reconcile',
+          commandId: 'reconcile-tool-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: {
+            operationId: 'toolop-restart',
+            decision: 'abort',
+            runId: 'run-restart',
+            threadId: 'thread-restart',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      type: 'tool.reconcile',
+      command_id: 'reconcile-tool-restart',
+      operation_id: 'toolop-restart',
+      decision: 'abort',
+    })
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'tool.reconcile', commandId: 'reconcile-tool-restart' }),
+      expect.objectContaining({ type: 'tool.reconcile', resumed: true }),
     )
   })
 

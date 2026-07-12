@@ -35,6 +35,7 @@ export type CancelRunCommandReceipt = Schemas['CancelRunCommandReceipt']
 export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt']
 export type ResolvePermissionCommandReceipt = Schemas['ResolvePermissionCommandReceipt']
 export type PlanResolveCommandReceipt = Schemas['PlanResolveCommandReceipt']
+export type ToolReconcileCommandReceipt = Schemas['ToolReconcileCommandReceipt']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -323,18 +324,30 @@ export interface PendingPlanResolveCommand extends PendingRuntimeCommandBase {
   }
 }
 
+export interface PendingToolReconcileCommand extends PendingRuntimeCommandBase {
+  type: 'tool.reconcile'
+  input: {
+    operationId: string
+    decision: LocalToolReconciliationDecision
+    runId: string
+    threadId: string
+  }
+}
+
 export type PendingRuntimeCommand =
   | PendingRunStartCommand
   | PendingRunCancelCommand
   | PendingQuestionAnswerCommand
   | PendingPermissionResolveCommand
   | PendingPlanResolveCommand
+  | PendingToolReconcileCommand
 export type RuntimeCommandResult =
   | LocalRun
   | CancelRunCommandReceipt
   | AnswerQuestionCommandReceipt
   | ResolvePermissionCommandReceipt
   | PlanResolveCommandReceipt
+  | ToolReconcileCommandReceipt
 
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
@@ -479,6 +492,14 @@ async function deliverRuntimeCommand(
         command.input.approvalId,
         command.input.decision,
         command.input.instructions,
+        config,
+        fetcher,
+      )
+    case 'tool.reconcile':
+      return reconcileLocalToolCommand(
+        command.commandId,
+        command.input.operationId,
+        command.input.decision,
         config,
         fetcher,
       )
@@ -1153,20 +1174,24 @@ export async function streamLocalRun(
   return { completed: result.completed }
 }
 
-export async function reconcileLocalTool(
+export async function reconcileLocalToolCommand(
+  commandID: string,
   operationID: string,
   decision: LocalToolReconciliationDecision,
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
-): Promise<void> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/tool-reconciliations/${encodeURIComponent(operationID)}`, {
+): Promise<ToolReconcileCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
     method: 'POST',
     headers: localHeaders(config, true),
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({
+      type: 'tool.reconcile',
+      command_id: commandID,
+      operation_id: operationID,
+      decision,
+    }),
   })
-  if (!response.ok) {
-    throw new Error(await localErrorMessage(response))
-  }
+  return decodeLocalResponse<ToolReconcileCommandReceipt>(response)
 }
 
 export async function resolveLocalPlanCommand(

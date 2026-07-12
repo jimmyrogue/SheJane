@@ -743,7 +743,7 @@ class DiagnosticsToolReceipt(BaseModel):
 
 class DiagnosticsWaitCandidate(BaseModel):
     id: str
-    kind: Literal["tool_review", "question", "tool_reconciliation"]
+    kind: Literal["tool_review", "question", "plan", "tool_reconciliation"]
     status: Literal["pending", "resolved"]
     created_at: str
     resolved_at: str | None = None
@@ -900,6 +900,28 @@ class PlanResolveCommandReceipt(BaseModel):
     resolved: Literal[True] = True
     decision: PlanApprovalDecision
     instructions: str | None = None
+    resumed: bool
+
+
+class ToolReconcileCommand(ReconcileToolRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["tool.reconcile"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    operation_id: str = Field(min_length=1, max_length=128)
+
+
+class ToolReconcileCommandReceipt(BaseModel):
+    type: Literal["tool.reconcile"]
+    command_id: str
+    operation_id: str
+    run_id: str
+    resolved: Literal[True] = True
+    decision: Literal["confirmed_completed", "retry_not_executed", "abort"]
     resumed: bool
 
 

@@ -110,7 +110,7 @@ import {
   probeLocalHost,
   resolveLocalPlanCommand,
   resolveLocalPermissionCommand,
-  reconcileLocalTool,
+  reconcileLocalToolCommand,
   setLocalCloudSession,
   streamLocalRun,
   updateLocalSkill,
@@ -131,6 +131,7 @@ import {
   type PendingQuestionAnswerCommand,
   type PendingPermissionResolveCommand,
   type PendingPlanResolveCommand,
+  type PendingToolReconcileCommand,
   type PendingRuntimeCommand,
   type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
@@ -384,6 +385,7 @@ function AppContent() {
   const questionAnswersInFlightRef = useRef(new Set<string>())
   const permissionDecisionsInFlightRef = useRef(new Set<string>())
   const planDecisionsInFlightRef = useRef(new Set<string>())
+  const toolReconciliationsInFlightRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -1291,7 +1293,8 @@ function AppContent() {
     if (
       command.type === 'question.answer' ||
       command.type === 'permission.resolve' ||
-      command.type === 'plan.resolve'
+      command.type === 'plan.resolve' ||
+      command.type === 'tool.reconcile'
     ) {
       await localData.deletePendingRuntimeCommand(command.commandId)
       const projected = await syncRuntimeThreadCache(config)
@@ -2336,6 +2339,20 @@ function AppContent() {
     requestID: string,
     decision: LocalToolReconciliationDecision,
   ) {
+    if (toolReconciliationsInFlightRef.current.has(requestID)) return
+    toolReconciliationsInFlightRef.current.add(requestID)
+    try {
+      await handleToolReconciliationOnce(messageID, requestID, decision)
+    } finally {
+      toolReconciliationsInFlightRef.current.delete(requestID)
+    }
+  }
+
+  async function handleToolReconciliationOnce(
+    messageID: string,
+    requestID: string,
+    decision: LocalToolReconciliationDecision,
+  ) {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
@@ -2347,13 +2364,43 @@ function AppContent() {
       return
     }
     setNotice('')
+    const contentBeforeDecision = message.content
+    let commandAccepted = false
     message.status = 'streaming'
     message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
-      await reconcileLocalTool(requestID, decision, localHostConfig)
+      const existing = (await localData.listPendingRuntimeCommands()).find(
+        (command): command is PendingToolReconcileCommand =>
+          command.type === 'tool.reconcile' && command.input.operationId === requestID,
+      )
+      const command = existing ?? {
+        type: 'tool.reconcile' as const,
+        commandId: `reconcile_${requestID}`,
+        createdAt: new Date().toISOString(),
+        input: {
+          operationId: requestID,
+          decision,
+          runId: message.runId,
+          threadId: conversation.id,
+        },
+      }
+      if (!existing) await localData.savePendingRuntimeCommand(command)
+      try {
+        await reconcileLocalToolCommand(
+          command.commandId,
+          command.input.operationId,
+          command.input.decision,
+          localHostConfig,
+        )
+        commandAccepted = true
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      } catch (error) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+        throw error
+      }
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
@@ -2365,10 +2412,12 @@ function AppContent() {
         },
       })
       finalizeLocalRunStatus(message)
+      scheduleConversationRender(conversation, renderContext)
     } catch (error) {
-      message.status = 'error'
-      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
-      setNotice(message.content)
+      message.status = commandAccepted ? 'streaming' : 'waiting_permission'
+      if (!commandAccepted) message.content = contentBeforeDecision
+      setNotice(error instanceof Error ? error.message : t('app.notice.localPermissionFailed'))
+      scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()
       await localData.save(conversation)

@@ -2738,10 +2738,9 @@ def test_permission_edit_preserves_tool_name_and_resumes_with_edited_args(
 
 
 def test_tool_reconciliation_is_persisted_idempotent_and_resumes(
-    client: TestClient, monkeypatch
+    client: TestClient,
 ) -> None:
     store = client.app.state.store
-    resume_calls: list[dict] = []
 
     async def prepare() -> tuple[str, str]:
         run = await store.create_run(
@@ -2782,12 +2781,7 @@ def test_tool_reconciliation_is_persisted_idempotent_and_resumes(
         await store.update_run_status(run["id"], "waiting_permission")
         return str(run["id"]), operation_id
 
-    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
-        resume_calls.append({"run_id": run_id, "decision": decision})
-        return True
-
-    run_id, operation_id = asyncio.run(prepare())
-    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
+    _run_id, operation_id = asyncio.run(prepare())
     endpoint = f"/local/v1/tool-reconciliations/{operation_id}"
     headers = {"Authorization": "Bearer tok"}
     body = {"decision": "retry_not_executed"}
@@ -2797,11 +2791,203 @@ def test_tool_reconciliation_is_persisted_idempotent_and_resumes(
     conflict = client.post(endpoint, headers=headers, json={"decision": "confirmed_completed"})
 
     assert first.status_code == replay.status_code == 200
-    assert conflict.status_code == 409
-    assert resume_calls[0] == {
-        "run_id": run_id,
-        "decision": {"interrupt_uncertain": {"decision": "retry_not_executed"}},
+    assert first.json() == {
+        "operation_id": operation_id,
+        "resolved": True,
+        "decision": "retry_not_executed",
+        "resumed": True,
     }
+    assert replay.json() == first.json()
+    assert conflict.status_code == 409
+
+
+def test_tool_reconcile_command_is_idempotent_and_rejects_changed_decisions(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def prepare() -> tuple[str, str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="reconcile durably",
+            workspace_path=None,
+        )
+        operation_id = "toolop_command"
+        await store.prepare_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            execution_attempt_id="job:command",
+            tool_call_id="call-command",
+            tool_name="execute",
+            tool_version="graph-v1",
+            arguments_hash="args-command",
+            arguments_json="{}",
+            risk="external_or_unknown",
+        )
+        await store.begin_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            execution_attempt_id="job:command",
+        )
+        await store.settle_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            status="outcome_unknown",
+            error_type="TimeoutError",
+        )
+        await store.create_tool_reconciliation(
+            run_id=str(run["id"]),
+            operation_id=operation_id,
+            wait_cycle_id="wait_command",
+            interrupt_id="interrupt_command",
+            payload={"operation_id": operation_id, "tool_name": "execute"},
+        )
+        permission = await store.create_permission(
+            run_id=str(run["id"]),
+            tool_call_id="call-command-permission",
+            tool_name="write_file",
+            arguments={"path": "result.txt"},
+            wait_cycle_id="wait_command",
+            interrupt_id="interrupt_permission",
+        )
+        await store.update_run_status(str(run["id"]), "waiting_permission")
+        return str(run["id"]), operation_id, str(permission["id"])
+
+    run_id, operation_id, permission_id = asyncio.run(prepare())
+    headers = {"Authorization": "Bearer tok"}
+    command = {
+        "type": "tool.reconcile",
+        "command_id": "reconcile_tool_command",
+        "operation_id": operation_id,
+        "decision": "retry_not_executed",
+    }
+
+    permission = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "permission.resolve",
+            "command_id": "resolve_before_reconciliation",
+            "permission_id": permission_id,
+            "decision": "deny",
+        },
+    )
+    assert permission.status_code == 200
+    assert permission.json()["resumed"] is False
+
+    accepted = client.post("/local/v1/commands", headers=headers, json=command)
+    replay = client.post("/local/v1/commands", headers=headers, json=command)
+    conflict = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={**command, "decision": "confirmed_completed"},
+    )
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json() == {
+        "type": "tool.reconcile",
+        "command_id": "reconcile_tool_command",
+        "operation_id": operation_id,
+        "run_id": run_id,
+        "resolved": True,
+        "decision": "retry_not_executed",
+        "resumed": True,
+    }
+    assert replay.json() == accepted.json()
+    assert conflict.status_code == 409
+
+
+def test_tool_reconcile_command_settles_an_ancestor_receipt(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def prepare() -> tuple[str, str, str]:
+        source = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="source side effect",
+            workspace_path=None,
+        )
+        source_operation = "toolop_ancestor_source"
+        await store.prepare_tool_receipt(
+            operation_id=source_operation,
+            run_id=str(source["id"]),
+            execution_attempt_id="job:ancestor-source",
+            tool_call_id="call-ancestor-source",
+            tool_name="execute",
+            tool_version="graph-v1",
+            arguments_hash="ancestor-args",
+            arguments_json="{}",
+            risk="external_or_unknown",
+        )
+        await store.begin_tool_receipt(
+            operation_id=source_operation,
+            run_id=str(source["id"]),
+            execution_attempt_id="job:ancestor-source",
+        )
+        await store.settle_tool_receipt(
+            operation_id=source_operation,
+            run_id=str(source["id"]),
+            status="outcome_unknown",
+            error_type="TimeoutError",
+        )
+        child = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="continue from source",
+            workspace_path=None,
+            parent_run_id=str(source["id"]),
+        )
+        child_operation = "toolop_ancestor_child"
+        await store.prepare_tool_receipt(
+            operation_id=child_operation,
+            run_id=str(child["id"]),
+            execution_attempt_id="job:ancestor-child",
+            tool_call_id="call-ancestor-child",
+            tool_name="execute",
+            tool_version="graph-v1",
+            arguments_hash="ancestor-args",
+            arguments_json="{}",
+            risk="external_or_unknown",
+        )
+        await store.create_tool_reconciliation(
+            run_id=str(child["id"]),
+            operation_id=child_operation,
+            wait_cycle_id="wait_ancestor_command",
+            interrupt_id="interrupt_ancestor_command",
+            payload={
+                "operation_id": child_operation,
+                "prior_operation_id": source_operation,
+                "tool_name": "execute",
+            },
+        )
+        await store.update_run_status(str(child["id"]), "waiting_permission")
+        return str(source["id"]), str(child["id"]), child_operation
+
+    source_run_id, child_run_id, operation_id = asyncio.run(prepare())
+    headers = {"Authorization": "Bearer tok"}
+    response = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "tool.reconcile",
+            "command_id": "reconcile_ancestor_command",
+            "operation_id": operation_id,
+            "decision": "confirmed_completed",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["resumed"] is True
+    source_diagnostics = client.get(
+        f"/local/v1/runs/{source_run_id}/diagnostics",
+        headers=headers,
+    ).json()
+    child_diagnostics = client.get(
+        f"/local/v1/runs/{child_run_id}/diagnostics",
+        headers=headers,
+    ).json()
+    assert source_diagnostics["tool_receipts"][0]["status"] == "completed"
+    assert child_diagnostics["tool_receipts"][0]["status"] == "completed"
 
 
 def test_plan_approval_resolution_emits_event_and_resumes(

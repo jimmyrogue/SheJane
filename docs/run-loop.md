@@ -39,13 +39,13 @@
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
   │                                                                                  │
-  │  POST /local/v1/commands  （支持取消、问题回答、权限决定与计划审批）             │
+  │  POST /local/v1/commands  （支持取消和四类等待决定）                             │
   │       ├─ Renderer 先把命令写入同一个 IndexedDB 待发队列                         │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
   │       ├─ 等待态取消会同时关闭权限、问题、计划审批和其他等待候选                 │
   │       ├─ 同编号同内容返回原回执；同编号不同内容返回 409                         │
   │       ├─ 回执后协调器停止当前执行；权威终态仍由事件与快照返回                   │
-  │       ├─ 三类等待事务写决定、事件和回执；等待周期齐全时同事务创建恢复作业       │
+  │       ├─ 四类等待事务写决定、事件和回执；等待周期齐全时同事务创建恢复作业       │
   │       └─ 对应旧接口暂时兼容，桌面客户端已不再调用                              │
   │                                                                                  │
   │  Runtime dispatcher                                                              │
@@ -248,6 +248,11 @@
   │       event: plan.approval_resolved { request_id, decision, instructions }          │
   │       与同一等待周期中的问题、权限共同结算；全部解决后才创建恢复作业               │
   │                                                                                     │
+  │     tool.reconcile 命令流程：                                                        │
+  │       用户确认已完成、确认未执行或停止重试，决定先作为不可变命令持久化             │
+  │       同一事务结算工具回执、等待候选、事件和命令回执                              │
+  │       与同一等待周期的其他候选全部解决后，才创建恢复作业                          │
+  │                                                                                     │
   │     CancelledError                                                                  │
   │       return 候选结果：canceled + run.canceled                                      │
   │                                                                                     │
@@ -363,6 +368,7 @@
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
 | 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 计划审批 | 客户端持久保存 `plan.resolve` → Runtime 原子保存决定、事件与回执；与同一等待周期的其他候选共同结算 | `test_runs_http` / `test_plan_approval` / `client.test` / `App.test` |
+| 工具对账 | 客户端持久保存 `tool.reconcile` → Runtime 原子结算工具回执、等待候选、事件和命令回执 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 恢复 | 只接受权限、问题、计划审批和工具对账的类型化决定；通用 `/resume` 已删除 | `test_runs_http` / `test_user_ask` |
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
