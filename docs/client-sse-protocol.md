@@ -1,6 +1,6 @@
 # Client ⇄ local-host SSE 协议
 
-> 本文只记录当前实现，不是目标运行时协议。目标 P4 的“先读快照再按游标恢复”、每个订阅者独立游标、持久事件与临时增量分层，以及全局资源变化订阅，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把共享队列、`[DONE]` 或逐字持久化当成目标设计。
+> 本文只记录当前实现，不是目标运行时协议。共享事件队列已经删除，每个服务端订阅者从数据库维护独立游标，但新连接目前仍从 `seq=0` 开始。目标 P4 尚未完成的“先读快照再按客户端游标恢复”、持久事件与临时增量分层，以及全局资源变化订阅，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把 `[DONE]` 或逐字持久化当成目标设计。
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 

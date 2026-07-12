@@ -8,11 +8,11 @@ For each leased run:
   agent.astream(version="v2", stream_mode=[...])
        │ (LangGraph emits typed stream parts)
        ▼
-  RunCoordinator._drive_run loops, pushes each event into the queue
-       │
-       ▼
-  /v1/runs/:id/stream SSE handler awaits queue.get() and yields one
-  SSE frame per event. Sentinel `None` ends the stream.
+RunCoordinator._drive_run persists each event and signals waiting subscribers
+│
+▼
+/v1/runs/:id/stream reads its own ordered database cursor and yields one
+SSE frame per event. In-memory events only reduce notification latency.
 
 Cancellation is a `task.cancel()` on the driver coroutine. LangGraph
 propagates CancelledError into the graph and the checkpointer persists
@@ -358,7 +358,7 @@ class RunCoordinator:
         self.agent_store = agent_store
         self.settings = settings or get_settings()
         self._tasks: dict[str, asyncio.Task[Any]] = {}
-        self._queues: dict[str, asyncio.Queue[Any]] = {}
+        self._wakeups: dict[str, asyncio.Event] = {}
         self._goals: dict[str, str] = {}
         self._user_inputs: dict[str, str] = {}
         self._workspaces: dict[str, str | None] = {}
@@ -419,7 +419,7 @@ class RunCoordinator:
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
-        """Persist an HTTP-originated event and mirror it to the live queue.
+        """Persist an HTTP-originated event and wake live subscribers.
 
         Used by HTTP handlers to surface side-effects (`permission.resolved`,
         `question.answered`) that originate from the API surface rather
@@ -427,14 +427,8 @@ class RunCoordinator:
         waiting point, the event is still persisted so the resume stream can
         replay it before `run.resumed`.
         """
-        queue = self._queues.get(run_id)
-        if queue is None:
-            try:
-                await self.store.append_event(run_id, event_type, payload)
-            except Exception as exc:
-                log.warning("event persist failed (%s): %s", event_type, exc)
-            return
-        await self._enqueue(queue, run_id, event_type, payload)
+        wakeup = self._wakeups.get(run_id)
+        await self._enqueue(wakeup, run_id, event_type, payload)
 
     # ---- public API ----
 
@@ -1051,10 +1045,8 @@ class RunCoordinator:
         self._settings_overrides[run_id] = dict(input_payload.get("settings") or {})
         self._run_metadata[run_id] = dict(input_payload.get("metadata") or {})
         self._modes[run_id] = str(input_payload.get("mode") or "auto")
-        queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=2048)
-        self._queues[run_id] = queue
-        if resume_payload is not None:
-            await self._replay_resume_side_effects(run_id, queue)
+        wakeup = asyncio.Event()
+        self._wakeups[run_id] = wakeup
 
         owner_task = asyncio.current_task()
         assert owner_task is not None
@@ -1118,7 +1110,7 @@ class RunCoordinator:
                         cleanup_report={"status": "completed"},
                     )
                     await self._commit_run_result(
-                        queue,
+                        wakeup,
                         run_id,
                         outcome.event_type,
                         outcome.payload,
@@ -1145,7 +1137,7 @@ class RunCoordinator:
                         cleanup_report={"status": "completed"},
                     )
                     await self._commit_run_result(
-                        queue,
+                        wakeup,
                         run_id,
                         outcome.event_type,
                         outcome.payload,
@@ -1168,7 +1160,7 @@ class RunCoordinator:
                         cleanup_report={"status": "completed"},
                     )
                     await self._commit_run_result(
-                        queue,
+                        wakeup,
                         run_id,
                         outcome.event_type,
                         outcome.payload,
@@ -1230,12 +1222,12 @@ class RunCoordinator:
                         "cleanup": cleanup_report,
                     }
                     try:
-                        event = await self.store.quarantine_execution_attempt(
+                        await self.store.quarantine_execution_attempt(
                             run_id,
                             reason="execution_cleanup_unconfirmed",
                             payload=quarantine_payload,
                         )
-                        self._mirror_stored_event(queue, event, quarantine_payload)
+                        wakeup.set()
                     except LeaseFenceError:
                         # The lease reaper may have quarantined this exact
                         # generation first. Leaving it sealed is the safe result.
@@ -1247,7 +1239,7 @@ class RunCoordinator:
                     )
                     if lease_lost:
                         await self._confirm_lost_attempt_cleanup(
-                            queue=queue,
+                            wakeup=wakeup,
                             run_id=run_id,
                             execution_attempt_id=execution_attempt_id,
                             job_id=str(job["id"]),
@@ -1287,7 +1279,7 @@ class RunCoordinator:
                         cleanup_report=cleanup_report,
                     )
                     await self._commit_run_result(
-                        queue,
+                        wakeup,
                         run_id,
                         outcome.event_type,
                         outcome.payload,
@@ -1297,7 +1289,7 @@ class RunCoordinator:
             self._lost_leases.add(owner_task)
             log.info("run %s stopped after losing lease generation %s", run_id, generation)
             await self._confirm_lost_attempt_cleanup(
-                queue=queue,
+                wakeup=wakeup,
                 run_id=run_id,
                 execution_attempt_id=execution_attempt_id,
                 job_id=str(job["id"]),
@@ -1312,7 +1304,7 @@ class RunCoordinator:
                     pass
                 elif owner_task in self._lost_leases:
                     await self._confirm_lost_attempt_cleanup(
-                        queue=queue,
+                        wakeup=wakeup,
                         run_id=run_id,
                         execution_attempt_id=execution_attempt_id,
                         job_id=str(job["id"]),
@@ -1346,7 +1338,7 @@ class RunCoordinator:
                             cleanup_report={"status": "completed"},
                         )
                         await self._commit_run_result(
-                            queue,
+                            wakeup,
                             run_id,
                             interrupted.event_type,
                             interrupted.payload,
@@ -1379,15 +1371,11 @@ class RunCoordinator:
             self._lost_leases.discard(owner_task)
             self._unconfirmed_cleanup.discard(owner_task)
             self._started_jobs.discard(owner_task)
-            try:
-                queue.put_nowait(None)
-            except asyncio.QueueFull:
-                queue.get_nowait()
-                queue.put_nowait(None)
+            wakeup.set()
             if self._tasks.get(run_id) is owner_task:
                 self._tasks.pop(run_id, None)
-            if self._queues.get(run_id) is queue:
-                self._queues.pop(run_id, None)
+            if self._wakeups.get(run_id) is wakeup:
+                self._wakeups.pop(run_id, None)
             self._goals.pop(run_id, None)
             self._user_inputs.pop(run_id, None)
             self._workspaces.pop(run_id, None)
@@ -1401,7 +1389,7 @@ class RunCoordinator:
     async def _confirm_lost_attempt_cleanup(
         self,
         *,
-        queue: asyncio.Queue[Any],
+        wakeup: asyncio.Event,
         run_id: str,
         execution_attempt_id: str,
         job_id: str,
@@ -1417,8 +1405,7 @@ class RunCoordinator:
         if not accepted:
             return
         if quarantine_event is not None:
-            quarantine_payload = json.loads(quarantine_event["payload_json"] or "{}")
-            self._mirror_stored_event(queue, quarantine_event, quarantine_payload)
+            wakeup.set()
         outcome = RunOutcome(
             "failed",
             "run.failed",
@@ -1441,7 +1428,7 @@ class RunCoordinator:
             payload=outcome.payload,
         )
         if event is not None:
-            self._mirror_stored_event(queue, event, outcome.payload)
+            wakeup.set()
 
     async def _settle_execution_outcome(
         self,
@@ -1598,41 +1585,6 @@ class RunCoordinator:
         self._job_wakeup.set()
         return True
 
-    async def _replay_resume_side_effects(
-        self,
-        run_id: str,
-        queue: asyncio.Queue[Any],
-    ) -> None:
-        events = await self.store.events_since(run_id, after_seq=0)
-        boundary_index = -1
-        for index, event in enumerate(events):
-            if event.get("event_type") == "run.waiting":
-                boundary_index = index
-        for event in events[boundary_index + 1 :]:
-            event_type = str(event.get("event_type") or "")
-            if event_type not in {
-                "permission.resolved",
-                "question.answered",
-                "tool.reconciliation_resolved",
-            }:
-                continue
-            try:
-                payload = json.loads(event.get("payload_json") or "{}")
-            except json.JSONDecodeError:
-                payload = {}
-            envelope = {
-                "id": event["id"],
-                "run_id": event["run_id"],
-                "seq": event["seq"],
-                "event_type": event_type,
-                "payload": payload,
-                "created_at": event["created_at"],
-            }
-            try:
-                queue.put_nowait(envelope)
-            except asyncio.QueueFull:
-                log.warning("event queue full for %s; dropping replayed %s", run_id, event_type)
-
     async def cancel_run(self, run_id: str) -> bool:
         state = await self.store.request_run_cancel(run_id)
         if state is None:
@@ -1700,28 +1652,19 @@ class RunCoordinator:
         """Yield AgentRunEvent envelopes (matching the TS interface):
             {id, run_id, seq, event_type, payload, created_at}
 
-        Live runs pull from the per-run asyncio.Queue. After daemon
-        restart / mid-stream reconnect we fall back to replaying the
-        persisted `local_events` table from the beginning. Either way
-        the SSE handler in server.py knows the shape and just JSON-dumps
-        each yielded dict into the `data:` line.
+        Every subscriber owns an independent cursor over `local_events`.
+        The in-memory Event is only a latency optimization; reconnects and
+        daemon restarts recover from the same durable event log.
         """
-        queue = self._queues.get(run_id)
-        # ponytail: short polling only bridges the legacy shared queue; P4
-        # replaces it with per-subscriber cursors plus database-backed wakeups.
-        while queue is None:
-            active_job = await self.store.get_active_run_job(run_id)
-            if active_job is not None:
-                await asyncio.sleep(0.01)
-                queue = self._queues.get(run_id)
-                continue
-            run = await self.store.get_run(run_id)
-            if run is None or run.get("status") not in {"queued", "running"}:
-                break
-            await asyncio.sleep(0.01)
-            queue = self._queues.get(run_id)
-        if queue is None:
-            for event in await self.store.events_since(run_id, after_seq=0):
+        wakeup = self._wakeups.get(run_id) or asyncio.Event()
+        after_seq = 0
+        while True:
+            # Notifications are deliberately lossy. Clear before reading so
+            # this subscriber usually observes the next signal; the durable
+            # cursor and timeout poll close all notification races.
+            wakeup.clear()
+            events = await self.store.events_since(run_id, after_seq=after_seq)
+            for event in events:
                 yield {
                     "id": event["id"],
                     "run_id": event["run_id"],
@@ -1730,13 +1673,20 @@ class RunCoordinator:
                     "payload": json.loads(event["payload_json"] or "{}"),
                     "created_at": event["created_at"],
                 }
-            return
+                after_seq = int(event["seq"])
 
-        while True:
-            item = await queue.get()
-            if item is None:
+            run = await self.store.get_run(run_id)
+            if run is None:
                 return
-            yield item
+            active_job = await self.store.get_active_run_job(run_id)
+            if run.get("status") not in {"queued", "running"} and active_job is None:
+                return
+            try:
+                await asyncio.wait_for(wakeup.wait(), timeout=0.5)
+            except TimeoutError:
+                # Polling is the recovery path when another process commits
+                # an event or this Runtime restarts between notifications.
+                pass
 
     # ---- driver ----
 
@@ -1755,7 +1705,7 @@ class RunCoordinator:
         model_api_key: str | None = None,
         resource_stack: AsyncExitStack | None = None,
     ) -> RunOutcome:
-        queue = self._queues[run_id]
+        wakeup = self._wakeups[run_id]
         workspace_path = self._workspaces.get(run_id)
         goal = self._goals.get(run_id, "")
         repair_context: dict[str, Any] | None = None
@@ -1769,7 +1719,7 @@ class RunCoordinator:
             # quick cancel produced a stream with run.canceled but no
             # run.started (flaked test_cancel_midflight on slow CI runners).
             if resume_payload is None:
-                await self._enqueue(queue, run_id, "run.started", {"goal": goal})
+                await self._enqueue(wakeup, run_id, "run.started", {"goal": goal})
 
                 repair_context = _repair_context_from_metadata(
                     self._run_metadata.get(run_id) or {},
@@ -1778,7 +1728,7 @@ class RunCoordinator:
                 if repair_context is not None:
                     if _repair_context_rejected(repair_context):
                         await self._enqueue(
-                            queue,
+                            wakeup,
                             run_id,
                             "repair.workflow",
                             _repair_workflow_payload(
@@ -1793,7 +1743,7 @@ class RunCoordinator:
                             payload=_repair_rejected_failure_payload(repair_context),
                         )
                     await self._enqueue(
-                        queue,
+                        wakeup,
                         run_id,
                         "repair.workflow",
                         _repair_workflow_payload(repair_context, status="started"),
@@ -1830,7 +1780,7 @@ class RunCoordinator:
                 if picked:
                     resolved_model = picked["model_id"]
                     await self._enqueue(
-                        queue,
+                        wakeup,
                         run_id,
                         "model.selected",
                         {
@@ -1898,7 +1848,7 @@ class RunCoordinator:
             }
 
             async def emit_steering_event(event_type: str, payload: dict[str, Any]) -> None:
-                await self._enqueue(queue, run_id, event_type, payload)
+                await self._enqueue(wakeup, run_id, event_type, payload)
 
             runtime_context = RuntimeContext(
                 run_id=run_id,
@@ -1977,7 +1927,7 @@ class RunCoordinator:
             }
             if resume_payload is not None:
                 input_payload: Any = Command(resume=resume_payload)
-                await self._enqueue(queue, run_id, "run.resumed", {"payload": resume_payload})
+                await self._enqueue(wakeup, run_id, "run.resumed", {"payload": resume_payload})
             else:
                 if graph_input_kind not in {"new", "fork"}:
                     raise RuntimeError(f"unsupported graph input kind: {graph_input_kind}")
@@ -2051,7 +2001,7 @@ class RunCoordinator:
                                 if isinstance(translated["data"], dict)
                                 else {"value": translated["data"]}
                             )
-                            await self._enqueue(queue, run_id, translated["event"], data)
+                            await self._enqueue(wakeup, run_id, translated["event"], data)
 
                 if current_checkpoint_id is None:
                     raise RuntimeError("graph execution produced no checkpoint")
@@ -2078,7 +2028,7 @@ class RunCoordinator:
                     if completion_failure is not None:
                         if repair_context is not None:
                             await self._enqueue(
-                                queue,
+                                wakeup,
                                 run_id,
                                 "repair.workflow",
                                 _repair_workflow_payload(
@@ -2097,7 +2047,7 @@ class RunCoordinator:
                         raise ExecutionSettlementError("final assistant draft is missing")
                     if repair_context is not None:
                         await self._enqueue(
-                            queue,
+                            wakeup,
                             run_id,
                             "repair.workflow",
                             _repair_workflow_payload(repair_context, status="completed"),
@@ -2151,7 +2101,7 @@ class RunCoordinator:
                 # Surface to user.
                 for snap_interrupt in interrupts:
                     await self._handle_interrupt(
-                        queue,
+                        wakeup,
                         run_id,
                         snap_interrupt,
                         wait_cycle_id=wait_cycle_id,
@@ -2176,7 +2126,7 @@ class RunCoordinator:
                 raise
             if repair_context is not None:
                 await self._enqueue(
-                    queue,
+                    wakeup,
                     run_id,
                     "repair.workflow",
                     _repair_workflow_payload(repair_context, status="canceled"),
@@ -2201,10 +2151,10 @@ class RunCoordinator:
             else:
                 log.exception("run %s failed", run_id)
             if isinstance(exc, BackendLLMError):
-                await self._enqueue(queue, run_id, "llm.error", failure_payload)
+                await self._enqueue(wakeup, run_id, "llm.error", failure_payload)
             if repair_context is not None:
                 await self._enqueue(
-                    queue,
+                    wakeup,
                     run_id,
                     "repair.workflow",
                     _repair_workflow_payload(
@@ -2242,7 +2192,7 @@ class RunCoordinator:
 
     async def _handle_interrupt(
         self,
-        queue: asyncio.Queue,
+        wakeup: asyncio.Event,
         run_id: str,
         snap_interrupt: Any,
         *,
@@ -2278,7 +2228,7 @@ class RunCoordinator:
                 payload=value,
             )
             await self._enqueue(
-                queue,
+                wakeup,
                 run_id,
                 "tool.reconciliation_required",
                 {
@@ -2306,7 +2256,7 @@ class RunCoordinator:
                 summary=summary,
             )
             await self._enqueue(
-                queue,
+                wakeup,
                 run_id,
                 "plan.approval_required",
                 {
@@ -2347,7 +2297,7 @@ class RunCoordinator:
             for q in questions:
                 q["id"] = record["id"]
             await self._enqueue(
-                queue,
+                wakeup,
                 run_id,
                 "question.asked",
                 {
@@ -2389,7 +2339,7 @@ class RunCoordinator:
                 action_index=action_index,
             )
             await self._enqueue(
-                queue,
+                wakeup,
                 run_id,
                 "permission.required",
                 {
@@ -2410,53 +2360,19 @@ class RunCoordinator:
 
     async def _enqueue(
         self,
-        queue: asyncio.Queue,
+        wakeup: asyncio.Event | None,
         run_id: str,
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
-        """Persist + stream simultaneously.
-
-        The queue item shape MUST match the TS `AgentRunEvent` interface
-        (`event_type`, `payload`, `id`, `run_id`, `seq`, `created_at`) —
-        the client's `parseAgentSSEChunk` reads `data.event_type` and
-        `data.payload.*` from inside the SSE JSON body, NOT from the
-        `event:` line. Returning the bare payload (the old shape) made
-        every event arrive as `{event_type: undefined}` on the client.
-        """
-        envelope: dict[str, Any]
-        try:
-            event = await self.store.append_event(run_id, event_type, payload)
-            envelope = {
-                "id": event["id"],
-                "run_id": event["run_id"],
-                "seq": event["seq"],
-                "event_type": event_type,
-                "payload": payload,
-                "created_at": event["created_at"],
-            }
-        except LeaseFenceError:
-            raise
-        except Exception as exc:
-            log.warning("event persist failed (%s): %s", event_type, exc)
-            # Synthesize a transient envelope so the stream still
-            # progresses even when persistence is broken.
-            envelope = {
-                "id": "",
-                "run_id": run_id,
-                "seq": 0,
-                "event_type": event_type,
-                "payload": payload,
-                "created_at": "",
-            }
-        try:
-            queue.put_nowait(envelope)
-        except asyncio.QueueFull:
-            log.warning("event queue full for %s; dropping %s", run_id, event_type)
+        """Persist an authoritative event, then wake interested subscribers."""
+        await self.store.append_event(run_id, event_type, payload)
+        if wakeup is not None:
+            wakeup.set()
 
     async def _commit_run_result(
         self,
-        queue: asyncio.Queue,
+        wakeup: asyncio.Event,
         run_id: str,
         event_type: str,
         payload: dict[str, Any],
@@ -2464,7 +2380,7 @@ class RunCoordinator:
         status: str,
     ) -> None:
         """Persist the authoritative result before notifying live subscribers."""
-        event, created = await self.store.commit_run_result(
+        _event, created = await self.store.commit_run_result(
             run_id,
             status=status,
             event_type=event_type,
@@ -2472,46 +2388,11 @@ class RunCoordinator:
         )
         if not created:
             return
-        envelope = {
-            "id": event["id"],
-            "run_id": event["run_id"],
-            "seq": event["seq"],
-            "event_type": event_type,
-            "payload": payload,
-            "created_at": event["created_at"],
-        }
-        try:
-            queue.put_nowait(envelope)
-        except asyncio.QueueFull:
-            log.warning("event queue full for %s; dropping %s", run_id, event_type)
+        wakeup.set()
         if status in {"waiting_permission", "waiting_input"}:
             resume_payload = await self.store.latest_resolved_wait_cycle_payload(run_id)
             if resume_payload is not None:
                 await self.resume_run(run_id=run_id, decision=resume_payload)
-
-    @staticmethod
-    def _mirror_stored_event(
-        queue: asyncio.Queue[Any],
-        event: dict[str, Any],
-        payload: dict[str, Any],
-    ) -> None:
-        """Publish an already committed store event to the live subscriber."""
-        envelope = {
-            "id": event["id"],
-            "run_id": event["run_id"],
-            "seq": event["seq"],
-            "event_type": event["event_type"],
-            "payload": payload,
-            "created_at": event["created_at"],
-        }
-        try:
-            queue.put_nowait(envelope)
-        except asyncio.QueueFull:
-            log.warning(
-                "event queue full for %s; dropping %s",
-                event["run_id"],
-                event["event_type"],
-            )
 
 
 # ---- helpers ----
@@ -2724,6 +2605,8 @@ def _redact_failure_value(value: Any, *, secrets: tuple[str, ...]) -> Any:
 
 
 def _waiting_status_for_interrupts(interrupts: list[Any]) -> str:
+    if not interrupts:
+        raise ExecutionSettlementError("graph paused without a durable interrupt")
     if interrupts and all(_is_user_input_interrupt(item) for item in interrupts):
         return "waiting_input"
     return "waiting_permission"

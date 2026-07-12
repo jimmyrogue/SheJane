@@ -224,6 +224,60 @@ async def test_execution_resources_close_before_result_is_committed(tmp_path: Pa
         await store.close()
 
 
+async def test_each_live_stream_subscriber_receives_the_complete_ordered_event_log(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(
+        store=store,
+        checkpointer=None,  # type: ignore[arg-type]
+        settings=Settings(SHEJANE_FAKE_LLM=True),
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def drive(**kwargs: Any) -> RunOutcome:
+        entered.set()
+        await release.wait()
+        await coordinator.emit_for_run(kwargs["run_id"], "test.first", {"value": 1})
+        await coordinator.emit_for_run(kwargs["run_id"], "test.second", {"value": 2})
+        return RunOutcome("failed", "run.failed", {"error": "expected test failure"})
+
+    coordinator._drive_run = drive  # type: ignore[method-assign]
+    try:
+        run = await coordinator.start_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_stream_fanout",
+            client_message_id="msg_stream_fanout",
+            protocol_version=1,
+            required_capabilities=["agent.run", "agent.stream"],
+            goal="inspect",
+        )
+        job = await store.claim_run_job(worker_id=coordinator._worker_id)
+        assert job is not None
+        execution = asyncio.create_task(coordinator._execute_claimed_job(job))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+
+        async def collect() -> list[str]:
+            return [event["event_type"] async for event in coordinator.stream(run["id"])]
+
+        first = asyncio.create_task(collect())
+        second = asyncio.create_task(collect())
+        await asyncio.sleep(0)
+        release.set()
+        first_events, second_events, _ = await asyncio.wait_for(
+            asyncio.gather(first, second, execution),
+            timeout=1,
+        )
+
+        expected = ["test.first", "test.second", "run.failed"]
+        assert first_events == expected
+        assert second_events == expected
+    finally:
+        release.set()
+        await store.close()
+
+
 async def test_cleanup_failure_quarantines_without_releasing_the_job(tmp_path: Path) -> None:
     store = await LocalStore.open(tmp_path / "local.db")
     coordinator = RunCoordinator(
@@ -576,6 +630,82 @@ async def test_waiting_run_accepts_resume_before_previous_task_bookkeeping_finis
         assert next_job["kind"] == "resume"
         assert next_job["status"] == "pending"
     finally:
+        await store.close()
+
+
+async def test_resumed_attempt_keeps_its_wakeup_while_previous_attempt_finishes(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(
+        store=store,
+        checkpointer=None,  # type: ignore[arg-type]
+        settings=Settings(SHEJANE_FAKE_LLM=True),
+    )
+    first_commit_blocked = asyncio.Event()
+    release_first_commit = asyncio.Event()
+    second_entered = asyncio.Event()
+    inspect_second = asyncio.Event()
+    wakeup_survived: list[bool] = []
+    drive_count = 0
+
+    async def drive(**kwargs: Any) -> RunOutcome:
+        nonlocal drive_count
+        drive_count += 1
+        if drive_count == 1:
+            return RunOutcome(
+                "waiting_input",
+                "run.waiting",
+                {"next": ["tools"], "interrupts": [{"kind": "question"}]},
+            )
+        second_entered.set()
+        await inspect_second.wait()
+        wakeup_survived.append(kwargs["run_id"] in coordinator._wakeups)
+        return RunOutcome("failed", "run.failed", {"error": "expected test failure"})
+
+    original_commit = coordinator._commit_run_result
+
+    async def commit(*args: Any, **kwargs: Any) -> None:
+        await original_commit(*args, **kwargs)
+        if kwargs["status"] != "waiting_input":
+            return
+        assert await coordinator.resume_run(
+            run_id=str(args[1]),
+            decision={"answers": {"question": ["answer"]}},
+        )
+        first_commit_blocked.set()
+        await release_first_commit.wait()
+
+    coordinator._drive_run = drive  # type: ignore[method-assign]
+    coordinator._commit_run_result = commit  # type: ignore[method-assign]
+    try:
+        await coordinator.start_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_attempt_wakeup",
+            client_message_id="msg_attempt_wakeup",
+            protocol_version=1,
+            required_capabilities=["agent.run", "agent.stream"],
+            goal="inspect",
+        )
+        first_job = await store.claim_run_job(worker_id=coordinator._worker_id)
+        assert first_job is not None
+        first = asyncio.create_task(coordinator._execute_claimed_job(first_job))
+        await asyncio.wait_for(first_commit_blocked.wait(), timeout=1)
+
+        second_job = await store.claim_run_job(worker_id=coordinator._worker_id)
+        assert second_job is not None and second_job["kind"] == "resume"
+        second = asyncio.create_task(coordinator._execute_claimed_job(second_job))
+        await asyncio.wait_for(second_entered.wait(), timeout=1)
+
+        release_first_commit.set()
+        await asyncio.wait_for(first, timeout=1)
+        inspect_second.set()
+        await asyncio.wait_for(second, timeout=1)
+
+        assert wakeup_survived == [True]
+    finally:
+        release_first_commit.set()
+        inspect_second.set()
         await store.close()
 
 

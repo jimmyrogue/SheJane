@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
-from local_host.runs import _waiting_status_for_interrupts
+from local_host.runs import ExecutionSettlementError, _waiting_status_for_interrupts
 from local_host.store.sqlite import LocalStore
 
 
@@ -62,3 +64,8 @@ def test_plan_approval_interrupt_marks_run_waiting_for_input() -> None:
     assert (
         _waiting_status_for_interrupts([_Interrupt({"kind": "plan_approval"})]) == "waiting_input"
     )
+
+
+def test_graph_cannot_wait_without_a_durable_interrupt() -> None:
+    with pytest.raises(ExecutionSettlementError, match="without a durable interrupt"):
+        _waiting_status_for_interrupts([])

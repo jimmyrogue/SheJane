@@ -197,6 +197,7 @@
   │                                                                                     │
   │       waiting_status = waiting_input if all interrupts are user.ask questions,       │
   │                        otherwise waiting_permission                                  │
+  │       若 next 非空但 interrupts 为空：明确失败，不提交无法恢复的等待状态             │
   │       for each interrupt:                                                           │
   │         if value.kind == "question":                                                │
   │           store.create_question(...)                                                │
@@ -213,7 +214,7 @@
   │       若租约过期：旧执行者完成清理并提交证明后，才把隔离任务结算为 failed           │
   │       LocalStore.commit_run_result(...)                                             │
   │         同一事务：更新 Run + 助手消息 + 线程版本 + 结果事件 + 结束旧执行作业        │
-  │       事务提交后才把结果事件放入 SSE 队列                                           │
+  │       事务提交后只唤醒 SSE；每个订阅者按自己的数据库游标读取结果事件                │
   │       客户端随后读取 /threads/{id}；漏掉 SSE 也能得到相同结果                       │
   │                                                                                     │
   │     POST /permissions/:id 流程：                                                     │
@@ -233,9 +234,8 @@
   │                                               action_kind, recovery_action }         │
   │                                                                                     │
   │     finally:                                                                        │
-  │       queue.put(None)   ← stream sentinel                                          │
-  │       self._queues.pop(run_id)   ← 后续 stream 走 events_since replay 路径           │
-  │       SSE 生成器 finally 写 data: [DONE]                                            │
+  │       唤醒订阅者并删除进程内唤醒信号；数据库事件日志仍是唯一事实来源                │
+  │       每个 SSE 订阅者读到终态且作业结束后退出，生成器最后写 data: [DONE]            │
   └─────────────────────────────────────────────────────────────────────────────────────┘
                                        │
                                        ▼
@@ -299,6 +299,7 @@
 | 终止 sentinel 是 `data: [DONE]`，不是 `event: stream.end` | `test_stream_emits_done_sentinel` ✅ |
 | `seq` 单调递增（dedupe） | `test_seq_monotonic_per_run` ✅ |
 | run 完成后 stream replay 也用 envelope | `test_replay_after_run_completion_has_same_envelope` ✅ |
+| 多个实时订阅者各自收到完整、有序的同一事件日志 | `test_each_live_stream_subscriber_receives_the_complete_ordered_event_log` ✅ |
 | `POST/GET/DELETE /local/v1/session` 返 `LocalCloudSession` shape | 7 case ✅ |
 
 ### 间接 / 单测覆盖

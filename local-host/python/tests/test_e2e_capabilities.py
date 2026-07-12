@@ -325,7 +325,13 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch) ->
         with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             body = resp.read().decode("utf-8")
         events = _parse_sse(body)
-        second_required = [e for e in events if e[0] == "permission.required"]
+        # A new subscriber replays the durable log from its own cursor, so the
+        # first review can appear again. Assert specifically on the new call.
+        second_required = [
+            e
+            for e in events
+            if e[0] == "permission.required" and e[1].get("tool_call_id") == "call_b"
+        ]
         assert len(second_required) == 1
         assert second_required[0][1]["arguments"]["file_path"] == "b.txt"
         second_id = second_required[0][1]["request_id"]
