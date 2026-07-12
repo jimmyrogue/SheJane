@@ -9759,6 +9759,70 @@ button.settings-row-button:focus-visible,
   color: var(--accent-danger-text, #8F3E27);
 }
 
+.settings-model-providers,
+.settings-provider-form {
+  display: grid;
+}
+
+.settings-provider-summary {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-provider-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px;
+}
+
+.settings-provider-key-row,
+.settings-provider-limits-row,
+.settings-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-provider-key-row {
+  grid-column: 1 / -1;
+}
+
+.settings-provider-limits-row {
+  grid-column: 1 / -1;
+}
+
+.settings-provider-limits-row > * {
+  flex: 1;
+}
+
+.settings-provider-key-row > :first-child {
+  flex: 1;
+}
+
+.settings-provider-key-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-provider-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--accent-danger-text, #8F3E27);
+  font-size: 12px;
+}
+
+.settings-provider-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
 @media (max-width: 820px) {
   .settings-layout {
     flex-direction: column;

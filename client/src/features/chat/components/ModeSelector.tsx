@@ -41,17 +41,19 @@ export interface ModelOption {
 export function ModeSelector({
   mode,
   models,
+  autoAvailable = true,
   onChange,
   disabled = false,
 }: {
   mode: ChatMode
   models: ModelOption[]
+  autoAvailable?: boolean
   onChange: (next: ChatMode) => void
   disabled?: boolean
 }) {
   const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<'intent' | 'models'>('intent')
+  const [view, setView] = useState<'intent' | 'models'>(autoAvailable ? 'intent' : 'models')
 
   const autoLabel = t('composer.mode.auto')
   const selectedModel = models.find((model) => model.id === mode)
@@ -60,7 +62,7 @@ export function ModeSelector({
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
-    if (!nextOpen) setView('intent')
+    if (!nextOpen) setView(autoAvailable ? 'intent' : 'models')
   }
 
   const selectAuto = () => {
@@ -151,7 +153,7 @@ export function ModeSelector({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" alignOffset={4} sideOffset={8} className="composer-mode-menu">
-        {view === 'intent' ? (
+        {autoAvailable && view === 'intent' ? (
           <>
             {renderChoice({
               key: 'auto',
@@ -190,17 +192,21 @@ export function ModeSelector({
           </>
         ) : (
           <>
-            <DropdownMenuItem
-              className="composer-mode-back-item"
-              onSelect={(event) => {
-                event.preventDefault()
-                setView('intent')
-              }}
-            >
-              <IconChevronLeft size={14} aria-hidden="true" />
-              <span>{t('composer.mode.specificModels')}</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="composer-mode-separator" />
+            {autoAvailable ? (
+              <>
+                <DropdownMenuItem
+                  className="composer-mode-back-item"
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setView('intent')
+                  }}
+                >
+                  <IconChevronLeft size={14} aria-hidden="true" />
+                  <span>{t('composer.mode.specificModels')}</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="composer-mode-separator" />
+              </>
+            ) : null}
             <div className="composer-mode-model-list">
               {groupedModels.map((group) => (
                 <div key={group.vendor}>

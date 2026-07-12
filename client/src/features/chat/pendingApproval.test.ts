@@ -86,7 +86,7 @@ describe('findConversationPendingApproval', () => {
       ]),
       t,
     )
-    expect(result).toEqual({ messageID: 'm2', requestID: 'p9', tool: '运行命令' })
+    expect(result).toEqual({ kind: 'approval', messageID: 'm2', requestID: 'p9', tool: '运行命令', toolName: '', arguments: {} })
   })
 
   it('falls back to the stripped label when permissionTool is absent', () => {
@@ -104,5 +104,41 @@ describe('findConversationPendingApproval', () => {
       t,
     )
     expect(result?.tool).toBe('打开受控网页')
+  })
+
+  it('returns an unresolved tool reconciliation and clears it after resolution', () => {
+    const pending = findConversationPendingApproval(
+      conversation([{
+        id: 'm1',
+        role: 'assistant',
+        content: '',
+        createdAt: '2026-05-13T00:00:00Z',
+        status: 'waiting_permission',
+        agentEvents: [{
+          type: 'tool.reconciliation_required',
+          label: '需要核对工具结果：运行命令',
+          permissionRequestId: 'toolop-1',
+          permissionTool: '运行命令',
+        }],
+      }]),
+      t,
+    )
+    expect(pending?.kind).toBe('reconciliation')
+
+    const resolved = findConversationPendingApproval(
+      conversation([{
+        id: 'm1',
+        role: 'assistant',
+        content: '',
+        createdAt: '2026-05-13T00:00:00Z',
+        status: 'done',
+        agentEvents: [
+          { type: 'tool.reconciliation_required', label: '', permissionRequestId: 'toolop-1' },
+          { type: 'tool.reconciliation_resolved', label: '', permissionRequestId: 'toolop-1' },
+        ],
+      }]),
+      t,
+    )
+    expect(resolved).toBeNull()
   })
 })

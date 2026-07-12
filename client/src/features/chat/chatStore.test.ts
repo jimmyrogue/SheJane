@@ -570,6 +570,22 @@ describe('chat store', () => {
     })
   })
 
+  it('renders an unconfirmed cleanup as a non-retryable quarantined run', () => {
+    expect(
+      timelineItem({
+        event_type: 'run.cleanup_required',
+        payload: {
+          error: 'Runtime cleanup is still unconfirmed.',
+          category: 'execution_cleanup_unconfirmed',
+        },
+      }),
+    ).toMatchObject({
+      label: 'Runtime cleanup is still unconfirmed.',
+      failureCategory: 'execution_cleanup_unconfirmed',
+      failureRetryable: false,
+    })
+  })
+
   it('adds the daemon failure policy hint to run.failed timeline labels', () => {
     expect(
       timelineItem({

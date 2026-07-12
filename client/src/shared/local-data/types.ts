@@ -98,8 +98,11 @@ export interface AgentTimelineItem {
   tokens?: number
   permissionRequestId?: string
   permissionTool?: string
-  permissionDecision?: 'approve' | 'deny'
+  permissionToolName?: string
+  permissionArguments?: Record<string, unknown>
+  permissionDecision?: 'approve' | 'edit' | 'deny'
   permissionScope?: 'once' | 'run'
+  reconciliationDecision?: 'confirmed_completed' | 'retry_not_executed' | 'abort'
   planApprovalRequestId?: string
   planApprovalDecision?: 'approve' | 'modify' | 'reject'
   planTodos?: AgentPlanTodo[]
@@ -130,6 +133,8 @@ export interface MessageAttachment {
 
 export interface ChatMessage {
   id: string
+  /** Stable id for retrying the Runtime command that created this message. */
+  commandId?: string
   role: MessageRole
   content: string
   createdAt: string

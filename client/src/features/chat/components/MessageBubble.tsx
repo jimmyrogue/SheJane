@@ -159,7 +159,11 @@ export function MessageBubble({
   const hideDuplicateFailureContent = isAssistant && isDuplicateFailureContent(message)
   // Action affordances appear on settled turns only (not mid-stream).
   const settled = message.status === 'done' || message.status === 'error'
-  const canRegenerate = isAssistant && settled && Boolean(onRegenerate)
+  const latestCleanupState = [...(message.agentEvents ?? [])].reverse().find(
+    (event) => event.type === 'run.cleanup_required' || event.type === 'run.failed',
+  )
+  const cleanupUnconfirmed = latestCleanupState?.type === 'run.cleanup_required'
+  const canRegenerate = isAssistant && settled && !cleanupUnconfirmed && Boolean(onRegenerate)
   const canEdit = !isAssistant && Boolean(onEditResend)
   const canDelete = settled && Boolean(onDelete)
 
@@ -352,7 +356,7 @@ function isDuplicateFailureContent(message: ChatMessage): boolean {
     return false
   }
   return (message.agentEvents ?? []).some((event) => {
-    if (event.type !== 'run.failed' && event.type !== 'tool.failed' && event.verificationStatus !== 'failed') {
+    if (event.type !== 'run.failed' && event.type !== 'run.cleanup_required' && event.type !== 'tool.failed' && event.verificationStatus !== 'failed') {
       return false
     }
     return sameFailureText(content, normalizeFailureText(event.label))

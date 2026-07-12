@@ -83,6 +83,7 @@ export function Composer({
   listMcpServers,
   mode,
   models = [],
+  autoModelAvailable = true,
   onModeChange,
   projectName,
   onSelectProject,
@@ -130,6 +131,7 @@ export function Composer({
   mode: ChatMode
   /** Catalog models for the picker (Auto is always offered on top). */
   models?: ModelOption[]
+  autoModelAvailable?: boolean
   onModeChange: (mode: ChatMode) => void
   /** Project (workspace) currently bound to this chat. When undefined,
    *  the toolbar shows an "add project" button that opens the directory
@@ -428,7 +430,13 @@ export function Composer({
             <IconFolderPlus size={16} aria-hidden="true" />
           </button>
         )}
-        <ModeSelector mode={mode} models={models} onChange={onModeChange} disabled={isSending || steeringMode} />
+        <ModeSelector
+          mode={mode}
+          models={models}
+          autoAvailable={autoModelAvailable}
+          onChange={onModeChange}
+          disabled={isSending || steeringMode}
+        />
         {canStop ? (
           <button
             type="button"

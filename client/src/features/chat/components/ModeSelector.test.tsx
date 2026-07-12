@@ -83,6 +83,24 @@ describe('ModeSelector (catalog-driven)', () => {
     expect(screen.getByText('DeepSeek V4 Flash')).toBeInTheDocument()
   })
 
+  it('opens directly on concrete models when the gateway Auto provider is unavailable', async () => {
+    render(
+      withProviders(
+        <ModeSelector
+          mode="gpt-4o"
+          models={MODELS}
+          autoAvailable={false}
+          onChange={vi.fn()}
+        />,
+      ),
+    )
+    openMenu()
+
+    expect((await screen.findAllByText('GPT-4o')).length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText('更快')).not.toBeInTheDocument()
+    expect(screen.queryByText('更强')).not.toBeInTheDocument()
+  })
+
   it('normalizes known vendor casing in the concrete model list', async () => {
     render(
       withProviders(

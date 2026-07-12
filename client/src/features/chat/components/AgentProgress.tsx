@@ -363,6 +363,7 @@ const OPERATION_TYPES = new Set([
   'repair.workflow',
   'run.waiting',
   'run.failed',
+  'run.cleanup_required',
 ])
 
 const ACTIVITY_TYPES = new Set([
@@ -377,6 +378,7 @@ const ACTIVITY_TYPES = new Set([
   'repair.workflow',
   'run.waiting',
   'run.failed',
+  'run.cleanup_required',
 ])
 
 const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
@@ -603,9 +605,11 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
   }
 
   const isActive = ACTIVE_RUN_STATUSES.has(message.status)
-  const latestRunFailure = [...events].reverse().find((event) => event.type === 'run.failed')
+  const latestRunFailure = [...events].reverse().find(
+    (event) => event.type === 'run.failed' || event.type === 'run.cleanup_required',
+  )
   const latestStatusFailure = message.status === 'error'
-    ? [...events].reverse().find((event) => event.type === 'run.failed' || event.type === 'tool.failed' || event.verificationStatus === 'failed')
+    ? [...events].reverse().find((event) => event.type === 'run.failed' || event.type === 'run.cleanup_required' || event.type === 'tool.failed' || event.verificationStatus === 'failed')
     : undefined
   const latestVerificationFailure = !isActive
     ? [...events].reverse().find((event) => event.verificationStatus === 'failed')

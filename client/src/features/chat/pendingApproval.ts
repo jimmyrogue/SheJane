@@ -2,9 +2,12 @@ import type { Translator } from '@/shared/i18n/i18n'
 import type { Conversation } from '@/shared/local-data/types'
 
 export interface PendingApproval {
+  kind: 'approval' | 'reconciliation'
   messageID: string
   requestID: string
   tool: string
+  toolName: string
+  arguments: Record<string, unknown>
 }
 
 /**
@@ -30,7 +33,9 @@ export function findConversationPendingApproval(
     const resolved = new Set<string>()
     for (const event of events) {
       if (
-        (event.type === 'permission.resolved' || event.type === 'permission.auto_approved') &&
+        (event.type === 'permission.resolved' ||
+          event.type === 'permission.auto_approved' ||
+          event.type === 'tool.reconciliation_resolved') &&
         event.permissionRequestId
       ) {
         resolved.add(event.permissionRequestId)
@@ -38,13 +43,16 @@ export function findConversationPendingApproval(
     }
     for (const event of [...events].reverse()) {
       if (
-        event.type === 'permission.required' &&
+        (event.type === 'permission.required' || event.type === 'tool.reconciliation_required') &&
         event.permissionRequestId &&
         !resolved.has(event.permissionRequestId)
       ) {
         return {
+          kind: event.type === 'permission.required' ? 'approval' : 'reconciliation',
           messageID: message.id,
           requestID: event.permissionRequestId,
+          toolName: event.permissionToolName || '',
+          arguments: event.permissionArguments || {},
           tool:
             event.permissionTool ||
             stripKnownPrefix(event.label, ['需要权限：', 'Permission required: ']) ||

@@ -77,16 +77,20 @@ import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
   cancelLocalRun,
+  clearLocalCloudSession,
   clearLocalMemory,
   createLocalSkill,
   createLocalRun,
   createMcpServer,
   deleteLocalSkill,
+  deleteLocalThread,
   deleteMcpServer,
   diagnoseLocalWorkspace,
   fetchWorkspaceFile,
   forkLocalRun,
   getLocalRunDiagnostics,
+  getLocalThreadSnapshot,
+  getLocalRuntimeInfo,
   getDesktopLocalHostConfig,
   answerLocalQuestion,
   getLocalArtifact,
@@ -94,6 +98,9 @@ import {
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalRuns,
+  listLocalThreads,
+  listLocalThreadChanges,
+  listLocalRuntimeModels,
   listLocalSchedules,
   listMcpServers,
   markLocalScheduleNotified,
@@ -101,15 +108,18 @@ import {
   probeLocalHost,
   resolveLocalPlanApproval,
   resolveLocalPermission,
+  reconcileLocalTool,
   setLocalCloudSession,
   streamLocalRun,
   updateLocalSkill,
+  updateLocalThread,
   updateMcpServer,
   type AdvancedAgentSettings,
   type AgentSettings,
   type LocalArtifact,
   type LocalCloudSession,
   type LocalHostConfig,
+  type LocalToolReconciliationDecision,
   type LocalHostProbe,
   type LocalPlanApprovalDecision,
   type LocalPermissionScope,
@@ -120,11 +130,13 @@ import {
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
+import { projectRuntimeThread } from './features/chat/runtimeProjection'
 
 const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'shejane-app-notice'
 const sidebarWidthStorageKey = 'shejane.sidebar.width.v2'
 const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
+const runtimeThreadIDsStorageKey = 'shejane.runtime-thread-ids.v1'
 const checkoutRecoveryPollMs = 3000
 const checkoutRecoveryMaxPolls = 40
 const scheduledRunNotificationPollMs = 30_000
@@ -132,6 +144,7 @@ interface LocalHarnessRunOptions {
   parentRunId?: string
   metadata?: LocalRunMetadata
   initialAgentEvents?: AgentTimelineItem[]
+  replaceFromClientId?: string
 }
 
 // v7 — dropped the codeExec field. Cloud code execution is now always
@@ -232,34 +245,20 @@ function readAdvancedAgentSettings(raw: unknown): AdvancedAgentSettings {
   if (typeof a.maxModelCalls === 'number' && Number.isFinite(a.maxModelCalls)) {
     out.maxModelCalls = a.maxModelCalls
   }
-  if (typeof a.maxHistoryTurns === 'number' && Number.isFinite(a.maxHistoryTurns)) {
-    out.maxHistoryTurns = a.maxHistoryTurns
-  }
-  if (typeof a.maxModelRetries === 'number' && Number.isFinite(a.maxModelRetries)) {
-    out.maxModelRetries = a.maxModelRetries
-  }
   if (typeof a.maxToolRetries === 'number' && Number.isFinite(a.maxToolRetries)) {
     out.maxToolRetries = a.maxToolRetries
   }
   if (typeof a.researchSearchLimit === 'number' && Number.isFinite(a.researchSearchLimit)) {
     out.researchSearchLimit = a.researchSearchLimit
   }
-  if (typeof a.toolSelectorMax === 'number' && Number.isFinite(a.toolSelectorMax)) {
-    out.toolSelectorMax = a.toolSelectorMax
-  }
   if (typeof a.subagents === 'boolean') out.subagents = a.subagents
-  if (typeof a.reflect === 'boolean') out.reflect = a.reflect
   if (typeof a.browserHeadless === 'boolean') out.browserHeadless = a.browserHeadless
-  if (a.toolCritic === 'off' || a.toolCritic === 'watch' || a.toolCritic === 'nudge' || a.toolCritic === 'block') {
-    out.toolCritic = a.toolCritic
-  }
   if (a.inputGuard === 'observe' || a.inputGuard === 'block') {
     out.inputGuard = a.inputGuard
   }
   if (a.planFirst === 'off' || a.planFirst === 'auto' || a.planFirst === 'always') {
     out.planFirst = a.planFirst
   }
-  if (typeof a.piiRedact === 'string') out.piiRedact = a.piiRedact
   return out
 }
 
@@ -337,17 +336,23 @@ export function App() {
 
 function AppContent() {
   const { t, locale } = useI18n()
+  const isDesktop = Boolean(window.shejaneDesktop)
   const api = useMemo(() => new SheJaneAPI(), [])
   // Stable reference so SpendHistoryDialog's fetch-on-open effect doesn't
   // re-run on every parent render.
   const fetchSpendHistory = useMemo(() => () => api.billingActivities(), [api])
   const authClient = useMemo(() => createAuthClient(api), [api])
   const [auth, setAuth] = useState<AuthPayload | null>(null)
-  // Per-user IndexedDB so switching accounts in the same Electron window does
-  // not leak the previous user's conversations.
+  const [authRestoreComplete, setAuthRestoreComplete] = useState(false)
+  // Desktop conversations belong to the stable local Runtime principal.
+  // Optional cloud identity must never swap the visible local transcript DB.
   const localData = useMemo(
-    () => new LocalConversationStore(`shejane-local:${auth?.user?.id ?? 'anonymous'}`),
-    [auth?.user?.id],
+    () => new LocalConversationStore(
+      isDesktop
+        ? 'shejane-local:runtime:local-owner'
+        : `shejane-local:${auth?.user?.id ?? 'anonymous'}`,
+    ),
+    [auth?.user?.id, isDesktop],
   )
   const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
   const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
@@ -355,12 +360,16 @@ function AppContent() {
   const activeIDRef = useRef<string | undefined>()
   const activeCloudToolLoopRunIdRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
+  const conversationInitializationCompleteRef = useRef(false)
+  const desktopMigrationChainRef = useRef<Promise<void>>(Promise.resolve())
   const recoveryStateRef = useRef(createRecoveryState())
   const startupRecoveryNoticeShownRef = useRef(false)
   const checkoutRecoveryTimerRef = useRef<number>()
   const checkoutRecoveryGenerationRef = useRef(0)
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
   const sidebarMotionTimerRef = useRef<number>()
+  const runtimeThreadCursorRef = useRef(0)
+  const runtimeThreadIDsRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -411,6 +420,8 @@ function AppContent() {
   // The chat model catalog (GET /api/v1/models), feeding the composer picker.
   // 'auto' is always offered on top of these.
   const [models, setModels] = useState<ChatModelInfo[]>([])
+  const [autoModelAvailable, setAutoModelAvailable] = useState(true)
+  const [modelCatalogVersion, setModelCatalogVersion] = useState(0)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
   const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
@@ -565,34 +576,55 @@ function AppContent() {
     }
   }, [api, auth?.access_token])
 
-  // Fetch the chat model catalog for the composer picker (both builds — models
-  // apply to local + cloud runs). If the persisted selection is no longer in
-  // the catalog, fall back to 'auto'.
+  // Desktop merges Runtime-owned BYOK models with the optional cloud catalog.
+  // The two reads are independent, so start them together.
   useEffect(() => {
-    if (!auth?.access_token) {
+    if (!auth?.access_token && !localHostConfig) {
       setModels([])
       return
     }
     let cancelled = false
-    void api
-      .listModels()
-      .then((catalog) => {
+    const cloudModels = auth?.access_token ? api.listModels().catch(() => []) : Promise.resolve([])
+    const runtimeModels = localHostConfig
+      ? Promise.all([
+          listLocalRuntimeModels(localHostConfig).catch(() => []),
+          getLocalRuntimeInfo(localHostConfig).catch(() => null),
+        ])
+      : Promise.resolve([[], null] as const)
+    void Promise.all([cloudModels, runtimeModels]).then(([cloudCatalog, [localCatalog, runtime]]) => {
         if (cancelled) return
+        const localModels: ChatModelInfo[] = localCatalog
+          .filter((model) => model.available)
+          .map((model, index) => ({
+            id: model.spec,
+            label: model.display_name,
+            description: t('settings.models.localDescription'),
+            vendor: model.provider_name,
+            vendor_info: t('settings.models.localVendorInfo'),
+            capability_tier: 'balanced',
+            priority: 10_000 + index,
+          }))
+        const localIDs = new Set(localModels.map((model) => model.id))
+        const usableCloudCatalog = !isDesktop || runtime?.gateway_provider_configured
+          ? cloudCatalog
+          : []
+        const catalog = [...localModels, ...usableCloudCatalog.filter((model) => !localIDs.has(model.id))]
+        const nextAutoAvailable = isDesktop
+          ? runtime?.gateway_provider_configured === true
+          : true
         setModels(catalog)
+        setAutoModelAvailable(nextAutoAvailable)
         setMode((current) => {
-          if (isAutoMode(current) || catalog.some((m) => m.id === current)) return current
-          const next: ChatMode = 'auto'
+          if ((nextAutoAvailable && isAutoMode(current)) || catalog.some((m) => m.id === current)) return current
+          const next: ChatMode = nextAutoAvailable ? 'auto' : (catalog[0]?.id ?? 'auto')
           writeChatMode(next)
           return next
         })
       })
-      .catch(() => {
-        if (!cancelled) setModels([])
-      })
     return () => {
       cancelled = true
     }
-  }, [api, auth?.access_token])
+  }, [api, auth?.access_token, isDesktop, localCloudSession?.connected, localHostConfig, modelCatalogVersion, t])
 
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
@@ -711,12 +743,35 @@ function AppContent() {
 
   useEffect(() => {
     let disposed = false
-    void recoverOrphanCloudStreamingConversations(localData, { t }).then((items) => {
+    const navigationVersion = navigationVersionRef.current
+    const maySelectInitialConversation = !conversationInitializationCompleteRef.current
+    void (async () => {
+      await migrateDesktopConversations(auth?.user?.id)
+      return recoverOrphanCloudStreamingConversations(localData, { t })
+    })().then((items) => {
       if (disposed) {
         return
       }
-      setConversations(items)
-      setActiveConversationID(items[0]?.id)
+      conversationInitializationCompleteRef.current = true
+      setConversations((current) => {
+        if (!isDesktop) {
+          return items
+        }
+        const merged = new Map(current.map((item) => [item.id, item]))
+        for (const item of items) {
+          const existing = merged.get(item.id)
+          if (!existing || item.updatedAt > existing.updatedAt) {
+            merged.set(item.id, item)
+          }
+        }
+        return sortConversationsForSidebar(Array.from(merged.values()))
+      })
+      if (
+        maySelectInitialConversation &&
+        navigationVersionRef.current === navigationVersion
+      ) {
+        setActiveConversationID(items[0]?.id)
+      }
       const [failure] = auth?.user?.id && !startupRecoveryNoticeShownRef.current
         ? recentRecoverableFailures(items, 1)
         : []
@@ -742,14 +797,16 @@ function AppContent() {
   // Reset transient session state when the signed-in user changes, so leftovers
   // from the previous account (draft, attached doc, etc.) don't bleed across.
   useEffect(() => {
-    setDraft('')
-    setAttachedDocumentIDs([])
-    setAttachedPreviews({})
-    setPendingWorkspace(undefined)
-    setPendingProject(undefined)
+    if (!isDesktop) {
+      setDraft('')
+      setAttachedDocumentIDs([])
+      setAttachedPreviews({})
+      setPendingWorkspace(undefined)
+      setPendingProject(undefined)
+    }
     setDocuments([])
     setBillingCheckoutOptions(null)
-  }, [auth?.user?.id])
+  }, [auth?.user?.id, isDesktop])
 
   // Let the API client silently renew an expired access token mid-session
   // (15-min TTL) using the long-lived refresh cookie, instead of bouncing
@@ -758,6 +815,7 @@ function AppContent() {
     api.setTokenRefresher(async () => {
       try {
         const payload = await authClient.refresh()
+        await migrateDesktopConversations(payload.user.id)
         api.setAccessToken(payload.access_token)
         setAuth(payload)
         return payload.access_token
@@ -771,7 +829,8 @@ function AppContent() {
   useEffect(() => {
     authClient
       .refresh()
-      .then((payload) => {
+      .then(async (payload) => {
+        await migrateDesktopConversations(payload.user.id)
         api.setAccessToken(payload.access_token)
         setAuth(payload)
         return Promise.all([api.balance(), api.listDocuments()])
@@ -781,6 +840,7 @@ function AppContent() {
         setDocuments(items)
       })
       .catch(() => undefined)
+      .finally(() => setAuthRestoreComplete(true))
   }, [api, authClient])
 
   useEffect(() => {
@@ -895,6 +955,87 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
+    if (!isDesktop || !localHost?.online || !localHostConfig?.token) {
+      return
+    }
+    let disposed = false
+    let polling = false
+    let interval: number | undefined
+    const applyProjected = (projected: Conversation[], deleted = new Set<string>()) => {
+      if (disposed || (projected.length === 0 && deleted.size === 0)) return
+      setConversations((current) => {
+        const merged = new Map(
+          current.filter((item) => !deleted.has(item.id)).map((item) => [item.id, item]),
+        )
+        for (const item of projected) merged.set(item.id, item)
+        return sortConversationsForSidebar(Array.from(merged.values()))
+      })
+    }
+    const pollChanges = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const result = await listLocalThreadChanges(runtimeThreadCursorRef.current, localHostConfig)
+        if (disposed) return
+        if (result.resetRequired) {
+          const previousThreadIDs = new Set(runtimeThreadIDsRef.current)
+          const projected = await syncRuntimeThreadCache(localHostConfig)
+          const deleted = new Set(
+            [...previousThreadIDs].filter((threadID) => !runtimeThreadIDsRef.current.has(threadID)),
+          )
+          applyProjected(projected, deleted)
+          return
+        }
+        const latest = new Map(result.changes.map((change) => [change.thread_id, change]))
+        const deleted = new Set(
+          [...latest.values()]
+            .filter((change) => change.change_type === 'thread.deleted')
+            .map((change) => change.thread_id),
+        )
+        await Promise.all([...deleted].map((threadID) => localData.delete(threadID)))
+        const existing = new Map((await localData.list()).map((item) => [item.id, item]))
+        const snapshots = await mapWithConcurrency(
+          [...latest.keys()].filter((threadID) => !deleted.has(threadID)),
+          4,
+          (threadID) => getLocalThreadSnapshot(threadID, localHostConfig),
+        )
+        const projected = snapshots.map((snapshot) =>
+          projectRuntimeThread(snapshot, existing.get(snapshot.thread.id), t),
+        )
+        await Promise.all(projected.map((conversation) => localData.save(conversation)))
+        const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
+        for (const threadID of latest.keys()) nextRuntimeThreadIDs.add(threadID)
+        for (const threadID of deleted) nextRuntimeThreadIDs.delete(threadID)
+        storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+        runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+        runtimeThreadCursorRef.current = Math.max(runtimeThreadCursorRef.current, result.cursor)
+        applyProjected(projected, deleted)
+      } catch {
+        // Cursor polling is a cache refresh. The next pass retries from the
+        // last committed cursor; it never changes Runtime truth.
+      } finally {
+        polling = false
+      }
+    }
+    void syncRuntimeThreadCache(localHostConfig)
+      .then((projected) => {
+        applyProjected(projected)
+        if (!disposed) {
+          interval = window.setInterval(() => void pollChanges(), 2000)
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          interval = window.setInterval(() => void pollChanges(), 2000)
+        }
+      })
+    return () => {
+      disposed = true
+      if (interval !== undefined) window.clearInterval(interval)
+    }
+  }, [isDesktop, localHost?.online, localHostConfig])
+
+  useEffect(() => {
     if (!localHost?.online || !localHostConfig?.token) {
       return
     }
@@ -931,13 +1072,27 @@ function AppContent() {
   }, [localHost?.online, localHostConfig, t])
 
   useEffect(() => {
-    if (!auth?.access_token || !localHost?.online || !localHostConfig?.token) {
-      if (!auth) {
-        setLocalCloudSessionState(null)
-      }
+    if (!localHost?.online || !localHostConfig?.token || !authRestoreComplete) {
       return
     }
     let disposed = false
+    if (!auth?.access_token) {
+      void clearLocalCloudSession(localHostConfig)
+        .then((session) => {
+          if (!disposed) {
+            setLocalCloudSessionState(session)
+            setModelCatalogVersion((version) => version + 1)
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            setLocalCloudSessionState({ connected: false })
+          }
+        })
+      return () => {
+        disposed = true
+      }
+    }
     void setLocalCloudSession(
       {
         cloudBaseURL: api.baseURL,
@@ -948,6 +1103,7 @@ function AppContent() {
       .then((session) => {
         if (!disposed) {
           setLocalCloudSessionState(session)
+          setModelCatalogVersion((version) => version + 1)
         }
       })
       .catch(() => {
@@ -958,7 +1114,7 @@ function AppContent() {
     return () => {
       disposed = true
     }
-  }, [api, auth, localHost?.online, localHostConfig])
+  }, [api, auth, authRestoreComplete, localHost?.online, localHostConfig])
 
   useEffect(() => {
     if (!localCloudSession?.connected) {
@@ -1006,6 +1162,7 @@ function AppContent() {
     : undefined
 
   async function handleAuth(payload: AuthPayload) {
+    await migrateDesktopConversations(payload.user.id)
     api.setAccessToken(payload.access_token)
     setAuth(payload)
     const [wallet, items] = await Promise.all([api.balance(), api.listDocuments()])
@@ -1013,10 +1170,64 @@ function AppContent() {
     setDocuments(items)
   }
 
+  async function migrateDesktopConversations(userID?: string): Promise<boolean> {
+    if (!isDesktop) return false
+    const migrate = async (): Promise<boolean> => {
+      const sourceNames = [
+        'shejane-local:anonymous',
+        ...(userID ? [`shejane-local:${userID}`] : []),
+      ]
+      let changed = false
+      const current = new Map((await localData.list()).map((item) => [item.id, item]))
+      for (const sourceName of sourceNames) {
+        const marker = `shejane.localDataMigrated.v1:${sourceName}`
+        if (localStorage.getItem(marker) === 'done') continue
+        const source = new LocalConversationStore(sourceName)
+        for (const conversation of await source.list()) {
+          const existing = current.get(conversation.id)
+          if (!existing || conversation.updatedAt > existing.updatedAt) {
+            await localData.save(conversation)
+            current.set(conversation.id, conversation)
+            changed = true
+          }
+        }
+        localStorage.setItem(marker, 'done')
+      }
+      return changed
+    }
+    const operation = desktopMigrationChainRef.current.then(migrate)
+    desktopMigrationChainRef.current = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
+  }
+
   async function refreshConversations(nextActiveID?: string, options: { preserveEmptyActive?: boolean } = {}) {
     const items = await recoverOrphanCloudStreamingConversations(localData, { t })
     setConversations(items)
     setActiveConversationID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
+  }
+
+  async function syncRuntimeThreadCache(config: LocalHostConfig): Promise<Conversation[]> {
+    const { threads, cursor } = await listLocalThreads(config)
+    const nextThreadIDs = new Set(threads.map((thread) => thread.id))
+    const removedThreadIDs = [...loadRuntimeThreadIDs()].filter((id) => !nextThreadIDs.has(id))
+    await Promise.all(removedThreadIDs.map((id) => localData.delete(id)))
+    const existing = new Map((await localData.list()).map((item) => [item.id, item]))
+    const snapshots = await mapWithConcurrency(
+      threads,
+      4,
+      (thread) => getLocalThreadSnapshot(thread.id, config),
+    )
+    const projected = snapshots.map((snapshot) =>
+      projectRuntimeThread(snapshot, existing.get(snapshot.thread.id), t),
+    )
+    await Promise.all(projected.map((conversation) => localData.save(conversation)))
+    storeRuntimeThreadIDs(nextThreadIDs)
+    runtimeThreadIDsRef.current = nextThreadIDs
+    runtimeThreadCursorRef.current = Math.max(runtimeThreadCursorRef.current, cursor)
+    return projected
   }
 
   function startNewConversation() {
@@ -1101,7 +1312,7 @@ function AppContent() {
   }
 
   async function sendMessage() {
-    if (!auth) {
+    if (!auth && !isDesktop) {
       setNotice(t('app.notice.loginBeforeSending'))
       return
     }
@@ -1130,10 +1341,19 @@ function AppContent() {
       // agent can image.edit them); other documents keep the cloud text path.
       const attachmentsAreImages = attachedDocuments.length > 0 &&
         attachedDocuments.every((document) => document.content_type.startsWith('image/'))
-      const canUseLocalHarness =
-        (attachedDocuments.length === 0 || attachmentsAreImages) &&
-        Boolean(localHost?.online && localHostConfig?.token && localCloudSession?.connected)
-      const conversation = canUseLocalHarness
+      if (isDesktop && attachedDocuments.length > 0 && !attachmentsAreImages) {
+        throw new Error(t('app.notice.localDocumentUnsupported'))
+      }
+      if (isDesktop && (!localHost?.online || !localHostConfig?.token)) {
+        throw new Error(t('app.notice.localHostDisconnected'))
+      }
+      if (
+        isDesktop &&
+        !((autoModelAvailable && isAutoMode(mode)) || models.some((model) => model.id === mode))
+      ) {
+        throw new Error(t('app.notice.localModelUnavailable'))
+      }
+      const conversation = isDesktop
         ? await sendLocalHarnessMessage(content, renderContext)
         : await chat.sendMessage({
             conversationId: activeID,
@@ -1155,7 +1375,9 @@ function AppContent() {
             },
           })
       await refreshConversationsAfterStream(conversation.id, renderContext)
-      setBalance(await api.balance())
+      if (auth) {
+        setBalance(await api.balance())
+      }
     } catch (error) {
       setDraft((current) => current || content)
       // Only restore the attachment if the user hasn't picked a new
@@ -1173,13 +1395,9 @@ function AppContent() {
     }
   }
 
-  /** Truncate the target conversation to before `userMessageID`, persist,
-   *  then start a fresh run with `text` via the original message route
-   *  (local failures stay local; cloud replies stay cloud). Shared by
-   *  regenerate (text = the original user message) and edit-resend (text = the edited message).
-   *  Both run paths rebuild model context purely from the supplied history,
-   *  so a client-side truncate + fresh run is all that's needed — there is
-   *  no server-side transcript to mutate. Re-running re-bills credits. */
+  /** Optimistically truncate the cache, then ask Runtime to create an
+   *  immutable replacement branch from `userMessageID`. The authoritative
+   *  snapshot later confirms the visible branch. */
   async function resendFromUserMessage(
     userMessageID: string,
     text: string,
@@ -1215,7 +1433,13 @@ function AppContent() {
     setNotice('')
     try {
       const next = preferLocal
-        ? await sendLocalHarnessMessage(text, renderContext, agentSettings, localRunOptions, targetConversationID)
+        ? await sendLocalHarnessMessage(
+            text,
+            renderContext,
+            agentSettings,
+            { ...localRunOptions, replaceFromClientId: userMessageID },
+            targetConversationID,
+          )
         : await chat.sendMessage({
             conversationId: targetConversationID,
             content: parseSkillDraft(text).text,
@@ -1595,6 +1819,7 @@ function AppContent() {
     }
 
     const timestamp = new Date().toISOString()
+    const commandId = createLocalID('cmd')
     const conversation = (targetConversationID ? await localData.get(targetConversationID) : undefined) ?? createConversation(text, timestamp, t('chat.newConversation'))
     // Composer's project picker can run before the first message, in
     // which case the workspace + project sit in pending* slots until
@@ -1607,6 +1832,7 @@ function AppContent() {
     }
     const userMessage: ChatMessage = {
       id: createLocalID('msg'),
+      commandId,
       role: 'user',
       content: text,
       createdAt: timestamp,
@@ -1689,14 +1915,27 @@ function AppContent() {
     try {
       const run = await createLocalRun(
         {
+          commandId,
+          clientMessageId: userMessage.id,
+          threadId: conversation.id,
+          assistantMessageId: assistantMessage.id,
+          userInput: text,
+          threadTitle: conversation.title,
+          threadMetadata: {
+            archived: conversation.archived,
+            pinned: conversation.pinned ?? false,
+            project: conversation.project,
+            workspace: conversation.workspace,
+          },
+          userItemMetadata: {
+            attachments: userMessage.attachments ?? [],
+          },
+          replaceFromClientId: runOptions?.replaceFromClientId,
           goal,
           workspacePath: conversation.workspace?.path.trim() || undefined,
-          history: deriveAgentHistory(
-            priorMessages,
-            effectiveSettings.advanced.maxHistoryTurns !== undefined
-              ? { maxMessages: effectiveSettings.advanced.maxHistoryTurns }
-              : undefined,
-          ),
+          history: runtimeThreadIDsRef.current.has(conversation.id)
+            ? undefined
+            : deriveAgentHistory(priorMessages),
           parentRunId,
           settings: effectiveSettings,
           metadata: runOptions?.metadata,
@@ -1705,6 +1944,9 @@ function AppContent() {
         runLocalHostConfig,
       )
       assistantMessage.runId = run.id
+      const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(conversation.id)
+      storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+      runtimeThreadIDsRef.current = nextRuntimeThreadIDs
       setLocalRuns((items) => upsertLocalRun(items, run))
       scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
@@ -1738,7 +1980,13 @@ function AppContent() {
       notifyAgentFailed(assistantMessage, t)
       throw error
     } finally {
-      conversation.updatedAt = new Date().toISOString()
+      try {
+        const snapshot = await getLocalThreadSnapshot(conversation.id, runLocalHostConfig)
+        Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
+        scheduleConversationRender(conversation, context)
+      } catch {
+        conversation.updatedAt = new Date().toISOString()
+      }
       await localData.save(conversation)
     }
 
@@ -1840,7 +2088,13 @@ function AppContent() {
     }
   }
 
-  async function handlePermissionDecision(messageID: string, requestID: string, decision: 'approve' | 'deny', scope: LocalPermissionScope = 'once') {
+  async function handlePermissionDecision(
+    messageID: string,
+    requestID: string,
+    decision: 'approve' | 'edit' | 'deny',
+    scope: LocalPermissionScope = 'once',
+    editedAction?: { name: string, args: Record<string, unknown> },
+  ) {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
@@ -1862,12 +2116,12 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
-      await resolveLocalPermission(requestID, decision, localHostConfig, { scope })
+      await resolveLocalPermission(requestID, decision, localHostConfig, { scope, editedAction })
       // Decision-acknowledgement toast so the user sees their click landed —
       // the bar disappears the moment the resume stream starts, otherwise
       // there's no feedback at all.
       toast.success(
-        decision === 'approve'
+        decision === 'approve' || decision === 'edit'
           ? t(scope === 'run' ? 'app.notice.permissionRunApproved' : 'app.notice.permissionApproved')
           : t('app.notice.permissionDenied'),
         { id: 'permission-decision', duration: 2000 },
@@ -1889,6 +2143,51 @@ function AppContent() {
       message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
       setNotice(message.content)
       scheduleConversationRender(conversation, renderContext)
+    } finally {
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      await refreshConversationsAfterStream(conversation.id, renderContext)
+    }
+  }
+
+  async function handleToolReconciliation(
+    messageID: string,
+    requestID: string,
+    decision: LocalToolReconciliationDecision,
+  ) {
+    if (!activeID || !localHostConfig) {
+      setNotice(t('app.notice.localHostDisconnected'))
+      return
+    }
+    const conversation = await localData.get(activeID)
+    const message = conversation?.messages.find((item) => item.id === messageID)
+    if (!conversation || !message?.runId) {
+      setNotice(t('app.notice.missingLocalTask'))
+      return
+    }
+    setNotice('')
+    message.status = 'streaming'
+    message.content = ''
+    const renderContext = createConversationRenderContext()
+    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
+    const toolArgsByCallId: ToolArgsByCallId = new Map()
+    try {
+      await reconcileLocalTool(requestID, decision, localHostConfig)
+      await streamLocalRun(message.runId, localHostConfig, {
+        onEvent: (event) => {
+          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
+          scheduleConversationRender(conversation, renderContext)
+        },
+        onDelta: (delta, event) => {
+          appendLocalDelta(message, delta, event, seenEventIDs)
+          scheduleConversationRender(conversation, renderContext)
+        },
+      })
+      finalizeLocalRunStatus(message)
+    } catch (error) {
+      message.status = 'error'
+      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
+      setNotice(message.content)
     } finally {
       conversation.updatedAt = new Date().toISOString()
       await localData.save(conversation)
@@ -2147,46 +2446,75 @@ function AppContent() {
       return
     }
     const sourceDiagnostics = runDiagnostics?.run.id === runID ? runDiagnostics : null
-    const forkGoal = sourceDiagnostics?.run.goal || undefined
+    const forkGoal = sourceDiagnostics?.run.goal || localRuns.find((run) => run.id === runID)?.goal
+    const timestamp = new Date().toISOString()
+    const sourceConversation = (await localData.list()).find((conversation) =>
+      conversation.messages.some((message) => message.runId === runID),
+    )
+    const userContent = t('app.notice.checkpointForkUserMessage', {
+      checkpoint: checkpointID.slice(0, 12),
+      goal: forkGoal ?? '',
+    })
+    const conversation = createConversation(
+      forkGoal || userContent,
+      timestamp,
+      t('chat.newConversation'),
+    )
+    conversation.workspace = sourceConversation?.workspace
+    conversation.project = sourceConversation?.project
+    const commandId = createLocalID('cmd')
+    const userMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      commandId,
+      role: 'user',
+      content: userContent,
+      createdAt: timestamp,
+      status: 'done',
+    }
+    const assistantMessage: ChatMessage = {
+      id: createLocalID('msg'),
+      role: 'assistant',
+      content: '',
+      createdAt: timestamp,
+      status: 'streaming',
+      runOrigin: 'local',
+      agentEvents: [],
+    }
     try {
       setNotice('')
-      const run = await forkLocalRun(runID, { checkpointId: checkpointID, goal: forkGoal }, localHostConfig)
+      const run = await forkLocalRun(
+        runID,
+        {
+          commandId,
+          clientMessageId: userMessage.id,
+          assistantMessageId: assistantMessage.id,
+          threadId: conversation.id,
+          checkpointId: checkpointID,
+          goal: forkGoal,
+          userInput: userContent,
+          threadTitle: conversation.title,
+          threadMetadata: {
+            archived: false,
+            pinned: false,
+            project: conversation.project,
+            workspace: conversation.workspace,
+          },
+        },
+        localHostConfig,
+      )
       setLocalRuns((items) => upsertLocalRun(items, run))
-
-      const timestamp = new Date().toISOString()
-      let conversation = activeIDRef.current ? await localData.get(activeIDRef.current) : undefined
-      if (!conversation) {
-        conversation = createConversation(run.goal, timestamp, t('chat.newConversation'))
-        navigationVersionRef.current += 1
-        setPendingWorkspace(undefined)
-        setPendingProject(undefined)
-        setActiveConversationID(conversation.id)
-        setMainView('chat')
-      }
-
-      const userMessage: ChatMessage = {
-        id: createLocalID('msg'),
-        role: 'user',
-        content: t('app.notice.checkpointForkUserMessage', {
-          checkpoint: checkpointID.slice(0, 12),
-          goal: run.goal,
-        }),
-        createdAt: timestamp,
-        status: 'done',
-      }
-      const assistantMessage: ChatMessage = {
-        id: createLocalID('msg'),
-        role: 'assistant',
-        content: '',
-        createdAt: timestamp,
-        status: 'streaming',
-        runId: run.id,
-        runOrigin: 'local',
-        agentEvents: [],
-      }
+      const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(conversation.id)
+      storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+      runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+      assistantMessage.runId = run.id
       conversation.messages = [...conversation.messages, userMessage, assistantMessage]
       conversation.updatedAt = timestamp
       await localData.save(conversation)
+      navigationVersionRef.current += 1
+      setPendingWorkspace(undefined)
+      setPendingProject(undefined)
+      setActiveConversationID(conversation.id)
+      setMainView('chat')
       setRunDiagnostics(null)
 
       const renderContext = createConversationRenderContext()
@@ -2205,7 +2533,13 @@ function AppContent() {
       })
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, renderContext)
-      conversation.updatedAt = new Date().toISOString()
+      try {
+        const snapshot = await getLocalThreadSnapshot(conversation.id, localHostConfig)
+        Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
+        scheduleConversationRender(conversation, renderContext)
+      } catch {
+        conversation.updatedAt = new Date().toISOString()
+      }
       await localData.save(conversation)
       await refreshConversationsAfterStream(conversation.id, renderContext)
     } catch (error) {
@@ -2346,6 +2680,27 @@ function AppContent() {
     if (options.touch ?? true) {
       conversation.updatedAt = new Date().toISOString()
     }
+    const runtimeOwnsThread = runtimeThreadIDsRef.current.has(conversationID)
+    if (runtimeOwnsThread && localHostConfig?.token) {
+      try {
+        await updateLocalThread(
+          conversationID,
+          {
+            title: conversation.title,
+            archived: conversation.archived,
+            metadata: {
+              pinned: conversation.pinned ?? false,
+              project: conversation.project,
+              workspace: conversation.workspace,
+            },
+          },
+          localHostConfig,
+        )
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : t('app.notice.localRunFailed'))
+        return undefined
+      }
+    }
     await localData.save(conversation)
     await refreshConversations(activeIDRef.current, { preserveEmptyActive: !activeIDRef.current })
     return conversation
@@ -2384,6 +2739,19 @@ function AppContent() {
       return
     }
     const deletedActive = activeIDRef.current === conversationID
+    const runtimeOwnsThread = runtimeThreadIDsRef.current.has(conversationID)
+    if (runtimeOwnsThread && localHostConfig?.token) {
+      try {
+        await deleteLocalThread(conversationID, localHostConfig)
+        const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
+        nextRuntimeThreadIDs.delete(conversationID)
+        storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+        runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : t('app.notice.localRunFailed'))
+        return
+      }
+    }
     await localData.delete(conversationID)
     if (deletedActive) {
       setPendingWorkspace(undefined)
@@ -2531,7 +2899,8 @@ function AppContent() {
     setNotice(t('app.notice.documentDeleted'))
   }
 
-  if (!auth) {
+  const desktopRuntimeOnly = isDesktop && Boolean(localHostConfig) && localHost !== null
+  if (!auth && !desktopRuntimeOnly) {
     return (
       <AuthScreen
         onAuthed={handleAuth}
@@ -2546,7 +2915,6 @@ function AppContent() {
   // web build (app.shejane.com) has NO local daemon, so the whole local-agent
   // surface — skills, MCP, IM connections, workspace — can never work there
   // and must be hidden.
-  const isDesktop = !!window.shejaneDesktop
   const shellClassName = isDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
   const shortcutModifier = keyboardShortcutModifier()
@@ -2827,18 +3195,22 @@ function AppContent() {
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop={isDesktop}
-              userEmail={auth.user.email}
+              userEmail={auth?.user.email}
               balance={balance}
               agentSettings={agentSettings}
+              localHostConfig={localHostConfig}
+              onModelProvidersChange={() => setModelCatalogVersion((version) => version + 1)}
               onAgentSettingsChange={(next) => {
                 setAgentSettings(next)
                 writeAgentSettings(next)
               }}
-              onRecharge={() => setRechargeDialogOpen(true)}
-              onShowSpendHistory={() => openSpendHistory()}
-              onLogout={() => {
-                void authClient.logout().finally(() => setAuth(null))
-              }}
+              onRecharge={auth ? () => setRechargeDialogOpen(true) : undefined}
+              onShowSpendHistory={auth ? () => openSpendHistory() : undefined}
+              onLogout={auth
+                ? () => {
+                    void authClient.logout().finally(() => setAuth(null))
+                  }
+                : undefined}
               onImportLocalData={(file) => void importLocalData(file)}
               onExportLocalData={() => void exportLocalData()}
               onClearMemory={
@@ -2907,7 +3279,7 @@ function AppContent() {
             {/* Advisory (non-blocking) email-verification nudge. Only shown
              *  when the server explicitly reports the email as unverified
              *  (=== false, so older payloads without the field don't nag). */}
-            {auth.user.email_verified === false && !emailBannerDismissed ? (
+            {auth?.user.email_verified === false && !emailBannerDismissed ? (
               <div className="status-banner status-banner-info" role="status">
                 <span className="status-banner-text">{t('topbar.bannerEmailUnverified')}</span>
                 <button
@@ -2990,7 +3362,8 @@ function AppContent() {
             <div className="composer-dock">
               <PendingApprovalBar
                 approval={pendingApproval}
-                onDecision={(messageID, requestID, decision, scope) => void handlePermissionDecision(messageID, requestID, decision, scope)}
+                onDecision={(messageID, requestID, decision, scope, editedAction) => void handlePermissionDecision(messageID, requestID, decision, scope, editedAction)}
+                onReconcile={(messageID, requestID, decision) => void handleToolReconciliation(messageID, requestID, decision)}
               />
 
               <PendingPlanApprovalBar
@@ -3059,6 +3432,7 @@ function AppContent() {
               }
               mode={mode}
               models={models}
+              autoModelAvailable={autoModelAvailable}
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
@@ -3467,12 +3841,14 @@ function notifyScheduledRun(schedule: LocalScheduledRun, t: Translator): void {
 }
 
 function latestRunFailedLabel(message: ChatMessage): string {
-  return [...(message.agentEvents ?? [])].reverse().find((event) => event.type === 'run.failed')?.label ?? ''
+  return [...(message.agentEvents ?? [])].reverse().find(
+    (event) => event.type === 'run.failed' || event.type === 'run.cleanup_required',
+  )?.label ?? ''
 }
 
 function finalizeLocalRunStatus(message: ChatMessage) {
   const events = message.agentEvents ?? []
-  if (events.some((event) => event.type === 'run.failed')) {
+  if (events.some((event) => event.type === 'run.failed' || event.type === 'run.cleanup_required')) {
     message.status = 'error'
     if (!message.content.trim()) {
       message.content = latestRunFailedLabel(message)
@@ -3499,6 +3875,12 @@ function hasPendingPermission(events: AgentTimelineItem[]): boolean {
   for (const event of events) {
     if (event.type === 'permission.required' && event.permissionRequestId) {
       pending.add(event.permissionRequestId)
+    }
+    if (event.type === 'tool.reconciliation_required' && event.permissionRequestId) {
+      pending.add(event.permissionRequestId)
+    }
+    if (event.type === 'tool.reconciliation_resolved' && event.permissionRequestId) {
+      pending.delete(event.permissionRequestId)
     }
     if (event.type === 'permission.resolved' && event.permissionRequestId) {
       pending.delete(event.permissionRequestId)
@@ -3624,6 +4006,41 @@ function createConversation(firstMessage: string, timestamp: string, fallbackTit
     updatedAt: timestamp,
     messages: [],
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  map: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let next = 0
+  async function worker() {
+    while (next < values.length) {
+      const index = next
+      next += 1
+      results[index] = await map(values[index])
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), values.length) }, () => worker()),
+  )
+  return results
+}
+
+function loadRuntimeThreadIDs(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(runtimeThreadIDsStorageKey) ?? '[]')
+    return new Set(
+      Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [],
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function storeRuntimeThreadIDs(ids: Set<string>) {
+  localStorage.setItem(runtimeThreadIDsStorageKey, JSON.stringify([...ids]))
 }
 
 /** Cross-platform basename: strips trailing separators then returns the

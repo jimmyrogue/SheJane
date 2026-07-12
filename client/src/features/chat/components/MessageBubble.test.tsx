@@ -133,6 +133,41 @@ describe('MessageBubble meta', () => {
     expect(onRegenerate).toHaveBeenCalledWith('m1')
   })
 
+  it('hides regenerate while Runtime cleanup is unconfirmed', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            status: 'error',
+            agentEvents: [
+              { type: 'run.cleanup_required', label: '执行清理尚未确认' },
+            ],
+          })}
+          onRegenerate={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument()
+  })
+
+  it('restores regenerate after the original owner confirms cleanup', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            status: 'error',
+            agentEvents: [
+              { type: 'run.cleanup_required', label: '执行清理尚未确认' },
+              { type: 'run.failed', label: '租约已失效，但清理已经完成' },
+            ],
+          })}
+          onRegenerate={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByRole('button', { name: '重新生成' })).toBeInTheDocument()
+  })
+
   it('edits and resends a user message', () => {
     const onEditResend = vi.fn()
     render(

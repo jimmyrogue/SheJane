@@ -560,21 +560,49 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         eventId,
         permissionRequestId: stringValue(payload.request_id),
         permissionTool: toolActionLabel(tool, t),
+        permissionToolName: tool,
+        permissionArguments:
+          payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
+            ? payload.arguments as Record<string, unknown>
+            : {},
       }
     }
     case 'permission.resolved': {
       const tool = stringValue(payload.tool)
-      const decision = payload.decision === 'approve' ? 'approve' : 'deny'
+      const decision = payload.decision === 'approve' || payload.decision === 'edit' ? payload.decision : 'deny'
       const scope = payload.scope === 'run' ? 'run' : 'once'
       const approvedLabel = scope === 'run' ? t('chat.timeline.permissionApprovedRun') : t('chat.timeline.permissionApprovedOnce')
       return {
         type: event.event_type,
-        label: `${decision === 'approve' ? approvedLabel : t('chat.timeline.permissionDenied')}${t('chat.timeline.labelJoiner')}${toolActionLabel(tool, t)}`,
+        label: `${decision === 'approve' || decision === 'edit' ? approvedLabel : t('chat.timeline.permissionDenied')}${t('chat.timeline.labelJoiner')}${toolActionLabel(tool, t)}`,
         eventId,
         permissionRequestId: stringValue(payload.request_id),
         permissionTool: toolActionLabel(tool, t),
         permissionDecision: decision,
         permissionScope: scope,
+      }
+    }
+    case 'tool.reconciliation_required': {
+      const tool = stringValue(payload.tool_name)
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.toolReconciliationRequired', { tool: toolActionLabel(tool, t) }),
+        eventId,
+        permissionRequestId: stringValue(payload.request_id),
+        permissionTool: toolActionLabel(tool, t),
+        permissionToolName: tool,
+      }
+    }
+    case 'tool.reconciliation_resolved': {
+      const decision = payload.decision === 'confirmed_completed' || payload.decision === 'retry_not_executed'
+        ? payload.decision
+        : 'abort'
+      return {
+        type: event.event_type,
+        label: t(`chat.timeline.toolReconciliation.${decision}`),
+        eventId,
+        permissionRequestId: stringValue(payload.request_id),
+        reconciliationDecision: decision,
       }
     }
     case 'permission.auto_approved': {
@@ -725,6 +753,14 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
       return { type: event.event_type, label: t('chat.timeline.runCompleted'), eventId }
     case 'run.failed':
       return runFailedTimelineItem(event.event_type, payload, eventId, t)
+    case 'run.cleanup_required':
+      return {
+        type: event.event_type,
+        label: stringValue(payload.error) || t('chat.timeline.runCleanupRequired'),
+        eventId,
+        failureCategory: stringValue(payload.category) || 'execution_cleanup_unconfirmed',
+        failureRetryable: false,
+      }
     case 'run.canceled':
       return { type: event.event_type, label: t('chat.timeline.runCanceled'), eventId }
     default:

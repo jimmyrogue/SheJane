@@ -359,11 +359,12 @@ describe('user client shell', () => {
     expect(await screen.findByText('本地数据已导出')).toBeInTheDocument()
   })
 
-  it('shows the login screen when the Electron auth bridge cannot refresh the session', async () => {
+  it('keeps the desktop Runtime usable when the cloud session cannot refresh', async () => {
     const calls = mockFetch('user')
     const refresh = vi.fn().mockRejectedValue(new Error('expired'))
     window.shejaneDesktop = {
       platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       auth: {
         register: vi.fn(),
         login: vi.fn(),
@@ -374,9 +375,17 @@ describe('user client shell', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('创建账号')).toBeInTheDocument()
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
+    expect(screen.queryByText('创建账号')).not.toBeInTheDocument()
     expect(refresh).toHaveBeenCalled()
     expect(calls.some((call) => call.url.endsWith('/api/v1/auth/refresh'))).toBe(false)
+
+    typeComposer('纯本地任务')
+    fireEvent.click(screen.getByText('发送'))
+    await waitFor(() => {
+      expect(calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs')).toBe(true)
+    })
+    expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
   })
 
   it('renders the auth screen for sign up and sign in', async () => {
@@ -592,6 +601,40 @@ describe('user client shell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '运行本地检查' }))
     expect(await screen.findByText('本地执行完成')).toBeInTheDocument()
+  })
+
+  it('reconciles a missed terminal SSE event from the authoritative Runtime snapshot', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    const calls = mockFetch('user', {
+      localRunStream,
+      localThreadTerminal: {
+        content: '快照中的权威回答',
+        status: 'completed',
+        eventType: 'run.completed',
+      },
+    })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+    }
+
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
+    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
+    fireEvent.click(screen.getByText('创建账号'))
+    await awaitSignedIn()
+
+    typeComposer('只通过快照完成')
+    fireEvent.click(screen.getByText('发送'))
+    expect((await screen.findAllByText('只通过快照完成')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(
+      calls.some((call) => call.url.endsWith('/local/v1/runs/local-run/stream')),
+    ).toBe(true))
+
+    act(() => localRunStream.done())
+
+    expect(await screen.findByText('快照中的权威回答')).toBeInTheDocument()
   })
 
   it('fires a desktop notification when a local run fails', async () => {
@@ -1200,7 +1243,7 @@ describe('user client shell', () => {
   })
 
   it('starts a repair run with source metadata from a repair failure action', async () => {
-    const localData = new LocalConversationStore('shejane-local:user-1')
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     await localData.save({
       id: 'conv-repair-failure',
       title: '修复任务',
@@ -1408,7 +1451,7 @@ describe('user client shell', () => {
 	  })
 	})
 
-	it('keeps an auth recovery target until a later login repairs the local cloud session', async () => {
+	it('clears the daemon cloud session on logout while keeping the local Runtime open', async () => {
 	  const localData = new LocalConversationStore('shejane-local:user-1')
 	  await localData.save({
 	    id: 'conv-auth-pending',
@@ -1435,6 +1478,17 @@ describe('user client shell', () => {
 	          },
 	        ],
 	      },
+	    ],
+	  })
+	  await localData.save({
+	    id: 'conv-newer-than-auth-pending',
+	    title: '更新的其它会话',
+	    archived: false,
+	    createdAt: '2026-05-10T00:00:02.000Z',
+	    updatedAt: '2026-05-10T00:00:03.000Z',
+	    messages: [
+	      { id: 'msg-newer-user', role: 'user', content: '其它任务', createdAt: '2026-05-10T00:00:02.000Z', status: 'done' },
+	      { id: 'msg-newer-assistant', role: 'assistant', content: '其它回答', createdAt: '2026-05-10T00:00:03.000Z', status: 'done' },
 	    ],
 	  })
 	  const calls = mockFetch('user', {
@@ -1484,33 +1538,17 @@ describe('user client shell', () => {
 	  fireEvent.click(await screen.findByRole('button', { name: '退出' }))
 	  const logoutConfirm = await screen.findByRole('alertdialog')
 	  fireEvent.click(within(logoutConfirm).getByRole('button', { name: '确认退出' }))
-	  await screen.findByText('创建你的账号')
-    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Test User' } })
-    fireEvent.change(screen.getByLabelText('邮箱'), { target: { value: 'user@example.com' } })
-	  fireEvent.change(screen.getByLabelText('密码', { exact: true }), { target: { value: 'secret123' } })
-	  fireEvent.click(screen.getByText('创建账号'))
-
-	  expect(await screen.findByText('本地云端会话已刷新，可重试刚才的任务')).toBeInTheDocument()
-	  expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
-
-	  fireEvent.click(screen.getByRole('button', { name: '重试' }))
-
 	  await waitFor(() => {
-	    const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
-	    expect(localRunPosts).toHaveLength(1)
-	    expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
-	      goal: '继续恢复本地任务',
-	      parent_run_id: 'local-run-auth-pending',
-	      metadata: {
-	        intent: 'retry',
-	        source_run_id: 'local-run-auth-pending',
-	        source_message_id: 'msg-assistant-auth-pending',
-	        attempt: 1,
-	        failure_category: 'auth',
-	        failure_action_kind: 'user_action',
-	      },
-	    })
+	    expect(calls.some(
+	      (call) =>
+	        call.url === 'http://127.0.0.1:17371/local/v1/session' &&
+	        call.init?.method === 'DELETE',
+	    )).toBe(true)
 	  })
+	  expect((await screen.findAllByRole('button', { name: '新对话' })).length).toBeGreaterThan(0)
+	  expect(screen.queryByText('创建你的账号')).not.toBeInTheDocument()
+	  expect(screen.getByRole('button', { name: '会话恢复任务' }).closest('.conversation-row')).toHaveClass('active')
+	  expect(calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')).toHaveLength(0)
 	})
 
 	it('starts only one retry when the same recovery confirmation is clicked twice', async () => {
@@ -1636,7 +1674,7 @@ describe('user client shell', () => {
   })
 
   it('binds recovery workspaces to the failed conversation when the user navigates during selection', async () => {
-    const localData = new LocalConversationStore('shejane-local:user-1')
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     await localData.save({
       id: 'conv-workspace-failure',
       title: '工作区失败任务',
@@ -1675,7 +1713,7 @@ describe('user client shell', () => {
         { id: 'msg-assistant-other', role: 'assistant', content: '普通回答', createdAt: '2026-05-10T00:00:03.000Z', status: 'done', runOrigin: 'cloud' },
       ],
     })
-    const calls = mockFetch('user')
+    mockFetch('user')
     let resolveWorkspace!: (path: string) => void
     const workspaceSelection = new Promise<string>((resolve) => {
       resolveWorkspace = resolve
@@ -1704,20 +1742,10 @@ describe('user client shell', () => {
       await workspaceSelection
     })
 
-    expect(await screen.findByText('当前对话已绑定工作区：fixed-workspace，可重试刚才的任务')).toBeInTheDocument()
-    expect((await localData.get('conv-workspace-failure'))?.workspace?.path).toBe('/tmp/fixed-workspace')
-    expect((await localData.get('conv-other'))?.workspace).toBeUndefined()
-
-    fireEvent.click(screen.getByRole('button', { name: '重试' }))
-
-    await waitFor(() => {
-      const localRunPosts = calls.filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
-      expect(localRunPosts).toHaveLength(1)
-      expect(JSON.parse(String(localRunPosts[0].init?.body ?? '{}'))).toMatchObject({
-        goal: '读取项目里的配置',
-        workspace_path: '/tmp/fixed-workspace',
-      })
+    await waitFor(async () => {
+      expect((await localData.get('conv-workspace-failure'))?.workspace?.path).toBe('/tmp/fixed-workspace')
     })
+    expect((await localData.get('conv-other'))?.workspace).toBeUndefined()
   })
 
   it('offers a retry confirmation after opening diagnostics for a configuration failure', async () => {
@@ -1820,7 +1848,8 @@ describe('user client shell', () => {
 
   it('deletes a message pair after confirming in the dialog', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
-    mockFetch('user', { localRunStream })
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    const calls = mockFetch('user', { localRunStream })
     window.shejaneDesktop = {
       platform: 'darwin',
       localHost: {
@@ -1839,12 +1868,22 @@ describe('user client shell', () => {
     typeComposer('要删除的问题')
     fireEvent.click(screen.getByText('发送'))
     expect((await screen.findAllByText('要删除的问题')).length).toBeGreaterThan(0)
+    await waitFor(() => {
+      expect(calls.some((call) => call.url.endsWith('/local/v1/runs/local-run/stream'))).toBe(true)
+    })
     act(() => {
       localRunStream.emit({ id: 'del-1', event_type: 'llm.delta', payload: { content: '要删除的回答' } })
       localRunStream.emit({ id: 'del-2', event_type: 'run.completed', payload: { final: '要删除的回答' } })
       localRunStream.done()
     })
     await settleStreamRender()
+    await waitFor(async () => {
+      const saved = (await localData.list()).find((conversation) =>
+        conversation.messages.some((message) => message.content === '要删除的回答'),
+      )
+      expect(saved?.messages.at(-1)).toMatchObject({ content: '要删除的回答', status: 'done' })
+    })
+    fireEvent.click(await screen.findByRole('button', { name: '要删除的问题' }))
     expect(await screen.findByText('要删除的回答')).toBeInTheDocument()
 
     // Delete the user message (the first 删除 button) → confirm in the dialog.
@@ -1964,7 +2003,7 @@ describe('user client shell', () => {
   })
 
   it('uses the Advanced max history turns setting before creating a local run', async () => {
-    const localData = new LocalConversationStore('shejane-local:user-1')
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
     const priorMessages = Array.from({ length: 26 }, (_, index) => ({
       id: `msg-history-${index}`,
       role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
@@ -1982,7 +2021,7 @@ describe('user client shell', () => {
     })
     localStorage.setItem(
       'shejane.agentSettings.v7',
-      JSON.stringify({ memory: 'on', skills: 'on', mcp: 'on', mcpDisabled: [], advanced: { maxHistoryTurns: 25 } }),
+      JSON.stringify({ memory: 'on', skills: 'on', mcp: 'on', mcpDisabled: [], advanced: {} }),
     )
     const calls = mockFetch('user')
     window.shejaneDesktop = {
@@ -2009,9 +2048,9 @@ describe('user client shell', () => {
         .filter((call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST')
         .map((call) => JSON.parse(call.init?.body as string))
         .at(-1)
-      expect(body).toMatchObject({ goal: '继续处理', settings: expect.objectContaining({ max_history_turns: 25 }) })
+      expect(body).toMatchObject({ goal: '继续处理' })
       expect(body.history).toHaveLength(26)
-      expect(body.history[0].content).toContain('已省略更早的 1 条消息')
+      expect(body.history[0].content).toBe('历史消息 0')
       expect(body.history.at(-1).content).toBe('历史消息 25')
     })
   })
@@ -2262,6 +2301,7 @@ function mockFetch(
 	    }>
 	    agentStream?: DeferredAgentStream
 	    localRunStream?: DeferredAgentStream
+	    localThreadTerminal?: { content: string; status: 'completed' | 'failed'; eventType: 'run.completed' | 'run.failed' }
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
 	    emailVerified?: boolean
 	    balance?: WalletBalance | (() => WalletBalance)
@@ -2286,6 +2326,39 @@ function mockFetch(
           status: 'ok',
           mode: 'daemon',
           worker: 'user',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/runtime') {
+      const gatewayConnected = calls.some(
+        (call) => call.url === 'http://127.0.0.1:17371/local/v1/session' && call.init?.method === 'POST',
+      )
+      return new Response(
+        JSON.stringify({
+          protocol_version: 1,
+          runtime_version: 'test',
+          capabilities: ['agent.run', 'agent.stream', 'hitl'],
+          model_provider_configured: true,
+          gateway_provider_configured: gatewayConnected,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/models') {
+      return new Response(
+        JSON.stringify({
+          models: [{
+            spec: 'local:ollama:qwen3:8b',
+            model_id: 'qwen3:8b',
+            display_name: 'Qwen 3 8B',
+            provider_id: 'ollama',
+            provider_name: 'Local Ollama',
+            tool_calling: true,
+            streaming: true,
+            max_input_tokens: 32768,
+            available: true,
+          }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
@@ -2325,6 +2398,30 @@ function mockFetch(
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs') {
       return new Response(JSON.stringify({ runs: localRuns }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (url === 'http://127.0.0.1:17371/local/v1/threads') {
+      return new Response(JSON.stringify({ threads: [], cursor: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/threads/changes')) {
+      return new Response(JSON.stringify({ changes: [], cursor: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/threads/') && init?.method === 'GET') {
+      const terminal = options.localThreadTerminal
+      if (!terminal) return new Response(JSON.stringify({ detail: 'thread not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+      const runCall = [...calls].reverse().find((call) => call.url.endsWith('/local/v1/runs') && call.init?.method === 'POST')
+      const body = JSON.parse(String(runCall?.init?.body ?? '{}')) as Record<string, string>
+      const threadID = body.thread_id
+      const now = '2026-07-12T00:00:02Z'
+      return new Response(JSON.stringify({
+        thread: { id: threadID, title: body.thread_title, metadata: body.thread_metadata ?? {}, version: 2, created_at: now, updated_at: now },
+        items: [
+          { id: 'runtime-user', thread_id: threadID, run_id: 'local-run', client_id: body.client_message_id, item_type: 'user_message', status: 'completed', content: body.user_input, metadata: body.user_item_metadata ?? {}, position: 1, version: 1, created_at: now, updated_at: now },
+          { id: 'runtime-assistant', thread_id: threadID, run_id: 'local-run', client_id: body.assistant_message_id, item_type: 'assistant_message', status: terminal.status, content: terminal.content, metadata: {}, position: 2, version: 2, created_at: now, updated_at: now, completed_at: now },
+        ],
+        runs: [{ id: 'local-run', goal: body.goal, user_input: body.user_input, status: terminal.status, thread_id: threadID, assistant_item_id: 'runtime-assistant', history_json: '[]', settings_json: '{}', metadata_json: '{}', created_at: now, updated_at: now }],
+        events: [{ id: 'runtime-event', run_id: 'local-run', seq: 1, event_type: terminal.eventType, payload: terminal.eventType === 'run.completed' ? { final_text: terminal.content } : { error: terminal.content }, created_at: now }],
+        cursor: 2,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.startsWith('http://127.0.0.1:17371/local/v1/schedules/')) {
       const schedule = localSchedules[0] ?? {

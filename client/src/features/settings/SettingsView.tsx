@@ -22,19 +22,17 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { useI18n, type Locale } from '@/shared/i18n/i18n'
 import type { WalletBalance } from '@/shared/api/client'
-import type { AdvancedAgentSettings, AgentSettings } from '@/shared/local-host/client'
+import type { AdvancedAgentSettings, AgentSettings, LocalHostConfig } from '@/shared/local-host/client'
+import { ModelProvidersSettings } from './ModelProvidersSettings'
 
-type SettingsSectionID = 'account' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+type SettingsSectionID = 'account' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
 
 const SETTINGS_SECTION_TOP_OFFSET = 72
 
 const runFields = [
   ['maxModelCalls', 1, 100, '20'],
-  ['maxHistoryTurns', 1, 200, '40'],
-  ['maxModelRetries', 0, 5, '2'],
   ['maxToolRetries', 0, 5, '2'],
   ['researchSearchLimit', 1, 20, '3'],
-  ['toolSelectorMax', 0, 50, '0'],
 ] as const
 
 function SettingRow({
@@ -121,9 +119,11 @@ export function SettingsView({
   onLogout,
   onImportLocalData,
   onExportLocalData,
+  localHostConfig,
+  onModelProvidersChange,
 }: {
   isDesktop?: boolean
-  userEmail: string
+  userEmail?: string
   balance?: WalletBalance | null
   agentSettings: Required<AgentSettings>
   onAgentSettingsChange: (next: Required<AgentSettings>) => void
@@ -133,11 +133,15 @@ export function SettingsView({
   onLogout?: () => void
   onImportLocalData: (file?: File) => void
   onExportLocalData?: () => void
+  localHostConfig?: LocalHostConfig | null
+  onModelProvidersChange?: () => void
 }) {
   const { t, locale, setLocale } = useI18n()
   const importInputRef = useRef<HTMLInputElement>(null)
   const settingsScrollRef = useRef<HTMLDivElement>(null)
-  const [activeSection, setActiveSection] = useState<SettingsSectionID>('account')
+  const [activeSection, setActiveSection] = useState<SettingsSectionID>(
+    userEmail ? 'account' : isDesktop ? 'models' : 'general',
+  )
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
@@ -152,7 +156,8 @@ export function SettingsView({
 
   const navItems = useMemo<Array<{ id: SettingsSectionID, label: string }>>(
     () => [
-      { id: 'account', label: t('settings.group.account') },
+      ...(userEmail ? [{ id: 'account' as const, label: t('settings.group.account') }] : []),
+      ...(isDesktop ? [{ id: 'models' as const, label: t('settings.group.models') }] : []),
       { id: 'agent', label: t('settings.group.agent') },
       ...(isDesktop
         ? [
@@ -164,7 +169,7 @@ export function SettingsView({
       { id: 'general', label: t('settings.group.general') },
       { id: 'data', label: t('settings.group.dataSecurity') },
     ],
-    [isDesktop, t],
+    [isDesktop, t, userEmail],
   )
 
   const updateActiveSectionFromScroll = useCallback(() => {
@@ -255,33 +260,48 @@ export function SettingsView({
 
           <div className="settings-main-scroll">
             <div className="settings-main">
-              <SettingsSection id="account" title={t('settings.group.account')}>
-                <div className="settings-account-head">
-                  <div className="settings-avatar" aria-hidden="true">{displayInitial(userEmail)}</div>
-                  <div className="settings-account-copy">
-                    <div className="settings-account-email">{userEmail}</div>
-                    <div className="settings-account-type">{t('settings.accountType')}</div>
+              {userEmail ? (
+                <SettingsSection id="account" title={t('settings.group.account')}>
+                  <div className="settings-account-head">
+                    <div className="settings-avatar" aria-hidden="true">{displayInitial(userEmail)}</div>
+                    <div className="settings-account-copy">
+                      <div className="settings-account-email">{userEmail}</div>
+                      <div className="settings-account-type">{t('settings.accountType')}</div>
+                    </div>
                   </div>
-                </div>
-                <div className="settings-balance-row">
-                  <div>
-                    <div className="settings-balance-label">{t('settings.balanceCredits')}</div>
-                    <div className="settings-balance-value">{formatCredits(availableCredits)}</div>
+                  <div className="settings-balance-row">
+                    <div>
+                      <div className="settings-balance-label">{t('settings.balanceCredits')}</div>
+                      <div className="settings-balance-value">{formatCredits(availableCredits)}</div>
+                    </div>
+                    <div className="settings-account-actions">
+                      {onShowSpendHistory ? (
+                        <button type="button" className="settings-inline-button" onClick={onShowSpendHistory}>
+                          {t('sidebar.account.spendHistory')}
+                        </button>
+                      ) : null}
+                      {onRecharge ? (
+                        <button type="button" className="settings-primary-button" onClick={onRecharge}>
+                          {t('sidebar.account.recharge')}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="settings-account-actions">
-                    {onShowSpendHistory ? (
-                      <button type="button" className="settings-inline-button" onClick={onShowSpendHistory}>
-                        {t('sidebar.account.spendHistory')}
-                      </button>
-                    ) : null}
-                    {onRecharge ? (
-                      <button type="button" className="settings-primary-button" onClick={onRecharge}>
-                        {t('sidebar.account.recharge')}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </SettingsSection>
+                </SettingsSection>
+              ) : null}
+
+              {isDesktop ? (
+                <SettingsSection
+                  id="models"
+                  title={t('settings.group.models')}
+                  note={t('settings.models.note')}
+                >
+                  <ModelProvidersSettings
+                    config={localHostConfig}
+                    onChanged={onModelProvidersChange}
+                  />
+                </SettingsSection>
+              ) : null}
 
               <SettingsSection id="agent" title={t('settings.group.agent')}>
                 <SettingRow label={t('sidebar.agentSettings.memory.label')} hint={t('sidebar.agentSettings.memory.hint')}>
@@ -367,32 +387,6 @@ export function SettingsView({
                         </SelectContent>
                       </Select>
                     </SettingRow>
-                    <SettingRow label={t('sidebar.agentSettings.advanced.reflect.label')} hint={t('sidebar.agentSettings.advanced.reflect.hint')}>
-                      <Switch
-                        checked={adv.reflect ?? false}
-                        aria-label={t('sidebar.agentSettings.advanced.reflect.label')}
-                        onCheckedChange={(checked) => setAdv({ reflect: checked })}
-                      />
-                    </SettingRow>
-                    <SettingRow label={t('sidebar.agentSettings.advanced.toolCritic.label')} hint={t('sidebar.agentSettings.advanced.toolCritic.hint')}>
-                      <Select
-                        value={adv.toolCritic ?? '__default__'}
-                        onValueChange={(value) =>
-                          setAdv({ toolCritic: value === '__default__' ? undefined : (value as 'off' | 'watch' | 'nudge' | 'block') })
-                        }
-                      >
-                        <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.toolCritic.label')}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
-                          <SelectItem value="off">off</SelectItem>
-                          <SelectItem value="watch">watch</SelectItem>
-                          <SelectItem value="nudge">nudge</SelectItem>
-                          <SelectItem value="block">block</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </SettingRow>
                   </SettingsSection>
 
                   <SettingsSection id="capability" title={t('sidebar.agentSettings.advanced.group.capability')}>
@@ -426,16 +420,6 @@ export function SettingsView({
                           <SelectItem value="block">block</SelectItem>
                         </SelectContent>
                       </Select>
-                    </SettingRow>
-                    <SettingRow label={t('sidebar.agentSettings.advanced.piiRedact.label')} hint={t('sidebar.agentSettings.advanced.piiRedact.hint')}>
-                      <Input
-                        type="text"
-                        className="settings-text-input"
-                        aria-label={t('sidebar.agentSettings.advanced.piiRedact.label')}
-                        placeholder="email, credit_card"
-                        value={adv.piiRedact ?? ''}
-                        onChange={(e) => setAdv({ piiRedact: e.target.value === '' ? undefined : e.target.value })}
-                      />
                     </SettingRow>
                   </SettingsSection>
                 </>
