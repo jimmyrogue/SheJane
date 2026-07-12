@@ -36,8 +36,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.config import reset_settings_for_tests
+from local_host.runs import RunCoordinator
 from local_host.server import create_app
+from local_host.store.sqlite import LocalStore
 from tests.helpers import run_command
 
 
@@ -144,7 +147,7 @@ def test_each_event_has_envelope_shape(client: TestClient) -> None:
     events, _ = _parse_sse(raw)
     assert events, "stream emitted zero events"
 
-    required = {"event_type", "payload", "id", "run_id", "seq", "created_at"}
+    required = {"event_type", "payload", "id", "run_id", "created_at"}
     for event in events:
         missing = required - set(event.keys())
         assert not missing, f"event missing envelope keys {missing}: {event}"
@@ -206,6 +209,40 @@ def test_replay_after_run_completion_has_same_envelope(client: TestClient) -> No
     required = {"event_type", "payload", "id", "run_id", "seq", "created_at"}
     for event in events:
         assert required <= set(event.keys()), event
+    assert not {
+        "llm.delta",
+        "llm.reasoning",
+        "llm.usage",
+        "llm.tool_call_chunk",
+        "subagent.spawned",
+    }.intersection(event["event_type"] for event in events)
+
+
+@pytest.mark.asyncio
+async def test_live_llm_delta_is_streamed_without_becoming_a_durable_event(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "transient-events.db")
+    coordinator = RunCoordinator(store, None)  # type: ignore[arg-type]
+    try:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="stream a transient delta",
+            workspace_path=None,
+        )
+        stream = coordinator.stream(run["id"])
+        next_event = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+
+        await coordinator.emit_for_run(run["id"], "llm.delta", {"content": "temporary"})
+
+        event = await asyncio.wait_for(next_event, timeout=1)
+        assert event["event_type"] == "llm.delta"
+        assert event["payload"] == {"content": "temporary"}
+        assert await store.events_since(run["id"]) == []
+        await stream.aclose()
+    finally:
+        await store.close()
 
 
 def test_stream_replays_only_events_after_the_client_cursor(client: TestClient) -> None:
@@ -218,8 +255,9 @@ def test_stream_replays_only_events_after_the_client_cursor(client: TestClient) 
     first_events, _ = _parse_sse(
         client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
     )
-    assert len(first_events) >= 2
-    after = int(first_events[-2]["seq"])
+    durable_events = [event for event in first_events if event.get("seq") is not None]
+    assert len(durable_events) >= 2
+    after = int(durable_events[-2]["seq"])
 
     resumed_events, has_done = _parse_sse(
         client.get(f"/local/v1/runs/{run_id}/stream?after={after}", headers=HEADERS).text
@@ -227,7 +265,7 @@ def test_stream_replays_only_events_after_the_client_cursor(client: TestClient) 
 
     assert has_done
     assert [event["seq"] for event in resumed_events] == [
-        event["seq"] for event in first_events if int(event["seq"]) > after
+        event["seq"] for event in durable_events if int(event["seq"]) > after
     ]
 
 
@@ -263,9 +301,10 @@ def test_stream_rejects_a_cursor_behind_the_retained_event_window(client: TestCl
         json=run_command("expired cursor"),
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
-    events, _ = _parse_sse(client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text)
-    assert len(events) >= 3
+    client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS)
     store = client.app.state.store
+    asyncio.run(store.append_event(run_id, "tool.requested", {"tool": "test"}))
+    asyncio.run(store.append_event(run_id, "tool.completed", {"tool": "test"}))
     asyncio.run(
         store._conn.execute("DELETE FROM local_events WHERE run_id = ? AND seq <= 2", (run_id,))
     )

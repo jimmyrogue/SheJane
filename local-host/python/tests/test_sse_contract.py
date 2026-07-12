@@ -16,6 +16,14 @@ from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
 from tests.helpers import run_command
 
+_TRANSIENT_EVENT_TYPES = {
+    "llm.delta",
+    "llm.reasoning",
+    "llm.usage",
+    "llm.tool_call_chunk",
+    "subagent.spawned",
+}
+
 
 def _client(tmp_path) -> TestClient:
     settings = reset_settings_for_tests(
@@ -68,10 +76,11 @@ def test_sse_stream_envelope_and_event_names(tmp_path) -> None:
     envelopes = _envelopes(raw)
     assert envelopes, "no SSE events received"
 
-    # Every event ships the canonical envelope keys.
+    # Every event has an identity; only durable events own a replay cursor.
     for e in envelopes:
-        for key in ("event_type", "payload", "id", "run_id", "seq", "created_at"):
+        for key in ("event_type", "payload", "id", "run_id", "created_at"):
             assert key in e, f"missing envelope key {key!r} in {e}"
+        assert ("seq" not in e) if e["event_type"] in _TRANSIENT_EVENT_TYPES else ("seq" in e)
 
     names = [e["event_type"] for e in envelopes]
     assert "run.started" in names
@@ -91,6 +100,6 @@ def test_sse_stream_envelope_and_event_names(tmp_path) -> None:
 def test_sse_stream_seq_is_monotonic(tmp_path) -> None:
     with _client(tmp_path) as client:
         _, raw = _run_and_read(client, "hello again")
-    seqs = [e["seq"] for e in _envelopes(raw)]
+    seqs = [e["seq"] for e in _envelopes(raw) if e.get("seq") is not None]
     assert seqs == sorted(seqs), f"seq not monotonic: {seqs}"
     assert len(seqs) == len(set(seqs)), "duplicate seq values"

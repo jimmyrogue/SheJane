@@ -240,6 +240,8 @@ async def test_each_live_stream_subscriber_receives_the_complete_ordered_event_l
         entered.set()
         await release.wait()
         await coordinator.emit_for_run(kwargs["run_id"], "test.first", {"value": 1})
+        await coordinator.emit_for_run(kwargs["run_id"], "llm.delta", {"content": "live"})
+        await store.append_event(kwargs["run_id"], "test.database_only", {"value": 2})
         await coordinator.emit_for_run(kwargs["run_id"], "test.second", {"value": 2})
         return RunOutcome("failed", "run.failed", {"error": "expected test failure"})
 
@@ -270,11 +272,122 @@ async def test_each_live_stream_subscriber_receives_the_complete_ordered_event_l
             timeout=1,
         )
 
-        expected = ["test.first", "test.second", "run.failed"]
+        expected = [
+            "test.first",
+            "llm.delta",
+            "test.database_only",
+            "test.second",
+            "run.failed",
+        ]
         assert first_events == expected
         assert second_events == expected
+        assert [event["event_type"] for event in await store.events_since(run["id"])] == [
+            "test.first",
+            "test.database_only",
+            "test.second",
+            "run.failed",
+        ]
     finally:
         release.set()
+        await store.close()
+
+
+async def test_stream_registration_failure_removes_its_subscriber(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(store=store, checkpointer=None)  # type: ignore[arg-type]
+    run = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="fail initial replay",
+        workspace_path=None,
+    )
+
+    async def fail_events_since(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+        raise RuntimeError("injected replay failure")
+
+    store.events_since = fail_events_since  # type: ignore[method-assign]
+    try:
+        stream = coordinator.stream(run["id"])
+        with pytest.raises(RuntimeError, match="injected replay failure"):
+            await anext(stream)
+        assert run["id"] not in coordinator._live_subscribers
+        assert run["id"] not in coordinator._stream_locks
+    finally:
+        await store.close()
+
+
+async def test_live_stream_preserves_transient_order_while_filling_a_durable_gap(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(store=store, checkpointer=None)  # type: ignore[arg-type]
+    run = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="preserve mixed event order",
+        workspace_path=None,
+    )
+    stream = coordinator.stream(run["id"])
+    try:
+        first_event = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        await coordinator.emit_for_run(run["id"], "test.first", {"value": 1})
+        assert (await asyncio.wait_for(first_event, timeout=1))["event_type"] == "test.first"
+
+        await coordinator.emit_for_run(run["id"], "llm.delta", {"content": "live"})
+        await store.append_event(run["id"], "test.database_only", {"value": 2})
+        await coordinator.emit_for_run(run["id"], "test.second", {"value": 3})
+
+        assert [
+            (await asyncio.wait_for(anext(stream), timeout=1))["event_type"] for _ in range(3)
+        ] == [
+            "llm.delta",
+            "test.database_only",
+            "test.second",
+        ]
+    finally:
+        await stream.aclose()
+        await store.close()
+
+
+async def test_slow_initial_replay_does_not_block_another_run_stream(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(store=store, checkpointer=None)  # type: ignore[arg-type]
+    first = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="slow replay",
+        workspace_path=None,
+    )
+    second = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="independent replay",
+        workspace_path=None,
+    )
+    replay_started = asyncio.Event()
+    release_replay = asyncio.Event()
+    events_since = store.events_since
+
+    async def delay_first_run(run_id: str, after_seq: int = 0) -> list[dict[str, Any]]:
+        if run_id == first["id"]:
+            replay_started.set()
+            await release_replay.wait()
+        return await events_since(run_id, after_seq=after_seq)
+
+    store.events_since = delay_first_run  # type: ignore[method-assign]
+    first_stream = coordinator.stream(first["id"])
+    second_stream = coordinator.stream(second["id"])
+    first_event = asyncio.create_task(anext(first_stream))
+    try:
+        await asyncio.wait_for(replay_started.wait(), timeout=1)
+        second_event = asyncio.create_task(anext(second_stream))
+        await asyncio.sleep(0)
+        await coordinator.emit_for_run(second["id"], "llm.delta", {"content": "live"})
+        event = await asyncio.wait_for(second_event, timeout=1)
+        assert event["payload"] == {"content": "live"}
+    finally:
+        release_replay.set()
+        first_event.cancel()
+        await asyncio.gather(first_event, return_exceptions=True)
+        await first_stream.aclose()
+        await second_stream.aclose()
         await store.close()
 
 

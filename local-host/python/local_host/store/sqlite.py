@@ -547,6 +547,15 @@ _RUN_RESULT_EVENTS = {
     "waiting_input": "run.waiting",
 }
 _TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled"}
+TRANSIENT_RUN_EVENT_TYPES = frozenset(
+    {
+        "llm.delta",
+        "llm.reasoning",
+        "llm.usage",
+        "llm.tool_call_chunk",
+        "subagent.spawned",
+    }
+)
 
 
 def _encode_payload(payload: dict[str, Any]) -> str:
@@ -694,6 +703,11 @@ class LocalStore:
         await LocalStore._ensure_tool_receipt_namespace(conn)
         await LocalStore._ensure_tool_receipt_version_column(conn)
         await LocalStore._ensure_wait_candidates(conn)
+        transient_placeholders = ",".join("?" for _ in TRANSIENT_RUN_EVENT_TYPES)
+        await conn.execute(
+            f"DELETE FROM local_events WHERE event_type IN ({transient_placeholders})",
+            tuple(sorted(TRANSIENT_RUN_EVENT_TYPES)),
+        )
         # Lark integration was removed; delete its local-only cache and todo data.
         for table in (
             "local_todo_items",

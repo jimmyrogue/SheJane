@@ -1529,7 +1529,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 async for event in coordinator.stream(run_id, after_seq=after):
                     yield {
-                        "id": str(event["seq"]),
+                        "id": str(event.get("seq") or event["id"]),
                         "event": event["event_type"],
                         "data": json.dumps(event, default=str, ensure_ascii=False),
                     }

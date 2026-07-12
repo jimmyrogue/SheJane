@@ -109,10 +109,11 @@
   │   │      │       subagent.spawned / subagent.completed /                     │    │
   │   │      │       agent.custom                                                │    │
   │   │      ▼                                                                   │    │
-  │   │   store.append_event  →  AgentRunEvent envelope                          │    │
-  │   │      │                   {event_type, payload, id, run_id, seq, ts}      │    │
-  │   │      ▼                          ▼                                       │    │
-  │   │  SQLite 持久化            sse-starlette 推流（sep="\n"）                  │    │
+  │   │   状态事件 → SQLite + seq       临时增量 → 有界订阅队列（无 seq）          │    │
+  │   │      │                          │                                       │    │
+  │   │      └──────────┬───────────────┘                                       │    │
+  │   │                 ▼                                                       │    │
+  │   │            sse-starlette 推流（sep="\n"）                              │    │
   │   │                                /local/v1/runs/:id/stream                 │    │
   │   │                                每帧 data: <envelope JSON>                │    │
   │   │                                最后 data: [DONE] sentinel                │    │
@@ -328,7 +329,7 @@
 
 | 契约 | 验证 |
 |---|---|
-| `data:` 体是 AgentRunEvent envelope（含 `event_type` + `payload` + `id` + `seq`） | `test_each_event_has_envelope_shape` ✅ |
+| `data:` 体是 AgentRunEvent envelope；持久事件含 `seq`，临时事件无 `seq` | `test_sse_stream_envelope_and_event_names` ✅ |
 | 终止 sentinel 是 `data: [DONE]`，不是 `event: stream.end` | `test_stream_emits_done_sentinel` ✅ |
 | `seq` 单调递增（dedupe） | `test_seq_monotonic_per_run` ✅ |
 | run 完成后 stream replay 也用 envelope | `test_replay_after_run_completion_has_same_envelope` ✅ |
@@ -381,6 +382,7 @@
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 快照与事件恢复 | 助手消息投影原子记录正文覆盖的事件高水位；客户端保存 `lastEventSeq`，SSE 用 `?after=<seq>` 仅回放后续事件 | `test_run_result_commit` / `test_sse_envelope` / `client.test` / `runtimeProjection.test` |
 | 游标重同步 | Runtime 拒绝超出事件窗口的游标；客户端读取完整线程快照后继续订阅 | `test_sse_envelope` / `client.test` / `App.test` |
+| 临时增量 | 逐字文本、推理、临时用量和未完成调用片段只走每订阅者有界队列，不写事件日志或重连重放 | `test_sse_envelope` / `test_run_jobs` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
 
 ### Failure recovery contract

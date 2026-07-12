@@ -1,6 +1,6 @@
 # Client ⇄ local-host SSE 协议
 
-> 本文只记录当前实现，不是目标运行时协议。共享事件队列已经删除；线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复独立游标。游标超出保留窗口时，Runtime 要求客户端重新读取权威快照。目标 P4 尚未完成的是持久状态与临时增量分层，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把 `[DONE]` 或逐字持久化当成目标设计。
+> 本文只记录当前实现，不是目标运行时协议。线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复持久状态；游标超出保留窗口时重新读取权威快照。逐字文本、推理、临时用量、工具参数片段和子 Agent 启动片段只通过有界实时通道发送，断线后不重放。P4 目标和后续边界见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 与 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
@@ -33,12 +33,12 @@ interface AgentRunEvent {
   payload?: Record<string, unknown>        // 事件特定 payload
   id?: string                              // dedupe 用，evt_<hex>
   run_id?: string
-  seq?: number                             // 同 run 内单调递增
+  seq?: number                             // 仅持久事件；同 run 内单调递增
   created_at?: string                      // ISO8601
 }
 ```
 
-事件持久化在 `local_events` 表，每条都有完整 envelope；replay 路径（daemon 重启或 stream 重连后）同样发完整 envelope。
+状态变化持久化在 `local_events` 表，每条都有 `seq`；replay 路径只返回这些持久事件。临时事件仍有唯一 `id`，但没有 `seq`，不会写入数据库或在重连后重放。Runtime 升级时会清理旧版本曾错误持久化的临时事件，序号空洞不影响后续游标。
 
 完整 TS 类型见 `client/src/shared/api/sse.ts:6-13`。
 
@@ -76,7 +76,7 @@ run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 | `llm.usage` | 供应商返回的临时用量，只用于实时显示 | `input_tokens`, `output_tokens`, `credits_cost` |
 | `llm.error` | 流中报错（非致命） | `message` |
 
-`llm.usage` 不是结算事实来源，断线时可以丢失。`run.completed` 中的用量由
+以上四类 `llm.*` 增量和 `subagent.spawned` 都是临时事件，断线或慢客户端背压时可以丢失。`llm.usage` 不是结算事实来源；`run.completed` 中的用量由
 Runtime 持久模型调用账本聚合；重复 SSE 事件不会改变该结果。
 
 ### 工具

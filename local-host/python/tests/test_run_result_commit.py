@@ -1030,3 +1030,33 @@ async def test_open_repairs_legacy_duplicate_event_sequences(tmp_path: Path) -> 
         assert sequence_index[2] == 1
     finally:
         await reopened.close()
+
+
+async def test_open_removes_legacy_transient_events_from_durable_replay(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-transient-events.db"
+    store = await LocalStore.open(db_path)
+    run = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="legacy transient events",
+        workspace_path=None,
+    )
+    await store.append_event(run["id"], "run.started", {"goal": "legacy"})
+    for event_type in (
+        "llm.delta",
+        "llm.reasoning",
+        "llm.usage",
+        "llm.tool_call_chunk",
+        "subagent.spawned",
+    ):
+        await store.append_event(run["id"], event_type, {"legacy": True})
+    await store.append_event(run["id"], "run.completed", {"final_text": "done"})
+    await store.close()
+
+    reopened = await LocalStore.open(db_path)
+    try:
+        assert [event["event_type"] for event in await reopened.events_since(run["id"])] == [
+            "run.started",
+            "run.completed",
+        ]
+    finally:
+        await reopened.close()

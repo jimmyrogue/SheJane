@@ -8,11 +8,9 @@ For each leased run:
   agent.astream(version="v2", stream_mode=[...])
        │ (LangGraph emits typed stream parts)
        ▼
-RunCoordinator._drive_run persists each event and signals waiting subscribers
-│
-▼
-/v1/runs/:id/stream reads its own ordered database cursor and yields one
-SSE frame per event. In-memory events only reduce notification latency.
+RunCoordinator._drive_run persists state changes and broadcasts temporary
+model output through bounded per-subscriber queues. `/v1/runs/:id/stream`
+merges both sources; reconnects replay only the durable database cursor.
 
 Cancellation is a `task.cancel()` on the driver coroutine. LangGraph
 propagates CancelledError into the graph and the checkpointer persists
@@ -30,6 +28,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -55,6 +54,7 @@ from .observability import build_callbacks
 from .progress_ledger import build_handoff_snapshot
 from .store.fenced_checkpointer import FencedCheckpointer
 from .store.sqlite import (
+    TRANSIENT_RUN_EVENT_TYPES,
     GraphHeadConflictError,
     LeaseFenceError,
     LocalStore,
@@ -65,6 +65,8 @@ from .tools.memory import extract_memory_write_facts
 from .tools.runtime import bind_runtime_tools
 
 log = logging.getLogger("local_host.runs")
+
+_LIVE_EVENT_QUEUE_SIZE = 256
 
 RUNTIME_PROTOCOL_VERSION = 1
 RUNTIME_CAPABILITIES = frozenset(
@@ -359,6 +361,9 @@ class RunCoordinator:
         self.settings = settings or get_settings()
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._wakeups: dict[str, asyncio.Event] = {}
+        self._live_subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
+        self._stream_locks: dict[str, asyncio.Lock] = {}
+        self._stream_lock_users: dict[str, int] = {}
         self._goals: dict[str, str] = {}
         self._user_inputs: dict[str, str] = {}
         self._workspaces: dict[str, str | None] = {}
@@ -419,7 +424,7 @@ class RunCoordinator:
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
-        """Persist an HTTP-originated event and wake live subscribers.
+        """Publish an HTTP-originated event and wake live subscribers.
 
         Used by HTTP handlers to surface side-effects (`permission.resolved`,
         `question.answered`) that originate from the API surface rather
@@ -1398,6 +1403,7 @@ class RunCoordinator:
             wakeup.set()
             if self._tasks.get(run_id) is owner_task:
                 self._tasks.pop(run_id, None)
+            self._discard_stream_state_if_idle(run_id)
             if self._wakeups.get(run_id) is wakeup:
                 self._wakeups.pop(run_id, None)
             self._goals.pop(run_id, None)
@@ -1686,40 +1692,70 @@ class RunCoordinator:
         """Yield AgentRunEvent envelopes (matching the TS interface):
             {id, run_id, seq, event_type, payload, created_at}
 
-        Every subscriber owns an independent cursor over `local_events`.
-        The in-memory Event is only a latency optimization; reconnects and
-        daemon restarts recover from the same durable event log.
+        Durable events include ``seq`` and replay from ``local_events``.
+        Temporary model output has no durable sequence and only reaches
+        subscribers that are connected while it is produced.
         """
-        wakeup = self._wakeups.get(run_id) or asyncio.Event()
-        while True:
-            # Notifications are deliberately lossy. Clear before reading so
-            # this subscriber usually observes the next signal; the durable
-            # cursor and timeout poll close all notification races.
-            wakeup.clear()
-            events = await self.store.events_since(run_id, after_seq=after_seq)
+        live_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_LIVE_EVENT_QUEUE_SIZE)
+        registered = False
+        try:
+            async with self._stream_publication(run_id):
+                self._live_subscribers.setdefault(run_id, set()).add(live_events)
+                registered = True
+                events = await self.store.events_since(run_id, after_seq=after_seq)
             for event in events:
-                yield {
-                    "id": event["id"],
-                    "run_id": event["run_id"],
-                    "seq": event["seq"],
-                    "event_type": event["event_type"],
-                    "payload": json.loads(event["payload_json"] or "{}"),
-                    "created_at": event["created_at"],
-                }
+                yield self._stored_event_envelope(event)
                 after_seq = int(event["seq"])
 
-            run = await self.store.get_run(run_id)
-            if run is None:
-                return
-            active_job = await self.store.get_active_run_job(run_id)
-            if run.get("status") not in {"queued", "running"} and active_job is None:
-                return
-            try:
-                await asyncio.wait_for(wakeup.wait(), timeout=0.5)
-            except TimeoutError:
-                # Polling is the recovery path when another process commits
-                # an event or this Runtime restarts between notifications.
-                pass
+            while True:
+                pending_live: list[dict[str, Any]] = []
+                try:
+                    pending_live.append(await asyncio.wait_for(live_events.get(), timeout=0.5))
+                    while not live_events.empty():
+                        pending_live.append(live_events.get_nowait())
+                    for event in pending_live:
+                        if event.get("seq") is None:
+                            yield event
+                            continue
+                        # A durable live event is only a wakeup. Always read
+                        # from SQLite so an earlier DB-only or dropped event
+                        # cannot be skipped by advancing directly to this seq.
+                        wake_seq = int(event["seq"])
+                        events = await self.store.events_since(run_id, after_seq=after_seq)
+                        for stored_event in events:
+                            if int(stored_event["seq"]) > wake_seq:
+                                break
+                            yield self._stored_event_envelope(stored_event)
+                            after_seq = int(stored_event["seq"])
+                except TimeoutError:
+                    pass
+
+                # Durable polling recovers events published by another process
+                # and any persistent notification dropped by a full live queue.
+                async with self._stream_publication(run_id):
+                    if not live_events.empty():
+                        continue
+                    events = await self.store.events_since(run_id, after_seq=after_seq)
+                for event in events:
+                    yield self._stored_event_envelope(event)
+                    after_seq = int(event["seq"])
+
+                run = await self.store.get_run(run_id)
+                if run is None:
+                    return
+                active_job = await self.store.get_active_run_job(run_id)
+                if not live_events.empty():
+                    continue
+                if run.get("status") not in {"queued", "running"} and active_job is None:
+                    return
+        finally:
+            if registered:
+                async with self._stream_publication(run_id):
+                    subscribers = self._live_subscribers.get(run_id)
+                    if subscribers is not None:
+                        subscribers.discard(live_events)
+                        if not subscribers:
+                            self._live_subscribers.pop(run_id, None)
 
     # ---- driver ----
 
@@ -2402,8 +2438,21 @@ class RunCoordinator:
         event_type: str,
         payload: dict[str, Any],
     ) -> None:
-        """Persist an authoritative event, then wake interested subscribers."""
-        await self.store.append_event(run_id, event_type, payload)
+        """Publish transient output or persist an authoritative event."""
+        async with self._stream_publication(run_id):
+            if event_type in TRANSIENT_RUN_EVENT_TYPES:
+                event = {
+                    "id": f"transient_{uuid.uuid4().hex}",
+                    "run_id": run_id,
+                    "event_type": event_type,
+                    "payload": payload,
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            else:
+                event = self._stored_event_envelope(
+                    await self.store.append_event(run_id, event_type, payload)
+                )
+            self._publish_live(run_id, event)
         if wakeup is not None:
             wakeup.set()
 
@@ -2417,12 +2466,15 @@ class RunCoordinator:
         status: str,
     ) -> None:
         """Persist the authoritative result before notifying live subscribers."""
-        _event, created = await self.store.commit_run_result(
-            run_id,
-            status=status,
-            event_type=event_type,
-            payload=payload,
-        )
+        async with self._stream_publication(run_id):
+            event, created = await self.store.commit_run_result(
+                run_id,
+                status=status,
+                event_type=event_type,
+                payload=payload,
+            )
+            if created:
+                self._publish_live(run_id, self._stored_event_envelope(event))
         if not created:
             return
         wakeup.set()
@@ -2430,6 +2482,49 @@ class RunCoordinator:
             resume_payload = await self.store.latest_resolved_wait_cycle_payload(run_id)
             if resume_payload is not None:
                 await self.resume_run(run_id=run_id, decision=resume_payload)
+
+    @staticmethod
+    def _stored_event_envelope(event: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": event["id"],
+            "run_id": event["run_id"],
+            "seq": event["seq"],
+            "event_type": event["event_type"],
+            "payload": json.loads(event["payload_json"] or "{}"),
+            "created_at": event["created_at"],
+        }
+
+    def _publish_live(self, run_id: str, event: dict[str, Any]) -> None:
+        for subscriber in tuple(self._live_subscribers.get(run_id, ())):
+            try:
+                subscriber.put_nowait(event)
+            except asyncio.QueueFull:
+                # Temporary output is allowed to drop under backpressure;
+                # durable events are recovered by the database poll above.
+                pass
+
+    @asynccontextmanager
+    async def _stream_publication(self, run_id: str) -> AsyncIterator[None]:
+        lock = self._stream_locks.setdefault(run_id, asyncio.Lock())
+        self._stream_lock_users[run_id] = self._stream_lock_users.get(run_id, 0) + 1
+        try:
+            async with lock:
+                yield
+        finally:
+            users = self._stream_lock_users.get(run_id, 1) - 1
+            if users > 0:
+                self._stream_lock_users[run_id] = users
+            else:
+                self._stream_lock_users.pop(run_id, None)
+            self._discard_stream_state_if_idle(run_id)
+
+    def _discard_stream_state_if_idle(self, run_id: str) -> None:
+        if (
+            self._stream_lock_users.get(run_id, 0) == 0
+            and not self._live_subscribers.get(run_id)
+            and run_id not in self._tasks
+        ):
+            self._stream_locks.pop(run_id, None)
 
 
 # ---- helpers ----
