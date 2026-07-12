@@ -808,6 +808,25 @@ class CancelRunResponse(BaseModel):
     canceled: bool
 
 
+class CancelRunCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["run.cancel"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    run_id: str = Field(min_length=1, max_length=128)
+
+
+class CancelRunCommandReceipt(BaseModel):
+    type: Literal["run.cancel"]
+    command_id: str
+    run_id: str
+    canceled: bool
+
+
 class ResumeRunResponse(BaseModel):
     resumed: Literal[True] = True
 

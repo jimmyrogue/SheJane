@@ -187,7 +187,8 @@ CREATE TABLE IF NOT EXISTS local_commands (
     command_type TEXT NOT NULL,
     client_message_id TEXT NOT NULL,
     payload_json TEXT NOT NULL,
-    run_id TEXT NOT NULL UNIQUE,
+    response_json TEXT NOT NULL DEFAULT '{}',
+    run_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     PRIMARY KEY (principal_id, id),
     FOREIGN KEY (run_id) REFERENCES local_runs(id)
@@ -331,7 +332,7 @@ CREATE TABLE IF NOT EXISTS local_permissions (
     arguments_json TEXT NOT NULL,
     risk TEXT,
     decision_json TEXT,
-    status TEXT NOT NULL,                -- pending | approved | denied
+    status TEXT NOT NULL,                -- pending | approved | denied | canceled
     scope TEXT NOT NULL DEFAULT 'once',  -- once | run
     grant_max_uses INTEGER NOT NULL DEFAULT 0,
     grant_use_count INTEGER NOT NULL DEFAULT 0,
@@ -373,7 +374,7 @@ CREATE TABLE IF NOT EXISTS local_questions (
     wait_cycle_id TEXT,
     interrupt_id TEXT,
     questions_json TEXT NOT NULL,
-    status TEXT NOT NULL,                -- pending | answered
+    status TEXT NOT NULL,                -- pending | answered | canceled
     answers_json TEXT,
     created_at TEXT NOT NULL,
     answered_at TEXT,
@@ -412,7 +413,7 @@ CREATE TABLE IF NOT EXISTS local_plan_approvals (
     tool_call_id TEXT NOT NULL,
     todos_json TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | modified | rejected
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | modified | rejected | canceled
     instructions TEXT,
     created_at TEXT NOT NULL,
     resolved_at TEXT,
@@ -656,6 +657,7 @@ class LocalStore:
                 "TEXT NOT NULL DEFAULT 'local:owner'"
             )
         await LocalStore._ensure_principal_scoped_commands(conn)
+        await LocalStore._ensure_generic_commands(conn)
         await LocalStore._ensure_run_job_principals(conn)
         cursor = await conn.execute("PRAGMA table_info(local_run_jobs)")
         job_columns = {row[1] for row in await cursor.fetchall()}
@@ -874,6 +876,44 @@ class LocalStore:
         except BaseException:
             await conn.execute("ROLLBACK TO principal_scoped_commands")
             await conn.execute("RELEASE principal_scoped_commands")
+            raise
+
+    @staticmethod
+    async def _ensure_generic_commands(conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(local_commands)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        schema = await (
+            await conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'local_commands'"
+            )
+        ).fetchone()
+        table_sql = str(schema[0] if schema else "").upper()
+        if "response_json" in columns and "RUN_ID TEXT NOT NULL UNIQUE" not in table_sql:
+            return
+        await conn.execute("SAVEPOINT generic_commands")
+        try:
+            await conn.execute(
+                "CREATE TABLE local_commands_v3 ("
+                "principal_id TEXT NOT NULL, id TEXT NOT NULL, command_type TEXT NOT NULL, "
+                "client_message_id TEXT NOT NULL, payload_json TEXT NOT NULL, "
+                "response_json TEXT NOT NULL DEFAULT '{}', run_id TEXT NOT NULL, "
+                "created_at TEXT NOT NULL, PRIMARY KEY (principal_id, id), "
+                "FOREIGN KEY (run_id) REFERENCES local_runs(id))"
+            )
+            response_expression = "response_json" if "response_json" in columns else "'{}'"
+            await conn.execute(
+                "INSERT INTO local_commands_v3 "
+                "(principal_id, id, command_type, client_message_id, payload_json, "
+                "response_json, run_id, created_at) "
+                "SELECT principal_id, id, command_type, client_message_id, payload_json, "
+                f"{response_expression}, run_id, created_at FROM local_commands"
+            )
+            await conn.execute("DROP TABLE local_commands")
+            await conn.execute("ALTER TABLE local_commands_v3 RENAME TO local_commands")
+            await conn.execute("RELEASE generic_commands")
+        except BaseException:
+            await conn.execute("ROLLBACK TO generic_commands")
+            await conn.execute("RELEASE generic_commands")
             raise
 
     @staticmethod
@@ -1865,8 +1905,9 @@ class LocalStore:
             await conn.execute(
                 "SELECT r.*, c.id AS command_id, c.client_message_id "
                 "FROM local_runs r JOIN local_commands c ON c.run_id = r.id "
-                "WHERE r.id = ?",
-                (command["run_id"],),
+                "AND c.principal_id = r.principal_id "
+                "WHERE r.id = ? AND c.principal_id = ? AND c.id = ?",
+                (command["run_id"], principal_id, command_id),
             )
         ).fetchone()
         if run is None:
@@ -2232,13 +2273,14 @@ class LocalStore:
                 await transaction_conn.execute(
                     "INSERT INTO local_commands "
                     "(principal_id, id, command_type, client_message_id, payload_json, "
-                    "run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "response_json, run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         principal_id,
                         command_id,
                         str(command_payload.get("type") or "run.start"),
                         client_message_id,
                         payload_json,
+                        _encode_payload(run),
                         run["id"],
                         run["created_at"],
                     ),
@@ -2760,57 +2802,178 @@ class LocalStore:
             await conn.execute("PRAGMA busy_timeout=5000")
             await conn.execute("BEGIN IMMEDIATE")
             try:
-                row = await (
-                    await conn.execute(
-                        "SELECT * FROM local_run_jobs WHERE run_id = ? "
-                        "AND status IN ('pending', 'leased') AND quarantined_at IS NULL",
-                        (run_id,),
-                    )
-                ).fetchone()
-                if row is None:
+                state = await self._request_run_cancel_uncommitted(conn, run_id)
+                if state is None:
                     await conn.rollback()
                     return None
-                job = dict(row)
-                requested_at = _now()
-                if job["status"] == "leased":
-                    await conn.execute(
-                        "UPDATE local_run_jobs SET cancel_requested_at = ?, updated_at = ? "
-                        "WHERE id = ? AND status = 'leased'",
-                        (requested_at, requested_at, job["id"]),
-                    )
-                    await conn.commit()
-                    return "leased"
-
-                await conn.execute(
-                    "UPDATE local_run_jobs SET status = 'canceled', cancel_requested_at = ?, "
-                    "updated_at = ?, finished_at = ? WHERE id = ? AND status = 'pending'",
-                    (requested_at, requested_at, requested_at, job["id"]),
-                )
-                await conn.execute(
-                    "UPDATE local_runs SET status = 'canceled', updated_at = ?, completed_at = ? "
-                    "WHERE id = ?",
-                    (requested_at, requested_at, run_id),
-                )
-                await self._append_event_uncommitted(
-                    conn,
-                    run_id,
-                    "run.canceled",
-                    payload_json="{}",
-                    created_at=requested_at,
-                )
-                await self._update_thread_projection_uncommitted(
-                    conn,
-                    run_id=run_id,
-                    run_status="canceled",
-                    change_type="run.canceled",
-                    payload={},
-                    changed_at=requested_at,
-                )
                 await conn.commit()
-                return "pending"
+                return state
             except BaseException:
                 await conn.rollback()
                 raise
+
+    async def request_run_cancel_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        run_id: str,
+    ) -> tuple[dict[str, Any], bool]:
+        payload_json = _encode_payload({"type": "run.cancel", "run_id": run_id})
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await (
+                    await conn.execute(
+                        "SELECT command_type, payload_json, response_json "
+                        "FROM local_commands WHERE principal_id = ? AND id = ?",
+                        (principal_id, command_id),
+                    )
+                ).fetchone()
+                if existing is not None:
+                    if (
+                        existing["command_type"] != "run.cancel"
+                        or existing["payload_json"] != payload_json
+                    ):
+                        raise CommandConflictError(
+                            f"command {command_id} was already accepted with different content"
+                        )
+                    await conn.rollback()
+                    return json.loads(existing["response_json"]), False
+                run = await (
+                    await conn.execute(
+                        "SELECT id, created_at FROM local_runs WHERE principal_id = ? AND id = ?",
+                        (principal_id, run_id),
+                    )
+                ).fetchone()
+                if run is None:
+                    raise KeyError(f"unknown run: {run_id}")
+                state = await self._request_run_cancel_uncommitted(conn, run_id)
+                receipt = {
+                    "type": "run.cancel",
+                    "command_id": command_id,
+                    "run_id": run_id,
+                    "canceled": state is not None,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, 'run.cancel', '', ?, ?, ?, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        payload_json,
+                        _encode_payload(receipt),
+                        run_id,
+                        _now(),
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def _request_run_cancel_uncommitted(
+        self,
+        conn: aiosqlite.Connection,
+        run_id: str,
+    ) -> str | None:
+        row = await (
+            await conn.execute(
+                "SELECT * FROM local_run_jobs WHERE run_id = ? "
+                "AND status IN ('pending', 'leased') AND quarantined_at IS NULL",
+                (run_id,),
+            )
+        ).fetchone()
+        if row is None:
+            run = await (
+                await conn.execute(
+                    "SELECT status FROM local_runs WHERE id = ?",
+                    (run_id,),
+                )
+            ).fetchone()
+            if run is None or run["status"] not in {"waiting_permission", "waiting_input"}:
+                return None
+            requested_at = _now()
+            await self._finish_run_cancel_uncommitted(
+                conn,
+                run_id=run_id,
+                requested_at=requested_at,
+            )
+            return "waiting"
+        job = dict(row)
+        requested_at = _now()
+        if job["status"] == "leased":
+            await conn.execute(
+                "UPDATE local_run_jobs SET cancel_requested_at = ?, updated_at = ? "
+                "WHERE id = ? AND status = 'leased'",
+                (requested_at, requested_at, job["id"]),
+            )
+            return "leased"
+
+        await conn.execute(
+            "UPDATE local_run_jobs SET status = 'canceled', cancel_requested_at = ?, "
+            "updated_at = ?, finished_at = ? WHERE id = ? AND status = 'pending'",
+            (requested_at, requested_at, requested_at, job["id"]),
+        )
+        await self._finish_run_cancel_uncommitted(
+            conn,
+            run_id=run_id,
+            requested_at=requested_at,
+        )
+        return "pending"
+
+    async def _finish_run_cancel_uncommitted(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        run_id: str,
+        requested_at: str,
+    ) -> None:
+        cancel_decision = _encode_payload({"type": "cancel", "reason": "run_canceled"})
+        await conn.execute(
+            "UPDATE local_permissions SET status = 'canceled', decision_json = ?, "
+            "resolved_at = ? WHERE run_id = ? AND status = 'pending'",
+            (cancel_decision, requested_at, run_id),
+        )
+        await conn.execute(
+            "UPDATE local_questions SET status = 'canceled' "
+            "WHERE run_id = ? AND status = 'pending'",
+            (run_id,),
+        )
+        await conn.execute(
+            "UPDATE local_wait_candidates SET status = 'resolved', decision_json = ?, "
+            "resolved_at = ? WHERE run_id = ? AND status = 'pending'",
+            (cancel_decision, requested_at, run_id),
+        )
+        await conn.execute(
+            "UPDATE local_plan_approvals SET status = 'canceled', resolved_at = ? "
+            "WHERE run_id = ? AND status = 'pending'",
+            (requested_at, run_id),
+        )
+        await conn.execute(
+            "UPDATE local_runs SET status = 'canceled', updated_at = ?, completed_at = ? "
+            "WHERE id = ?",
+            (requested_at, requested_at, run_id),
+        )
+        await self._append_event_uncommitted(
+            conn,
+            run_id,
+            "run.canceled",
+            payload_json="{}",
+            created_at=requested_at,
+        )
+        await self._update_thread_projection_uncommitted(
+            conn,
+            run_id=run_id,
+            run_status="canceled",
+            change_type="run.canceled",
+            payload={},
+            changed_at=requested_at,
+        )
 
     async def update_run_mode(self, run_id: str, mode: str) -> None:
         """Persist the RESOLVED tier (fast|deep) once classification settles,
@@ -2886,6 +3049,8 @@ class LocalStore:
         cursor = await self._conn.execute(
             "SELECT r.*, c.id AS command_id, c.client_message_id "
             "FROM local_runs r LEFT JOIN local_commands c ON c.run_id = r.id "
+            "AND c.principal_id = r.principal_id "
+            "AND c.command_type IN ('run.start', 'run.fork') "
             "WHERE r.id = ?",
             (run_id,),
         )
@@ -2898,6 +3063,8 @@ class LocalStore:
         cursor = await self._conn.execute(
             "SELECT r.*, c.id AS command_id, c.client_message_id "
             "FROM local_runs r LEFT JOIN local_commands c ON c.run_id = r.id "
+            "AND c.principal_id = r.principal_id "
+            "AND c.command_type IN ('run.start', 'run.fork') "
             "WHERE r.principal_id = ? AND r.id = ?",
             (principal_id, run_id),
         )
@@ -2925,6 +3092,8 @@ class LocalStore:
                       WHERE e.run_id = r.id) AS events_count
               FROM local_runs r
               LEFT JOIN local_commands c ON c.run_id = r.id
+                   AND c.principal_id = r.principal_id
+                   AND c.command_type IN ('run.start', 'run.fork')
              WHERE r.principal_id = ?
              ORDER BY datetime(r.updated_at) DESC, r.id DESC
              LIMIT ?
@@ -3036,6 +3205,8 @@ class LocalStore:
                         "SELECT r.*, c.id AS command_id, c.client_message_id, "
                         "(SELECT COUNT(*) FROM local_events e WHERE e.run_id = r.id) AS events_count "
                         "FROM local_runs r LEFT JOIN local_commands c ON c.run_id = r.id "
+                        "AND c.principal_id = r.principal_id "
+                        "AND c.command_type IN ('run.start', 'run.fork') "
                         f"WHERE r.principal_id = ? AND r.id IN ({placeholders}) "
                         "ORDER BY datetime(r.created_at), r.id",
                         [principal_id, *run_ids],
@@ -3978,6 +4149,7 @@ class LocalStore:
         status: str,
         scope: str | None = None,
         decision: dict[str, Any] | None = None,
+        event_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if status not in {"approved", "denied"}:
             raise ValueError("permission status must be approved or denied")
@@ -4008,6 +4180,19 @@ class LocalStore:
                 )
             return record
         async with self.run_write_transaction(str(record["run_id"])) as conn:
+            run = await (
+                await conn.execute(
+                    "SELECT status FROM local_runs WHERE id = ?",
+                    (record["run_id"],),
+                )
+            ).fetchone()
+            if run is None or run["status"] in {
+                "completed",
+                "failed",
+                "canceled",
+                "cleanup_required",
+            }:
+                raise WaitDecisionConflictError("run is not awaiting a decision")
             cursor = await conn.execute(
                 "UPDATE local_permissions SET status = ?, scope = ?, decision_json = ?, "
                 "grant_max_uses = ?, grant_expires_at = ?, resolved_at = ? "
@@ -4032,6 +4217,14 @@ class LocalStore:
             if wait_cursor.rowcount != 1:
                 raise WaitDecisionConflictError(
                     "permission wait candidate was resolved concurrently"
+                )
+            if event_payload is not None:
+                await self._append_event_uncommitted(
+                    conn,
+                    str(record["run_id"]),
+                    "permission.resolved",
+                    payload_json=_encode_payload(event_payload),
+                    created_at=_now(),
                 )
         return await self.get_permission(permission_id)
 
@@ -4231,6 +4424,7 @@ class LocalStore:
         question_id: str,
         *,
         answers: dict[str, Any],
+        event_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         record = await self.get_question(question_id)
         if record is None:
@@ -4258,6 +4452,19 @@ class LocalStore:
             return record
         now = _now()
         async with self.run_write_transaction(str(record["run_id"])) as conn:
+            run = await (
+                await conn.execute(
+                    "SELECT status FROM local_runs WHERE id = ?",
+                    (record["run_id"],),
+                )
+            ).fetchone()
+            if run is None or run["status"] in {
+                "completed",
+                "failed",
+                "canceled",
+                "cleanup_required",
+            }:
+                raise WaitDecisionConflictError("run is not awaiting a decision")
             cursor = await conn.execute(
                 "UPDATE local_questions SET status = 'answered', answers_json = ?, "
                 "answered_at = ? WHERE id = ? AND status = 'pending'",
@@ -4270,6 +4477,14 @@ class LocalStore:
             )
             if cursor.rowcount != 1 or wait_cursor.rowcount != 1:
                 raise WaitDecisionConflictError("question was answered concurrently")
+            if event_payload is not None:
+                await self._append_event_uncommitted(
+                    conn,
+                    str(record["run_id"]),
+                    "question.answered",
+                    payload_json=_encode_payload(event_payload),
+                    created_at=now,
+                )
         return await self.get_question(question_id)
 
     async def list_wait_candidates_for_run(self, run_id: str) -> list[dict[str, Any]]:

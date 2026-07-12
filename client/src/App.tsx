@@ -76,12 +76,12 @@ import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef
 import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
-  cancelLocalRun,
+  cancelLocalRunCommand,
   clearLocalCloudSession,
   clearLocalMemory,
   createLocalSkill,
   createLocalRun,
-  deliverPendingLocalRunCommands,
+  deliverPendingRuntimeCommands,
   createMcpServer,
   deleteLocalSkill,
   deleteLocalThread,
@@ -126,7 +126,10 @@ import {
   type LocalHostProbe,
   type LocalPlanApprovalDecision,
   type LocalPermissionScope,
-  type PendingLocalRunCommand,
+  type PendingRunStartCommand,
+  type PendingRunCancelCommand,
+  type PendingRuntimeCommand,
+  type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
   type LocalRunMetadata,
@@ -969,9 +972,9 @@ function AppContent() {
     const config = localHostConfig
     const deliver = async () => {
       try {
-        const commands = await localData.listPendingLocalRunCommands()
+        const commands = await localData.listPendingRuntimeCommands()
         if (disposed || commands.length === 0) return
-        const delivered = await deliverPendingLocalRunCommands(
+        const delivered = await deliverPendingRuntimeCommands(
           commands,
           config,
           (command, run) => settleDeliveredLocalRunCommand(command, run, config).then(() => undefined),
@@ -1275,10 +1278,15 @@ function AppContent() {
   }
 
   async function settleDeliveredLocalRunCommand(
-    command: PendingLocalRunCommand,
-    run: LocalHarnessRun,
+    command: PendingRuntimeCommand,
+    result: RuntimeCommandResult,
     config: LocalHostConfig,
   ): Promise<boolean> {
+    if (command.type === 'run.cancel') {
+      await localData.deletePendingRuntimeCommand(command.commandId)
+      return true
+    }
+    const run = result as LocalHarnessRun
     const threadID = command.input.threadId
     if (threadID) {
       const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(threadID)
@@ -1286,12 +1294,12 @@ function AppContent() {
       runtimeThreadIDsRef.current = nextRuntimeThreadIDs
     }
     const [pending, conversation] = await Promise.all([
-      localData.getPendingLocalRunCommand(command.commandId),
+      localData.getPendingRuntimeCommand(command.commandId),
       threadID ? localData.get(threadID) : Promise.resolve(undefined),
     ])
     if (pending?.canceledAt || (threadID && !conversation)) {
       if (threadID) {
-        await cancelLocalRun(run.id, config)
+        await cancelLocalRunCommand(`cancel_${run.id}`, run.id, config)
         await streamLocalRun(run.id, config, { onDelta: () => undefined, onEvent: () => undefined })
         await deleteLocalThread(threadID, config)
         const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
@@ -1302,11 +1310,11 @@ function AppContent() {
       if (threadID) {
         await localData.settleCanceledLocalRunCommand(threadID, command.commandId)
       } else {
-        await localData.deletePendingLocalRunCommand(command.commandId)
+        await localData.deletePendingRuntimeCommand(command.commandId)
       }
       return false
     }
-    await localData.deletePendingLocalRunCommand(command.commandId)
+    await localData.deletePendingRuntimeCommand(command.commandId)
     return true
   }
 
@@ -2018,12 +2026,13 @@ function AppContent() {
       metadata: runOptions?.metadata,
       mode,
     }
-    const pendingCommand: PendingLocalRunCommand = {
+    const pendingCommand: PendingRunStartCommand = {
+      type: 'run.start',
       commandId,
       createdAt: timestamp,
       input: runInput,
     }
-    await localData.saveWithPendingLocalRunCommand(conversation, pendingCommand)
+    await localData.saveWithPendingRuntimeCommand(conversation, pendingCommand)
 
     let keepConversation = true
     try {
@@ -2110,7 +2119,24 @@ function AppContent() {
       if (!localHostConfig) {
         return
       }
-      await cancelLocalRun(activeMessage.runId, localHostConfig)
+      const existing = (await localData.listPendingRuntimeCommands()).find(
+        (command): command is PendingRunCancelCommand =>
+          command.type === 'run.cancel' && command.input.runId === activeMessage.runId,
+      )
+      const command = existing ?? {
+        type: 'run.cancel' as const,
+        commandId: `cancel_${activeMessage.runId}`,
+        createdAt: new Date().toISOString(),
+        input: { runId: activeMessage.runId, threadId: activeConversation.id },
+      }
+      if (!existing) await localData.savePendingRuntimeCommand(command)
+      try {
+        await cancelLocalRunCommand(command.commandId, command.input.runId, localHostConfig)
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      } catch (error) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+        throw error
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
     }

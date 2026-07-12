@@ -31,7 +31,7 @@ export type LocalArtifact = Schemas['LocalArtifact']
 export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
-export type CancelRunResponse = Schemas['CancelRunResponse']
+export type CancelRunCommandReceipt = Schemas['CancelRunCommandReceipt']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -270,13 +270,25 @@ export interface CreateLocalRunInput {
   mode?: ChatMode
 }
 
-export interface PendingLocalRunCommand {
+interface PendingRuntimeCommandBase {
   commandId: string
   createdAt: string
-  input: CreateLocalRunInput
   canceledAt?: string
   settledAt?: string
 }
+
+export interface PendingRunStartCommand extends PendingRuntimeCommandBase {
+  type: 'run.start'
+  input: CreateLocalRunInput
+}
+
+export interface PendingRunCancelCommand extends PendingRuntimeCommandBase {
+  type: 'run.cancel'
+  input: { runId: string; threadId: string }
+}
+
+export type PendingRuntimeCommand = PendingRunStartCommand | PendingRunCancelCommand
+export type RuntimeCommandResult = LocalRun | CancelRunCommandReceipt
 
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
@@ -357,13 +369,13 @@ export async function createLocalRun(
   return decodeLocalResponse<LocalRun>(response)
 }
 
-export async function deliverPendingLocalRunCommands(
-  commands: PendingLocalRunCommand[],
+export async function deliverPendingRuntimeCommands(
+  commands: PendingRuntimeCommand[],
   config: LocalHostConfig,
-  settle: (command: PendingLocalRunCommand, run: LocalRun) => Promise<void>,
+  settle: (command: PendingRuntimeCommand, result: RuntimeCommandResult) => Promise<void>,
   fetcher: Fetcher = fetch,
 ): Promise<number> {
-  const byThread = new Map<string, PendingLocalRunCommand[]>()
+  const byThread = new Map<string, PendingRuntimeCommand[]>()
   for (const command of [...commands].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     const key = command.input.threadId ?? command.commandId
     const threadCommands = byThread.get(key)
@@ -375,8 +387,15 @@ export async function deliverPendingLocalRunCommands(
       let count = 0
       for (const command of threadCommands) {
         try {
-          const run = await createLocalRun(command.input, config, fetcher)
-          await settle(command, run)
+          const result = command.type === 'run.start'
+            ? await createLocalRun(command.input, config, fetcher)
+            : await cancelLocalRunCommand(
+                command.commandId,
+                command.input.runId,
+                config,
+                fetcher,
+              )
+          await settle(command, result)
           count += 1
         } catch {
           break
@@ -861,19 +880,18 @@ export async function clearLocalMemory(
   return decodeLocalResponse<ClearMemoryResponse>(response)
 }
 
-/** Stop a streaming run. Daemon will emit `run.canceled` on the SSE
- *  channel, which the existing stream loop already handles. Idempotent:
- *  re-calling on an already-completed run is a no-op (`canceled: false`). */
-export async function cancelLocalRun(
+export async function cancelLocalRunCommand(
+  commandID: string,
   runID: string,
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
-): Promise<CancelRunResponse> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/cancel`, {
+): Promise<CancelRunCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
     method: 'POST',
-    headers: localHeaders(config, false),
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ type: 'run.cancel', command_id: commandID, run_id: runID }),
   })
-  return decodeLocalResponse<CancelRunResponse>(response)
+  return decodeLocalResponse<CancelRunCommandReceipt>(response)
 }
 
 export async function injectLocalRunInstruction(

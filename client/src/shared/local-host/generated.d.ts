@@ -27,6 +27,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Command */
+        post: operations["accept_command_local_v1_commands_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/health": {
         parameters: {
             query?: never;
@@ -787,6 +804,32 @@ export interface components {
             answers: {
                 [key: string]: string[];
             };
+        };
+        /** CancelRunCommand */
+        CancelRunCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "run.cancel";
+        };
+        /** CancelRunCommandReceipt */
+        CancelRunCommandReceipt: {
+            /** Canceled */
+            canceled: boolean;
+            /** Command Id */
+            command_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "run.cancel";
         };
         /** CancelRunResponse */
         CancelRunResponse: {
@@ -2109,6 +2152,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LocalArtifact"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_command_local_v1_commands_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelRunCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"];
                 };
             };
             /** @description Validation Error */

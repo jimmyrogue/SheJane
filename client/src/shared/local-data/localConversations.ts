@@ -1,5 +1,5 @@
 import type { Conversation, ConversationExport } from './types'
-import type { PendingLocalRunCommand } from '../local-host/client'
+import type { PendingRuntimeCommand, PendingRunStartCommand } from '../local-host/client'
 
 const STORE_NAME = 'conversations'
 const PENDING_LOCAL_RUN_COMMANDS_STORE_NAME = 'pending-local-run-commands'
@@ -27,9 +27,9 @@ export class LocalConversationStore {
     await requestToPromise(store.put(conversation))
   }
 
-  async saveWithPendingLocalRunCommand(
+  async saveWithPendingRuntimeCommand(
     conversation: Conversation,
-    command: PendingLocalRunCommand,
+    command: PendingRuntimeCommand,
   ): Promise<void> {
     const db = await this.open()
     const transaction = db.transaction(
@@ -39,6 +39,11 @@ export class LocalConversationStore {
     transaction.objectStore(STORE_NAME).put(conversation)
     transaction.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME).put(command)
     await transactionToPromise(transaction)
+  }
+
+  async savePendingRuntimeCommand(command: PendingRuntimeCommand): Promise<void> {
+    const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readwrite')
+    await requestToPromise(store.put(command))
   }
 
   async saveRuntimeProjection(conversation: Conversation): Promise<boolean> {
@@ -54,7 +59,7 @@ export class LocalConversationStore {
       .getAll(conversation.id)
     let saved = false
     commands.onsuccess = () => {
-      if (!(commands.result as PendingLocalRunCommand[]).some((command) => command.canceledAt)) {
+      if (!(commands.result as PendingRuntimeCommand[]).some((command) => command.canceledAt)) {
         conversations.put(conversation)
         saved = true
       }
@@ -63,22 +68,27 @@ export class LocalConversationStore {
     return saved
   }
 
-  async listPendingLocalRunCommands(): Promise<PendingLocalRunCommand[]> {
+  async listPendingRuntimeCommands(): Promise<PendingRuntimeCommand[]> {
     const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readonly')
-    const commands = await requestToPromise<PendingLocalRunCommand[]>(store.getAll())
+    const commands = await requestToPromise<Array<PendingRuntimeCommand | Omit<PendingRunStartCommand, 'type'>>>(store.getAll())
     return commands
+      .map((command) => 'type' in command ? command : { ...command, type: 'run.start' as const })
       .filter((command) => !command.settledAt)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
-  async getPendingLocalRunCommand(
+  async getPendingRuntimeCommand(
     commandId: string,
-  ): Promise<PendingLocalRunCommand | undefined> {
+  ): Promise<PendingRuntimeCommand | undefined> {
     const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readonly')
-    return requestToPromise<PendingLocalRunCommand | undefined>(store.get(commandId))
+    const command = await requestToPromise<
+      PendingRuntimeCommand | Omit<PendingRunStartCommand, 'type'> | undefined
+    >(store.get(commandId))
+    if (!command) return undefined
+    return 'type' in command ? command : { ...command, type: 'run.start' }
   }
 
-  async deletePendingLocalRunCommand(commandId: string): Promise<void> {
+  async deletePendingRuntimeCommand(commandId: string): Promise<void> {
     const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readwrite')
     await requestToPromise(store.delete(commandId))
   }
@@ -115,7 +125,7 @@ export class LocalConversationStore {
       .getAll(id)
     commands.onsuccess = () => {
       const canceledAt = new Date().toISOString()
-      for (const command of commands.result as PendingLocalRunCommand[]) {
+      for (const command of commands.result as PendingRuntimeCommand[]) {
         pendingCommands.put({ ...command, canceledAt })
       }
     }

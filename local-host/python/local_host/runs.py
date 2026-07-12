@@ -430,6 +430,12 @@ class RunCoordinator:
         wakeup = self._wakeups.get(run_id)
         await self._enqueue(wakeup, run_id, event_type, payload)
 
+    def wake_run(self, run_id: str) -> None:
+        """Wake subscribers after an HTTP decision and its event commit together."""
+        wakeup = self._wakeups.get(run_id)
+        if wakeup is not None:
+            wakeup.set()
+
     # ---- public API ----
 
     async def _model_binding(

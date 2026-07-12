@@ -141,6 +141,186 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert "test-cloud-token" not in stored["settings_json"]
 
 
+def test_cancel_command_is_idempotent_and_rejects_retargeting(client: TestClient) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    start_command = run_command(
+        "first cancel target",
+        thread_id="cancel_command_thread",
+        assistant_message_id="cancel_command_assistant",
+    )
+    first_run = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json=start_command,
+    ).json()
+    command = {
+        "type": "run.cancel",
+        "command_id": "cmd_cancel_http",
+        "run_id": first_run["id"],
+    }
+
+    accepted = client.post("/local/v1/commands", headers=headers, json=command)
+    replay = client.post("/local/v1/commands", headers=headers, json=command)
+    second_run = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json=run_command("second cancel target"),
+    ).json()
+    conflict = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={**command, "run_id": second_run["id"]},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json() == {
+        "type": "run.cancel",
+        "command_id": "cmd_cancel_http",
+        "run_id": first_run["id"],
+        "canceled": True,
+    }
+    assert replay.json() == accepted.json()
+    assert conflict.status_code == 409
+    start_replay = client.post("/local/v1/runs", headers=headers, json=start_command)
+    assert start_replay.status_code == 200
+    assert start_replay.json()["command_id"] == start_command["command_id"]
+    assert start_replay.json()["client_message_id"] == start_command["client_message_id"]
+    listed_runs = client.get("/local/v1/runs", headers=headers).json()["runs"]
+    assert [run["id"] for run in listed_runs].count(first_run["id"]) == 1
+    snapshot_runs = client.get(
+        "/local/v1/threads/cancel_command_thread",
+        headers=headers,
+    ).json()["runs"]
+    assert [run["id"] for run in snapshot_runs].count(first_run["id"]) == 1
+    assert snapshot_runs[0]["command_id"] == start_command["command_id"]
+    assert (
+        "data: [DONE]"
+        in client.get(f"/local/v1/runs/{first_run['id']}/stream", headers=headers).text
+    )
+    assert (
+        client.get(f"/local/v1/runs/{first_run['id']}", headers=headers).json()["status"]
+        == "canceled"
+    )
+
+
+@pytest.mark.parametrize("waiting_status", ["waiting_permission", "waiting_input"])
+def test_cancel_command_terminates_waiting_run(
+    client: TestClient,
+    waiting_status: str,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_waiting_run() -> str:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal=f"cancel {waiting_status}",
+            workspace_path=None,
+        )
+        await store.update_run_status(run["id"], waiting_status)
+        return str(run["id"])
+
+    run_id = asyncio.run(seed_waiting_run())
+    headers = {"Authorization": "Bearer tok"}
+    command = {
+        "type": "run.cancel",
+        "command_id": f"cancel_{waiting_status}",
+        "run_id": run_id,
+    }
+
+    accepted = client.post("/local/v1/commands", headers=headers, json=command)
+    replay = client.post("/local/v1/commands", headers=headers, json=command)
+
+    assert accepted.status_code == 200
+    assert accepted.json()["canceled"] is True
+    assert replay.json() == accepted.json()
+    run = client.get(f"/local/v1/runs/{run_id}", headers=headers).json()
+    assert run["status"] == "canceled"
+    assert "run.canceled" in {
+        json.loads(line.removeprefix("data: "))["event_type"]
+        for line in client.get(
+            f"/local/v1/runs/{run_id}/stream",
+            headers=headers,
+        ).text.splitlines()
+        if line.startswith("data: {")
+    }
+
+
+def test_cancel_command_closes_wait_decisions_and_rejects_late_answers(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_waits() -> tuple[str, str, str, str]:
+        permission_run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="cancel permission",
+            workspace_path=None,
+        )
+        permission = await store.create_permission(
+            run_id=permission_run["id"],
+            tool_call_id="call-cancel",
+            tool_name="write_file",
+            arguments={"path": "a.txt"},
+        )
+        await store.update_run_status(permission_run["id"], "waiting_permission")
+
+        question_run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="cancel question",
+            workspace_path=None,
+        )
+        question = await store.create_question(
+            run_id=question_run["id"],
+            tool_call_id="ask-cancel",
+            questions=[{"id": "choice", "question": "Which file?"}],
+        )
+        await store.update_run_status(question_run["id"], "waiting_input")
+        return (
+            str(permission_run["id"]),
+            str(permission["id"]),
+            str(question_run["id"]),
+            str(question["id"]),
+        )
+
+    permission_run_id, permission_id, question_run_id, question_id = asyncio.run(seed_waits())
+    headers = {"Authorization": "Bearer tok"}
+    for run_id in (permission_run_id, question_run_id):
+        response = client.post(
+            "/local/v1/commands",
+            headers=headers,
+            json={
+                "type": "run.cancel",
+                "command_id": f"cancel_{run_id}",
+                "run_id": run_id,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["canceled"] is True
+
+    permission_events_before = asyncio.run(store.events_since(permission_run_id, after_seq=0))
+    question_events_before = asyncio.run(store.events_since(question_run_id, after_seq=0))
+
+    permission_response = client.post(
+        f"/local/v1/permissions/{permission_id}",
+        headers=headers,
+        json={"decision": "approve", "scope": "once"},
+    )
+    question_response = client.post(
+        f"/local/v1/questions/{question_id}",
+        headers=headers,
+        json={"answers": {"choice": ["a.txt"]}},
+    )
+
+    assert permission_response.status_code == 409
+    assert question_response.status_code == 409
+    assert asyncio.run(store.get_permission(permission_id))["status"] == "canceled"
+    assert asyncio.run(store.get_question(question_id))["status"] == "canceled"
+    assert (
+        asyncio.run(store.events_since(permission_run_id, after_seq=0)) == permission_events_before
+    )
+    assert asyncio.run(store.events_since(question_run_id, after_seq=0)) == question_events_before
+
+
 def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
     assert client.get("/local/v1/runtime").status_code == 401
     response = client.get(

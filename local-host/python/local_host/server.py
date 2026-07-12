@@ -35,6 +35,8 @@ from .agent.builder import open_checkpointer, open_store
 from .api_schemas import (
     MAX_LOCAL_REQUEST_BODY_BYTES,
     AnswerQuestionRequest,
+    CancelRunCommand,
+    CancelRunCommandReceipt,
     CancelRunResponse,
     ClearMemoryResponse,
     CreateRunRequest,
@@ -129,6 +131,7 @@ from .store.sqlite import (
 log = logging.getLogger("local_host.server")
 
 _HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
+_TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled", "cleanup_required"}
 _MODEL_PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
@@ -1064,6 +1067,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runs = await store.list_runs(principal_id=request.state.principal_id)
         return {"runs": runs}
 
+    @app.post("/local/v1/commands", response_model=CancelRunCommandReceipt)
+    async def accept_command(
+        request: Request,
+        body: CancelRunCommand,
+    ) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        try:
+            receipt, _created = await store.request_run_cancel_command(
+                principal_id=request.state.principal_id,
+                command_id=body.command_id,
+                run_id=body.run_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except CommandConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if receipt["canceled"]:
+            coordinator: RunCoordinator = app.state.coordinator
+            await coordinator.cancel_run(body.run_id)
+        return receipt
+
     @app.post("/local/v1/runs", response_model=LocalRun)
     async def create_run(request: Request, body: CreateRunRequest) -> dict[str, Any]:
         """Create a new run. Returns the flat `LocalRun` shape (NOT
@@ -1295,7 +1319,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             principal_id=request.state.principal_id,
             run_id=run_id,
         )
-        if run.get("status") in {"completed", "canceled", "failed", "cleanup_required"}:
+        if run.get("status") in _TERMINAL_RUN_STATUSES:
             raise HTTPException(status_code=409, detail="run is not active")
         record = await store.create_steering_instruction(run_id=run_id, content=content)
         return {"run_id": run_id, "instruction_id": record["id"], "queued": True}
@@ -1379,35 +1403,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             persisted_status = "denied"
         already_resolved = record.get("status") != "pending"
+        if not already_resolved and run.get("status") in _TERMINAL_RUN_STATUSES:
+            raise HTTPException(status_code=409, detail="run is not awaiting a decision")
+        resolution_event = {
+            "request_id": permission_id,
+            "tool": record["tool_name"],
+            "tool_name": record["tool_name"],
+            "operation_id": record.get("operation_id"),
+            "decision": decision_text,
+            "scope": str(scope),
+        }
         try:
             await store.resolve_permission(
                 permission_id,
                 status=persisted_status,
                 scope=str(scope),
                 decision=hitl_decision,
+                event_payload=None if already_resolved else resolution_event,
             )
         except (PermissionDecisionConflictError, WaitDecisionConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator
-        # Emit `permission.resolved` onto the run's SSE queue so the
-        # client's `hasPendingPermission` check (App.tsx:1339) clears
-        # the in-flight approval card. Without this the card stays
-        # rendered after the user clicks approve. Emit before deciding
-        # whether to resume because batched HITL pauses may still be
-        # waiting on sibling permission cards.
         if not already_resolved:
-            await coordinator.emit_for_run(
-                record["run_id"],
-                "permission.resolved",
-                {
-                    "request_id": permission_id,
-                    "tool": record["tool_name"],
-                    "tool_name": record["tool_name"],
-                    "operation_id": record.get("operation_id"),
-                    "decision": decision_text,
-                    "scope": str(scope),
-                },
-            )
+            coordinator.wake_run(str(record["run_id"]))
         resume_payload = await store.wait_cycle_resume_payload(
             run_id=str(record["run_id"]),
             wait_cycle_id=str(record.get("wait_cycle_id") or record["id"]),
@@ -1456,23 +1474,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path=run.get("workspace_path"),
         )
         already_answered = record.get("status") != "pending"
+        if not already_answered and run.get("status") in _TERMINAL_RUN_STATUSES:
+            raise HTTPException(status_code=409, detail="run is not awaiting a decision")
+        answer_event = {"request_id": question_id, "answers": answers}
         try:
-            await store.answer_question(question_id, answers=answers)
+            await store.answer_question(
+                question_id,
+                answers=answers,
+                event_payload=None if already_answered else answer_event,
+            )
         except WaitDecisionConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator
-        # Mirror the permission flow: emit `question.answered` onto the
-        # run's stream so the client's `hasPendingQuestion` check
-        # (App.tsx:1352) clears the answer prompt UI.
         if not already_answered:
-            await coordinator.emit_for_run(
-                record["run_id"],
-                "question.answered",
-                {
-                    "request_id": question_id,
-                    "answers": answers,
-                },
-            )
+            coordinator.wake_run(str(record["run_id"]))
         resume_payload = await store.wait_cycle_resume_payload(
             run_id=str(record["run_id"]),
             wait_cycle_id=str(record.get("wait_cycle_id") or record["id"]),
@@ -1516,6 +1531,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             principal_id=request.state.principal_id,
             path=run.get("workspace_path"),
         )
+        if run.get("status") in _TERMINAL_RUN_STATUSES:
+            raise HTTPException(status_code=409, detail="run is not awaiting a decision")
         already_resolved = record.get("status") != "pending"
         payload = _json_object(record.get("payload_json"))
         current_receipt = await store.get_tool_receipt(operation_id)
@@ -1605,6 +1622,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             principal_id=request.state.principal_id,
             path=run.get("workspace_path"),
         )
+        if run.get("status") in _TERMINAL_RUN_STATUSES:
+            raise HTTPException(status_code=409, detail="run is not awaiting a decision")
 
         status = {
             "approve": "approved",

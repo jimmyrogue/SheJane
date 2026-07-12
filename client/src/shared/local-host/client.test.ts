@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createLocalRun,
-  deliverPendingLocalRunCommands,
+  cancelLocalRunCommand,
+  deliverPendingRuntimeCommands,
   authorizeLocalWorkspace,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -43,6 +44,40 @@ import {
 const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
 
 describe('desktop local host client', () => {
+  it('submits cancellation through the immutable Runtime command endpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'run.cancel',
+          command_id: 'cmd-cancel-1',
+          run_id: 'run-1',
+          canceled: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      cancelLocalRunCommand(
+        'cmd-cancel-1',
+        'run-1',
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ type: 'run.cancel', run_id: 'run-1', canceled: true })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/commands',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'run.cancel',
+          command_id: 'cmd-cancel-1',
+          run_id: 'run-1',
+        }),
+      }),
+    )
+  })
+
   it('posts an explicit tool reconciliation decision', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
     await reconcileLocalTool(
@@ -257,8 +292,9 @@ describe('desktop local host client', () => {
     const acknowledge = vi.fn().mockResolvedValue(undefined)
 
     await expect(
-      deliverPendingLocalRunCommands(
+      deliverPendingRuntimeCommands(
         [{
+          type: 'run.start',
           commandId: 'cmd-restart',
           createdAt: '2026-05-10T00:00:00.000Z',
           input: {
@@ -281,6 +317,51 @@ describe('desktop local host client', () => {
     expect(acknowledge).toHaveBeenCalledWith(
       expect.objectContaining({ commandId: 'cmd-restart' }),
       expect.objectContaining({ id: 'run-replayed-after-restart' }),
+    )
+  })
+
+  it('redelivers a persisted cancel command through the shared command endpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'run.cancel',
+          command_id: 'cmd-cancel-restart',
+          run_id: 'run-cancel-restart',
+          canceled: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'run.cancel',
+          commandId: 'cmd-cancel-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: { runId: 'run-cancel-restart', threadId: 'conv-cancel-restart' },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/commands',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'run.cancel',
+          command_id: 'cmd-cancel-restart',
+          run_id: 'run-cancel-restart',
+        }),
+      }),
+    )
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'run.cancel', commandId: 'cmd-cancel-restart' }),
+      expect.objectContaining({ type: 'run.cancel', canceled: true }),
     )
   })
 
@@ -307,9 +388,10 @@ describe('desktop local host client', () => {
     const acknowledge = vi.fn().mockResolvedValue(undefined)
 
     await expect(
-      deliverPendingLocalRunCommands(
+      deliverPendingRuntimeCommands(
         [
           {
+            type: 'run.start',
             commandId: 'cmd-rejected',
             createdAt: '2026-05-10T00:00:00.000Z',
             input: {
@@ -320,6 +402,7 @@ describe('desktop local host client', () => {
             },
           },
           {
+            type: 'run.start',
             commandId: 'cmd-other',
             createdAt: '2026-05-10T00:00:01.000Z',
             input: {

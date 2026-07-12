@@ -20,6 +20,65 @@
         "title": "AnswerQuestionRequest",
         "type": "object"
       },
+      "CancelRunCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "run_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "run.cancel",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "run_id"
+        ],
+        "title": "CancelRunCommand",
+        "type": "object"
+      },
+      "CancelRunCommandReceipt": {
+        "properties": {
+          "canceled": {
+            "title": "Canceled",
+            "type": "boolean"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "run.cancel",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "run_id",
+          "canceled"
+        ],
+        "title": "CancelRunCommandReceipt",
+        "type": "object"
+      },
       "CancelRunResponse": {
         "properties": {
           "canceled": {
@@ -3455,6 +3514,44 @@
           }
         },
         "summary": "Get Artifact"
+      }
+    },
+    "/local/v1/commands": {
+      "post": {
+        "operationId": "accept_command_local_v1_commands_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelRunCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelRunCommandReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Command"
       }
     },
     "/local/v1/health": {

@@ -390,7 +390,7 @@ describe('user client shell', () => {
 
   it('redelivers an unacknowledged Runtime command after the desktop restarts', async () => {
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
-    await localData.saveWithPendingLocalRunCommand(
+    await localData.saveWithPendingRuntimeCommand(
       {
         id: 'conv-pending-restart',
         title: '恢复任务',
@@ -409,6 +409,7 @@ describe('user client shell', () => {
         ],
       },
       {
+        type: 'run.start',
         commandId: 'cmd-pending-restart',
         createdAt: '2026-05-10T00:00:00.000Z',
         input: {
@@ -436,7 +437,7 @@ describe('user client shell', () => {
         client_message_id: 'msg-pending-restart',
       })
     })
-    await waitFor(async () => expect(await localData.listPendingLocalRunCommands()).toEqual([]))
+    await waitFor(async () => expect(await localData.listPendingRuntimeCommands()).toEqual([]))
   })
 
   it('keeps an unacknowledged command pending instead of inventing a failed Run', async () => {
@@ -459,7 +460,7 @@ describe('user client shell', () => {
         status: 'pending',
         runOrigin: 'local',
       })
-      expect(await localData.listPendingLocalRunCommands()).toHaveLength(1)
+      expect(await localData.listPendingRuntimeCommands()).toHaveLength(1)
     })
   })
 
@@ -469,7 +470,7 @@ describe('user client shell', () => {
       releaseCreate = resolve
     })
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
-    await localData.saveWithPendingLocalRunCommand(
+    await localData.saveWithPendingRuntimeCommand(
       {
         id: 'conv-delete-during-delivery',
         title: '删除投递中任务',
@@ -479,6 +480,7 @@ describe('user client shell', () => {
         messages: [],
       },
       {
+        type: 'run.start',
         commandId: 'cmd-delete-during-delivery',
         createdAt: '2026-05-10T00:00:00.000Z',
         input: {
@@ -508,7 +510,8 @@ describe('user client shell', () => {
       (call) => call.url.endsWith('/local/v1/threads/conv-delete-during-delivery') &&
         call.init?.method === 'DELETE',
     )).toBe(true))
-    const cancelIndex = calls.findIndex((call) => call.url.endsWith('/local/v1/runs/local-run/cancel'))
+    const cancelIndex = calls.findIndex((call) =>
+      call.url.endsWith('/local/v1/commands') && call.init?.method === 'POST')
     const streamIndex = calls.findIndex((call) => call.url.endsWith('/local/v1/runs/local-run/stream'))
     const deleteIndex = calls.findIndex((call) =>
       call.url.endsWith('/local/v1/threads/conv-delete-during-delivery') &&
@@ -518,13 +521,13 @@ describe('user client shell', () => {
     expect(deleteIndex).toBeGreaterThan(streamIndex)
     await waitFor(async () => {
       expect(await localData.get('conv-delete-during-delivery')).toBeUndefined()
-      expect(await localData.listPendingLocalRunCommands()).toEqual([])
+      expect(await localData.listPendingRuntimeCommands()).toEqual([])
     })
   })
 
   it('does not render a stale Runtime snapshot for a canceled conversation', async () => {
     const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
-    await localData.saveWithPendingLocalRunCommand(
+    await localData.saveWithPendingRuntimeCommand(
       {
         id: 'conv-stale-canceled',
         title: '已删除对话',
@@ -534,6 +537,7 @@ describe('user client shell', () => {
         messages: [],
       },
       {
+        type: 'run.start',
         commandId: 'cmd-stale-canceled',
         createdAt: '2026-05-10T00:00:00.000Z',
         input: {
@@ -834,6 +838,42 @@ describe('user client shell', () => {
     act(() => localRunStream.done())
 
     await waitFor(() => expect(screen.getByText('快照中的权威回答')).toBeInTheDocument())
+  })
+
+  it('persists user cancellation as an immutable Runtime command', async () => {
+    const localRunStream = createDeferredAgentStream('local-run')
+    const calls = mockFetch('user', { localRunStream })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+    render(<App />)
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
+
+    typeComposer('取消这个任务')
+    fireEvent.click(screen.getByText('发送'))
+    await waitFor(() => expect(calls.some(
+      (call) => call.url.endsWith('/local/v1/runs/local-run/stream'),
+    )).toBe(true))
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 50)))
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }))
+    fireEvent.click(screen.getByRole('button', { name: '停止生成' }))
+
+    await waitFor(() => {
+      const commandCalls = calls.filter((call) =>
+        call.url.endsWith('/local/v1/commands') && call.init?.method === 'POST')
+      expect(commandCalls.length).toBeGreaterThan(0)
+      expect(commandCalls.map((call) => JSON.parse(String(call.init?.body)))).toEqual(
+        commandCalls.map(() => ({
+          type: 'run.cancel',
+          run_id: 'local-run',
+          command_id: 'cancel_local-run',
+        })),
+      )
+    })
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await waitFor(async () => expect(await localData.listPendingRuntimeCommands()).toEqual([]))
+    act(() => localRunStream.done())
   })
 
   it('fires a desktop notification when a local run fails', async () => {
@@ -2610,9 +2650,19 @@ function mockFetch(
     if (url === 'http://127.0.0.1:17371/local/v1/runs') {
       return new Response(JSON.stringify({ runs: localRuns }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
-    if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/cancel') {
+    if (url === 'http://127.0.0.1:17371/local/v1/commands' && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body ?? '{}')) as {
+        type?: string
+        command_id?: string
+        run_id?: string
+      }
       localRunCanceled = true
-      return new Response(JSON.stringify({ canceled: true }), {
+      return new Response(JSON.stringify({
+        type: body.type,
+        command_id: body.command_id,
+        run_id: body.run_id,
+        canceled: true,
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
