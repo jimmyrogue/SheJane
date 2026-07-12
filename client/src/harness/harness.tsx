@@ -22,7 +22,6 @@ import { RechargeDialog } from '@/features/billing/RechargeDialog'
 import { RechargePendingDialog } from '@/features/billing/RechargePendingDialog'
 import { SettingsView } from '@/features/settings/SettingsView'
 import { SpendHistoryDialog, type HistoryFilter } from '@/features/billing/SpendHistoryDialog'
-import { TodayView } from '@/features/today/TodayView'
 import type { ChatMode, Conversation, ChatMessage } from '@/shared/local-data/types'
 import type { ModelOption } from '@/features/chat/components/ModeSelector'
 import type { BillingActivity, BillingCheckoutOptions, UserDocument, WalletBalance, WalletTransaction } from '@/shared/api/client'
@@ -101,7 +100,7 @@ const activeConvo: Conversation = {
     },
     msg('m3', 'user', '很好。汇总这件事以后每个月都要做，帮我写一个能自己跑的脚本。', now - 6 * 60_000),
     {
-      ...msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是飞书多维表还是导出的 xlsx？', now - 5 * 60_000),
+      ...msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是在线表格还是导出的 xlsx？', now - 5 * 60_000),
       creditsCost: 4210,
       runMode: { resolved: 'deepseek-v4-pro', reason: '' },
       agentEvents: [{ type: 'tool.completed', label: '工具完成：读取文件', tool: 'fs.read' }],
@@ -353,7 +352,7 @@ function Shell() {
   const [rechargePendingOpen, setRechargePendingOpen] = useState(false)
   const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
   const [spendHistoryInitialFilter, setSpendHistoryInitialFilter] = useState<HistoryFilter>('all')
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>(
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings'>(
     view === 'skills'
       ? 'skills'
       : view === 'mcp'
@@ -362,9 +361,7 @@ function Shell() {
           ? 'connections'
           : view === 'settings'
             ? 'settings'
-            : view === 'today'
-              ? 'today'
-              : 'chat',
+            : 'chat',
   )
   const displayedConversation = harnessCase === 'provider-error'
     ? providerErrorConvo
@@ -421,7 +418,6 @@ function Shell() {
           onDeleteConversation={noop}
           onCollapseSidebar={collapseSidebar}
           isDesktop
-          onOpenToday={() => setMainView('today')}
           onOpenSkills={() => setMainView('skills')}
           onOpenMcp={() => setMainView('mcp')}
           onOpenConnections={() => setMainView('connections')}
@@ -432,9 +428,7 @@ function Shell() {
           )}
         />
         <div className="view-transition" key={mainView}>
-          {mainView === 'today' ? (
-            <TodayView onQuoteToChat={() => setMainView('chat')} />
-          ) : mainView === 'skills' ? (
+          {mainView === 'skills' ? (
             <SkillsView
               listInstalled={async () => ({ skills: mockSkills, roots: [] })}
               onCreateSkill={async () => {}}

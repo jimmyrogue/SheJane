@@ -162,3 +162,32 @@ async def test_ensure_columns_adds_mode_to_legacy_db(tmp_path: Path) -> None:
         assert legacy["mode"] == "fast"  # backfilled by _ensure_columns
     finally:
         await store.close()
+
+
+async def test_open_removes_retired_lark_tables(tmp_path: Path) -> None:
+    import aiosqlite
+
+    db_path = tmp_path / "legacy-lark.db"
+    conn = await aiosqlite.connect(str(db_path))
+    for table in (
+        "local_lark_connections",
+        "local_lark_sources",
+        "local_lark_messages",
+        "local_todo_items",
+    ):
+        await conn.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY)")
+    await conn.commit()
+    await conn.close()
+
+    store = await LocalStore.open(db_path)
+    try:
+        cursor = await store._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'local_lark_%'"
+        )
+        assert await cursor.fetchall() == []
+        cursor = await store._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'local_todo_items'"
+        )
+        assert await cursor.fetchall() == []
+    finally:
+        await store.close()

@@ -9,15 +9,13 @@ Phase 2' deliverables:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
 import re
 import shutil
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
-from hashlib import sha256
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +29,6 @@ from .agent.builder import open_checkpointer, open_store
 from .api_schemas import (
     AnswerQuestionRequest,
     CancelRunResponse,
-    ClearLocalLarkCacheResponse,
     ClearMemoryResponse,
     CreateRunRequest,
     CreateScheduledRunRequest,
@@ -41,21 +38,14 @@ from .api_schemas import (
     HealthResponse,
     InjectRunInstructionRequest,
     InjectRunInstructionResponse,
-    ListLocalLarkSourcesResponse,
-    ListLocalTodosResponse,
     ListRunsResponse,
     ListScheduledRunsResponse,
     ListWorkspacesResponse,
     LocalArtifact,
     LocalCloudSession,
-    LocalLarkConnection,
-    LocalLarkConnectResponse,
-    LocalLarkSource,
-    LocalLarkStatus,
     LocalRun,
     LocalRunDiagnostics,
     LocalScheduledRun,
-    LocalTodoItem,
     LocalWorkspaceAuthorization,
     LocalWorkspaceDiagnosis,
     McpServerCatalog,
@@ -65,11 +55,7 @@ from .api_schemas import (
     McpServerWriteResponse,
     PermissionResolution,
     PlanApprovalResolution,
-    PreviewLocalLarkRequest,
-    PreviewLocalLarkResponse,
     QuestionAnswer,
-    QuoteLocalTodoRequest,
-    QuoteLocalTodoResponse,
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
     ResumeRunResponse,
@@ -78,29 +64,10 @@ from .api_schemas import (
     SkillFile,
     SkillWriteRequest,
     SkillWriteResponse,
-    SyncLocalLarkRequest,
-    SyncLocalLarkResponse,
-    UpdateLocalLarkConnectionRequest,
-    UpdateLocalLarkSourceRequest,
-    UpdateLocalTodoItemRequest,
 )
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
 from .failure_policy import classify_failure_payload
-from .lark.candidates import classify_lark_candidate
-from .lark.connector import (
-    LarkAuthRequiredError,
-    LarkConnector,
-    LarkFetchedSource,
-    LarkMessageSnapshot,
-)
-from .lark.extractors import (
-    CloudRedactedTodoExtractor,
-    RuleTodoExtractor,
-    TodoExtractionCandidate,
-)
-from .lark.normalize import normalize_lark_message
-from .lark.redact import redact_lark_text
 from .progress_ledger import (
     latest_feature_ledger as _latest_feature_ledger,
 )
@@ -114,96 +81,6 @@ from .store.sqlite import LocalStore
 log = logging.getLogger("local_host.server")
 
 _HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-class LarkAutoSyncDispatcher:
-    """Local-only polling loop for desktop Lark sync.
-
-    It intentionally uses the rules extractor only. Cloud-redacted extraction
-    still requires an explicit preview + manual sync in the renderer.
-    """
-
-    def __init__(
-        self,
-        app: FastAPI,
-        *,
-        poll_interval_seconds: float = 30.0,
-    ) -> None:
-        self.app = app
-        self.poll_interval_seconds = poll_interval_seconds
-        self._task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
-
-    def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._run_loop(), name="lark-auto-sync")
-
-    async def stop(self) -> None:
-        if self._task is None:
-            return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._task = None
-
-    async def tick(self, *, now: datetime | None = None) -> bool:
-        store: LocalStore = self.app.state.store
-        connection = await store.ensure_lark_connection()
-        if not connection.get("auto_sync_enabled"):
-            return False
-        if connection.get("status") != "connected":
-            return False
-        now = (now or datetime.now(UTC)).astimezone(UTC)
-        interval_minutes = int(connection.get("auto_sync_interval_minutes") or 5)
-        last_auto_synced_at = _parse_datetime(str(connection.get("last_auto_synced_at") or ""))
-        if last_auto_synced_at is not None and now - last_auto_synced_at < timedelta(
-            minutes=interval_minutes
-        ):
-            return False
-        if self._lock.locked():
-            return False
-        async with self._lock:
-            try:
-                await _sync_lark_once(
-                    self.app,
-                    SyncLocalLarkRequest(
-                        limit=100,
-                        extraction_provider="cloud_redacted",
-                        model="auto",
-                    ),
-                )
-            except HTTPException as exc:
-                await store.update_lark_connection(
-                    last_error_code=str(exc.detail or "lark_auto_sync_failed")
-                )
-                return False
-            except Exception:
-                log.exception("lark auto sync tick failed")
-                await store.update_lark_connection(last_error_code="lark_auto_sync_failed")
-                return False
-            await store.update_lark_connection(
-                last_auto_synced_at=now.isoformat(),
-                last_error_code="",
-            )
-            return True
-
-    async def _run_loop(self) -> None:
-        try:
-            while True:
-                try:
-                    await self.tick()
-                except Exception:
-                    log.exception("lark auto sync loop failed")
-                await asyncio.sleep(self.poll_interval_seconds)
-        except asyncio.CancelledError:
-            raise
 
 
 def _list_skill_files() -> list[dict[str, str]]:
@@ -473,14 +350,12 @@ async def lifespan(app: FastAPI):
         agent_store=agent_store,
     )
     scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
-    lark_auto_sync = LarkAutoSyncDispatcher(app)
     app.state.store = store
     app.state.settings = settings
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
     app.state.scheduler = scheduler
-    app.state.lark_auto_sync = lark_auto_sync
     # Reconcile runs the previous process left non-terminal (the daemon is
     # SIGKILLed on every `make dev-electron` restart): fail dead queued/running
     # runs, leave waiting_permission runs resumable. Without this they sit
@@ -488,7 +363,6 @@ async def lifespan(app: FastAPI):
     await coordinator.recover_orphans()
     await scheduler.recover_running()
     scheduler.start()
-    lark_auto_sync.start()
     # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
     # GET response so the client can show "paired Xs ago".
     app.state.cloud_session_updated_at = None
@@ -501,7 +375,6 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await lark_auto_sync.stop()
         await scheduler.stop()
         await store_stack.aclose()
         await ck_stack.aclose()
@@ -581,215 +454,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # use a different endpoint then.
         store = getattr(app.state, "store", None)
         return {"tools": describe_tools(store=store, workspace_root=None)}
-
-    def lark_connector() -> LarkConnector:
-        return _lark_connector_for_app(app, settings)
-
-    @app.get("/local/v1/lark/status", response_model=LocalLarkStatus)
-    async def lark_status() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        connector = lark_connector()
-        if connector.status.available:
-            auth_status = await connector.probe_auth_status()
-            connection = await store.update_lark_connection(
-                status=auth_status.status,
-                tenant_label=auth_status.tenant_label,
-                account_label=auth_status.account_label,
-                last_checked_at=_now_iso(),
-                last_error_code=auth_status.last_error_code,
-            )
-        else:
-            connection = await store.ensure_lark_connection()
-        return {
-            "connection": connection,
-            "connector": connector.status.as_dict(),
-        }
-
-    @app.post("/local/v1/lark/connect", response_model=LocalLarkConnectResponse)
-    async def connect_lark() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        connector = lark_connector()
-        if not connector.status.available:
-            raise HTTPException(status_code=409, detail="lark connector not found")
-        result = await connector.start_login()
-        if result.status == "error":
-            await store.update_lark_connection(
-                status="error",
-                last_checked_at=_now_iso(),
-                last_error_code=result.last_error_code,
-            )
-            raise HTTPException(status_code=502, detail=result.last_error_code)
-        connection = await store.update_lark_connection(
-            status=result.status,
-            last_checked_at=_now_iso(),
-            last_error_code=result.last_error_code,
-        )
-        if result.device_code:
-            _track_lark_auth_task(
-                app,
-                asyncio.create_task(
-                    _complete_lark_login_from_device_code(app, result.device_code),
-                    name="lark-auth-complete",
-                ),
-            )
-        return {
-            "connection": connection,
-            "connector": connector.status.as_dict(),
-            "authorization_url": result.authorization_url,
-            "device_code": result.device_code,
-        }
-
-    @app.post("/local/v1/lark/disconnect", response_model=LocalLarkStatus)
-    async def disconnect_lark() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        connector = lark_connector()
-        if connector.status.available:
-            result = await connector.logout()
-            if result.status == "error":
-                connection = await store.update_lark_connection(
-                    status="error",
-                    last_checked_at=_now_iso(),
-                    last_error_code=result.last_error_code,
-                )
-                return {"connection": connection, "connector": connector.status.as_dict()}
-        await store.clear_lark_cache()
-        connection = await store.update_lark_connection(
-            status="disconnected",
-            tenant_label="",
-            account_label="",
-            last_checked_at=_now_iso(),
-            last_error_code="",
-        )
-        return {"connection": connection, "connector": connector.status.as_dict()}
-
-    @app.patch("/local/v1/lark/connection", response_model=LocalLarkConnection)
-    async def update_lark_connection(
-        body: UpdateLocalLarkConnectionRequest,
-    ) -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        return await store.update_lark_connection(
-            cloud_extraction_enabled=body.cloud_extraction_enabled,
-            data_retention_days=body.data_retention_days,
-            auto_sync_enabled=body.auto_sync_enabled,
-            auto_sync_interval_minutes=body.auto_sync_interval_minutes,
-        )
-
-    @app.get("/local/v1/lark/sources", response_model=ListLocalLarkSourcesResponse)
-    async def list_lark_sources() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        return {"sources": await store.list_lark_sources()}
-
-    @app.post("/local/v1/lark/sources/discover", response_model=ListLocalLarkSourcesResponse)
-    async def discover_lark_sources() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        connector = lark_connector()
-        if not connector.status.available:
-            raise HTTPException(status_code=409, detail="lark connector not found")
-        try:
-            sources = await connector.fetch_recent_im_sources(chat_limit=100)
-            await _import_lark_sources(store, sources)
-        except LarkAuthRequiredError as exc:
-            await store.update_lark_connection(
-                status="needs_auth",
-                last_checked_at=_now_iso(),
-                last_error_code=str(exc),
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"sources": await store.list_lark_sources()}
-
-    @app.patch("/local/v1/lark/sources/{source_id}", response_model=LocalLarkSource)
-    async def update_lark_source(
-        source_id: str,
-        body: UpdateLocalLarkSourceRequest,
-    ) -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        updated = await store.update_lark_source(
-            source_id,
-            display_label=body.display_label,
-            sync_enabled=body.sync_enabled,
-        )
-        if updated is None:
-            raise HTTPException(status_code=404, detail="lark source not found")
-        return updated
-
-    @app.post("/local/v1/lark/preview", response_model=PreviewLocalLarkResponse)
-    async def preview_lark_candidates(body: PreviewLocalLarkRequest) -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        messages = await store.list_lark_messages_for_sync(limit=body.limit)
-        candidates, skipped = await _lark_todo_candidates_from_messages(store, messages)
-        candidate_groups = _merge_lark_todo_candidate_groups(candidates)
-        skipped += len(candidates) - len(candidate_groups)
-        candidates = [candidate for candidate, _message_ids in candidate_groups]
-        return {
-            "provider": "lark",
-            "processed_messages": len(messages),
-            "candidate_count": len(candidates),
-            "skipped_messages": skipped,
-            "candidates": [
-                {
-                    "message_id": candidate.message_id,
-                    "source_id": candidate.source_id,
-                    "source_label": candidate.source_label,
-                    "source_type": candidate.source_type,
-                    "redacted_text": candidate.redacted_text[:240],
-                    "priority": candidate.priority_hint,
-                    "suggested_action": candidate.suggested_action,
-                    "confidence": candidate.confidence,
-                }
-                for candidate in candidates
-            ],
-        }
-
-    @app.delete("/local/v1/lark/cache", response_model=ClearLocalLarkCacheResponse)
-    async def clear_lark_cache() -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        cleared = await store.clear_lark_cache()
-        return {"cleared": True, **cleared}
-
-    @app.post("/local/v1/lark/sync", response_model=SyncLocalLarkResponse)
-    async def sync_lark(body: SyncLocalLarkRequest) -> dict[str, Any]:
-        return await _sync_lark_once(app, body)
-
-    @app.get("/local/v1/todos", response_model=ListLocalTodosResponse)
-    async def list_todos(provider: str = Query("lark")) -> dict[str, Any]:
-        if provider != "lark":
-            raise HTTPException(status_code=400, detail="unsupported todo provider")
-        store: LocalStore = app.state.store
-        return {"todos": await store.list_todo_items(provider=provider)}
-
-    @app.patch("/local/v1/todos/{todo_id}", response_model=LocalTodoItem)
-    async def update_todo_item(
-        todo_id: str,
-        body: UpdateLocalTodoItemRequest,
-    ) -> dict[str, Any]:
-        store: LocalStore = app.state.store
-        updated = await store.update_todo_item(
-            todo_id,
-            priority=body.priority,
-            status=body.status,
-            due_at=body.due_at,
-        )
-        if updated is None:
-            raise HTTPException(status_code=404, detail="todo not found")
-        return updated
-
-    @app.post("/local/v1/todos/{todo_id}/quote", response_model=QuoteLocalTodoResponse)
-    async def quote_todo_item(
-        todo_id: str,
-        body: QuoteLocalTodoRequest,
-    ) -> dict[str, str]:
-        store: LocalStore = app.state.store
-        todo = await store.get_todo_item(todo_id)
-        if todo is None:
-            raise HTTPException(status_code=404, detail="todo not found")
-        if todo.get("provider") != "lark":
-            raise HTTPException(status_code=400, detail="unsupported todo provider")
-        return {
-            "todo_id": todo_id,
-            "text": _format_todo_quote(todo, include_evidence=body.include_evidence),
-        }
 
     @app.get("/local/v1/workspaces", response_model=ListWorkspacesResponse)
     async def list_workspaces() -> dict[str, Any]:
@@ -1606,370 +1270,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return SkillDeleteResponse(name=name)
 
     return app
-
-
-def _format_todo_quote(todo: dict[str, Any], *, include_evidence: bool) -> str:
-    title = str(todo.get("title") or "").strip()
-    lines = [title or "待办"]
-    summary = str(todo.get("summary") or "").strip()
-    if summary and summary != title:
-        lines.append(f"摘要：{summary}")
-    due_at = str(todo.get("due_at") or "").strip()
-    if due_at:
-        lines.append(f"时间：{due_at}")
-    evidence = str(todo.get("evidence_preview") or "").strip()
-    if include_evidence and evidence:
-        lines.append(f"来源：{evidence}")
-    return "\n".join(lines)
-
-
-def _lark_todo_extractor(
-    provider: str,
-    *,
-    settings: Settings,
-    model: str,
-) -> RuleTodoExtractor | CloudRedactedTodoExtractor:
-    if provider == "rules":
-        return RuleTodoExtractor()
-    if provider == "cloud_redacted":
-        return CloudRedactedTodoExtractor(
-            cloud_base_url=settings.cloud_base_url,
-            cloud_token=settings.cloud_token,
-            model=model,
-        )
-    if provider == "local_model":
-        raise HTTPException(status_code=501, detail="local model extraction is not implemented yet")
-    raise HTTPException(status_code=400, detail="unsupported todo extraction provider")
-
-
-async def _lark_todo_candidates_from_messages(
-    store: LocalStore,
-    messages: list[dict[str, Any]],
-) -> tuple[list[TodoExtractionCandidate], int]:
-    skipped = 0
-    candidates: list[TodoExtractionCandidate] = []
-    dismissed_todos = _dismissed_lark_todos_for_today(await store.list_todo_items(provider="lark"))
-    for message in messages:
-        if await store.todo_for_source_message_id(str(message["id"])):
-            skipped += 1
-            continue
-        raw_text = str(message.get("text") or message.get("redacted_text") or "").strip()
-        redacted_text = str(message.get("redacted_text") or "").strip()
-        if not redacted_text:
-            redacted_text = redact_lark_text(raw_text).text
-        candidate = classify_lark_candidate(
-            raw_text,
-            source_type=str(message.get("source_type") or ""),
-            mentions_user="@" in raw_text,
-            high_priority_source=False,
-        )
-        if not candidate.is_actionable:
-            skipped += 1
-            continue
-        if _dismissed_todo_suppresses_candidate(
-            dismissed_todos,
-            source_id=str(message["source_id"]),
-            text=redacted_text or raw_text,
-        ):
-            skipped += 1
-            continue
-        candidates.append(
-            TodoExtractionCandidate(
-                message_id=str(message["id"]),
-                source_id=str(message["source_id"]),
-                source_label=str(message.get("display_label") or "Lark"),
-                source_type=str(message.get("source_type") or ""),
-                raw_text=raw_text,
-                redacted_text=redacted_text,
-                priority_hint=candidate.priority,
-                suggested_action=candidate.suggested_action,
-                confidence=candidate.confidence,
-                created_at=str(message.get("created_at_lark") or message.get("received_at") or ""),
-            )
-        )
-    return candidates, skipped
-
-
-def _merge_lark_todo_candidate_groups(
-    candidates: list[TodoExtractionCandidate],
-) -> list[tuple[TodoExtractionCandidate, list[str]]]:
-    groups: list[tuple[TodoExtractionCandidate, list[str]]] = []
-    for candidate in candidates:
-        for index, (representative, message_ids) in enumerate(groups):
-            if candidate.source_id == representative.source_id and _similar_lark_todo_text(
-                candidate.redacted_text or candidate.raw_text,
-                representative.redacted_text or representative.raw_text,
-            ):
-                message_ids.append(candidate.message_id)
-                if _priority_rank(candidate.priority_hint) < _priority_rank(
-                    representative.priority_hint
-                ):
-                    groups[index] = (candidate, message_ids)
-                break
-        else:
-            groups.append((candidate, [candidate.message_id]))
-    return groups
-
-
-def _dismissed_lark_todos_for_today(todos: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    today = datetime.now(UTC).date()
-    dismissed: list[dict[str, Any]] = []
-    for todo in todos:
-        if todo.get("status") != "dismissed":
-            continue
-        updated_at = _parse_datetime(str(todo.get("updated_at") or ""))
-        if updated_at is not None and updated_at.astimezone(UTC).date() == today:
-            dismissed.append(todo)
-    return dismissed
-
-
-def _dismissed_todo_suppresses_candidate(
-    dismissed_todos: list[dict[str, Any]],
-    *,
-    source_id: str,
-    text: str,
-) -> bool:
-    for todo in dismissed_todos:
-        if str(todo.get("source_id") or "") != source_id:
-            continue
-        if _similar_lark_todo_text(
-            text, str(todo.get("evidence_preview") or todo.get("title") or "")
-        ):
-            return True
-    return False
-
-
-def _similar_lark_todo_text(left: str, right: str) -> bool:
-    left_key = _lark_todo_similarity_key(left)
-    right_key = _lark_todo_similarity_key(right)
-    if not left_key or not right_key:
-        return False
-    if left_key in right_key or right_key in left_key:
-        return True
-    left_tokens = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", left_key))
-    right_tokens = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", right_key))
-    if left_tokens and right_tokens:
-        overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
-        if overlap >= 0.62:
-            return True
-    shared_chars = len(set(left_key) & set(right_key))
-    return shared_chars / max(len(set(left_key) | set(right_key)), 1) >= 0.72
-
-
-def _lark_todo_similarity_key(text: str) -> str:
-    normalized = text.lower()
-    normalized = re.sub(r"\[[^\]]+\]", " ", normalized)
-    normalized = re.sub(r"https?://\S+", " ", normalized)
-    normalized = re.sub(r"[^\w\u4e00-\u9fff]+", " ", normalized)
-    stop_terms = [
-        "please",
-        "could",
-        "would",
-        "you",
-        "today",
-        "tomorrow",
-        "请",
-        "麻烦",
-        "帮忙",
-        "一下",
-        "今天",
-        "明天",
-        "下班前",
-        "上午",
-        "下午",
-    ]
-    for term in stop_terms:
-        normalized = normalized.replace(term, " ")
-    return re.sub(r"\s+", "", normalized)
-
-
-def _priority_rank(priority: str) -> int:
-    return {"now": 0, "today": 1, "later": 2, "fyi": 3}.get(priority, 3)
-
-
-def _parse_datetime(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed
-
-
-async def _sync_lark_once(
-    app: FastAPI,
-    body: SyncLocalLarkRequest,
-) -> dict[str, Any]:
-    store: LocalStore = app.state.store
-    connector = _lark_connector_for_app(app, app.state.settings)
-    if connector.status.available:
-        try:
-            sources = await connector.fetch_recent_im_sources(chat_limit=min(body.limit, 20))
-            enabled_sources = await _import_lark_sources(store, sources)
-            if enabled_sources:
-                snapshot = await connector.fetch_recent_im_messages_for_sources(
-                    enabled_sources,
-                    messages_per_chat=min(body.limit, 50),
-                )
-                await _import_lark_messages(store, snapshot)
-        except LarkAuthRequiredError as exc:
-            await store.update_lark_connection(
-                status="needs_auth",
-                last_checked_at=_now_iso(),
-                last_error_code=str(exc),
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    await store.prune_lark_messages()
-    messages = await store.list_lark_messages_for_sync(limit=body.limit)
-    candidates, skipped = await _lark_todo_candidates_from_messages(store, messages)
-    candidate_groups = _merge_lark_todo_candidate_groups(candidates)
-    skipped += len(candidates) - len(candidate_groups)
-    candidates = [candidate for candidate, _message_ids in candidate_groups]
-    connection = await store.ensure_lark_connection()
-    extraction_provider = body.extraction_provider
-    if not connection.get("cloud_extraction_enabled") and extraction_provider == "cloud_redacted":
-        extraction_provider = "rules"
-    extractor = _lark_todo_extractor(
-        extraction_provider,
-        settings=app.state.settings,
-        model=body.model,
-    )
-    result = await extractor.extract(candidates)
-    created = 0
-    candidate_by_id = {
-        candidate.message_id: (candidate, message_ids)
-        for candidate, message_ids in candidate_groups
-    }
-    if result.error_code:
-        skipped += len(candidates)
-    else:
-        for todo in result.todos:
-            candidate_entry = candidate_by_id.get(todo.candidate_id)
-            if candidate_entry is None or not todo.title:
-                skipped += 1
-                continue
-            candidate, source_message_ids = candidate_entry
-            await store.create_todo_item(
-                source_id=candidate.source_id,
-                source_message_ids=source_message_ids,
-                priority=todo.priority,
-                title=todo.title[:120],
-                summary=todo.summary,
-                suggested_action=todo.suggested_action,
-                due_at=todo.due_at,
-                confidence=todo.confidence,
-                extraction_provider=result.provider,
-                evidence_preview=candidate.redacted_text[:240],
-            )
-            created += 1
-        skipped += max(0, len(candidates) - created)
-    return {
-        "provider": "lark",
-        "extraction_provider": result.provider,
-        "processed_messages": len(messages),
-        "created_todos": created,
-        "skipped_messages": skipped,
-        "error_code": result.error_code,
-    }
-
-
-def _lark_connector_for_app(app: FastAPI, settings: Settings) -> LarkConnector:
-    factory = getattr(app.state, "lark_connector_factory", None)
-    if factory is not None:
-        return factory()
-    return LarkConnector.discover(resources_path=settings.desktop_resources_path)
-
-
-def _track_lark_auth_task(app: FastAPI, task: asyncio.Task[None]) -> None:
-    tasks = getattr(app.state, "lark_auth_tasks", None)
-    if tasks is None:
-        tasks = set()
-        app.state.lark_auth_tasks = tasks
-    tasks.add(task)
-    task.add_done_callback(tasks.discard)
-
-
-async def _complete_lark_login_from_device_code(app: FastAPI, device_code: str) -> None:
-    store: LocalStore = app.state.store
-    connector = _lark_connector_for_app(app, app.state.settings)
-    try:
-        auth_status = await connector.complete_login(device_code)
-        await store.update_lark_connection(
-            status=auth_status.status,
-            tenant_label=auth_status.tenant_label,
-            account_label=auth_status.account_label,
-            last_checked_at=_now_iso(),
-            last_error_code=auth_status.last_error_code,
-        )
-    except Exception:
-        log.exception("lark device-code auth completion failed")
-        await store.update_lark_connection(
-            status="needs_auth",
-            last_checked_at=_now_iso(),
-            last_error_code="lark_auth_completion_failed",
-        )
-
-
-async def _import_lark_sources(
-    store: LocalStore,
-    sources: list[LarkFetchedSource],
-) -> list[LarkFetchedSource]:
-    enabled_sources: list[LarkFetchedSource] = []
-    existing_hashes = {
-        str(source.get("provider_source_id_hash") or "")
-        for source in await store.list_lark_sources()
-    }
-    for source in sources:
-        source_hash = _stable_lark_hash("source", source.provider_source_id)
-        initial_sync_enabled = False if source_hash not in existing_hashes else None
-        local_source = await store.upsert_lark_source(
-            provider_source_id_hash=source_hash,
-            source_type=source.source_type,
-            display_label=source.display_label or "Lark",
-            sync_enabled=initial_sync_enabled,
-        )
-        if local_source.get("sync_enabled"):
-            enabled_sources.append(source)
-    return enabled_sources
-
-
-async def _import_lark_messages(store: LocalStore, snapshot: LarkMessageSnapshot) -> None:
-    sources_by_provider_id: dict[str, dict[str, Any]] = {}
-    for source in snapshot.sources:
-        local_source = await store.upsert_lark_source(
-            provider_source_id_hash=_stable_lark_hash("source", source.provider_source_id),
-            source_type=source.source_type,
-            display_label=source.display_label or "Lark",
-            sync_enabled=None,
-        )
-        if local_source.get("sync_enabled"):
-            sources_by_provider_id[source.provider_source_id] = local_source
-
-    for message in snapshot.messages:
-        source = sources_by_provider_id.get(message.source_provider_id)
-        if source is None:
-            continue
-        normalized = normalize_lark_message(message.raw or {})
-        redacted = redact_lark_text(normalized.text)
-        await store.create_lark_message(
-            source_id=source["id"],
-            provider_message_id_hash=_stable_lark_hash("message", message.provider_message_id),
-            sender_hash=_stable_lark_hash("sender", message.sender_id) if message.sender_id else "",
-            message_type=message.message_type,
-            text=normalized.text,
-            redacted_text=redacted.text,
-            created_at_lark=message.created_at_lark,
-        )
-
-
-def _stable_lark_hash(kind: str, value: str) -> str:
-    return sha256(f"{kind}:{value}".encode()).hexdigest()
 
 
 def _current_permission_batch(

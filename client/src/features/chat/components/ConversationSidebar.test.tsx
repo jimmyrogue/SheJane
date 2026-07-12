@@ -98,7 +98,6 @@ describe('ConversationSidebar', () => {
     expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-    expect(screen.getByRole('button', { name: '今日 · 待办' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '技能' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '连接' })).toBeInTheDocument()

@@ -75,11 +75,6 @@ ensure_node_modules() {
   fi
 }
 
-ensure_connector_resources() {
-  echo "Preparing bundled connector resources"
-  (cd "${ROOT_DIR}/client" && npm run prepare:connectors && npm run verify:connectors)
-}
-
 force_kill_stragglers() {
   # Hard-restart prelude. Each `make dev-electron` does a full clean
   # restart by default — we kill any lingering daemon/vite/electron
@@ -201,7 +196,6 @@ start_local_host() {
       "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN"
       "SHEJANE_LOCAL_HOST_PORT=$LOCAL_HOST_PORT"
       "SHEJANE_LOCAL_HOST_URL=$LOCAL_HOST_URL"
-      "SHEJANE_LOCAL_DESKTOP_RESOURCES_PATH=${ROOT_DIR}/client/electron"
       "SHEJANE_CLOUD_BASE_URL=$API_BASE_URL"
       "PYTHONUNBUFFERED=1"
     )
@@ -298,7 +292,6 @@ main() {
   require_command uv
   mkdir -p "$LOG_DIR"
   ensure_node_modules "${ROOT_DIR}/client"
-  ensure_connector_resources
 
   # Hard restart: kill any leftover daemon/vite/electron + free ports
   # FIRST, so the rest of the script can assume a clean slate. Opt out

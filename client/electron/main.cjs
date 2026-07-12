@@ -347,7 +347,6 @@ async function startBundledDaemon() {
       SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
       SHEJANE_LOCAL_HOST_PORT: String(port),
       SHEJANE_LOCAL_HOST_TOKEN: daemonToken,
-      SHEJANE_LOCAL_DESKTOP_RESOURCES_PATH: process.resourcesPath,
       SHEJANE_CLOUD_BASE_URL: apiBaseURL(),
       PYTHONUNBUFFERED: '1',
     }),

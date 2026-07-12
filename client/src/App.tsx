@@ -66,7 +66,6 @@ import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
 import { SettingsView } from './features/settings/SettingsView'
 import { SkillsView } from './features/skills/SkillsView'
-import { TodayView } from './features/today/TodayView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
@@ -400,7 +399,7 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
@@ -2735,7 +2734,6 @@ function AppContent() {
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
             isDesktop={isDesktop}
-            onOpenToday={() => setMainView('today')}
             onOpenSkills={() => setMainView('skills')}
             onOpenMcp={() => setMainView('mcp')}
             onOpenConnections={() => setMainView('connections')}
@@ -2825,15 +2823,7 @@ function AppContent() {
               }}
             />
           ) : mainView === 'connections' ? (
-            <ConnectionsView localHostConfig={localHostConfig} />
-          ) : mainView === 'today' ? (
-            <TodayView
-              localHostConfig={localHostConfig}
-              onQuoteToChat={(text) => {
-                setDraft((current) => (current ? `${current}\n${text}` : text))
-                setMainView('chat')
-              }}
-            />
+            <ConnectionsView />
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop={isDesktop}

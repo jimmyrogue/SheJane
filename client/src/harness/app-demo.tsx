@@ -87,7 +87,7 @@ const conversations: Conversation[] = [
       msg('m1', 'user', '帮我把 Q2 的营收数据整理成汇报，老板要看完成率和趋势。', now - 90 * 60_000),
       msg('m2', 'assistant', richReply, now - 88 * 60_000),
       msg('m3', 'user', '很好。汇总这件事以后每个月都要做，帮我写一个能自己跑的脚本。', now - 6 * 60_000),
-      msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是飞书多维表还是导出的 xlsx？', now - 5 * 60_000),
+      msg('m4', 'assistant', '可以。我会写一个按月拉取数据、生成同样表格与骨架的脚本，跑完直接产出 pptx。先确认数据源是在线表格还是导出的 xlsx？', now - 5 * 60_000),
     ],
   },
   { id: 'c2', title: '整理本周周报', archived: false, createdAt: iso(now - 3 * HOUR), updatedAt: iso(now - 40 * 60_000), messages: [] },

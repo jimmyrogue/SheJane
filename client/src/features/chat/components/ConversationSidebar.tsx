@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconAffiliate,
-  IconCalendar,
   IconDots,
   IconDownload,
   IconLayoutSidebarLeftCollapse,
@@ -65,7 +64,6 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   isDesktop = true,
-  onOpenToday,
   onOpenSkills,
   onOpenMcp,
   onOpenConnections,
@@ -87,15 +85,13 @@ export function ConversationSidebar({
   /** Electron build flag. The web build has no local daemon, so local-agent
    *  pages are hidden when false. */
   isDesktop?: boolean
-  /** Navigate to the 今日 · 待办 view (priority-grouped daily digest). */
-  onOpenToday?: () => void
   onOpenSkills?: () => void
   onOpenMcp?: () => void
   onOpenConnections?: () => void
   /** Navigate to the full 设置 page. Account, billing, agent config, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
-  activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings' | 'today'
+  activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings'
   searchRequestVersion?: number
   resizeHandle?: ReactNode
 }) {
@@ -128,16 +124,6 @@ export function ConversationSidebar({
   const recentConversations = conversations.filter(
     (conversation) => !conversation.pinned && matchesQuery(conversation),
   )
-  const pendingTodayConversations = conversations.filter((conversation) => {
-    const status = conversationSidebarStatus(
-      conversation,
-      conversation.id === activeID,
-      seenConversationVersions[conversation.id],
-    )
-    return status === 'needs_attention'
-  })
-  const pendingTodayCount = pendingTodayConversations.length
-
   useEffect(() => {
     if (!activeConversation) {
       return
@@ -361,19 +347,6 @@ export function ConversationSidebar({
           <IconPlus size={14} />
           <span>{t('app.newChat')}</span>
           <span className="sidebar-item-hint">⌘N</span>
-        </button>
-        <button
-          className={`sidebar-item sidebar-today-item${activeView === 'today' ? ' active' : ''}`}
-          type="button"
-          aria-label={t('sidebar.today')}
-          title={t('sidebar.todayHint')}
-          onClick={() => onOpenToday?.()}
-        >
-          <IconCalendar size={14} />
-          <span>{t('sidebar.today')}</span>
-          {pendingTodayCount > 0 ? (
-            <span className="badge sidebar-today-badge">{Math.min(pendingTodayCount, 9)}</span>
-          ) : null}
         </button>
       </div>
 

@@ -75,12 +75,6 @@ out/
 *.pkg
 *.AppImage
 *.exe
-# Downloaded desktop connector binaries. Packaging scripts regenerate these
-# from client/electron/connectors/lark/manifest.json and verify checksums.
-client/electron/connectors/lark/darwin-arm64/lark-cli
-client/electron/connectors/lark/darwin-x64/lark-cli
-client/electron/connectors/lark/win32-x64/lark-cli.exe
-
 # Go build/test artifacts
 api/api
 api/migrate
