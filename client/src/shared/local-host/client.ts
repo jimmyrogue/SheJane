@@ -67,7 +67,7 @@ export interface DesktopBridge {
   platform: string
   localHost?: {
     baseURL?: string
-    token?: string
+    session?: 'desktop'
   }
   /** Open a file with the OS's default application. Returns "" on
    *  success or an error message string on failure (mirrors
@@ -83,6 +83,8 @@ export interface DesktopBridge {
 
 export interface LocalHostConfig {
   baseURL: string
+  session?: 'desktop'
+  /** Non-Electron clients may authenticate directly. Desktop never receives it. */
   token?: string
 }
 
@@ -106,11 +108,16 @@ export function getDesktopLocalHostConfig(bridge: DesktopBridge | undefined = wi
   if (!baseURL) {
     return undefined
   }
-  const token = bridge?.localHost?.token?.trim() || import.meta.env.VITE_SHEJANE_LOCAL_HOST_TOKEN?.trim()
   return {
     baseURL,
-    token: token || undefined,
+    ...(bridge?.localHost?.session === 'desktop' ? { session: 'desktop' as const } : {}),
   }
+}
+
+export function hasLocalHostAuthorization(
+  config: LocalHostConfig | null | undefined,
+): config is LocalHostConfig {
+  return config?.session === 'desktop' || Boolean(config?.token)
 }
 
 export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch): Promise<LocalHostProbe> {

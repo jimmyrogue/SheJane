@@ -5,9 +5,8 @@ async function invokeAuth(channel, input) {
   return unwrapAuthIPCResult(await ipcRenderer.invoke(channel, input))
 }
 
-// The packaged app passes the daemon URL+token as preload args (reliable across
-// the main→renderer process boundary); dev sets them in the env via
-// scripts/dev-electron.sh. Read args first, fall back to env.
+// Main passes only the Runtime address and an opaque session marker. The
+// pairing token never crosses into the renderer process.
 function argValue(prefix) {
   const found = process.argv.find((a) => a.startsWith(prefix))
   return found ? found.slice(prefix.length) : undefined
@@ -20,7 +19,10 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
       argValue('--shejane-local-host-url=') ||
       process.env.SHEJANE_LOCAL_HOST_URL ||
       'http://127.0.0.1:17371',
-    token: argValue('--shejane-local-host-token=') || process.env.SHEJANE_LOCAL_HOST_TOKEN || '',
+    session:
+      argValue('--shejane-local-host-session=') === 'desktop'
+        ? 'desktop'
+        : undefined,
   },
   auth: {
     register: (input) => invokeAuth('shejane:auth-register', input),

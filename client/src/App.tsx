@@ -92,6 +92,7 @@ import {
   getLocalThreadSnapshot,
   getLocalRuntimeInfo,
   getDesktopLocalHostConfig,
+  hasLocalHostAuthorization,
   answerLocalQuestion,
   getLocalArtifact,
   getLocalSkillFile,
@@ -939,7 +940,7 @@ function AppContent() {
         setLocalHost(probe)
       }
     })
-    if (config.token) {
+    if (hasLocalHostAuthorization(config)) {
       void Promise.all([listAuthorizedWorkspaces(config), listLocalRuns(config)])
         .then(([workspaces, runs]) => {
           if (!disposed) {
@@ -955,7 +956,7 @@ function AppContent() {
   }, [])
 
   useEffect(() => {
-    if (!isDesktop || !localHost?.online || !localHostConfig?.token) {
+    if (!isDesktop || !localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
       return
     }
     let disposed = false
@@ -1036,7 +1037,7 @@ function AppContent() {
   }, [isDesktop, localHost?.online, localHostConfig])
 
   useEffect(() => {
-    if (!localHost?.online || !localHostConfig?.token) {
+    if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
       return
     }
     let disposed = false
@@ -1072,7 +1073,7 @@ function AppContent() {
   }, [localHost?.online, localHostConfig, t])
 
   useEffect(() => {
-    if (!localHost?.online || !localHostConfig?.token || !authRestoreComplete) {
+    if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig) || !authRestoreComplete) {
       return
     }
     let disposed = false
@@ -1344,7 +1345,7 @@ function AppContent() {
       if (isDesktop && attachedDocuments.length > 0 && !attachmentsAreImages) {
         throw new Error(t('app.notice.localDocumentUnsupported'))
       }
-      if (isDesktop && (!localHost?.online || !localHostConfig?.token)) {
+      if (isDesktop && (!localHost?.online || !hasLocalHostAuthorization(localHostConfig))) {
         throw new Error(t('app.notice.localHostDisconnected'))
       }
       if (
@@ -1680,7 +1681,7 @@ function AppContent() {
 
   async function refreshLocalCloudSessionNow(recoveryTarget?: RecoveryTarget) {
     const config = localHostConfig ?? getDesktopLocalHostConfig()
-    if (!auth?.access_token || !config?.token) {
+    if (!auth?.access_token || !hasLocalHostAuthorization(config)) {
       queueCloudSessionRecoveryTarget(recoveryTarget)
       setNotice(t('app.notice.cloudSessionRefreshUnavailable'))
       return
@@ -2574,7 +2575,7 @@ function AppContent() {
    *  toast on daemon-side errors (e.g. not yet paired). */
   async function selectProjectForActiveConversation(recoveryTarget?: RecoveryTarget) {
     const config = localHostConfig ?? getDesktopLocalHostConfig()
-    if (!config?.token) {
+    if (!hasLocalHostAuthorization(config)) {
       setNotice(t('app.notice.localHostNotPairedAuthorize'))
       return
     }
@@ -2618,7 +2619,7 @@ function AppContent() {
   }
 
   async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
-    if (!localHostConfig?.token) {
+    if (!hasLocalHostAuthorization(localHostConfig)) {
       throw new Error(t('app.notice.localHostNotPairedAuthorize'))
     }
     const nextPath = path.trim()
@@ -2638,7 +2639,7 @@ function AppContent() {
   }
 
   async function diagnoseWorkspace(path: string): Promise<LocalWorkspaceDiagnosis> {
-    if (!localHostConfig?.token) {
+    if (!hasLocalHostAuthorization(localHostConfig)) {
       throw new Error(t('app.notice.localHostNotPairedDiagnose'))
     }
     const nextPath = path.trim()
@@ -2681,7 +2682,7 @@ function AppContent() {
       conversation.updatedAt = new Date().toISOString()
     }
     const runtimeOwnsThread = runtimeThreadIDsRef.current.has(conversationID)
-    if (runtimeOwnsThread && localHostConfig?.token) {
+    if (runtimeOwnsThread && hasLocalHostAuthorization(localHostConfig)) {
       try {
         await updateLocalThread(
           conversationID,
@@ -2740,7 +2741,7 @@ function AppContent() {
     }
     const deletedActive = activeIDRef.current === conversationID
     const runtimeOwnsThread = runtimeThreadIDsRef.current.has(conversationID)
-    if (runtimeOwnsThread && localHostConfig?.token) {
+    if (runtimeOwnsThread && hasLocalHostAuthorization(localHostConfig)) {
       try {
         await deleteLocalThread(conversationID, localHostConfig)
         const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
@@ -3518,7 +3519,7 @@ function localHostStatusLabel(
   if (!localHost?.online) {
     return t('app.localStatus.cloudOnly')
   }
-  if (!config?.token) {
+  if (!hasLocalHostAuthorization(config)) {
     return t('app.localStatus.unpaired')
   }
   if (!session?.connected) {

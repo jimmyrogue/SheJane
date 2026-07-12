@@ -19,6 +19,7 @@
   ┌─ 1. 入口与状态机 ────────────────────────────────────────────────────────────────┐
   │                                                                                  │
   │  POST /local/v1/runs                                                              │
+  │       ├─ Electron Main 为 Runtime 请求注入 Bearer Token；Renderer 只持有地址和会话标记 │
   │       ├─ 配对 Token 映射为稳定 Runtime 身份 local:owner                          │
   │       ├─ 认证后、JSON 解析前限制请求体为 1 MiB                                   │
   │       ├─ command_id 与 client_message_id 必填                                    │

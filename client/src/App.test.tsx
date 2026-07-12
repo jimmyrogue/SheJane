@@ -364,7 +364,7 @@ describe('user client shell', () => {
     const refresh = vi.fn().mockRejectedValue(new Error('expired'))
     window.shejaneDesktop = {
       platform: 'darwin',
-      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
       auth: {
         register: vi.fn(),
         login: vi.fn(),
@@ -563,7 +563,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -615,7 +615,7 @@ describe('user client shell', () => {
     })
     window.shejaneDesktop = {
       platform: 'darwin',
-      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
     }
 
     render(<App />)
@@ -646,7 +646,7 @@ describe('user client shell', () => {
       notify,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -703,7 +703,7 @@ describe('user client shell', () => {
       notify,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -729,7 +729,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -769,7 +769,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -815,7 +815,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -902,7 +902,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -978,7 +978,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1066,7 +1066,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1139,7 +1139,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1216,7 +1216,7 @@ describe('user client shell', () => {
       openExternal,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1276,7 +1276,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1351,7 +1351,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1416,7 +1416,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1509,7 +1509,7 @@ describe('user client shell', () => {
 	    platform: 'darwin',
 	    localHost: {
 	      baseURL: 'http://127.0.0.1:17371',
-	      token: 'local-token',
+	      session: 'desktop',
 	    },
 	  }
 
@@ -1586,7 +1586,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1645,7 +1645,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
       selectWorkspaceDirectory: vi.fn().mockResolvedValue('/tmp/fixed-workspace'),
     }
@@ -1722,7 +1722,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
       selectWorkspaceDirectory: vi.fn().mockReturnValue(workspaceSelection),
     }
@@ -1782,7 +1782,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1819,7 +1819,7 @@ describe('user client shell', () => {
       notify,
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1854,7 +1854,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1902,7 +1902,7 @@ describe('user client shell', () => {
     const calls = mockFetch('user', { emailVerified: false })
     window.shejaneDesktop = {
       platform: 'darwin',
-      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
     }
 
     render(<App />)
@@ -1923,7 +1923,7 @@ describe('user client shell', () => {
     mockFetch('user', { emailVerified: true })
     window.shejaneDesktop = {
       platform: 'darwin',
-      localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
     }
 
     render(<App />)
@@ -1942,7 +1942,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -1973,7 +1973,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
       selectWorkspaceDirectory: vi.fn().mockResolvedValue('/tmp/picked-workspace'),
     }
@@ -2028,7 +2028,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -2072,7 +2072,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
     }
 
@@ -2126,7 +2126,7 @@ describe('user client shell', () => {
       platform: 'darwin',
       localHost: {
         baseURL: 'http://127.0.0.1:17371',
-        token: 'local-token',
+        session: 'desktop',
       },
       selectWorkspaceDirectory,
     }

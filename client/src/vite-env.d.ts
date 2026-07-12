@@ -5,7 +5,7 @@ interface Window {
     platform: string
     localHost?: {
       baseURL?: string
-      token?: string
+      session?: 'desktop'
     }
     auth?: {
       register(input: { email: string; password: string; name: string }): Promise<import('./shared/api/client').AuthPayload>

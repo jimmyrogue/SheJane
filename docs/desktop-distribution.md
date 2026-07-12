@@ -19,7 +19,7 @@
 2. 生成**一次性随机配对 token**(`crypto.randomBytes(32).toString('hex')`)。
 3. `child_process.spawn` 冻结的 daemon(`process.resourcesPath/local-host/shejane-local-host[.exe]`),**scrubbed 环境**:
    `SHEJANE_LOCAL_HOST_ADDR=127.0.0.1`、`SHEJANE_LOCAL_HOST_PORT=<freePort>`、`SHEJANE_LOCAL_HOST_TOKEN=<token>`、`SHEJANE_CLOUD_BASE_URL=https://app.shejane.com`、`PYTHONUNBUFFERED=1`、`PATH/HOME/TMPDIR` —— **绝不转发任何 provider 密钥**(Invariant #1)。
-4. 把同一 `SHEJANE_LOCAL_HOST_URL` + `SHEJANE_LOCAL_HOST_TOKEN` 写进 main 自身 `process.env`,`preload.cjs` 据此交给渲染层(目前唯一的交接通道,无 IPC)。
+4. Electron Main 保管 `SHEJANE_LOCAL_HOST_TOKEN`，并只对目标 Runtime 地址注入认证头；`preload.cjs` 仅把 URL 和不含秘密的桌面会话标记交给渲染层。
 5. 轮询 `GET /local/v1/health`(免鉴权路径)直到 200,期间显示 splash;超时弹 `dialog.showErrorBox`。
 6. `loadFile(dist/index.html)`。
 
@@ -86,7 +86,7 @@
 ## 安全模型
 
 - **仅环回**:`SHEJANE_LOCAL_HOST_ADDR` 保持 `127.0.0.1`,main.cjs 不得改成 0.0.0.0。
-- **一次性配对 token**:dev 的 `dev-local-token` 不能 ship;打包版每次启动随机生成,只经 spawn env + preload bridge 传递,**不写日志/磁盘**。daemon 经 `PairingTokenAuthMiddleware` 强制(空 token → 非 health 全 503;不匹配 → 401)。
+- **一次性配对 token**:dev 的 `dev-local-token` 不能 ship;打包版每次启动随机生成，只存在于 Electron Main 和 daemon 的 spawn 环境，**不进入 Renderer、不写日志/磁盘**。daemon 经 `PairingTokenAuthMiddleware` 强制(空 token → 非 health 全 503;不匹配 → 401)。
 - **Invariant #1**:daemon spawn env 是 scrubbed 的(选择性转发,镜像 `dev-electron.sh` 的 `env -i`),不含任何 OpenAI/Tavily/Anthropic/E2B/AWS/Stripe 密钥。daemon 仅作代理:LLM 经 `{cloud}/api/v1/agent/llm/stream`、平台付费工具经 `{cloud}/api/v1/agent/tools/execute`,都带用户 JWT(经 `POST /local/v1/session` 运行时下发)。`scripts/check-no-platform-keys-in-daemon.sh` 在 lefthook + CI 兜底。
 
 ## 最大风险

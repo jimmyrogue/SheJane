@@ -134,9 +134,9 @@ describe('desktop local host client', () => {
     expect(
       getDesktopLocalHostConfig({
         platform: 'darwin',
-        localHost: { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
       }),
-    ).toEqual({ baseURL: 'http://127.0.0.1:17371', token: 'local-token' })
+    ).toEqual({ baseURL: 'http://127.0.0.1:17371', session: 'desktop' })
   })
 
   it('probes public health without a pairing token', async () => {

@@ -16,6 +16,7 @@ const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
+const { installLocalRuntimeAuthorization } = require('./local-runtime-auth.cjs')
 const { appNameForLocale, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
 const {
   configureApplicationMenuForPlatform,
@@ -275,8 +276,8 @@ function apiBaseURL() {
 // ─── Bundled local-agent daemon ────────────────────────────────────────────
 // Packaged builds spawn the frozen daemon (shipped via electron-builder
 // extraResources) on a fresh loopback port with a one-time pairing token, then
-// hand the URL+token to the renderer. In dev, scripts/dev-electron.sh does this
-// instead, so main.cjs leaves the daemon alone (app.isPackaged === false).
+// keep its token in Main, and expose only an authenticated desktop-session
+// marker to the renderer. Dev still relies on scripts/dev-electron.sh to spawn.
 
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -311,14 +312,24 @@ function daemonEnv(extra) {
   return { ...env, ...extra }
 }
 
-// Preload args so the renderer reliably gets the daemon URL+token (not reliant
-// on env crossing the main→renderer process boundary). Empty in dev → preload
-// falls back to the env that dev-electron.sh set.
-function localHostArgs() {
-  if (!daemonURL || !daemonToken) {
-    return []
+function localRuntimeConnection() {
+  return {
+    baseURL:
+      daemonURL ||
+      process.env.SHEJANE_LOCAL_HOST_URL ||
+      'http://127.0.0.1:17371',
+    token: daemonToken || process.env.SHEJANE_LOCAL_HOST_TOKEN || '',
   }
-  return [`--shejane-local-host-url=${daemonURL}`, `--shejane-local-host-token=${daemonToken}`]
+}
+
+// Renderer receives only the address and an opaque desktop-session marker.
+// Electron's request session adds the private bearer token in Main.
+function localHostArgs() {
+  const connection = localRuntimeConnection()
+  return [
+    `--shejane-local-host-url=${connection.baseURL}`,
+    ...(connection.token ? ['--shejane-local-host-session=desktop'] : []),
+  ]
 }
 
 async function waitForHealth(url, timeoutMs = 30000) {
@@ -364,10 +375,6 @@ async function startBundledDaemon() {
       dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.exited', { code, signal }))
     }
   })
-
-  // Belt-and-suspenders: also expose via env (the dev handoff channel).
-  process.env.SHEJANE_LOCAL_HOST_URL = daemonURL
-  process.env.SHEJANE_LOCAL_HOST_TOKEN = daemonToken
 
   if (!(await waitForHealth(daemonURL))) {
     dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.startTimeout'))
@@ -438,6 +445,10 @@ app.whenReady().then(async () => {
   // dev relies on scripts/dev-electron.sh (which also sets the env).
   if (app.isPackaged) {
     await startBundledDaemon()
+  }
+  const runtimeConnection = localRuntimeConnection()
+  if (runtimeConnection.token) {
+    installLocalRuntimeAuthorization(session.defaultSession.webRequest, runtimeConnection)
   }
   createWindow()
   createTray()
