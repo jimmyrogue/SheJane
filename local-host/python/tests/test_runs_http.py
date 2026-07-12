@@ -468,12 +468,20 @@ def test_runtime_thread_snapshot_and_change_cursor_are_authoritative(client: Tes
             workspace_path=None,
             mode="auto",
         )
-        await store.commit_run_result(
-            run["id"],
-            status="completed",
-            event_type="run.completed",
-            payload={"final_text": "done"},
-        )
+        job = await store.claim_run_job(worker_id="worker-thread-snapshot")
+        assert job is not None
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-thread-snapshot",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            await store.commit_run_result(
+                run["id"],
+                status="completed",
+                event_type="run.completed",
+                payload={"final_text": "done"},
+            )
         return run
 
     run = asyncio.run(seed_thread())

@@ -946,6 +946,7 @@ class RunCoordinator:
                             "retryable": False,
                             "category": "checkpoint_incompatible",
                         },
+                        orphan_recovery=True,
                     )
                     failed += 1
                 except Exception:
@@ -968,6 +969,7 @@ class RunCoordinator:
                             "retryable": True,
                             "category": "runtime_interrupted",
                         },
+                        orphan_recovery=True,
                     )
                     failed += 1
                 except Exception:

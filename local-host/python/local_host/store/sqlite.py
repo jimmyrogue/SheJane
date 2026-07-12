@@ -971,7 +971,8 @@ class LocalStore:
                         await conn.execute(
                             "SELECT 1 FROM local_run_jobs WHERE id = ? AND run_id = ? "
                             "AND status = 'leased' AND lease_owner = ? "
-                            "AND lease_generation = ? AND lease_expires_at > ?",
+                            "AND lease_generation = ? AND quarantined_at IS NULL "
+                            "AND lease_expires_at > ?",
                             (
                                 active_lease.job_id,
                                 active_lease.run_id,
@@ -3242,6 +3243,7 @@ class LocalStore:
         status: str,
         event_type: str,
         payload: dict[str, Any],
+        orphan_recovery: bool = False,
     ) -> tuple[dict[str, Any], bool]:
         """Atomically persist a waiting or terminal run state and its event.
 
@@ -3261,6 +3263,21 @@ class LocalStore:
             ).fetchone()
             if run_row is None:
                 raise KeyError(f"unknown run: {run_id}")
+
+            if execution_lease is None:
+                if not orphan_recovery:
+                    raise LeaseFenceError(
+                        f"run {run_id} result requires the active execution lease"
+                    )
+                active_job = await (
+                    await conn.execute(
+                        "SELECT 1 FROM local_run_jobs WHERE run_id = ? "
+                        "AND status IN ('pending', 'leased') LIMIT 1",
+                        (run_id,),
+                    )
+                ).fetchone()
+                if active_job is not None:
+                    raise LeaseFenceError(f"run {run_id} still has an unsettled execution job")
 
             current_status = str(run_row[0])
             if current_status == status:
@@ -3411,6 +3428,7 @@ class LocalStore:
         run_status: str,
         settled_at: str,
     ) -> None:
+        fence_at = _now()
         job_status = {
             "completed": "completed",
             "failed": "dead",
@@ -3421,7 +3439,8 @@ class LocalStore:
         cursor = await conn.execute(
             "UPDATE local_run_jobs SET status = ?, updated_at = ?, finished_at = ?, "
             "lease_expires_at = NULL WHERE id = ? AND run_id = ? AND status = 'leased' "
-            "AND lease_owner = ? AND lease_generation = ?",
+            "AND lease_owner = ? AND lease_generation = ? AND quarantined_at IS NULL "
+            "AND lease_expires_at > ?",
             (
                 job_status,
                 settled_at,
@@ -3430,6 +3449,7 @@ class LocalStore:
                 lease.run_id,
                 lease.lease_owner,
                 lease.lease_generation,
+                fence_at,
             ),
         )
         if cursor.rowcount != 1:

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
-from local_host.store.sqlite import LocalStore, RunResultConflictError
+from local_host.store.sqlite import LeaseFenceError, LocalStore, RunResultConflictError
 
 
 async def _open_store(tmp_path: Path) -> LocalStore:
@@ -28,6 +29,7 @@ async def test_commit_run_result_writes_status_and_event_together(tmp_path: Path
             status="completed",
             event_type="run.completed",
             payload={"final_text": "done"},
+            orphan_recovery=True,
         )
 
         saved = await store.get_run(run["id"])
@@ -68,12 +70,20 @@ async def test_result_transaction_finalizes_runtime_thread_projection(tmp_path: 
             tool_calls=[],
         )
 
-        await store.commit_run_result(
-            run["id"],
-            status="completed",
-            event_type="run.completed",
-            payload={"final_text": "authoritative answer"},
-        )
+        job = await store.claim_run_job(worker_id="worker-projection")
+        assert job is not None
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-projection",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            await store.commit_run_result(
+                run["id"],
+                status="completed",
+                event_type="run.completed",
+                payload={"final_text": "authoritative answer"},
+            )
 
         thread = await store._conn.execute_fetchall(
             "SELECT principal_id, title, metadata_json, version "
@@ -275,14 +285,22 @@ async def test_projection_failure_rolls_back_run_event_message_and_version(tmp_p
             "BEGIN SELECT RAISE(ABORT, 'injected projection failure'); END"
         )
         await store._conn.commit()
+        job = await store.claim_run_job(worker_id="worker-projection-rollback")
+        assert job is not None
 
-        with pytest.raises(Exception, match="injected projection failure"):
-            await store.commit_run_result(
-                run["id"],
-                status="completed",
-                event_type="run.completed",
-                payload={"final_text": "must roll back"},
-            )
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-projection-rollback",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            with pytest.raises(Exception, match="injected projection failure"):
+                await store.commit_run_result(
+                    run["id"],
+                    status="completed",
+                    event_type="run.completed",
+                    payload={"final_text": "must roll back"},
+                )
 
         saved = await store.get_run(run["id"])
         assistant = await store._conn.execute_fetchall(
@@ -296,7 +314,7 @@ async def test_projection_failure_rolls_back_run_event_message_and_version(tmp_p
             "SELECT change_type FROM local_thread_changes "
             "WHERE thread_id = 'thread_projection_rollback'"
         )
-        assert saved is not None and saved["status"] == "queued"
+        assert saved is not None and saved["status"] == "running"
         assert await store.events_since(run["id"]) == []
         assert [tuple(row) for row in assistant] == [("in_progress", "", 1)]
         assert [tuple(row) for row in thread] == [(1,)]
@@ -481,12 +499,14 @@ async def test_commit_run_result_is_idempotent_for_the_same_result(tmp_path: Pat
             status="failed",
             event_type="run.failed",
             payload={"error": "provider unavailable", "retryable": True},
+            orphan_recovery=True,
         )
         replay, replay_created = await store.commit_run_result(
             run["id"],
             status="failed",
             event_type="run.failed",
             payload={"retryable": True, "error": "provider unavailable"},
+            orphan_recovery=True,
         )
 
         assert first_created is True
@@ -510,6 +530,7 @@ async def test_commit_run_result_rejects_a_conflicting_terminal_result(tmp_path:
             status="completed",
             event_type="run.completed",
             payload={"final_text": "done"},
+            orphan_recovery=True,
         )
 
         with pytest.raises(RunResultConflictError):
@@ -518,6 +539,7 @@ async def test_commit_run_result_rejects_a_conflicting_terminal_result(tmp_path:
                 status="failed",
                 event_type="run.failed",
                 payload={"error": "too late"},
+                orphan_recovery=True,
             )
 
         assert (await store.get_run(run["id"]))["status"] == "completed"
@@ -549,6 +571,7 @@ async def test_commit_run_result_rolls_back_status_when_event_insert_fails(
                 status="completed",
                 event_type="run.completed",
                 payload={"final_text": "must not persist"},
+                orphan_recovery=True,
             )
 
         saved = await store.get_run(run["id"])
@@ -556,6 +579,260 @@ async def test_commit_run_result_rolls_back_status_when_event_insert_fails(
         assert saved["status"] == "queued"
         assert saved["completed_at"] is None
         assert await store.events_since(run["id"]) == []
+    finally:
+        await store.close()
+
+
+async def test_active_job_result_requires_its_execution_lease(tmp_path: Path) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_requires_lease",
+            client_message_id="msg_requires_lease",
+            thread_id="thread_requires_lease",
+            command_payload={"type": "run.start", "goal": "finish"},
+            goal="finish",
+            workspace_path=None,
+            mode="auto",
+        )
+
+        with pytest.raises(LeaseFenceError, match="active execution lease"):
+            await store.commit_run_result(
+                run["id"],
+                status="completed",
+                event_type="run.completed",
+                payload={"final_text": "must not persist"},
+            )
+
+        saved = await store.get_run(run["id"])
+        jobs = await store._conn.execute_fetchall(
+            "SELECT status FROM local_run_jobs WHERE run_id = ?", (run["id"],)
+        )
+        assert saved is not None and saved["status"] == "queued"
+        assert [row["status"] for row in jobs] == ["pending"]
+        assert await store.events_since(run["id"]) == []
+
+        await store._conn.execute(
+            "UPDATE local_run_jobs SET quarantined_at = datetime('now') WHERE run_id = ?",
+            (run["id"],),
+        )
+        await store._conn.commit()
+        with pytest.raises(LeaseFenceError, match="unsettled execution job"):
+            await store.commit_run_result(
+                run["id"],
+                status="failed",
+                event_type="run.failed",
+                payload={"error": "must remain quarantined"},
+                orphan_recovery=True,
+            )
+        assert (await store.get_run(run["id"]))["status"] == "queued"
+        assert await store.events_since(run["id"]) == []
+    finally:
+        await store.close()
+
+
+async def test_no_job_result_still_requires_explicit_orphan_recovery(tmp_path: Path) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="not implicitly recoverable",
+            workspace_path=None,
+        )
+
+        with pytest.raises(LeaseFenceError, match="active execution lease"):
+            await store.commit_run_result(
+                run["id"],
+                status="failed",
+                event_type="run.failed",
+                payload={"error": "must not persist"},
+            )
+
+        assert (await store.get_run(run["id"]))["status"] == "queued"
+        assert await store.events_since(run["id"]) == []
+    finally:
+        await store.close()
+
+
+async def test_execution_lease_cannot_commit_a_different_run(tmp_path: Path) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        first = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="first",
+            workspace_path=None,
+        )
+        second, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_other_lease",
+            client_message_id="msg_other_lease",
+            thread_id="thread_other_lease",
+            command_payload={"type": "run.start", "goal": "second"},
+            goal="second",
+            workspace_path=None,
+            mode="auto",
+        )
+        job = await store.claim_run_job(worker_id="worker-other-lease")
+        assert job is not None and job["run_id"] == second["id"]
+
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=second["id"],
+            lease_owner="worker-other-lease",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            with pytest.raises(LeaseFenceError, match="cannot write run"):
+                await store.commit_run_result(
+                    first["id"],
+                    status="completed",
+                    event_type="run.completed",
+                    payload={"final_text": "must not persist"},
+                )
+
+        assert (await store.get_run(first["id"]))["status"] == "queued"
+        assert (await store.get_run(second["id"]))["status"] == "running"
+        assert await store.events_since(first["id"]) == []
+        jobs = await store._conn.execute_fetchall(
+            "SELECT status FROM local_run_jobs WHERE id = ?", (job["id"],)
+        )
+        assert [row["status"] for row in jobs] == ["leased"]
+    finally:
+        await store.close()
+
+
+async def test_expired_execution_lease_cannot_commit_a_result(tmp_path: Path) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_expired_lease",
+            client_message_id="msg_expired_lease",
+            thread_id="thread_expired_lease",
+            command_payload={"type": "run.start", "goal": "finish"},
+            goal="finish",
+            workspace_path=None,
+            mode="auto",
+        )
+        job = await store.claim_run_job(worker_id="worker-expired", lease_seconds=-1)
+        assert job is not None
+
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-expired",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            with pytest.raises(LeaseFenceError, match="stale"):
+                await store.commit_run_result(
+                    run["id"],
+                    status="completed",
+                    event_type="run.completed",
+                    payload={"final_text": "must not persist"},
+                )
+
+        assert (await store.get_run(run["id"]))["status"] == "running"
+        assert await store.events_since(run["id"]) == []
+        jobs = await store._conn.execute_fetchall(
+            "SELECT status FROM local_run_jobs WHERE id = ?", (job["id"],)
+        )
+        assert [row["status"] for row in jobs] == ["leased"]
+    finally:
+        await store.close()
+
+
+async def test_lease_expiring_during_result_commit_rolls_back_every_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_mid_commit_expiry",
+            client_message_id="msg_mid_commit_expiry",
+            assistant_message_id="assistant_mid_commit_expiry",
+            thread_id="thread_mid_commit_expiry",
+            command_payload={"type": "run.start", "goal": "finish"},
+            goal="finish",
+            workspace_path=None,
+            mode="auto",
+        )
+        job = await store.claim_run_job(worker_id="worker-mid-commit-expiry")
+        assert job is not None
+        expires_at = (datetime.now(UTC) + timedelta(milliseconds=100)).isoformat()
+        await store._conn.execute(
+            "UPDATE local_run_jobs SET lease_expires_at = ? WHERE id = ?",
+            (expires_at, job["id"]),
+        )
+        await store._conn.commit()
+
+        before_events = await store.events_since(run["id"])
+        before_items = await store._conn.execute_fetchall(
+            "SELECT status, content, version FROM local_thread_items "
+            "WHERE thread_id = ? ORDER BY position, id",
+            (run["thread_id"],),
+        )
+        before_thread = await store._conn.execute_fetchall(
+            "SELECT version FROM local_threads WHERE id = ?", (run["thread_id"],)
+        )
+        before_changes = await store._conn.execute_fetchall(
+            "SELECT change_type FROM local_thread_changes WHERE thread_id = ? ORDER BY cursor",
+            (run["thread_id"],),
+        )
+        original_projection = LocalStore._update_thread_projection_uncommitted
+
+        async def delayed_projection(*args, **kwargs) -> None:
+            await asyncio.sleep(0.2)
+            await original_projection(*args, **kwargs)
+
+        monkeypatch.setattr(
+            LocalStore,
+            "_update_thread_projection_uncommitted",
+            staticmethod(delayed_projection),
+        )
+
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-mid-commit-expiry",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            with pytest.raises(LeaseFenceError, match="stale"):
+                await store.commit_run_result(
+                    run["id"],
+                    status="completed",
+                    event_type="run.completed",
+                    payload={"final_text": "must roll back"},
+                )
+
+        assert (await store.get_run(run["id"]))["status"] == "running"
+        assert await store.events_since(run["id"]) == before_events
+        assert (
+            await store._conn.execute_fetchall(
+                "SELECT status, content, version FROM local_thread_items "
+                "WHERE thread_id = ? ORDER BY position, id",
+                (run["thread_id"],),
+            )
+            == before_items
+        )
+        assert (
+            await store._conn.execute_fetchall(
+                "SELECT version FROM local_threads WHERE id = ?", (run["thread_id"],)
+            )
+            == before_thread
+        )
+        assert (
+            await store._conn.execute_fetchall(
+                "SELECT change_type FROM local_thread_changes WHERE thread_id = ? ORDER BY cursor",
+                (run["thread_id"],),
+            )
+            == before_changes
+        )
+        jobs = await store._conn.execute_fetchall(
+            "SELECT status FROM local_run_jobs WHERE id = ?", (job["id"],)
+        )
+        assert [row["status"] for row in jobs] == ["leased"]
     finally:
         await store.close()
 
