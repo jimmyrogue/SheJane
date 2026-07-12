@@ -76,6 +76,7 @@ import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef
 import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
+  answerLocalQuestionCommand,
   cancelLocalRunCommand,
   clearLocalCloudSession,
   clearLocalMemory,
@@ -94,7 +95,6 @@ import {
   getLocalRuntimeInfo,
   getDesktopLocalHostConfig,
   hasLocalHostAuthorization,
-  answerLocalQuestion,
   getLocalArtifact,
   getLocalSkillFile,
   listAuthorizedWorkspaces,
@@ -128,6 +128,7 @@ import {
   type LocalPermissionScope,
   type PendingRunStartCommand,
   type PendingRunCancelCommand,
+  type PendingQuestionAnswerCommand,
   type PendingRuntimeCommand,
   type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
@@ -378,6 +379,7 @@ function AppContent() {
   const sidebarMotionTimerRef = useRef<number>()
   const runtimeThreadCursorRef = useRef(0)
   const runtimeThreadIDsRef = useRef(new Set<string>())
+  const questionAnswersInFlightRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -1282,6 +1284,14 @@ function AppContent() {
     result: RuntimeCommandResult,
     config: LocalHostConfig,
   ): Promise<boolean> {
+    if (command.type === 'question.answer') {
+      await localData.deletePendingRuntimeCommand(command.commandId)
+      const projected = await syncRuntimeThreadCache(config)
+      setConversations((items) =>
+        projected.reduce((next, conversation) => upsertConversation(next, conversation), items),
+      )
+      return true
+    }
     if (command.type === 'run.cancel') {
       await localData.deletePendingRuntimeCommand(command.commandId)
       return true
@@ -2303,7 +2313,21 @@ function AppContent() {
     }
   }
 
-  async function handleQuestionAnswer(messageID: string, requestID: string, answers: Record<string, string[]>) {
+  async function handleQuestionAnswer(
+    messageID: string,
+    requestID: string,
+    answers: Record<string, string[]>,
+  ) {
+    if (questionAnswersInFlightRef.current.has(requestID)) return
+    questionAnswersInFlightRef.current.add(requestID)
+    try {
+      await handleQuestionAnswerOnce(messageID, requestID, answers)
+    } finally {
+      questionAnswersInFlightRef.current.delete(requestID)
+    }
+  }
+
+  async function handleQuestionAnswerOnce(messageID: string, requestID: string, answers: Record<string, string[]>) {
     if (!activeID) {
       setNotice(t('app.notice.missingLocalTask'))
       return
@@ -2345,6 +2369,8 @@ function AppContent() {
     }
 
     setNotice('')
+    const contentBeforeAnswer = message.content
+    let commandAccepted = false
     message.status = 'streaming'
     // Resume replays the full event history; rebuild from the replay rather
     // than appending onto already-shown text.
@@ -2353,7 +2379,35 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
-      await answerLocalQuestion(requestID, answers, localHostConfig)
+      const existing = (await localData.listPendingRuntimeCommands()).find(
+        (command): command is PendingQuestionAnswerCommand =>
+          command.type === 'question.answer' && command.input.questionId === requestID,
+      )
+      const command = existing ?? {
+        type: 'question.answer' as const,
+        commandId: `answer_${requestID}`,
+        createdAt: new Date().toISOString(),
+        input: {
+          questionId: requestID,
+          answers,
+          runId: message.runId,
+          threadId: conversation.id,
+        },
+      }
+      if (!existing) await localData.savePendingRuntimeCommand(command)
+      try {
+        await answerLocalQuestionCommand(
+          command.commandId,
+          command.input.questionId,
+          command.input.answers,
+          localHostConfig,
+        )
+        commandAccepted = true
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      } catch (error) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+        throw error
+      }
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalRun(message.runId, localHostConfig, {
         onEvent: (event) => {
@@ -2368,9 +2422,9 @@ function AppContent() {
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
-      message.status = 'error'
-      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
-      setNotice(message.content)
+      message.status = commandAccepted ? 'streaming' : 'waiting_input'
+      if (!commandAccepted) message.content = contentBeforeAnswer
+      setNotice(error instanceof Error ? error.message : t('app.notice.localPermissionFailed'))
       scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()

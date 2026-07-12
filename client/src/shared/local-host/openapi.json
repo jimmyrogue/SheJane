@@ -1,6 +1,87 @@
 {
   "components": {
     "schemas": {
+      "AnswerQuestionCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Answers",
+            "type": "object"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "question.answer",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "answers",
+          "type",
+          "command_id",
+          "question_id"
+        ],
+        "title": "AnswerQuestionCommand",
+        "type": "object"
+      },
+      "AnswerQuestionCommandReceipt": {
+        "properties": {
+          "answered": {
+            "const": true,
+            "default": true,
+            "title": "Answered",
+            "type": "boolean"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "question.answer",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "question_id",
+          "run_id",
+          "resumed"
+        ],
+        "title": "AnswerQuestionCommandReceipt",
+        "type": "object"
+      },
       "AnswerQuestionRequest": {
         "properties": {
           "answers": {
@@ -3511,7 +3592,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CancelRunCommand"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CancelRunCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AnswerQuestionCommand"
+                  }
+                ],
+                "title": "Body"
               }
             }
           },
@@ -3522,7 +3611,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelRunCommandReceipt"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CancelRunCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnswerQuestionCommandReceipt"
+                    }
+                  ],
+                  "title": "Response Accept Command Local V1 Commands Post"
                 }
               }
             },

@@ -321,6 +321,115 @@ def test_cancel_command_closes_wait_decisions_and_rejects_late_answers(
     assert asyncio.run(store.events_since(question_run_id, after_seq=0)) == question_events_before
 
 
+def test_question_answer_command_is_idempotent_and_rejects_changed_answers(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_question() -> tuple[str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="answer durably",
+            workspace_path=None,
+        )
+        question = await store.create_question(
+            run_id=run["id"],
+            tool_call_id="ask-durable",
+            questions=[{"id": "choice", "question": "Which mode?"}],
+        )
+        await store.update_run_status(run["id"], "waiting_input")
+        return str(run["id"]), str(question["id"])
+
+    run_id, question_id = asyncio.run(seed_question())
+    headers = {"Authorization": "Bearer tok"}
+    command = {
+        "type": "question.answer",
+        "command_id": "answer_durable",
+        "question_id": question_id,
+        "answers": {"choice": ["mode X"]},
+    }
+
+    accepted = client.post("/local/v1/commands", headers=headers, json=command)
+    replay = client.post("/local/v1/commands", headers=headers, json=command)
+    conflict = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={**command, "answers": {"choice": ["mode Y"]}},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json() == {
+        "type": "question.answer",
+        "command_id": "answer_durable",
+        "question_id": question_id,
+        "run_id": run_id,
+        "answered": True,
+        "resumed": True,
+    }
+    assert replay.json() == accepted.json()
+    assert conflict.status_code == 409
+
+
+def test_question_answer_command_waits_for_every_candidate_in_the_cycle(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_questions() -> tuple[str, str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="answer a batch",
+            workspace_path=None,
+        )
+        first = await store.create_question(
+            run_id=run["id"],
+            tool_call_id="ask-first",
+            questions=[{"id": "first", "question": "First?"}],
+            wait_cycle_id="question-batch",
+            interrupt_id="interrupt-first",
+        )
+        second = await store.create_question(
+            run_id=run["id"],
+            tool_call_id="ask-second",
+            questions=[{"id": "second", "question": "Second?"}],
+            wait_cycle_id="question-batch",
+            interrupt_id="interrupt-second",
+        )
+        await store.update_run_status(run["id"], "waiting_input")
+        return str(run["id"]), str(first["id"]), str(second["id"])
+
+    run_id, first_id, second_id = asyncio.run(seed_questions())
+    headers = {"Authorization": "Bearer tok"}
+
+    first = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "question.answer",
+            "command_id": "answer_first",
+            "question_id": first_id,
+            "answers": {"First?": ["one"]},
+        },
+    )
+    second = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "question.answer",
+            "command_id": "answer_second",
+            "question_id": second_id,
+            "answers": {"Second?": ["two"]},
+        },
+    )
+
+    assert first.status_code == 200
+    assert first.json()["answered"] is True
+    assert first.json()["resumed"] is False
+    assert second.status_code == 200
+    assert second.json()["run_id"] == run_id
+    assert second.json()["resumed"] is True
+
+
 def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
     assert client.get("/local/v1/runtime").status_code == 401
     response = client.get(

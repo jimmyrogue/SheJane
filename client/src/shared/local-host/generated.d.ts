@@ -781,6 +781,44 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnswerQuestionCommand */
+        AnswerQuestionCommand: {
+            /** Answers */
+            answers: {
+                [key: string]: string[];
+            };
+            /** Command Id */
+            command_id: string;
+            /** Question Id */
+            question_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "question.answer";
+        };
+        /** AnswerQuestionCommandReceipt */
+        AnswerQuestionCommandReceipt: {
+            /**
+             * Answered
+             * @default true
+             * @constant
+             */
+            answered: true;
+            /** Command Id */
+            command_id: string;
+            /** Question Id */
+            question_id: string;
+            /** Resumed */
+            resumed: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "question.answer";
+        };
         /** AnswerQuestionRequest */
         AnswerQuestionRequest: {
             /** Answers */
@@ -2148,7 +2186,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"];
             };
         };
         responses: {
@@ -2158,7 +2196,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"];
                 };
             };
             /** @description Validation Error */

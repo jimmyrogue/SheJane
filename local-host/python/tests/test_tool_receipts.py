@@ -109,6 +109,9 @@ async def test_legacy_p10_tables_migrate_before_new_indexes(tmp_path: Path) -> N
             questions_json TEXT NOT NULL, status TEXT NOT NULL,
             answers_json TEXT, created_at TEXT NOT NULL, answered_at TEXT
         );
+        INSERT INTO local_questions
+            (id, run_id, tool_call_id, questions_json, status, answers_json, created_at, answered_at)
+        VALUES ('legacy-question', 'legacy-run', 'legacy-call', '[]', 'pending', NULL, '2026-01-01', NULL);
         CREATE TABLE local_tool_receipts (
             operation_id TEXT PRIMARY KEY, run_id TEXT NOT NULL,
             execution_attempt_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
@@ -140,6 +143,13 @@ async def test_legacy_p10_tables_migrate_before_new_indexes(tmp_path: Path) -> N
         }
         assert {"tool_version", "interrupt_id", "action_index"} <= permission_columns
         assert "execution_namespace" in receipt_columns
+        legacy_question = await (
+            await store._conn.execute(
+                "SELECT wait_cycle_id, interrupt_id FROM local_questions WHERE id = ?",
+                ("legacy-question",),
+            )
+        ).fetchone()
+        assert tuple(legacy_question) == ("legacy-question", "legacy-question")
     finally:
         await store.close()
 

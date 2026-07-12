@@ -34,6 +34,8 @@ from . import __version__
 from .agent.builder import open_checkpointer, open_store
 from .api_schemas import (
     MAX_LOCAL_REQUEST_BODY_BYTES,
+    AnswerQuestionCommand,
+    AnswerQuestionCommandReceipt,
     AnswerQuestionRequest,
     CancelRunCommand,
     CancelRunCommandReceipt,
@@ -1066,12 +1068,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runs = await store.list_runs(principal_id=request.state.principal_id)
         return {"runs": runs}
 
-    @app.post("/local/v1/commands", response_model=CancelRunCommandReceipt)
+    @app.post(
+        "/local/v1/commands",
+        response_model=CancelRunCommandReceipt | AnswerQuestionCommandReceipt,
+    )
     async def accept_command(
         request: Request,
-        body: CancelRunCommand,
+        body: CancelRunCommand | AnswerQuestionCommand,
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
+        coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, AnswerQuestionCommand):
+            command_payload = {
+                "type": body.type,
+                "question_id": body.question_id,
+                "answers": body.answers,
+            }
+            try:
+                replay = await store.accepted_command_receipt(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    command_type=body.type,
+                    payload=command_payload,
+                )
+                if replay is not None:
+                    if replay.get("resumed"):
+                        coordinator.wake_jobs()
+                    return replay
+                question = await store.get_question(body.question_id)
+                if question is None:
+                    raise KeyError(body.question_id)
+                run = await _owned_run(
+                    store,
+                    principal_id=request.state.principal_id,
+                    run_id=str(question["run_id"]),
+                    not_found_detail="question not found",
+                )
+                await _authorized_workspace_path(
+                    store,
+                    principal_id=request.state.principal_id,
+                    path=run.get("workspace_path"),
+                )
+                await coordinator.reconcile_resume_head(str(question["run_id"]))
+                receipt, _created = await store.request_question_answer_command(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    question_id=body.question_id,
+                    answers=body.answers,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="question not found") from exc
+            except (CommandConflictError, WaitDecisionConflictError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except WorkspaceAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if receipt["resumed"]:
+                coordinator.wake_jobs()
+            return receipt
         try:
             receipt, _created = await store.request_run_cancel_command(
                 principal_id=request.state.principal_id,
@@ -1083,7 +1136,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except CommandConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if receipt["canceled"]:
-            coordinator: RunCoordinator = app.state.coordinator
             await coordinator.cancel_run(body.run_id)
         return receipt
 

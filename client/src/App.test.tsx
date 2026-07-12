@@ -876,6 +876,75 @@ describe('user client shell', () => {
     act(() => localRunStream.done())
   })
 
+  it('keeps one durable question answer pending across transport failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-question-command',
+      title: '等待回答',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'question-user', role: 'user', content: '请选择模式', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'question-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_input',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'question.asked',
+            label: '需要你的回答',
+            questionRequestId: 'question-command',
+            questions: [{
+              question: 'Which mode?',
+              header: 'Mode',
+              options: [{ label: 'Mode X' }, { label: 'Mode Y' }],
+            }],
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { questionAnswerFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    fireEvent.click(await screen.findByText('Mode X'))
+    fireEvent.click(screen.getByText('Mode Y'))
+
+    await waitFor(() => {
+      const commands = calls.filter((call) =>
+        call.url.endsWith('/local/v1/commands') &&
+        JSON.parse(String(call.init?.body ?? '{}')).type === 'question.answer')
+      expect(commands.length).toBeGreaterThan(0)
+      expect(commands.map((command) => JSON.parse(String(command.init?.body ?? '{}')))).toEqual(
+        commands.map(() => ({
+        type: 'question.answer',
+        command_id: 'answer_question-command',
+        question_id: 'question-command',
+        answers: { 'Which mode?': ['Mode X'] },
+        })),
+      )
+    })
+    await waitFor(async () => {
+      expect(await localData.listPendingRuntimeCommands()).toEqual([
+        expect.objectContaining({
+          type: 'question.answer',
+          commandId: 'answer_question-command',
+          input: expect.objectContaining({ answers: { 'Which mode?': ['Mode X'] } }),
+        }),
+      ])
+      expect((await localData.get('conv-question-command'))?.messages.at(-1)?.status).toBe(
+        'waiting_input',
+      )
+    })
+  })
+
   it('fires a desktop notification when a local run fails', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
@@ -2543,6 +2612,7 @@ function mockFetch(
 	    localThreadTerminal?: { content: string; status: 'completed' | 'failed'; eventType: 'run.completed' | 'run.failed' }
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
 	    localRunCreateFailures?: number
+	    questionAnswerFailures?: number
 	    localRunCreateGate?: Promise<void>
 	    requireRunCancelBeforeThreadDelete?: boolean
 	    runtimeThreads?: Array<Record<string, unknown>>
@@ -2557,6 +2627,7 @@ function mockFetch(
 	  const localSchedules = options.localSchedules ?? []
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
 	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
+	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
 	  let localRunCanceled = false
 	  let uploadCounter = 0
 	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
@@ -2655,6 +2726,24 @@ function mockFetch(
         type?: string
         command_id?: string
         run_id?: string
+        question_id?: string
+      }
+      if (body.type === 'question.answer') {
+        if (questionAnswerFailures > 0) {
+          questionAnswerFailures -= 1
+          throw new TypeError('connection reset')
+        }
+        return new Response(JSON.stringify({
+          type: body.type,
+          command_id: body.command_id,
+          question_id: body.question_id,
+          run_id: 'local-run',
+          answered: true,
+          resumed: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
       }
       localRunCanceled = true
       return new Response(JSON.stringify({

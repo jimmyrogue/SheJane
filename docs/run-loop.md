@@ -39,12 +39,13 @@
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
   │                                                                                  │
-  │  POST /local/v1/commands  （当前已支持 run.cancel）                              │
-  │       ├─ Renderer 先把取消命令写入同一个 IndexedDB 待发队列                     │
+  │  POST /local/v1/commands  （当前支持 run.cancel 与 question.answer）             │
+  │       ├─ Renderer 先把取消或回答命令写入同一个 IndexedDB 待发队列               │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
   │       ├─ 等待态取消会同时关闭权限、问题、计划审批和其他等待候选                 │
   │       ├─ 同编号同内容返回原回执；同编号不同内容返回 409                         │
   │       ├─ 回执后协调器停止当前执行；权威终态仍由事件与快照返回                   │
+  │       ├─ 回答事务写回答、事件和回执；等待周期齐全时同事务创建恢复作业           │
   │       └─ 旧 /runs/{run_id}/cancel 暂时兼容，桌面客户端已不再调用                │
   │                                                                                  │
   │  Runtime dispatcher                                                              │

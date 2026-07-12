@@ -739,6 +739,10 @@ class LocalStore:
             if column not in question_columns:
                 await conn.execute(f"ALTER TABLE local_questions ADD COLUMN {column} TEXT")
         await conn.execute(
+            "UPDATE local_questions SET wait_cycle_id = COALESCE(wait_cycle_id, id), "
+            "interrupt_id = COALESCE(interrupt_id, id)"
+        )
+        await conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_local_questions_interrupt "
             "ON local_questions(run_id, interrupt_id) WHERE interrupt_id IS NOT NULL"
         )
@@ -1843,6 +1847,19 @@ class LocalStore:
         )
 
     @staticmethod
+    def _run_job_input(run: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "principal_id": run["principal_id"],
+            "goal": run["goal"],
+            "user_input": run.get("user_input") or run["goal"],
+            "workspace_path": run["workspace_path"],
+            "mode": run["mode"],
+            "history": json.loads(run["history_json"] or "[]"),
+            "settings": json.loads(run["settings_json"] or "{}"),
+            "metadata": json.loads(run["metadata_json"] or "{}"),
+        }
+
+    @staticmethod
     def _new_run_job_record(
         *,
         run_id: str,
@@ -1913,6 +1930,46 @@ class LocalStore:
         if run is None:
             raise RuntimeError(f"command {command_id} references a missing run")
         return dict(run)
+
+    @staticmethod
+    async def _accepted_command_receipt_uncommitted(
+        conn: aiosqlite.Connection,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_type: str,
+        payload_json: str,
+    ) -> dict[str, Any] | None:
+        existing = await (
+            await conn.execute(
+                "SELECT command_type, payload_json, response_json "
+                "FROM local_commands WHERE principal_id = ? AND id = ?",
+                (principal_id, command_id),
+            )
+        ).fetchone()
+        if existing is None:
+            return None
+        if existing["command_type"] != command_type or existing["payload_json"] != payload_json:
+            raise CommandConflictError(
+                f"command {command_id} was already accepted with different content"
+            )
+        return json.loads(existing["response_json"])
+
+    async def accepted_command_receipt(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        return await self._accepted_command_receipt_uncommitted(
+            self._conn,
+            principal_id=principal_id,
+            command_id=command_id,
+            command_type=command_type,
+            payload_json=_encode_payload(payload),
+        )
 
     async def accepted_run_for_command(
         self,
@@ -2340,16 +2397,7 @@ class LocalStore:
                 job = self._new_run_job_record(
                     run_id=run_id,
                     kind=kind,
-                    input_payload={
-                        "principal_id": run["principal_id"],
-                        "goal": run["goal"],
-                        "user_input": run.get("user_input") or run["goal"],
-                        "workspace_path": run["workspace_path"],
-                        "mode": run["mode"],
-                        "history": json.loads(run["history_json"] or "[]"),
-                        "settings": json.loads(run["settings_json"] or "{}"),
-                        "metadata": json.loads(run["metadata_json"] or "{}"),
-                    },
+                    input_payload=self._run_job_input(run),
                     resume_payload=resume_payload,
                 )
                 await self._insert_run_job(conn, job)
@@ -2825,23 +2873,16 @@ class LocalStore:
             await conn.execute("PRAGMA busy_timeout=5000")
             await conn.execute("BEGIN IMMEDIATE")
             try:
-                existing = await (
-                    await conn.execute(
-                        "SELECT command_type, payload_json, response_json "
-                        "FROM local_commands WHERE principal_id = ? AND id = ?",
-                        (principal_id, command_id),
-                    )
-                ).fetchone()
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="run.cancel",
+                    payload_json=payload_json,
+                )
                 if existing is not None:
-                    if (
-                        existing["command_type"] != "run.cancel"
-                        or existing["payload_json"] != payload_json
-                    ):
-                        raise CommandConflictError(
-                            f"command {command_id} was already accepted with different content"
-                        )
                     await conn.rollback()
-                    return json.loads(existing["response_json"]), False
+                    return existing, False
                 run = await (
                     await conn.execute(
                         "SELECT id, created_at FROM local_runs WHERE principal_id = ? AND id = ?",
@@ -2861,6 +2902,157 @@ class LocalStore:
                     "INSERT INTO local_commands "
                     "(principal_id, id, command_type, client_message_id, payload_json, "
                     "response_json, run_id, created_at) VALUES (?, ?, 'run.cancel', '', ?, ?, ?, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        payload_json,
+                        _encode_payload(receipt),
+                        run_id,
+                        _now(),
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def request_question_answer_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        question_id: str,
+        answers: dict[str, list[str]],
+    ) -> tuple[dict[str, Any], bool]:
+        payload_json = _encode_payload(
+            {"type": "question.answer", "question_id": question_id, "answers": answers}
+        )
+        answers_json = json.dumps(
+            answers,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="question.answer",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+
+                record = await (
+                    await conn.execute(
+                        "SELECT q.run_id, q.wait_cycle_id, q.status AS question_status, "
+                        "q.answers_json, r.status AS run_status, r.principal_id, "
+                        "r.goal, r.user_input, r.workspace_path, r.mode, r.history_json, "
+                        "r.settings_json, r.metadata_json "
+                        "FROM local_questions q JOIN local_runs r ON r.id = q.run_id "
+                        "WHERE q.id = ? AND r.principal_id = ?",
+                        (question_id, principal_id),
+                    )
+                ).fetchone()
+                if record is None:
+                    raise KeyError(f"unknown question: {question_id}")
+                run_id = str(record["run_id"])
+                workspace_error = await self._workspace_owner_error(
+                    conn,
+                    principal_id=principal_id,
+                    path=record["workspace_path"],
+                ) or await self._workspace_path_error(record["workspace_path"])
+                if workspace_error is not None:
+                    raise WorkspaceAdmissionError(workspace_error)
+
+                if record["question_status"] == "pending":
+                    if record["run_status"] != "waiting_input":
+                        raise WaitDecisionConflictError("run is not awaiting a question answer")
+                    now = _now()
+                    question_cursor = await conn.execute(
+                        "UPDATE local_questions SET status = 'answered', answers_json = ?, "
+                        "answered_at = ? WHERE id = ? AND status = 'pending'",
+                        (answers_json, now, question_id),
+                    )
+                    wait_cursor = await conn.execute(
+                        "UPDATE local_wait_candidates SET status = 'resolved', "
+                        "decision_json = ?, resolved_at = ? "
+                        "WHERE id = ? AND status = 'pending'",
+                        (answers_json, now, question_id),
+                    )
+                    if question_cursor.rowcount != 1 or wait_cursor.rowcount != 1:
+                        raise WaitDecisionConflictError("question was answered concurrently")
+                    await self._append_event_uncommitted(
+                        conn,
+                        run_id,
+                        "question.answered",
+                        payload_json=_encode_payload(
+                            {"request_id": question_id, "answers": answers}
+                        ),
+                        created_at=now,
+                    )
+                elif (
+                    record["question_status"] != "answered"
+                    or str(record["answers_json"] or "") != answers_json
+                ):
+                    raise WaitDecisionConflictError(
+                        "question was already resolved with different content"
+                    )
+
+                resume_payload = await self._wait_cycle_resume_payload_uncommitted(
+                    conn,
+                    run_id=run_id,
+                    wait_cycle_id=str(record["wait_cycle_id"]),
+                )
+                resumed = record["run_status"] in {
+                    "queued",
+                    "running",
+                    "completed",
+                    "failed",
+                }
+                if (
+                    record["run_status"] in {"waiting_permission", "waiting_input"}
+                    and resume_payload is not None
+                ):
+                    active_job = await (
+                        await conn.execute(
+                            "SELECT * FROM local_run_jobs WHERE run_id = ? "
+                            "AND status IN ('pending', 'leased')",
+                            (run_id,),
+                        )
+                    ).fetchone()
+                    if active_job is None:
+                        job = self._new_run_job_record(
+                            run_id=run_id,
+                            kind="resume",
+                            input_payload=self._run_job_input(dict(record)),
+                            resume_payload=resume_payload,
+                        )
+                        await self._insert_run_job(conn, job)
+                    elif active_job["kind"] != "resume":
+                        raise WaitDecisionConflictError("run already has a different active job")
+                    resumed = True
+
+                receipt = {
+                    "type": "question.answer",
+                    "command_id": command_id,
+                    "question_id": question_id,
+                    "run_id": run_id,
+                    "answered": True,
+                    "resumed": resumed,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'question.answer', '', ?, ?, ?, ?)",
                     (
                         principal_id,
                         command_id,
@@ -4288,7 +4480,20 @@ class LocalStore:
         wait_cycle_id: str,
     ) -> dict[str, Any] | None:
         """Build LangGraph's interrupt-id keyed resume payload when complete."""
-        cursor = await self._conn.execute(
+        return await self._wait_cycle_resume_payload_uncommitted(
+            self._conn,
+            run_id=run_id,
+            wait_cycle_id=wait_cycle_id,
+        )
+
+    @staticmethod
+    async def _wait_cycle_resume_payload_uncommitted(
+        conn: aiosqlite.Connection,
+        *,
+        run_id: str,
+        wait_cycle_id: str,
+    ) -> dict[str, Any] | None:
+        cursor = await conn.execute(
             "SELECT * FROM local_wait_candidates "
             "WHERE run_id = ? AND wait_cycle_id = ? "
             "ORDER BY interrupt_id, position",

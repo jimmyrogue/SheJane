@@ -32,6 +32,7 @@ export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunCommandReceipt = Schemas['CancelRunCommandReceipt']
+export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -287,8 +288,21 @@ export interface PendingRunCancelCommand extends PendingRuntimeCommandBase {
   input: { runId: string; threadId: string }
 }
 
-export type PendingRuntimeCommand = PendingRunStartCommand | PendingRunCancelCommand
-export type RuntimeCommandResult = LocalRun | CancelRunCommandReceipt
+export interface PendingQuestionAnswerCommand extends PendingRuntimeCommandBase {
+  type: 'question.answer'
+  input: {
+    questionId: string
+    answers: Record<string, string[]>
+    runId: string
+    threadId: string
+  }
+}
+
+export type PendingRuntimeCommand =
+  | PendingRunStartCommand
+  | PendingRunCancelCommand
+  | PendingQuestionAnswerCommand
+export type RuntimeCommandResult = LocalRun | CancelRunCommandReceipt | AnswerQuestionCommandReceipt
 
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
@@ -389,12 +403,20 @@ export async function deliverPendingRuntimeCommands(
         try {
           const result = command.type === 'run.start'
             ? await createLocalRun(command.input, config, fetcher)
-            : await cancelLocalRunCommand(
-                command.commandId,
-                command.input.runId,
-                config,
-                fetcher,
-              )
+            : command.type === 'run.cancel'
+              ? await cancelLocalRunCommand(
+                  command.commandId,
+                  command.input.runId,
+                  config,
+                  fetcher,
+                )
+              : await answerLocalQuestionCommand(
+                  command.commandId,
+                  command.input.questionId,
+                  command.input.answers,
+                  config,
+                  fetcher,
+                )
           await settle(command, result)
           count += 1
         } catch {
@@ -894,6 +916,26 @@ export async function cancelLocalRunCommand(
   return decodeLocalResponse<CancelRunCommandReceipt>(response)
 }
 
+export async function answerLocalQuestionCommand(
+  commandID: string,
+  questionID: string,
+  answers: Record<string, string[]>,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<AnswerQuestionCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: 'question.answer',
+      command_id: commandID,
+      question_id: questionID,
+      answers,
+    }),
+  })
+  return decodeLocalResponse<AnswerQuestionCommandReceipt>(response)
+}
+
 export async function injectLocalRunInstruction(
   runID: string,
   content: string,
@@ -1047,22 +1089,6 @@ export async function resolveLocalPermission(
     method: 'POST',
     headers: localHeaders(config, true),
     body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    throw new Error(await localErrorMessage(response))
-  }
-}
-
-export async function answerLocalQuestion(
-  requestID: string,
-  answers: Record<string, string[]>,
-  config: LocalHostConfig,
-  fetcher: Fetcher = fetch,
-): Promise<void> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/questions/${encodeURIComponent(requestID)}`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify({ answers }),
   })
   if (!response.ok) {
     throw new Error(await localErrorMessage(response))

@@ -827,6 +827,27 @@ class CancelRunCommandReceipt(BaseModel):
     canceled: bool
 
 
+class AnswerQuestionCommand(AnswerQuestionRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["question.answer"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    question_id: str = Field(min_length=1, max_length=128)
+
+
+class AnswerQuestionCommandReceipt(BaseModel):
+    type: Literal["question.answer"]
+    command_id: str
+    question_id: str
+    run_id: str
+    answered: Literal[True] = True
+    resumed: bool
+
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------

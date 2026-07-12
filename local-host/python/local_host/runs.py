@@ -1593,6 +1593,16 @@ class RunCoordinator:
         self._job_wakeup.set()
         return True
 
+    async def reconcile_resume_head(self, run_id: str) -> bool:
+        run = await self.store.get_run(run_id)
+        if run is None:
+            return False
+        await self._reconcile_graph_head(run)
+        return True
+
+    def wake_jobs(self) -> None:
+        self._job_wakeup.set()
+
     async def cancel_run(self, run_id: str) -> bool:
         state = await self.store.request_run_cancel(run_id)
         if state is None:

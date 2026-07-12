@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  answerLocalQuestionCommand,
   createLocalRun,
   cancelLocalRunCommand,
   deliverPendingRuntimeCommands,
@@ -44,6 +45,44 @@ import {
 const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
 
 describe('desktop local host client', () => {
+  it('submits question answers through the immutable Runtime command endpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'question.answer',
+          command_id: 'answer-question-1',
+          question_id: 'question-1',
+          run_id: 'run-1',
+          answered: true,
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      answerLocalQuestionCommand(
+        'answer-question-1',
+        'question-1',
+        { choice: ['mode X'] },
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ type: 'question.answer', answered: true, resumed: true })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/commands',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'question.answer',
+          command_id: 'answer-question-1',
+          question_id: 'question-1',
+          answers: { choice: ['mode X'] },
+        }),
+      }),
+    )
+  })
+
   it('submits cancellation through the immutable Runtime command endpoint', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -362,6 +401,53 @@ describe('desktop local host client', () => {
     expect(acknowledge).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'run.cancel', commandId: 'cmd-cancel-restart' }),
       expect.objectContaining({ type: 'run.cancel', canceled: true }),
+    )
+  })
+
+  it('redelivers a persisted question answer with its original answers', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'question.answer',
+          command_id: 'answer-question-restart',
+          question_id: 'question-restart',
+          run_id: 'run-restart',
+          answered: true,
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'question.answer',
+          commandId: 'answer-question-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: {
+            questionId: 'question-restart',
+            answers: { choice: ['mode X'] },
+            runId: 'run-restart',
+            threadId: 'thread-restart',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      type: 'question.answer',
+      command_id: 'answer-question-restart',
+      question_id: 'question-restart',
+      answers: { choice: ['mode X'] },
+    })
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'question.answer', commandId: 'answer-question-restart' }),
+      expect.objectContaining({ type: 'question.answer', resumed: true }),
     )
   })
 
