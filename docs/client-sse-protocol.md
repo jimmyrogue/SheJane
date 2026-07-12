@@ -1,5 +1,7 @@
 # Client ⇄ local-host SSE 协议
 
+> 本文只记录当前实现，不是目标运行时协议。目标 P4 的“先读快照再按游标恢复”、每个订阅者独立游标、持久事件与临时增量分层，以及全局资源变化订阅，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把共享队列、`[DONE]` 或逐字持久化当成目标设计。
+
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
 > **文档版本**：post-Phase-5'+，对应客户端 `parseAgentSSEBuffer`（`client/src/shared/api/sse.ts`）+ daemon `RunCoordinator.stream` + `event_translator.translate`。

@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
+The diagram below describes the **current implementation**, including cloud dependencies that the target Runtime architecture intends to remove or make optional. Target P1-P12 stage numbering and migration boundaries live only in [docs/harness-runtime-stages.md](docs/harness-runtime-stages.md).
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Electron renderer (client/) — React 18 + Vite + Tailwind 4    │
@@ -33,7 +35,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 There's also an admin panel (`admin/`) — separate Vite/React app for the model catalog, credit-rate tuning, audit logs, and user/account operations.
 
-The most important architectural file to read first: **[docs/run-loop.md](docs/run-loop.md)** has the complete flow of one agent run from `POST /local/v1/runs` to terminal state, including the LangGraph middleware stack, the auto-approve loop for `scope=run` permission grants, and how SSE events flow back to the client.
+The two runtime truth sources answer different questions:
+
+- **[docs/harness-runtime-stages.md](docs/harness-runtime-stages.md)** — canonical target P1-P12 stages, migration seams, and the mandatory pre-change comparison order.
+- **[docs/run-loop.md](docs/run-loop.md)** — current implementation from `POST /local/v1/runs` to terminal state, including middleware, HITL, and SSE behavior.
+
+Never use `run-loop.md` to invent target phase numbers, and never describe unimplemented target behavior as current code.
 
 **Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook — it carries the detailed backend/billing/frontend rules (store dual-impl, wallet-ledger discipline, Stripe webhook idempotency, admin surfaces, the supported subscription lifecycle). [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. Current priorities live in [docs/roadmap.md](docs/roadmap.md). The product spec is [spec.md](spec.md).
 
@@ -52,6 +59,8 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 5. **`.env` audit is honest.** Every key in `.env` corresponds to a real `os.getenv` / `getEnvInt` / pydantic alias somewhere in the code. Don't add dead keys; don't read undocumented keys. See `.env.example` for the schema with section comments.
 
 6. **Model selection is a catalog, not fast/deep tiers.** Client requests send an Auto sentinel (`auto`, `auto.fast`, `auto.smart`) or a concrete catalog model id. Auto sentinels are resolved by the Go API against enabled chat models and emit `model.selected`; `auto.fast` / `auto.smart` are speed/capability preferences, not fixed tiers or model IDs. The daemon and web loop must not reintroduce their own fast/deep classifiers. The stable model id is still stored in `model_configs.slot` for migration safety, but docs and UI call it "model ID". Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields, with legacy input/output multipliers and `credit_multiplier` only as fallback; the global markup remains the margin knob. Image models are not shown in the chat picker; the current image resolver only supports `image.default`.
+
+7. **Product-specific connectors do not belong in the runtime core.** The retired Lark/Feishu message-sync and todo pipeline must not be restored as private daemon routes, dedicated tables, or client state. Future business-platform integrations should use standard tools or MCP.
 
 ## Common commands
 
@@ -129,11 +138,12 @@ make logs-dev                # snapshot of all of the above
 
 | If you're asking about... | Read |
 |---|---|
+| Canonical target P1-P12 chain, stage number for a change, pre-change comparison checklist | `docs/harness-runtime-stages.md` |
 | One run from POST to terminal — middleware order, HITL, scope=run, SSE events | `docs/run-loop.md` |
+| Existing keep/delete/migrate decisions by target stage | `docs/harness-stage-improvement-notes.md` |
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
-| Historical Node → Python migration background | `docs/migration-langgraph.md` |
 | Model catalog / provider routing | `api/internal/modelreg/`, `api/internal/llm/router.go`, `api/internal/app/model_resolver.go`, `api/internal/httpapi/admin_modelconfig.go`, `admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
 | Daemon code | `local-host/python/local_host/` — `server.py` router, `runs.py` run loop, `llm/resolve.py` asks the Go API to resolve Auto once per run, `agent/builder.py` wires the middleware stack, `agent/subagents.py` defines deepagents subagents (invoked via the injected `task` tool), `middleware/` is the input-guard/plan-first/reflect/tool-critic/output-guard/memory-writeback stack, `tools/` has the `@tool` functions, `store/sqlite.py` is the local checkpoint + KV store |
 | API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |

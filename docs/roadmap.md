@@ -1,8 +1,9 @@
 # SheJane Roadmap
 
-> 更新日期：2026-06-14
+> 更新日期：2026-07-12
 >
 > 结构约定：**未完成的事项按优先级 P0 → P4 排在前面**，每项附实现思路与参考方向；已完成的事项收在文末「已完成存档」，作为实现记录保留。完成一项就把它移到存档，避免双份状态。
+> 这里的 P0-P4 是路线图优先级，不是 Harness Runtime 的 P1-P12 阶段编号。
 >
 > 本次优先级吸收了 2026-06-13 与现代 agent harness（Claude Code / Codex CLI / Cursor）的能力对标结论：P1 = 高收益低成本（基建现成），P2 = 中收益跟进，P4 = 高成本战略投资。
 
@@ -21,7 +22,8 @@
 - Electron 主进程文案已接入桌面端共享 locale 资源：menu、daemon 错误弹窗、workspace 选择弹窗和 auth bridge generic error 统一走 `client/shared/desktop-i18n.json`；启动时优先读取上次 renderer 写入的 locale，没有记录时按系统语言归一到 zh/en。
 - Release workflow 已对 GHCR 镜像增加供应链守门：Trivy HIGH / CRITICAL 漏洞扫描作为签名前 gate，Syft 生成 SPDX JSON SBOM 并附到 tag 的 GitHub Release，Cosign 使用 GitHub OIDC keyless 签名镜像 digest。
 - Nightly External Smoke 在 GitHub Actions 中会对缺失 secret 显式降级：缺 `SHEJANE_API_BASE_URL` 跳过整套并写 warning / job summary，缺 `STRIPE_WEBHOOK_SECRET` 只跳过 Stripe webhook smoke，避免金丝雀因未配置 secret 直接红掉。
-- 文档入口收敛为 `CLAUDE.md`、`AGENTS.md`、`docs/run-loop.md`、`docs/client-sse-protocol.md`、`docs/document-tool-policy.md`、`docs/self-correction-stack.md`、`docs/operations.md`、本路线图。旧 status 快照、旧模型目录设计稿、旧 Node 架构图和 Phase 0 spike 报告已删除。
+- 文档入口收敛为 `CLAUDE.md`、`AGENTS.md`、`docs/harness-runtime-stages.md`（目标 P1-P12 唯一编号）、`docs/harness-stage-improvement-notes.md`（待优化记录）、`docs/run-loop.md`（当前实现）、`docs/client-sse-protocol.md`、`docs/document-tool-policy.md`、`docs/operations.md` 和本路线图。旧状态快照、迁移记录、差距报告和分散研究文档已删除。
+- 飞书连接器、消息同步、待办提取、“今日待办”界面及相关专用接口已经删除。业务平台集成不再进入运行内核，未来统一通过标准工具或 MCP 接入。
 - 发布标签已对齐：`v0.1.9`（`3438f02`）包含生图重复回复修复（`3ec14c7`）和可配置模型目录（`1ff449d`）；main 仅领先一个 UI polish 提交（`151ec96`），下次打 tag 带上即可。
 - 2026-06-13 harness 对标结论：HITL 权限、checkpoint/恢复、MCP 多源发现、Skills、中间件式自我纠错栈（plan-first / tool-critic / verification-loop / progress-ledger）已对齐甚至领先现代 harness；多 provider 模型目录和 Reserve→Settle 计费是参照物没有的差异化资产。主要缺口（mid-run steering、计划审批、subagent 配置化、语义摘要/记忆、Auto 可靠性路由）已按收益 × 难度编入下面的 P1/P2/P4。
 
@@ -94,7 +96,7 @@
 | P3 | web 文档问答与工具组合策略 | 成功 | 新增 `docs/document-tool-policy.md`，明确附件 × 工具矩阵：纯文本可走 web/cloud/local tools；上传 PDF/DOCX/XLSX 进入 document-grounded Q&A，多个文档注入同一个上下文，但本 turn 不混用 web search、image generation、code execution、本地项目工具、MCP 或 Skills；图片附件仍保留 Local Host image-edit 路径。Composer 在有附件且工具入口可用时显示紧凑「附件模式」状态 chip，tooltip 说明本 turn 暂停网页/图片工具；dev harness 增加 `?attachment=1` 便于 UI QA。验证：`npm test -- --run src/features/chat/components/Composer.test.tsx`、`cd client && npm run build`、Browser 打开 `http://127.0.0.1:5174/harness.html?view=chat&attachment=1`，确认页面标题、DOM 中唯一「附件模式」状态、tooltip、输入交互和移动宽度状态均正常且 console 无 error/warn；Browser 截图接口两次因 CDP `Page.captureScreenshot` 超时未产出截图。 |
 | P3 | 键盘快捷键与帮助面板 | 成功 | App 全局快捷键扩展为 `Cmd/Ctrl+N` 新建对话、`Cmd/Ctrl+K` 展开侧栏并聚焦会话搜索、`Esc` 关闭快捷键面板或停止当前可取消 run、`?` 打开快捷键帮助面板；输入框/可编辑区域不会触发 `?` 帮助。`ConversationSidebar` 新增受控 `searchRequestVersion`，复用现有搜索 UI；帮助面板复用 shadcn Dialog，以动作 + `kbd` 键位列表展示。验证：`npm test -- --run src/App.test.tsx`、`cd client && npm run build`、`git diff --check`、Browser 重新加载 `harness.html?view=chat&attachment=1` 确认页面无 console error/warn。 |
 | P3 | Electron 主进程中文串接入 i18n | 成功 | 新增 `client/shared/desktop-i18n.json` 作为 Electron main/preload 与 renderer 可共享的桌面文案资源，`client/electron/desktop-i18n.cjs` 负责 locale 归一、模板插值和文案读取；menu、daemon 错误弹窗、workspace 选择弹窗与 auth bridge generic fallback 都改为读取共享文案。启动 locale 改为优先使用 renderer 之前写入的 dock-lang，没有记录时读取系统 locale（`en-US` 等归一为 `en`，其余归一为 `zh`）。`electron-builder.yml` 已把 `shared/**/*` 纳入 asar。验证：`npm test -- --run electron/menu.test.ts src/shared/api/electronAuthBridge.test.ts`、`node -e "const i18n=require('./client/electron/desktop-i18n.cjs'); console.log(i18n.normalizeDesktopLocale('en-US'), i18n.desktopText('en-US','dialogs.selectWorkspaceTitle'))"`、`rg` 确认主进程中文只剩共享资源和测试断言、`cd client && npm run build`。 |
-| P3 | 中间件自我纠错栈对外文档化 | 成功 | 新增 `docs/self-correction-stack.md`，把 plan-first、计划审批、tool critic、verification loop、progress ledger 和 reflect 从内部时序图整理成面向用户/评估者的能力说明，覆盖触发点、配置开关、用户可见信号、边界和关键源码；`docs/run-loop.md` 与 `docs/operations.md` 已补入口链接。验证：人工核对 `docs/run-loop.md` 中间件矩阵、`local-host/python/local_host/middleware/*.py` docstring 和 `local-host/python/local_host/agent/builder.py` 装配顺序。 |
+| P3 | 中间件说明归档 | 成功 | 当前装配和事件统一保留在 `docs/run-loop.md`；目标保留、替换和删除决定已经合并进 `docs/harness-stage-improvement-notes.md` 的 P8-P11，不再维护单独的中间件说明。 |
 | P4 | 语义摘要 + 语义记忆（共享 embedding 基建） | 跳过 | 本轮可行性核对后未实施：当前只有确定性历史摘要、workspace namespace 隔离、显式 `user_fact` 和 keyword/recency `memory.search`；完整 P4 需要新增云端 embedding/model registry 能力、Reserve/Settle 计费、Local Host 向量索引启用、LLM compact 策略、事实抽取/合并/过期验证和迁移测试，无法在一次线性清单执行中安全完成。该项保留在 P4 backlog，下一步应先拆成 embedding 网关 + 语义 memory MVP + LLM compact 三个可验收子任务。依据：`rg embedding/vector/semantic/memory.search/max_history_turns`、`docs/run-loop.md`、`docs/operations.md`、`local-host/python/local_host/tools/memory.py`。 |
 | P4 | 失败后的一键恢复工作流（统一 orchestrator） | 跳过 | 本轮可行性核对后未实施：现有 retry/repair/quota/auth/workspace 已有入口、metadata、per-target in-flight guard 和观察器，但统一 orchestrator 会改动失败分类、UI recovery target、钱包/session/workspace 前置条件、确认流与 run 重启编排，跨 client、daemon 和测试面较大；仓促合并会比现状的显式按钮更容易造成误重跑。该项保留在 P4 backlog，建议先写状态机 spec，再按一个 category 一次迁移。依据：`rg retry/repair/recovery/failure/action_kind`、`docs/run-loop.md`、`docs/operations.md`、`client/src/App.tsx`、`client/src/features/chat/components/AgentProgress.tsx`。 |
 | P4 | 跨设备会话同步 | 跳过 | 本轮可行性核对后未实施：当前产品边界明确为聊天正文 local-first，后端只存 usage metadata、billing、run 摘要和审计；跨设备同步需要先决定是否同步完整消息、是否端到端加密、冲突解决、删除/导出语义和本地 run 工件边界。该项不是纯工程缺口，继续保留在 P4 backlog，产品决策完成后再做 schema/API/client sync 设计。依据：`rg conversation/messages/IndexedDB/local-first/sync/encrypt`、`AGENTS.md`、`docs/operations.md`、`client/src/shared/local-data`。 |

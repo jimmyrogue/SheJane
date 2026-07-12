@@ -18,59 +18,12 @@
 1. 选一个空闲环回端口(`net.createServer().listen(0)`,不再硬编码 17371)。
 2. 生成**一次性随机配对 token**(`crypto.randomBytes(32).toString('hex')`)。
 3. `child_process.spawn` 冻结的 daemon(`process.resourcesPath/local-host/shejane-local-host[.exe]`),**scrubbed 环境**:
-   `SHEJANE_LOCAL_HOST_ADDR=127.0.0.1`、`SHEJANE_LOCAL_HOST_PORT=<freePort>`、`SHEJANE_LOCAL_HOST_TOKEN=<token>`、`SHEJANE_LOCAL_DESKTOP_RESOURCES_PATH=process.resourcesPath`、`SHEJANE_CLOUD_BASE_URL=https://app.shejane.com`、`PYTHONUNBUFFERED=1`、`PATH/HOME/TMPDIR` —— **绝不转发任何 provider 密钥**(Invariant #1)。
+   `SHEJANE_LOCAL_HOST_ADDR=127.0.0.1`、`SHEJANE_LOCAL_HOST_PORT=<freePort>`、`SHEJANE_LOCAL_HOST_TOKEN=<token>`、`SHEJANE_CLOUD_BASE_URL=https://app.shejane.com`、`PYTHONUNBUFFERED=1`、`PATH/HOME/TMPDIR` —— **绝不转发任何 provider 密钥**(Invariant #1)。
 4. 把同一 `SHEJANE_LOCAL_HOST_URL` + `SHEJANE_LOCAL_HOST_TOKEN` 写进 main 自身 `process.env`,`preload.cjs` 据此交给渲染层(目前唯一的交接通道,无 IPC)。
 5. 轮询 `GET /local/v1/health`(免鉴权路径)直到 200,期间显示 splash;超时弹 `dialog.showErrorBox`。
 6. `loadFile(dist/index.html)`。
 
 退出时**强杀**:POSIX `SIGKILL` 进程组 / Windows `taskkill /T /F`(uvicorn 吞 SIGTERM,见 CLAUDE.md Invariant #4)。绑到 `before-quit/will-quit`,**不是窗口关闭**(本应用关窗=隐藏到托盘)。可写状态在 `~/.shejane`,只读签名包不被写。
-
-## Lark / 飞书 CLI 连接器资源
-
-桌面版会把官方 `lark-cli` 作为产品连接器放在 asar 外,路径固定为:
-
-```text
-process.resourcesPath/connectors/lark/<platform>-<arch>/lark-cli[.exe]
-```
-
-local-host 的发现顺序是:
-
-1. packaged app 里的 `process.resourcesPath/connectors/lark/...`;
-2. dev 脚本传入的 `client/electron/connectors/lark/...`;
-3. 开发环境的系统 `PATH` 里的 `lark-cli`。
-
-连接器 manifest 在 `client/electron/connectors/lark/manifest.json`,当前钉到官方 `larksuite/cli` `v1.0.53`,覆盖:
-
-- `darwin-arm64/lark-cli`
-- `darwin-x64/lark-cli`
-- `win32-x64/lark-cli.exe`
-
-准备命令:
-
-```bash
-cd client
-npm run prepare:connectors
-npm run verify:connectors
-```
-
-`prepare:connectors` 会下载 manifest 中的官方 release archive,先校验 `archiveSha256`,再解压出可执行文件并写入 `client/electron/connectors/lark/<target>/...`;`verify:connectors` 再校验最终二进制的 `binarySha256`。这些二进制是本地/CI 生成物,已在 `.gitignore` 中排除,不要提交进仓库。标准 `npm run dist` / `npm run dist:dir` 会先跑 `prepare:connectors` 和 `verify:connectors`,缺少 Windows x64 或任一目标 checksum 不匹配都会阻断打包。
-
-Windows 基线仍是 **Windows 10+ x64**。v1 不提供 Windows ia32;Windows arm64 CLI 已有官方 release asset,但 SheJane 当前 electron-builder 目标只有 `win.x64`,所以 manifest 暂不把 `win32-arm64` 标成 required。
-
-Windows smoke:
-
-1. 在 Windows x64 runner 或本机执行 `make build-daemon`,再 `cd client && npm run dist:dir`。
-2. 执行 `npm run smoke:packaged-lark`。该脚本会启动 unpacked app,等待 packaged main 进程写出临时 smoke handoff,确认 local-host health 正常,调用 `/local/v1/lark/status` 验证飞书 Lark 使用 `bundled` connector,再调用 disconnect 并确认没有残留的 packaged `lark-cli` 子进程。
-3. 手动打开「连接」页复核一遍 UI 文案:飞书 Lark 行应显示 `内置 lark-cli`;未登录时应是 `需要授权` 或受控的未连接/连接异常状态,不能显示缺失 CLI。
-
-macOS 本机快速 smoke:
-
-```bash
-make build-daemon
-cd client
-npm run dist:dir
-npm run smoke:packaged-lark
-```
 
 ## 关键现实(调研 + 对抗验证确认,会改变做法)
 

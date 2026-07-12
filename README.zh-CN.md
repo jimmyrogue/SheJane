@@ -43,7 +43,22 @@
 └─────────────────────────────┘        └─────────────────────────┘
 ```
 
-独立的**管理后台**(`admin/`)负责模型注册表、积分费率和审计日志。
+独立的**管理后台**(`admin/`)负责模型注册表、积分费率、用户、订单和审计日志。
+
+## 当前实现与方案
+
+| 领域 | 当前实现 |
+|---|---|
+| 产品形态 | 本地优先桌面聊天 + 云端账号、计费、模型控制面。 |
+| 模型 | `Auto`、`auto.fast`、`auto.smart` 由 Go API 基于后台启用的 chat 模型解析；daemon 不再做 fast/deep 分层判断。 |
+| 计费 | LLM 与云端工具统一 credits,走 reserve -> settle -> release；Stripe Checkout 是一次性充值。 |
+| 文档 | Composer 支持多文件 PDF/DOCX/XLSX/图片附件；文档问答使用短期 S3 对象,不是团队向量库。 |
+| 本地 agent | LangGraph/deepagents run loop,含 HITL 审批、checkpoint、subagent、skills、MCP、本机定时 run、verification loop 和 progress ledger。 |
+| 业务平台集成 | 不再内置飞书连接器。未来统一通过标准工具或 MCP 接入，不增加平台专用运行链路。 |
+| 安全开源状态 | `main` 已合入开源硬化：`.env*` 忽略并被 hook 拦截,生产 Postgres 缺 `POSTGRES_PASSWORD` 会 fail closed,本地工具受工作区/审批约束,provider key 只在 Go API。 |
+
+刻意暂缓：embedding 语义记忆/摘要、跨失败类型的一键恢复 orchestrator、
+跨设备聊天同步、admin 退款/手工改订单、应用签名与公证。
 
 ## 功能
 
@@ -51,6 +66,8 @@
   复杂任务,全走一个输入入口。
 - **本地 agent harness** —— LangGraph + deepagents 中间件栈:规划、工具
   调用、记忆、上下文压缩、验证、以及 human-in-the-loop 权限确认。
+- **Auto 模型目录** —— 管理员配置模型 ID、provider、厂商信息、能力档位、
+  token 成本价和生图价格；用户端看到 Auto 与已启用 chat 模型。
 - **工具**
   - 授权工作区内的文件系统读写
   - Office 读**写** —— `.docx` / `.xlsx` / `.pptx`(copy-on-write,原文件不动)
@@ -63,11 +80,11 @@
 - **应用内文档预览** —— 右侧面板渲染 `.docx` / `.xlsx` / `.pptx` 大纲和
   PDF(Chromium 阅读器),支持下载。
 - **云端控制面** —— JWT 鉴权、积分账本(预留 → 结算 → 释放)、模型路由
-  (DeepSeek / OpenAI 兼容 / Anthropic)、Stripe 订阅计费、S3 文档存储。
+  (DeepSeek / OpenAI 兼容 / Anthropic)、Stripe 一次性充值、S3 文档存储。
 - **本地优先历史** —— 聊天存在浏览器(IndexedDB);后端只存用量元数据 +
   计费,不存完整聊天正文。
 - **天然的密钥边界** —— 平台付费 provider key 只在 Go API;daemon 把计费类
-  工具通过云端 Tool Gateway 代理。CI 强制校验。
+  工具通过云端 Tool Gateway 代理。hook、CI 和运行时配置检查共同强制校验。
 
 ## 快速开始
 
@@ -84,6 +101,7 @@ make dev-electron           # Docker(Postgres/API)+ daemon + Vite + Electron
 key 基本够用)。完整带注释的配置项见 [`.env.example`](./.env.example)。
 
 出问题?`make doctor` 会诊断常见的「为什么 dev 跑不起来」。
+不要提交 `.env`;仓库只跟踪 `.env.example`。
 
 ## 技术栈
 
@@ -108,8 +126,11 @@ e2e/             Playwright 端到端测试
 ## 文档
 
 - **[CLAUDE.md](./CLAUDE.md)** —— 架构、关键不变量、代码位置、常用命令。
-- **[docs/run-loop.md](./docs/run-loop.md)** —— 一次 agent run 从 POST 到终态(中间件、HITL、SSE 事件)。
-- **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** —— 客户端 ↔ daemon 的 SSE 线格式。
+- **[docs/harness-runtime-stages.md](./docs/harness-runtime-stages.md)** —— 目标运行时唯一的 P1-P12 阶段编号和修改前检查顺序。
+- **[docs/harness-stage-improvement-notes.md](./docs/harness-stage-improvement-notes.md)** —— P1-P12 的保留、替换、删除、迁移和验收决定。
+- **[docs/run-loop.md](./docs/run-loop.md)** —— 当前实现中一次任务从提交到结束的真实流程。
+- **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** —— 客户端与本地运行时之间的 SSE 接口。
+- **[docs/document-tool-policy.md](./docs/document-tool-policy.md)** —— 附件与工具组合规则。
 - **[docs/operations.md](./docs/operations.md)** —— 部署 + 运维手册。
 - **[docs/roadmap.md](./docs/roadmap.md)** —— 当前优先级和暂缓事项。
 - **[spec.md](./spec.md)** —— 本地 agent harness 规格。
@@ -119,6 +140,7 @@ e2e/             Playwright 端到端测试
 ```bash
 make lint        # ruff + gofmt + go vet + 密钥边界校验
 make test        # 四个栈(Go + Python + client + admin)
+make build       # API + client + admin + daemon 依赖的生产构建
 make test-e2e    # Playwright 模拟端到端
 ```
 

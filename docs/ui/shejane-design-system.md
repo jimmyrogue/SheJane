@@ -64,7 +64,7 @@ The primary shell is a utility surface, not a landing page.
 
 - The window background is `--sj-paper` edge to edge. Do not wrap the app in an outer card, border, or old-style framed shell.
 - The left sidebar is a floating raised-paper island: about `192px` wide at the default desktop width, `12px` from the window edges, `14px` radius, a hairline border, and a barely visible shadow.
-- Sidebar top hierarchy is logo, `新对话`, `今日 · 待办`, then the conversation list. Local-daemon actions (`技能`, `连接`) and `设置` belong in the bottom footer, not in the top nav.
+- Sidebar top hierarchy is logo, `新对话`, then the conversation list. Local-daemon actions (`技能`, `连接`) and `设置` belong in the bottom footer, not in the top nav.
 - The main chat area remains paper, not a white panel. The message row column is centered at about `700px`.
 - User messages are small raised-paper bubbles with a hairline; assistant messages are plain rich text on paper.
 - The composer is a bottom floating island: about `560px` wide, raised paper, `10px` radius, light hairline, and quiet icon tools below the editor line.
@@ -86,8 +86,6 @@ Attachments and generated artifacts use single-color type glyphs instead of colo
 Cards should be small raised-paper objects with a hairline, not colored badges. Clicking previewable files opens the right floating preview panel; non-previewable files keep the external/download action.
 
 ## Future Product Surfaces
-
-The v4 prototype includes `今日 · 待办`, todo references inside messages, and daily-summary explorations. Those are product capabilities, not just visual styling. Until the backend/data model exists, document and prototype them as future work rather than shipping fake todo data in the real app.
 
 When these features are implemented:
 

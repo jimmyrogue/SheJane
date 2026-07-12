@@ -1,8 +1,9 @@
 # Run Loop —— 当前能力实现态
 
 > **范围**：`local-host/python/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
-> **关联**：[client-sse-protocol.md](client-sse-protocol.md) · [self-correction-stack.md](self-correction-stack.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
-> **状态**：当前实现态。历史 Node→Python 迁移背景见 [migration-langgraph.md](migration-langgraph.md)，不要把那份迁移计划当成当前架构入口。
+> **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) · [client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
+> **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
+> **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
 
 ---
 

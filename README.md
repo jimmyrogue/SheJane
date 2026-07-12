@@ -15,6 +15,10 @@ English · [简体中文](./README.zh-CN.md)
 ---
 
 > **Status:** pre-1.0, under active development. APIs and schemas may change.
+>
+> **Naming:** the product is **SheJane** / **石间**. `shejane` remains the
+> compatibility name for package names, paths, and `SHEJANE_*` environment
+> variables.
 
 ## What it is
 
@@ -43,7 +47,23 @@ auth/billing/documents.
 ```
 
 A standalone **admin panel** (`admin/`) handles the model registry, credit
-rates, and audit logs.
+rates, users, orders, and audit logs.
+
+## Current shape
+
+| Area | Current implementation |
+|---|---|
+| Product | Local-first desktop chat with a cloud account/billing/model plane. |
+| Models | `Auto`, `auto.fast`, and `auto.smart` resolve in the Go API against enabled admin-defined chat models; the daemon does not classify fast/deep tiers. |
+| Billing | Unified credits with reserve -> settle -> release for LLM and cloud tools; Stripe Checkout is a one-time top-up flow. |
+| Documents | Multi-file PDF/DOCX/XLSX/image attachments in the composer; document Q&A uses temporary S3 objects, not a team vector library. |
+| Local agent | LangGraph/deepagents run loop with HITL approvals, checkpoints, subagents, skills, MCP, local schedules, verification, and progress ledger. |
+| Business integrations | No built-in Lark/Feishu connector. Future platform integrations should use standard tools or MCP instead of private runtime paths. |
+| Security posture | Open-source hardening is in `main`: `.env*` is ignored/guarded, production Postgres fails closed without `POSTGRES_PASSWORD`, local tools are workspace/approval bounded, and provider keys stay in the Go API. |
+
+Deliberately deferred: semantic memory/summary with embeddings, one-click
+recovery orchestration across failure categories, cross-device chat sync,
+admin refunds/manual order mutation, and app signing/notarization.
 
 ## Features
 
@@ -52,6 +72,9 @@ rates, and audit logs.
 - **Local agent harness** — LangGraph + deepagents middleware stack:
   planning, tool calls, memory, context compaction, verification, and
   human-in-the-loop permission gating.
+- **Auto model catalog** — admins configure model IDs, providers, vendor
+  metadata, capability tiers, token prices, and image pricing; users see Auto
+  plus enabled chat models.
 - **Tools**
   - Filesystem over an authorized workspace
   - Office read **and** write — `.docx` / `.xlsx` / `.pptx` (copy-on-write, original never touched)
@@ -65,12 +88,12 @@ rates, and audit logs.
   `.pptx` outlines and PDFs (Chromium viewer), with download.
 - **Cloud control plane** — JWT auth, a credit ledger (reserve → settle →
   release), LLM routing (DeepSeek / OpenAI-compatible / Anthropic), Stripe
-  pay-as-you-go credit top-ups, and S3-backed document storage.
+  one-time credit top-ups, and S3-backed document storage.
 - **Local-first history** — chat lives in the browser (IndexedDB); the
   backend stores usage metadata + billing, not full chat bodies.
 - **Secret boundary by design** — platform-paid provider keys live only in
   the Go API; the daemon proxies billed tools through the cloud Tool
-  Gateway. Enforced in CI.
+  Gateway. Enforced by hooks, CI, and runtime config checks.
 
 ## Quick start
 
@@ -88,6 +111,7 @@ provider key in `.env` (a DeepSeek key covers most of it). See
 [`.env.example`](./.env.example) for the full, commented config schema.
 
 Trouble? `make doctor` diagnoses the common "why isn't dev working" causes.
+Never commit `.env`; only `.env.example` is tracked.
 
 ## Tech stack
 
@@ -112,9 +136,11 @@ e2e/             Playwright end-to-end tests
 ## Documentation
 
 - **[CLAUDE.md](./CLAUDE.md)** — architecture, the critical invariants, where things live, common commands.
-- **[docs/run-loop.md](./docs/run-loop.md)** — one agent run from POST to terminal (middleware, HITL, SSE events).
+- **[docs/harness-runtime-stages.md](./docs/harness-runtime-stages.md)** — the canonical target P1-P12 stages and mandatory pre-change comparison order.
+- **[docs/harness-stage-improvement-notes.md](./docs/harness-stage-improvement-notes.md)** — consolidated keep, replace, delete, migration, and acceptance decisions for P1-P12.
+- **[docs/run-loop.md](./docs/run-loop.md)** — the current implementation from POST to terminal (middleware, HITL, SSE events).
 - **[docs/client-sse-protocol.md](./docs/client-sse-protocol.md)** — the client ↔ daemon SSE wire format.
-- **[docs/agent-architecture-gap-review.md](./docs/agent-architecture-gap-review.md)** — current completion/gap review against LangGraph, harness, OpenAI Agents SDK, and MCP patterns.
+- **[docs/document-tool-policy.md](./docs/document-tool-policy.md)** — attachment/tool mixing rules.
 - **[docs/operations.md](./docs/operations.md)** — deployment + operations runbook.
 - **[docs/roadmap.md](./docs/roadmap.md)** — current priorities and deferred work.
 - **[spec.md](./spec.md)** — the local agent harness specification.
@@ -124,6 +150,7 @@ e2e/             Playwright end-to-end tests
 ```bash
 make lint        # ruff + gofmt + go vet + secret-boundary guard
 make test        # all four stacks (Go + Python + client + admin)
+make build       # production build for API + client + admin + daemon deps
 make test-e2e    # Playwright simulated end-to-end
 ```
 

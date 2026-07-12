@@ -4,6 +4,18 @@ The first stop for coding agents (and humans) working in this repository. Keep i
 
 For the full architecture, the critical invariants, and "where things live", read **[CLAUDE.md](./CLAUDE.md)** first. Dev setup + workflow live in **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 
+## Runtime Stage Discipline
+
+For any work touching Desktop ↔ Runtime startup, Commands, Runs, Events, Workers, Agent execution, Tools, Checkpoints, or terminal state:
+
+1. Read **[docs/harness-runtime-stages.md](./docs/harness-runtime-stages.md)** and identify one canonical `primary_stage` before changing code.
+2. Read the stage's immediate upstream and downstream contracts in order.
+3. Compare the target stage with the current implementation in **[docs/run-loop.md](./docs/run-loop.md)**.
+4. Check existing decisions in **[docs/harness-stage-improvement-notes.md](./docs/harness-stage-improvement-notes.md)**.
+5. Record the primary stage, affected adjacent stages, canonical state owner, and old path being replaced in the implementation plan or handoff.
+
+Do not invent a second P1-P12 numbering scheme. `run-loop.md` describes current code; `harness-runtime-stages.md` alone owns target stage numbers.
+
 ## Product shape
 
 SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
@@ -16,7 +28,7 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
 
-See CLAUDE.md for the request flow, the SSE protocol, and the critical invariants.
+See CLAUDE.md for the architecture map and critical invariants. Use the canonical stage document above for target request flow and `run-loop.md` for current request flow.
 
 ## Commands
 
