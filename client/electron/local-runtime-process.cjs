@@ -4,6 +4,57 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function isPortConflictError(output) {
+  const normalized = String(output).toLowerCase()
+  return normalized.includes('address already in use') || normalized.includes('winerror 10048')
+}
+
+function waitForRuntimeProcessClose(child, timeoutMs = 2000) {
+  if (child.runtimeClosed) {
+    return Promise.resolve(true)
+  }
+  return new Promise((resolve) => {
+    const onClose = () => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      child.off('close', onClose)
+      resolve(false)
+    }, timeoutMs)
+    child.once('close', onClose)
+  })
+}
+
+async function startRuntimeWithPortRetry({
+  maxAttempts = 3,
+  timeoutMs = 30000,
+  start,
+  ready,
+  retryable,
+  stop,
+}) {
+  const deadline = Date.now() + timeoutMs
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (Date.now() >= deadline) {
+      return null
+    }
+    const child = await start()
+    const remainingMs = Math.max(0, deadline - Date.now())
+    if (remainingMs > 0 && await ready(child, remainingMs)) {
+      return child
+    }
+
+    const stoppedBeforeCleanup = child.exitCode !== null
+    await stop(child)
+    const shouldRetry = stoppedBeforeCleanup && retryable(child)
+    if (!shouldRetry) {
+      return null
+    }
+  }
+  return null
+}
+
 async function waitForRuntimeReady({
   baseURL,
   token,
@@ -108,6 +159,9 @@ async function stopRuntimeProcess(child, {
 }
 
 module.exports = {
+  isPortConflictError,
+  startRuntimeWithPortRetry,
   stopRuntimeProcess,
   waitForRuntimeReady,
+  waitForRuntimeProcessClose,
 }

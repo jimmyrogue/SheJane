@@ -3,7 +3,22 @@ import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { stopRuntimeProcess, waitForRuntimeReady } = require('./local-runtime-process.cjs') as {
+const {
+  isPortConflictError,
+  startRuntimeWithPortRetry,
+  stopRuntimeProcess,
+  waitForRuntimeReady,
+  waitForRuntimeProcessClose,
+} = require('./local-runtime-process.cjs') as {
+  isPortConflictError: (output: string) => boolean
+  startRuntimeWithPortRetry: <T extends { exitCode: number | null }>(options: {
+    maxAttempts?: number
+    timeoutMs?: number
+    start: () => Promise<T>
+    ready: (child: T, timeoutMs: number) => Promise<boolean>
+    retryable: (child: T) => boolean
+    stop: (child: T) => Promise<void>
+  }) => Promise<T | null>
   waitForRuntimeReady: (options: {
     baseURL: string
     token: string
@@ -23,6 +38,10 @@ const { stopRuntimeProcess, waitForRuntimeReady } = require('./local-runtime-pro
       forceKill: (pid: number) => void | Promise<void>
     },
   ) => Promise<void>
+  waitForRuntimeProcessClose: (
+    child: EventEmitter & { runtimeClosed?: boolean },
+    timeoutMs?: number,
+  ) => Promise<boolean>
 }
 
 function runtimeProcess(kill: (signal: string) => boolean) {
@@ -30,6 +49,93 @@ function runtimeProcess(kill: (signal: string) => boolean) {
 }
 
 describe('Electron local Runtime process lifecycle', () => {
+  it('recognizes only address-in-use startup errors as port conflicts', () => {
+    expect(isPortConflictError("ERROR: [Errno 48] address already in use")).toBe(true)
+    expect(isPortConflictError('OSError: [WinError 10048] only one usage is permitted')).toBe(true)
+    expect(isPortConflictError('Runtime database migration failed')).toBe(false)
+  })
+
+  it('retries a new port only when the previous Runtime already stopped', async () => {
+    const stopped = { exitCode: 98, portConflict: false }
+    const ready = { exitCode: null }
+    const start = vi.fn()
+      .mockResolvedValueOnce(stopped)
+      .mockResolvedValueOnce(ready)
+    const checkReady = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    const stop = vi.fn().mockImplementation(async (child) => {
+      child.portConflict = true
+    })
+
+    await expect(startRuntimeWithPortRetry({
+      start,
+      ready: checkReady,
+      retryable: (child) => child.portConflict === true,
+      stop,
+    })).resolves.toBe(ready)
+    expect(start).toHaveBeenCalledTimes(2)
+    expect(stop).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledWith(stopped)
+  })
+
+  it('waits for stdio close before classifying a stopped Runtime', async () => {
+    const child = Object.assign(new EventEmitter(), { runtimeClosed: false })
+    const closed = waitForRuntimeProcessClose(child, 100)
+    child.runtimeClosed = true
+    child.emit('close')
+
+    await expect(closed).resolves.toBe(true)
+  })
+
+  it('does not retry a Runtime that is still alive after readiness times out', async () => {
+    const alive = { exitCode: null }
+    const start = vi.fn().mockResolvedValue(alive)
+    const stop = vi.fn().mockResolvedValue(undefined)
+
+    await expect(startRuntimeWithPortRetry({
+      start,
+      ready: async () => false,
+      retryable: () => false,
+      stop,
+    })).resolves.toBeNull()
+    expect(start).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledWith(alive)
+  })
+
+  it('does not retry a stopped Runtime unless the failure is a port conflict', async () => {
+    const configFailure = { exitCode: 1 }
+    const start = vi.fn().mockResolvedValue(configFailure)
+
+    await expect(startRuntimeWithPortRetry({
+      start,
+      ready: async () => false,
+      retryable: () => false,
+      stop: async () => undefined,
+    })).resolves.toBeNull()
+    expect(start).toHaveBeenCalledOnce()
+  })
+
+  it('shares one startup deadline across port retries', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const conflict = { exitCode: 98 }
+    const start = vi.fn().mockResolvedValue(conflict)
+
+    await expect(startRuntimeWithPortRetry({
+      timeoutMs: 30,
+      start,
+      ready: async () => {
+        vi.setSystemTime(30)
+        return false
+      },
+      retryable: () => true,
+      stop: async () => undefined,
+    })).resolves.toBeNull()
+    expect(start).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
   it('waits for the authenticated Runtime protocol and required capabilities', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))

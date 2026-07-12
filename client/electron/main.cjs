@@ -17,7 +17,13 @@ const crypto = require('node:crypto')
 const net = require('node:net')
 const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 const { installLocalRuntimeAuthorization } = require('./local-runtime-auth.cjs')
-const { stopRuntimeProcess, waitForRuntimeReady } = require('./local-runtime-process.cjs')
+const {
+  isPortConflictError,
+  startRuntimeWithPortRetry,
+  stopRuntimeProcess,
+  waitForRuntimeReady,
+  waitForRuntimeProcessClose,
+} = require('./local-runtime-process.cjs')
 const { appNameForLocale, desktopText, normalizeDesktopLocale } = require('./desktop-i18n.cjs')
 const {
   configureApplicationMenuForPlatform,
@@ -359,8 +365,19 @@ async function startBundledDaemon() {
     windowsHide: true,
   })
   daemonProcess = child
+  child.runtimeClosed = false
+  child.once('close', () => {
+    child.runtimeClosed = true
+  })
+  let startupErrorOutput = ''
   child.stdout.on('data', (chunk) => process.stdout.write(`[daemon] ${chunk}`))
-  child.stderr.on('data', (chunk) => process.stderr.write(`[daemon] ${chunk}`))
+  child.stderr.on('data', (chunk) => {
+    startupErrorOutput = `${startupErrorOutput}${chunk}`.slice(-2048)
+    if (isPortConflictError(startupErrorOutput)) {
+      child.runtimePortConflict = true
+    }
+    process.stderr.write(`[daemon] ${chunk}`)
+  })
   child.on('error', (err) => {
     console.error('[daemon] failed:', err && err.message)
   })
@@ -375,10 +392,10 @@ async function startBundledDaemon() {
       dialog.showErrorBox(currentAppName(), desktopText(currentLocale, 'daemon.exited', { code, signal }))
     }
   })
+  return child
 }
 
-async function stopBundledDaemon() {
-  const child = daemonProcess
+async function stopBundledDaemon(child = daemonProcess) {
   daemonReady = false
   runtimeSessionReady = false
   if (!child) {
@@ -386,29 +403,32 @@ async function stopBundledDaemon() {
     daemonToken = null
     return
   }
-  await stopRuntimeProcess(child, {
-    forceKill: async (pid) => {
-      if (process.platform === 'win32') {
-        try {
-          await new Promise((resolve, reject) => {
-            const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true })
-            killer.once('error', reject)
-            killer.once('exit', (code) => {
-              if (code === 0) {
-                resolve()
-                return
-              }
-              reject(new Error(`taskkill exited with code ${code}`))
+  if (child.exitCode === null) {
+    await stopRuntimeProcess(child, {
+      forceKill: async (pid) => {
+        if (process.platform === 'win32') {
+          try {
+            await new Promise((resolve, reject) => {
+              const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true })
+              killer.once('error', reject)
+              killer.once('exit', (code) => {
+                if (code === 0) {
+                  resolve()
+                  return
+                }
+                reject(new Error(`taskkill exited with code ${code}`))
+              })
             })
-          })
-          return
-        } catch (error) {
-          console.error('[daemon] taskkill failed, falling back to process.kill:', error)
+            return
+          } catch (error) {
+            console.error('[daemon] taskkill failed, falling back to process.kill:', error)
+          }
         }
-      }
-      process.kill(pid, 'SIGKILL')
-    },
-  })
+        process.kill(pid, 'SIGKILL')
+      },
+    })
+  }
+  await waitForRuntimeProcessClose(child)
   if (daemonProcess === child) {
     daemonProcess = null
   }
@@ -416,11 +436,12 @@ async function stopBundledDaemon() {
   daemonToken = null
 }
 
-async function waitForRuntimeConnection(connection, ownedProcess) {
+async function waitForRuntimeConnection(connection, ownedProcess, timeoutMs = 30000) {
   if (!ownedProcess) {
     return waitForRuntimeReady({
       baseURL: connection.baseURL,
       token: connection.token,
+      timeoutMs,
     })
   }
   if (ownedProcess.exitCode !== null || daemonProcess !== ownedProcess) {
@@ -431,13 +452,14 @@ async function waitForRuntimeConnection(connection, ownedProcess) {
   const readiness = waitForRuntimeReady({
     baseURL: connection.baseURL,
     token: connection.token,
+    timeoutMs,
     signal: readinessController.signal,
   })
   let onStopped
   const stopped = new Promise((resolve) => {
     onStopped = () => resolve(false)
     ownedProcess.once('error', onStopped)
-    ownedProcess.once('exit', onStopped)
+    ownedProcess.once('close', onStopped)
   })
   try {
     const ready = await Promise.race([readiness, stopped])
@@ -445,8 +467,17 @@ async function waitForRuntimeConnection(connection, ownedProcess) {
   } finally {
     readinessController.abort()
     ownedProcess.off('error', onStopped)
-    ownedProcess.off('exit', onStopped)
+    ownedProcess.off('close', onStopped)
   }
+}
+
+async function startBundledRuntime() {
+  return startRuntimeWithPortRetry({
+    start: startBundledDaemon,
+    ready: (child, timeoutMs) => waitForRuntimeConnection(localRuntimeConnection(), child, timeoutMs),
+    retryable: (child) => child.runtimePortConflict === true,
+    stop: stopBundledDaemon,
+  })
 }
 
 function registerAuthHandlers() {
@@ -489,14 +520,14 @@ app.whenReady().then(async () => {
     // point at a separately managed Runtime through the SHEJANE_LOCAL_HOST_*
     // variables, but both paths must pass the same protocol handshake before
     // the renderer is created.
-    if (app.isPackaged) {
-      await startBundledDaemon()
-    }
+    const ownedProcess = app.isPackaged ? await startBundledRuntime() : null
     const runtimeConnection = localRuntimeConnection()
-    const ownedProcess = daemonProcess
+    const runtimeAvailable = app.isPackaged
+      ? Boolean(ownedProcess)
+      : Boolean(runtimeConnection.token) && await waitForRuntimeConnection(runtimeConnection, null)
     if (
       !runtimeConnection.token ||
-      !(await waitForRuntimeConnection(runtimeConnection, ownedProcess))
+      !runtimeAvailable
     ) {
       throw new Error(desktopText(currentLocale, 'daemon.startTimeout'))
     }
