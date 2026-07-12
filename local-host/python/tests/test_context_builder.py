@@ -1,7 +1,4 @@
-"""Tests for the daemon-side ContextBuilder — the Layer 20-55 owner of
-the Prompt Construction stack. Cloud-side Layer 0+10 lives in Go and is
-tested separately in api/internal/llm/router_test.go.
-"""
+"""Tests for the Runtime-owned prompt construction stack."""
 
 from __future__ import annotations
 
@@ -18,6 +15,21 @@ from local_host.agent.context_builder import (
 )
 
 # ---- _layer_developer ------------------------------------------------
+
+
+def test_runtime_identity_and_safety_precede_developer_instructions(tmp_path: Path) -> None:
+    identity_file = tmp_path / "identity.md"
+    identity_file.write_text("IDENTITY_AND_SAFETY_MARKER", encoding="utf-8")
+    developer_file = tmp_path / "developer.md"
+    developer_file.write_text("DEVELOPER_MARKER", encoding="utf-8")
+
+    builder = ContextBuilder(
+        identity_prompt_path=identity_file,
+        developer_prompt_path=developer_file,
+    )
+    result = builder.build(runtime=RuntimeContext())
+
+    assert result.index("IDENTITY_AND_SAFETY_MARKER") < result.index("DEVELOPER_MARKER")
 
 
 def test_developer_layer_loaded_from_disk(tmp_path: Path) -> None:
@@ -248,7 +260,10 @@ def test_total_budget_trims_trailing_layers(tmp_path: Path) -> None:
     truncatable layers shrink first; the developer layer stays whole."""
     prompt_file = tmp_path / "dev.md"
     prompt_file.write_text("DEV-CONTENT-MARKER\n" + ("PAD\n" * 100), encoding="utf-8")
+    identity_file = tmp_path / "identity.md"
+    identity_file.write_text("IDENTITY", encoding="utf-8")
     builder = ContextBuilder(
+        identity_prompt_path=identity_file,
         developer_prompt_path=prompt_file,
         total_budget_chars=600,  # very tight
     )
@@ -281,7 +296,14 @@ def test_render_snapshot_returns_per_layer_dict(tmp_path: Path) -> None:
     # All five layers always show up in the snapshot (some may be empty
     # when their inputs are not provided — the snapshot exposes that
     # too, which is useful for debugging "why is my <task> empty?").
-    assert set(snap.keys()) == {"developer", "task", "skills", "state", "runtime_context"}
+    assert set(snap.keys()) == {
+        "identity_safety",
+        "developer",
+        "task",
+        "skills",
+        "state",
+        "runtime_context",
+    }
     assert "dev" in snap["developer"]
     assert "- x" in snap["skills"]
     assert "/ws" in snap["runtime_context"]

@@ -297,6 +297,7 @@ class BackendChatModel(BaseChatModel):
     ) -> dict[str, Any]:
         body = {
             "run_id": kwargs.get("run_id", self.run_id),
+            "prompt_owner": "runtime-v1",
             # The cloud LLM endpoint now routes by model id (flat catalog). We
             # forward the daemon's current tier value here; the cloud maps an
             # unknown id (incl. legacy "fast"/"deep"/"auto") to the default

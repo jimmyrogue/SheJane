@@ -52,6 +52,7 @@ def test_runtime_prompt_is_built_from_invocation_context() -> None:
     message = RuntimePromptMiddleware().wrap_model_call(Request(), handler)
     rendered = str(message.content)
 
+    assert rendered.index("石间（SheJane）") < rendered.index("deep agent base prompt")
     assert "deep agent base prompt" in rendered
     assert "检查运行时上下文" in rendered
     assert "/tmp/workspace" in rendered

@@ -413,8 +413,8 @@ class RuntimePromptMiddleware(AgentMiddleware):
         return request.override(
             system_message=SystemMessage(
                 content=[
+                    {"type": "text", "text": prompt},
                     *system_message.content_blocks,
-                    {"type": "text", "text": f"\n\n{prompt}"},
                 ]
             )
         )
@@ -727,11 +727,9 @@ async def build_agent(
         else None
     )
 
-    # Layer 30-55 of the prompt stack — developer instructions, task,
-    # skills hint, run state, runtime context. See context_builder.py for
-    # the full stack layout. Cloud-injected Layer 0+10 (identity, safety)
-    # gets prepended in api/internal/httpapi/agent_stream.go via
-    # InjectScenePrompt("agent_local", ...).
+    # Complete provider-independent prompt stack: Runtime identity and safety,
+    # developer instructions, task, skills hint, run state, and environment.
+    # See context_builder.py for the full layout.
     if runtime_context is None:
         runtime_context = RuntimeContext(
             run_id=run_id,

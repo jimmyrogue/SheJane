@@ -228,7 +228,81 @@ func TestAgentLLMStreamDoesNotSwitchModelOnProviderFailure(t *testing.T) {
 	}
 }
 
+func TestAgentLLMStreamForwardsRuntimePromptWithoutGatewayInjection(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MonthlyCredits = 10_000
+	application := app.New(cfg, store.NewMemoryStore())
+	provider := &capturingStreamProvider{}
+	application.Router = llm.NewRouterWithModels(provider, "capture", provider, "capture")
+	server := NewServer(application)
+	token := registerAndToken(t, server)
+
+	body := `{"run_id":"runtime-prompt-owner","prompt_owner":"runtime-v1","model":"capture","messages":[{"role":"system","content":"RUNTIME_IDENTITY_POLICY"},{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if len(provider.request.Messages) != 2 {
+		t.Fatalf("provider messages = %#v, want exactly the two Runtime messages", provider.request.Messages)
+	}
+	if provider.request.Messages[0].Content != "RUNTIME_IDENTITY_POLICY" {
+		t.Fatalf("first provider message = %q", provider.request.Messages[0].Content)
+	}
+}
+
+func TestAgentLLMStreamKeepsCompatibilityPromptForUnmarkedClients(t *testing.T) {
+	cfg := config.Default()
+	cfg.JWTSecret = "test-secret"
+	cfg.MonthlyCredits = 10_000
+	application := app.New(cfg, store.NewMemoryStore())
+	provider := &capturingStreamProvider{}
+	application.Router = llm.NewRouterWithModels(provider, "capture", provider, "capture")
+	server := NewServer(application)
+	token := registerAndToken(t, server)
+
+	body := `{"run_id":"legacy-prompt-client","model":"capture","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent/llm/stream", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if len(provider.request.Messages) != 2 || provider.request.Messages[0].Role != "system" {
+		t.Fatalf("compatibility prompt missing: %#v", provider.request.Messages)
+	}
+	if !strings.Contains(provider.request.Messages[0].Content, "SheJane") {
+		t.Fatalf("unexpected compatibility prompt: %q", provider.request.Messages[0].Content)
+	}
+}
+
 // --- helpers ---
+
+type capturingStreamProvider struct {
+	request llm.ChatRequest
+}
+
+func (p *capturingStreamProvider) Name() string {
+	return "capture"
+}
+
+func (p *capturingStreamProvider) Stream(_ context.Context, request llm.ChatRequest, _ string) (<-chan llm.Chunk, <-chan error) {
+	p.request = request
+	chunks := make(chan llm.Chunk, 1)
+	errs := make(chan error)
+	chunks <- llm.Chunk{Text: "ok", FinishReason: "stop"}
+	close(chunks)
+	close(errs)
+	return chunks, errs
+}
 
 type streamReasoningProvider struct{}
 

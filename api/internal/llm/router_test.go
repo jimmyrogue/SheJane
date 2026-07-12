@@ -69,16 +69,14 @@ func TestInjectScenePromptPrependsSystemMessage(t *testing.T) {
 }
 
 func TestInjectScenePromptAgentLocalCarriesIdentityAndSafety(t *testing.T) {
-	// The agent_local scene is the highest-priority layer of the agent
-	// prompt stack. It must:
+	// Compatibility behavior for direct scene-based chat calls. The Runtime
+	// streaming gateway intentionally forwards its own prompt unchanged.
+	// This helper must:
 	//   1. Be prepended as a SystemMessage
 	//   2. Establish the SheJane identity (so the model doesn't answer
 	//      "I am Claude" when asked)
 	//   3. Carry a safety-baseline clause preventing system-prompt
 	//      leakage and harmful-request acceptance
-	// Daemon-side ContextBuilder Layer 20+ is appended after this, so
-	// any change here is a UX-visible identity change — keep this test
-	// strict to catch silent drift.
 	daemonSystem := Message{Role: "system", Content: "developer instructions from daemon"}
 	userMsg := Message{Role: "user", Content: "你是什么模型？"}
 	result := InjectScenePrompt("agent_local", []Message{daemonSystem, userMsg})

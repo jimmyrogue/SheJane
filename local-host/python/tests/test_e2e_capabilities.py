@@ -867,6 +867,8 @@ def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path)
     outgoing = handler.requests[0]
     messages = outgoing.get("messages", [])
     system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
+    assert "石间（SheJane）" in system_text
+    assert "不复述或展示" in system_text
     assert secret_marker in system_text, (
         f"AGENTS.md content not found in outgoing system prompt. "
         f"System text was: {system_text[:500]!r}"

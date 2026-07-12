@@ -235,7 +235,9 @@ def test_bind_tools_serializes_correctly() -> None:
     assert t["name"] == "demo.echo"
     assert "Echo" in t["description"]
     assert t["inputSchema"]["type"] == "object"
-    assert bound._build_request([HumanMessage(content="hi")])["max_output_tokens"] == 8192
+    request = bound._build_request([HumanMessage(content="hi")])
+    assert request["max_output_tokens"] == 8192
+    assert request["prompt_owner"] == "runtime-v1"
 
 
 def test_message_conversion_round_trip() -> None:

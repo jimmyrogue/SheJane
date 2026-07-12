@@ -10,6 +10,8 @@
 # fast and lets each inner binary be code-signed individually (needed for macOS
 # notarization in a later phase).
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = []
@@ -38,6 +40,10 @@ for pkg in (
 # The daemon boots via uvicorn.run("local_host.server:app", ...) — a STRING
 # import — so the whole local_host package is invisible to static analysis.
 hiddenimports += collect_submodules("local_host")
+datas += [
+    (str(path), "local_host/agent/prompts")
+    for path in Path("local_host/agent/prompts").glob("*.md")
+]
 # uvicorn loads its loop / protocol / lifespan implementations dynamically.
 hiddenimports += collect_submodules("uvicorn")
 

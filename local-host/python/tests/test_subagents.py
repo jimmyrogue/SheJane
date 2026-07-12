@@ -53,6 +53,7 @@ def test_build_subagents_returns_researcher_and_writer() -> None:
     )
     names = {s["name"] for s in subs}
     assert names == {"general-purpose", "researcher", "writer"}
+    assert all(str(item["system_prompt"]).startswith("<identity>") for item in subs)
 
 
 def test_researcher_pulls_only_research_relevant_tools_from_main() -> None:
@@ -167,7 +168,8 @@ tools:
     reviewer = next(s for s in subs if s["name"] == "reviewer")
 
     assert reviewer["description"] == "Review implementation diffs with a narrow evidence trail."
-    assert reviewer["system_prompt"] == "You are a careful implementation reviewer."
+    assert str(reviewer["system_prompt"]).startswith("<identity>")
+    assert str(reviewer["system_prompt"]).endswith("You are a careful implementation reviewer.")
     assert reviewer["model"] == "model-x"
     assert [t.name for t in reviewer["tools"]] == ["web.search", "time.now"]
 
@@ -192,7 +194,8 @@ tools: []
 
     assert len(writers) == 1
     assert writers[0]["description"] == "A project-specific release note writer."
-    assert writers[0]["system_prompt"] == "Write in the team's release-note voice."
+    assert str(writers[0]["system_prompt"]).startswith("<identity>")
+    assert str(writers[0]["system_prompt"]).endswith("Write in the team's release-note voice.")
 
 
 def test_invalid_configured_subagent_is_skipped(tmp_path: Path) -> None:

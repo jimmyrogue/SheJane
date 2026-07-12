@@ -38,10 +38,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from ..middleware import ToolExecutionMiddleware, ToolReviewMiddleware
+from .context_builder import identity_safety_prompt
 
 log = logging.getLogger("local_host.agent.subagents")
 
 SUBAGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def _fenced_prompt(prompt: str) -> str:
+    return f"{identity_safety_prompt()}\n\n{prompt.strip()}"
+
 
 # ---- subagent system prompts -----------------------------------------------
 
@@ -138,7 +144,7 @@ def _builtin_subagents(
             # version, so internal tools receive review + durable receipts.
             "name": "general-purpose",
             "description": DEFAULT_GENERAL_PURPOSE_DESCRIPTION,
-            "system_prompt": DEFAULT_SUBAGENT_PROMPT,
+            "system_prompt": _fenced_prompt(DEFAULT_SUBAGENT_PROMPT),
             "model": main_model,
             "tools": main_tools,
             "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
@@ -156,7 +162,7 @@ def _builtin_subagents(
                 "this for a single research question that would otherwise "
                 "require many search/fetch calls (isolate the noise)."
             ),
-            "system_prompt": RESEARCHER_PROMPT,
+            "system_prompt": _fenced_prompt(RESEARCHER_PROMPT),
             "model": main_model,
             "tools": research_tools,
             "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
@@ -168,7 +174,7 @@ def _builtin_subagents(
                 "(article / email / spec / etc.). No tools. Use when you "
                 "have the facts and just need a careful final draft."
             ),
-            "system_prompt": WRITER_PROMPT,
+            "system_prompt": _fenced_prompt(WRITER_PROMPT),
             "model": main_model,
             "tools": [],
             "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
@@ -239,7 +245,7 @@ def _load_subagent_file(
     return {
         "name": name,
         "description": description,
-        "system_prompt": prompt.strip(),
+        "system_prompt": _fenced_prompt(prompt),
         "model": main_model,
         "tools": selected_tools,
         "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],

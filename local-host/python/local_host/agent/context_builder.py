@@ -1,11 +1,8 @@
-"""Context Engineering — assembles the daemon-side portion of the prompt
-stack that `create_deep_agent(instructions=...)` consumes.
+"""Context Engineering — assembles the Runtime-owned prompt stack that
+`create_deep_agent(instructions=...)` consumes.
 
 Prompt Stack Overview
 ---------------------
-This module owns Layer 20-50. Layer 0+10 (identity, safety) live on the
-cloud side (api/internal/llm/router.go:scenePrompt("agent_local")) and
-are prepended by the Go API before the request hits the model provider.
 Tool definitions (Layer 20 wire form) come from LangChain's bind_tools
 path automatically. Conversation history (Layer 60) and current user
 message (Layer 70) flow through `agent.astream(messages)` and are not
@@ -14,8 +11,7 @@ prompt-string concerns.
 ```
 Priority   Layer                          Owner
 ─────────────────────────────────────────────────────
-0          Identity                       Cloud (router.go)
-10         Safety baseline                Cloud (router.go)
+0          Identity and safety baseline   Runtime — identity.md
 20         Tool definitions               LangChain (auto)
 30         Developer instructions         Daemon — developer.md zones
 35         Current task                   Daemon — this file (per-run)
@@ -34,9 +30,8 @@ recommended skeleton ([Role & Policies] [Task] [State] [Evidence]
 RuntimeContext, not in static markdown.
 
 The output of `ContextBuilder.build()` is a single string passed as
-`instructions=` to `create_deep_agent`. deepagents turns it into a
-SystemMessage that arrives at the cloud LLM gateway second (after the
-cloud-injected identity SystemMessage).
+`instructions=` to `create_deep_agent`. Deep Agents turns it into the
+same leading SystemMessage for local, BYOK, and optional gateway models.
 
 Budget Management
 -----------------
@@ -68,11 +63,10 @@ from pathlib import Path
 log = logging.getLogger("local_host.agent.context_builder")
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+_IDENTITY_PROMPT_PATH = _PROMPTS_DIR / "identity.md"
 _DEVELOPER_PROMPT_PATH = _PROMPTS_DIR / "developer.md"
 
-# Conservative defaults. The total budget here only governs daemon-side
-# layers; the cloud-side identity prompt is small (~250 chars) and not
-# counted. Rough rule of thumb: 1 token ≈ 4 chars for English, ~2 chars
+# Conservative defaults. Rough rule of thumb: 1 token ≈ 4 chars for English, ~2 chars
 # for Chinese. 8 KiB → ~2k–4k tokens worth of system context.
 _DEFAULT_TOTAL_BUDGET_CHARS = 8 * 1024
 _TRUNCATION_MARKER = "\n…[内容过长已截断]"
@@ -221,7 +215,7 @@ class RuntimeContext:
 
 
 class ContextBuilder:
-    """Assembles Layer 20-55 of the prompt stack.
+    """Assembles the complete Runtime-owned prompt stack.
 
     Stateless: a single instance can build many prompts. Tests
     construct with overridden paths/budgets.
@@ -230,11 +224,14 @@ class ContextBuilder:
     def __init__(
         self,
         *,
+        identity_prompt_path: Path = _IDENTITY_PROMPT_PATH,
         developer_prompt_path: Path = _DEVELOPER_PROMPT_PATH,
         total_budget_chars: int = _DEFAULT_TOTAL_BUDGET_CHARS,
     ) -> None:
+        self._identity_prompt_path = identity_prompt_path
         self._developer_prompt_path = developer_prompt_path
         self._total_budget_chars = total_budget_chars
+        self._identity_cache: str | None = None
         self._developer_cache: str | None = None
 
     # ---- public API ----------------------------------------------------
@@ -259,6 +256,7 @@ class ContextBuilder:
         """Construct every layer for this run, in declaration order.
         Sorting by priority happens in `_assemble`; this just lists them."""
         return [
+            self._layer_identity_safety(),
             self._layer_developer(),
             self._layer_task(runtime.task_goal),
             self._layer_skills(runtime.enabled_skills),
@@ -267,6 +265,23 @@ class ContextBuilder:
         ]
 
     # ---- layer builders ------------------------------------------------
+
+    def _layer_identity_safety(self) -> ContextLayer:
+        """Layer 0 — provider-independent identity and safety policy."""
+        if self._identity_cache is None:
+            try:
+                self._identity_cache = self._identity_prompt_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise RuntimeError(
+                    f"identity and safety prompt is unavailable: {self._identity_prompt_path}"
+                ) from exc
+        return ContextLayer(
+            name="identity_safety",
+            priority=0,
+            content=self._identity_cache,
+            max_chars=2048,
+            truncatable=False,
+        )
 
     def _layer_developer(self) -> ContextLayer:
         """Layer 30 — agent behavior guidance (file-loaded, non-truncatable).
@@ -482,6 +497,8 @@ class ContextBuilder:
                 new_content = content[:new_len] + _TRUNCATION_MARKER if new_len > 0 else ""
                 rendered[i] = (layer, new_content)
                 joined = "\n\n".join(c for _, c in rendered if c)
+            if len(joined) > self._total_budget_chars:
+                raise ValueError("non-truncatable context layers exceed the total context budget")
 
         # Telemetry — per-layer + total char counts. Goes to the daemon
         # log so `make logs-local-host` can answer "why is my prompt
@@ -509,12 +526,17 @@ def build_default_context(runtime: RuntimeContext) -> str:
     return _default_builder.build(runtime=runtime)
 
 
+def identity_safety_prompt() -> str:
+    """Return the same provider-independent baseline used by the main Agent."""
+    return _default_builder._layer_identity_safety().content
+
+
 def reset_prompt_cache_for_tests() -> None:
-    """Drop the cached developer prompt so a subsequent build re-reads
-    the file. Tests that mutate developer.md call this between cases.
+    """Drop cached Runtime prompt files so a subsequent build re-reads them.
 
     Production code should NEVER call this — the cache is intentional
     to avoid file I/O per run."""
+    _default_builder._identity_cache = None
     _default_builder._developer_cache = None
 
 

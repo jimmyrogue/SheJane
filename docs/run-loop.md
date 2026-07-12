@@ -106,6 +106,7 @@
   │                                                                                     │
   │   ❶ 入循环前一次性                                                                   │
   │     ┌─────────────────────────────────────────────────────────────────────────┐     │
+  │     │  • Runtime identity + safety         ← 主 Agent/子 Agent、所有供应商共用 │     │
   │     │ before_agent (顺序)                                                      │     │
   │     │  • TodoListMiddleware                  ┐  ✅ cap 7  写 write_todos 工具  │     │
   │     │  • SkillsMiddleware                    ├  ✅ cap 6  md skills 注入        │     │
@@ -137,7 +138,7 @@
   │     │       ↓                                                                  │     │
   │     │ LedgerChatModel 记录首次输出 → 已绑定的唯一供应商模型               │     │
   │     │       ↓                                                                  │     │
-  │     │   POST /api/v1/agent/llm/stream   (Go 后端 SSE)                          │     │
+  │     │   可选 POST /api/v1/agent/llm/stream   (runtime-v1 标记后只转发并计费)    │     │
   │     │       │  ├─ 信用 reserve（前置扣额度）                                    │     │
   │     │       │  ├─ Anthropic gateway 对长 request 加顶层 cache_control ✅cap3 │     │
   │     │       │  ├─ vendor LLM stream                                            │     │

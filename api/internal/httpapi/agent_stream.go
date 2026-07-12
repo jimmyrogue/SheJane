@@ -43,17 +43,14 @@ func (s *Server) agentLLMStream(w http.ResponseWriter, r *http.Request, user sto
 	}
 	messages := agentBodyMessages(body)
 	tools := agentBodyTools(body)
+	if body.PromptOwner != "runtime-v1" {
+		messages = llm.InjectScenePrompt("agent_local", messages)
+	}
 	// Resolve the requested model (id / "auto" / "") to a live provider + the
 	// concrete catalog model id used for billing + records.
 	provider, model, modelID := s.app.Router.SelectModel(body.Model)
-	// Prepend the agent_local scene prompt (Layer 0+10 of the prompt
-	// stack: identity + safety). Daemon-side ContextBuilder owns
-	// Layer 20+ (developer instructions, memory, runtime context),
-	// which already arrive in `messages` as a SystemMessage from
-	// create_deep_agent's `instructions=`. We always want cloud's
-	// identity prompt to be FIRST so daemon-side instructions can't
-	// override the user-facing identity / safety contract.
-	messages = llm.InjectScenePrompt("agent_local", messages)
+	// The Runtime owns the complete prompt, including identity and safety.
+	// This optional gateway forwards the supplied messages unchanged.
 	request := llm.ChatRequest{
 		Model:           modelID,
 		Stream:          true,
@@ -255,11 +252,11 @@ func writeLLMSSEEvent(w io.Writer, event string, payload map[string]any) error {
 	return err
 }
 
-// agentLLMBody is the shared request shape between agentLLMGateway and
-// agentLLMStream. Kept identical so the Python sidecar can switch transports
-// without touching its request builder.
+// agentLLMBody is the Runtime and compatibility-client request shape for the
+// streaming model gateway.
 type agentLLMBody struct {
 	RunID           string `json:"run_id"`
+	PromptOwner     string `json:"prompt_owner"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
 	// Model is the catalog model id, or "auto"/"" for the default. (Replaces
 	// the old fast/deep "mode" — the daemon now forwards the user's model.)

@@ -187,11 +187,9 @@ func scenePrompt(scene string) string {
 	case "calculate":
 		return "你是石间的数据分析助手。先说明计算口径，再给出结论和可复核的步骤。"
 	case "agent_local":
-		// Layer 0 (Identity) + Layer 10 (Safety) of the prompt stack —
-		// see docs/run-loop.md and the ContextBuilder module on the
-		// daemon side for Layer 20+. This prompt is the HIGHEST-priority
-		// system message; everything the daemon adds (developer
-		// instructions, memory, runtime context) is appended after.
+		// Compatibility prompt for direct scene-based chat calls. The agent
+		// Runtime owns its complete prompt and the agent streaming gateway
+		// does not inject this scene.
 		//
 		// Identity guidance is phrased as "introduce yourself naturally"
 		// rather than scripting a verbatim reply — earlier versions
