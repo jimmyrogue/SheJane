@@ -30,6 +30,7 @@ from langchain_core.outputs import ChatGenerationChunk
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 
 async def _slow_astream(self, messages, stop=None, run_manager=None, **kwargs):
@@ -62,6 +63,7 @@ def slow_client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -95,7 +97,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
     headers = {"Authorization": "Bearer tok"}
 
     # Start the run
-    r = slow_client.post("/local/v1/runs", headers=headers, json={"goal": "slow"})
+    r = slow_client.post("/local/v1/runs", headers=headers, json=run_command("slow"))
     assert r.status_code == 200
     run_id = r.json()["id"]
 
@@ -141,7 +143,7 @@ def test_cancel_interrupts_running_run(slow_client: TestClient) -> None:
     assert r.json()["status"] == "canceled"
 
 
-def test_cancel_unknown_run_returns_false_canceled(slow_client: TestClient) -> None:
+def test_cancel_unknown_run_returns_not_found(slow_client: TestClient) -> None:
     """Sanity guard for the existing /cancel path on a non-existent id —
     we already covered this in test_runs_http.py but re-asserting alongside
     the mid-flight test makes the fixture set self-contained."""
@@ -149,5 +151,4 @@ def test_cancel_unknown_run_returns_false_canceled(slow_client: TestClient) -> N
         "/local/v1/runs/run_nope/cancel",
         headers={"Authorization": "Bearer tok"},
     )
-    assert r.status_code == 200
-    assert r.json()["canceled"] is False
+    assert r.status_code == 404

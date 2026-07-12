@@ -210,6 +210,20 @@ async def test_code_execute_gated_on_when_enabled(monkeypatch, settings_with_ses
     assert "code.execute" in names
 
 
+@pytest.mark.asyncio
+async def test_cloud_gateway_tools_are_omitted_without_a_cloud_binding() -> None:
+    from local_host.tools.registry import build_tools
+
+    tools = await build_tools(
+        include_mcp=False,
+        include_code_exec=True,
+        include_cloud_tools=False,
+    )
+    names = {tool.name for tool in tools}
+    assert "web.fetch" in names
+    assert not {"web.search", "image.generate", "image.edit", "pdf.inspect", "code.execute"} & names
+
+
 # --- PR v1: files_in + blacklist + output sync -------------------------------
 
 

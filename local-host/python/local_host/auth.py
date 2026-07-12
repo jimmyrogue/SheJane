@@ -10,51 +10,58 @@ auth first.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import secrets
 
-from fastapi import Request, status
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse, Response
+from fastapi import status
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import get_settings
 
 EXEMPT_PATHS = frozenset({"/local/v1/health", "/v1/health", "/health"})
+LOCAL_OWNER_PRINCIPAL_ID = "local:owner"
 
 
-class PairingTokenAuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        if request.url.path in EXEMPT_PATHS:
-            return await call_next(request)
+class PairingTokenAuthMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("path") in EXEMPT_PATHS:
+            await self.app(scope, receive, send)
+            return
 
         expected = get_settings().pairing_token
         if not expected:
             # Daemon started without a token configured — refuse everything
             # except /health. Lets the Electron host detect "not yet paired".
-            return JSONResponse(
+            response = JSONResponse(
                 {"error": "pairing token not configured"},
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+            await response(scope, receive, send)
+            return
 
-        provided = _extract_token(request)
-        if provided != expected:
-            return JSONResponse(
+        provided = _extract_token(Headers(scope=scope))
+        if provided is None or not secrets.compare_digest(provided, expected):
+            response = JSONResponse(
                 {"error": "invalid pairing token"},
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
+            await response(scope, receive, send)
+            return
 
-        return await call_next(request)
+        scope.setdefault("state", {})["principal_id"] = LOCAL_OWNER_PRINCIPAL_ID
+        await self.app(scope, receive, send)
 
 
-def _extract_token(request: Request) -> str | None:
-    auth_header = request.headers.get("Authorization")
+def _extract_token(headers: Headers) -> str | None:
+    auth_header = headers.get("Authorization")
     if auth_header and auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
 
-    direct = request.headers.get("X-SheJane-Local-Token")
+    direct = headers.get("X-SheJane-Local-Token")
     if direct:
         return direct.strip()
 

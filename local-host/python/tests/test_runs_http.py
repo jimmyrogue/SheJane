@@ -7,6 +7,7 @@ parts 1+2+3+4 together.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -17,13 +18,26 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.config import reset_settings_for_tests
-from local_host.runs import (
-    _build_dropped_history_summary,
-    _run_failed_payload,
-    _truncate_history_for_run,
-)
-from local_host.server import create_app
+from local_host.runs import _completion_failure_payload, _run_failed_payload
+from local_host.server import RequestBodyLimitMiddleware, create_app
+from tests.helpers import run_command
+
+
+def fork_command(checkpoint_id: str, *, suffix: str, goal: str | None = None) -> dict[str, str]:
+    payload = {
+        "command_id": f"cmd_fork_{suffix}",
+        "client_message_id": f"msg_fork_user_{suffix}",
+        "assistant_message_id": f"msg_fork_assistant_{suffix}",
+        "thread_id": f"thread_fork_{suffix}",
+        "checkpoint_id": checkpoint_id,
+        "user_input": f"Retry from checkpoint {checkpoint_id}",
+        "thread_title": "Forked conversation",
+    }
+    if goal is not None:
+        payload["goal"] = goal
+    return payload
 
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
@@ -40,46 +54,6 @@ def _patched_async_client(handler):
             )
 
     return _Patched
-
-
-def test_dropped_history_summary_keeps_middle_decisions() -> None:
-    messages = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"} for i in range(14)
-    ]
-    messages[5] = {
-        "role": "user",
-        "content": "重要决定：所有 API 错误必须保留 request_id",
-    }
-
-    summary = _build_dropped_history_summary(messages)
-
-    assert summary is not None
-    assert "重要决定" in summary
-    assert "request_id" in summary
-
-
-def test_history_truncation_preserves_client_omission_marker() -> None:
-    marker = {
-        "role": "user",
-        "content": (
-            "【上下文提示｜对话较长，已省略更早的 25 条消息，仅保留最近内容；如需更早信息请重述。】\n"
-            "早期摘要：\n- 用户: 重要决定：所有 API 错误必须保留 request_id"
-        ),
-    }
-    messages = [marker] + [
-        {"role": "assistant" if i % 2 else "user", "content": f"msg-{i:03d}"} for i in range(10)
-    ]
-
-    kept, dropped_count, dropped_messages = _truncate_history_for_run(
-        messages,
-        max_history_turns=10,
-    )
-
-    assert kept[0] == marker
-    assert len(kept) == 10
-    assert dropped_count == 1
-    assert dropped_messages == [{"role": "user", "content": "msg-000"}]
-    assert all("上下文提示｜对话较长" not in item["content"] for item in dropped_messages)
 
 
 @pytest.fixture
@@ -104,6 +78,7 @@ def client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -144,7 +119,7 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "say hi"},
+        json=run_command("say hi"),
     )
     assert r.status_code == 200
     # POST /runs returns the flat LocalRun shape (no `{run: ...}` wrapper) —
@@ -153,21 +128,500 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert run["id"].startswith("run_")
     assert run["goal"] == "say hi"
     assert run["status"] == "queued"
+    stored = asyncio.run(client.app.state.store.get_run(run["id"]))
+    assert stored["principal_id"] == LOCAL_OWNER_PRINCIPAL_ID
+    snapshot = json.loads(stored["settings_json"])
+    assert snapshot["_snapshot_version"] == 1
+    assert snapshot["_model_binding"]["credential_ref"] == "runtime:cloud_session"
+    assert snapshot["_model_binding"]["required_capabilities"] == [
+        "streaming",
+        "tool_calling",
+    ]
+    assert "capabilities" not in snapshot["_model_binding"]
+    assert "test-cloud-token" not in stored["settings_json"]
+
+
+def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
+    assert client.get("/local/v1/runtime").status_code == 401
+    response = client.get(
+        "/local/v1/runtime",
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert response.status_code == 200
+    assert response.json()["protocol_version"] == 1
+    assert {"agent.run", "agent.stream", "workspace.files"}.issubset(
+        response.json()["capabilities"]
+    )
+
+
+def test_run_admission_rejects_protocol_and_capability_mismatch(
+    client: TestClient,
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    bad_protocol = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json=run_command("hello", protocol_version=2),
+    )
+    missing_capability = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json=run_command(
+            "hello",
+            command_id="cmd_missing_capability",
+            required_capabilities=["agent.run", "future.feature"],
+        ),
+    )
+
+    assert bad_protocol.status_code == 409
+    assert bad_protocol.json()["detail"]["code"] == "protocol_version_unsupported"
+    assert missing_capability.status_code == 409
+    assert missing_capability.json()["detail"]["code"] == "capability_unavailable"
+    assert client.get("/local/v1/runs", headers=headers).json() == {"runs": []}
+
+
+def test_run_admission_requires_a_configured_model_provider(tmp_path: Path) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="",
+        SHEJANE_FAKE_LLM=False,
+        data_dir=tmp_path,
+    )
+    with TestClient(create_app(settings)) as local_client:
+        response = local_client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+            json=run_command("hello"),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "model_provider_missing"
+        runtime = local_client.get(
+            "/local/v1/runtime",
+            headers={"Authorization": "Bearer tok"},
+        )
+        assert runtime.json()["model_provider_configured"] is False
+        assert local_client.get(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+        ).json() == {"runs": []}
+
+
+def test_runtime_discovery_matches_invalid_model_provider_admission(
+    tmp_path: Path,
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="configured-token",
+        SHEJANE_CLOUD_BASE_URL="not-a-url",
+        data_dir=tmp_path,
+    )
+    with TestClient(create_app(settings)) as local_client:
+        headers = {"Authorization": "Bearer tok"}
+        runtime = local_client.get("/local/v1/runtime", headers=headers)
+        response = local_client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command("hello"),
+        )
+
+        assert runtime.json()["model_provider_configured"] is False
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "model_provider_invalid"
+
+
+def test_idempotent_replay_precedes_current_model_provider_admission(
+    client: TestClient,
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    command = run_command("hello", command_id="cmd_provider_replay")
+    first = client.post("/local/v1/runs", headers=headers, json=command)
+    assert first.status_code == 200
+
+    client.app.state.settings.cloud_token = ""
+    replay = client.post("/local/v1/runs", headers=headers, json=command)
+
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+
+
+def test_run_command_persists_only_public_settings_and_workflow_metadata(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command(
+            "repair",
+            settings={"memory": "off", "api_key": "must-not-persist"},
+            metadata={
+                "intent": "repair",
+                "attempt": 2,
+                "token": "must-not-persist",
+            },
+        ),
+    )
+    assert response.status_code == 200
+
+    async def persisted_payloads() -> tuple[str, str]:
+        store = client.app.state.store
+        run = await store.get_run(response.json()["id"])
+        command = await (
+            await store._conn.execute(
+                "SELECT payload_json FROM local_commands WHERE run_id = ?",
+                (response.json()["id"],),
+            )
+        ).fetchone()
+        assert run is not None and command is not None
+        return run["metadata_json"], command["payload_json"]
+
+    metadata_json, command_json = asyncio.run(persisted_payloads())
+    assert json.loads(metadata_json) == {"intent": "repair", "attempt": 2}
+    assert "must-not-persist" not in command_json
+
+
+def test_create_run_requires_owned_available_workspace(client: TestClient, tmp_path: Path) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    rejected = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**run_command("inspect"), "workspace_path": str(tmp_path)},
+    )
+    assert rejected.status_code == 403
+    assert client.get("/local/v1/runs", headers=headers).json() == {"runs": []}
+
+    authorized = client.post(
+        "/local/v1/workspaces",
+        headers=headers,
+        json={"path": str(tmp_path), "label": "test"},
+    )
+    assert authorized.status_code == 200
+    accepted = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect", command_id="cmd_workspace_owned"),
+            "workspace_path": str(tmp_path),
+        },
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["workspace_path"] == str(tmp_path.resolve())
+
+
+def test_command_replay_precedes_current_workspace_admission(
+    client: TestClient, tmp_path: Path
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    workspace = client.post(
+        "/local/v1/workspaces",
+        headers=headers,
+        json={"path": str(tmp_path), "label": "test"},
+    ).json()
+    command = {
+        "command_id": "cmd_workspace_replay",
+        "client_message_id": "msg_workspace_replay",
+        "protocol_version": 1,
+        "required_capabilities": ["agent.run", "agent.stream"],
+        "goal": "inspect",
+        "workspace_path": str(tmp_path),
+    }
+    first = client.post("/local/v1/runs", headers=headers, json=command)
+    assert first.status_code == 200
+    assert (
+        client.delete(f"/local/v1/workspaces/{workspace['id']}", headers=headers).status_code == 200
+    )
+
+    replay = client.post("/local/v1/runs", headers=headers, json=command)
+    conflict = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**command, "goal": "different"},
+    )
+
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert conflict.status_code == 409
+    assert client.get(f"/local/v1/runs/{first.json()['id']}", headers=headers).status_code == 200
+    fork = client.post(
+        f"/local/v1/runs/{first.json()['id']}/fork",
+        headers=headers,
+        json=fork_command("cp_revoked", suffix="revoked"),
+    )
+    assert fork.status_code == 403
+
+
+def test_foreign_run_and_children_are_hidden(client: TestClient) -> None:
+    store = client.app.state.store
+
+    async def create_foreign_resources() -> tuple[str, str, str]:
+        run = await store.create_run(
+            principal_id="user:foreign",
+            goal="private",
+            workspace_path=None,
+        )
+        artifact = await store.create_artifact(
+            run_id=run["id"],
+            kind="result",
+            title="private",
+            content="secret",
+        )
+        permission = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call_foreign",
+            tool_name="execute",
+            arguments={},
+        )
+        return run["id"], artifact["id"], permission["id"]
+
+    run_id, artifact_id, permission_id = asyncio.run(create_foreign_resources())
+    headers = {"Authorization": "Bearer tok"}
+
+    assert run_id not in {
+        run["id"] for run in client.get("/local/v1/runs", headers=headers).json()["runs"]
+    }
+    assert client.get(f"/local/v1/runs/{run_id}", headers=headers).status_code == 404
+    assert client.get(f"/local/v1/runs/{run_id}/stream", headers=headers).status_code == 404
+    assert client.get(f"/local/v1/runs/{run_id}/diagnostics", headers=headers).status_code == 404
+    assert client.post(f"/local/v1/runs/{run_id}/cancel", headers=headers).status_code == 404
+    assert (
+        client.post(
+            f"/local/v1/runs/{run_id}/inject",
+            headers=headers,
+            json={"content": "steal"},
+        ).status_code
+        == 404
+    )
+    assert client.get(f"/local/v1/artifacts/{artifact_id}", headers=headers).status_code == 404
+    assert (
+        client.post(
+            f"/local/v1/permissions/{permission_id}",
+            headers=headers,
+            json={"decision": "deny", "scope": "once"},
+        ).status_code
+        == 404
+    )
+
+
+def test_create_run_rejects_foreign_parent_before_writing(client: TestClient) -> None:
+    store = client.app.state.store
+
+    async def create_foreign_parent() -> str:
+        run = await store.create_run(
+            principal_id="user:foreign",
+            goal="parent",
+            workspace_path=None,
+        )
+        return run["id"]
+
+    parent_id = asyncio.run(create_foreign_parent())
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={**run_command("child"), "parent_run_id": parent_id},
+    )
+
+    assert response.status_code == 404
+    local_runs = client.get("/local/v1/runs", headers={"Authorization": "Bearer tok"}).json()[
+        "runs"
+    ]
+    assert local_runs == []
+
+
+def test_create_run_rejects_cleanup_required_parent(client: TestClient) -> None:
+    store = client.app.state.store
+
+    async def create_quarantined_parent() -> str:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="parent",
+            workspace_path=None,
+        )
+        await store.update_run_status(run["id"], "cleanup_required")
+        return str(run["id"])
+
+    parent_id = asyncio.run(create_quarantined_parent())
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={**run_command("child"), "parent_run_id": parent_id},
+    )
+
+    assert response.status_code == 409
+    assert "safely settled" in response.text
+
+
+def test_runtime_thread_snapshot_and_change_cursor_are_authoritative(client: TestClient) -> None:
+    store = client.app.state.store
+
+    async def seed_thread() -> dict:
+        run, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_thread_snapshot",
+            client_message_id="msg_thread_snapshot",
+            thread_id="conversation_snapshot",
+            assistant_message_id="msg_assistant_snapshot",
+            user_input="visible inspect",
+            thread_title="Visible snapshot",
+            thread_metadata={"pinned": True},
+            command_payload={"type": "run.start", "goal": "inspect"},
+            goal="inspect",
+            workspace_path=None,
+            mode="auto",
+        )
+        await store.commit_run_result(
+            run["id"],
+            status="completed",
+            event_type="run.completed",
+            payload={"final_text": "done"},
+        )
+        return run
+
+    run = asyncio.run(seed_thread())
+    headers = {"Authorization": "Bearer tok"}
+
+    listing = client.get("/local/v1/threads", headers=headers)
+    snapshot = client.get("/local/v1/threads/conversation_snapshot", headers=headers)
+    changes = client.get("/local/v1/threads/changes?after=0", headers=headers)
+
+    assert listing.status_code == 200
+    assert listing.json()["threads"][0]["id"] == "conversation_snapshot"
+    assert listing.json()["cursor"] >= 2
+    assert snapshot.status_code == 200
+    assert snapshot.json()["thread"]["version"] == 2
+    assert snapshot.json()["thread"]["metadata"] == {"pinned": True}
+    assert [item["item_type"] for item in snapshot.json()["items"]] == [
+        "user_message",
+        "assistant_message",
+    ]
+    assistant = next(
+        item for item in snapshot.json()["items"] if item["item_type"] == "assistant_message"
+    )
+    assert assistant["status"] == "completed"
+    assert assistant["content"] == "done"
+    assert assistant["client_id"] == "msg_assistant_snapshot"
+    user = next(item for item in snapshot.json()["items"] if item["item_type"] == "user_message")
+    assert user["content"] == "visible inspect"
+    assert snapshot.json()["runs"][0]["id"] == run["id"]
+    assert [change["change_type"] for change in changes.json()["changes"]] == [
+        "turn.started",
+        "run.completed",
+    ]
+
+
+def test_create_run_command_is_idempotent_and_rejects_conflicting_content(
+    client: TestClient,
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    command = {
+        "command_id": "cmd_http_1",
+        "client_message_id": "msg_http_1",
+        "protocol_version": 1,
+        "required_capabilities": ["agent.run", "agent.stream"],
+        "goal": "say hi",
+    }
+
+    first = client.post("/local/v1/runs", headers=headers, json=command)
+    replay = client.post("/local/v1/runs", headers=headers, json=command)
+    conflict = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**command, "goal": "different"},
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
+    assert replay.json()["command_id"] == "cmd_http_1"
+    assert conflict.status_code == 409
+
+
+def test_create_run_rejects_partial_command_ids_and_unknown_fields(client: TestClient) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    partial = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={"command_id": "cmd_partial", "goal": "say hi"},
+    )
+    missing = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={"goal": "say hi"},
+    )
+    unknown = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**run_command("say hi"), "unexpected": True},
+    )
+    forged_principal = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**run_command("say hi"), "principal_id": "attacker"},
+    )
+
+    assert partial.status_code == 422
+    assert missing.status_code == 422
+    assert unknown.status_code == 422
+    assert forged_principal.status_code == 422
+
+
+def test_pairing_token_rotation_keeps_the_same_local_owner(
+    tmp_path: Path,
+) -> None:
+    command = {
+        "command_id": "cmd_rotated_token",
+        "client_message_id": "msg_rotated_token",
+        "protocol_version": 1,
+        "required_capabilities": ["agent.run", "agent.stream"],
+        "goal": "same command",
+    }
+    first_settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="token-one",
+        SHEJANE_FAKE_LLM=True,
+        data_dir=tmp_path,
+    )
+    with TestClient(create_app(first_settings)) as first_client:
+        first = first_client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer token-one"},
+            json=command,
+        )
+        assert first.status_code == 200
+
+    second_settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="token-two",
+        SHEJANE_FAKE_LLM=True,
+        data_dir=tmp_path,
+    )
+    with TestClient(create_app(second_settings)) as second_client:
+        rejected = second_client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer token-one"},
+            json=command,
+        )
+        replay = second_client.post(
+            "/local/v1/runs",
+            headers={"Authorization": "Bearer token-two"},
+            json=command,
+        )
+
+    assert rejected.status_code == 401
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
 
 
 def test_create_run_persists_run_metadata(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={
-            "goal": "repair task",
-            "metadata": {
+        json=run_command(
+            "repair task",
+            metadata={
                 "intent": "repair",
                 "source_run_id": "run_original",
                 "source_message_id": "msg_original",
                 "attempt": 1,
             },
-        },
+        ),
     )
     assert r.status_code == 200
     run = r.json()
@@ -190,7 +644,7 @@ def test_fork_run_missing_checkpoint_returns_404(client: TestClient) -> None:
     source = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "source task"},
+        json=run_command("source task"),
     )
     assert source.status_code == 200
     source_run_id = source.json()["id"]
@@ -198,18 +652,18 @@ def test_fork_run_missing_checkpoint_returns_404(client: TestClient) -> None:
     fork = client.post(
         f"/local/v1/runs/{source_run_id}/fork",
         headers={"Authorization": "Bearer tok"},
-        json={"checkpoint_id": "checkpoint-does-not-exist"},
+        json=fork_command("checkpoint-does-not-exist", suffix="missing"),
     )
 
     assert fork.status_code == 404
     assert fork.json()["detail"] == "checkpoint not found"
 
 
-def test_fork_run_from_checkpoint_creates_child_thread(client: TestClient) -> None:
+def test_fork_run_from_checkpoint_creates_child_branch_head(client: TestClient) -> None:
     source = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "draft a plan"},
+        json=run_command("draft a plan"),
     )
     assert source.status_code == 200
     source_run_id = source.json()["id"]
@@ -233,7 +687,7 @@ def test_fork_run_from_checkpoint_creates_child_thread(client: TestClient) -> No
     fork = client.post(
         f"/local/v1/runs/{source_run_id}/fork",
         headers={"Authorization": "Bearer tok"},
-        json={"checkpoint_id": checkpoint_id, "goal": "retry from that point"},
+        json=fork_command(checkpoint_id, suffix="child", goal="retry from that point"),
     )
 
     assert fork.status_code == 200
@@ -246,17 +700,127 @@ def test_fork_run_from_checkpoint_creates_child_thread(client: TestClient) -> No
     assert metadata["intent"] == "checkpoint_fork"
     assert metadata["source_run_id"] == source_run_id
     assert metadata["source_checkpoint_id"] == checkpoint_id
-
-    copied = client.app.state.checkpointer.get(
-        {
-            "configurable": {
-                "thread_id": child["id"],
-                "checkpoint_ns": "",
-                "checkpoint_id": checkpoint_id,
-            }
-        }
+    assert child["graph_thread_id"] == source.json()["graph_thread_id"]
+    assert child["graph_checkpoint_id"] == checkpoint_id
+    assert child["thread_id"] == "thread_fork_child"
+    snapshot = client.get(
+        "/local/v1/threads/thread_fork_child",
+        headers={"Authorization": "Bearer tok"},
     )
-    assert copied is not None
+    assert snapshot.status_code == 200
+    assert [item["client_id"] for item in snapshot.json()["items"]] == [
+        "msg_fork_user_child",
+        "msg_fork_assistant_child",
+    ]
+    assert (
+        client.app.state.checkpointer.get(
+            {
+                "configurable": {
+                    "thread_id": child["id"],
+                    "checkpoint_ns": "",
+                    "checkpoint_id": checkpoint_id,
+                }
+            }
+        )
+        is None
+    )
+
+    with client.stream(
+        "GET",
+        f"/local/v1/runs/{child['id']}/stream",
+        headers={"Authorization": "Bearer tok"},
+    ) as resp:
+        assert resp.status_code == 200
+        resp.read()
+    advanced = client.get(
+        f"/local/v1/runs/{child['id']}",
+        headers={"Authorization": "Bearer tok"},
+    ).json()
+    assert advanced["graph_checkpoint_id"] != checkpoint_id
+
+    sibling_head = client.post(
+        f"/local/v1/runs/{source_run_id}/fork",
+        headers={"Authorization": "Bearer tok"},
+        json=fork_command(advanced["graph_checkpoint_id"], suffix="sibling"),
+    )
+    assert sibling_head.status_code == 404
+
+
+def test_fork_rejects_an_existing_product_thread(client: TestClient) -> None:
+    source = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command("source branch"),
+    )
+    with client.stream(
+        "GET",
+        f"/local/v1/runs/{source.json()['id']}/stream",
+        headers={"Authorization": "Bearer tok"},
+    ) as response:
+        response.read()
+    checkpoint = client.get(
+        f"/local/v1/runs/{source.json()['id']}/diagnostics",
+        headers={"Authorization": "Bearer tok"},
+    ).json()["latest_checkpoint"]["id"]
+
+    target_command = run_command("target branch")
+    target_command["thread_id"] = "existing_fork_target"
+    target = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=target_command,
+    )
+    with client.stream(
+        "GET",
+        f"/local/v1/runs/{target.json()['id']}/stream",
+        headers={"Authorization": "Bearer tok"},
+    ) as response:
+        response.read()
+
+    payload = fork_command(checkpoint, suffix="existing")
+    payload["thread_id"] = "existing_fork_target"
+    fork = client.post(
+        f"/local/v1/runs/{source.json()['id']}/fork",
+        headers={"Authorization": "Bearer tok"},
+        json=payload,
+    )
+    assert fork.status_code == 409
+    assert "already exists" in fork.text
+
+
+def test_fork_command_replay_ignores_later_workspace_revocation(
+    client: TestClient, tmp_path: Path
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    workspace = client.post(
+        "/local/v1/workspaces",
+        headers=headers,
+        json={"path": str(tmp_path), "label": "fork replay"},
+    ).json()
+    source = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json=run_command("workspace source", workspace_path=str(tmp_path)),
+    )
+    with client.stream(
+        "GET", f"/local/v1/runs/{source.json()['id']}/stream", headers=headers
+    ) as response:
+        response.read()
+    checkpoint = client.get(
+        f"/local/v1/runs/{source.json()['id']}/diagnostics", headers=headers
+    ).json()["latest_checkpoint"]["id"]
+    payload = fork_command(checkpoint, suffix="durable_replay")
+
+    first = client.post(f"/local/v1/runs/{source.json()['id']}/fork", headers=headers, json=payload)
+    assert first.status_code == 200
+    assert (
+        client.delete(f"/local/v1/workspaces/{workspace['id']}", headers=headers).status_code == 200
+    )
+    replay = client.post(
+        f"/local/v1/runs/{source.json()['id']}/fork", headers=headers, json=payload
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == first.json()["id"]
 
 
 def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
@@ -286,6 +850,7 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX=3,
         data_dir=tmp,
     )
@@ -294,9 +859,9 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
         r = c.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={
-                "goal": "repair task",
-                "metadata": {
+            json=run_command(
+                "repair task",
+                metadata={
                     "intent": "repair",
                     "source_run_id": "run_original",
                     "source_message_id": "msg_original",
@@ -304,7 +869,7 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
                     "failure_category": "validation",
                     "failure_action_kind": "repair",
                 },
-            },
+            ),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -373,6 +938,7 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -380,9 +946,9 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
         r = c.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={
-                "goal": "retry task",
-                "metadata": {
+            json=run_command(
+                "retry task",
+                metadata={
                     "intent": "retry",
                     "source_run_id": "run_failed",
                     "source_message_id": "msg_failed",
@@ -390,7 +956,7 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
                     "failure_category": "auth",
                     "failure_action_kind": "user_action",
                 },
-            },
+            ),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -434,6 +1000,7 @@ def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> N
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX=1,
         data_dir=tmp,
     )
@@ -442,15 +1009,15 @@ def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> N
         r = c.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={
-                "goal": "repair task",
-                "metadata": {
+            json=run_command(
+                "repair task",
+                metadata={
                     "intent": "repair",
                     "source_run_id": "run_original",
                     "source_message_id": "msg_original",
                     "attempt": 2,
                 },
-            },
+            ),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -496,9 +1063,103 @@ def test_create_run_rejects_empty_goal(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": ""},
+        json=run_command(""),
     )
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_status"),
+    [
+        ({"goal": "x" * 131_073}, 422),
+        ({"goal": "x", "history": [{"role": "user", "content": "x"}] * 257}, 422),
+        ({"goal": "x", "metadata": {"oversized": "x" * 1_048_576}}, 413),
+    ],
+)
+def test_create_run_rejects_oversized_persistent_input(
+    client: TestClient,
+    body: dict,
+    expected_status: int,
+) -> None:
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json={**run_command(str(body["goal"])), **body},
+    )
+    assert response.status_code == expected_status
+
+
+async def test_request_body_limit_counts_streamed_chunks() -> None:
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"x" * 600_000, "more_body": True},
+            {"type": "http.request", "body": b"x" * 600_000, "more_body": False},
+        ]
+    )
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return next(messages)
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    async def consume_body(_scope: dict, receive, _send) -> None:
+        while (await receive()).get("more_body"):
+            pass
+
+    middleware = RequestBodyLimitMiddleware(consume_body)
+    await middleware(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/local/v1/runs",
+            "raw_path": b"/local/v1/runs",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 1),
+            "server": ("127.0.0.1", 17371),
+        },
+        receive,
+        send,
+    )
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
+
+
+def test_create_run_rejects_deep_or_excessive_nested_input(client: TestClient) -> None:
+    nested: dict = {}
+    for _ in range(9):
+        nested = {"next": nested}
+
+    deep = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command("x", metadata=nested),
+    )
+    wide = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command("x", settings={"items": list(range(512))}),
+    )
+
+    assert deep.status_code == 422
+    assert wide.status_code == 422
+
+
+def test_auth_rejects_oversized_unauthenticated_body_before_reading_it(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Content-Type": "application/json"},
+        content=b"x" * 1_048_577,
+    )
+    assert response.status_code == 401
 
 
 def test_get_run_404_for_unknown(client: TestClient) -> None:
@@ -522,13 +1183,68 @@ def test_run_failed_payload_includes_failure_policy_for_generic_exceptions() -> 
     assert "implementation" in payload["suggested_action"]
 
 
+def test_completion_router_block_becomes_structured_run_failure() -> None:
+    payload = _completion_failure_payload(
+        {
+            "completion_route": {
+                "decision": "blocked",
+                "reason": "verification_failed",
+                "message": "file missing: report.txt",
+                "recoverable": True,
+                "attempts": 1,
+                "max_attempts": 1,
+                "tool_call_id": "verify-1",
+                "run_id": "run-1",
+            }
+        },
+        current_run_id="run-1",
+    )
+
+    assert payload == {
+        "error": "file missing: report.txt",
+        "error_code": "verification_failed",
+        "source": "completion_router",
+        "failure_category": "verification",
+        "recoverable": True,
+        "retryable": False,
+        "details": {
+            "attempts": 1,
+            "max_attempts": 1,
+            "tool_call_id": "verify-1",
+        },
+        "category": "validation",
+        "action_kind": "repair",
+        "recovery_action": "repair",
+        "suggested_action": "Fix the invalid request arguments before retrying.",
+    }
+
+
+def test_completion_router_scope_mismatch_fails_closed() -> None:
+    payload = _completion_failure_payload(
+        {
+            "completion_route": {
+                "decision": "blocked",
+                "reason": "verification_failed",
+                "message": "old failure",
+                "recoverable": True,
+                "run_id": "source-run",
+            }
+        },
+        current_run_id="fork-run",
+    )
+
+    assert payload is not None
+    assert payload["error_code"] == "completion_route_scope_mismatch"
+    assert payload["recoverable"] is False
+
+
 def test_full_run_lifecycle_through_sse(client: TestClient) -> None:
     """Start a run, stream until terminal event, verify run.completed."""
     # Start
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "say hi"},
+        json=run_command("say hi"),
     )
     assert r.status_code == 200
     run_id = r.json()["id"]  # flat LocalRun shape (no wrapper)
@@ -563,7 +1279,7 @@ def test_run_diagnostics_include_handoff_summary(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "say hi"},
+        json=run_command("say hi"),
     )
     assert r.status_code == 200
     run_id = r.json()["id"]
@@ -601,11 +1317,13 @@ def test_run_diagnostics_include_reflection_summary(client: TestClient) -> None:
     store = client.app.state.store
 
     async def create_completed_run() -> str:
-        run = await store.create_run(goal="Reflect on answer", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Reflect on answer",
+            workspace_path=None,
+        )
         await store.update_run_status(run["id"], "completed")
         return run["id"]
-
-    import asyncio
 
     run_id = asyncio.run(create_completed_run())
 
@@ -659,7 +1377,7 @@ def test_run_diagnostics_include_latest_feature_ledger(client: TestClient) -> No
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "say hi"},
+        json=run_command("say hi"),
     )
     assert r.status_code == 200
     run_id = r.json()["id"]
@@ -726,7 +1444,11 @@ def test_run_diagnostics_marks_missing_progress_ledger_for_handoff(client: TestC
     store = client.app.state.store
 
     async def create_completed_run() -> str:
-        run = await store.create_run(goal="Long task", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Long task",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.completed",
@@ -757,7 +1479,11 @@ def test_run_diagnostics_marks_missing_progress_ledger_for_waiting_input(
     store = client.app.state.store
 
     async def create_waiting_input_run() -> str:
-        run = await store.create_run(goal="Ask a clarifying question", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Ask a clarifying question",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.completed",
@@ -794,7 +1520,11 @@ def test_run_diagnostics_marks_stale_progress_ledger_after_later_tool_event(
     store = client.app.state.store
 
     async def create_stale_ledger_run() -> str:
-        run = await store.create_run(goal="Long task", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Long task",
+            workspace_path=None,
+        )
         payload = {
             "summary": "Initial plan",
             "status": "in_progress",
@@ -845,7 +1575,11 @@ def test_run_diagnostics_keeps_fresh_ledger_across_passive_waiting_events(
     store = client.app.state.store
 
     async def create_waiting_run_with_fresh_ledger() -> str:
-        run = await store.create_run(goal="Needs approval", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Needs approval",
+            workspace_path=None,
+        )
         payload = {
             "summary": "Ready for the user's approval",
             "status": "blocked",
@@ -892,7 +1626,11 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
     store = client.app.state.store
 
     async def create_failed_run() -> str:
-        run = await store.create_run(goal="Spend credits", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Spend credits",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "run.failed",
@@ -926,7 +1664,11 @@ def test_run_diagnostics_reports_latest_task_verification_pass(
     store = client.app.state.store
 
     async def create_verified_run() -> str:
-        run = await store.create_run(goal="Repair then verify", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Repair then verify",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.failed",
@@ -998,7 +1740,11 @@ def test_run_diagnostics_suppresses_recovered_tool_failure_for_completed_run(
     store = client.app.state.store
 
     async def create_recovered_run() -> str:
-        run = await store.create_run(goal="Search then answer", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Search then answer",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.failed",
@@ -1045,7 +1791,11 @@ def test_run_diagnostics_reports_latest_task_verification_failure(
     store = client.app.state.store
 
     async def create_unverified_run() -> str:
-        run = await store.create_run(goal="Verify and report", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Verify and report",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.failed",
@@ -1092,7 +1842,11 @@ def test_run_diagnostics_classifies_auth_failures(client: TestClient) -> None:
     store = client.app.state.store
 
     async def create_failed_run() -> str:
-        run = await store.create_run(goal="Search web", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Search web",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.failed",
@@ -1127,7 +1881,11 @@ def test_run_diagnostics_classifies_transient_failures(client: TestClient) -> No
     store = client.app.state.store
 
     async def create_failed_run() -> str:
-        run = await store.create_run(goal="Call model", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Call model",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "run.failed",
@@ -1186,15 +1944,15 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
-        max_model_retries=0,
     )
     app = create_app(settings)
     with TestClient(app) as client:
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "call the model"},
+            json=run_command("call the model"),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -1240,7 +1998,11 @@ def test_run_diagnostics_respects_tool_failure_retry_fields(client: TestClient) 
     store = client.app.state.store
 
     async def create_failed_run() -> str:
-        run = await store.create_run(goal="Search web", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Search web",
+            workspace_path=None,
+        )
         await store.append_event(
             run["id"],
             "tool.failed",
@@ -1272,26 +2034,21 @@ def test_run_diagnostics_respects_tool_failure_retry_fields(client: TestClient) 
     assert "Retry" in failure["suggested_action"]
 
 
-def test_cancel_unknown_run_returns_false(client: TestClient) -> None:
+def test_cancel_unknown_run_returns_not_found(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs/run_nope/cancel",
         headers={"Authorization": "Bearer tok"},
     )
-    assert r.status_code == 200
-    assert r.json()["canceled"] is False
+    assert r.status_code == 404
 
 
-def test_resume_unknown_run_returns_409(client: TestClient) -> None:
+def test_resume_unknown_run_returns_not_found(client: TestClient) -> None:
     r = client.post(
         "/local/v1/runs/run_nope/resume",
         headers={"Authorization": "Bearer tok"},
         json={"action": "approve"},
     )
-    # No active task -> coordinator returns False -> 409
-    # (Or: a recreated queue with no checkpoint -> still works but errors;
-    # implementation currently lets you re-drive a run if no task exists.
-    # For now any non-200 is acceptable in the unknown-run case.)
-    assert r.status_code in (200, 409, 500)
+    assert r.status_code == 404
 
 
 def test_multi_permission_batch_waits_for_all_decisions_before_resume(
@@ -1302,19 +2059,29 @@ def test_multi_permission_batch_waits_for_all_decisions_before_resume(
     resume_calls: list[dict] = []
 
     async def create_waiting_run() -> tuple[str, dict, dict]:
-        run = await store.create_run(goal="Approve two tools", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Approve two tools",
+            workspace_path=None,
+        )
         await store.append_event(run["id"], "run.started", {"goal": run["goal"]})
         first = await store.create_permission(
             run_id=run["id"],
             tool_call_id="",
             tool_name="write_file",
             arguments={"path": "a.txt"},
+            wait_cycle_id="wait_batch",
+            interrupt_id="interrupt_tools",
+            action_index=0,
         )
         second = await store.create_permission(
             run_id=run["id"],
             tool_call_id="",
             tool_name="execute",
             arguments={"command": "make test"},
+            wait_cycle_id="wait_batch",
+            interrupt_id="interrupt_tools",
+            action_index=1,
         )
         for record in (first, second):
             await store.append_event(
@@ -1359,13 +2126,199 @@ def test_multi_permission_batch_waits_for_all_decisions_before_resume(
         {
             "run_id": run_id,
             "decision": {
-                "decisions": [
-                    {"type": "approve"},
-                    {"type": "reject", "message": "Tool execution denied by user."},
-                ]
+                "interrupt_tools": {
+                    "decisions": [
+                        {"type": "approve"},
+                        {"type": "reject", "message": "Tool execution denied by user."},
+                    ]
+                }
             },
         }
     ]
+
+
+def test_permission_decision_is_idempotent_and_conflicting_replay_is_rejected(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    store = client.app.state.store
+    resume_calls: list[dict] = []
+
+    async def prepare() -> dict:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="write exact file",
+            workspace_path=None,
+        )
+        permission = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call_exact",
+            operation_id="toolop_exact",
+            tool_name="write_file",
+            arguments={"file_path": "a.txt", "text": "A"},
+            arguments_hash="hash_exact",
+            risk="workspace_write",
+        )
+        await store.append_event(run["id"], "permission.required", {"request_id": permission["id"]})
+        await store.append_event(
+            run["id"], "run.waiting", {"next": ["ToolReviewMiddleware.after_model"]}
+        )
+        await store.update_run_status(run["id"], "waiting_permission")
+        return permission
+
+    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
+        resume_calls.append({"run_id": run_id, "decision": decision})
+        return True
+
+    permission = asyncio.run(prepare())
+    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
+    endpoint = f"/local/v1/permissions/{permission['id']}"
+    headers = {"Authorization": "Bearer tok"}
+    body = {"decision": "approve", "scope": "run"}
+
+    first = client.post(endpoint, headers=headers, json=body)
+    replay = client.post(endpoint, headers=headers, json=body)
+    conflict = client.post(
+        endpoint,
+        headers=headers,
+        json={"decision": "deny", "scope": "run"},
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert replay.json()["resumed"] is True
+    assert conflict.status_code == 409
+    # Identical replay rechecks/enqueues the durable resume owner so a crash
+    # between decision commit and job creation cannot strand the run.
+    assert len(resume_calls) == 2
+
+
+def test_permission_edit_preserves_tool_name_and_resumes_with_edited_args(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    store = client.app.state.store
+    resume_calls: list[dict] = []
+
+    async def prepare() -> dict:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="edit command",
+            workspace_path=None,
+        )
+        permission = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call_edit",
+            operation_id="toolop_edit",
+            tool_name="execute",
+            arguments={"command": "rm -rf build"},
+            arguments_hash="hash_edit",
+            risk="external_or_unknown",
+        )
+        await store.append_event(run["id"], "permission.required", {"request_id": permission["id"]})
+        await store.append_event(run["id"], "run.waiting", {"next": ["review"]})
+        await store.update_run_status(run["id"], "waiting_permission")
+        return permission
+
+    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
+        resume_calls.append({"run_id": run_id, "decision": decision})
+        return True
+
+    permission = asyncio.run(prepare())
+    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
+    endpoint = f"/local/v1/permissions/{permission['id']}"
+    headers = {"Authorization": "Bearer tok"}
+    edited_action = {"name": "execute", "args": {"command": "make test"}}
+
+    response = client.post(
+        endpoint,
+        headers=headers,
+        json={"decision": "edit", "scope": "once", "edited_action": edited_action},
+    )
+    changed_name = client.post(
+        endpoint,
+        headers=headers,
+        json={
+            "decision": "edit",
+            "scope": "once",
+            "edited_action": {"name": "write_file", "args": {}},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert resume_calls[0]["decision"] == {
+        permission["interrupt_id"]: {
+            "decisions": [{"type": "edit", "edited_action": edited_action}]
+        }
+    }
+    assert changed_name.status_code == 400
+
+
+def test_tool_reconciliation_is_persisted_idempotent_and_resumes(
+    client: TestClient, monkeypatch
+) -> None:
+    store = client.app.state.store
+    resume_calls: list[dict] = []
+
+    async def prepare() -> tuple[str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="reconcile uncertain tool",
+            workspace_path=None,
+        )
+        operation_id = "toolop_uncertain"
+        await store.prepare_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            execution_attempt_id="job:1",
+            tool_call_id="call-uncertain",
+            tool_name="execute",
+            tool_version="graph-v1",
+            arguments_hash="args-hash",
+            arguments_json="{}",
+            risk="external_or_unknown",
+        )
+        await store.begin_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            execution_attempt_id="job:1",
+        )
+        await store.settle_tool_receipt(
+            operation_id=operation_id,
+            run_id=str(run["id"]),
+            status="outcome_unknown",
+            error_type="TimeoutError",
+        )
+        await store.create_tool_reconciliation(
+            run_id=run["id"],
+            operation_id=operation_id,
+            wait_cycle_id="wait_uncertain",
+            interrupt_id="interrupt_uncertain",
+            payload={"operation_id": operation_id, "tool_name": "execute"},
+        )
+        await store.update_run_status(run["id"], "waiting_permission")
+        return str(run["id"]), operation_id
+
+    async def fake_resume_run(*, run_id: str, decision: dict) -> bool:
+        resume_calls.append({"run_id": run_id, "decision": decision})
+        return True
+
+    run_id, operation_id = asyncio.run(prepare())
+    monkeypatch.setattr(client.app.state.coordinator, "resume_run", fake_resume_run)
+    endpoint = f"/local/v1/tool-reconciliations/{operation_id}"
+    headers = {"Authorization": "Bearer tok"}
+    body = {"decision": "retry_not_executed"}
+
+    first = client.post(endpoint, headers=headers, json=body)
+    replay = client.post(endpoint, headers=headers, json=body)
+    conflict = client.post(endpoint, headers=headers, json={"decision": "confirmed_completed"})
+
+    assert first.status_code == replay.status_code == 200
+    assert conflict.status_code == 409
+    assert resume_calls[0] == {
+        "run_id": run_id,
+        "decision": {"interrupt_uncertain": {"decision": "retry_not_executed"}},
+    }
 
 
 def test_plan_approval_resolution_emits_event_and_resumes(
@@ -1376,7 +2329,11 @@ def test_plan_approval_resolution_emits_event_and_resumes(
     resume_calls: list[dict] = []
 
     async def create_waiting_run() -> tuple[str, dict]:
-        run = await store.create_run(goal="Plan before editing", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Plan before editing",
+            workspace_path=None,
+        )
         approval = await store.create_plan_approval(
             run_id=run["id"],
             tool_call_id="call-plan",
@@ -1436,16 +2393,13 @@ def test_plan_approval_resolution_emits_event_and_resumes(
     assert any(event["event_type"] == "plan.approval_resolved" for event in events)
 
 
-def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
+def test_history_is_not_pretruncated_before_token_aware_compaction(
     monkeypatch,
 ) -> None:
-    """End-to-end: posting a run with > _MAX_HISTORY_TURNS items should
-    cause the daemon to truncate the forwarded history AND surface the
-    dropped-count notice in the <state> block of the system prompt, so
-    the model knows context is incomplete. Without this notice, the
-    model would silently lose earlier turns and may answer based on
-    only the recent slice — a real "model is confused, what just
-    happened" failure mode.
+    """The Runtime passes accepted history to Deep Agents unchanged.
+
+    Token-aware summarization owns compaction; the coordinator must not apply
+    a second message-count cap or manufacture a heuristic system summary.
     """
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-trunc-"))
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
@@ -1480,11 +2434,12 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
     with TestClient(app) as client:
-        # Build 60 prior history turns (> the 40-turn cap).
+        # This exceeded the removed 40-message coordinator cap.
         history = []
         for i in range(60):
             role = "user" if i % 2 == 0 else "assistant"
@@ -1493,7 +2448,7 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "what was message 5?", "history": history},
+            json=run_command("what was message 5?", history=history),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -1506,28 +2461,21 @@ def test_long_history_gets_truncated_and_state_layer_notes_dropped_count(
             assert resp.status_code == 200
             resp.read()
 
-    # The backend was called at least once; inspect the system prompt
-    # for the dropped-count notice.
     assert captured_requests, "expected at least one backend LLM call"
-    # The system message is the first message in the request body.
     first = captured_requests[0]
     messages = first.get("messages", [])
     system_blocks = [m["content"] for m in messages if m.get("role") == "system"]
     joined_system = "\n".join(system_blocks)
-    # 60 - 40 = 20 dropped
-    assert "已省略本对话早期的 20 条消息" in joined_system, (
-        f"expected dropped-count notice in system prompt; got: {joined_system!r}"
-    )
+    assert "已省略本对话早期" not in joined_system
+    assert "早期对话压缩摘要" not in joined_system
     assert "第 61 轮" in joined_system
-    assert "早期对话压缩摘要" in joined_system
-    assert "用户: msg-000" in joined_system
-    assert "助手: msg-019" in joined_system
-    # And the actual forwarded message list is capped at 40 + 1 (current goal).
     user_or_asst = [m for m in messages if m.get("role") in {"user", "assistant"}]
-    assert len(user_or_asst) <= 41, f"forwarded history not truncated: {len(user_or_asst)} messages"
+    assert len(user_or_asst) == 61
+    assert user_or_asst[0]["content"] == "msg-000"
+    assert user_or_asst[-2]["content"] == "msg-059"
 
 
-def test_long_history_uses_per_run_max_history_turns_override(monkeypatch) -> None:
+def test_removed_history_limit_setting_does_not_change_model_input(monkeypatch) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-history-override-"))
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
@@ -1555,6 +2503,7 @@ def test_long_history_uses_per_run_max_history_turns_override(monkeypatch) -> No
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -1567,11 +2516,11 @@ def test_long_history_uses_per_run_max_history_turns_override(monkeypatch) -> No
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={
-                "goal": "summarize",
-                "history": history,
-                "settings": {"max_history_turns": 10},
-            },
+            json=run_command(
+                "summarize",
+                history=history,
+                settings={"max_history_turns": 10},
+            ),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -1588,14 +2537,14 @@ def test_long_history_uses_per_run_max_history_turns_override(monkeypatch) -> No
     first = captured_requests[0]
     messages = first.get("messages", [])
     joined_system = "\n".join(m["content"] for m in messages if m.get("role") == "system")
-    assert "已省略本对话早期的 5 条消息" in joined_system
+    assert "已省略本对话早期" not in joined_system
     user_or_asst = [m for m in messages if m.get("role") in {"user", "assistant"}]
-    assert len(user_or_asst) <= 11
-    assert not any(m.get("content") == "msg-000" for m in user_or_asst)
+    assert len(user_or_asst) == 16
+    assert any(m.get("content") == "msg-000" for m in user_or_asst)
     assert any(m.get("content") == "msg-014" for m in user_or_asst)
 
 
-def test_long_history_preserves_client_omission_marker_when_daemon_truncates(
+def test_transport_omission_marker_passes_through_without_daemon_rewrite(
     monkeypatch,
 ) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-client-marker-"))
@@ -1625,6 +2574,7 @@ def test_long_history_preserves_client_omission_marker_when_daemon_truncates(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -1649,11 +2599,10 @@ def test_long_history_preserves_client_omission_marker_when_daemon_truncates(
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={
-                "goal": "what did we decide about request ids?",
-                "history": history,
-                "settings": {"max_history_turns": 10},
-            },
+            json=run_command(
+                "what did we decide about request ids?",
+                history=history,
+            ),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -1671,12 +2620,11 @@ def test_long_history_preserves_client_omission_marker_when_daemon_truncates(
     user_or_asst = [m for m in messages if m.get("role") in {"user", "assistant"}]
     joined_system = "\n".join(m["content"] for m in messages if m.get("role") == "system")
 
-    assert len(user_or_asst) <= 11
-    assert "已省略本对话早期的 1 条消息" in joined_system
-    assert "早期对话压缩摘要" in joined_system
-    assert "用户: msg-000" in joined_system
+    assert len(user_or_asst) == 12
+    assert "已省略本对话早期" not in joined_system
+    assert "早期对话压缩摘要" not in joined_system
     assert "上下文提示｜对话较长" not in joined_system
     assert user_or_asst[0]["content"].startswith("【上下文提示｜对话较长")
     assert "重要决定：所有 API 错误必须保留 request_id" in user_or_asst[0]["content"]
-    assert not any(m.get("content") == "msg-000" for m in user_or_asst)
+    assert any(m.get("content") == "msg-000" for m in user_or_asst)
     assert any(m.get("content") == "msg-009" for m in user_or_asst)

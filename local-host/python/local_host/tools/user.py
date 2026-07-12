@@ -3,12 +3,12 @@
 Calls LangGraph's `interrupt()` from inside the tool. The graph pauses,
 RunCoordinator detects `snapshot.next` non-empty and emits `run.waiting`
 with the question payload over SSE. The client shows UI, collects an
-answer, then POSTs `/local/v1/questions/{id}` (or `/runs/{id}/resume`)
-which `Command(resume=...)` the graph — the answer becomes this tool's
+answer, then POSTs `/local/v1/questions/{id}`. The Runtime persists that typed
+answer before using `Command(resume=...)`; the answer becomes this tool's
 return value, which the main LLM consumes.
 
 This fills the gap where:
-  - HumanInTheLoopMiddleware handles "may I do this destructive thing?"
+  - ToolReviewMiddleware handles "may I perform this consequential action?"
     (permission, pre-tool-call gate)
   - user.ask handles "please clarify something for me" (mid-task Q&A,
     explicit tool call from the LLM)

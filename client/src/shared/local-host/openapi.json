@@ -54,8 +54,38 @@
         "type": "object"
       },
       "CreateRunRequest": {
+        "additionalProperties": false,
         "properties": {
+          "assistant_message_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Message Id"
+          },
+          "client_message_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Client Message Id",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
           "goal": {
+            "maxLength": 131072,
             "title": "Goal",
             "type": "string"
           },
@@ -68,6 +98,7 @@
                   },
                   "type": "object"
                 },
+                "maxItems": 256,
                 "type": "array"
               },
               {
@@ -90,12 +121,16 @@
           },
           "model": {
             "default": "auto",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^\\S+$",
             "title": "Model",
             "type": "string"
           },
           "parent_run_id": {
             "anyOf": [
               {
+                "maxLength": 128,
                 "type": "string"
               },
               {
@@ -103,6 +138,34 @@
               }
             ],
             "title": "Parent Run Id"
+          },
+          "protocol_version": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Protocol Version",
+            "type": "integer"
+          },
+          "replace_from_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replace From Client Id"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Required Capabilities",
+            "type": "array"
           },
           "settings": {
             "anyOf": [
@@ -116,9 +179,72 @@
             ],
             "title": "Settings"
           },
+          "thread_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
+          "thread_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Metadata"
+          },
+          "thread_title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Title"
+          },
+          "user_input": {
+            "anyOf": [
+              {
+                "maxLength": 131072,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Input"
+          },
+          "user_item_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Item Metadata"
+          },
           "workspace_path": {
             "anyOf": [
               {
+                "maxLength": 4096,
                 "type": "string"
               },
               {
@@ -129,6 +255,10 @@
           }
         },
         "required": [
+          "command_id",
+          "client_message_id",
+          "protocol_version",
+          "required_capabilities",
           "goal"
         ],
         "title": "CreateRunRequest",
@@ -225,6 +355,30 @@
           "path"
         ],
         "title": "CreateWorkspaceRequest",
+        "type": "object"
+      },
+      "DeleteLocalThreadResponse": {
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "DeleteLocalThreadResponse",
         "type": "object"
       },
       "DiagnoseWorkspaceRequest": {
@@ -707,6 +861,119 @@
         "title": "DiagnosticsReflectionCritic",
         "type": "object"
       },
+      "DiagnosticsToolReceipt": {
+        "description": "Safe execution identity/status without raw tool arguments or output.",
+        "properties": {
+          "arguments_hash": {
+            "title": "Arguments Hash",
+            "type": "string"
+          },
+          "attempt_count": {
+            "title": "Attempt Count",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "result_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Hash"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "prepared",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "outcome_unknown",
+              "rejected",
+              "canceled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_call_id": {
+            "title": "Tool Call Id",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "tool_version": {
+            "title": "Tool Version",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "tool_call_id",
+          "tool_name",
+          "tool_version",
+          "arguments_hash",
+          "risk",
+          "status",
+          "attempt_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DiagnosticsToolReceipt",
+        "type": "object"
+      },
       "DiagnosticsVerification": {
         "description": "Latest machine-readable task.verify result, if any.",
         "properties": {
@@ -761,6 +1028,74 @@
           "source_event_type"
         ],
         "title": "DiagnosticsVerification",
+        "type": "object"
+      },
+      "DiagnosticsWaitCandidate": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "tool_review",
+              "question",
+              "tool_reconciliation"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "resolved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "created_at"
+        ],
+        "title": "DiagnosticsWaitCandidate",
+        "type": "object"
+      },
+      "EditedToolAction": {
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "args"
+        ],
+        "title": "EditedToolAction",
         "type": "object"
       },
       "FeatureLedger": {
@@ -847,14 +1182,39 @@
         "type": "object"
       },
       "ForkRunRequest": {
+        "additionalProperties": false,
         "properties": {
+          "assistant_message_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Assistant Message Id",
+            "type": "string"
+          },
           "checkpoint_id": {
+            "maxLength": 256,
+            "minLength": 1,
             "title": "Checkpoint Id",
+            "type": "string"
+          },
+          "client_message_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Client Message Id",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
             "type": "string"
           },
           "goal": {
             "anyOf": [
               {
+                "maxLength": 131072,
                 "type": "string"
               },
               {
@@ -875,18 +1235,14 @@
             ],
             "title": "Metadata"
           },
-          "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model"
+          "thread_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Thread Id",
+            "type": "string"
           },
-          "settings": {
+          "thread_metadata": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -896,11 +1252,45 @@
                 "type": "null"
               }
             ],
-            "title": "Settings"
+            "title": "Thread Metadata"
+          },
+          "thread_title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Title"
+          },
+          "user_input": {
+            "maxLength": 131072,
+            "title": "User Input",
+            "type": "string"
+          },
+          "user_item_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Item Metadata"
           }
         },
         "required": [
-          "checkpoint_id"
+          "command_id",
+          "client_message_id",
+          "assistant_message_id",
+          "thread_id",
+          "checkpoint_id",
+          "user_input"
         ],
         "title": "ForkRunRequest",
         "type": "object"
@@ -1046,6 +1436,22 @@
         "title": "LatestCheckpoint",
         "type": "object"
       },
+      "ListLocalModelProvidersResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/LocalModelProvider"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ListLocalModelProvidersResponse",
+        "type": "object"
+      },
       "ListRunsResponse": {
         "properties": {
           "runs": {
@@ -1076,6 +1482,75 @@
           "schedules"
         ],
         "title": "ListScheduledRunsResponse",
+        "type": "object"
+      },
+      "ListThreadChangesResponse": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/LocalThreadChange"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "changes",
+          "cursor"
+        ],
+        "title": "ListThreadChangesResponse",
+        "type": "object"
+      },
+      "ListThreadsResponse": {
+        "properties": {
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "next_before_created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before Created At"
+          },
+          "next_before_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before Id"
+          },
+          "threads": {
+            "items": {
+              "$ref": "#/components/schemas/LocalThread"
+            },
+            "title": "Threads",
+            "type": "array"
+          }
+        },
+        "required": [
+          "threads",
+          "cursor"
+        ],
+        "title": "ListThreadsResponse",
         "type": "object"
       },
       "ListWorkspacesResponse": {
@@ -1182,9 +1657,147 @@
         "title": "LocalCloudSession",
         "type": "object"
       },
+      "LocalModelProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 128.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "model_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Model Id",
+            "type": "string"
+          },
+          "streaming": {
+            "default": true,
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "tool_calling": {
+            "default": true,
+            "title": "Tool Calling",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model_id",
+          "display_name"
+        ],
+        "title": "LocalModelProfile",
+        "type": "object"
+      },
+      "LocalModelProvider": {
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_configured": {
+            "title": "Credential Configured",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "openai_compatible",
+            "title": "Kind",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/LocalModelProfile"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "requires_api_key": {
+            "title": "Requires Api Key",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "base_url",
+          "requires_api_key",
+          "credential_configured",
+          "models",
+          "enabled",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalModelProvider",
+        "type": "object"
+      },
       "LocalRun": {
         "description": "One row of the `local_runs` table, surfaced over HTTP.\n\n`history_json` / `settings_json` are stringified JSON because\nSQLite stores them that way — the client parses on demand. Kept\nas strings here (not dict) to keep the wire format honest.",
         "properties": {
+          "assistant_item_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Item Id"
+          },
           "canceled_at": {
             "anyOf": [
               {
@@ -1195,6 +1808,28 @@
               }
             ],
             "title": "Canceled At"
+          },
+          "client_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Message Id"
+          },
+          "command_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Id"
           },
           "completed_at": {
             "anyOf": [
@@ -1225,6 +1860,28 @@
           "goal": {
             "title": "Goal",
             "type": "string"
+          },
+          "graph_checkpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Checkpoint Id"
+          },
+          "graph_thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Thread Id"
           },
           "history_json": {
             "default": "[]",
@@ -1262,6 +1919,7 @@
               "running",
               "waiting_permission",
               "waiting_input",
+              "cleanup_required",
               "completed",
               "canceled",
               "failed"
@@ -1269,9 +1927,31 @@
             "title": "Status",
             "type": "string"
           },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          },
           "updated_at": {
             "title": "Updated At",
             "type": "string"
+          },
+          "user_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Input"
           },
           "workspace_path": {
             "anyOf": [
@@ -1374,6 +2054,20 @@
             "default": 1,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "tool_receipts": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsToolReceipt"
+            },
+            "title": "Tool Receipts",
+            "type": "array"
+          },
+          "wait_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticsWaitCandidate"
+            },
+            "title": "Wait Candidates",
+            "type": "array"
           }
         },
         "required": [
@@ -1385,6 +2079,92 @@
           "handoff"
         ],
         "title": "LocalRunDiagnostics",
+        "type": "object"
+      },
+      "LocalRuntimeModel": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "provider_name": {
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "spec": {
+            "title": "Spec",
+            "type": "string"
+          },
+          "streaming": {
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "tool_calling": {
+            "title": "Tool Calling",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "spec",
+          "model_id",
+          "display_name",
+          "provider_id",
+          "provider_name",
+          "tool_calling",
+          "streaming",
+          "available"
+        ],
+        "title": "LocalRuntimeModel",
+        "type": "object"
+      },
+      "LocalRuntimeModelCatalog": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/LocalRuntimeModel"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "LocalRuntimeModelCatalog",
         "type": "object"
       },
       "LocalScheduledRun": {
@@ -1516,6 +2296,301 @@
           "updated_at"
         ],
         "title": "LocalScheduledRun",
+        "type": "object"
+      },
+      "LocalThread": {
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalThread",
+        "type": "object"
+      },
+      "LocalThreadChange": {
+        "properties": {
+          "change_type": {
+            "title": "Change Type",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "thread_version": {
+            "title": "Thread Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cursor",
+          "thread_id",
+          "thread_version",
+          "change_type",
+          "created_at"
+        ],
+        "title": "LocalThreadChange",
+        "type": "object"
+      },
+      "LocalThreadEvent": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "seq",
+          "event_type",
+          "created_at"
+        ],
+        "title": "LocalThreadEvent",
+        "type": "object"
+      },
+      "LocalThreadItem": {
+        "properties": {
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "item_type": {
+            "title": "Item Type",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_id": {
+            "title": "Thread Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "thread_id",
+          "item_type",
+          "status",
+          "content",
+          "position",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LocalThreadItem",
+        "type": "object"
+      },
+      "LocalThreadSnapshot": {
+        "properties": {
+          "cursor": {
+            "title": "Cursor",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/LocalThreadEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "events_truncated": {
+            "default": false,
+            "title": "Events Truncated",
+            "type": "boolean"
+          },
+          "has_more_items": {
+            "default": false,
+            "title": "Has More Items",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LocalThreadItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_before_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before Position"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/LocalRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "thread": {
+            "$ref": "#/components/schemas/LocalThread"
+          }
+        },
+        "required": [
+          "thread",
+          "items",
+          "runs",
+          "events",
+          "cursor"
+        ],
+        "title": "LocalThreadSnapshot",
         "type": "object"
       },
       "LocalWorkspaceAuthorization": {
@@ -1811,6 +2886,7 @@
           "decision": {
             "enum": [
               "approve",
+              "edit",
               "deny"
             ],
             "title": "Decision",
@@ -1906,15 +2982,44 @@
         "title": "QuestionAnswer",
         "type": "object"
       },
+      "ReconcileToolRequest": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirmed_completed",
+              "retry_not_executed",
+              "abort"
+            ],
+            "title": "Decision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ReconcileToolRequest",
+        "type": "object"
+      },
       "ResolvePermissionRequest": {
         "properties": {
           "decision": {
             "enum": [
               "approve",
+              "edit",
               "deny"
             ],
             "title": "Decision",
             "type": "string"
+          },
+          "edited_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditedToolAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scope": {
             "default": "once",
@@ -1971,6 +3076,43 @@
           }
         },
         "title": "ResumeRunResponse",
+        "type": "object"
+      },
+      "RuntimeInfo": {
+        "description": "Authenticated Runtime protocol and capability discovery.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "gateway_provider_configured": {
+            "title": "Gateway Provider Configured",
+            "type": "boolean"
+          },
+          "model_provider_configured": {
+            "title": "Model Provider Configured",
+            "type": "boolean"
+          },
+          "protocol_version": {
+            "title": "Protocol Version",
+            "type": "integer"
+          },
+          "runtime_version": {
+            "title": "Runtime Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "runtime_version",
+          "capabilities",
+          "model_provider_configured",
+          "gateway_provider_configured"
+        ],
+        "title": "RuntimeInfo",
         "type": "object"
       },
       "SetCloudSessionRequest": {
@@ -2086,6 +3228,145 @@
           "skill"
         ],
         "title": "SkillWriteResponse",
+        "type": "object"
+      },
+      "ToolReconciliationResolution": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirmed_completed",
+              "retry_not_executed",
+              "abort"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "resolved": {
+            "const": true,
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "operation_id",
+          "decision",
+          "resumed"
+        ],
+        "title": "ToolReconciliationResolution",
+        "type": "object"
+      },
+      "UpdateLocalThreadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "UpdateLocalThreadRequest",
+        "type": "object"
+      },
+      "UpsertLocalModelProviderRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "openai_compatible",
+            "default": "openai_compatible",
+            "title": "Kind",
+            "type": "string"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/LocalModelProfile"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Models",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "requires_api_key": {
+            "default": true,
+            "title": "Requires Api Key",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "base_url",
+          "models"
+        ],
+        "title": "UpsertLocalModelProviderRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -2337,7 +3618,7 @@
     },
     "/local/v1/memory": {
       "delete": {
-        "description": "Wipe every note from all long-term memory namespaces.\n\nBacks the \"清空记忆 / Clear memory\" button in the agent settings\ndialog. Walks every (\"notes\", ...) namespace in pages of 200\n(matches the BaseStore default search limit ceiling for SQLite stores)\nand deletes each key. Returns the total count so the UI can render an\naccurate \"cleared N memories\" toast.\n\nIdempotent: calling it on an empty store returns\n`deleted_count: 0` without error.",
+        "description": "Wipe this authenticated principal's long-term memory namespaces.\n\nBacks the \"清空记忆 / Clear memory\" button in the agent settings\ndialog. Walks every (\"notes\", ...) namespace in pages of 200\n(matches the BaseStore default search limit ceiling for SQLite stores)\nand deletes each key. Returns the total count so the UI can render an\naccurate \"cleared N memories\" toast.\n\nIdempotent: calling it on an empty store returns\n`deleted_count: 0` without error.",
         "operationId": "clear_memory_local_v1_memory_delete",
         "responses": {
           "200": {
@@ -2354,9 +3635,131 @@
         "summary": "Clear Memory"
       }
     },
+    "/local/v1/model-providers": {
+      "get": {
+        "operationId": "list_model_providers_local_v1_model_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLocalModelProvidersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Model Providers"
+      }
+    },
+    "/local/v1/model-providers/{provider_id}": {
+      "delete": {
+        "operationId": "remove_model_provider_local_v1_model_providers__provider_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalModelProvider"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Model Provider"
+      },
+      "put": {
+        "operationId": "upsert_model_provider_local_v1_model_providers__provider_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertLocalModelProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalModelProvider"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Model Provider"
+      }
+    },
+    "/local/v1/models": {
+      "get": {
+        "operationId": "list_runtime_models_local_v1_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalRuntimeModelCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Runtime Models"
+      }
+    },
     "/local/v1/permissions/{permission_id}": {
       "post": {
-        "description": "Approve / deny a pending tool-permission request.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"reject\", ...}]}` shape\nthat `HumanInTheLoopMiddleware` expects on resume. One LangGraph\ninterrupt can contain multiple HITL action requests, so the run\nresumes only after every permission in the current pause batch is\nresolved, preserving the original `permission.required` order.\n\nWhen `scope=run`, the coordinator caches the tool name so the\nauto-approve loop in `_drive_run` skips re-prompting on\nsubsequent gates for the same tool in the same run.",
+        "description": "Approve, edit, or deny a parameter-bound tool review.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"edit\"|\"reject\", ...}]}` shape\nthat `ToolReviewMiddleware` verifies on resume. One LangGraph\ninterrupt can contain multiple action requests, so the run\nresumes only after every permission in the current pause batch is\nresolved, preserving the original `permission.required` order.\n\n`scope=run` is a bounded durable grant for the same tool, exact\nargument fingerprint, and risk class; it never widens by tool name.",
         "operationId": "resolve_permission_local_v1_permissions__permission_id__post",
         "parameters": [
           {
@@ -2909,6 +4312,24 @@
         "summary": "Stream Run"
       }
     },
+    "/local/v1/runtime": {
+      "get": {
+        "operationId": "runtime_info_local_v1_runtime_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runtime Info"
+      }
+    },
     "/local/v1/schedules": {
       "get": {
         "operationId": "list_schedules_local_v1_schedules_get",
@@ -3330,6 +4751,363 @@
         "summary": "Update Local Skill"
       }
     },
+    "/local/v1/threads": {
+      "get": {
+        "operationId": "list_threads_local_v1_threads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_created_at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Created At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListThreadsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Threads"
+      }
+    },
+    "/local/v1/threads/changes": {
+      "get": {
+        "operationId": "list_thread_changes_local_v1_threads_changes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListThreadChangesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Thread Changes"
+      }
+    },
+    "/local/v1/threads/{thread_id}": {
+      "delete": {
+        "operationId": "delete_thread_local_v1_threads__thread_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteLocalThreadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Thread"
+      },
+      "get": {
+        "operationId": "get_thread_snapshot_local_v1_threads__thread_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_position",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Position"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item_limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 2,
+              "title": "Item Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_limit",
+            "required": false,
+            "schema": {
+              "default": 5000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Event Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalThreadSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Thread Snapshot"
+      },
+      "patch": {
+        "operationId": "update_thread_local_v1_threads__thread_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "thread_id",
+            "required": true,
+            "schema": {
+              "title": "Thread Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLocalThreadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalThread"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Thread"
+      }
+    },
+    "/local/v1/tool-reconciliations/{operation_id}": {
+      "post": {
+        "operationId": "reconcile_tool_operation_local_v1_tool_reconciliations__operation_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileToolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolReconciliationResolution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile Tool Operation"
+      }
+    },
     "/local/v1/tools": {
       "get": {
         "operationId": "list_tools_local_v1_tools_get",
@@ -3352,7 +5130,7 @@
     },
     "/local/v1/workspace-files": {
       "get": {
-        "description": "Stream a file's bytes back to the renderer.\n\nGated by `local_workspaces` — the file's parent chain must be inside\na path the user previously authorized via `workspace.open`. We do\nNOT serve arbitrary paths; that would let a compromised renderer\nexfiltrate the entire disk.\n\nUsed by the right-side DocPreviewPanel to fetch .docx / .xlsx\nbytes for in-browser rendering (docx-preview, exceljs). No\nresponse_model — this is a binary stream, not a JSON shape, so\nit stays out of api_schemas.py / openapi.json by design.",
+        "description": "Stream a file's bytes back to the renderer.\n\nGated by `local_workspaces` — the file's parent chain must be inside\na path the user previously authorized in the client. We do\nNOT serve arbitrary paths; that would let a compromised renderer\nexfiltrate the entire disk.\n\nUsed by the right-side DocPreviewPanel to fetch .docx / .xlsx\nbytes for in-browser rendering (docx-preview, exceljs). No\nresponse_model — this is a binary stream, not a JSON shape, so\nit stays out of api_schemas.py / openapi.json by design.",
         "operationId": "get_workspace_file_local_v1_workspace_files_get",
         "parameters": [
           {

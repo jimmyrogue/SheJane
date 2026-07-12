@@ -3,7 +3,7 @@
 Composition (final):
 - trivial:  time.now, environment.observe, open.url, open.file,
             clipboard.read, clipboard.write
-- custom:   workspace.open, task.verify, task.progress, skill.use, web.fetch
+- custom:   task.verify, task.progress, skill.use, web.fetch
 - gateway:  image.generate, image.edit, web.search — all proxy through
             POST /api/v1/agent/tools/execute (cloud Tool Gateway). No
             platform-paid provider keys live in the daemon env.

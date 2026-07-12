@@ -1,10 +1,8 @@
-"""memory.search — recall past run notes during the current run.
+"""Explicit, workspace-scoped durable memory tools.
 
-Closes the long-term memory loop: `MemoryWritebackMiddleware` writes
-`{goal, answer}` to the current run's memory namespace after each run; this
-tool lets the agent **query** that namespace while it's still running, so a
-follow-up question can leverage what was learned in a previous session without
-crossing workspace boundaries.
+Memory is not written as a hidden end-of-run side effect. The model must call
+``memory.write`` after the user explicitly asks it to remember a fact; every
+write therefore crosses the normal tool review and durable receipt path.
 
 Implementation notes
 --------------------
@@ -27,24 +25,110 @@ Implementation notes
 
 from __future__ import annotations
 
+import re
+import uuid
 from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
 from typing import Annotated, Any
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore
 
-from ..middleware.memory_writeback import NAMESPACE
+NAMESPACE = ("notes", "global")
+NOTES_NAMESPACE_PREFIX = ("notes",)
 
 
-def make_memory_search_tool(namespace: tuple[str, ...] = NAMESPACE):
+def memory_namespace_for_workspace(
+    workspace_root: str | None,
+    principal_id: str | None,
+) -> tuple[str, ...]:
+    """Return an opaque namespace owned by one authenticated principal."""
+    if not principal_id:
+        raise ValueError("memory principal is required")
+    principal_hash = sha256(principal_id.encode()).hexdigest()
+    if not workspace_root:
+        return ("notes", "principal", principal_hash, "global")
+    try:
+        normalized = str(Path(workspace_root).expanduser().resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        normalized = str(workspace_root)
+    return (
+        "notes",
+        "principal",
+        principal_hash,
+        "workspace",
+        sha256(normalized.encode()).hexdigest(),
+    )
+
+
+def memory_namespace_prefix(principal_id: str) -> tuple[str, ...]:
+    principal_hash = sha256(principal_id.encode()).hexdigest()
+    return ("notes", "principal", principal_hash)
+
+
+def extract_memory_write_facts(user_input: str) -> tuple[str, ...]:
+    """Extract explicit positive memory directives from trusted user input.
+
+    Directives must begin a line (optionally with a polite prefix). This keeps
+    quoted/model-generated text and negative instructions from minting a write
+    capability. The tool must later submit the exact extracted fact.
+    """
+    facts: list[str] = []
+    negative = re.compile(
+        r"^\s*(?:(?:请|请你|麻烦你?)\s*)?(?:不要|别|无需|不必|禁止).{0,8}"
+        r"(?:记住|保存|写入)|^\s*(?:please\s+)?(?:do\s+not|don't|never)\s+"
+        r"(?:remember|save|store)\b",
+        re.IGNORECASE,
+    )
+    directives = (
+        re.compile(
+            r"^\s*(?:(?:请|请你|帮我|麻烦你?)\s*)?"
+            r"(?:记住|保存(?:到)?记忆|写入(?:到)?记忆)\s*[：:，,]?\s*(.+?)\s*$",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^\s*(?:please\s+)?(?:remember(?:\s+that)?|"
+            r"save\s+(?:this|the following)(?:\s+(?:to memory|for later))?|"
+            r"store\s+(?:this|the following)(?:\s+(?:in memory|for later))?)"
+            r"\s*[：:,\-]?\s+(.+?)\s*$",
+            re.IGNORECASE,
+        ),
+    )
+    lines = [line for line in str(user_input or "").splitlines() if line.strip()]
+    if not lines or any(line.lstrip().startswith((">", "```", "~~~")) for line in lines):
+        return ()
+    for line in lines:
+        if negative.search(line):
+            return ()
+        matched = False
+        for pattern in directives:
+            match = pattern.match(line)
+            if match:
+                fact = " ".join(match.group(1).split())
+                if fact and len(fact) <= 2_000 and fact not in facts:
+                    facts.append(fact)
+                matched = True
+                break
+        # A capability message contains only direct, positive memory
+        # directives. Explanations, examples, quoted passages, or mixed tasks
+        # require a separate explicit memory command from the user.
+        if not matched:
+            return ()
+    return tuple(facts)
+
+
+def make_memory_search_tool(namespace: tuple[str, ...] | None = None):
     @tool("memory.search")
     async def memory_search(
         query: str,
         limit: int = 5,
+        runtime: ToolRuntime[Any] = None,  # type: ignore[assignment]
         store: Annotated[BaseStore, InjectedStore()] = None,  # type: ignore[assignment]
     ) -> dict[str, Any]:
-        """Search durable notes written by past runs in this workspace.
+        """Search durable facts explicitly saved for this workspace.
 
         Args:
             query: Free-text search query (keyword/substring matching).
@@ -57,10 +141,18 @@ def make_memory_search_tool(namespace: tuple[str, ...] = NAMESPACE):
         if store is None:
             return {"ok": "false", "error": "memory store not configured for this run"}
 
+        context = getattr(runtime, "context", None)
+        try:
+            active_namespace = namespace or memory_namespace_for_workspace(
+                getattr(context, "workspace_root", None),
+                getattr(context, "principal_id", None),
+            )
+        except ValueError as exc:
+            return {"ok": "false", "error": str(exc)}
         requested_limit = _clamp_limit(limit)
         try:
             items = await store.asearch(
-                namespace, query=query, limit=_candidate_limit(requested_limit)
+                active_namespace, query=query, limit=_candidate_limit(requested_limit)
             )
         except Exception as exc:
             return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
@@ -80,8 +172,62 @@ def make_memory_search_tool(namespace: tuple[str, ...] = NAMESPACE):
     return memory_search
 
 
-memory_search = make_memory_search_tool(NAMESPACE)
-MEMORY_TOOLS = [memory_search]
+@tool("memory.write")
+async def memory_write(
+    fact: str,
+    runtime: ToolRuntime[Any] = None,  # type: ignore[assignment]
+    store: Annotated[BaseStore, InjectedStore()] = None,  # type: ignore[assignment]
+) -> dict[str, Any]:
+    """Save one durable fact only when the user explicitly asks to remember it.
+
+    Args:
+        fact: The concise fact to remember. Do not infer or save facts without
+            an explicit user request.
+    """
+    normalized = " ".join(str(fact or "").split())
+    if not normalized:
+        return {"ok": False, "error": "fact must not be empty"}
+    if len(normalized) > 2_000:
+        return {"ok": False, "error": "fact exceeds 2000 characters"}
+    if store is None:
+        return {"ok": False, "error": "memory store not configured for this run"}
+    context = getattr(runtime, "context", None)
+    allowed_facts = tuple(getattr(context, "memory_write_facts", ()) or ())
+    if normalized not in allowed_facts:
+        return {"ok": False, "error": "fact was not authorized by the current user input"}
+    try:
+        namespace = memory_namespace_for_workspace(
+            getattr(context, "workspace_root", None),
+            getattr(context, "principal_id", None),
+        )
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        existing = await store.asearch(namespace, query=normalized, limit=50)
+        if any(
+            isinstance(item.value, dict)
+            and item.value.get("kind") == "user_fact"
+            and item.value.get("fact") == normalized
+            for item in existing
+        ):
+            return {"ok": True, "saved": False, "reason": "already_exists"}
+        key = uuid.uuid4().hex
+        await store.aput(
+            namespace,
+            key,
+            {
+                "kind": "user_fact",
+                "fact": normalized,
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        return {"ok": True, "saved": True, "key": key}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+memory_search = make_memory_search_tool()
+MEMORY_TOOLS = [memory_search, memory_write]
 
 
 def _clamp_limit(value: int) -> int:

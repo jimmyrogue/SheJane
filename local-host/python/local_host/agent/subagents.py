@@ -29,9 +29,15 @@ from pathlib import Path
 
 import yaml
 from deepagents.backends import FilesystemBackend
-from deepagents.middleware.subagents import SubAgent
+from deepagents.middleware.subagents import (
+    DEFAULT_GENERAL_PURPOSE_DESCRIPTION,
+    DEFAULT_SUBAGENT_PROMPT,
+    SubAgent,
+)
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
+
+from ..middleware import ToolExecutionMiddleware, ToolReviewMiddleware
 
 log = logging.getLogger("local_host.agent.subagents")
 
@@ -88,9 +94,13 @@ def build_subagents(
                      `None` uses the runtime resolver; tests pass `[]` to
                      exercise only the built-ins.
     """
-    subagents = _builtin_subagents(main_tools=main_tools, main_model=main_model)
+    # Durable memory is a top-level user capability. A configured or generic
+    # subagent receives a model-authored task description, never the original
+    # authenticated user instruction, so it must not be able to write memory.
+    subagent_tools = [tool for tool in main_tools if tool.name != "memory.write"]
+    subagents = _builtin_subagents(main_tools=subagent_tools, main_model=main_model)
     configured = _load_configured_subagents(
-        main_tools=main_tools,
+        main_tools=subagent_tools,
         main_model=main_model,
         agent_roots=_resolve_agent_roots() if agent_roots is None else list(agent_roots),
     )
@@ -122,6 +132,18 @@ def _builtin_subagents(
 
     subagents: list[SubAgent] = [
         {
+            # Deep Agents currently injects an automatic general-purpose
+            # subagent that does not inherit Runtime middleware. Defining the
+            # same name later makes its task registry select this fenced
+            # version, so internal tools receive review + durable receipts.
+            "name": "general-purpose",
+            "description": DEFAULT_GENERAL_PURPOSE_DESCRIPTION,
+            "system_prompt": DEFAULT_SUBAGENT_PROMPT,
+            "model": main_model,
+            "tools": main_tools,
+            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
+        },
+        {
             "name": "researcher",
             "description": (
                 "USE THIS FOR ANY INDEPENDENT RESEARCH QUESTION. Prefer "
@@ -137,6 +159,7 @@ def _builtin_subagents(
             "system_prompt": RESEARCHER_PROMPT,
             "model": main_model,
             "tools": research_tools,
+            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
         },
         {
             "name": "writer",
@@ -148,6 +171,7 @@ def _builtin_subagents(
             "system_prompt": WRITER_PROMPT,
             "model": main_model,
             "tools": [],
+            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
         },
     ]
     return subagents
@@ -218,6 +242,7 @@ def _load_subagent_file(
         "system_prompt": prompt.strip(),
         "model": main_model,
         "tools": selected_tools,
+        "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
     }
 
 

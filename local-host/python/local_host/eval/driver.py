@@ -9,6 +9,7 @@ each `data:` line is JSON {event_type, payload, ...}; `data: [DONE]` ends it.
 from __future__ import annotations
 
 import json
+import uuid
 
 import httpx
 
@@ -26,7 +27,15 @@ class HttpDaemonDriver:
         return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
     async def run(self, case: EvalCase) -> Trajectory:
-        body: dict[str, object] = {"goal": case.goal, "mode": case.mode}
+        command_suffix = uuid.uuid4().hex
+        body: dict[str, object] = {
+            "command_id": f"cmd_eval_{command_suffix}",
+            "client_message_id": f"msg_eval_{command_suffix}",
+            "protocol_version": 1,
+            "required_capabilities": ["agent.run", "agent.stream"],
+            "goal": case.goal,
+            "model": case.mode,
+        }
         if case.settings:
             body["settings"] = case.settings
         async with httpx.AsyncClient(timeout=self.timeout) as client:

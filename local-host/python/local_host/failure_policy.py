@@ -102,7 +102,15 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
         category = "permission"
         recoverable = True
         suggested_action = "Approve or deny the pending permission request before retrying."
-    elif _contains_any(haystack, "validation", "invalid", "bad request", "400"):
+    elif _contains_any(
+        haystack,
+        "validation",
+        "verification_failed",
+        "verification failed",
+        "invalid",
+        "bad request",
+        "400",
+    ):
         category = "validation"
         recoverable = True
         suggested_action = "Fix the invalid request arguments before retrying."

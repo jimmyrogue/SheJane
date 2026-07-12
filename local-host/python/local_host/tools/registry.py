@@ -16,63 +16,56 @@ from deepagents.middleware import FilesystemMiddleware
 from langchain_core.tools import BaseTool
 
 from ..config import get_settings
-from ..middleware.memory_writeback import memory_namespace_for_workspace
 from ..store.sqlite import LocalStore
 from .browser import make_browser_tool_if_configured
 from .code import CODE_TOOLS_for_workspace
 from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
-from .memory import MEMORY_TOOLS, make_memory_search_tool
+from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
 from .pdf import PDF_TOOLS
 from .progress import PROGRESS_TOOLS, make_progress_tool
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
-from .web import WEB_TOOLS
-from .workspace import make_workspace_open_tool
+from .web import web_fetch, web_search
 
 log = logging.getLogger("local_host.tools.registry")
 
 
-def core_tools() -> list[BaseTool]:
+def core_tools(*, include_cloud_tools: bool | None = None) -> list[BaseTool]:
     """Tools that should always be available — no external deps required."""
-    return [
+    if include_cloud_tools is None:
+        include_cloud_tools = bool(get_settings().cloud_token.strip())
+    tools = [
         *TRIVIAL_TOOLS,
-        *WEB_TOOLS,
+        web_fetch,
         *VERIFY_TOOLS,
-        *IMAGE_TOOLS,
         *MEMORY_TOOLS,
         *USER_TOOLS,
         *OFFICE_READ_TOOLS,
-        # Office write tools (Phase 2). Deliberately NOT registered in
-        # `agent/builder.py:DESTRUCTIVE_TOOLS` — they use copy-on-first-write
-        # against `<basename>.edited.<ext>` and never touch the original,
-        # so HITL approval isn't needed.
+        # Office writes keep copy-on-first-write semantics, and the Runtime's
+        # parameter-bound review policy still treats them as workspace writes.
         *OFFICE_WRITE_TOOLS,
-        # pdf.inspect: proxies to the cloud Tool Gateway which runs
-        # Poppler (pdfinfo, pdfgrep) on the user's uploaded PDF.
-        # Always-on — the gateway re-checks document ownership +
-        # bills credits per call. No external API key required.
-        *PDF_TOOLS,
         *PROGRESS_TOOLS,
     ]
+    if include_cloud_tools:
+        tools.extend([web_search, *IMAGE_TOOLS, *PDF_TOOLS])
+    return tools
 
 
 async def build_tools(
     *,
-    store: LocalStore | None = None,
-    run_id: str | None = None,
-    workspace_root: str | None = None,
     include_mcp: bool = True,
     mcp_disabled_servers: set[str] | None = None,
     include_code_exec: bool = False,
+    include_cloud_tools: bool = True,
     browser_llm: Any = None,
     browser_headless: bool = True,
 ) -> list[BaseTool]:
     """Assemble the full per-run toolset.
 
-    All Phase 2' categories: trivial + workspace.open + web
+    All Runtime tool categories: local utilities + web
     (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP.
     `browser.task` is intentionally omitted until both browser-use and a
     browser-specific LLM binding are configured.
@@ -84,34 +77,32 @@ async def build_tools(
     """
     tools: list[BaseTool] = []
     tools.extend(TRIVIAL_TOOLS)
-    tools.extend(WEB_TOOLS)
+    tools.append(web_fetch)
     tools.extend(VERIFY_TOOLS)
-    tools.extend(IMAGE_TOOLS)
-    tools.append(make_memory_search_tool(memory_namespace_for_workspace(workspace_root)))
+    tools.extend(MEMORY_TOOLS)
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
     tools.extend(OFFICE_WRITE_TOOLS)
-    # pdf.inspect — see core_tools() comment for rationale. No
-    # workspace binding needed (it operates on cloud document_id,
-    # not on workspace files).
-    tools.extend(PDF_TOOLS)
-    tools.append(make_progress_tool(store=store, run_id=run_id))
-    if include_code_exec:
+    # Gateway-backed tools are visible only when this Run froze a real
+    # cloud binding. Local-only agents should never plan around tools that
+    # can only return cloud_session_missing.
+    if include_cloud_tools:
+        tools.extend([web_search, *IMAGE_TOOLS, *PDF_TOOLS])
+    tools.append(make_progress_tool())
+    if include_code_exec and include_cloud_tools:
         # Bind code.execute to the run's workspace so files_in/files_out
         # can read/write against the correct directory. The closure
         # form is required because LangChain tools can't pull arbitrary
         # runtime state out of RunnableConfig without an InjectedToolArg,
         # and we also need the workspace AFTER the tool returns (to
         # write files_out).
-        tools.extend(CODE_TOOLS_for_workspace(workspace_root))
-    if store is not None:
-        tools.append(make_workspace_open_tool(store))
+        tools.extend(CODE_TOOLS_for_workspace(None))
     # ls/read_file/write_file/edit_file/glob/grep/execute are provided by
     # deepagents FilesystemMiddleware
     # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
     # tools here — that would collide on `read_file` / `write_file` names.
-    # `web.search` is now part of WEB_TOOLS (proxied through the cloud
-    # gateway), so no conditional wiring is needed here.
+    # `web.search` is proxied through the optional cloud gateway; web.fetch
+    # remains a local, SSRF-guarded tool.
 
     browser_tool = make_browser_tool_if_configured(llm=browser_llm, headless=browser_headless)
     if browser_tool is not None:
@@ -138,19 +129,19 @@ def describe_tools_sync(
     """
     out: list[dict[str, Any]] = []
     tools: list[BaseTool] = [*_deepagents_filesystem_tools(workspace_root), *core_tools()]
-    if store is not None:
-        tools.append(make_workspace_open_tool(store))
     for t in tools:
-        out.append(
-            {
-                "name": t.name,
-                "description": (t.description or "").strip().splitlines()[0]
-                if t.description
-                else "",
-                "args_schema": _serialize_args_schema(t),
-            }
-        )
+        definition = tool_definition(t)
+        definition["description"] = definition["description"].splitlines()[0]
+        out.append(definition)
     return out
+
+
+def tool_definition(tool: BaseTool) -> dict[str, Any]:
+    return {
+        "name": tool.name,
+        "description": (tool.description or "").strip(),
+        "args_schema": _serialize_args_schema(tool),
+    }
 
 
 def _deepagents_filesystem_tools(workspace_root: str | None = None) -> list[BaseTool]:

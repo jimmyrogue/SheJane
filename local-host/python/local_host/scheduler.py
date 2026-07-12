@@ -8,6 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from .runs import RUNTIME_PROTOCOL_VERSION, sanitize_run_metadata
 from .store.sqlite import LocalStore
 
 log = logging.getLogger("local_host.scheduler")
@@ -94,15 +95,34 @@ class ScheduledRunDispatcher:
     async def _run_schedule(self, schedule: dict[str, Any]) -> None:
         schedule_id = str(schedule["id"])
         try:
-            metadata = _json_object(schedule.get("metadata_json"))
+            workspace_error = await self.store.workspace_admission_error(
+                principal_id=str(schedule["principal_id"]),
+                path=schedule.get("workspace_path"),
+            )
+            if workspace_error is not None:
+                await self.store.complete_scheduled_run(
+                    schedule_id,
+                    status="failed",
+                    error_message=workspace_error,
+                )
+                return
+            metadata = sanitize_run_metadata(_json_object(schedule.get("metadata_json")))
             metadata.update({"intent": "scheduled_run", "scheduled_run_id": schedule_id})
+            schedule_settings = _json_object(schedule.get("settings_json"))
             run = await self.coordinator.start_run(
+                principal_id=str(schedule["principal_id"]),
+                command_id=f"cmd_schedule:{schedule_id}",
+                client_message_id=f"msg_schedule:{schedule_id}",
+                protocol_version=RUNTIME_PROTOCOL_VERSION,
+                required_capabilities=["agent.run", "agent.stream"],
                 goal=str(schedule.get("goal") or ""),
                 workspace_path=schedule.get("workspace_path"),
                 mode=str(schedule.get("model") or "auto"),
                 history=_json_list(schedule.get("history_json")),
-                settings=_json_object(schedule.get("settings_json")),
+                settings=schedule_settings,
                 metadata=metadata,
+                settings_are_frozen="_snapshot_version" in schedule_settings,
+                metadata_is_trusted=True,
             )
             run_id = str(run["id"])
             await self.store.mark_scheduled_run_started(schedule_id, run_id)

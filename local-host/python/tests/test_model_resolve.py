@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from local_host.config import reset_settings_for_tests
 from local_host.llm.resolve import resolve_auto_model
 from local_host.server import create_app
+from tests.helpers import run_command
 
 # ---------------------------------------------------------------------------
 # Unit: the HTTP client.
@@ -134,6 +135,7 @@ def test_auto_run_emits_model_selected_and_persists(monkeypatch) -> None:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -141,7 +143,7 @@ def test_auto_run_emits_model_selected_and_persists(monkeypatch) -> None:
         created = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "帮我分析这份报表", "model": "auto.smart"},
+            json=run_command("帮我分析这份报表", model="auto.smart"),
         )
         assert created.status_code == 200, created.text
         run_id = created.json()["id"]

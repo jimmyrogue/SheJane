@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
@@ -77,6 +78,7 @@ def client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -115,7 +117,7 @@ def test_stream_emits_done_sentinel(client: TestClient) -> None:
     create = client.post(
         "/local/v1/runs",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json={"goal": "say hello"},
+        json=run_command("say hello"),
     )
     assert create.status_code == 200, create.text
     # Tolerate both flat-LocalRun (post-Block-2) and {run: {...}} (pre).
@@ -134,7 +136,7 @@ def test_each_event_has_envelope_shape(client: TestClient) -> None:
     create = client.post(
         "/local/v1/runs",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json={"goal": "say hi"},
+        json=run_command("say hi"),
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
     raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
@@ -157,7 +159,7 @@ def test_run_started_payload_carries_goal(client: TestClient) -> None:
     create = client.post(
         "/local/v1/runs",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json={"goal": "spot-check goal text"},
+        json=run_command("spot-check goal text"),
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
     raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
@@ -173,7 +175,7 @@ def test_seq_monotonic_per_run(client: TestClient) -> None:
     create = client.post(
         "/local/v1/runs",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json={"goal": "ordered"},
+        json=run_command("ordered"),
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
     raw = client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
@@ -190,7 +192,7 @@ def test_replay_after_run_completion_has_same_envelope(client: TestClient) -> No
     create = client.post(
         "/local/v1/runs",
         headers={**HEADERS, "Content-Type": "application/json"},
-        json={"goal": "replay"},
+        json=run_command("replay"),
     ).json()
     run_id = create.get("id") or create.get("run", {}).get("id")
     # First stream — live.

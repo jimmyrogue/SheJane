@@ -131,7 +131,7 @@ def test_office_read_wrong_extension_returns_error(tmp_path: Path) -> None:
 
 
 def test_office_read_empty_path_returns_error() -> None:
-    """office.read with empty path → ok=false (matches workspace.open's behavior)."""
+    """office.read with empty path returns a structured error."""
     result = office_read.func(path="")
     assert result["ok"] == "false"
     assert result["error"] == "path required"

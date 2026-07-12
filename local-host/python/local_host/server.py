@@ -9,6 +9,8 @@ Phase 2' deliverables:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -18,34 +20,47 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from langchain_core.messages import ToolMessage
 from sse_starlette.sse import EventSourceResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
 from .agent.builder import open_checkpointer, open_store
 from .api_schemas import (
+    MAX_LOCAL_REQUEST_BODY_BYTES,
     AnswerQuestionRequest,
     CancelRunResponse,
     ClearMemoryResponse,
     CreateRunRequest,
     CreateScheduledRunRequest,
     CreateWorkspaceRequest,
+    DeleteLocalThreadResponse,
     DiagnoseWorkspaceRequest,
     ForkRunRequest,
     HealthResponse,
     InjectRunInstructionRequest,
     InjectRunInstructionResponse,
+    ListLocalModelProvidersResponse,
     ListRunsResponse,
     ListScheduledRunsResponse,
+    ListThreadChangesResponse,
+    ListThreadsResponse,
     ListWorkspacesResponse,
     LocalArtifact,
     LocalCloudSession,
+    LocalModelProvider,
     LocalRun,
     LocalRunDiagnostics,
+    LocalRuntimeModelCatalog,
     LocalScheduledRun,
+    LocalThread,
+    LocalThreadSnapshot,
     LocalWorkspaceAuthorization,
     LocalWorkspaceDiagnosis,
     McpServerCatalog,
@@ -56,31 +71,168 @@ from .api_schemas import (
     PermissionResolution,
     PlanApprovalResolution,
     QuestionAnswer,
+    ReconcileToolRequest,
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
     ResumeRunResponse,
+    RuntimeInfo,
     SetCloudSessionRequest,
     SkillDeleteResponse,
     SkillFile,
     SkillWriteRequest,
     SkillWriteResponse,
+    ToolReconciliationResolution,
+    UpdateLocalThreadRequest,
+    UpsertLocalModelProviderRequest,
 )
 from .auth import PairingTokenAuthMiddleware
 from .config import Settings, get_settings
 from .failure_policy import classify_failure_payload
+from .middleware.tool_execution import serialize_tool_result
+from .model_credentials import (
+    CredentialStoreError,
+    credential_ref,
+    delete_model_api_key,
+    get_model_api_key,
+    new_credential_ref,
+    set_model_api_key,
+)
 from .progress_ledger import (
     latest_feature_ledger as _latest_feature_ledger,
 )
 from .progress_ledger import (
     progress_ledger_state as _progress_ledger_state,
 )
-from .runs import CheckpointNotFoundError, RunCoordinator, RunNotFoundError
+from .runs import (
+    RUNTIME_PROTOCOL_VERSION,
+    CheckpointNotFoundError,
+    RunCoordinator,
+    RunNotFoundError,
+    freeze_run_settings,
+    model_provider_configuration_error,
+    runtime_capabilities,
+    sanitize_run_metadata,
+)
 from .scheduler import ScheduledRunDispatcher
-from .store.sqlite import LocalStore
+from .store.sqlite import (
+    CommandConflictError,
+    LocalStore,
+    ParentRunAdmissionError,
+    PermissionDecisionConflictError,
+    RunAdmissionError,
+    RunResultConflictError,
+    ThreadAdmissionError,
+    WaitDecisionConflictError,
+    WorkspaceAdmissionError,
+)
 
 log = logging.getLogger("local_host.server")
 
 _HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
+_MODEL_PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def _model_provider_base_url(raw: str) -> str:
+    value = raw.strip().rstrip("/")
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or bool(parsed.query)
+        or bool(parsed.fragment)
+    ):
+        raise HTTPException(status_code=400, detail="model provider base URL is invalid")
+    return value
+
+
+def _provider_models(row: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        models = json.loads(row.get("models_json") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return models if isinstance(models, list) else []
+
+
+async def _model_provider_response(
+    row: dict[str, Any],
+    *,
+    credential_configured: bool | None = None,
+) -> LocalModelProvider:
+    requires_api_key = bool(row.get("requires_api_key"))
+    configured = credential_configured
+    if configured is None:
+        configured = not requires_api_key or bool(
+            await get_model_api_key(
+                str(row["principal_id"]),
+                str(row["id"]),
+                str(row["credential_ref"]),
+            )
+        )
+    return LocalModelProvider(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        kind="openai_compatible",
+        base_url=str(row["base_url"]),
+        requires_api_key=requires_api_key,
+        credential_configured=configured,
+        models=_provider_models(row),
+        enabled=bool(row.get("enabled")),
+        version=int(row.get("version") or 1),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+class _RequestBodyTooLarge(Exception):
+    pass
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized HTTP bodies before FastAPI parses JSON."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int = MAX_LOCAL_REQUEST_BODY_BYTES) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_length = dict(scope.get("headers", [])).get(b"content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > self.max_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise _RequestBodyTooLarge
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _RequestBodyTooLarge:
+            await self._reject(scope, receive, send)
+
+    @staticmethod
+    async def _reject(scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse(
+            {"detail": "request body exceeds the 1 MiB limit"},
+            status_code=413,
+        )
+        await response(scope, receive, send)
 
 
 def _list_skill_files() -> list[dict[str, str]]:
@@ -198,6 +350,43 @@ def _normalize_schedule_time(raw: str) -> str:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC).isoformat()
+
+
+async def _owned_run(
+    store: LocalStore,
+    *,
+    principal_id: str,
+    run_id: str,
+    not_found_detail: str = "run not found",
+) -> dict[str, Any]:
+    run = await store.get_run_for_principal(principal_id=principal_id, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    return run
+
+
+async def _normalized_path(raw: str) -> str:
+    return await asyncio.to_thread(
+        lambda: str(Path(os.path.abspath(os.path.expanduser(raw))).resolve())
+    )
+
+
+async def _authorized_workspace_path(
+    store: LocalStore, *, principal_id: str, path: str | None
+) -> str | None:
+    if path is None:
+        return None
+    resolved = await _normalized_path(path)
+    workspace = await store.workspace_by_path(principal_id=principal_id, path=resolved)
+    if workspace is None:
+        raise HTTPException(status_code=403, detail="workspace is not authorized")
+    workspace_error = await store.workspace_admission_error(
+        principal_id=principal_id,
+        path=resolved,
+    )
+    if workspace_error is not None:
+        raise HTTPException(status_code=409, detail=workspace_error)
+    return resolved
 
 
 def _shejane_mcp_config_path() -> Path:
@@ -348,6 +537,7 @@ async def lifespan(app: FastAPI):
         store=store,
         checkpointer=checkpointer,
         agent_store=agent_store,
+        settings=settings,
     )
     scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
     app.state.store = store
@@ -361,6 +551,7 @@ async def lifespan(app: FastAPI):
     # runs, leave waiting_permission runs resumable. Without this they sit
     # `running` forever and the client never sees a terminal state.
     await coordinator.recover_orphans()
+    coordinator.start()
     await scheduler.recover_running()
     scheduler.start()
     # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
@@ -376,6 +567,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await scheduler.stop()
+        await coordinator.stop()
         await store_stack.aclose()
         await ck_stack.aclose()
         await store.close()
@@ -391,6 +583,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        _request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        # FastAPI normally includes the rejected input in its 422 payload.
+        # Local requests can contain provider credentials, so return only
+        # the location, message, and error type across the entire API.
+        errors = [
+            {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": errors})
+
+    app.add_middleware(RequestBodyLimitMiddleware)
 
     # Order matters: middleware added LAST runs FIRST on the request path
     # (Starlette wraps outward). PairingTokenAuthMiddleware must sit
@@ -444,6 +652,234 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pairing_configured=bool(settings.pairing_token),
         )
 
+    @app.get("/local/v1/runtime", response_model=RuntimeInfo)
+    async def runtime_info(request: Request) -> RuntimeInfo:
+        runtime_settings: Settings = app.state.settings
+        gateway_configured = model_provider_configuration_error(runtime_settings) is None
+        provider_configured = gateway_configured
+        if not provider_configured:
+            store: LocalStore = app.state.store
+            try:
+                providers = await store.list_model_providers(
+                    principal_id=request.state.principal_id
+                )
+                for provider in providers:
+                    if bool(provider.get("enabled")) and (
+                        not bool(provider.get("requires_api_key"))
+                        or await get_model_api_key(
+                            request.state.principal_id,
+                            str(provider["id"]),
+                            str(provider["credential_ref"]),
+                        )
+                    ):
+                        provider_configured = True
+                        break
+            except CredentialStoreError:
+                provider_configured = False
+        return RuntimeInfo(
+            protocol_version=RUNTIME_PROTOCOL_VERSION,
+            runtime_version=__version__,
+            capabilities=sorted(runtime_capabilities(runtime_settings)),
+            model_provider_configured=provider_configured,
+            gateway_provider_configured=gateway_configured,
+        )
+
+    @app.get(
+        "/local/v1/model-providers",
+        response_model=ListLocalModelProvidersResponse,
+    )
+    async def list_model_providers(request: Request) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        try:
+            providers = [
+                await _model_provider_response(row)
+                for row in await store.list_model_providers(principal_id=request.state.principal_id)
+            ]
+        except CredentialStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"providers": providers}
+
+    @app.put(
+        "/local/v1/model-providers/{provider_id}",
+        response_model=LocalModelProvider,
+    )
+    async def upsert_model_provider(
+        request: Request,
+        provider_id: str,
+        body: UpsertLocalModelProviderRequest,
+    ) -> LocalModelProvider:
+        provider_id = provider_id.strip().lower()
+        if not _MODEL_PROVIDER_ID_RE.fullmatch(provider_id) or provider_id in {
+            "auto",
+            "fake",
+            "gateway",
+            "local",
+        }:
+            raise HTTPException(status_code=400, detail="model provider id is invalid or reserved")
+        models = [model.model_dump(mode="json") for model in body.models]
+        if len({model["model_id"] for model in models}) != len(models):
+            raise HTTPException(status_code=400, detail="model ids must be unique per provider")
+        principal_id = request.state.principal_id
+        api_key = body.api_key.strip() if body.api_key is not None else None
+        if api_key and not body.requires_api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API key must be omitted when the provider does not require one",
+            )
+        base_url = _model_provider_base_url(body.base_url)
+        store: LocalStore = app.state.store
+        try:
+            async with app.state.coordinator.model_provider_mutation(
+                principal_id=principal_id,
+                provider_id=provider_id,
+            ):
+                existing = await store.get_model_provider(
+                    principal_id=principal_id,
+                    provider_id=provider_id,
+                )
+                needs_credential_access = bool(
+                    body.requires_api_key
+                    or api_key
+                    or (existing and bool(existing.get("requires_api_key")))
+                )
+                existing_key = (
+                    await get_model_api_key(
+                        principal_id,
+                        provider_id,
+                        str(existing["credential_ref"]) if existing else None,
+                    )
+                    if needs_credential_access
+                    else None
+                )
+                if body.requires_api_key and not api_key and not existing_key:
+                    raise HTTPException(
+                        status_code=400, detail="model provider API key is required"
+                    )
+                old_credential_ref = (
+                    str(existing["credential_ref"]) if existing else credential_ref(provider_id)
+                )
+                next_credential_ref = old_credential_ref
+                if api_key:
+                    next_credential_ref = new_credential_ref(provider_id)
+                    await set_model_api_key(
+                        principal_id,
+                        provider_id,
+                        api_key,
+                        next_credential_ref,
+                    )
+                try:
+                    provider = await store.upsert_model_provider(
+                        principal_id=principal_id,
+                        provider_id=provider_id,
+                        name=body.name.strip(),
+                        kind=body.kind,
+                        base_url=base_url,
+                        requires_api_key=body.requires_api_key,
+                        credential_ref=next_credential_ref,
+                        models=models,
+                        enabled=body.enabled,
+                    )
+                except BaseException:
+                    if next_credential_ref != old_credential_ref:
+                        await delete_model_api_key(
+                            principal_id,
+                            provider_id,
+                            next_credential_ref,
+                        )
+                    raise
+                if existing_key and (
+                    not body.requires_api_key or next_credential_ref != old_credential_ref
+                ):
+                    try:
+                        await delete_model_api_key(
+                            principal_id,
+                            provider_id,
+                            old_credential_ref,
+                        )
+                    except CredentialStoreError:
+                        log.warning(
+                            "failed to clean obsolete model credential provider=%s", provider_id
+                        )
+                return await _model_provider_response(
+                    provider,
+                    credential_configured=not body.requires_api_key
+                    or bool(api_key or existing_key),
+                )
+        except CredentialStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.delete(
+        "/local/v1/model-providers/{provider_id}",
+        response_model=LocalModelProvider,
+    )
+    async def remove_model_provider(request: Request, provider_id: str) -> LocalModelProvider:
+        principal_id = request.state.principal_id
+        store: LocalStore = app.state.store
+        try:
+            async with app.state.coordinator.model_provider_mutation(
+                principal_id=principal_id,
+                provider_id=provider_id,
+            ):
+                provider = await store.get_model_provider(
+                    principal_id=principal_id,
+                    provider_id=provider_id,
+                )
+                if provider is None:
+                    raise HTTPException(status_code=404, detail="model provider not found")
+                response = await _model_provider_response(provider)
+                provider_credential_ref = str(provider["credential_ref"])
+                await store.delete_model_provider(
+                    principal_id=principal_id,
+                    provider_id=provider_id,
+                )
+                for ref in {provider_credential_ref, credential_ref(provider_id)}:
+                    try:
+                        await delete_model_api_key(principal_id, provider_id, ref)
+                    except CredentialStoreError:
+                        log.warning(
+                            "failed to clean deleted model credential provider=%s", provider_id
+                        )
+        except CredentialStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return response
+
+    @app.get("/local/v1/models", response_model=LocalRuntimeModelCatalog)
+    async def list_runtime_models(request: Request) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        models: list[dict[str, Any]] = []
+        try:
+            for row in await store.list_model_providers(principal_id=request.state.principal_id):
+                if not bool(row.get("enabled")):
+                    continue
+                requires_key = bool(row.get("requires_api_key"))
+                configured = not requires_key or bool(
+                    await get_model_api_key(
+                        request.state.principal_id,
+                        str(row["id"]),
+                        str(row["credential_ref"]),
+                    )
+                )
+                for model in _provider_models(row):
+                    models.append(
+                        {
+                            "spec": f"local:{row['id']}:{model['model_id']}",
+                            "model_id": model["model_id"],
+                            "display_name": model["display_name"],
+                            "provider_id": row["id"],
+                            "provider_name": row["name"],
+                            "tool_calling": bool(model.get("tool_calling")),
+                            "streaming": bool(model.get("streaming")),
+                            "max_input_tokens": model.get("max_input_tokens"),
+                            "max_output_tokens": model.get("max_output_tokens"),
+                            "available": configured
+                            and bool(model.get("tool_calling"))
+                            and bool(model.get("streaming")),
+                        }
+                    )
+        except CredentialStoreError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"models": models}
+
     @app.get("/local/v1/tools")
     async def list_tools() -> dict[str, Any]:
         from .tools.registry import describe_tools
@@ -456,26 +892,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"tools": describe_tools(store=store, workspace_root=None)}
 
     @app.get("/local/v1/workspaces", response_model=ListWorkspacesResponse)
-    async def list_workspaces() -> dict[str, Any]:
+    async def list_workspaces(request: Request) -> dict[str, Any]:
         store: LocalStore = app.state.store
-        return {"workspaces": await store.list_workspaces()}
+        return {"workspaces": await store.list_workspaces(principal_id=request.state.principal_id)}
 
     @app.post("/local/v1/workspaces", response_model=LocalWorkspaceAuthorization)
-    async def add_workspace(body: CreateWorkspaceRequest) -> dict[str, Any]:
+    async def add_workspace(request: Request, body: CreateWorkspaceRequest) -> dict[str, Any]:
         """Authorize a workspace path. Returns the flat row — the TS
         `authorizeLocalWorkspace` reads `.id / .path / .label` directly
         (no wrapper)."""
         store: LocalStore = app.state.store
-        path = body.path.strip()
-        if not path:
+        raw_path = body.path.strip()
+        if not raw_path:
             raise HTTPException(status_code=400, detail="path required")
-        return await store.create_workspace(path=path, label=body.label.strip() or path)
+        path = await _normalized_path(raw_path)
+        if not await asyncio.to_thread(Path(path).is_dir):
+            raise HTTPException(status_code=400, detail="workspace must be an existing directory")
+        return await store.create_workspace(
+            principal_id=request.state.principal_id,
+            path=path,
+            label=body.label.strip() or path,
+        )
 
     @app.delete(
         "/local/v1/workspaces/{workspace_id}",
         response_model=LocalWorkspaceAuthorization,
     )
-    async def remove_workspace(workspace_id: str) -> dict[str, Any]:
+    async def remove_workspace(request: Request, workspace_id: str) -> dict[str, Any]:
         """Revoke a workspace authorization. Returns the deleted row
         matching the TS `revokeLocalWorkspace` →
         `Promise<LocalWorkspaceAuthorization>` signature."""
@@ -484,17 +927,132 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # exist, surface a 404 — client `decodeLocalResponse` throws
         # which the renderer catches and shows to the user.
         existing = None
-        for ws in await store.list_workspaces():
+        principal_id = request.state.principal_id
+        for ws in await store.list_workspaces(principal_id=principal_id):
             if ws["id"] == workspace_id:
                 existing = ws
                 break
         if existing is None:
             raise HTTPException(status_code=404, detail="workspace not found")
-        await store.delete_workspace(workspace_id)
+        await store.delete_workspace(principal_id=principal_id, workspace_id=workspace_id)
         return existing
 
+    @app.get("/local/v1/threads", response_model=ListThreadsResponse)
+    async def list_threads(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=500),
+        before_created_at: str | None = Query(default=None),
+        before_id: str | None = Query(default=None),
+    ):
+        store: LocalStore = app.state.store
+        if (before_created_at is None) != (before_id is None):
+            raise HTTPException(status_code=400, detail="both thread page cursors are required")
+        threads, cursor, has_more = await store.list_threads(
+            principal_id=request.state.principal_id,
+            limit=limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
+        return {
+            "threads": [_thread_record_for_api(thread) for thread in threads],
+            "cursor": cursor,
+            "has_more": has_more,
+            "next_before_created_at": threads[-1]["created_at"] if has_more and threads else None,
+            "next_before_id": threads[-1]["id"] if has_more and threads else None,
+        }
+
+    @app.get("/local/v1/threads/changes", response_model=ListThreadChangesResponse)
+    async def list_thread_changes(
+        request: Request,
+        after: int = Query(default=0, ge=0),
+        limit: int = Query(default=500, ge=1, le=1000),
+    ):
+        store: LocalStore = app.state.store
+        changes, cursor = await store.thread_changes_since(
+            principal_id=request.state.principal_id,
+            after_cursor=after,
+            limit=limit,
+        )
+        return {"changes": changes, "cursor": cursor}
+
+    @app.get("/local/v1/threads/{thread_id}", response_model=LocalThreadSnapshot)
+    async def get_thread_snapshot(
+        request: Request,
+        thread_id: str,
+        before_position: int | None = Query(default=None, ge=1),
+        item_limit: int = Query(default=200, ge=2, le=500),
+        event_limit: int = Query(default=5000, ge=1, le=10000),
+        expected_version: int | None = Query(default=None, ge=1),
+    ):
+        store: LocalStore = app.state.store
+        try:
+            snapshot = await store.get_thread_snapshot(
+                principal_id=request.state.principal_id,
+                thread_id=thread_id,
+                before_position=before_position,
+                item_limit=item_limit,
+                event_limit=event_limit,
+                expected_version=expected_version,
+            )
+        except RunResultConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="thread not found")
+        items = []
+        for item in snapshot["items"]:
+            try:
+                metadata = json.loads(item.get("metadata_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+            items.append({**item, "metadata": metadata if isinstance(metadata, dict) else {}})
+        events = []
+        for event in snapshot["events"]:
+            try:
+                payload = json.loads(event.get("payload_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+            events.append({**event, "payload": payload if isinstance(payload, dict) else {}})
+        return {
+            **snapshot,
+            "thread": _thread_record_for_api(snapshot["thread"]),
+            "items": items,
+            "events": events,
+        }
+
+    @app.patch("/local/v1/threads/{thread_id}", response_model=LocalThread)
+    async def update_thread(
+        request: Request,
+        thread_id: str,
+        body: UpdateLocalThreadRequest,
+    ):
+        store: LocalStore = app.state.store
+        thread = await store.update_thread(
+            principal_id=request.state.principal_id,
+            thread_id=thread_id,
+            title=body.title,
+            metadata=body.metadata,
+            archived=body.archived,
+        )
+        if thread is None:
+            raise HTTPException(status_code=404, detail="thread not found")
+        return _thread_record_for_api(thread)
+
+    @app.delete("/local/v1/threads/{thread_id}", response_model=DeleteLocalThreadResponse)
+    async def delete_thread(request: Request, thread_id: str):
+        store: LocalStore = app.state.store
+        try:
+            version = await store.delete_thread(
+                principal_id=request.state.principal_id,
+                thread_id=thread_id,
+            )
+        except RunResultConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if version is None:
+            raise HTTPException(status_code=404, detail="thread not found")
+        return {"id": thread_id, "deleted": True, "version": version}
+
     @app.get("/local/v1/runs", response_model=ListRunsResponse)
-    async def list_runs() -> dict[str, Any]:
+    async def list_runs(request: Request) -> dict[str, Any]:
         """Recent runs newest-first.
 
         Client `listLocalRuns()` (client/src/shared/local-host/client.ts:283)
@@ -503,11 +1061,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         the conversation history sidebar came up empty.
         """
         store: LocalStore = app.state.store
-        runs = await store.list_runs()
+        runs = await store.list_runs(principal_id=request.state.principal_id)
         return {"runs": runs}
 
     @app.post("/local/v1/runs", response_model=LocalRun)
-    async def create_run(body: CreateRunRequest) -> dict[str, Any]:
+    async def create_run(request: Request, body: CreateRunRequest) -> dict[str, Any]:
         """Create a new run. Returns the flat `LocalRun` shape (NOT
         `{run: {...}}`) — that's the contract `client.test.ts:63-92`
         pins and what TypeScript's `createLocalRun` reads via
@@ -515,96 +1073,171 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         goal = body.goal.strip()
         if not goal:
             raise HTTPException(status_code=400, detail="goal required")
-        coordinator: RunCoordinator = app.state.coordinator
-        return await coordinator.start_run(
-            goal=goal,
-            workspace_path=body.workspace_path,
-            # The daemon's internal `mode` plumbing now carries the model id
-            # (or "auto"); resolution happens cloud-side.
-            mode=body.model,
-            history=body.history or [],
-            parent_run_id=body.parent_run_id,
-            settings=body.settings,
-            metadata=body.metadata,
+        principal_id = request.state.principal_id
+        workspace_path = (
+            await _normalized_path(body.workspace_path) if body.workspace_path is not None else None
         )
+        coordinator: RunCoordinator = app.state.coordinator
+        try:
+            return await coordinator.start_run(
+                principal_id=principal_id,
+                command_id=body.command_id,
+                client_message_id=body.client_message_id,
+                protocol_version=body.protocol_version,
+                required_capabilities=body.required_capabilities,
+                goal=goal,
+                thread_id=body.thread_id,
+                user_input=body.user_input,
+                assistant_message_id=body.assistant_message_id,
+                thread_title=body.thread_title,
+                thread_metadata=body.thread_metadata,
+                user_item_metadata=body.user_item_metadata,
+                replace_from_client_id=body.replace_from_client_id,
+                workspace_path=workspace_path,
+                # The daemon's internal `mode` plumbing now carries the model id
+                # (or "auto"); resolution happens cloud-side.
+                mode=body.model,
+                history=body.history or [],
+                parent_run_id=body.parent_run_id,
+                settings=body.settings,
+                metadata=body.metadata,
+            )
+        except CommandConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except WorkspaceAdmissionError as exc:
+            status_code = 409 if "no longer available" in str(exc) else 403
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        except ParentRunAdmissionError as exc:
+            status_code = 404 if "not found" in str(exc) else 409
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        except ThreadAdmissionError as exc:
+            status_code = 404 if "not found" in str(exc) else 409
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        except RunAdmissionError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
 
     @app.get("/local/v1/schedules", response_model=ListScheduledRunsResponse)
     async def list_schedules(
+        request: Request,
         status: str | None = Query(default=None),
         notify_pending: bool = Query(default=False),
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
-        schedules = await store.list_scheduled_runs(
+        schedules = await store.list_scheduled_runs_for_principal(
+            principal_id=request.state.principal_id,
             status=status,
             notify_pending=notify_pending,
         )
         return {"schedules": schedules}
 
     @app.post("/local/v1/schedules", response_model=LocalScheduledRun)
-    async def create_schedule(body: CreateScheduledRunRequest) -> dict[str, Any]:
+    async def create_schedule(request: Request, body: CreateScheduledRunRequest) -> dict[str, Any]:
         goal = body.goal.strip()
         if not goal:
             raise HTTPException(status_code=400, detail="goal required")
         store: LocalStore = app.state.store
-        return await store.create_scheduled_run(
-            goal=goal,
-            run_at=_normalize_schedule_time(body.run_at),
-            workspace_path=body.workspace_path,
-            model=body.model.strip() or "auto",
-            history=body.history or [],
-            settings=body.settings,
-            metadata=body.metadata,
+        principal_id = request.state.principal_id
+        workspace_path = (
+            await _normalized_path(body.workspace_path) if body.workspace_path is not None else None
         )
+        try:
+            return await store.create_scheduled_run(
+                principal_id=principal_id,
+                goal=goal,
+                run_at=_normalize_schedule_time(body.run_at),
+                workspace_path=workspace_path,
+                model=body.model.strip() or "auto",
+                history=body.history or [],
+                settings=freeze_run_settings(app.state.settings, body.settings),
+                metadata=sanitize_run_metadata(body.metadata),
+            )
+        except WorkspaceAdmissionError as exc:
+            status_code = 409 if "no longer available" in str(exc) else 403
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
     @app.delete("/local/v1/schedules/{schedule_id}", response_model=LocalScheduledRun)
-    async def cancel_schedule(schedule_id: str) -> dict[str, Any]:
+    async def cancel_schedule(request: Request, schedule_id: str) -> dict[str, Any]:
         store: LocalStore = app.state.store
-        schedule = await store.cancel_scheduled_run(schedule_id)
+        schedule = await store.cancel_scheduled_run(
+            principal_id=request.state.principal_id,
+            schedule_id=schedule_id,
+        )
         if schedule is None:
             raise HTTPException(status_code=404, detail="schedule not found")
         return schedule
 
     @app.post("/local/v1/schedules/{schedule_id}/notified", response_model=LocalScheduledRun)
-    async def mark_schedule_notified(schedule_id: str) -> dict[str, Any]:
+    async def mark_schedule_notified(request: Request, schedule_id: str) -> dict[str, Any]:
         store: LocalStore = app.state.store
-        schedule = await store.mark_scheduled_run_notified(schedule_id)
+        schedule = await store.mark_scheduled_run_notified(
+            principal_id=request.state.principal_id,
+            schedule_id=schedule_id,
+        )
         if schedule is None:
             raise HTTPException(status_code=404, detail="schedule not found")
         return schedule
 
     @app.post("/local/v1/runs/{run_id}/fork", response_model=LocalRun)
-    async def fork_run(run_id: str, body: ForkRunRequest) -> dict[str, Any]:
+    async def fork_run(request: Request, run_id: str, body: ForkRunRequest) -> dict[str, Any]:
         checkpoint_id = body.checkpoint_id.strip()
         if not checkpoint_id:
             raise HTTPException(status_code=400, detail="checkpoint_id required")
+        await _owned_run(
+            app.state.store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
         coordinator: RunCoordinator = app.state.coordinator
         try:
             return await coordinator.fork_run(
+                principal_id=request.state.principal_id,
                 source_run_id=run_id,
+                command_id=body.command_id,
+                client_message_id=body.client_message_id,
+                assistant_message_id=body.assistant_message_id,
+                thread_id=body.thread_id,
                 checkpoint_id=checkpoint_id,
                 goal=body.goal,
-                mode=body.model,
-                settings=body.settings,
+                user_input=body.user_input,
+                thread_title=body.thread_title,
+                thread_metadata=body.thread_metadata,
+                user_item_metadata=body.user_item_metadata,
                 metadata=body.metadata,
             )
         except RunNotFoundError as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
         except CheckpointNotFoundError as exc:
             raise HTTPException(status_code=404, detail="checkpoint not found") from exc
+        except WorkspaceAdmissionError as exc:
+            status_code = 409 if "no longer available" in str(exc) else 403
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        except ThreadAdmissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except CommandConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/local/v1/runs/{run_id}", response_model=LocalRun)
-    async def get_run(run_id: str) -> dict[str, Any]:
+    async def get_run(request: Request, run_id: str) -> dict[str, Any]:
         """Return the flat run record (same shape as POST /runs)."""
         store: LocalStore = app.state.store
-        run = await store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run not found")
-        return run
+        return await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
 
     @app.get("/local/v1/runs/{run_id}/stream")
-    async def stream_run(run_id: str) -> EventSourceResponse:
+    async def stream_run(request: Request, run_id: str) -> EventSourceResponse:
+        await _owned_run(
+            app.state.store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
         coordinator: RunCoordinator = app.state.coordinator
 
         async def gen():
@@ -634,7 +1267,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return EventSourceResponse(gen(), sep="\n")
 
     @app.post("/local/v1/runs/{run_id}/cancel", response_model=CancelRunResponse)
-    async def cancel_run(run_id: str) -> dict[str, Any]:
+    async def cancel_run(request: Request, run_id: str) -> dict[str, Any]:
+        await _owned_run(
+            app.state.store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
         coordinator: RunCoordinator = app.state.coordinator
         ok = await coordinator.cancel_run(run_id)
         return {"canceled": ok}
@@ -644,6 +1282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=InjectRunInstructionResponse,
     )
     async def inject_run_instruction(
+        request: Request,
         run_id: str,
         body: InjectRunInstructionRequest,
     ) -> dict[str, Any]:
@@ -651,22 +1290,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not content:
             raise HTTPException(status_code=400, detail="content required")
         store: LocalStore = app.state.store
-        run = await store.get_run(run_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="run not found")
-        if run.get("status") in {"completed", "canceled", "failed"}:
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
+        if run.get("status") in {"completed", "canceled", "failed", "cleanup_required"}:
             raise HTTPException(status_code=409, detail="run is not active")
         record = await store.create_steering_instruction(run_id=run_id, content=content)
         return {"run_id": run_id, "instruction_id": record["id"], "queued": True}
 
     @app.post("/local/v1/runs/{run_id}/resume", response_model=ResumeRunResponse)
-    async def resume_run(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        coordinator: RunCoordinator = app.state.coordinator
-        decision = body or {"action": "approve"}
-        ok = await coordinator.resume_run(run_id=run_id, decision=decision)
-        if not ok:
-            raise HTTPException(status_code=409, detail="run not paused")
-        return {"resumed": True}
+    async def resume_run(request: Request, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        run = await _owned_run(
+            app.state.store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
+        await _authorized_workspace_path(
+            app.state.store,
+            principal_id=request.state.principal_id,
+            path=run.get("workspace_path"),
+        )
+        # An untyped resume body can bypass permission/question validation and
+        # cannot be made safely idempotent. Every supported wait candidate has
+        # a dedicated endpoint that first persists and validates its decision.
+        del body
+        raise HTTPException(
+            status_code=409,
+            detail="resolve the pending permission or question through its typed endpoint",
+        )
 
     # ---- compatibility shims the client expects (pre-existing Node API) ----
     #
@@ -676,20 +1329,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/local/v1/permissions/{permission_id}", response_model=PermissionResolution)
     async def resolve_permission(
-        permission_id: str, body: ResolvePermissionRequest
+        request: Request, permission_id: str, body: ResolvePermissionRequest
     ) -> dict[str, Any]:
-        """Approve / deny a pending tool-permission request.
+        """Approve, edit, or deny a parameter-bound tool review.
 
         Translates the client's `{decision, scope}` body into the
-        `{"decisions": [{"type": "approve"|"reject", ...}]}` shape
-        that `HumanInTheLoopMiddleware` expects on resume. One LangGraph
-        interrupt can contain multiple HITL action requests, so the run
+        `{"decisions": [{"type": "approve"|"edit"|"reject", ...}]}` shape
+        that `ToolReviewMiddleware` verifies on resume. One LangGraph
+        interrupt can contain multiple action requests, so the run
         resumes only after every permission in the current pause batch is
         resolved, preserving the original `permission.required` order.
 
-        When `scope=run`, the coordinator caches the tool name so the
-        auto-approve loop in `_drive_run` skips re-prompting on
-        subsequent gates for the same tool in the same run.
+        `scope=run` is a bounded durable grant for the same tool, exact
+        argument fingerprint, and risk class; it never widens by tool name.
         """
         decision_text = body.decision
         scope = body.scope
@@ -697,44 +1349,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         record = await store.get_permission(permission_id)
         if record is None:
             raise HTTPException(status_code=404, detail="permission not found")
-        await store.resolve_permission(
-            permission_id,
-            status="approved" if decision_text == "approve" else "denied",
-            scope=str(scope),
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=record["run_id"],
+            not_found_detail="permission not found",
         )
+        await _authorized_workspace_path(
+            store,
+            principal_id=request.state.principal_id,
+            path=run.get("workspace_path"),
+        )
+        if decision_text == "approve":
+            hitl_decision: dict[str, Any] = {"type": "approve"}
+            persisted_status = "approved"
+        elif decision_text == "edit":
+            assert body.edited_action is not None
+            if body.edited_action.name != record["tool_name"]:
+                raise HTTPException(status_code=400, detail="tool name cannot be changed")
+            hitl_decision = {
+                "type": "edit",
+                "edited_action": body.edited_action.model_dump(),
+            }
+            persisted_status = "approved"
+        else:
+            hitl_decision = {
+                "type": "reject",
+                "message": "Tool execution denied by user.",
+            }
+            persisted_status = "denied"
+        already_resolved = record.get("status") != "pending"
+        try:
+            await store.resolve_permission(
+                permission_id,
+                status=persisted_status,
+                scope=str(scope),
+                decision=hitl_decision,
+            )
+        except (PermissionDecisionConflictError, WaitDecisionConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator
-        # If the user picked "Always allow for this run", cache the
-        # tool name in the coordinator so the auto-approve loop in
-        # `_drive_run` skips re-prompting on subsequent gates for the
-        # same tool. Without this the agent runs into HITL again every
-        # turn and the user has to click approve repeatedly.
-        if decision_text == "approve" and scope == "run":
-            coordinator.grant_tool_scope(record["run_id"], record["tool_name"])
         # Emit `permission.resolved` onto the run's SSE queue so the
         # client's `hasPendingPermission` check (App.tsx:1339) clears
         # the in-flight approval card. Without this the card stays
         # rendered after the user clicks approve. Emit before deciding
         # whether to resume because batched HITL pauses may still be
         # waiting on sibling permission cards.
-        await coordinator.emit_for_run(
-            record["run_id"],
-            "permission.resolved",
-            {
-                "request_id": permission_id,
-                "tool": record["tool_name"],
-                "tool_name": record["tool_name"],
-                "decision": decision_text,
-                "scope": str(scope),
-            },
+        if not already_resolved:
+            await coordinator.emit_for_run(
+                record["run_id"],
+                "permission.resolved",
+                {
+                    "request_id": permission_id,
+                    "tool": record["tool_name"],
+                    "tool_name": record["tool_name"],
+                    "operation_id": record.get("operation_id"),
+                    "decision": decision_text,
+                    "scope": str(scope),
+                },
+            )
+        resume_payload = await store.wait_cycle_resume_payload(
+            run_id=str(record["run_id"]),
+            wait_cycle_id=str(record.get("wait_cycle_id") or record["id"]),
         )
-        permissions = await store.list_permissions_for_run(record["run_id"])
-        raw_events = await store.events_since(record["run_id"], after_seq=0)
-        batch = _current_permission_batch(raw_events, permissions, permission_id)
-        if any(item.get("status") == "pending" for item in batch):
+        if resume_payload is None:
             ok = False
         else:
-            resume_payload = {"decisions": [_hitl_decision_for_permission(item) for item in batch]}
-            ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
+            ok = await _ensure_resume_job(
+                store=store,
+                coordinator=coordinator,
+                run_id=record["run_id"],
+                decision=resume_payload,
+            )
         return {
             "permission_id": permission_id,
             "resolved": True,
@@ -744,7 +1430,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.post("/local/v1/questions/{question_id}", response_model=QuestionAnswer)
-    async def answer_question(question_id: str, body: AnswerQuestionRequest) -> dict[str, Any]:
+    async def answer_question(
+        request: Request, question_id: str, body: AnswerQuestionRequest
+    ) -> dict[str, Any]:
         """Submit answers to a paused user.ask interrupt.
 
         Body shape (per `client.ts:answerLocalQuestion`):
@@ -756,31 +1444,143 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         record = await store.get_question(question_id)
         if record is None:
             raise HTTPException(status_code=404, detail="question not found")
-        await store.answer_question(question_id, answers=answers)
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=record["run_id"],
+            not_found_detail="question not found",
+        )
+        await _authorized_workspace_path(
+            store,
+            principal_id=request.state.principal_id,
+            path=run.get("workspace_path"),
+        )
+        already_answered = record.get("status") != "pending"
+        try:
+            await store.answer_question(question_id, answers=answers)
+        except WaitDecisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator
-        # user.ask reads `answers` directly (see tools/user.py) — pass
-        # both shapes for maximum compatibility.
-        resume_payload = {"answers": answers, "question_id": question_id}
         # Mirror the permission flow: emit `question.answered` onto the
         # run's stream so the client's `hasPendingQuestion` check
         # (App.tsx:1352) clears the answer prompt UI.
-        await coordinator.emit_for_run(
-            record["run_id"],
-            "question.answered",
-            {
-                "request_id": question_id,
-                "answers": answers,
-            },
+        if not already_answered:
+            await coordinator.emit_for_run(
+                record["run_id"],
+                "question.answered",
+                {
+                    "request_id": question_id,
+                    "answers": answers,
+                },
+            )
+        resume_payload = await store.wait_cycle_resume_payload(
+            run_id=str(record["run_id"]),
+            wait_cycle_id=str(record.get("wait_cycle_id") or record["id"]),
         )
-        ok = await coordinator.resume_run(run_id=record["run_id"], decision=resume_payload)
+        if resume_payload is not None:
+            ok = await _ensure_resume_job(
+                store=store,
+                coordinator=coordinator,
+                run_id=record["run_id"],
+                decision=resume_payload,
+            )
+        else:
+            ok = False
         return {
             "question_id": question_id,
             "answered": True,
             "resumed": ok,
         }
 
+    @app.post(
+        "/local/v1/tool-reconciliations/{operation_id}",
+        response_model=ToolReconciliationResolution,
+    )
+    async def reconcile_tool_operation(
+        request: Request,
+        operation_id: str,
+        body: ReconcileToolRequest,
+    ) -> dict[str, Any]:
+        store: LocalStore = app.state.store
+        record = await store.get_wait_candidate(operation_id)
+        if record is None or record.get("kind") != "tool_reconciliation":
+            raise HTTPException(status_code=404, detail="tool reconciliation not found")
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=str(record["run_id"]),
+            not_found_detail="tool reconciliation not found",
+        )
+        await _authorized_workspace_path(
+            store,
+            principal_id=request.state.principal_id,
+            path=run.get("workspace_path"),
+        )
+        already_resolved = record.get("status") != "pending"
+        payload = _json_object(record.get("payload_json"))
+        current_receipt = await store.get_tool_receipt(operation_id)
+        prior_operation_id = str(payload.get("prior_operation_id") or operation_id)
+        prior_receipt = await store.get_tool_receipt(prior_operation_id)
+        if current_receipt is None or prior_receipt is None:
+            raise HTTPException(status_code=409, detail="tool reconciliation receipt is missing")
+        current_result = (
+            _tool_reconciliation_result(current_receipt, body.decision)
+            if body.decision != "retry_not_executed"
+            else None
+        )
+        prior_result = _tool_reconciliation_result(
+            prior_receipt,
+            "abort" if body.decision == "retry_not_executed" else body.decision,
+        )
+        try:
+            await store.resolve_tool_reconciliation(
+                operation_id,
+                decision=body.decision,
+                current_result_json=current_result,
+                current_result_hash=(
+                    hashlib.sha256(current_result.encode()).hexdigest()
+                    if current_result is not None
+                    else None
+                ),
+                prior_result_json=prior_result,
+                prior_result_hash=hashlib.sha256(prior_result.encode()).hexdigest(),
+            )
+        except WaitDecisionConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        coordinator: RunCoordinator = app.state.coordinator
+        if not already_resolved:
+            await coordinator.emit_for_run(
+                str(record["run_id"]),
+                "tool.reconciliation_resolved",
+                {
+                    "request_id": operation_id,
+                    "operation_id": operation_id,
+                    "decision": body.decision,
+                },
+            )
+        resume_payload = await store.wait_cycle_resume_payload(
+            run_id=str(record["run_id"]),
+            wait_cycle_id=str(record["wait_cycle_id"]),
+        )
+        ok = bool(
+            resume_payload is not None
+            and await _ensure_resume_job(
+                store=store,
+                coordinator=coordinator,
+                run_id=str(record["run_id"]),
+                decision=resume_payload,
+            )
+        )
+        return {
+            "operation_id": operation_id,
+            "resolved": True,
+            "decision": body.decision,
+            "resumed": ok,
+        }
+
     @app.post("/local/v1/plans/{approval_id}", response_model=PlanApprovalResolution)
     async def resolve_plan_approval(
+        request: Request,
         approval_id: str,
         body: ResolvePlanApprovalRequest,
     ) -> dict[str, Any]:
@@ -794,6 +1594,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         record = await store.get_plan_approval(approval_id)
         if record is None:
             raise HTTPException(status_code=404, detail="plan approval not found")
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=record["run_id"],
+            not_found_detail="plan approval not found",
+        )
+        await _authorized_workspace_path(
+            store,
+            principal_id=request.state.principal_id,
+            path=run.get("workspace_path"),
+        )
 
         status = {
             "approve": "approved",
@@ -831,7 +1642,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/local/v1/artifacts/{artifact_id}", response_model=LocalArtifact)
-    async def get_artifact(artifact_id: str) -> dict[str, Any]:
+    async def get_artifact(request: Request, artifact_id: str) -> dict[str, Any]:
         """Return a single artifact record.
 
         Shape matches the TS `LocalArtifact` interface
@@ -841,6 +1652,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         record = await store.get_artifact(artifact_id)
         if record is None:
             raise HTTPException(status_code=404, detail="artifact not found")
+        await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=record["run_id"],
+            not_found_detail="artifact not found",
+        )
         return {
             "id": record["id"],
             "title": record["title"],
@@ -851,12 +1668,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/local/v1/workspace-files")
     async def get_workspace_file(
+        request: Request,
         path: str = Query(..., description="Absolute file path inside an authorized workspace"),
     ):
         """Stream a file's bytes back to the renderer.
 
         Gated by `local_workspaces` — the file's parent chain must be inside
-        a path the user previously authorized via `workspace.open`. We do
+        a path the user previously authorized in the client. We do
         NOT serve arbitrary paths; that would let a compromised renderer
         exfiltrate the entire disk.
 
@@ -867,23 +1685,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if not path:
             raise HTTPException(status_code=400, detail="path required")
-        resolved = Path(os.path.abspath(os.path.expanduser(path))).resolve()
+        resolved = Path(await _normalized_path(path))
         try:
-            if not resolved.is_file():
+            if not await asyncio.to_thread(resolved.is_file):
                 raise HTTPException(status_code=404, detail="file not found")
         except OSError as exc:
             raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
         store: LocalStore = app.state.store
-        workspaces = await store.list_workspaces()
+        workspaces = await store.list_workspaces(principal_id=request.state.principal_id)
         # `is_relative_to` walks the parent chain; we need the file to live
         # under *some* authorized workspace root.
-        roots = [
-            Path(os.path.abspath(os.path.expanduser(ws["path"]))).resolve() for ws in workspaces
-        ]
+        roots = [Path(ws["path"]) for ws in workspaces]
         if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
             raise HTTPException(
                 status_code=403,
-                detail="path is not inside any authorized workspace; call workspace.open first",
+                detail="path is not inside any authorized workspace",
             )
         # Let FileResponse pick the right Content-Type from the extension.
         # docx → application/vnd.openxmlformats-officedocument.wordprocessingml.document
@@ -900,6 +1716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/local/v1/pptx-outline")
     async def get_pptx_outline(
+        request: Request,
         path: str = Query(..., description="Absolute .pptx path inside an authorized workspace"),
     ) -> dict[str, Any]:
         """Return the slide outline JSON for a .pptx file.
@@ -917,23 +1734,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if not path:
             raise HTTPException(status_code=400, detail="path required")
-        resolved = Path(os.path.abspath(os.path.expanduser(path))).resolve()
+        resolved = Path(await _normalized_path(path))
         try:
-            if not resolved.is_file():
+            if not await asyncio.to_thread(resolved.is_file):
                 raise HTTPException(status_code=404, detail="file not found")
         except OSError as exc:
             raise HTTPException(status_code=400, detail=f"invalid path: {exc}") from exc
         if resolved.suffix.lower() != ".pptx":
             raise HTTPException(status_code=400, detail="path must point to a .pptx file")
         store: LocalStore = app.state.store
-        workspaces = await store.list_workspaces()
-        roots = [
-            Path(os.path.abspath(os.path.expanduser(ws["path"]))).resolve() for ws in workspaces
-        ]
+        workspaces = await store.list_workspaces(principal_id=request.state.principal_id)
+        roots = [Path(ws["path"]) for ws in workspaces]
         if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
             raise HTTPException(
                 status_code=403,
-                detail="path is not inside any authorized workspace; call workspace.open first",
+                detail="path is not inside any authorized workspace",
             )
         # Defer the import so the daemon boot path doesn't pay for
         # python-pptx unless someone actually previews a deck.
@@ -948,7 +1763,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from exc
 
     @app.get("/local/v1/runs/{run_id}/diagnostics", response_model=LocalRunDiagnostics)
-    async def run_diagnostics(run_id: str) -> dict[str, Any]:
+    async def run_diagnostics(request: Request, run_id: str) -> dict[str, Any]:
         """Return the full `LocalRunDiagnostics` payload.
 
         Shape (per TS interface `client/src/shared/local-host/client.ts`):
@@ -960,9 +1775,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         undefined) and the "latest checkpoint" tab was always missing.
         """
         store: LocalStore = app.state.store
-        run = await store.get_run(run_id)
-        if not run:
-            raise HTTPException(status_code=404, detail="run not found")
+        run = await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
         raw_events = await store.events_since(run_id, after_seq=0)
         events = [
             {
@@ -976,9 +1793,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for e in raw_events
         ]
         permissions = await store.list_permissions_for_run(run_id)
+        tool_receipts = await store.list_tool_receipts_for_run(run_id)
+        wait_candidates = await store.list_wait_candidates_for_run(run_id)
         artifacts = await store.list_artifacts_for_run(run_id)
-        latest_checkpoint = await _latest_checkpoint_summary(app.state.checkpointer, run_id)
-        reflection = await _latest_checkpoint_reflection(app.state.checkpointer, run_id)
+        latest_checkpoint = await _latest_checkpoint_summary(app.state.checkpointer, run)
+        reflection = await _latest_checkpoint_reflection(app.state.checkpointer, run)
         return {
             "schema_version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
@@ -986,6 +1805,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "run": run,
             "events": events,
             "permissions": permissions,
+            "tool_receipts": [
+                {
+                    key: receipt.get(key)
+                    for key in (
+                        "operation_id",
+                        "tool_call_id",
+                        "tool_name",
+                        "tool_version",
+                        "arguments_hash",
+                        "risk",
+                        "status",
+                        "attempt_count",
+                        "result_hash",
+                        "error_type",
+                        "created_at",
+                        "started_at",
+                        "completed_at",
+                        "updated_at",
+                    )
+                }
+                for receipt in tool_receipts
+            ],
+            "wait_candidates": [
+                {
+                    key: candidate.get(key)
+                    for key in ("id", "kind", "status", "created_at", "resolved_at")
+                }
+                for candidate in wait_candidates
+            ],
             "artifacts": artifacts,
             "latest_checkpoint": latest_checkpoint,
             "handoff": _build_diagnostics_handoff(run, events, permissions, artifacts),
@@ -1059,25 +1907,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response_model=LocalWorkspaceDiagnosis,
         response_model_exclude_none=True,
     )
-    async def diagnose_workspace(body: DiagnoseWorkspaceRequest) -> dict[str, Any]:
+    async def diagnose_workspace(
+        request: Request, body: DiagnoseWorkspaceRequest
+    ) -> dict[str, Any]:
         """Inspect a candidate path against the authorization registry.
 
         Response matches the TS `LocalWorkspaceDiagnosis` shape — the
         `reason` enum drives the workspace-picker's "why disabled?"
         copy, keep it stable.
         """
-        import os as _os
-        from pathlib import Path as _Path
-
         store: LocalStore = app.state.store
         path = body.path.strip()
         if not path:
             raise HTTPException(status_code=400, detail="path required")
-        resolved = _os.path.abspath(_os.path.expanduser(path))
-        path_obj = _Path(resolved)
-        exists = path_obj.exists()
-        is_directory = path_obj.is_dir()
-        workspace = await store.workspace_by_path(resolved)
+        resolved = await _normalized_path(path)
+        path_obj = Path(resolved)
+        exists, is_directory = await asyncio.gather(
+            asyncio.to_thread(path_obj.exists),
+            asyncio.to_thread(path_obj.is_dir),
+        )
+        workspace = await store.workspace_by_path(
+            principal_id=request.state.principal_id,
+            path=resolved,
+        )
         authorized = workspace is not None
         if not exists:
             reason = "not_found"
@@ -1099,8 +1951,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return payload
 
     @app.delete("/local/v1/memory", response_model=ClearMemoryResponse)
-    async def clear_memory() -> dict[str, Any]:
-        """Wipe every note from all long-term memory namespaces.
+    async def clear_memory(request: Request) -> dict[str, Any]:
+        """Wipe this authenticated principal's long-term memory namespaces.
 
         Backs the "清空记忆 / Clear memory" button in the agent settings
         dialog. Walks every ("notes", ...) namespace in pages of 200
@@ -1111,7 +1963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Idempotent: calling it on an empty store returns
         `deleted_count: 0` without error.
         """
-        from .middleware.memory_writeback import NAMESPACE, NOTES_NAMESPACE_PREFIX
+        from .tools.memory import memory_namespace_prefix
 
         agent_store = getattr(app.state, "agent_store", None)
         if agent_store is None:
@@ -1122,13 +1974,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Loop until a page comes back smaller than `limit` so we don't
         # over-fetch on a single-item store.
         page_size = 200
-        namespaces = [NAMESPACE]
+        principal_prefix = memory_namespace_prefix(request.state.principal_id)
+        namespaces = [principal_prefix]
         if hasattr(agent_store, "alist_namespaces"):
             namespaces = []
             offset = 0
             while True:
                 page = await agent_store.alist_namespaces(
-                    prefix=NOTES_NAMESPACE_PREFIX,
+                    prefix=principal_prefix,
                     limit=page_size,
                     offset=offset,
                 )
@@ -1310,6 +2163,36 @@ def _current_permission_batch(
     return batch
 
 
+async def _ensure_resume_job(
+    *,
+    store: LocalStore,
+    coordinator: RunCoordinator,
+    run_id: str,
+    decision: dict[str, Any],
+) -> bool:
+    """Idempotently ensure a resolved wait has a durable resume owner.
+
+    The decision and resume job are currently separate SQLite transactions.
+    Replaying the same decision repairs the crash window between them instead
+    of falsely acknowledging a run that remains permanently paused.
+    """
+    if await coordinator.resume_run(run_id=run_id, decision=decision):
+        return True
+    run = await store.get_run(run_id)
+    if run is None:
+        return False
+    if run.get("status") in {"completed", "failed", "canceled"}:
+        return True
+    if run.get("status") not in {"waiting_permission", "waiting_input"}:
+        return False
+    active_job = await store.get_active_run_job(run_id)
+    return bool(
+        active_job
+        and active_job.get("kind") == "resume"
+        and active_job.get("status") in {"pending", "leased"}
+    )
+
+
 def _current_permission_batch_ids(raw_events: list[dict[str, Any]]) -> list[str]:
     boundary_index = -1
     for index, event in enumerate(raw_events):
@@ -1330,6 +2213,14 @@ def _current_permission_batch_ids(raw_events: list[dict[str, Any]]) -> list[str]
     return request_ids
 
 
+def _thread_record_for_api(thread: dict[str, Any]) -> dict[str, Any]:
+    try:
+        metadata = json.loads(thread.get("metadata_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        metadata = {}
+    return {**thread, "metadata": metadata if isinstance(metadata, dict) else {}}
+
+
 def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     payload = event.get("payload")
     if isinstance(payload, dict):
@@ -1344,7 +2235,42 @@ def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _hitl_decision_for_permission(permission: dict[str, Any]) -> dict[str, str]:
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _tool_reconciliation_result(receipt: dict[str, Any], decision: str) -> str:
+    completed = decision == "confirmed_completed"
+    return serialize_tool_result(
+        ToolMessage(
+            content=(
+                "The user verified that the external action completed successfully."
+                if completed
+                else "The user verified that this uncertain action must not be retried automatically."
+            ),
+            name=str(receipt.get("tool_name") or ""),
+            tool_call_id=str(receipt.get("tool_call_id") or ""),
+            status="success" if completed else "error",
+        )
+    )
+
+
+def _hitl_decision_for_permission(permission: dict[str, Any]) -> dict[str, Any]:
+    raw = permission.get("decision_json")
+    if isinstance(raw, str) and raw:
+        try:
+            decision = json.loads(raw)
+        except json.JSONDecodeError:
+            decision = None
+        if isinstance(decision, dict):
+            return decision
+    # Compatibility for permission rows created before decision_json existed.
     if permission.get("status") == "approved":
         return {"type": "approve"}
     return {"type": "reject", "message": "Tool execution denied by user."}
@@ -1388,6 +2314,12 @@ def _build_diagnostics_handoff(
     elif status in {"queued", "running"}:
         headline = f"Run is {status} with {event_count} persisted events."
         next_actions = ["Reconnect to the stream or wait for the run to reach a terminal state."]
+    elif status == "cleanup_required":
+        headline = "Run is quarantined because execution cleanup could not yet be confirmed."
+        blockers.append("The Runtime has not released this execution generation.")
+        next_actions = [
+            "Do not retry automatically; inspect Runtime diagnostics and cleanup state."
+        ]
     elif status == "failed":
         headline = f"Run failed after {event_count} events."
         next_actions = ["Inspect blockers and recent failed events before retrying."]
@@ -1428,58 +2360,72 @@ def _build_diagnostics_handoff(
     }
 
 
-async def _latest_checkpoint_summary(checkpointer: Any, run_id: str) -> dict[str, Any] | None:
-    if checkpointer is None or not hasattr(checkpointer, "alist"):
-        return None
-    config = {"configurable": {"thread_id": run_id}}
-    try:
-        async for item in checkpointer.alist(config, limit=1):
-            checkpoint = getattr(item, "checkpoint", None)
-            metadata = getattr(item, "metadata", None)
-            item_config = getattr(item, "config", None)
-            if not isinstance(checkpoint, dict):
-                checkpoint = {}
-            if not isinstance(metadata, dict):
-                metadata = {}
-            if not isinstance(item_config, dict):
-                item_config = {}
-            configurable = item_config.get("configurable")
-            if not isinstance(configurable, dict):
-                configurable = {}
+def _run_checkpoint_config(run: dict[str, Any]) -> dict[str, Any]:
+    configurable = {"thread_id": str(run.get("graph_thread_id") or run["id"])}
+    checkpoint_id = run.get("graph_checkpoint_id")
+    if isinstance(checkpoint_id, str) and checkpoint_id:
+        configurable["checkpoint_id"] = checkpoint_id
+    return {"configurable": configurable}
 
-            checkpoint_id = _first_string(checkpoint.get("id"), configurable.get("checkpoint_id"))
-            if not checkpoint_id:
-                return None
-            step = _int_or_none(metadata.get("step"))
-            reason = _first_string(metadata.get("source"), metadata.get("reason"), "checkpoint")
-            return {
-                "id": checkpoint_id,
-                "run_id": _first_string(configurable.get("thread_id"), run_id),
-                "step": step if step is not None else 0,
-                "reason": reason or "checkpoint",
-                "messages_count": _checkpoint_messages_count(checkpoint),
-                "created_at": _first_string(checkpoint.get("ts"), metadata.get("created_at")),
-            }
+
+async def _latest_checkpoint_summary(
+    checkpointer: Any, run: dict[str, Any]
+) -> dict[str, Any] | None:
+    if checkpointer is None:
+        return None
+    run_id = str(run["id"])
+    try:
+        item = await _run_checkpoint_tuple(checkpointer, run)
+        if item is None:
+            return None
+        checkpoint = item.checkpoint if isinstance(item.checkpoint, dict) else {}
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
+        configurable = item.config.get("configurable", {})
+        checkpoint_id = _first_string(checkpoint.get("id"), configurable.get("checkpoint_id"))
+        if not checkpoint_id:
+            return None
+        step = _int_or_none(metadata.get("step"))
+        reason = _first_string(metadata.get("source"), metadata.get("reason"), "checkpoint")
+        return {
+            "id": checkpoint_id,
+            "run_id": run_id,
+            "step": step if step is not None else 0,
+            "reason": reason or "checkpoint",
+            "messages_count": _checkpoint_messages_count(checkpoint),
+            "created_at": _first_string(checkpoint.get("ts"), metadata.get("created_at")),
+        }
     except Exception as exc:
         log.warning("latest checkpoint summary failed run_id=%s: %s", run_id, exc)
     return None
 
 
-async def _latest_checkpoint_reflection(checkpointer: Any, run_id: str) -> dict[str, Any] | None:
-    if checkpointer is None or not hasattr(checkpointer, "alist"):
+async def _latest_checkpoint_reflection(
+    checkpointer: Any, run: dict[str, Any]
+) -> dict[str, Any] | None:
+    if checkpointer is None:
         return None
-    config = {"configurable": {"thread_id": run_id}}
+    run_id = str(run["id"])
     try:
-        async for item in checkpointer.alist(config, limit=1):
-            checkpoint = getattr(item, "checkpoint", None)
-            if not isinstance(checkpoint, dict):
-                return None
-            channel_values = checkpoint.get("channel_values")
-            if not isinstance(channel_values, dict):
-                return None
-            return _diagnostics_reflection(channel_values.get("reflection"))
+        item = await _run_checkpoint_tuple(checkpointer, run)
+        checkpoint = item.checkpoint if item is not None else None
+        if not isinstance(checkpoint, dict):
+            return None
+        channel_values = checkpoint.get("channel_values")
+        if not isinstance(channel_values, dict):
+            return None
+        return _diagnostics_reflection(channel_values.get("reflection"))
     except Exception as exc:
         log.warning("latest checkpoint reflection failed run_id=%s: %s", run_id, exc)
+    return None
+
+
+async def _run_checkpoint_tuple(checkpointer: Any, run: dict[str, Any]) -> Any | None:
+    config = _run_checkpoint_config(run)
+    if run.get("graph_checkpoint_id") and hasattr(checkpointer, "aget_tuple"):
+        return await checkpointer.aget_tuple(config)
+    if hasattr(checkpointer, "alist"):
+        async for item in checkpointer.alist(config, limit=1):
+            return item
     return None
 
 

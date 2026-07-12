@@ -4,6 +4,9 @@ import {
   authorizeLocalWorkspace,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
+  getLocalRuntimeInfo,
+  listLocalModelProviders,
+  upsertLocalModelProvider,
   getDesktopLocalHostConfig,
   getLocalArtifact,
   listAuthorizedWorkspaces,
@@ -17,6 +20,11 @@ import {
   cancelLocalSchedule,
   createLocalSchedule,
   listLocalRuns,
+  listLocalThreads,
+  getLocalThreadSnapshot,
+  listLocalThreadChanges,
+  updateLocalThread,
+  deleteLocalThread,
   listLocalSchedules,
   markLocalScheduleNotified,
   probeLocalHost,
@@ -28,9 +36,98 @@ import {
   streamLocalRun,
   injectLocalRunInstruction,
   resolveLocalPlanApproval,
+  reconcileLocalTool,
 } from './client'
 
+const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
+
 describe('desktop local host client', () => {
+  it('posts an explicit tool reconciliation decision', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
+    await reconcileLocalTool(
+      'toolop-1',
+      'retry_not_executed',
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/tool-reconciliations/toolop-1',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ decision: 'retry_not_executed' }),
+      }),
+    )
+  })
+  it('writes and lists Runtime model providers without changing field names', async () => {
+    const provider = {
+      id: 'ollama',
+      name: 'Local Ollama',
+      kind: 'openai_compatible' as const,
+      base_url: 'http://127.0.0.1:11434/v1',
+      requires_api_key: false,
+      credential_configured: true,
+      models: [{ model_id: 'qwen3:8b', display_name: 'Qwen', tool_calling: true, streaming: true }],
+      enabled: true,
+      version: 1,
+      created_at: '2026-07-12T00:00:00Z',
+      updated_at: '2026-07-12T00:00:00Z',
+    }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(provider), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ providers: [provider] }), { status: 200 }))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await upsertLocalModelProvider(
+      'ollama',
+      {
+        name: 'Local Ollama',
+        kind: 'openai_compatible',
+        base_url: 'http://127.0.0.1:11434/v1',
+        requires_api_key: false,
+        models: provider.models,
+        enabled: true,
+      },
+      config,
+      fetcher,
+    )
+    await expect(listLocalModelProviders(config, fetcher)).resolves.toEqual([provider])
+
+    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({
+      name: 'Local Ollama',
+      kind: 'openai_compatible',
+      base_url: 'http://127.0.0.1:11434/v1',
+      requires_api_key: false,
+      models: provider.models,
+      enabled: true,
+    })
+  })
+  it('discovers the authenticated runtime protocol and capabilities', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          protocol_version: 1,
+          runtime_version: '0.1.3',
+          capabilities: ['agent.run', 'agent.stream'],
+          model_provider_configured: true,
+          gateway_provider_configured: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      getLocalRuntimeInfo(
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ protocol_version: 1 })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runtime',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
+      }),
+    )
+  })
   it('only returns local host config when the desktop bridge exposes one', () => {
     expect(getDesktopLocalHostConfig(undefined)).toBeUndefined()
     expect(getDesktopLocalHostConfig({ platform: 'darwin' })).toBeUndefined()
@@ -87,7 +184,7 @@ describe('desktop local host client', () => {
 
     await expect(
       createLocalRun(
-        { goal: 'Inspect workspace', workspacePath: '/tmp/project' },
+        { ...TEST_COMMAND, threadId: 'conversation-1', goal: 'Inspect workspace', workspacePath: '/tmp/project' },
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
         fetcher,
       ),
@@ -97,9 +194,50 @@ describe('desktop local host client', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
-        body: JSON.stringify({ goal: 'Inspect workspace', workspace_path: '/tmp/project', history: [] }),
+        body: JSON.stringify({
+          command_id: TEST_COMMAND.commandId,
+          client_message_id: TEST_COMMAND.clientMessageId,
+          thread_id: 'conversation-1',
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl', 'mcp', 'memory', 'skills', 'subagents', 'workspace.files'],
+          goal: 'Inspect workspace',
+          workspace_path: '/tmp/project',
+          history: [],
+        }),
       }),
     )
+  })
+
+  it('retries a transport failure with the same immutable command ids', async () => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'run-replayed',
+            goal: 'Inspect workspace',
+            status: 'queued',
+            created_at: '2026-05-11T00:00:00Z',
+            updated_at: '2026-05-11T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+
+    await createLocalRun(
+      { commandId: 'cmd_client_1', clientMessageId: 'msg_client_1', goal: 'Inspect workspace' },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    const firstBody = (fetcher.mock.calls[0]?.[1] as RequestInit).body
+    const secondBody = (fetcher.mock.calls[1]?.[1] as RequestInit).body
+    expect(secondBody).toBe(firstBody)
+    expect(JSON.parse(String(firstBody))).toMatchObject({
+      command_id: 'cmd_client_1',
+      client_message_id: 'msg_client_1',
+    })
   })
 
   it('carries per-run agent settings in the run-create payload', async () => {
@@ -117,7 +255,7 @@ describe('desktop local host client', () => {
     )
 
     await createLocalRun(
-      { goal: 'Remember things', settings: { memory: 'on' } },
+      { ...TEST_COMMAND, goal: 'Remember things', settings: { memory: 'on' } },
       { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       fetcher,
     )
@@ -125,7 +263,15 @@ describe('desktop local host client', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/runs',
       expect.objectContaining({
-        body: JSON.stringify({ goal: 'Remember things', history: [], settings: { memory: 'on' } }),
+        body: JSON.stringify({
+          command_id: TEST_COMMAND.commandId,
+          client_message_id: TEST_COMMAND.clientMessageId,
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl', 'mcp', 'memory', 'skills', 'subagents'],
+          goal: 'Remember things',
+          history: [],
+          settings: { memory: 'on' },
+        }),
       }),
     )
   })
@@ -145,7 +291,7 @@ describe('desktop local host client', () => {
     )
 
     await createLocalRun(
-      { goal: 'Use a skill', settings: { memory: 'off', skills: 'on' } },
+      { ...TEST_COMMAND, goal: 'Use a skill', settings: { memory: 'off', skills: 'on' } },
       { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       fetcher,
     )
@@ -153,7 +299,15 @@ describe('desktop local host client', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/runs',
       expect.objectContaining({
-        body: JSON.stringify({ goal: 'Use a skill', history: [], settings: { memory: 'off', skills: 'on' } }),
+        body: JSON.stringify({
+          command_id: TEST_COMMAND.commandId,
+          client_message_id: TEST_COMMAND.clientMessageId,
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl', 'mcp', 'skills', 'subagents'],
+          goal: 'Use a skill',
+          history: [],
+          settings: { memory: 'off', skills: 'on' },
+        }),
       }),
     )
   })
@@ -174,6 +328,7 @@ describe('desktop local host client', () => {
 
     await createLocalRun(
       {
+        ...TEST_COMMAND,
         goal: 'Fix the failed task',
         metadata: {
           intent: 'repair',
@@ -190,6 +345,10 @@ describe('desktop local host client', () => {
       'http://127.0.0.1:17371/local/v1/runs',
       expect.objectContaining({
         body: JSON.stringify({
+          command_id: TEST_COMMAND.commandId,
+          client_message_id: TEST_COMMAND.clientMessageId,
+          protocol_version: 1,
+          required_capabilities: ['agent.run', 'agent.stream', 'hitl', 'mcp', 'memory', 'skills', 'subagents'],
           goal: 'Fix the failed task',
           history: [],
           metadata: {
@@ -219,19 +378,16 @@ describe('desktop local host client', () => {
 
     await createLocalRun(
       {
+        ...TEST_COMMAND,
         goal: 'g',
         settings: {
           advanced: {
             maxModelCalls: 50,
-            maxHistoryTurns: 12,
-            maxModelRetries: 1,
             maxToolRetries: 4,
             researchSearchLimit: 8,
             subagents: false,
             browserHeadless: false,
-            toolCritic: 'block',
             planFirst: 'auto',
-            piiRedact: 'email,credit_card',
             // unset knobs must NOT appear on the wire (daemon keeps its default)
           },
         },
@@ -243,15 +399,11 @@ describe('desktop local host client', () => {
     const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
     expect(sent.settings).toEqual({
       max_model_calls: 50,
-      max_history_turns: 12,
-      max_model_retries: 1,
       max_tool_retries: 4,
       research_search_limit: 8,
       subagents: false,
       browser_headless: false,
-      tool_critic: 'block',
       plan_first: 'auto',
-      pii_redact: 'email,credit_card',
     })
   })
 
@@ -270,7 +422,7 @@ describe('desktop local host client', () => {
     )
 
     await createLocalRun(
-      { goal: 'g', settings: { advanced: {} } },
+      { ...TEST_COMMAND, goal: 'g', settings: { advanced: {} } },
       { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       fetcher,
     )
@@ -297,7 +449,16 @@ describe('desktop local host client', () => {
     await expect(
       forkLocalRun(
         'run-source',
-        { checkpointId: 'ckpt-1', goal: 'Retry from checkpoint', mode: 'auto' },
+        {
+          commandId: 'cmd-fork',
+          clientMessageId: 'msg-user',
+          assistantMessageId: 'msg-assistant',
+          threadId: 'conv-fork',
+          checkpointId: 'ckpt-1',
+          goal: 'Retry from checkpoint',
+          userInput: 'Retry from checkpoint ckpt-1',
+          threadTitle: 'Forked conversation',
+        },
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
         fetcher,
       ),
@@ -309,9 +470,14 @@ describe('desktop local host client', () => {
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
         body: JSON.stringify({
+          command_id: 'cmd-fork',
+          client_message_id: 'msg-user',
+          assistant_message_id: 'msg-assistant',
+          thread_id: 'conv-fork',
           checkpoint_id: 'ckpt-1',
           goal: 'Retry from checkpoint',
-          model: 'auto',
+          user_input: 'Retry from checkpoint ckpt-1',
+          thread_title: 'Forked conversation',
         }),
       }),
     )
@@ -526,6 +692,7 @@ describe('desktop local host client', () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -544,6 +711,15 @@ describe('desktop local host client', () => {
     await expect(
       resolveLocalPermission('perm-2', 'approve', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, { scope: 'run' }, fetcher),
     ).resolves.toBeUndefined()
+    await expect(
+      resolveLocalPermission(
+        'perm-3',
+        'edit',
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        { editedAction: { name: 'execute', args: { command: 'make test' } } },
+        fetcher,
+      ),
+    ).resolves.toBeUndefined()
     await expect(getLocalArtifact('artifact-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toMatchObject({
       id: 'artifact-1',
       content: 'artifact content',
@@ -560,6 +736,18 @@ describe('desktop local host client', () => {
     )
     expect(fetcher).toHaveBeenNthCalledWith(
       3,
+      'http://127.0.0.1:17371/local/v1/permissions/perm-3',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          decision: 'edit',
+          scope: 'once',
+          edited_action: { name: 'execute', args: { command: 'make test' } },
+        }),
+      }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
       'http://127.0.0.1:17371/local/v1/artifacts/artifact-1',
       expect.objectContaining({ method: 'GET' }),
     )
@@ -788,6 +976,172 @@ describe('desktop local host client', () => {
       2,
       'http://127.0.0.1:17371/local/v1/runs/run-1/diagnostics',
       expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
+    )
+  })
+
+  it('reads authoritative Runtime thread snapshots and change cursors', async () => {
+    const thread = {
+      id: 'conversation-1',
+      title: 'Inspect workspace',
+      version: 2,
+      created_at: '2026-07-12T00:00:00Z',
+      updated_at: '2026-07-12T00:00:01Z',
+    }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ threads: [thread], cursor: 7 }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          thread,
+          items: [{
+            id: 'item-1',
+            thread_id: thread.id,
+            item_type: 'assistant_message',
+            status: 'completed',
+            content: 'done',
+            metadata: {},
+            position: 2,
+            version: 2,
+            created_at: thread.created_at,
+            updated_at: thread.updated_at,
+          }],
+          runs: [],
+          cursor: 7,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          changes: [{
+            cursor: 7,
+            thread_id: thread.id,
+            thread_version: 2,
+            change_type: 'run.completed',
+            created_at: thread.updated_at,
+          }],
+          cursor: 7,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(listLocalThreads(config, fetcher)).resolves.toMatchObject({ cursor: 7 })
+    await expect(getLocalThreadSnapshot(thread.id, config, fetcher)).resolves.toMatchObject({
+      thread: { id: thread.id, version: 2 },
+      items: [{ content: 'done' }],
+    })
+    await expect(listLocalThreadChanges(3, config, fetcher)).resolves.toMatchObject({
+      cursor: 7,
+      changes: [{ change_type: 'run.completed' }],
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      'http://127.0.0.1:17371/local/v1/threads/changes?after=3&limit=1000',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('drains thread changes through the page containing a later tombstone', async () => {
+    const createdAt = '2026-07-12T00:00:00Z'
+    const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+      cursor: index + 1,
+      thread_id: index === 999 ? 'conversation-deleted-later' : `conversation-${index}`,
+      thread_version: 1,
+      change_type: 'thread.updated',
+      created_at: createdAt,
+    }))
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: firstPage, cursor: 1000 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        changes: [{
+          cursor: 1001,
+          thread_id: 'conversation-deleted-later',
+          thread_version: 2,
+          change_type: 'thread.deleted',
+          created_at: createdAt,
+        }],
+        cursor: 1001,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    const result = await listLocalThreadChanges(
+      0,
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+    expect(result).toMatchObject({ cursor: 1001 })
+    expect(result.changes).toHaveLength(1001)
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/threads/changes?after=1000&limit=1000',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('falls back to a full snapshot sync when the bounded change catch-up is exhausted', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const after = Number(new URL(String(input)).searchParams.get('after') ?? 0)
+      const changes = Array.from({ length: 1000 }, (_, index) => ({
+        cursor: after + index + 1,
+        thread_id: `conversation-${after + index + 1}`,
+        thread_version: 1,
+        change_type: 'thread.updated',
+        created_at: '2026-07-12T00:00:00Z',
+      }))
+      return new Response(JSON.stringify({ changes, cursor: after + 1000 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    await expect(listLocalThreadChanges(
+      0,
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )).resolves.toEqual({ changes: [], cursor: 10_000, resetRequired: true })
+    expect(fetcher).toHaveBeenCalledTimes(10)
+  })
+
+  it('updates and tombstones Runtime-owned threads', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'conversation-1',
+        title: 'Renamed',
+        metadata: { pinned: true },
+        version: 3,
+        created_at: '2026-07-12T00:00:00Z',
+        updated_at: '2026-07-12T00:00:03Z',
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'conversation-1', deleted: true, version: 4,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const config = { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }
+
+    await expect(updateLocalThread(
+      'conversation-1',
+      { title: 'Renamed', metadata: { pinned: true } },
+      config,
+      fetcher,
+    )).resolves.toMatchObject({ title: 'Renamed', version: 3 })
+    await expect(deleteLocalThread('conversation-1', config, fetcher)).resolves.toEqual({
+      id: 'conversation-1', deleted: true, version: 4,
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      'http://127.0.0.1:17371/local/v1/threads/conversation-1',
+      expect.objectContaining({ method: 'PATCH' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      'http://127.0.0.1:17371/local/v1/threads/conversation-1',
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 

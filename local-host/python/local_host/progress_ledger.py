@@ -12,6 +12,7 @@ LEDGER_DIRTY_EVENT_TYPES = {
     "tool.failed",
     "permission.resolved",
     "permission.auto_approved",
+    "tool.reconciliation_resolved",
     "run.failed",
     "run.canceled",
     "run.budget_warning",

@@ -6,10 +6,9 @@ Mode (env SHEJANE_LOCAL_INPUT_GUARD):
                let the run continue (default)
   block      — write an assistant refusal and jump to end
 
-This is intentionally low-fidelity; the strong protection comes from the
-backend's own filters and from HumanInTheLoopMiddleware gating destructive
-tools. Phase 4'+ can swap this for an LLM-judge if the false-positive rate
-on the heuristic gets annoying.
+This is intentionally low-fidelity. ToolReviewMiddleware separately enforces
+parameter-bound approval for consequential actions; this heuristic only
+handles obvious hostile input patterns.
 """
 
 from __future__ import annotations

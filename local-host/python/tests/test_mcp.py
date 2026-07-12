@@ -17,15 +17,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from mcp.client.stdio import StdioServerParameters
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
 from local_host.tools.mcp import (
+    MAX_MCP_DESCRIPTION_CHARS,
+    MAX_MCP_SCHEMA_DEPTH,
     SOURCE_CLAUDE_DESKTOP,
     SOURCE_CODEX,
     SOURCE_CURSOR,
@@ -33,7 +38,21 @@ from local_host.tools.mcp import (
     SOURCE_SHEJANE,
     _normalize_entry,
     discover_servers,
+    mcp_sensitive_values,
+    validate_mcp_tools,
 )
+from local_host.tools.mcp_stdio import MCPStdioFrameTooLargeError, bounded_stdio_client
+
+
+@pytest.mark.asyncio
+async def test_stdio_frame_limit_rejects_before_json_parsing() -> None:
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "print('x' * 128, flush=True)"],
+    )
+    async with bounded_stdio_client(server, max_frame_bytes=32) as (read, _write):
+        result = await read.receive()
+    assert isinstance(result, MCPStdioFrameTooLargeError)
 
 
 def _isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -79,6 +98,16 @@ def test_normalize_explicit_transport_wins() -> None:
     assert norm["transport"] == "sse"
 
 
+@pytest.mark.parametrize("alias", ["http", "streamable-http"])
+def test_normalize_http_transport_aliases(alias: str) -> None:
+    norm = _normalize_entry(
+        "remote",
+        {"transport": alias, "url": "https://api.example.com/mcp"},
+    )
+    assert norm is not None
+    assert norm["transport"] == "streamable_http"
+
+
 def test_normalize_missing_command_and_url_returns_none() -> None:
     # Claude Desktop sometimes has entries like {"disabled": true} with
     # nothing else — we should drop instead of crashing later.
@@ -114,6 +143,83 @@ def test_normalize_strips_nested_env_values() -> None:
 def test_normalize_non_dict_returns_none() -> None:
     assert _normalize_entry("x", "not a dict") is None
     assert _normalize_entry("x", None) is None
+
+
+def test_mcp_metadata_rejects_configured_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from langchain_core.tools import tool
+
+    secret = "secret-value-12345"
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps(
+            {
+                "remote": {
+                    "url": "https://example.com/mcp",
+                    "headers": {"Authorization": f"Bearer {secret}"},
+                }
+            }
+        ),
+    )
+
+    @tool("mcp.remote.leak")
+    def leaking_tool(value: str = secret) -> str:
+        """A tool whose server-controlled schema echoes a credential."""
+        return value
+
+    sensitive = mcp_sensitive_values(tmp_path)
+    assert any(secret in value for value in sensitive)
+    assert validate_mcp_tools([leaking_tool], sensitive_values=sensitive) == []
+
+    @tool(secret)
+    def leaking_name(value: str) -> str:
+        """A tool whose name echoes a credential."""
+        return value
+
+    assert (
+        validate_mcp_tools(
+            [leaking_name],
+            sensitive_values=sensitive,
+        )
+        == []
+    )
+
+
+def test_mcp_metadata_enforces_size_depth_and_name_boundaries() -> None:
+    from langchain_core.tools import tool
+
+    @tool("mcp.safe.lookup")
+    def safe_tool(value: str) -> str:
+        """Look up one value."""
+        return value
+
+    @tool("mcp.too.large", description="x" * (MAX_MCP_DESCRIPTION_CHARS + 1))
+    def large_tool(value: str) -> str:
+        return value
+
+    deep_schema: dict[str, object] = {"type": "object"}
+    cursor = deep_schema
+    for _ in range(MAX_MCP_SCHEMA_DEPTH + 1):
+        child: dict[str, object] = {}
+        cursor["properties"] = child
+        cursor = child
+
+    accepted = validate_mcp_tools(
+        [safe_tool, large_tool, safe_tool],
+        reserved_names={"mcp.reserved"},
+    )
+    assert [item.name for item in accepted] == ["mcp.safe.lookup"]
+    assert accepted[0].args_schema["type"] == "object"
+    assert (
+        validate_mcp_tools(
+            [safe_tool],
+            reserved_names={"mcp.safe.lookup"},
+        )
+        == []
+    )
+    safe_tool.args_schema = deep_schema
+    assert validate_mcp_tools([safe_tool]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -474,12 +580,7 @@ def test_build_agent_skips_mcp_when_disabled(
 def test_build_mcp_tools_drops_disabled_names_before_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`disabled_servers` must filter the config map BEFORE
-    MultiServerMCPClient is constructed — otherwise we'd needlessly
-    spawn subprocesses just to ignore their output.
-
-    We monkeypatch the client class to record what config it was
-    handed and assert the disabled name is absent."""
+    """`disabled_servers` must filter config before any connection opens."""
     import local_host.tools.mcp as mcp_mod
 
     monkeypatch.setenv(
@@ -496,18 +597,11 @@ def test_build_mcp_tools_drops_disabled_names_before_client(
 
     captured_config: dict[str, dict] = {}
 
-    class FakeClient:
-        def __init__(self, config, tool_name_prefix=True):
-            captured_config.update(config)
+    async def fake_build(config):
+        captured_config.update(config)
+        return []
 
-        async def get_tools(self):
-            return []
-
-    # MultiServerMCPClient is imported lazily inside build_mcp_tools —
-    # patch the module attribute path it imports from.
-    import langchain_mcp_adapters.client as mcp_client_mod
-
-    monkeypatch.setattr(mcp_client_mod, "MultiServerMCPClient", FakeClient)
+    monkeypatch.setattr(mcp_mod, "_build_mcp_tools_from_config", fake_build)
 
     asyncio.run(mcp_mod.build_mcp_tools(tmp_path, disabled_servers={"drop"}))
     assert "keep" in captured_config
@@ -545,12 +639,104 @@ def test_build_mcp_tools_empty_after_disable_returns_early(
     assert called["yes"] is False
 
 
-def test_build_agent_threads_disabled_set_to_build_tools(
+def test_mcp_discovery_stops_after_bounded_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import ListToolsResult, Tool
+
+    import local_host.tools.mcp as mcp_mod
+
+    pages = 0
+
+    class FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            nonlocal pages
+            pages += 1
+            start = (pages - 1) * 40
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name=f"tool_{index}",
+                        description="Bounded test tool.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                    for index in range(start, start + 40)
+                ],
+                nextCursor=f"page-{pages + 1}",
+            )
+
+    @asynccontextmanager
+    async def fake_create_session(_connection):
+        yield FakeSession()
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    tools = asyncio.run(
+        mcp_mod._build_mcp_tools_from_config(
+            {"server": {"transport": "stdio", "command": "unused"}}
+        )
+    )
+
+    assert pages == 2
+    assert len(tools) == mcp_mod.MAX_MCP_TOOLS
+
+
+def test_mcp_websocket_discovery_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+
+    import local_host.tools.mcp as mcp_mod
+
+    @asynccontextmanager
+    async def unexpected_session(_connection):
+        raise AssertionError("websocket connection should not open")
+        yield
+
+    monkeypatch.setattr(sessions_mod, "create_session", unexpected_session)
+    tools = asyncio.run(
+        mcp_mod._build_mcp_tools_from_config(
+            {"remote": {"transport": "websocket", "url": "wss://example.com/mcp"}}
+        )
+    )
+    assert tools == []
+
+
+@pytest.mark.parametrize("alias", ["http", "streamable-http"])
+def test_mcp_http_aliases_receive_bounded_client(
+    alias: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import ListToolsResult
+
+    import local_host.tools.mcp as mcp_mod
+
+    captured: dict[str, object] = {}
+
+    class FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(tools=[])
+
+    @asynccontextmanager
+    async def fake_create_session(connection):
+        captured.update(connection)
+        yield FakeSession()
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    asyncio.run(
+        mcp_mod._build_mcp_tools_from_config(
+            {"remote": {"transport": alias, "url": "https://example.com/mcp"}}
+        )
+    )
+    assert captured["httpx_client_factory"] is mcp_mod._bounded_http_client
+
+
+def test_build_agent_threads_disabled_set_to_mcp_loader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End-to-end-ish: passing `mcp_disabled_servers` to build_agent
-    must reach build_tools' kwargs. Spy on build_tools (same pattern
-    as the mcp_enabled gate test above)."""
+    """Disabled MCP names must reach the attempt-local MCP loader."""
     from langgraph.store.memory import InMemoryStore
 
     import local_host.agent.builder as builder_mod
@@ -560,6 +746,9 @@ def test_build_agent_threads_disabled_set_to_build_tools(
     captured: dict[str, object] = {}
 
     async def fake_build_tools(**kwargs):
+        return []
+
+    async def fake_build_validated_mcp_tools(_data_dir, **kwargs):
         captured.update(kwargs)
         return []
 
@@ -567,6 +756,11 @@ def test_build_agent_threads_disabled_set_to_build_tools(
         return object()
 
     monkeypatch.setattr(builder_mod, "build_tools", fake_build_tools)
+    monkeypatch.setattr(
+        builder_mod,
+        "build_validated_mcp_tools",
+        fake_build_validated_mcp_tools,
+    )
     monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
 
     async def run() -> set[str] | None:
@@ -584,7 +778,7 @@ def test_build_agent_threads_disabled_set_to_build_tools(
                 mcp_enabled=True,
                 mcp_disabled_servers={"github", "playwright"},
             )
-            return captured.get("mcp_disabled_servers")  # type: ignore[return-value]
+            return captured.get("disabled_servers")  # type: ignore[return-value]
         finally:
             await store.close()
             await stack.aclose()

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 # --- mock backend helpers (shared with capability tests) ---
 
@@ -60,6 +61,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         SHEJANE_PLAN_FIRST="off",
         data_dir=tmp,
     )
@@ -273,7 +275,7 @@ def test_user_ask_in_parallel_tool_call_batch_still_pauses(monkeypatch) -> None:
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "plan a trip"},
+            json=run_command("plan a trip"),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -346,7 +348,7 @@ def test_user_ask_pauses_run_with_question_in_waiting_event(monkeypatch) -> None
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": "compare frontend frameworks"},
+            json=run_command("compare frontend frameworks"),
         )
         assert r.status_code == 200
         run_id = r.json()["id"]
@@ -413,7 +415,7 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        r = client.post("/local/v1/runs", headers=headers, json={"goal": "x"})
+        r = client.post("/local/v1/runs", headers=headers, json=run_command("x"))
         run_id = r.json()["id"]
 
         # Drain the first stream until waiting
@@ -440,6 +442,19 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
         # Drain the post-resume stream
         with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body2 = resp.read().decode("utf-8")
+        replay = client.post(
+            f"/local/v1/questions/{question_id}",
+            headers=headers,
+            json={"answers": {question_id: ["mode X"]}},
+        )
+        conflict = client.post(
+            f"/local/v1/questions/{question_id}",
+            headers=headers,
+            json={"answers": {question_id: ["mode Y"]}},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["resumed"] is True
+        assert conflict.status_code == 409
 
     # Stream after resume should contain at least run.resumed signal
     events2 = _parse_sse(body2)

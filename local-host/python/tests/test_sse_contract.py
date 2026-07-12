@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 
 def _client(tmp_path) -> TestClient:
@@ -26,7 +27,11 @@ def _client(tmp_path) -> TestClient:
 
 
 def _run_and_read(client: TestClient, goal: str) -> tuple[str, str]:
-    r = client.post("/local/v1/runs", headers={"Authorization": "Bearer tok"}, json={"goal": goal})
+    r = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command(goal),
+    )
     assert r.status_code == 200, r.text
     run_id = r.json()["id"]
     with client.stream(

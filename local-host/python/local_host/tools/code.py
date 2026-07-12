@@ -60,6 +60,7 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any
 
+from langchain.tools import ToolRuntime
 from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
@@ -259,6 +260,7 @@ def make_code_execute_tool(workspace_root: str | None):
     @tool("code.execute")
     async def code_execute(
         code: str,
+        runtime: ToolRuntime[Any] = None,  # type: ignore[assignment]
         language: str = "python",
         files_in: list[str] | None = None,
         tool_call_id: Annotated[str, InjectedToolCallId] = "",
@@ -344,10 +346,13 @@ def make_code_execute_tool(workspace_root: str | None):
                 "recoverable": False,
             }
 
+        context = getattr(runtime, "context", None)
+        active_workspace = workspace_root or getattr(context, "workspace_root", None)
+
         # Read + validate files_in before billing — return a clear
         # tool-error envelope so the LLM can self-correct.
         try:
-            files_payload = _read_files_in(workspace_root, files_in or [])
+            files_payload = _read_files_in(active_workspace, files_in or [])
         except ValueError as exc:
             return {
                 "ok": False,
@@ -374,7 +379,7 @@ def make_code_execute_tool(workspace_root: str | None):
             data = result.get("data") or {}
             files_out = data.get("files_out") or []
             try:
-                written = _write_files_out(workspace_root, conversation_id, list(files_out))
+                written = _write_files_out(active_workspace, conversation_id, list(files_out))
             except OSError as exc:
                 log.warning("code.execute: write_files_out failed: %s", exc)
                 written = []

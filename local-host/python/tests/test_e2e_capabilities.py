@@ -8,7 +8,6 @@ verifies one wired-up capability:
   2. SubAgentMiddleware        — `task` tool call surfaces `subagent.spawned`
   3. PromptCaching             — Go Anthropic gateway adds `cache_control`
   4. Local direct fallback     — ignored even when stale env supplies models
-  5. PIIMiddleware             — email in user goal is `[REDACTED_EMAIL]`-replaced
                                   before the LLM sees it
   6. MemoryMiddleware          — AGENTS.md content lands in the outgoing
                                   system prompt
@@ -32,6 +31,7 @@ from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 # --- shared mock backend helpers ---
 
@@ -87,6 +87,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -136,8 +137,14 @@ def _post_run_and_stream(
     *,
     workspace_path: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
-    body = {"goal": goal}
+    body = run_command(goal)
     if workspace_path is not None:
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers={"Authorization": "Bearer tok"},
+            json={"path": workspace_path, "label": "test"},
+        )
+        assert authorized.status_code == 200, authorized.text
         body["workspace_path"] = workspace_path
     r = client.post(
         "/local/v1/runs",
@@ -169,7 +176,7 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
                     {
                         "id": "call_w1",
                         "name": "write_file",
-                        "arguments": {"file_path": "spike.txt", "text": "hello"},
+                        "arguments": {"file_path": "spike.txt", "content": "hello"},
                     },
                 ),
                 ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
@@ -182,7 +189,7 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
     event_names = {e[0] for e in events}
     # HumanInTheLoop fires before write_file executes → graph pauses.
     assert "run.waiting" in event_names, (
-        f"expected run.waiting (HumanInTheLoop interrupt). got: {sorted(event_names)}"
+        f"expected run.waiting (HumanInTheLoop interrupt). got: {events}"
     )
     # Block 4 contract: each pause must also surface a narrow
     # `permission.required` event carrying a `request_id` the client
@@ -215,7 +222,7 @@ def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> Non
                     {
                         "id": "call_w1",
                         "name": "write_file",
-                        "arguments": {"file_path": "x.txt", "text": "hi"},
+                        "arguments": {"file_path": "x.txt", "content": "hi"},
                     },
                 ),
                 ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
@@ -228,7 +235,7 @@ def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> Non
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        run = client.post("/local/v1/runs", headers=headers, json={"goal": "write"}).json()
+        run = client.post("/local/v1/runs", headers=headers, json=run_command("write")).json()
         with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
         perm_id = next(
@@ -258,12 +265,12 @@ def _parse_sse_persisted(client: TestClient, run_id: str) -> list[tuple[str, dic
     return [(e["event_type"], e["payload"]) for e in diag["events"]]
 
 
-def test_capability_1d_scope_run_skips_subsequent_approvals(monkeypatch) -> None:
-    """If the user picked 'Always allow for this run', subsequent HITL
-    interrupts for the SAME tool in the SAME run must auto-resume
-    without paging the user again. Daemon's auto-approve loop emits
-    `permission.auto_approved` so the timeline still records what
-    happened — the user just doesn't have to click."""
+def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch) -> None:
+    """A run grant is bound to the approved argument fingerprint.
+
+    Approving write_file for a.txt must not silently authorize b.txt merely
+    because both calls share the same tool name.
+    """
     handler = RecordingHandler(
         scripts=[
             # Turn 1: ask to write file A (paused by HITL)
@@ -273,20 +280,20 @@ def test_capability_1d_scope_run_skips_subsequent_approvals(monkeypatch) -> None
                     {
                         "id": "call_a",
                         "name": "write_file",
-                        "arguments": {"file_path": "a.txt", "text": "A"},
+                        "arguments": {"file_path": "a.txt", "content": "A"},
                     },
                 ),
                 ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
             ],
-            # Turn 2 (after first approve + tool exec): ask for file B
-            # — would normally pause again, but scope=run should skip.
+            # Turn 2 (after first approve + tool exec): a different path must
+            # produce a fresh review candidate.
             [
                 (
                     "llm.tool_call",
                     {
                         "id": "call_b",
                         "name": "write_file",
-                        "arguments": {"file_path": "b.txt", "text": "B"},
+                        "arguments": {"file_path": "b.txt", "content": "B"},
                     },
                 ),
                 ("llm.done", {"request_id": "r2", "finish_reason": "tool_calls"}),
@@ -301,33 +308,37 @@ def test_capability_1d_scope_run_skips_subsequent_approvals(monkeypatch) -> None
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
         run = client.post(
-            "/local/v1/runs", headers=headers, json={"goal": "write two files"}
+            "/local/v1/runs", headers=headers, json=run_command("write two files")
         ).json()
         with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
-        # Approve once with scope="run" — caches the tool grant.
+        # Approve only this exact argument fingerprint for the run.
         perm_id = next(
             e for e in _parse_sse_persisted(client, run["id"]) if e[0] == "permission.required"
         )[1]["request_id"]
-        client.post(
+        first_approval = client.post(
             f"/local/v1/permissions/{perm_id}",
             headers=headers,
             json={"decision": "approve", "scope": "run"},
         )
+        assert first_approval.status_code == 200, first_approval.text
         with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             body = resp.read().decode("utf-8")
+        events = _parse_sse(body)
+        second_required = [e for e in events if e[0] == "permission.required"]
+        assert len(second_required) == 1
+        assert second_required[0][1]["arguments"]["file_path"] == "b.txt"
+        second_id = second_required[0][1]["request_id"]
+        approved = client.post(
+            f"/local/v1/permissions/{second_id}",
+            headers=headers,
+            json={"decision": "approve", "scope": "once"},
+        )
+        assert approved.status_code == 200, approved.text
+        with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
+            completed_body = resp.read().decode("utf-8")
 
-    events = _parse_sse(body)
-    names = [e[0] for e in events]
-    # Run must NOT have paused again — no second permission.required.
-    second_required = [e for e in events if e[0] == "permission.required"]
-    assert not second_required, f"scope=run should suppress subsequent HITL prompts; got: {names}"
-    # The auto-approve must surface as `permission.auto_approved` so the
-    # timeline reflects the decision (chatStore.ts:184).
-    auto = [e for e in events if e[0] == "permission.auto_approved"]
-    assert auto, f"expected permission.auto_approved on auto-resumed tool. got: {names}"
-    assert auto[0][1]["tool"] == "write_file"
-    assert "run.completed" in names
+    assert "run.completed" in [event[0] for event in _parse_sse(completed_body)]
 
 
 def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
@@ -349,7 +360,7 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
                     {
                         "id": "call_w1",
                         "name": "write_file",
-                        "arguments": {"file_path": "ok.txt", "text": "x"},
+                        "arguments": {"file_path": "ok.txt", "content": "x"},
                     },
                 ),
                 ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
@@ -363,7 +374,7 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        r = client.post("/local/v1/runs", headers=headers, json={"goal": "write a file"})
+        r = client.post("/local/v1/runs", headers=headers, json=run_command("write a file"))
         run_id = r.json()["id"]
         with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body1 = resp.read().decode("utf-8")
@@ -390,6 +401,242 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
     names2 = {e[0] for e in events2}
     assert "run.completed" in names2, f"expected run.completed after approve. got: {sorted(names2)}"
     assert "run.failed" not in names2, "approve resume should not crash the graph"
+
+
+def test_capability_1e_denied_tool_is_not_executed_and_has_rejected_receipt(
+    monkeypatch,
+) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_denied",
+                        "name": "write_file",
+                        "arguments": {"file_path": "denied.txt", "content": "no"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "The write was denied."}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        run = client.post(
+            "/local/v1/runs", headers=headers, json=run_command("do not write")
+        ).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            response.read()
+        permission = next(
+            event
+            for event in _parse_sse_persisted(client, run["id"])
+            if event[0] == "permission.required"
+        )[1]
+        denied = client.post(
+            f"/local/v1/permissions/{permission['request_id']}",
+            headers=headers,
+            json={"decision": "deny", "scope": "once"},
+        )
+        assert denied.status_code == 200, denied.text
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            body = response.read().decode("utf-8")
+        diagnostics = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
+
+    assert "run.completed" in [event[0] for event in _parse_sse(body)], body
+    receipt = next(
+        item for item in diagnostics["tool_receipts"] if item["tool_call_id"] == "call_denied"
+    )
+    assert receipt["status"] == "rejected"
+    assert receipt["attempt_count"] == 0
+
+
+def test_capability_1f_review_pauses_the_entire_mixed_tool_batch(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "source.txt").write_text("source", encoding="utf-8")
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_read",
+                        "name": "read_file",
+                        "arguments": {"file_path": "source.txt"},
+                    },
+                ),
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_write",
+                        "name": "write_file",
+                        "arguments": {"file_path": "target.txt", "content": "target"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "Both calls finished."}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        workspace = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "batch"},
+        )
+        assert workspace.status_code == 200, workspace.text
+        command = run_command("read then write")
+        command["workspace_path"] = str(tmp_path)
+        run = client.post("/local/v1/runs", headers=headers, json=command).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            response.read()
+
+        paused = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
+        # Even the read-only sibling must not execute before review of the
+        # consequential call has resolved.
+        assert paused["tool_receipts"] == []
+        permission = next(
+            event for event in paused["events"] if event["event_type"] == "permission.required"
+        )["payload"]
+        approved = client.post(
+            f"/local/v1/permissions/{permission['request_id']}",
+            headers=headers,
+            json={"decision": "approve", "scope": "once"},
+        )
+        assert approved.status_code == 200, approved.text
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            response.read()
+        completed = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
+
+    assert {receipt["tool_call_id"] for receipt in completed["tool_receipts"]} == {
+        "call_read",
+        "call_write",
+    }
+    assert (tmp_path / "target.txt").read_text(encoding="utf-8") == "target"
+
+
+def test_capability_1g_invalid_tool_arguments_fail_before_review(monkeypatch) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_invalid",
+                        "name": "write_file",
+                        # `content` is required; this obsolete key must be
+                        # rejected before asking the user or entering a tool.
+                        "arguments": {"file_path": "bad.txt", "text": "bad"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "The call was invalid."}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        run = client.post(
+            "/local/v1/runs", headers=headers, json=run_command("invalid write")
+        ).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            body = response.read().decode("utf-8")
+        diagnostics = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
+
+    assert "run.completed" in [event[0] for event in _parse_sse(body)]
+    assert not any(event["event_type"] == "permission.required" for event in diagnostics["events"])
+    receipt = next(
+        item for item in diagnostics["tool_receipts"] if item["tool_call_id"] == "call_invalid"
+    )
+    assert receipt["status"] == "failed"
+    assert receipt["attempt_count"] == 0
+    assert receipt["error_type"] == "ToolInputValidationError"
+
+
+def test_capability_1h_edited_arguments_are_revalidated_and_executed(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_edit_write",
+                        "name": "write_file",
+                        "arguments": {"file_path": "edited.txt", "content": "original"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "Edited write finished."}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "edit"},
+        )
+        command = run_command("write edited content")
+        command["workspace_path"] = str(tmp_path)
+        run = client.post("/local/v1/runs", headers=headers, json=command).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            first_body = response.read().decode("utf-8")
+        permission = next(
+            event[1] for event in _parse_sse(first_body) if event[0] == "permission.required"
+        )
+        edited_action = {
+            "name": "write_file",
+            "args": {"file_path": "edited.txt", "content": "edited"},
+        }
+        edited = client.post(
+            f"/local/v1/permissions/{permission['request_id']}",
+            headers=headers,
+            json={
+                "decision": "edit",
+                "scope": "once",
+                "edited_action": edited_action,
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            second_body = response.read().decode("utf-8")
+
+    assert "run.completed" in [event[0] for event in _parse_sse(second_body)]
+    assert (tmp_path / "edited.txt").read_text(encoding="utf-8") == "edited"
 
 
 # ---- capability 2: SubAgent dispatch ----
@@ -429,6 +676,85 @@ def test_capability_2_subagent_task_surfaces_spawned_event(monkeypatch) -> None:
     assert "subagent.spawned" in event_names, (
         f"expected subagent.spawned for task() call. got: {event_names}"
     )
+
+
+def test_capability_2c_subagent_tools_share_review_and_receipt_boundary(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_task",
+                        "name": "task",
+                        "arguments": {
+                            "subagent_type": "general-purpose",
+                            "description": "Write child.txt with child content.",
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_child_write",
+                        "name": "write_file",
+                        "arguments": {"file_path": "child.txt", "content": "child"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r2", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "Child file written."}),
+                ("llm.done", {"request_id": "r3", "finish_reason": "stop"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "Done."}),
+                ("llm.done", {"request_id": "r4", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        workspace = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "subagent"},
+        )
+        assert workspace.status_code == 200, workspace.text
+        command = run_command("delegate a write")
+        command["workspace_path"] = str(tmp_path)
+        run = client.post("/local/v1/runs", headers=headers, json=command).json()
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            first_body = response.read().decode("utf-8")
+        first_events = _parse_sse(first_body)
+        permission = next(event[1] for event in first_events if event[0] == "permission.required")
+        assert permission["tool_call_id"] == "call_child_write"
+        approved = client.post(
+            f"/local/v1/permissions/{permission['request_id']}",
+            headers=headers,
+            json={"decision": "approve", "scope": "once"},
+        )
+        assert approved.status_code == 200, approved.text
+        with client.stream(
+            "GET", f"/local/v1/runs/{run['id']}/stream", headers=headers
+        ) as response:
+            second_body = response.read().decode("utf-8")
+        diagnostics = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
+
+    assert "run.completed" in [event[0] for event in _parse_sse(second_body)]
+    assert (tmp_path / "child.txt").read_text(encoding="utf-8") == "child"
+    assert {receipt["tool_call_id"] for receipt in diagnostics["tool_receipts"]} >= {
+        "call_task",
+        "call_child_write",
+    }
 
 
 # ---- capability 3: prompt caching stays in the cloud gateway ----
@@ -479,10 +805,10 @@ def test_capability_4_local_direct_modelfallback_ignored(monkeypatch, caplog) ->
     assert "SHEJANE_LOCAL_FALLBACK_MODELS is ignored" in caplog.text
 
 
-# ---- capability 5: PII redaction on user input ----
+# ---- capability 6: AGENTS.md memory loads into system prompt ----
 
 
-def test_capability_5_pii_redacts_email_before_llm_sees_it(monkeypatch) -> None:
+def test_outbound_policy_redacts_external_request_without_state_middleware(monkeypatch) -> None:
     monkeypatch.setenv("SHEJANE_LOCAL_PII_REDACT", "email")
     handler = RecordingHandler(
         scripts=[
@@ -493,25 +819,16 @@ def test_capability_5_pii_redacts_email_before_llm_sees_it(monkeypatch) -> None:
         ]
     )
     with _make_client(monkeypatch, handler) as client:
-        _post_run_and_stream(
-            client,
-            "please contact me at alice@example.com about the proposal",
-        )
+        _post_run_and_stream(client, "contact alice@example.com about the proposal")
 
-    # Inspect the outgoing LLM request body — the user message should be
-    # redacted by PIIMiddleware before the model ever sees the email.
-    assert handler.requests, "no LLM request was made"
     outgoing = handler.requests[0]
-    messages = outgoing.get("messages", [])
-    user_texts = " ".join(m.get("content", "") for m in messages if m.get("role") == "user")
-    assert "alice@example.com" not in user_texts, f"PII leaked! outgoing user text: {user_texts!r}"
-    # The middleware uses [REDACTED_EMAIL] markers
-    assert "[REDACTED_EMAIL]" in user_texts or "[redacted" in user_texts.lower(), (
-        f"expected redaction marker, got: {user_texts!r}"
+    user_texts = " ".join(
+        message.get("content", "")
+        for message in outgoing.get("messages", [])
+        if message.get("role") == "user"
     )
-
-
-# ---- capability 6: AGENTS.md memory loads into system prompt ----
+    assert "alice@example.com" not in user_texts
+    assert "[REDACTED_EMAIL]" in user_texts
 
 
 def test_capability_6_memory_middleware_injects_agents_md(monkeypatch, tmp_path) -> None:

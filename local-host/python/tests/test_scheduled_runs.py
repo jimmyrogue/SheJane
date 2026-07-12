@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,7 +22,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from local_host.config import reset_settings_for_tests
+from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
+from local_host.config import Settings, reset_settings_for_tests
+from local_host.runs import RunCoordinator
 from local_host.scheduler import ScheduledRunDispatcher
 from local_host.server import create_app
 from local_host.store.sqlite import LocalStore
@@ -37,6 +40,7 @@ class FakeCoordinator:
     async def start_run(self, **kwargs: Any) -> dict[str, Any]:
         self.started.append(kwargs)
         run = await self.store.create_run(
+            principal_id=kwargs["principal_id"],
             goal=kwargs["goal"],
             workspace_path=kwargs.get("workspace_path"),
             parent_run_id=None,
@@ -74,16 +78,23 @@ async def test_store_claims_due_schedules_once(tmp_path: Path) -> None:
     store = await LocalStore.open(tmp_path / "local-host.db")
     try:
         now = datetime.now(UTC)
+        await store.create_workspace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            path=str(tmp_path),
+            label="test",
+        )
         due = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
             goal="整理日报",
             run_at=(now - timedelta(seconds=5)).isoformat(),
-            workspace_path="/work",
+            workspace_path=str(tmp_path),
             model="auto",
             history=[{"role": "user", "content": "昨天做了什么"}],
             settings={"memory": "on"},
             metadata={"source": "test"},
         )
         future = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
             goal="明天再跑",
             run_at=(now + timedelta(hours=1)).isoformat(),
         )
@@ -101,14 +112,50 @@ async def test_store_claims_due_schedules_once(tmp_path: Path) -> None:
         await store.close()
 
 
+async def test_legacy_schedules_migrate_to_the_local_owner(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE local_scheduled_runs (
+            id TEXT PRIMARY KEY, goal TEXT NOT NULL, workspace_path TEXT,
+            model TEXT NOT NULL DEFAULT 'auto', history_json TEXT NOT NULL DEFAULT '[]',
+            settings_json TEXT NOT NULL DEFAULT '{}', metadata_json TEXT NOT NULL DEFAULT '{}',
+            run_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'scheduled', run_id TEXT,
+            result_text TEXT, error_message TEXT, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL, completed_at TEXT, notified_at TEXT
+        );
+        INSERT INTO local_scheduled_runs
+            (id, goal, run_at, created_at, updated_at)
+            VALUES ('sched_legacy', 'legacy', '2026-01-02', '2026-01-01', '2026-01-01');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = await LocalStore.open(db_path)
+    try:
+        schedule = await store.get_scheduled_run("sched_legacy")
+        assert schedule is not None
+        assert schedule["principal_id"] == LOCAL_OWNER_PRINCIPAL_ID
+    finally:
+        await store.close()
+
+
 async def test_dispatcher_starts_due_schedule_and_marks_completed(tmp_path: Path) -> None:
     store = await LocalStore.open(tmp_path / "local-host.db")
     try:
         now = datetime.now(UTC)
+        await store.create_workspace(
+            principal_id="user:scheduled-owner",
+            path=str(tmp_path),
+            label="test",
+        )
         schedule = await store.create_scheduled_run(
+            principal_id="user:scheduled-owner",
             goal="跑一次本地检查",
             run_at=(now - timedelta(seconds=1)).isoformat(),
-            workspace_path="/repo",
+            workspace_path=str(tmp_path),
             model="auto",
             settings={"skills": "on"},
             metadata={"kind": "nightly"},
@@ -124,13 +171,19 @@ async def test_dispatcher_starts_due_schedule_and_marks_completed(tmp_path: Path
         assert updated["result_text"] == "scheduled done"
         assert coordinator.started == [
             {
+                "principal_id": "user:scheduled-owner",
+                "command_id": f"cmd_schedule:{schedule['id']}",
+                "client_message_id": f"msg_schedule:{schedule['id']}",
+                "protocol_version": 1,
+                "required_capabilities": ["agent.run", "agent.stream"],
                 "goal": "跑一次本地检查",
-                "workspace_path": "/repo",
+                "workspace_path": str(tmp_path),
                 "mode": "auto",
                 "history": [],
                 "settings": {"skills": "on"},
+                "settings_are_frozen": False,
+                "metadata_is_trusted": True,
                 "metadata": {
-                    "kind": "nightly",
                     "intent": "scheduled_run",
                     "scheduled_run_id": schedule["id"],
                 },
@@ -140,18 +193,52 @@ async def test_dispatcher_starts_due_schedule_and_marks_completed(tmp_path: Path
         await store.close()
 
 
+async def test_dispatcher_rejects_unknown_settings_snapshot_version(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local-host.db")
+    try:
+        now = datetime.now(UTC)
+        schedule = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="inspect",
+            run_at=(now - timedelta(seconds=1)).isoformat(),
+            settings={"_snapshot_version": 2},
+        )
+        coordinator = RunCoordinator(
+            store=store,
+            checkpointer=None,  # type: ignore[arg-type]
+            settings=Settings(SHEJANE_FAKE_LLM=True),
+        )
+        dispatcher = ScheduledRunDispatcher(store=store, coordinator=coordinator)
+
+        await dispatcher.tick(now=now)
+
+        failed = await store.get_scheduled_run(schedule["id"])
+        assert failed is not None and failed["status"] == "failed"
+        assert "snapshot version is unsupported" in failed["error_message"]
+    finally:
+        await store.close()
+
+
 def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) -> None:
     future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    workspace = Path(tempfile.mkdtemp(prefix="jdl-schedule-workspace-"))
+    authorized = client.post(
+        "/local/v1/workspaces",
+        headers=HEADERS,
+        json={"path": str(workspace), "label": "schedule"},
+    )
+    assert authorized.status_code == 200
     created = client.post(
         "/local/v1/schedules",
         headers=HEADERS,
         json={
             "goal": "稍后总结项目",
             "run_at": future,
-            "workspace_path": "/repo",
+            "workspace_path": str(workspace),
             "model": "auto",
             "history": [{"role": "user", "content": "项目背景"}],
-            "settings": {"memory": "on"},
+            "settings": {"memory": "on", "api_key": "must-not-persist"},
+            "metadata": {"token": "must-not-persist"},
         },
     )
     assert created.status_code == 200
@@ -159,6 +246,11 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     assert schedule["id"].startswith("sched_")
     assert schedule["status"] == "scheduled"
     assert schedule["goal"] == "稍后总结项目"
+    schedule_settings = json.loads(schedule["settings_json"])
+    assert schedule_settings["_snapshot_version"] == 1
+    assert schedule_settings["memory"] == "on"
+    assert "must-not-persist" not in schedule["settings_json"]
+    assert json.loads(schedule["metadata_json"]) == {}
 
     listed = client.get("/local/v1/schedules", headers=HEADERS)
     assert listed.status_code == 200
@@ -167,7 +259,11 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     store = client.app.state.store
 
     async def finish_schedule() -> None:
-        run = await store.create_run(goal="done", workspace_path=None)
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="done",
+            workspace_path=None,
+        )
         await store.mark_scheduled_run_started(schedule["id"], run["id"])
         await store.complete_scheduled_run(
             schedule["id"],
@@ -195,3 +291,56 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     canceled = client.delete(f"/local/v1/schedules/{other['id']}", headers=HEADERS)
     assert canceled.status_code == 200
     assert canceled.json()["status"] == "canceled"
+
+
+def test_foreign_schedule_is_hidden_from_local_owner(client: TestClient) -> None:
+    store = client.app.state.store
+
+    async def create_foreign_schedule() -> str:
+        schedule = await store.create_scheduled_run(
+            principal_id="user:foreign",
+            goal="private",
+            run_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        )
+        return schedule["id"]
+
+    schedule_id = asyncio.run(create_foreign_schedule())
+
+    listed = client.get("/local/v1/schedules", headers=HEADERS)
+    assert listed.json() == {"schedules": []}
+    canceled = client.delete(f"/local/v1/schedules/{schedule_id}", headers=HEADERS)
+    assert canceled.status_code == 404
+    notified = client.post(f"/local/v1/schedules/{schedule_id}/notified", headers=HEADERS)
+    assert notified.status_code == 404
+
+
+async def test_dispatcher_rejects_a_revoked_workspace(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local-host.db")
+    try:
+        workspace = await store.create_workspace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            path=str(tmp_path),
+            label="test",
+        )
+        schedule = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="private",
+            workspace_path=str(tmp_path),
+            run_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+        )
+        assert await store.delete_workspace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            workspace_id=workspace["id"],
+        )
+        coordinator = FakeCoordinator(store)
+        dispatcher = ScheduledRunDispatcher(store=store, coordinator=coordinator)
+
+        await dispatcher.tick()
+
+        updated = await store.get_scheduled_run(schedule["id"])
+        assert updated is not None
+        assert updated["status"] == "failed"
+        assert updated["run_id"] is None
+        assert coordinator.started == []
+    finally:
+        await store.close()

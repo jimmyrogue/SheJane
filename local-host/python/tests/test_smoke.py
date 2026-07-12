@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
 
@@ -76,7 +77,7 @@ def test_tools_listing_includes_deepagents_runtime_tool_contract(client: TestCli
     assert "command" in tools["execute"]["args_schema"]["properties"]
 
 
-def test_workspaces_crud(client: TestClient) -> None:
+def test_workspaces_crud(client: TestClient, tmp_path: Path) -> None:
     headers = {"Authorization": "Bearer test-pairing-token"}
 
     # initially empty
@@ -88,11 +89,11 @@ def test_workspaces_crud(client: TestClient) -> None:
     r = client.post(
         "/local/v1/workspaces",
         headers=headers,
-        json={"path": "/tmp/some-workspace", "label": "Test WS"},
+        json={"path": str(tmp_path), "label": "Test WS"},
     )
     assert r.status_code == 200
     ws = r.json()
-    assert ws["path"] == "/tmp/some-workspace"
+    assert ws["path"] == str(tmp_path.resolve())
     assert ws["label"] == "Test WS"
 
     # list now has one
@@ -137,13 +138,13 @@ def test_trivial_tool_callable_directly() -> None:
     assert "ok" in out
 
 
-def test_tools_listing_includes_workspace_open(client: TestClient) -> None:
+def test_tools_listing_excludes_workspace_authorization(client: TestClient) -> None:
     r = client.get(
         "/local/v1/tools",
         headers={"Authorization": "Bearer test-pairing-token"},
     )
     names = {t["name"] for t in r.json()["tools"]}
-    assert "workspace.open" in names
+    assert "workspace.open" not in names
 
 
 def test_tools_listing_includes_progress_ledger(client: TestClient) -> None:
@@ -158,46 +159,6 @@ def test_tools_listing_includes_progress_ledger(client: TestClient) -> None:
     assert "validation_commands" in schema["properties"]
 
 
-def test_workspace_open_tool_authorizes_directory(tmp_path: Path) -> None:
-    """workspace.open should write a record to the store and return its id."""
-    import asyncio
-
-    from local_host.store.sqlite import LocalStore
-    from local_host.tools.workspace import make_workspace_open_tool
-
-    async def run() -> dict[str, str]:
-        store = await LocalStore.open(tmp_path / "store.db")
-        tool = make_workspace_open_tool(store)
-        try:
-            return await tool.ainvoke({"path": str(tmp_path), "label": "test"})
-        finally:
-            await store.close()
-
-    result = asyncio.run(run())
-    assert result["ok"] == "true"
-    assert result["path"] == str(tmp_path)
-    assert result["workspace_id"].startswith("ws_")
-
-
-def test_workspace_open_rejects_missing_directory(tmp_path: Path) -> None:
-    import asyncio
-
-    from local_host.store.sqlite import LocalStore
-    from local_host.tools.workspace import make_workspace_open_tool
-
-    async def run() -> dict[str, str]:
-        store = await LocalStore.open(tmp_path / "store.db")
-        tool = make_workspace_open_tool(store)
-        try:
-            return await tool.ainvoke({"path": str(tmp_path / "does-not-exist")})
-        finally:
-            await store.close()
-
-    result = asyncio.run(run())
-    assert result["ok"] == "false"
-    assert "not an accessible directory" in result["error"]
-
-
 def test_progress_ledger_tool_creates_artifact(tmp_path: Path) -> None:
     import asyncio
     import json
@@ -207,7 +168,11 @@ def test_progress_ledger_tool_creates_artifact(tmp_path: Path) -> None:
 
     async def run() -> tuple[dict[str, str], list[dict]]:
         store = await LocalStore.open(tmp_path / "store.db")
-        run = await store.create_run(goal="Build feature", workspace_path=str(tmp_path))
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="Build feature",
+            workspace_path=str(tmp_path),
+        )
         tool = make_progress_tool(store=store, run_id=run["id"])
         try:
             result = await tool.ainvoke(
@@ -335,7 +300,10 @@ def test_task_verify_file_exists(tmp_path: Path) -> None:
     target = tmp_path / "a.txt"
     target.write_text("hello", encoding="utf-8")
     out = asyncio.run(
-        task_verify.ainvoke({"checks": [{"kind": "file_exists", "path": str(target)}]})
+        task_verify.ainvoke(
+            {"checks": [{"kind": "file_exists", "path": "a.txt"}]},
+            config={"configurable": {"workspace_root": str(tmp_path)}},
+        )
     )
     assert out["ok"] == "true"
     assert out["results"][0]["ok"] is True
@@ -354,7 +322,8 @@ def test_task_verify_mixed_pass_fail(tmp_path: Path) -> None:
                     {"kind": "shell_exit_code", "command": "true", "expected": 0},
                     {"kind": "unknown_kind"},
                 ]
-            }
+            },
+            config={"configurable": {"workspace_root": str(tmp_path)}},
         )
     )
     assert out["ok"] == "false"
@@ -370,6 +339,68 @@ def test_task_verify_empty_checks_rejected() -> None:
 
     out = asyncio.run(task_verify.ainvoke({"checks": []}))
     assert out["ok"] == "false"
+
+
+def test_task_verify_rejects_file_outside_workspace(tmp_path: Path) -> None:
+    import asyncio
+
+    from local_host.tools.verify import task_verify
+
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    out = asyncio.run(
+        task_verify.ainvoke(
+            {"checks": [{"kind": "file_contains", "path": str(outside), "substring": "secret"}]},
+            config={"configurable": {"workspace_root": str(workspace)}},
+        )
+    )
+
+    assert out["ok"] == "false"
+    assert "outside workspace" in out["results"][0]["detail"]
+
+
+def test_task_verify_rejects_private_url_without_network_call() -> None:
+    import asyncio
+
+    from local_host.tools.verify import task_verify
+
+    out = asyncio.run(
+        task_verify.ainvoke({"checks": [{"kind": "url_reachable", "url": "http://127.0.0.1:8080"}]})
+    )
+
+    assert out["ok"] == "false"
+    assert "private/loopback" in out["results"][0]["detail"]
+
+
+def test_pinned_network_backend_uses_validated_address() -> None:
+    import asyncio
+
+    import httpcore
+
+    from local_host.tools.web import _PinnedNetworkBackend
+
+    calls: list[str] = []
+
+    class Delegate:
+        async def connect_tcp(self, host, port, **kwargs):
+            del port, kwargs
+            calls.append(host)
+            return object()
+
+        async def sleep(self, seconds):
+            del seconds
+
+    backend = _PinnedNetworkBackend("example.com", "93.184.216.34")
+    backend.delegate = Delegate()
+
+    asyncio.run(backend.connect_tcp("example.com", 443))
+    assert calls == ["93.184.216.34"]
+
+    with pytest.raises(httpcore.ConnectError, match="unvalidated hostname"):
+        asyncio.run(backend.connect_tcp("rebound.internal", 443))
 
 
 # --- skills catalog (HTTP layer only — agent-facing loading is now ---
@@ -521,21 +552,12 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
     import asyncio
 
     from local_host.config import reset_settings_for_tests
-    from local_host.store.sqlite import LocalStore
     from local_host.tools.registry import build_tools
 
     async def run() -> list[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        store = await LocalStore.open(tmp_path / "store.db")
-        try:
-            tools = await build_tools(
-                store=store,
-                workspace_root=str(tmp_path),
-                include_mcp=False,  # no MCP servers configured
-            )
-            return [t.name for t in tools]
-        finally:
-            await store.close()
+        tools = await build_tools(include_mcp=False)
+        return [t.name for t in tools]
 
     names = asyncio.run(run())
     expected = {
@@ -549,7 +571,6 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "task.verify",
         "image.generate",
         "image.edit",
-        "workspace.open",
         "memory.search",
         "user.ask",
     }

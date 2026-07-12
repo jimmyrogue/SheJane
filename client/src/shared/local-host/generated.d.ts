@@ -106,7 +106,7 @@ export interface paths {
         post?: never;
         /**
          * Clear Memory
-         * @description Wipe every note from all long-term memory namespaces.
+         * @description Wipe this authenticated principal's long-term memory namespaces.
          *
          *     Backs the "清空记忆 / Clear memory" button in the agent settings
          *     dialog. Walks every ("notes", ...) namespace in pages of 200
@@ -123,6 +123,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/model-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Model Providers */
+        get: operations["list_model_providers_local_v1_model_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/model-providers/{provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upsert Model Provider */
+        put: operations["upsert_model_provider_local_v1_model_providers__provider_id__put"];
+        post?: never;
+        /** Remove Model Provider */
+        delete: operations["remove_model_provider_local_v1_model_providers__provider_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Runtime Models */
+        get: operations["list_runtime_models_local_v1_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/permissions/{permission_id}": {
         parameters: {
             query?: never;
@@ -134,18 +186,17 @@ export interface paths {
         put?: never;
         /**
          * Resolve Permission
-         * @description Approve / deny a pending tool-permission request.
+         * @description Approve, edit, or deny a parameter-bound tool review.
          *
          *     Translates the client's `{decision, scope}` body into the
-         *     `{"decisions": [{"type": "approve"|"reject", ...}]}` shape
-         *     that `HumanInTheLoopMiddleware` expects on resume. One LangGraph
-         *     interrupt can contain multiple HITL action requests, so the run
+         *     `{"decisions": [{"type": "approve"|"edit"|"reject", ...}]}` shape
+         *     that `ToolReviewMiddleware` verifies on resume. One LangGraph
+         *     interrupt can contain multiple action requests, so the run
          *     resumes only after every permission in the current pause batch is
          *     resolved, preserving the original `permission.required` order.
          *
-         *     When `scope=run`, the coordinator caches the tool name so the
-         *     auto-approve loop in `_drive_run` skips re-prompting on
-         *     subsequent gates for the same tool in the same run.
+         *     `scope=run` is a bounded durable grant for the same tool, exact
+         *     argument fingerprint, and risk class; it never widens by tool name.
          */
         post: operations["resolve_permission_local_v1_permissions__permission_id__post"];
         delete?: never;
@@ -394,6 +445,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runtime Info */
+        get: operations["runtime_info_local_v1_runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/schedules": {
         parameters: {
             query?: never;
@@ -523,6 +591,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Threads */
+        get: operations["list_threads_local_v1_threads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/threads/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Thread Changes */
+        get: operations["list_thread_changes_local_v1_threads_changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Thread Snapshot */
+        get: operations["get_thread_snapshot_local_v1_threads__thread_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Thread */
+        delete: operations["delete_thread_local_v1_threads__thread_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Thread */
+        patch: operations["update_thread_local_v1_threads__thread_id__patch"];
+        trace?: never;
+    };
+    "/local/v1/tool-reconciliations/{operation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile Tool Operation */
+        post: operations["reconcile_tool_operation_local_v1_tool_reconciliations__operation_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/tools": {
         parameters: {
             query?: never;
@@ -552,7 +690,7 @@ export interface paths {
          * @description Stream a file's bytes back to the renderer.
          *
          *     Gated by `local_workspaces` — the file's parent chain must be inside
-         *     a path the user previously authorized via `workspace.open`. We do
+         *     a path the user previously authorized in the client. We do
          *     NOT serve arbitrary paths; that would let a compromised renderer
          *     exfiltrate the entire disk.
          *
@@ -674,6 +812,12 @@ export interface components {
         };
         /** CreateRunRequest */
         CreateRunRequest: {
+            /** Assistant Message Id */
+            assistant_message_id?: string | null;
+            /** Client Message Id */
+            client_message_id: string;
+            /** Command Id */
+            command_id: string;
             /** Goal */
             goal: string;
             /** History */
@@ -691,8 +835,28 @@ export interface components {
             model: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            /** Protocol Version */
+            protocol_version: number;
+            /** Replace From Client Id */
+            replace_from_client_id?: string | null;
+            /** Required Capabilities */
+            required_capabilities: string[];
             /** Settings */
             settings?: {
+                [key: string]: unknown;
+            } | null;
+            /** Thread Id */
+            thread_id?: string | null;
+            /** Thread Metadata */
+            thread_metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Thread Title */
+            thread_title?: string | null;
+            /** User Input */
+            user_input?: string | null;
+            /** User Item Metadata */
+            user_item_metadata?: {
                 [key: string]: unknown;
             } | null;
             /** Workspace Path */
@@ -733,6 +897,19 @@ export interface components {
             label: string;
             /** Path */
             path: string;
+        };
+        /** DeleteLocalThreadResponse */
+        DeleteLocalThreadResponse: {
+            /**
+             * Deleted
+             * @default true
+             * @constant
+             */
+            deleted: true;
+            /** Id */
+            id: string;
+            /** Version */
+            version: number;
         };
         /** DiagnoseWorkspaceRequest */
         DiagnoseWorkspaceRequest: {
@@ -912,6 +1089,43 @@ export interface components {
             raw?: string | null;
         };
         /**
+         * DiagnosticsToolReceipt
+         * @description Safe execution identity/status without raw tool arguments or output.
+         */
+        DiagnosticsToolReceipt: {
+            /** Arguments Hash */
+            arguments_hash: string;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Error Type */
+            error_type?: string | null;
+            /** Operation Id */
+            operation_id: string;
+            /** Result Hash */
+            result_hash?: string | null;
+            /** Risk */
+            risk: string;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "running" | "paused" | "completed" | "failed" | "outcome_unknown" | "rejected" | "canceled";
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Tool Name */
+            tool_name: string;
+            /** Tool Version */
+            tool_version: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
          * DiagnosticsVerification
          * @description Latest machine-readable task.verify result, if any.
          */
@@ -929,6 +1143,34 @@ export interface components {
              * @enum {string}
              */
             status: "passed" | "failed";
+        };
+        /** DiagnosticsWaitCandidate */
+        DiagnosticsWaitCandidate: {
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "tool_review" | "question" | "tool_reconciliation";
+            /** Resolved At */
+            resolved_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "resolved";
+        };
+        /** EditedToolAction */
+        EditedToolAction: {
+            /** Args */
+            args: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
         };
         /**
          * FeatureLedger
@@ -958,18 +1200,32 @@ export interface components {
         };
         /** ForkRunRequest */
         ForkRunRequest: {
+            /** Assistant Message Id */
+            assistant_message_id: string;
             /** Checkpoint Id */
             checkpoint_id: string;
+            /** Client Message Id */
+            client_message_id: string;
+            /** Command Id */
+            command_id: string;
             /** Goal */
             goal?: string | null;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
             } | null;
-            /** Model */
-            model?: string | null;
-            /** Settings */
-            settings?: {
+            /** Thread Id */
+            thread_id: string;
+            /** Thread Metadata */
+            thread_metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Thread Title */
+            thread_title?: string | null;
+            /** User Input */
+            user_input: string;
+            /** User Item Metadata */
+            user_item_metadata?: {
                 [key: string]: unknown;
             } | null;
         };
@@ -1051,6 +1307,11 @@ export interface components {
             /** Step */
             step: number;
         };
+        /** ListLocalModelProvidersResponse */
+        ListLocalModelProvidersResponse: {
+            /** Providers */
+            providers: components["schemas"]["LocalModelProvider"][];
+        };
         /** ListRunsResponse */
         ListRunsResponse: {
             /** Runs */
@@ -1060,6 +1321,29 @@ export interface components {
         ListScheduledRunsResponse: {
             /** Schedules */
             schedules: components["schemas"]["LocalScheduledRun"][];
+        };
+        /** ListThreadChangesResponse */
+        ListThreadChangesResponse: {
+            /** Changes */
+            changes: components["schemas"]["LocalThreadChange"][];
+            /** Cursor */
+            cursor: number;
+        };
+        /** ListThreadsResponse */
+        ListThreadsResponse: {
+            /** Cursor */
+            cursor: number;
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Next Before Created At */
+            next_before_created_at?: string | null;
+            /** Next Before Id */
+            next_before_id?: string | null;
+            /** Threads */
+            threads: components["schemas"]["LocalThread"][];
         };
         /** ListWorkspacesResponse */
         ListWorkspacesResponse: {
@@ -1104,6 +1388,55 @@ export interface components {
             /** Updated At */
             updated_at?: string | null;
         };
+        /** LocalModelProfile */
+        LocalModelProfile: {
+            /** Display Name */
+            display_name: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Model Id */
+            model_id: string;
+            /**
+             * Streaming
+             * @default true
+             */
+            streaming: boolean;
+            /**
+             * Tool Calling
+             * @default true
+             */
+            tool_calling: boolean;
+        };
+        /** LocalModelProvider */
+        LocalModelProvider: {
+            /** Base Url */
+            base_url: string;
+            /** Created At */
+            created_at: string;
+            /** Credential Configured */
+            credential_configured: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "openai_compatible";
+            /** Models */
+            models: components["schemas"]["LocalModelProfile"][];
+            /** Name */
+            name: string;
+            /** Requires Api Key */
+            requires_api_key: boolean;
+            /** Updated At */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
         /**
          * LocalRun
          * @description One row of the `local_runs` table, surfaced over HTTP.
@@ -1113,8 +1446,14 @@ export interface components {
          *     as strings here (not dict) to keep the wire format honest.
          */
         LocalRun: {
+            /** Assistant Item Id */
+            assistant_item_id?: string | null;
             /** Canceled At */
             canceled_at?: string | null;
+            /** Client Message Id */
+            client_message_id?: string | null;
+            /** Command Id */
+            command_id?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Created At */
@@ -1123,6 +1462,10 @@ export interface components {
             events_count?: number | null;
             /** Goal */
             goal: string;
+            /** Graph Checkpoint Id */
+            graph_checkpoint_id?: string | null;
+            /** Graph Thread Id */
+            graph_thread_id?: string | null;
             /**
              * History Json
              * @default []
@@ -1146,9 +1489,13 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "queued" | "running" | "waiting_permission" | "waiting_input" | "completed" | "canceled" | "failed";
+            status: "queued" | "running" | "waiting_permission" | "waiting_input" | "cleanup_required" | "completed" | "canceled" | "failed";
+            /** Thread Id */
+            thread_id?: string | null;
             /** Updated At */
             updated_at: string;
+            /** User Input */
+            user_input?: string | null;
             /** Workspace Path */
             workspace_path?: string | null;
         };
@@ -1175,6 +1522,38 @@ export interface components {
              * @constant
              */
             schema_version: 1;
+            /** Tool Receipts */
+            tool_receipts?: components["schemas"]["DiagnosticsToolReceipt"][];
+            /** Wait Candidates */
+            wait_candidates?: components["schemas"]["DiagnosticsWaitCandidate"][];
+        };
+        /** LocalRuntimeModel */
+        LocalRuntimeModel: {
+            /** Available */
+            available: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Provider Name */
+            provider_name: string;
+            /** Spec */
+            spec: string;
+            /** Streaming */
+            streaming: boolean;
+            /** Tool Calling */
+            tool_calling: boolean;
+        };
+        /** LocalRuntimeModelCatalog */
+        LocalRuntimeModelCatalog: {
+            /** Models */
+            models: components["schemas"]["LocalRuntimeModel"][];
         };
         /** LocalScheduledRun */
         LocalScheduledRun: {
@@ -1225,6 +1604,114 @@ export interface components {
             updated_at: string;
             /** Workspace Path */
             workspace_path?: string | null;
+        };
+        /** LocalThread */
+        LocalThread: {
+            /** Archived At */
+            archived_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Deleted At */
+            deleted_at?: string | null;
+            /** Id */
+            id: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** LocalThreadChange */
+        LocalThreadChange: {
+            /** Change Type */
+            change_type: string;
+            /** Created At */
+            created_at: string;
+            /** Cursor */
+            cursor: number;
+            /** Run Id */
+            run_id?: string | null;
+            /** Thread Id */
+            thread_id: string;
+            /** Thread Version */
+            thread_version: number;
+        };
+        /** LocalThreadEvent */
+        LocalThreadEvent: {
+            /** Created At */
+            created_at: string;
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: string;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id: string;
+            /** Seq */
+            seq: number;
+        };
+        /** LocalThreadItem */
+        LocalThreadItem: {
+            /** Client Id */
+            client_id?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Item Type */
+            item_type: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Position */
+            position: number;
+            /** Run Id */
+            run_id?: string | null;
+            /** Status */
+            status: string;
+            /** Thread Id */
+            thread_id: string;
+            /** Updated At */
+            updated_at: string;
+            /** Version */
+            version: number;
+        };
+        /** LocalThreadSnapshot */
+        LocalThreadSnapshot: {
+            /** Cursor */
+            cursor: number;
+            /** Events */
+            events: components["schemas"]["LocalThreadEvent"][];
+            /**
+             * Events Truncated
+             * @default false
+             */
+            events_truncated: boolean;
+            /**
+             * Has More Items
+             * @default false
+             */
+            has_more_items: boolean;
+            /** Items */
+            items: components["schemas"]["LocalThreadItem"][];
+            /** Next Before Position */
+            next_before_position?: number | null;
+            /** Runs */
+            runs: components["schemas"]["LocalRun"][];
+            thread: components["schemas"]["LocalThread"];
         };
         /** LocalWorkspaceAuthorization */
         LocalWorkspaceAuthorization: {
@@ -1368,7 +1855,7 @@ export interface components {
              * Decision
              * @enum {string}
              */
-            decision: "approve" | "deny";
+            decision: "approve" | "edit" | "deny";
             /** Permission Id */
             permission_id: string;
             /**
@@ -1416,13 +1903,22 @@ export interface components {
             /** Resumed */
             resumed: boolean;
         };
+        /** ReconcileToolRequest */
+        ReconcileToolRequest: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirmed_completed" | "retry_not_executed" | "abort";
+        };
         /** ResolvePermissionRequest */
         ResolvePermissionRequest: {
             /**
              * Decision
              * @enum {string}
              */
-            decision: "approve" | "deny";
+            decision: "approve" | "edit" | "deny";
+            edited_action?: components["schemas"]["EditedToolAction"] | null;
             /**
              * Scope
              * @default once
@@ -1448,6 +1944,22 @@ export interface components {
              * @constant
              */
             resumed: true;
+        };
+        /**
+         * RuntimeInfo
+         * @description Authenticated Runtime protocol and capability discovery.
+         */
+        RuntimeInfo: {
+            /** Capabilities */
+            capabilities: string[];
+            /** Gateway Provider Configured */
+            gateway_provider_configured: boolean;
+            /** Model Provider Configured */
+            model_provider_configured: boolean;
+            /** Protocol Version */
+            protocol_version: number;
+            /** Runtime Version */
+            runtime_version: string;
         };
         /** SetCloudSessionRequest */
         SetCloudSessionRequest: {
@@ -1500,6 +2012,62 @@ export interface components {
         /** SkillWriteResponse */
         SkillWriteResponse: {
             skill: components["schemas"]["SkillFile"];
+        };
+        /** ToolReconciliationResolution */
+        ToolReconciliationResolution: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "confirmed_completed" | "retry_not_executed" | "abort";
+            /** Operation Id */
+            operation_id: string;
+            /**
+             * Resolved
+             * @default true
+             * @constant
+             */
+            resolved: true;
+            /** Resumed */
+            resumed: boolean;
+        };
+        /** UpdateLocalThreadRequest */
+        UpdateLocalThreadRequest: {
+            /** Archived */
+            archived?: boolean | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** UpsertLocalModelProviderRequest */
+        UpsertLocalModelProviderRequest: {
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Kind
+             * @default openai_compatible
+             * @constant
+             */
+            kind: "openai_compatible";
+            /** Models */
+            models: components["schemas"]["LocalModelProfile"][];
+            /** Name */
+            name: string;
+            /**
+             * Requires Api Key
+             * @default true
+             */
+            requires_api_key: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -1709,6 +2277,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClearMemoryResponse"];
+                };
+            };
+        };
+    };
+    list_model_providers_local_v1_model_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListLocalModelProvidersResponse"];
+                };
+            };
+        };
+    };
+    upsert_model_provider_local_v1_model_providers__provider_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpsertLocalModelProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalModelProvider"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_model_provider_local_v1_model_providers__provider_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalModelProvider"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runtime_models_local_v1_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalRuntimeModelCatalog"];
                 };
             };
         };
@@ -2136,6 +2810,26 @@ export interface operations {
             };
         };
     };
+    runtime_info_local_v1_runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeInfo"];
+                };
+            };
+        };
+    };
     list_schedules_local_v1_schedules_get: {
         parameters: {
             query?: {
@@ -2475,6 +3169,208 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_threads_local_v1_threads_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before_created_at?: string | null;
+                before_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListThreadsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_thread_changes_local_v1_threads_changes_get: {
+        parameters: {
+            query?: {
+                after?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListThreadChangesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thread_snapshot_local_v1_threads__thread_id__get: {
+        parameters: {
+            query?: {
+                before_position?: number | null;
+                item_limit?: number;
+                event_limit?: number;
+                expected_version?: number | null;
+            };
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalThreadSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_thread_local_v1_threads__thread_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteLocalThreadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_thread_local_v1_threads__thread_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLocalThreadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalThread"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_tool_operation_local_v1_tool_reconciliations__operation_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileToolRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolReconciliationResolution"];
                 };
             };
             /** @description Validation Error */

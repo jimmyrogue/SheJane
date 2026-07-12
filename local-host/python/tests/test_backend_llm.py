@@ -141,9 +141,9 @@ def test_astream_yields_per_token(monkeypatch) -> None:
         return [c.message.content async for c in model._astream([HumanMessage(content="hi")])]
 
     chunks = asyncio.run(collect())
-    # tokens only — llm.done is filtered out without capture_meta (this stream
-    # has no llm.usage event; usage surfacing is covered separately below).
-    assert chunks == ["a", "b", "c"]
+    # The final empty chunk carries the provider request id for the durable
+    # model-call receipt; product text streaming still sees only a/b/c.
+    assert chunks == ["a", "b", "c", ""]
 
 
 def test_astream_surfaces_usage(monkeypatch) -> None:
@@ -235,6 +235,7 @@ def test_bind_tools_serializes_correctly() -> None:
     assert t["name"] == "demo.echo"
     assert "Echo" in t["description"]
     assert t["inputSchema"]["type"] == "object"
+    assert bound._build_request([HumanMessage(content="hi")])["max_output_tokens"] == 8192
 
 
 def test_message_conversion_round_trip() -> None:

@@ -52,7 +52,7 @@ def test_build_subagents_returns_researcher_and_writer() -> None:
         agent_roots=[],
     )
     names = {s["name"] for s in subs}
-    assert names == {"researcher", "writer"}
+    assert names == {"general-purpose", "researcher", "writer"}
 
 
 def test_researcher_pulls_only_research_relevant_tools_from_main() -> None:
@@ -95,6 +95,34 @@ def test_writer_has_no_tools() -> None:
     subs = build_subagents(main_tools=[], main_model="x", agent_roots=[])
     writer = next(s for s in subs if s["name"] == "writer")
     assert writer["tools"] == []
+
+
+def test_subagents_never_receive_top_level_memory_write_capability(tmp_path: Path) -> None:
+    from langchain_core.tools import tool
+
+    from local_host.agent.subagents import build_subagents
+
+    @tool("memory.write")
+    def memory_write(fact: str) -> str:
+        """Persist a top-level user-authorized fact."""
+        return fact
+
+    _write_subagent(
+        tmp_path,
+        "configured.md",
+        frontmatter="""
+name: configured
+description: Configured helper
+tools: memory.write
+""",
+        body="Help with the task.",
+    )
+    subagents = build_subagents(
+        main_tools=[memory_write],
+        main_model="x",
+        agent_roots=[tmp_path],
+    )
+    assert all("memory.write" not in {tool.name for tool in item["tools"]} for item in subagents)
 
 
 def test_build_subagents_loads_configured_markdown_agent(tmp_path: Path) -> None:
@@ -181,7 +209,7 @@ def test_invalid_configured_subagent_is_skipped(tmp_path: Path) -> None:
     subs = build_subagents(main_tools=[], main_model="model-x", agent_roots=[agent_root])
     names = {s["name"] for s in subs}
 
-    assert names == {"researcher", "writer"}
+    assert names == {"general-purpose", "researcher", "writer"}
 
 
 def test_backend_factory_uses_workspace_root(tmp_path: Path) -> None:

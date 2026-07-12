@@ -1,7 +1,6 @@
 """Translate LangGraph stream events into client-friendly SSE event types.
 
-LangGraph's `astream(stream_mode=[…])` returns `(mode, payload)` tuples
-whose payload shape depends on mode:
+LangGraph's v2 stream returns typed parts whose `data` shape depends on mode:
 
   * messages → (AIMessageChunk | ToolMessageChunk | …, metadata: dict)
   * updates  → {node_name: state_delta}
@@ -26,7 +25,6 @@ client/src/features/chat/chatStore.ts):
   tool.completed       — tool result observed (was `tool.end` pre-Block-3
                          — client looks for `tool.completed`)
   tool.failed          — tool result observed with status="error"
-  graph.node           — generic node transition (catch-all)
   agent.custom         — middleware-emitted custom payload
   subagent.spawned     — deepagents task() tool spawning a subagent
   subagent.completed   — subagent finished
@@ -47,10 +45,8 @@ from .failure_policy import classify_failure_payload
 def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
     """Return zero or more `{event, data}` dicts for a single stream tuple.
 
-    The translator never raises — anything it can't classify becomes a
-    `graph.node` event with the raw serialized payload, so the daemon's
-    event log stays complete even when an unknown mode is added by
-    LangGraph in the future.
+    Unknown graph internals stay in checkpoints and traces instead of the
+    stable product event stream.
     """
     if kind == "messages":
         return _translate_messages(payload)
@@ -60,7 +56,7 @@ def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
         return [
             {"event": "agent.custom", "data": _safe_dump(payload)},
         ]
-    return [{"event": "graph.node", "data": {"kind": kind, "payload": _safe_dump(payload)}}]
+    return []
 
 
 # ---- messages mode ----
@@ -68,11 +64,7 @@ def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
 
 def _translate_messages(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, tuple) or len(payload) != 2:
-        # Malformed payload — surface as a generic graph.node so the
-        # client doesn't render arbitrary state as model output. (See
-        # the trailing fall-through at the end of this function for
-        # the same rationale.)
-        return [{"event": "graph.node", "data": {"kind": "messages", "raw": _safe_dump(payload)}}]
+        return []
     chunk, _metadata = payload
 
     if isinstance(chunk, AIMessageChunk):
@@ -89,10 +81,11 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
             out.append({"event": "llm.reasoning", "data": {"content": reasoning}})
 
         usage = chunk.additional_kwargs.get("usage")
+        if not isinstance(usage, dict):
+            usage = chunk.usage_metadata
         if isinstance(usage, dict):
-            # Per-LLM-call usage from the Go gateway (input/output tokens +
-            # credits). runs.py sums these across a turn onto run.completed;
-            # the client renders a per-turn usage chip.
+            # Ephemeral per-call usage for the live chip. The authoritative
+            # run total comes from the durable model-call ledger, not SSE.
             out.append(
                 {
                     "event": "llm.usage",
@@ -179,53 +172,21 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
             }
         ]
 
-    # Catch-all for any other chunk type LangGraph streams in messages
-    # mode (HumanMessageChunk, SystemMessage, or middleware-injected
-    # custom types). Previously we wrapped these as `llm.delta`, which
-    # meant a middleware appending e.g. a HumanMessage to state would
-    # surface as if the assistant had streamed its content — caused the
-    # OutputGuard retry-nudge regression where "Your last response was
-    # empty…" was emitted both as an llm.delta and persisted on the
-    # message. Anything not from the model is now a graph.node event so
-    # the client never confuses it with assistant content.
-    return [
-        {
-            "event": "graph.node",
-            "data": {
-                "kind": "messages",
-                "chunk_type": type(chunk).__name__,
-                "payload": _safe_dump(chunk),
-            },
-        }
-    ]
+    return []
 
 
 # ---- updates mode ----
 
-#  Updates payload is roughly `{node_name: {state_field: value, …}}`. We
-#  emit one `graph.node` per node — tool completions are sourced from
-#  `messages` mode only so we don't double-emit (see docstring below).
+#  Updates payload is roughly `{node_name: {state_field: value, …}}`.
 
 
 def _translate_updates(payload: Any) -> list[dict[str, Any]]:
-    """Emit one `graph.node` per node update.
-
-    Important: do NOT also emit per-ToolMessage `tool.completed` events
-    here. An earlier version of this function inspected the `tools` node
-    update and emitted one tool.completed per ToolMessage inside —
-    intended as best-effort tool observation. But LangGraph's `messages`
-    stream mode already yields the same ToolMessage (handled in
-    `_translate_messages`), so every tool ended up reported twice with
-    different daemon-side event IDs. Client-side dedupe is keyed on
-    event ID, so the duplicates leaked into `message.agentEvents` and
-    caused `operationCountsLabel` to double-count ("搜索 8 次" instead
-    of "搜索 4 次"). messages-mode is the single source of truth.
-    """
+    """Extract stable tool requests and discard raw node deltas."""
     if not isinstance(payload, dict):
-        return [{"event": "graph.node", "data": _safe_dump(payload)}]
+        return []
 
     out: list[dict[str, Any]] = []
-    for node, delta in payload.items():
+    for delta in payload.values():
         # When the model node finishes a turn, its delta carries an
         # AIMessage with the fully assembled `tool_calls` list. Emit one
         # `tool.requested` event per tool_call so the client renderer can
@@ -238,12 +199,6 @@ def _translate_updates(payload: Any) -> list[dict[str, Any]]:
         # — a clean single-emit point. Same "single source of truth"
         # discipline that fixed the duplicate-tool.completed bug.
         out.extend(_tool_requested_events_from_update(delta))
-        out.append(
-            {
-                "event": "graph.node",
-                "data": {"node": node, "delta": _safe_dump(delta)},
-            }
-        )
     return out
 
 

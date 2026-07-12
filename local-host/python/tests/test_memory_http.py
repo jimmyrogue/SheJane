@@ -61,18 +61,20 @@ def test_clear_memory_deletes_existing_notes(client: TestClient) -> None:
 
     from langgraph.store.memory import InMemoryStore
 
-    from local_host.middleware.memory_writeback import NAMESPACE
+    from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
+    from local_host.tools.memory import memory_namespace_for_workspace
 
     # Swap the SQLite-backed store opened in lifespan for an in-memory
     # one — same BaseStore interface, but trivially shareable across
     # event loops.
     mem_store = InMemoryStore()
     client.app.state.agent_store = mem_store
+    namespace = memory_namespace_for_workspace(None, LOCAL_OWNER_PRINCIPAL_ID)
 
     async def _seed() -> None:
-        await mem_store.aput(NAMESPACE, "k1", {"goal": "a", "answer": "1"})
-        await mem_store.aput(NAMESPACE, "k2", {"goal": "b", "answer": "2"})
-        await mem_store.aput(NAMESPACE, "k3", {"goal": "c", "answer": "3"})
+        await mem_store.aput(namespace, "k1", {"goal": "a", "answer": "1"})
+        await mem_store.aput(namespace, "k2", {"goal": "b", "answer": "2"})
+        await mem_store.aput(namespace, "k3", {"goal": "c", "answer": "3"})
 
     asyncio.run(_seed())
 
@@ -83,7 +85,7 @@ def test_clear_memory_deletes_existing_notes(client: TestClient) -> None:
     assert body["deleted_count"] == 3
 
     async def _remaining() -> list:
-        return list(await mem_store.asearch(NAMESPACE))
+        return list(await mem_store.asearch(namespace))
 
     assert asyncio.run(_remaining()) == []
 
@@ -93,16 +95,20 @@ def test_clear_memory_deletes_all_notes_namespaces(client: TestClient) -> None:
 
     from langgraph.store.memory import InMemoryStore
 
-    from local_host.middleware.memory_writeback import NAMESPACE
+    from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
+    from local_host.tools.memory import memory_namespace_for_workspace
 
     mem_store = InMemoryStore()
     client.app.state.agent_store = mem_store
-    workspace_ns = ("notes", "workspace", "abc123")
+    global_ns = memory_namespace_for_workspace(None, LOCAL_OWNER_PRINCIPAL_ID)
+    workspace_ns = memory_namespace_for_workspace("/workspace", LOCAL_OWNER_PRINCIPAL_ID)
+    other_owner_ns = memory_namespace_for_workspace(None, "another-principal")
 
     async def _seed() -> None:
-        await mem_store.aput(NAMESPACE, "legacy", {"goal": "legacy", "answer": "global"})
+        await mem_store.aput(global_ns, "global", {"goal": "global", "answer": "one"})
         await mem_store.aput(workspace_ns, "w1", {"goal": "workspace", "answer": "one"})
         await mem_store.aput(workspace_ns, "w2", {"goal": "workspace", "answer": "two"})
+        await mem_store.aput(other_owner_ns, "private", {"goal": "other", "answer": "keep"})
 
     asyncio.run(_seed())
 
@@ -112,11 +118,12 @@ def test_clear_memory_deletes_all_notes_namespaces(client: TestClient) -> None:
 
     async def _remaining() -> list:
         out = []
-        for namespace in await mem_store.alist_namespaces(prefix=("notes",)):
+        for namespace in await mem_store.alist_namespaces(prefix=("notes", "principal")):
             out.extend(await mem_store.asearch(namespace))
         return out
 
-    assert asyncio.run(_remaining()) == []
+    remaining = asyncio.run(_remaining())
+    assert [item.key for item in remaining] == ["private"]
 
 
 def test_clear_memory_idempotent(client: TestClient) -> None:

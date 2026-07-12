@@ -16,10 +16,8 @@ modified. Every write tool copies the original to a sibling
 thereafter. Repeated edits land in the same copy. The user can reset
 edits by deleting `xxx.edited.docx` in Finder.
 
-Because the original is untouched, write tools do NOT require HITL
-approval (they're not registered in `agent/builder.py:DESTRUCTIVE_TOOLS`).
-This trades a permission prompt for the predictable "copy is the
-safety net" contract.
+Because the original is untouched, rollback remains predictable. The Runtime
+still reviews each concrete write operation before execution.
 
 All write tools also use an atomic write pattern: write to
 `<target>.tmp`, re-open with the appropriate library to verify it's a
@@ -274,7 +272,7 @@ def office_read(path: str) -> dict[str, Any]:
 
     Args:
         path: Absolute filesystem path to a .docx or .xlsx file. Must
-              already exist. Use `workspace.open` first if the file
+              already exist. Select the workspace in the client first if the file
               lives in a directory the agent hasn't been authorized for.
 
     Returns:

@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from tests.helpers import run_command
 
 
 def _stream_response(events: list[tuple[str, str]]) -> httpx.Response:
@@ -64,6 +65,7 @@ def client_with_tokens(monkeypatch) -> tuple[TestClient, list[str]]:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
+        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -105,7 +107,7 @@ def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "Hi"},
+        json=run_command("Hi"),
     )
     run_id = r.json()["id"]
 
@@ -134,7 +136,7 @@ def test_run_completed_terminal_event_present(client_with_tokens) -> None:
     r = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json={"goal": "Hi"},
+        json=run_command("Hi"),
     )
     run_id = r.json()["id"]  # flat LocalRun shape
 
@@ -165,7 +167,7 @@ def test_first_token_latency_under_budget(client_with_tokens) -> None:
         r = client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json={"goal": f"iter-{i}"},
+            json=run_command(f"iter-{i}"),
         )
         run_id = r.json()["id"]  # flat LocalRun
 

@@ -14,6 +14,9 @@
  * upstream LLM (or a complex daemon mock mode) and are deferred.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   probeLocalHost,
@@ -29,6 +32,7 @@ import {
 
 const BASE_URL = process.env.VITE_TEST_LOCAL_HOST_URL
 const TOKEN = process.env.VITE_TEST_LOCAL_HOST_TOKEN ?? 'dev-local-token'
+const CONTRACT_SETTINGS = { memory: 'off', skills: 'off', mcp: 'off' } as const
 
 // Vitest 2.x — describe.skipIf(condition) drops the whole block.
 describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
@@ -82,10 +86,18 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
   // -----------------------------------------------------------------
   describe('runs', () => {
     it('POST returns flat LocalRun (no {run: ...} wrapper)', async () => {
-      const run = await createLocalRun({ goal: 'contract test run' }, config)
+      const run = await createLocalRun(
+        {
+          commandId: 'cmd_contract_create',
+          clientMessageId: 'msg_contract_create',
+          goal: 'contract test run',
+          settings: CONTRACT_SETTINGS,
+        },
+        config,
+      )
       expect(run.id).toMatch(/^run_/)
       expect(run.goal).toBe('contract test run')
-      expect(run.status).toMatch(/queued|running/)
+      expect(run.status).toMatch(/queued|running|completed/)
       // Anti-regression — earlier daemon wrapped in {run: ...}.
       expect((run as unknown as { run?: unknown }).run).toBeUndefined()
     })
@@ -99,7 +111,15 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
     })
 
     it('previously-created run appears in list with envelope fields', async () => {
-      const created = await createLocalRun({ goal: 'list-me' }, config)
+      const created = await createLocalRun(
+        {
+          commandId: 'cmd_contract_list',
+          clientMessageId: 'msg_contract_list',
+          goal: 'list-me',
+          settings: CONTRACT_SETTINGS,
+        },
+        config,
+      )
       const runs = await listLocalRuns(config)
       const found = runs.find((r) => r.id === created.id)
       expect(found).toBeDefined()
@@ -119,7 +139,15 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
   // -----------------------------------------------------------------
   describe('runs stream', () => {
     it('parses the SSE envelope: event_type populated, run.started/completed delivered', async () => {
-      const created = await createLocalRun({ goal: 'contract stream' }, config)
+      const created = await createLocalRun(
+        {
+          commandId: 'cmd_contract_stream',
+          clientMessageId: 'msg_contract_stream',
+          goal: 'contract stream',
+          settings: CONTRACT_SETTINGS,
+        },
+        config,
+      )
       const events: string[] = []
       const result = await streamLocalRun(created.id, config, {
         onEvent: (event) => events.push(event.event_type),
@@ -141,30 +169,35 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
   // -----------------------------------------------------------------
   describe('workspaces', () => {
     it('POST returns flat LocalWorkspaceAuthorization (no wrapper)', async () => {
-      const path = `/tmp/contract-ws-${Date.now()}`
+      const path = mkdtempSync(join(tmpdir(), 'shejane-contract-ws-'))
       const ws = await authorizeLocalWorkspace(path, config)
       expect(ws.id).toBeTruthy()
-      expect(ws.path).toBe(path)
+      expect(ws.path).toBe(realpathSync(path))
       expect((ws as unknown as { workspace?: unknown }).workspace).toBeUndefined()
 
       // Cleanup
       await revokeLocalWorkspace(ws.id, config)
+      rmSync(path, { recursive: true, force: true })
     })
 
     it('DELETE returns the deleted record (flat shape)', async () => {
-      const ws = await authorizeLocalWorkspace(`/tmp/contract-del-${Date.now()}`, config)
+      const path = mkdtempSync(join(tmpdir(), 'shejane-contract-del-'))
+      const ws = await authorizeLocalWorkspace(path, config)
       const deleted = await revokeLocalWorkspace(ws.id, config)
       // Returns the deleted record, NOT {deleted: bool}.
       expect(deleted.id).toBe(ws.id)
       expect(deleted.path).toBe(ws.path)
+      rmSync(path, { recursive: true, force: true })
     })
 
     it('list returns LocalWorkspaceAuthorization[] from {workspaces} envelope', async () => {
-      const ws = await authorizeLocalWorkspace(`/tmp/contract-list-${Date.now()}`, config)
+      const path = mkdtempSync(join(tmpdir(), 'shejane-contract-list-'))
+      const ws = await authorizeLocalWorkspace(path, config)
       const all = await listAuthorizedWorkspaces(config)
       expect(Array.isArray(all)).toBe(true)
       expect(all.find((w) => w.id === ws.id)).toBeDefined()
       await revokeLocalWorkspace(ws.id, config)
+      rmSync(path, { recursive: true, force: true })
     })
   })
 
@@ -175,7 +208,10 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
   describe('error shape', () => {
     it('POST /runs with missing goal returns readable message', async () => {
       try {
-        await createLocalRun({ goal: '' }, config)
+        await createLocalRun(
+          { commandId: 'cmd_contract_empty', clientMessageId: 'msg_contract_empty', goal: '' },
+          config,
+        )
         expect.fail('expected error from empty goal')
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error)

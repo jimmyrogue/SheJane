@@ -8,6 +8,9 @@ the real eval (`python -m local_host.eval`) needs a running daemon.
 from __future__ import annotations
 
 import asyncio
+import json
+
+import httpx
 
 from local_host.eval import (
     EvalCase,
@@ -19,6 +22,7 @@ from local_host.eval import (
     make_llm_judge,
     parse_judgment,
 )
+from local_host.eval.driver import HttpDaemonDriver
 
 
 def _case(**kw) -> EvalCase:
@@ -97,6 +101,33 @@ def test_evaluate_captures_driver_crash_as_failed_case() -> None:
     assert not report.passed
     assert report.results[0].trajectory.failed
     assert "daemon down" in report.results[0].trajectory.error
+
+
+def test_http_driver_sends_the_strict_run_command(monkeypatch) -> None:
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"id": "run_eval"})
+        return httpx.Response(
+            200,
+            content=b"data: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+
+    class PatchedClient(httpx.AsyncClient):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr("local_host.eval.driver.httpx.AsyncClient", PatchedClient)
+
+    asyncio.run(HttpDaemonDriver("http://runtime", "tok").run(_case(mode="auto.smart")))
+
+    assert requests[0]["model"] == "auto.smart"
+    assert requests[0]["command_id"].startswith("cmd_eval_")
+    assert requests[0]["client_message_id"].startswith("msg_eval_")
+    assert "mode" not in requests[0]
 
 
 def test_parse_judgment_handles_fenced_json() -> None:

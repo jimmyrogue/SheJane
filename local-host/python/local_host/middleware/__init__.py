@@ -1,39 +1,33 @@
 """Custom middleware for phases not covered by built-ins:
 
   P1 input_guard         — InputGuardMiddleware
-  P4 reflection          — ReflectMiddleware
-  P6 memory writeback    — MemoryWritebackMiddleware
-  P8 verification loop   — VerificationLoopMiddleware
-  P8 progress ledger     — ProgressLedgerGuardMiddleware
+  P9 completion router   — CompletionRouterMiddleware
   P8 result retry        — ToolResultRetryMiddleware
-  P9 output guard        — OutputGuardMiddleware
+  P8 outbound policy     — OutboundPolicyMiddleware
   P1 mid-run steering    — SteeringMiddleware
-  P1 plan approval       — PlanApprovalMiddleware
 
 P7 (skills) is handled by deepagents.SkillsMiddleware in agent/builder.py,
 not by a custom class here.
 """
 
+from .completion_router import CompletionRouterMiddleware
 from .input_guard import InputGuardMiddleware
-from .memory_writeback import MemoryWritebackMiddleware
-from .output_guard import OutputGuardMiddleware
-from .plan_approval import PlanApprovalMiddleware
+from .outbound_policy import OutboundPolicyMiddleware
 from .plan_first import PlanFirstMiddleware
-from .progress_ledger_guard import ProgressLedgerGuardMiddleware
-from .reflect import ReflectMiddleware
 from .steering import SteeringMiddleware
+from .tool_execution import ToolExecutionMiddleware
 from .tool_result_retry import ToolResultRetryMiddleware
-from .verification_loop import VerificationLoopMiddleware
+from .tool_review import ToolReviewMiddleware
+from .tool_visibility import ToolVisibilityMiddleware
 
 __all__ = [
+    "CompletionRouterMiddleware",
     "InputGuardMiddleware",
-    "MemoryWritebackMiddleware",
-    "OutputGuardMiddleware",
-    "PlanApprovalMiddleware",
+    "OutboundPolicyMiddleware",
     "PlanFirstMiddleware",
-    "ProgressLedgerGuardMiddleware",
-    "ReflectMiddleware",
     "SteeringMiddleware",
+    "ToolExecutionMiddleware",
     "ToolResultRetryMiddleware",
-    "VerificationLoopMiddleware",
+    "ToolReviewMiddleware",
+    "ToolVisibilityMiddleware",
 ]

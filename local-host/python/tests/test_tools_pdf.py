@@ -216,11 +216,8 @@ async def test_unpaired_returns_cloud_session_missing(settings_unpaired) -> None
     assert result["errorCode"] == "cloud_session_missing"
 
 
-def test_registry_includes_pdf_inspect() -> None:
-    # Smoke check: pdf.inspect is in the always-on core toolset
-    # (no gate flag — gateway re-checks document ownership).
+def test_registry_includes_pdf_inspect_only_with_cloud_tools() -> None:
     from local_host.tools.registry import core_tools
 
-    tools = core_tools()
-    names = {t.name for t in tools}
-    assert "pdf.inspect" in names
+    assert "pdf.inspect" in {tool.name for tool in core_tools(include_cloud_tools=True)}
+    assert "pdf.inspect" not in {tool.name for tool in core_tools(include_cloud_tools=False)}

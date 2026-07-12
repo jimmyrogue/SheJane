@@ -4,8 +4,6 @@ strand in-flight runs as `running` forever and silently downgrade HITL resumes
 to the fast tier in a no-workspace sandbox. These tests lock the fix:
 
   - recover_orphans(): queued/running → failed, waiting_permission/waiting_input → kept.
-  - _hydrate_run_state(): rebuild goal/workspace/mode/settings/grants from the
-    DB so a resume after restart isn't degraded.
   - resolved tier (fast|deep) is persisted, not the requested mode.
 """
 
@@ -13,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.runs import RunCoordinator
 from local_host.store.sqlite import LocalStore
 
@@ -22,23 +21,47 @@ async def _open_store(tmp_path: Path) -> LocalStore:
 
 
 def _coordinator(store: LocalStore) -> RunCoordinator:
-    # recover_orphans / _hydrate_run_state only touch the store, so a None
-    # checkpointer/agent_store is fine for these unit tests.
+    # recover_orphans only touches the store, so a None checkpointer is fine.
     return RunCoordinator(store=store, checkpointer=None, agent_store=None)  # type: ignore[arg-type]
 
 
 async def test_recover_orphans_fails_dead_runs_and_keeps_waiting(tmp_path: Path) -> None:
     store = await _open_store(tmp_path)
     try:
-        running = await store.create_run(goal="g1", workspace_path="/ws", mode="deep")
+        running = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g1",
+            workspace_path="/ws",
+            mode="deep",
+        )
         await store.update_run_status(running["id"], "running")
-        queued = await store.create_run(goal="g2", workspace_path=None, mode="fast")
+        queued = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g2",
+            workspace_path=None,
+            mode="fast",
+        )
         # queued: create_run leaves status='queued'
-        waiting = await store.create_run(goal="g3", workspace_path="/ws3", mode="deep")
+        waiting = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g3",
+            workspace_path="/ws3",
+            mode="deep",
+        )
         await store.update_run_status(waiting["id"], "waiting_permission")
-        waiting_input = await store.create_run(goal="g5", workspace_path="/ws5", mode="deep")
+        waiting_input = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g5",
+            workspace_path="/ws5",
+            mode="deep",
+        )
         await store.update_run_status(waiting_input["id"], "waiting_input")
-        done = await store.create_run(goal="g4", workspace_path=None, mode="fast")
+        done = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g4",
+            workspace_path=None,
+            mode="fast",
+        )
         await store.update_run_status(done["id"], "completed")
 
         active_ids = {run["id"] for run in await store.list_active_runs()}
@@ -58,75 +81,15 @@ async def test_recover_orphans_fails_dead_runs_and_keeps_waiting(tmp_path: Path)
         await store.close()
 
 
-async def test_hydrate_run_state_rebuilds_caches_from_db(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
-        run = await store.create_run(
-            goal="重构登录流程",
-            workspace_path="/proj",
-            settings={"memory": "off"},
-            mode="deep",
-        )
-        rid = run["id"]
-        await store.update_run_status(rid, "waiting_permission")
-        # A scope=run grant approved before the restart.
-        perm = await store.create_permission(
-            run_id=rid, tool_call_id="c1", tool_name="fs.write", arguments={"path": "x"}
-        )
-        await store.resolve_permission(perm["id"], status="approved", scope="run")
-
-        # Fresh coordinator with empty caches (post-restart).
-        coord = _coordinator(store)
-        assert await coord._hydrate_run_state(rid) is True
-
-        assert coord._goals[rid] == "重构登录流程"
-        assert coord._workspaces[rid] == "/proj"
-        assert coord._modes[rid] == "deep"  # tier preserved, not downgraded to fast
-        assert coord._settings_overrides[rid] == {"memory": "off"}
-        assert coord._run_grants[rid] == {"fs.write"}
-
-        # Idempotent: a second call is a no-op and still True.
-        assert await coord._hydrate_run_state(rid) is True
-        # Unknown run id → False (resume_run refuses).
-        assert await coord._hydrate_run_state("run_missing") is False
-    finally:
-        await store.close()
-
-
-async def test_hydrate_run_state_rebuilds_run_metadata_from_db(tmp_path: Path) -> None:
-    store = await _open_store(tmp_path)
-    try:
-        run = await store.create_run(
-            goal="修复失败任务",
-            workspace_path="/proj",
-            metadata={
-                "intent": "repair",
-                "source_run_id": "run_original",
-                "source_message_id": "msg_original",
-                "attempt": 2,
-            },
-            mode="deep",
-        )
-        rid = run["id"]
-        await store.update_run_status(rid, "waiting_input")
-
-        coord = _coordinator(store)
-        assert await coord._hydrate_run_state(rid) is True
-
-        assert coord._run_metadata[rid] == {
-            "intent": "repair",
-            "source_run_id": "run_original",
-            "source_message_id": "msg_original",
-            "attempt": 2,
-        }
-    finally:
-        await store.close()
-
-
 async def test_create_run_persists_mode_and_update_run_mode(tmp_path: Path) -> None:
     store = await _open_store(tmp_path)
     try:
-        run = await store.create_run(goal="g", workspace_path=None, mode="deep")
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="g",
+            workspace_path=None,
+            mode="deep",
+        )
         assert (await store.get_run(run["id"]))["mode"] == "deep"
         # Resolved-tier write-back (e.g. auto → deep).
         await store.update_run_mode(run["id"], "fast")
@@ -135,7 +98,7 @@ async def test_create_run_persists_mode_and_update_run_mode(tmp_path: Path) -> N
         await store.close()
 
 
-async def test_ensure_columns_adds_mode_to_legacy_db(tmp_path: Path) -> None:
+async def test_ensure_columns_adds_runtime_fields_to_legacy_db(tmp_path: Path) -> None:
     # Simulate a DB created before the `mode` column existed, then reopen and
     # confirm the additive migration backfilled it with the 'fast' default.
     import aiosqlite
@@ -160,6 +123,9 @@ async def test_ensure_columns_adds_mode_to_legacy_db(tmp_path: Path) -> None:
         legacy = await store.get_run("run_legacy")
         assert legacy is not None
         assert legacy["mode"] == "fast"  # backfilled by _ensure_columns
+        assert legacy["graph_thread_id"] == "run_legacy"
+        assert legacy["graph_checkpoint_id"] is None
+        assert legacy["graph_input_kind"] == "new"
     finally:
         await store.close()
 

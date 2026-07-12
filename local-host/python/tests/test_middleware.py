@@ -68,75 +68,16 @@ def test_input_guard_clean_message_returns_none(monkeypatch: Any) -> None:
 # --- no custom middleware to unit-test here ---
 
 
-# --- output guard ---
+# --- single completion router ---
 
 
-def test_output_guard_lets_normal_answer_through() -> None:
-    from local_host.middleware.output_guard import OutputGuardMiddleware
-
-    mw = OutputGuardMiddleware()
-    state = {
-        "messages": [
-            HumanMessage(content="hi"),
-            AIMessage(content="Here is your answer about how X works."),
-        ]
-    }
-    assert mw.after_model(state, runtime=None) is None
-
-
-def test_output_guard_flags_empty_answer_without_injecting_messages() -> None:
-    """Regression: an earlier version of this middleware appended a
-    HumanMessage retry nudge to state when the assistant produced an
-    empty final answer. Because the deepagents loop had already
-    decided the model was done, that nudge never triggered another
-    model call — it just became the latest message, which
-    runs.py:_extract_final_text then surfaced as the user-visible
-    "assistant" reply ("Your last response was empty …" rendered as
-    chat output). The middleware is now observe-only: it flags the
-    state but does NOT touch messages."""
-    from local_host.middleware.output_guard import OutputGuardMiddleware
-
-    mw = OutputGuardMiddleware()
-    state = {"messages": [HumanMessage(content="hi"), AIMessage(content="")]}
-    result = mw.after_model(state, runtime=None)
-    assert result == {"output_guard_flag": "empty"}
-    assert "messages" not in result
-
-
-def test_output_guard_flags_bare_refusal_without_injecting_messages() -> None:
-    from local_host.middleware.output_guard import OutputGuardMiddleware
-
-    mw = OutputGuardMiddleware()
-    state = {
-        "messages": [
-            HumanMessage(content="explain"),
-            AIMessage(content="抱歉，我不能帮你。"),
-        ]
-    }
-    result = mw.after_model(state, runtime=None)
-    assert result == {"output_guard_flag": "refusal"}
-    assert "messages" not in result
-
-
-def test_output_guard_skips_if_tool_call_pending() -> None:
-    from local_host.middleware.output_guard import OutputGuardMiddleware
-
-    mw = OutputGuardMiddleware()
-    ai = AIMessage(
-        content="",
-        tool_calls=[{"id": "c1", "name": "t", "args": {}}],
+def test_completion_router_uses_runtime_state_for_failed_verification_repair() -> None:
+    from local_host.middleware.completion_router import (
+        CompletionRouterMiddleware,
+        completion_repair_instruction,
     )
-    state = {"messages": [HumanMessage(content="x"), ai]}
-    assert mw.after_model(state, runtime=None) is None
 
-
-# --- verification repair loop ---
-
-
-def test_verification_loop_jumps_back_to_model_on_failed_task_verify() -> None:
-    from local_host.middleware.verification_loop import VerificationLoopMiddleware
-
-    mw = VerificationLoopMiddleware(max_attempts=2)
+    mw = CompletionRouterMiddleware(max_verification_repairs=2)
     state = {
         "messages": [
             HumanMessage(content="write report.txt with the word ok"),
@@ -168,18 +109,19 @@ def test_verification_loop_jumps_back_to_model_on_failed_task_verify() -> None:
 
     assert result is not None
     assert result["jump_to"] == "model"
-    assert result["verification_repair_attempts"] == 1
-    assert result["verification_loop"]["status"] == "repair_requested"
-    assert len(result["messages"]) == 1
-    assert "substring absent in report.txt" in result["messages"][0].content
+    assert result["verification_repair_state"] == {"run_id": "", "attempts": 1}
+    assert result["completion_route"]["decision"] == "repair_requested"
+    assert "messages" not in result
+    assert "persisted task.verify receipt failed" in completion_repair_instruction(result)
+    assert "substring absent in report.txt" not in completion_repair_instruction(result)
 
 
-def test_verification_loop_does_not_jump_when_attempt_budget_exhausted() -> None:
-    from local_host.middleware.verification_loop import VerificationLoopMiddleware
+def test_completion_router_blocks_when_verification_budget_is_exhausted() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
 
-    mw = VerificationLoopMiddleware(max_attempts=1)
+    mw = CompletionRouterMiddleware(max_verification_repairs=1)
     state = {
-        "verification_repair_attempts": 1,
+        "verification_repair_state": {"run_id": "", "attempts": 1},
         "messages": [
             HumanMessage(content="write report.txt"),
             ToolMessage(
@@ -193,20 +135,22 @@ def test_verification_loop_does_not_jump_when_attempt_budget_exhausted() -> None
 
     result = mw.after_model(state, runtime=None)
 
-    assert result == {
-        "verification_loop": {
-            "status": "exhausted",
-            "attempts": 1,
-            "max_attempts": 1,
-            "reason": "file missing: report.txt",
-        }
+    assert result["completion_route"] == {
+        "decision": "blocked",
+        "reason": "verification_failed",
+        "message": "file missing: report.txt",
+        "recoverable": True,
+        "attempts": 1,
+        "max_attempts": 1,
+        "tool_call_id": "verify-call",
+        "run_id": "",
     }
 
 
-def test_verification_loop_ignores_passing_or_pending_outputs() -> None:
-    from local_host.middleware.verification_loop import VerificationLoopMiddleware
+def test_completion_router_allows_verified_final_and_leaves_tools_to_builtin_route() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
 
-    mw = VerificationLoopMiddleware(max_attempts=1)
+    mw = CompletionRouterMiddleware(max_verification_repairs=1)
     pending = AIMessage(content="", tool_calls=[{"id": "call", "name": "task.verify", "args": {}}])
     passing_state = {
         "messages": [
@@ -221,7 +165,214 @@ def test_verification_loop_ignores_passing_or_pending_outputs() -> None:
     }
 
     assert mw.after_model({"messages": [HumanMessage(content="x"), pending]}, runtime=None) is None
-    assert mw.after_model(passing_state, runtime=None) is None
+    result = mw.after_model(passing_state, runtime=None)
+    assert result["completion_route"]["decision"] == "final"
+    assert result["completion_route"]["verification_ok"] is True
+
+
+def test_completion_router_ignores_failed_verification_from_an_ancestor_turn() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "messages": [
+            HumanMessage(content="old task"),
+            ToolMessage(
+                content='{"ok":"false","error":"old failure"}',
+                tool_call_id="old-verify",
+                name="task.verify",
+            ),
+            AIMessage(content="Old result"),
+            HumanMessage(content="new unrelated question"),
+            AIMessage(content="New answer"),
+        ]
+    }
+
+    result = CompletionRouterMiddleware().after_model(state, runtime=None)
+
+    assert result["completion_route"]["decision"] == "final"
+    assert "verification_ok" not in result["completion_route"]
+
+
+def test_runtime_steering_does_not_hide_current_turn_verification_failure() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "messages": [
+            HumanMessage(
+                content="current task",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-1"},
+            ),
+            ToolMessage(
+                content='{"ok":"false","error":"current failure"}',
+                tool_call_id="verify-current",
+                name="task.verify",
+            ),
+            HumanMessage(
+                content="user steering",
+                additional_kwargs={"runtime_kind": "steering"},
+            ),
+            AIMessage(content="Done"),
+        ]
+    }
+
+    result = CompletionRouterMiddleware().after_model(state, runtime=None)
+
+    assert result["completion_route"]["decision"] == "repair_requested"
+    assert result["completion_route"]["tool_call_id"] == "verify-current"
+
+
+def test_forked_run_does_not_inherit_repair_instruction_or_attempt_budget() -> None:
+    from local_host.middleware.completion_router import (
+        CompletionRouterMiddleware,
+        completion_repair_instruction,
+    )
+
+    state = {
+        "completion_route": {
+            "decision": "repair_requested",
+            "run_id": "source-run",
+            "instruction": "old instruction",
+        },
+        "verification_repair_state": {"run_id": "source-run", "attempts": 1},
+        "messages": [
+            HumanMessage(
+                content="new fork goal",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "fork-run"},
+            ),
+            ToolMessage(
+                content='{"ok":"false","error":"new failure"}',
+                tool_call_id="new-verify",
+                name="task.verify",
+            ),
+            AIMessage(content="Done"),
+        ],
+    }
+
+    result = CompletionRouterMiddleware(max_verification_repairs=1).after_model(
+        state,
+        runtime=None,
+    )
+
+    assert completion_repair_instruction(state, run_id="fork-run") is None
+    assert result["completion_route"]["decision"] == "repair_requested"
+    assert result["completion_route"]["attempts"] == 1
+    assert result["verification_repair_state"] == {"run_id": "fork-run", "attempts": 1}
+
+
+def test_successful_verification_becomes_stale_after_mutating_tool() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "messages": [
+            HumanMessage(content="edit report"),
+            ToolMessage(
+                content='{"ok":"true","results":[]}',
+                tool_call_id="verify-pass",
+                name="task.verify",
+            ),
+            ToolMessage(
+                content='{"ok":"true"}',
+                tool_call_id="edit-after-verify",
+                name="office.update_paragraph",
+            ),
+            AIMessage(content="Done"),
+        ]
+    }
+
+    result = CompletionRouterMiddleware().after_model(state, runtime=None)
+
+    assert result["completion_route"]["decision"] == "repair_requested"
+    assert "became stale" in result["completion_route"]["message"]
+
+
+def test_completion_router_rejects_empty_truncated_and_invalid_outputs() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    mw = CompletionRouterMiddleware()
+    empty = mw.after_model({"messages": [AIMessage(content="")]}, runtime=None)
+    truncated = mw.after_model(
+        {"messages": [AIMessage(content="partial", response_metadata={"finish_reason": "length"})]},
+        runtime=None,
+    )
+    invalid = mw.after_model(
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "valid", "args": {}, "id": "good"}],
+                    invalid_tool_calls=[
+                        {"name": "broken", "args": "{", "id": "bad", "error": "invalid"}
+                    ],
+                )
+            ]
+        },
+        runtime=None,
+    )
+
+    assert empty["completion_route"]["reason"] == "empty_model_output"
+    assert truncated["completion_route"]["reason"] == "model_output_truncated"
+    assert invalid["completion_route"]["reason"] == "invalid_tool_calls"
+
+
+def test_completion_router_decision_is_part_of_compiled_graph_state() -> None:
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    agent = create_agent(
+        FakeMessagesListChatModel(responses=[AIMessage(content="")]),
+        tools=[],
+        middleware=[CompletionRouterMiddleware()],
+    )
+
+    result = agent.invoke({"messages": [{"role": "user", "content": "hi"}]})
+
+    assert result["completion_route"]["decision"] == "failed"
+    assert result["completion_route"]["reason"] == "empty_model_output"
+
+
+def test_compiled_graph_does_not_execute_valid_sibling_of_invalid_tool_call() -> None:
+    from langchain.agents import create_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.tools import tool
+
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    calls = {"count": 0}
+
+    class ToolAwareFake(FakeMessagesListChatModel):
+        def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+            del tools, tool_choice, kwargs
+            return self
+
+    @tool("dangerous.write")
+    def dangerous_write() -> str:
+        """A test-only side effect that must not run."""
+        calls["count"] += 1
+        return "executed"
+
+    model = ToolAwareFake(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "dangerous.write", "args": {}, "id": "valid"}],
+                invalid_tool_calls=[
+                    {"name": "broken", "args": "{", "id": "invalid", "error": "invalid"}
+                ],
+            )
+        ]
+    )
+    agent = create_agent(
+        model,
+        tools=[dangerous_write],
+        middleware=[CompletionRouterMiddleware()],
+    )
+
+    result = agent.invoke({"messages": [{"role": "user", "content": "write"}]})
+
+    assert calls["count"] == 0
+    assert result["completion_route"]["reason"] == "invalid_tool_calls"
 
 
 # --- tool result retry ---
@@ -358,244 +509,3 @@ async def test_tool_result_retry_uses_failure_policy_for_retryable_envelope() ->
     assert attempts == 1
     assert isinstance(result, ToolMessage)
     assert json.loads(str(result.content))["error_code"] == "insufficient_credits"
-
-
-# --- progress ledger guard ---
-
-
-def test_progress_ledger_guard_requests_progress_after_tool_work() -> None:
-    from local_host.middleware.progress_ledger_guard import ProgressLedgerGuardMiddleware
-
-    mw = ProgressLedgerGuardMiddleware(max_attempts=1)
-    state = {
-        "messages": [
-            HumanMessage(content="edit the project docs"),
-            AIMessage(
-                content="", tool_calls=[{"id": "read-call", "name": "read_file", "args": {}}]
-            ),
-            ToolMessage(content="old docs", tool_call_id="read-call", name="read_file"),
-            AIMessage(content="I updated the docs."),
-        ]
-    }
-
-    result = mw.after_model(state, runtime=None)
-
-    assert result is not None
-    assert result["jump_to"] == "model"
-    assert result["progress_ledger_guard_attempts"] == 1
-    assert result["progress_ledger_guard"]["status"] == "refresh_requested"
-    assert result["progress_ledger_guard"]["last_tool"] == "read_file"
-    assert "task.progress" in result["messages"][0].content
-
-
-def test_progress_ledger_guard_ignores_fresh_progress_or_simple_final() -> None:
-    from local_host.middleware.progress_ledger_guard import ProgressLedgerGuardMiddleware
-
-    mw = ProgressLedgerGuardMiddleware(max_attempts=1)
-    simple_state = {
-        "messages": [
-            HumanMessage(content="what is 2+2?"),
-            AIMessage(content="4"),
-        ]
-    }
-    fresh_state = {
-        "messages": [
-            HumanMessage(content="edit the docs"),
-            ToolMessage(content="old docs", tool_call_id="read-call", name="read_file"),
-            ToolMessage(
-                content='{"ok":"true","summary":"docs updated"}',
-                tool_call_id="progress-call",
-                name="task.progress",
-            ),
-            AIMessage(content="Done."),
-        ]
-    }
-    pending_state = {
-        "messages": [
-            HumanMessage(content="edit"),
-            ToolMessage(content="old docs", tool_call_id="read-call", name="read_file"),
-            AIMessage(
-                content="",
-                tool_calls=[{"id": "progress-call", "name": "task.progress", "args": {}}],
-            ),
-        ]
-    }
-
-    assert mw.after_model(simple_state, runtime=None) is None
-    assert mw.after_model(fresh_state, runtime=None) is None
-    assert mw.after_model(pending_state, runtime=None) is None
-
-
-def test_progress_ledger_guard_stops_after_attempt_budget() -> None:
-    from local_host.middleware.progress_ledger_guard import ProgressLedgerGuardMiddleware
-
-    mw = ProgressLedgerGuardMiddleware(max_attempts=1)
-    state = {
-        "progress_ledger_guard_attempts": 1,
-        "messages": [
-            HumanMessage(content="edit docs"),
-            ToolMessage(content="old docs", tool_call_id="read-call", name="read_file"),
-            AIMessage(content="I cannot update the ledger."),
-        ],
-    }
-
-    result = mw.after_model(state, runtime=None)
-
-    assert result == {
-        "progress_ledger_guard": {
-            "status": "exhausted",
-            "attempts": 1,
-            "max_attempts": 1,
-            "last_tool": "read_file",
-        }
-    }
-
-
-def test_progress_ledger_guard_ignores_failed_tool_outputs() -> None:
-    from local_host.middleware.progress_ledger_guard import ProgressLedgerGuardMiddleware
-
-    mw = ProgressLedgerGuardMiddleware(max_attempts=1)
-    state = {
-        "messages": [
-            HumanMessage(content="edit docs"),
-            ToolMessage(
-                content="validation failed",
-                tool_call_id="write-call",
-                name="write_file",
-                status="error",
-            ),
-            AIMessage(content="The write failed."),
-        ],
-    }
-
-    assert mw.after_model(state, runtime=None) is None
-
-
-def test_progress_ledger_guard_ignores_control_tools() -> None:
-    from local_host.middleware.progress_ledger_guard import ProgressLedgerGuardMiddleware
-
-    mw = ProgressLedgerGuardMiddleware(max_attempts=1)
-    state = {
-        "messages": [
-            HumanMessage(content="ask me a question"),
-            ToolMessage(content="mode X", tool_call_id="ask-call", name="user.ask"),
-            ToolMessage(
-                content='{"iso":"2026-06-10T00:00:00Z"}', tool_call_id="time-call", name="time.now"
-            ),
-            AIMessage(content="You chose mode X."),
-        ],
-    }
-
-    assert mw.after_model(state, runtime=None) is None
-
-
-def test_extract_final_text_ignores_non_ai_messages() -> None:
-    """Regression for the diagnostic where the user-visible "assistant"
-    reply was actually the OutputGuard's injected HumanMessage
-    ("Your last response was empty…"). _extract_final_text used to
-    return the first non-empty content of ANY message; it now only
-    looks at AIMessages so middleware-injected nudges, ToolMessages,
-    and HumanMessages can never leak into the chat."""
-    from langchain_core.messages import SystemMessage, ToolMessage
-
-    from local_host.runs import _extract_final_text
-
-    state = {
-        "messages": [
-            SystemMessage(content="system rules"),
-            HumanMessage(content="hi"),
-            AIMessage(content="real assistant answer"),
-            ToolMessage(content="tool output", tool_call_id="c1"),
-            HumanMessage(content="Your last response was empty. Please answer …"),
-        ]
-    }
-    assert _extract_final_text(state) == "real assistant answer"
-
-
-def test_extract_final_text_empty_when_no_ai_message() -> None:
-    """If the assistant never produced text — e.g. tool-call only run
-    that terminated abnormally — final_text is empty, not someone
-    else's content."""
-    from local_host.runs import _extract_final_text
-
-    state = {
-        "messages": [
-            HumanMessage(content="hi"),
-            HumanMessage(content="oops nudge"),
-        ]
-    }
-    assert _extract_final_text(state) == ""
-
-
-# --- reflect ---
-
-
-def test_reflect_summarizes_after_agent() -> None:
-    from local_host.middleware.reflect import ReflectMiddleware
-
-    mw = ReflectMiddleware()
-    state = {
-        "messages": [
-            HumanMessage(content="task"),
-            AIMessage(content="step 1"),
-            ToolMessage(content="r", tool_call_id="c1"),
-            AIMessage(content="final answer here"),
-        ]
-    }
-    result = mw.after_agent(state, runtime=None)
-    assert result["reflection"]["ai_messages"] == 2
-    assert result["reflection"]["tool_results"] == 1
-    assert result["reflection"]["final_answer_chars"] == len("final answer here")
-
-
-# --- memory writeback ---
-
-
-def test_memory_writeback_skips_when_no_store() -> None:
-    from local_host.middleware.memory_writeback import MemoryWritebackMiddleware
-
-    mw = MemoryWritebackMiddleware()
-    state = {
-        "messages": [
-            HumanMessage(content="goal"),
-            AIMessage(content="answer"),
-        ]
-    }
-
-    class FakeRuntime:
-        store = None
-
-    assert mw.after_agent(state, runtime=FakeRuntime()) is None
-
-
-def test_memory_writeback_writes_when_store_present() -> None:
-    from local_host.middleware.memory_writeback import MemoryWritebackMiddleware
-
-    class InMemoryStore:
-        def __init__(self) -> None:
-            self.items: list[tuple[Any, str, dict[str, Any]]] = []
-
-        def put(self, namespace, key, value):
-            self.items.append((namespace, key, value))
-
-    store = InMemoryStore()
-
-    class FakeRuntime:
-        pass
-
-    rt = FakeRuntime()
-    rt.store = store
-
-    mw = MemoryWritebackMiddleware()
-    state = {
-        "messages": [
-            HumanMessage(content="find me a recipe"),
-            AIMessage(content="here is one: ..."),
-        ]
-    }
-    mw.after_agent(state, runtime=rt)
-    assert len(store.items) == 1
-    ns, _key, note = store.items[0]
-    assert ns == ("notes", "global")
-    assert note["goal"] == "find me a recipe"
-    assert "here is one" in note["answer"]

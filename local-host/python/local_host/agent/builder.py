@@ -3,14 +3,14 @@
 We use `deepagents.create_deep_agent` instead of plain
 `langchain.agents.create_agent` because it auto-assembles a sensible
 batteries-included middleware stack and the SubAgent / Skills /
-Filesystem / Shell / HumanInTheLoop integrations we need anyway. Our
+Filesystem / Shell integrations we need anyway. Our
 remaining job is to:
 
   1. Pick the model (BackendChatModel pointed at the cloud SSE endpoint).
   2. Build a *narrow* tool list (everything outside the deepagents auto
-     stack: workspace.open, time, env, clipboard, web, image, MCP, browser).
+     stack: time, env, clipboard, web, image, MCP, browser).
   3. Pass per-run config: `subagents=`, `skills=`, `backend=`,
-     `interrupt_on=`, `checkpointer=`.
+     `checkpointer=`.
   4. Append our custom middleware (5 phase hooks + retry/limit knobs)
      into the user-middleware slot.
 
@@ -26,108 +26,87 @@ What deepagents auto-adds for us (we no longer wire these manually):
   ToolExclusionMiddleware         ← conditional tool gating
   Prompt caching                  ← Go Anthropic gateway adds cache_control
   MemoryMiddleware                ← AGENTS.md loader
-  HumanInTheLoopMiddleware        ← when `interrupt_on=` passed
+  Tool review + durable receipts  ← our Runtime middleware, including subagents
 """
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import ipaddress
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-import httpx
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
-    ContextEditingMiddleware,
-    LLMToolSelectorMiddleware,
-    ModelCallLimitMiddleware,
-    ModelRetryMiddleware,
-    PIIMiddleware,
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
 )
+from langchain_core.messages import SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from ..config import Settings, get_settings
-from ..failure_policy import build_retry_decision
-from ..llm.backend import BackendChatModel, BackendLLMError
+from ..llm.backend import BackendChatModel
+from ..llm.ledger import LedgerChatModel
+from ..llm.runtime import RuntimeModelProxy
 from ..middleware import (
+    CompletionRouterMiddleware,
     InputGuardMiddleware,
-    MemoryWritebackMiddleware,
-    OutputGuardMiddleware,
-    PlanApprovalMiddleware,
+    OutboundPolicyMiddleware,
     PlanFirstMiddleware,
-    ProgressLedgerGuardMiddleware,
-    ReflectMiddleware,
     SteeringMiddleware,
+    ToolExecutionMiddleware,
     ToolResultRetryMiddleware,
-    VerificationLoopMiddleware,
+    ToolReviewMiddleware,
+    ToolVisibilityMiddleware,
 )
-from ..middleware.memory_writeback import memory_namespace_for_workspace
+from ..middleware.completion_router import completion_repair_instruction
 from ..store.sqlite import LocalStore
-from ..tools.registry import build_tools
-from .context_builder import RuntimeContext, build_default_context
+from ..tools.mcp import build_validated_mcp_tools
+from ..tools.registry import build_tools, tool_definition
+from ..tools.runtime import RuntimeToolProxy
+from .context_builder import AsyncToolExecutionGate, RuntimeContext, build_default_context
 from .subagents import build_subagents
 
 log = logging.getLogger("local_host.agent.builder")
 
+_AGENT_DEFINITION_CACHE_MAX = 16
+_AGENT_STATE_SCHEMA_VERSION = 1
 
-# Tools the user MUST approve before they run. Forwarded to
-# `create_deep_agent(interrupt_on=...)` — deepagents wires its bundled
-# HumanInTheLoopMiddleware accordingly. Tool names mix deepagents-provided
-# (`write_file`, `execute`, `edit_file`) and our custom (`open.url`, etc.).
-DESTRUCTIVE_TOOLS: dict[str, bool] = {
-    "write_file": True,
-    "edit_file": True,
-    "execute": True,  # deepagents shell-equivalent
-    "open.url": True,
-    "open.file": True,
-    "clipboard.read": True,
-    "clipboard.write": True,
-    "browser.task": True,  # agentic browser can do anything
-    "image.generate": True,  # paid + side-effecting
-    "image.edit": True,
+_DEEPAGENTS_TOOL_NAMES = {
+    "write_todos",
+    "task",
+    "ls",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "glob",
+    "grep",
+    "execute",
 }
 
 
-# Tools the selector must never filter out — these are the agent's
-# "always-available" capabilities even when LLMToolSelectorMiddleware
-# narrows the toolset for a given turn:
-#   - write_todos   : planning is fundamental
-#   - task          : subagent dispatch — letting the LLM still hand off
-#                     even when its main toolset has been narrowed
-#   - memory.search : long-term memory recall — must be accessible
-#                     regardless of how many other tools survive
-#   - time.now      : tiny but the model often needs it for orientation
-ALWAYS_INCLUDE_TOOLS: list[str] = [
-    "write_todos",
-    "task",
-    "memory.search",
-    "user.ask",  # clarifying-question gateway must always be reachable
-    "time.now",
-]
-
-
-# Tools that benefit from auto-retry on transient failure (network /
-# filesystem / browser flakes). Crucially NOT including tools that use
+# Read-only tools that benefit from auto-retry on transient failure.
+# Consequential tools are deliberately excluded: after a timeout the Runtime
+# cannot safely infer whether an external or filesystem side effect happened.
+# We also exclude tools that use
 # LangGraph control-flow exceptions (`interrupt()` → GraphInterrupt),
 # because `ToolRetryMiddleware._handle_failure` would swallow that
 # exception and convert it to a ToolMessage, defeating the pause.
 RETRY_ELIGIBLE_TOOLS: list[str] = [
     "web.fetch",
     "web.search",
-    "browser.task",
-    "execute",  # deepagents shell — FS races etc.
     "read_file",
-    "write_file",
-    "edit_file",
 ]
 
 
@@ -232,6 +211,15 @@ def _build_agent_backend(
     return CompositeBackend(default=default, routes=routes)
 
 
+def _runtime_backend(runtime: Any) -> Any:
+    """Return the workspace backend bound to this invocation."""
+    context = getattr(runtime, "context", None)
+    backend = getattr(context, "backend", None)
+    if backend is None:
+        raise RuntimeError("agent workspace backend is not bound")
+    return backend
+
+
 async def open_checkpointer(
     settings: Settings | None = None,
 ) -> tuple[AsyncSqliteSaver, AsyncExitStack]:
@@ -254,9 +242,8 @@ async def open_checkpointer(
 async def open_store(settings: Settings | None = None) -> tuple[BaseStore, AsyncExitStack]:
     """Open a long-lived `BaseStore` for cross-run durable memory.
 
-    This is what `MemoryWritebackMiddleware` writes into (post-run summary
-    of goal + final answer) and what `langgraph.store.base.BaseStore`-aware
-    middleware/tools read from via `runtime.store`.
+    This is what explicit memory tools write into and what
+    `langgraph.store.base.BaseStore`-aware tools read via `runtime.store`.
 
     Backed by `AsyncSqliteStore` on the daemon data dir — same WAL +
     eager-setup pattern as the checkpointer.
@@ -274,46 +261,32 @@ async def open_store(settings: Settings | None = None) -> tuple[BaseStore, Async
 
 def _custom_middleware(
     settings: Settings,
-    *,
-    memory_enabled: bool = True,
-    memory_namespace: tuple[str, ...] | None = None,
 ) -> list[AgentMiddleware]:
     """Our middleware that deepagents doesn't auto-add.
 
     Order:
       InputGuard → ToolCallLimit → ToolRetry →
-      ModelRetry → ModelCallLimit → ContextEditing →
-      OutputGuard → VerificationLoop → ProgressLedgerGuard → Reflect → MemoryWriteback
+      durable model-call reservation →
+      CompletionRouter
 
     `before_*` fire top-to-bottom, `after_*` fire bottom-to-top —
-    so OutputGuard runs before VerificationLoop after each LLM call, then the
-    progress-ledger guard, Reflect, and MemoryWriteback.
-
-    `memory_enabled=False` keeps MemoryWritebackMiddleware in the chain
-    but short-circuits its hooks — surfaces of the chain stay symmetric
-    across runs, only the persistence is skipped.
+    CompletionRouter is the only custom after-model hook that may change the
+    graph route. Execution settlement and cleanup are owned by RunCoordinator,
+    outside the graph middleware chain.
     """
     middleware: list[AgentMiddleware] = [
+        RuntimePromptMiddleware(),
+        RuntimeModelMiddleware(),
+        ToolVisibilityMiddleware(),
+        OutboundPolicyMiddleware(),
         InputGuardMiddleware(mode=settings.input_guard_mode),  # P1
         # Plan & Execute mode (off | always | auto; auto-skips trivial
         # tasks). Sourced from settings so the Advanced agent-settings
         # panel can override the SHEJANE_PLAN_FIRST env default per-run.
         PlanFirstMiddleware(mode=settings.plan_first_mode),
+        ToolReviewMiddleware(),
+        ToolExecutionMiddleware(),
     ]
-    if str(settings.plan_first_mode).lower() != "off":
-        middleware.append(PlanApprovalMiddleware())
-    # PII redaction (opt-in via SHEJANE_LOCAL_PII_REDACT). One
-    # PIIMiddleware instance per PII type — they compose cleanly.
-    for pii_type in _parse_pii_types(settings.pii_redact_types):
-        middleware.append(
-            PIIMiddleware(
-                pii_type=pii_type,
-                strategy="redact",
-                apply_to_input=True,
-                apply_to_output=False,  # don't break legitimate model output
-                apply_to_tool_results=True,  # leak surface: tool returns
-            )
-        )
     middleware.extend(
         [
             ToolCallLimitMiddleware(  # P8
@@ -347,100 +320,85 @@ def _custom_middleware(
                 initial_delay=0.25,
                 max_delay=2.0,
             ),
-            ModelRetryMiddleware(
-                max_retries=settings.max_model_retries,
-                retry_on=_should_retry_model_exception,
-                on_failure="error",
-            ),
         ]
     )
     if settings.fallback_models.strip():
         log.warning(
-            "SHEJANE_LOCAL_FALLBACK_MODELS is ignored; if model fallback is "
-            "introduced, it must live in the Go model gateway so provider keys "
-            "and credit accounting stay in the cloud control plane"
+            "SHEJANE_LOCAL_FALLBACK_MODELS is ignored; automatic model switching "
+            "is disabled, so changing model requires a new explicit command"
         )
     middleware.extend(
         [
-            ModelCallLimitMiddleware(run_limit=settings.max_model_calls),
-            ContextEditingMiddleware(),
-            OutputGuardMiddleware(),  # P9
-            VerificationLoopMiddleware(max_attempts=settings.verification_repair_max),
-            ProgressLedgerGuardMiddleware(max_attempts=1),
-            ReflectMiddleware(enabled=settings.enable_critic_reflection),  # P4
-            MemoryWritebackMiddleware(
-                enabled=memory_enabled,
-                namespace=memory_namespace or memory_namespace_for_workspace(None),
-            ),  # P6
+            CompletionRouterMiddleware(max_verification_repairs=settings.verification_repair_max),
         ]
     )
     return middleware
 
 
-def _should_retry_model_exception(exc: Exception) -> bool:
-    if isinstance(exc, BackendLLMError):
-        return _should_retry_model_payload(exc.to_event_payload())
-    if isinstance(exc, httpx.HTTPStatusError):
-        return _should_retry_model_payload(
-            {
-                "code": str(exc.response.status_code),
-                "message": str(exc),
-            }
+class RuntimePromptMiddleware(AgentMiddleware):
+    """Append model-visible instructions from the invocation context."""
+
+    @staticmethod
+    def _request_with_context(request: Any) -> Any:
+        context = getattr(getattr(request, "runtime", None), "context", None)
+        if not isinstance(context, RuntimeContext):
+            return request
+        prompt = build_default_context(context)
+        repair_instruction = completion_repair_instruction(
+            getattr(request, "state", {}),
+            run_id=context.run_id,
         )
-    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
-        return _should_retry_model_payload(
-            {
-                "code": "timeout",
-                "message": str(exc) or type(exc).__name__,
-                "retryable": True,
-            }
-        )
-    if isinstance(exc, (httpx.TransportError, ConnectionError)):
-        return _should_retry_model_payload(
-            {
-                "code": "network_error",
-                "message": str(exc) or type(exc).__name__,
-                "retryable": True,
-            }
-        )
-    return False
-
-
-def _should_retry_model_payload(payload: dict[str, Any]) -> bool:
-    decision = build_retry_decision(
-        "run.failed",
-        payload,
-        attempt=0,
-        max_attempts=1,
-        initial_delay=0,
-        max_delay=0,
-    )
-    return bool(decision["should_retry"])
-
-
-_VALID_PII_TYPES = {"email", "credit_card", "ip", "mac_address", "url"}
-
-
-def _parse_pii_types(spec: str) -> list[str]:
-    """Split + validate the PII types env. Unknown entries are dropped
-    with a warning (so a typo doesn't crash boot)."""
-    out: list[str] = []
-    for token in spec.split(","):
-        t = token.strip()
-        if not t:
-            continue
-        if t not in _VALID_PII_TYPES:
-            log.warning(
-                "unknown PII type %r ignored (valid: %s)",
-                t,
-                sorted(_VALID_PII_TYPES),
+        if repair_instruction:
+            prompt = f"{prompt}\n\n<runtime-repair>\n{repair_instruction}\n</runtime-repair>"
+        system_message = request.system_message
+        return request.override(
+            system_message=SystemMessage(
+                content=[
+                    *system_message.content_blocks,
+                    {"type": "text", "text": f"\n\n{prompt}"},
+                ]
             )
-            continue
-        out.append(t)
-    return out
+        )
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return handler(self._request_with_context(request))
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        return await handler(self._request_with_context(request))
 
 
-def _build_chat_model(settings: Settings, run_id: str, mode: str) -> Any:
+class RuntimeModelMiddleware(AgentMiddleware):
+    """Select the model connection owned by this invocation."""
+
+    @staticmethod
+    def _request_with_model(request: Any) -> Any:
+        context = getattr(getattr(request, "runtime", None), "context", None)
+        model = getattr(context, "model", None)
+        return request.override(model=model) if model is not None else request
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return handler(self._request_with_model(request))
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        return await handler(self._request_with_model(request))
+
+
+def _build_chat_model(
+    settings: Settings,
+    run_id: str,
+    mode: str,
+    *,
+    model_binding: dict[str, Any] | None = None,
+    model_api_key: str | None = None,
+) -> Any:
     """The agent's chat model — the real cloud-backed one, or a deterministic
     network-free fake when settings.fake_llm is set (SSE contract test). Used
     for the main model AND the selector/critic models so a faked run makes no
@@ -448,12 +406,49 @@ def _build_chat_model(settings: Settings, run_id: str, mode: str) -> Any:
     if settings.fake_llm:
         from ..llm.fake import FakeBackendChatModel
 
-        return FakeBackendChatModel()
+        return FakeBackendChatModel(
+            profile={
+                "max_input_tokens": settings.unknown_model_max_input_tokens,
+                "max_output_tokens": settings.unknown_model_max_output_tokens,
+            }
+        )
+    if model_binding and model_binding.get("provider") == "openai_compatible":
+        from langchain_openai import ChatOpenAI
+
+        raw_profile = model_binding.get("profile")
+        profile = (
+            {
+                key: raw_profile[key]
+                for key in ("tool_calling", "max_input_tokens", "max_output_tokens")
+                if key in raw_profile and raw_profile[key] is not None
+            }
+            if isinstance(raw_profile, dict)
+            else {}
+        )
+        profile.setdefault("max_input_tokens", settings.unknown_model_max_input_tokens)
+        profile.setdefault("max_output_tokens", settings.unknown_model_max_output_tokens)
+        return ChatOpenAI(
+            model=str(model_binding["model_id"]),
+            base_url=str(model_binding["base_url"]),
+            api_key=model_api_key or "local",
+            streaming=True,
+            stream_usage=True,
+            max_retries=0,
+            max_tokens=int(profile["max_output_tokens"]),
+            timeout=settings.model_request_timeout_seconds,
+            profile=profile,
+        )
     return BackendChatModel(
         cloud_base_url=settings.cloud_base_url,
         cloud_token=settings.cloud_token,
         run_id=run_id,
         mode=mode,
+        request_timeout_s=settings.model_request_timeout_seconds,
+        max_output_tokens=settings.unknown_model_max_output_tokens,
+        profile={
+            "max_input_tokens": settings.unknown_model_max_input_tokens,
+            "max_output_tokens": settings.unknown_model_max_output_tokens,
+        },
     )
 
 
@@ -473,6 +468,33 @@ def _str_or_none(value: Any) -> str | None:
     return text or None
 
 
+def _outbound_is_external(
+    settings: Settings,
+    model_binding: dict[str, Any] | None,
+) -> bool:
+    if settings.fake_llm or (model_binding or {}).get("provider") == "fake":
+        return False
+    if (model_binding or {}).get("provider") == "gateway" or model_binding is None:
+        return True
+    raw_url = str((model_binding or {}).get("base_url") or "")
+    hostname = (urlparse(raw_url).hostname or "").strip().lower()
+    if hostname == "localhost":
+        return False
+    try:
+        return not ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return True
+
+
+def _outbound_pii_types(spec: str) -> tuple[str, ...]:
+    valid = {"email", "credit_card", "ip", "mac_address", "url"}
+    return tuple(
+        dict.fromkeys(
+            item for item in (part.strip().lower() for part in spec.split(",")) if item in valid
+        )
+    )
+
+
 async def build_agent(
     *,
     store: LocalStore,
@@ -483,8 +505,6 @@ async def build_agent(
     mode: str = "fast",
     task_goal: str | None = None,
     turn_count: int | None = None,
-    dropped_history_count: int = 0,
-    dropped_history_summary: str | None = None,
     repair_context: dict[str, Any] | None = None,
     retry_context: dict[str, Any] | None = None,
     memory_enabled: bool = True,
@@ -492,7 +512,15 @@ async def build_agent(
     mcp_enabled: bool = True,
     mcp_disabled_servers: set[str] | None = None,
     code_exec_enabled: bool = False,
+    cloud_tools_enabled: bool = True,
     settings: Settings | None = None,
+    model_binding: dict[str, Any] | None = None,
+    model_api_key: str | None = None,
+    resource_stack: AsyncExitStack | None = None,
+    execution_attempt_id: str | None = None,
+    runtime_context: RuntimeContext | None = None,
+    definition_cache: dict[str, Any] | None = None,
+    definition_cache_lock: asyncio.Lock | None = None,
     steering_emit: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
     extra_middleware: list[AgentMiddleware] | None = None,
 ) -> Any:
@@ -513,23 +541,14 @@ async def build_agent(
         turn_count:      How many messages we're into the conversation
                          (incl. current user message). Used for the
                          <state> layer.
-        dropped_history_count:
-                         How many earlier messages were truncated before
-                         this run started. Surfaced to the model so it
-                         knows context is incomplete instead of silently
-                         losing it.
-        dropped_history_summary:
-                         Compact deterministic digest of truncated earlier
-                         messages. This preserves some decisions and
-                         constraints without making another model call.
         repair_context:  Optional run metadata for a user-confirmed repair
                          attempt. Rendered into the <state> layer so the
                          model can distinguish repair from ordinary retry.
         retry_context:   Optional run metadata for a user-confirmed retry
                          attempt. Rendered into the <state> layer so the
                          model can avoid repeating the failed path blindly.
-        memory_enabled:  When False, drops `memory.search` from the tool
-                         list and short-circuits the writeback middleware.
+        memory_enabled:  When False, drops `memory.search` and `memory.write`
+                         from the tool list.
                          The user toggle in agent settings flows in here
                          via RunCoordinator._settings_overrides.
         skills_enabled:  When False, passes `skills=None` to deepagents so
@@ -558,19 +577,54 @@ async def build_agent(
     settings = settings or get_settings()
 
     tools = await build_tools(
-        store=store,
-        run_id=run_id,
-        workspace_root=workspace_root,
-        include_mcp=mcp_enabled,
-        mcp_disabled_servers=mcp_disabled_servers,
+        include_mcp=False,
         include_code_exec=code_exec_enabled,
+        include_cloud_tools=cloud_tools_enabled,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
         browser_headless=settings.browser_headless,
     )
+    dynamic_tools = (
+        await build_validated_mcp_tools(
+            settings.data_dir,
+            disabled_servers=mcp_disabled_servers,
+            reserved_names={tool.name for tool in tools} | _DEEPAGENTS_TOOL_NAMES,
+        )
+        if mcp_enabled
+        else []
+    )
+    tools.extend(
+        RuntimeToolProxy.from_tool(
+            item.tool,
+            description=item.description,
+            args_schema=item.args_schema,
+        )
+        for item in dynamic_tools
+    )
     if not memory_enabled:
-        tools = [t for t in tools if t.name != "memory.search"]
+        tools = [t for t in tools if not t.name.startswith("memory.")]
 
-    model = _build_chat_model(settings, run_id, mode)
+    provider_model = _build_chat_model(
+        settings,
+        run_id,
+        mode,
+        model_binding=model_binding,
+        model_api_key=model_api_key,
+    )
+    _register_model_cleanup(provider_model, resource_stack)
+    model = (
+        LedgerChatModel(
+            delegate=provider_model,
+            store=store,
+            run_id=run_id,
+            execution_attempt_id=execution_attempt_id,
+            model_name=mode,
+            max_calls=settings.max_model_calls,
+            profile=getattr(provider_model, "profile", None),
+        )
+        if execution_attempt_id is not None
+        else provider_model
+    )
+    definition_model = RuntimeModelProxy(profile=getattr(model, "profile", None))
 
     skills_dirs = _resolve_skills_dirs() if skills_enabled else []
     skills_arg = [str(d) for d in skills_dirs] if skills_dirs else None
@@ -597,59 +651,16 @@ async def build_agent(
         memory_sources=memory_arg,
     )
 
-    memory_namespace = memory_namespace_for_workspace(workspace_root)
-    middleware = _custom_middleware(
-        settings,
-        memory_enabled=memory_enabled,
-        memory_namespace=memory_namespace,
-    )
-    if steering_emit is not None:
-        middleware.insert(
-            2,
-            SteeringMiddleware(store=store, run_id=run_id, emit=steering_emit),
-        )
-
-    # LLM-driven tool preselection — sits in the custom middleware band
-    # so the narrowed toolset is what the main LLM sees. Always-include
-    # keeps the agent's core capabilities (planning, memory, subagent
-    # dispatch) accessible regardless of selection. Selector reuses
-    # BackendChatModel in "fast" mode so its cost flows through our
-    # cloud accounting.
-    if settings.tool_selector_max_tools > 0:
-        selector_model = _build_chat_model(settings, run_id, "fast")
-        always_include = (
-            ALWAYS_INCLUDE_TOOLS
-            if memory_enabled
-            else [name for name in ALWAYS_INCLUDE_TOOLS if name != "memory.search"]
-        )
-        middleware.append(
-            LLMToolSelectorMiddleware(
-                model=selector_model,
-                max_tools=settings.tool_selector_max_tools,
-                always_include=always_include,
-            )
-        )
-
-    # Mid-loop tool-result critic. Watches "lossy" tools (web.fetch,
-    # web.search, task, browser.task, execute, read_file, edit_file)
-    # and asks a cheap LLM whether each result is usable for the task.
-    # Annotates or replaces ToolMessages based on mode.
-    if settings.tool_critic_mode.lower() in {"watch", "nudge", "block"}:
-        from ..middleware.tool_critic import ToolResultCriticMiddleware
-
-        critic_model = _build_chat_model(settings, run_id, "fast")
-        middleware.append(
-            ToolResultCriticMiddleware(
-                critic_model=critic_model,
-                mode=settings.tool_critic_mode,
-            )
-        )
+    middleware = _custom_middleware(settings)
+    middleware.insert(3, SteeringMiddleware())
 
     if extra_middleware:
         middleware.extend(extra_middleware)
 
     subagents_arg = (
-        build_subagents(main_tools=tools, main_model=model) if settings.enable_subagents else None
+        build_subagents(main_tools=tools, main_model=definition_model)
+        if settings.enable_subagents
+        else None
     )
 
     # Layer 30-55 of the prompt stack — developer instructions, task,
@@ -657,15 +668,34 @@ async def build_agent(
     # the full stack layout. Cloud-injected Layer 0+10 (identity, safety)
     # gets prepended in api/internal/httpapi/agent_stream.go via
     # InjectScenePrompt("agent_local", ...).
-    instructions = build_default_context(
-        RuntimeContext(
+    if runtime_context is None:
+        runtime_context = RuntimeContext(
+            run_id=run_id,
+            store=store,
+            steering_emit=steering_emit,
+            backend=backend,
+            model=model,
+            dynamic_tools={item.name: item.tool for item in dynamic_tools},
+            execution_attempt_id=execution_attempt_id,
+            tool_mutation_lock=AsyncToolExecutionGate(),
+            outbound_is_external=_outbound_is_external(settings, model_binding),
+            outbound_pii_types=_outbound_pii_types(settings.pii_redact_types),
+            outbound_secrets=tuple(
+                value
+                for value in (
+                    model_api_key,
+                    settings.cloud_token
+                    if (model_binding or {}).get("provider") == "gateway" or model_binding is None
+                    else None,
+                )
+                if isinstance(value, str) and value
+            ),
+            memory_enabled=memory_enabled,
             workspace_root=workspace_root,
             enabled_skills=_active_skill_names(skills_arg),
             task_goal=task_goal,
             mode=mode,
             turn_count=turn_count,
-            dropped_history_count=dropped_history_count,
-            dropped_history_summary=dropped_history_summary,
             repair_intent=bool(repair_context),
             repair_attempt=_int_or_none((repair_context or {}).get("attempt")),
             repair_max_attempts=_int_or_none((repair_context or {}).get("max_attempts")),
@@ -684,21 +714,136 @@ async def build_agent(
                 (retry_context or {}).get("failure_action_kind")
             ),
         )
-    )
+    else:
+        runtime_context.enabled_skills = _active_skill_names(skills_arg)
+        runtime_context.backend = backend
+        runtime_context.model = model
+        runtime_context.execution_attempt_id = execution_attempt_id
+        if not isinstance(runtime_context.tool_mutation_lock, AsyncToolExecutionGate):
+            runtime_context.tool_mutation_lock = AsyncToolExecutionGate()
+        runtime_context.outbound_is_external = _outbound_is_external(settings, model_binding)
+        runtime_context.outbound_pii_types = _outbound_pii_types(settings.pii_redact_types)
+        runtime_context.outbound_secrets = tuple(
+            value
+            for value in (
+                model_api_key,
+                settings.cloud_token
+                if (model_binding or {}).get("provider") == "gateway" or model_binding is None
+                else None,
+            )
+            if isinstance(value, str) and value
+        )
+        runtime_context.dynamic_tools = {item.name: item.tool for item in dynamic_tools}
+        runtime_context.memory_enabled = memory_enabled
 
-    return create_deep_agent(
-        model=model,
+    fingerprint = _agent_definition_fingerprint(
+        settings=settings,
+        model_profile=getattr(definition_model, "profile", None),
         tools=tools,
-        middleware=middleware,
-        system_prompt=instructions,
         subagents=subagents_arg,
         skills=skills_arg,
         memory=memory_arg,
-        backend=backend,
-        interrupt_on=DESTRUCTIVE_TOOLS,
-        checkpointer=checkpointer,
-        store=agent_store,
     )
+    runtime_context.graph_definition_id = fingerprint
+
+    def compile_definition() -> Any:
+        return create_deep_agent(
+            model=definition_model,
+            tools=tools,
+            middleware=middleware,
+            subagents=subagents_arg,
+            skills=skills_arg,
+            memory=memory_arg,
+            backend=_runtime_backend,
+            checkpointer=checkpointer,
+            store=agent_store,
+            context_schema=RuntimeContext,
+        )
+
+    if definition_cache is None or extra_middleware:
+        agent = compile_definition()
+    elif definition_cache_lock is None:
+        agent = _cached_agent_definition(definition_cache, fingerprint, compile_definition)
+    else:
+        async with definition_cache_lock:
+            agent = _cached_agent_definition(definition_cache, fingerprint, compile_definition)
+    nodes = getattr(agent, "nodes", {})
+    tools_node = nodes.get("tools") if isinstance(nodes, dict) else None
+    bound_tools = getattr(getattr(tools_node, "bound", None), "tools_by_name", {})
+    runtime_context.tool_registry = dict(bound_tools) if isinstance(bound_tools, dict) else {}
+    return agent
+
+
+def _agent_definition_fingerprint(
+    *,
+    settings: Settings,
+    model_profile: Any,
+    tools: list[Any],
+    subagents: list[Any] | None,
+    skills: list[str] | None,
+    memory: list[str] | None,
+) -> str:
+    payload = {
+        "version": _AGENT_STATE_SCHEMA_VERSION,
+        "model_profile": model_profile,
+        "tools": [tool_definition(tool) for tool in tools],
+        "subagents": [
+            {
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "system_prompt": item.get("system_prompt"),
+                "tools": [tool_definition(tool) for tool in item.get("tools", [])],
+                "middleware": [type(value).__qualname__ for value in item.get("middleware", [])],
+            }
+            for item in (subagents or [])
+            if isinstance(item, dict)
+        ],
+        "skills": skills or [],
+        "memory": memory or [],
+        "middleware": {
+            "input_guard": settings.input_guard_mode,
+            "plan_first": settings.plan_first_mode,
+            "research_limit": settings.research_search_limit,
+            "tool_retries": settings.max_tool_retries,
+            "verification_repairs": settings.verification_repair_max,
+            "subagents": settings.enable_subagents,
+            "browser_headless": settings.browser_headless,
+        },
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _cached_agent_definition(
+    cache: dict[str, Any],
+    fingerprint: str,
+    compile_definition: Callable[[], Any],
+) -> Any:
+    if fingerprint in cache:
+        definition = cache.pop(fingerprint)
+        cache[fingerprint] = definition
+        return definition
+    definition = compile_definition()
+    cache[fingerprint] = definition
+    # ponytail: bounded process-local LRU; add durable cache only if compile
+    # time remains material across daemon restarts.
+    if len(cache) > _AGENT_DEFINITION_CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    return definition
+
+
+def _register_model_cleanup(model: Any, stack: AsyncExitStack | None) -> None:
+    """Close provider clients when the owning execution attempt ends."""
+    if stack is None:
+        return
+    async_client = getattr(model, "root_async_client", None)
+    async_close = getattr(async_client, "close", None)
+    if callable(async_close):
+        stack.push_async_callback(async_close)
+    sync_client = getattr(model, "root_client", None)
+    sync_close = getattr(sync_client, "close", None)
+    if callable(sync_close):
+        stack.callback(sync_close)
 
 
 def _active_skill_names(skills_arg: list[str] | None) -> list[str]:

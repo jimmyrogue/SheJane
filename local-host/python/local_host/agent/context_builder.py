@@ -57,9 +57,11 @@ file I/O on every run.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import locale as _locale
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,6 +76,62 @@ _DEVELOPER_PROMPT_PATH = _PROMPTS_DIR / "developer.md"
 # for Chinese. 8 KiB → ~2k–4k tokens worth of system context.
 _DEFAULT_TOTAL_BUDGET_CHARS = 8 * 1024
 _TRUNCATION_MARKER = "\n…[内容过长已截断]"
+
+
+class AsyncToolExecutionGate:
+    """Fair shared/exclusive gate plus deterministic ordering within a batch."""
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._readers = 0
+        self._writer = False
+        self._waiting_writers = 0
+        self._batch_next: dict[str, int] = {}
+
+    @asynccontextmanager
+    async def read(self):
+        async with self._condition:
+            await self._condition.wait_for(lambda: not self._writer and self._waiting_writers == 0)
+            self._readers += 1
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._readers -= 1
+                self._condition.notify_all()
+
+    @asynccontextmanager
+    async def write(self):
+        async with self._condition:
+            self._waiting_writers += 1
+            try:
+                await self._condition.wait_for(lambda: not self._writer and self._readers == 0)
+                self._writer = True
+            finally:
+                self._waiting_writers -= 1
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._writer = False
+                self._condition.notify_all()
+
+    @asynccontextmanager
+    async def ordered(self, batch_key: str, position: int, completed_prefix: int = 0):
+        async with self._condition:
+            current = self._batch_next.get(batch_key, 0)
+            if completed_prefix > current:
+                self._batch_next[batch_key] = completed_prefix
+            await self._condition.wait_for(lambda: self._batch_next.get(batch_key, 0) == position)
+        completed = False
+        try:
+            yield
+            completed = True
+        finally:
+            if completed:
+                async with self._condition:
+                    self._batch_next[batch_key] = position + 1
+                    self._condition.notify_all()
 
 
 @dataclass(frozen=True)
@@ -107,7 +165,31 @@ class RuntimeContext:
     learn a long positional signature.
     """
 
-    # Layer 55 — runtime context
+    # Harness-only dependencies. They are available to middleware and tools,
+    # but ContextBuilder never renders them into the model prompt.
+    run_id: str | None = None
+    principal_id: str | None = None
+    store: object | None = None
+    steering_emit: object | None = None
+    backend: object | None = None
+    model: object | None = None
+    dynamic_tools: dict[str, object] = field(default_factory=dict)
+    tool_registry: dict[str, object] = field(default_factory=dict)
+    memory_enabled: bool = True
+    # Trusted ingress capability derived from the real top-level user input.
+    # Tools may inspect it, but it is never rendered into the model prompt.
+    memory_write_facts: tuple[str, ...] = ()
+    graph_definition_id: str | None = None
+    execution_attempt_id: str | None = None
+    # Shared by parent + subagents. Consequential tool calls acquire this
+    # lock so LangChain's parallel ToolNode cannot race workspace/external
+    # mutations. Read-only calls and subagent orchestration remain parallel.
+    tool_mutation_lock: object = field(default_factory=AsyncToolExecutionGate)
+    outbound_is_external: bool = False
+    outbound_pii_types: tuple[str, ...] = ()
+    outbound_secrets: tuple[str, ...] = ()
+
+    # Layer 55 — model-visible runtime context
     workspace_root: str | None = None
     locale: str | None = None
     enabled_skills: list[str] = field(default_factory=list)
@@ -123,8 +205,6 @@ class RuntimeContext:
     # but needs to know about the current run.
     mode: str | None = None  # the resolved mode ("fast" / "deep")
     turn_count: int | None = None  # message count incl. current turn
-    dropped_history_count: int = 0  # earlier turns removed by truncation
-    dropped_history_summary: str | None = None  # compact digest of removed earlier turns
     repair_intent: bool = False
     repair_attempt: int | None = None
     repair_max_attempts: int | None = None
@@ -236,9 +316,8 @@ class ContextBuilder:
 
     def _layer_state(self, runtime: RuntimeContext) -> ContextLayer:
         """Layer 50 — current run state. Things the model can't observe
-        but should know: which model tier the user picked, how many
-        turns we're into the conversation, whether older turns were
-        dropped by truncation.
+        but should know: which model tier the user picked and how many
+        turns we're into the conversation.
 
         Distinct from runtime_context (Layer 55): state describes the
         RUN, runtime_context describes the ENVIRONMENT.
@@ -248,15 +327,6 @@ class ContextBuilder:
             bullets.append(f"- 当前模式: {runtime.mode}")
         if runtime.turn_count is not None:
             bullets.append(f"- 对话轮次: 第 {runtime.turn_count} 轮")
-        if runtime.dropped_history_count > 0:
-            bullets.append(
-                f"- 已省略本对话早期的 {runtime.dropped_history_count} 条消息以节省上下文，"
-                f"如需要更早的细节请向用户确认。"
-            )
-        if runtime.dropped_history_summary and runtime.dropped_history_summary.strip():
-            bullets.append(
-                "- 早期对话压缩摘要:\n" + _indent(runtime.dropped_history_summary.strip(), "  ")
-            )
         if runtime.repair_intent:
             attempt = runtime.repair_attempt if runtime.repair_attempt is not None else 1
             max_attempts = runtime.repair_max_attempts if runtime.repair_max_attempts else "?"

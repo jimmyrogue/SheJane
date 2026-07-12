@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 
 from ..store.sqlite import LocalStore
@@ -18,6 +19,7 @@ def make_progress_tool(store: LocalStore | None = None, run_id: str | None = Non
     @tool("task.progress")
     async def task_progress(
         summary: str,
+        runtime: ToolRuntime[Any] = None,  # type: ignore[assignment]
         status: str = "in_progress",
         acceptance_criteria: list[str] | None = None,
         decisions: list[str] | None = None,
@@ -31,7 +33,10 @@ def make_progress_tool(store: LocalStore | None = None, run_id: str | None = Non
         Use this after planning, after important design decisions, before
         pausing, and after validation. Keep entries concise and factual.
         """
-        if store is None or not run_id:
+        context = getattr(runtime, "context", None)
+        active_store = store or getattr(context, "store", None)
+        active_run_id = run_id or getattr(context, "run_id", None)
+        if active_store is None or not active_run_id:
             return {"ok": "false", "error": "progress ledger is not bound to a run"}
         summary_text = summary.strip()
         if not summary_text:
@@ -50,8 +55,8 @@ def make_progress_tool(store: LocalStore | None = None, run_id: str | None = Non
             "unresolved_risks": _clean_list(unresolved_risks),
             "next_actions": _clean_list(next_actions),
         }
-        artifact = await store.create_artifact(
-            run_id=run_id,
+        artifact = await active_store.create_artifact(
+            run_id=active_run_id,
             kind="progress_ledger",
             title="Progress ledger",
             content=json.dumps(payload, ensure_ascii=False),

@@ -54,16 +54,21 @@ cares that the rest still work.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 from langchain_core.tools import BaseTool
+
+from .mcp_stdio import bounded_stdio_client
 
 log = logging.getLogger("local_host.tools.mcp")
 
@@ -77,6 +82,85 @@ SOURCE_CLAUDE_DESKTOP = "claude-desktop"
 SOURCE_CURSOR = "cursor"
 SOURCE_CODEX = "codex"
 SOURCE_ENV = "env"
+
+MAX_MCP_TOOLS = 64
+MAX_MCP_SERVERS = 32
+MAX_MCP_DESCRIPTION_CHARS = 4_096
+MAX_MCP_SCHEMA_BYTES = 65_536
+MAX_MCP_TOTAL_SCHEMA_BYTES = 524_288
+MAX_MCP_SCHEMA_DEPTH = 16
+MAX_MCP_SCHEMA_NODES = 4_096
+MAX_MCP_HTTP_BYTES = 4 * 1_024 * 1_024
+MAX_MCP_STDIO_FRAME_BYTES = 4 * 1_024 * 1_024
+MCP_DISCOVERY_TIMEOUT_SECONDS = 15
+
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+_CREDENTIAL_PATTERN_RE = re.compile(
+    r"(?:\bBearer\s+[^\s]{8,}|\bsk-[A-Za-z0-9_-]{8,})",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class ValidatedMCPTool:
+    """An MCP implementation plus metadata safe to cache and show a model."""
+
+    tool: BaseTool
+    name: str
+    description: str
+    args_schema: dict[str, Any]
+
+
+class _LimitedResponseStream(httpx.AsyncByteStream):
+    def __init__(self, stream: httpx.AsyncByteStream, budget: list[int]) -> None:
+        self._stream = stream
+        self._budget = budget
+
+    async def __aiter__(self):
+        async for chunk in self._stream:
+            self._budget[0] -= len(chunk)
+            if self._budget[0] < 0:
+                raise httpx.HTTPError("MCP response byte limit exceeded")
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _LimitedHTTPTransport(httpx.AsyncBaseTransport):
+    def __init__(self, max_bytes: int) -> None:
+        self._transport = httpx.AsyncHTTPTransport()
+        self._budget = [max_bytes]
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        response = await self._transport.handle_async_request(request)
+        content_length = response.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > self._budget[0]:
+            await response.aclose()
+            raise httpx.HTTPError("MCP response byte limit exceeded")
+        return httpx.Response(
+            status_code=response.status_code,
+            headers=response.headers,
+            stream=_LimitedResponseStream(response.stream, self._budget),
+            extensions=response.extensions,
+        )
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
+def _bounded_http_client(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=_LimitedHTTPTransport(MAX_MCP_HTTP_BYTES),
+        follow_redirects=True,
+        headers=headers,
+        timeout=timeout or httpx.Timeout(30, read=300),
+        auth=auth,
+    )
 
 
 @dataclass(frozen=True)
@@ -235,6 +319,8 @@ def _normalize_entry(name: str, raw: Any) -> dict[str, Any] | None:
     declared_transport = raw.get("transport")
     if isinstance(declared_transport, str) and declared_transport.strip():
         transport = declared_transport.strip().lower()
+        if transport in {"http", "streamable-http"}:
+            transport = "streamable_http"
     elif has_url:
         # Sniff the URL: ws:// → websocket, otherwise default to streamable_http
         # which MultiServerMCPClient maps to plain HTTP transport.
@@ -361,6 +447,207 @@ def _load_mcp_config(data_dir: Path | None) -> dict[str, dict[str, Any]]:
     return {srv.name: srv.config for srv in discover_servers(data_dir)}
 
 
+def mcp_sensitive_values(
+    data_dir: Path | None,
+    *,
+    disabled_servers: set[str] | None = None,
+) -> tuple[str, ...]:
+    """Return configured MCP credentials for metadata leak detection.
+
+    Values are never logged or copied into the reusable graph definition.
+    """
+    config = _load_mcp_config(data_dir)
+    if disabled_servers:
+        config = {name: cfg for name, cfg in config.items() if name not in disabled_servers}
+    return _sensitive_values_from_config(config)
+
+
+def _sensitive_values_from_config(config: dict[str, dict[str, Any]]) -> tuple[str, ...]:
+    configured_values = {
+        value
+        for server in config.values()
+        for section_name in ("headers", "env")
+        for value in _string_values(server.get(section_name))
+        if len(value) >= 4
+    }
+    values = {
+        variant
+        for value in configured_values
+        for variant in _credential_variants(value)
+        if len(variant) >= 4
+    }
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+async def build_validated_mcp_tools(
+    data_dir: Path | None,
+    *,
+    disabled_servers: set[str] | None = None,
+    reserved_names: set[str] | None = None,
+) -> list[ValidatedMCPTool]:
+    """Load and validate MCP tools against the exact config used to connect."""
+    config = _load_mcp_config(data_dir)
+    if disabled_servers:
+        config = {name: cfg for name, cfg in config.items() if name not in disabled_servers}
+    tools = await _build_mcp_tools_from_config(config)
+    return validate_mcp_tools(
+        tools,
+        sensitive_values=_sensitive_values_from_config(config),
+        reserved_names=reserved_names,
+    )
+
+
+def validate_mcp_tools(
+    tools: list[BaseTool],
+    *,
+    sensitive_values: tuple[str, ...] = (),
+    reserved_names: set[str] | None = None,
+) -> list[ValidatedMCPTool]:
+    """Validate untrusted MCP metadata before graph compilation.
+
+    MCP servers control tool names, descriptions, and JSON schemas. Only
+    bounded, JSON-only metadata crosses into the cached definition and model
+    request; actual tool objects remain execution-local.
+    """
+    accepted: list[ValidatedMCPTool] = []
+    seen = set(reserved_names or ())
+    total_schema_bytes = 0
+    if len(tools) > MAX_MCP_TOOLS:
+        log.warning("MCP tool limit reached; ignoring %d excess tools", len(tools) - MAX_MCP_TOOLS)
+    for index, tool in enumerate(tools[:MAX_MCP_TOOLS]):
+        try:
+            name = str(getattr(tool, "name", ""))
+        except Exception:
+            log.warning("MCP tool candidate %d rejected because its name is unreadable", index)
+            continue
+        if _contains_sensitive_metadata((name,), sensitive_values=sensitive_values):
+            log.warning(
+                "MCP tool candidate %d rejected because its name contains credential material",
+                index,
+            )
+            continue
+        if not _TOOL_NAME_RE.fullmatch(name) or name in seen:
+            log.warning("MCP tool candidate %d rejected due to invalid or reserved name", index)
+            continue
+        description = str(getattr(tool, "description", "") or "").strip()
+        if len(description) > MAX_MCP_DESCRIPTION_CHARS:
+            log.warning("MCP tool candidate %d rejected due to oversized description", index)
+            continue
+        try:
+            schema = _safe_tool_schema(tool)
+            schema_strings = _validate_schema_tree(schema)
+            encoded = json.dumps(
+                schema,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        except Exception as exc:
+            log.warning(
+                "MCP tool candidate %d rejected due to invalid schema: %s",
+                index,
+                type(exc).__name__,
+            )
+            continue
+        if len(encoded) > MAX_MCP_SCHEMA_BYTES:
+            log.warning("MCP tool candidate %d rejected due to oversized schema", index)
+            continue
+        if total_schema_bytes + len(encoded) > MAX_MCP_TOTAL_SCHEMA_BYTES:
+            log.warning("MCP aggregate schema limit reached; skipping remaining tools")
+            break
+        if _contains_sensitive_metadata(
+            (description, *schema_strings),
+            sensitive_values=sensitive_values,
+        ):
+            log.warning(
+                "MCP tool candidate %d rejected because its metadata contains credential material",
+                index,
+            )
+            continue
+        # JSON round-trip severs references to server-owned mutable objects.
+        safe_schema = json.loads(encoded)
+        accepted.append(ValidatedMCPTool(tool, name, description, safe_schema))
+        seen.add(name)
+        total_schema_bytes += len(encoded)
+    return accepted
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [item for nested in value.values() for item in _string_values(nested)]
+    if isinstance(value, list):
+        return [item for nested in value for item in _string_values(nested)]
+    return []
+
+
+def _credential_variants(value: str) -> tuple[str, ...]:
+    scheme, separator, credential = value.partition(" ")
+    if separator and scheme.lower() in {"bearer", "basic", "token"}:
+        return value, credential.strip()
+    return (value,)
+
+
+def _safe_tool_schema(tool: BaseTool) -> dict[str, Any]:
+    schema_source = getattr(tool, "tool_call_schema", None) or tool.args_schema
+    if schema_source is None:
+        return {"type": "object", "properties": {}}
+    if isinstance(schema_source, dict):
+        return schema_source
+    schema = schema_source.model_json_schema()
+    if not isinstance(schema, dict):
+        raise TypeError("tool schema must be an object")
+    return schema
+
+
+def _validate_schema_tree(value: Any) -> list[str]:
+    strings: list[str] = []
+    nodes = 0
+
+    def visit(node: Any, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > MAX_MCP_SCHEMA_NODES:
+            raise ValueError("schema node limit exceeded")
+        if depth > MAX_MCP_SCHEMA_DEPTH:
+            raise ValueError("schema depth limit exceeded")
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if not isinstance(key, str):
+                    raise TypeError("schema keys must be strings")
+                strings.append(key)
+                visit(child, depth + 1)
+            return
+        if isinstance(node, list):
+            for child in node:
+                visit(child, depth + 1)
+            return
+        if isinstance(node, str):
+            strings.append(node)
+            return
+        if node is None or isinstance(node, bool | int | float):
+            return
+        raise TypeError("schema contains a non-JSON value")
+
+    visit(value, 0)
+    return strings
+
+
+def _contains_sensitive_metadata(
+    values: tuple[str, ...],
+    *,
+    sensitive_values: tuple[str, ...],
+) -> bool:
+    for value in values:
+        if _CREDENTIAL_PATTERN_RE.search(value):
+            return True
+        if any(secret in value for secret in sensitive_values):
+            return True
+    return False
+
+
 async def build_mcp_tools(
     data_dir: Path | None,
     *,
@@ -383,20 +670,103 @@ async def build_mcp_tools(
     config = _load_mcp_config(data_dir)
     if disabled_servers:
         config = {name: cfg for name, cfg in config.items() if name not in disabled_servers}
+    return await _build_mcp_tools_from_config(config)
+
+
+async def _build_mcp_tools_from_config(
+    config: dict[str, dict[str, Any]],
+) -> list[BaseTool]:
     if not config:
         return []
 
     try:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
+        import langchain_mcp_adapters.sessions as mcp_sessions
+        from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
     except ImportError:
         log.warning("langchain-mcp-adapters not installed; skipping MCP")
         return []
 
-    client = MultiServerMCPClient(config, tool_name_prefix=True)
-    try:
-        tools = await client.get_tools()
-    except Exception as exc:
-        log.warning("MCP get_tools() failed (%s): %s", type(exc).__name__, exc)
-        return []
+    # The adapter resolves this module-level transport both during discovery
+    # and when a converted tool later opens its own session.
+    def bounded_adapter_stdio_client(server, errlog=sys.stderr):
+        return bounded_stdio_client(
+            server,
+            errlog,
+            max_frame_bytes=MAX_MCP_STDIO_FRAME_BYTES,
+        )
+
+    mcp_sessions.stdio_client = bounded_adapter_stdio_client
+    create_session = mcp_sessions.create_session
+
+    tools: list[BaseTool] = []
+    candidates_seen = 0
+    raw_schema_bytes = 0
+    servers = list(config.items())
+    if len(servers) > MAX_MCP_SERVERS:
+        log.warning(
+            "MCP server limit reached; ignoring %d excess servers", len(servers) - MAX_MCP_SERVERS
+        )
+    for server_index, (server_name, raw_connection) in enumerate(servers[:MAX_MCP_SERVERS]):
+        if candidates_seen >= MAX_MCP_TOOLS:
+            break
+        connection = dict(raw_connection)
+        transport = connection.get("transport")
+        if transport == "websocket":
+            log.warning(
+                "MCP server candidate %d skipped because websocket discovery is not bounded",
+                server_index,
+            )
+            continue
+        if transport in {"sse", "http", "streamable-http", "streamable_http"}:
+            connection["httpx_client_factory"] = _bounded_http_client
+        try:
+            async with asyncio.timeout(MCP_DISCOVERY_TIMEOUT_SECONDS):
+                async with create_session(connection) as session:
+                    await session.initialize()
+                    cursor: str | None = None
+                    while candidates_seen < MAX_MCP_TOOLS:
+                        page = await session.list_tools(cursor=cursor)
+                        for raw_tool in page.tools:
+                            candidates_seen += 1
+                            if candidates_seen > MAX_MCP_TOOLS:
+                                break
+                            try:
+                                schema = raw_tool.inputSchema
+                                _validate_schema_tree(schema)
+                                schema_size = len(
+                                    json.dumps(
+                                        schema,
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                        allow_nan=False,
+                                    ).encode()
+                                )
+                            except Exception:
+                                continue
+                            if schema_size > MAX_MCP_SCHEMA_BYTES:
+                                continue
+                            if raw_schema_bytes + schema_size > MAX_MCP_TOTAL_SCHEMA_BYTES:
+                                candidates_seen = MAX_MCP_TOOLS
+                                break
+                            tools.append(
+                                convert_mcp_tool_to_langchain_tool(
+                                    None,
+                                    raw_tool,
+                                    connection=connection,
+                                    server_name=server_name,
+                                    tool_name_prefix=True,
+                                )
+                            )
+                            raw_schema_bytes += schema_size
+                        cursor = page.nextCursor
+                        if not cursor:
+                            break
+        except Exception as exc:
+            log.warning(
+                "MCP server candidate %d discovery failed: %s",
+                server_index,
+                type(exc).__name__,
+            )
     log.info("loaded %d MCP tools across %d servers", len(tools), len(config))
-    return list(tools)
+    return tools

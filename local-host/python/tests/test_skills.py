@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from langgraph.store.memory import InMemoryStore
@@ -287,6 +288,7 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
         return object()
 
     monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
+    runtime_context = builder_mod.RuntimeContext()
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
@@ -302,6 +304,7 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
                 workspace_root=str(tmp_path),
                 run_id="r-skills-on",
                 skills_enabled=True,
+                runtime_context=runtime_context,
             )
         finally:
             await store.close()
@@ -311,7 +314,9 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     skills = captured["skills"]
     assert isinstance(skills, list) and len(skills) >= 1
     assert any(str(shejane) in s for s in skills)
-    backend = captured["backend"]
+    backend_factory = captured["backend"]
+    assert callable(backend_factory)
+    backend = backend_factory(SimpleNamespace(context=runtime_context))
     assert isinstance(backend, CompositeBackend)
     assert isinstance(backend.default, FilesystemBackend)
     assert backend.default.virtual_mode is True
@@ -387,6 +392,7 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
         return object()
 
     monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
+    runtime_context = builder_mod.RuntimeContext()
 
     async def run() -> None:
         reset_settings_for_tests(data_dir=tmp_path / "data")
@@ -401,13 +407,16 @@ def test_build_agent_defaults_workspace_to_real_scratch_when_none(
                 agent_store=InMemoryStore(),
                 workspace_root=None,
                 run_id="r-no-workspace",
+                runtime_context=runtime_context,
             )
         finally:
             await store.close()
             await stack.aclose()
 
     asyncio.run(run())
-    backend = captured["backend"]
+    backend_factory = captured["backend"]
+    assert callable(backend_factory)
+    backend = backend_factory(SimpleNamespace(context=runtime_context))
     assert isinstance(backend, CompositeBackend)
     assert isinstance(backend.default, FilesystemBackend)
     assert backend.default.virtual_mode is True

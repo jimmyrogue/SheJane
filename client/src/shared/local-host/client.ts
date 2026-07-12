@@ -16,6 +16,15 @@ import type { components } from './generated'
 type Schemas = components['schemas']
 
 export type LocalRun = Schemas['LocalRun']
+export type LocalThread = Schemas['LocalThread']
+export type LocalThreadItem = Schemas['LocalThreadItem']
+export type LocalThreadChange = Schemas['LocalThreadChange']
+export type LocalThreadSnapshot = Schemas['LocalThreadSnapshot']
+export type RuntimeInfo = Schemas['RuntimeInfo']
+export type LocalModelProvider = Schemas['LocalModelProvider']
+export type LocalModelProfile = Schemas['LocalModelProfile']
+export type LocalRuntimeModel = Schemas['LocalRuntimeModel']
+export type UpsertLocalModelProviderRequest = Schemas['UpsertLocalModelProviderRequest']
 export type LocalScheduledRun = Schemas['LocalScheduledRun']
 export type LocalCloudSession = Schemas['LocalCloudSession']
 export type LocalArtifact = Schemas['LocalArtifact']
@@ -35,6 +44,12 @@ export type SkillWriteRequest = Schemas['SkillWriteRequest']
 export type SkillWriteResponse = Schemas['SkillWriteResponse']
 export type SkillDeleteResponse = Schemas['SkillDeleteResponse']
 export type LocalPermissionScope = 'once' | 'run'
+export type LocalPermissionDecision = 'approve' | 'edit' | 'deny'
+export type LocalToolReconciliationDecision = 'confirmed_completed' | 'retry_not_executed' | 'abort'
+export interface LocalEditedToolAction {
+  name: string
+  args: Record<string, unknown>
+}
 export type LocalPlanApprovalDecision = 'approve' | 'modify' | 'reject'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
@@ -84,6 +99,7 @@ export interface LocalStreamHandlers {
 }
 
 type Fetcher = typeof fetch
+export const LOCAL_RUNTIME_PROTOCOL_VERSION = 1
 
 export function getDesktopLocalHostConfig(bridge: DesktopBridge | undefined = window.shejaneDesktop): LocalHostConfig | undefined {
   const baseURL = bridge?.localHost?.baseURL?.trim()
@@ -124,6 +140,64 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
   }
 }
 
+export async function getLocalRuntimeInfo(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<RuntimeInfo> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runtime`, {
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<RuntimeInfo>(response)
+}
+
+export async function listLocalModelProviders(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalModelProvider[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/model-providers`, {
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ providers?: LocalModelProvider[] }>(response)
+  return body.providers ?? []
+}
+
+export async function upsertLocalModelProvider(
+  providerID: string,
+  input: UpsertLocalModelProviderRequest,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalModelProvider> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/model-providers/${encodeURIComponent(providerID)}`, {
+    method: 'PUT',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<LocalModelProvider>(response)
+}
+
+export async function deleteLocalModelProvider(
+  providerID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalModelProvider> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/model-providers/${encodeURIComponent(providerID)}`, {
+    method: 'DELETE',
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<LocalModelProvider>(response)
+}
+
+export async function listLocalRuntimeModels(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalRuntimeModel[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/models`, {
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ models?: LocalRuntimeModel[] }>(response)
+  return body.models ?? []
+}
+
 /**
  * User-configurable per-run agent settings. Sent with every run-create request
  * and applied by local-host (overriding its env defaults). Open-ended shape so
@@ -139,30 +213,18 @@ export async function probeLocalHost(baseURL: string, fetcher: Fetcher = fetch):
 export interface AdvancedAgentSettings {
   /** Hard cap on LLM calls per run (runaway guard). Daemon default 20. */
   maxModelCalls?: number
-  /** Prior user/assistant messages forwarded into a new local run. Daemon default 40. */
-  maxHistoryTurns?: number
-  /** Retries for transient model gateway failures. Daemon default 2. */
-  maxModelRetries?: number
   /** Retries for a failing tool before giving up. Daemon default 2. */
   maxToolRetries?: number
   /** Results the research / deep-search path requests per query. Daemon default 3. */
   researchSearchLimit?: number
-  /** LLM tool-preselection: keep the N most-relevant tools. 0 = off. */
-  toolSelectorMax?: number
   /** deepagents subagents (the `task` tool). Daemon default on. */
   subagents?: boolean
-  /** End-of-run LLM critic reflection (extra cost). Daemon default off. */
-  reflect?: boolean
   /** Run the browser tool headless. Daemon default on. */
   browserHeadless?: boolean
-  /** Mid-loop tool-result critic. Daemon default off. */
-  toolCritic?: 'off' | 'watch' | 'nudge' | 'block'
   /** Prompt-injection input guard. Daemon default observe. */
   inputGuard?: 'observe' | 'block'
   /** Plan-first middleware. Daemon default off. */
   planFirst?: 'off' | 'auto' | 'always'
-  /** Comma-separated PII types to redact (e.g. "email,credit_card"). */
-  piiRedact?: string
 }
 
 export interface AgentSettings {
@@ -198,35 +260,34 @@ function serializeAgentSettings(settings?: AgentSettings): Record<string, unknow
   const adv = src.advanced
   if (adv) {
     if (adv.maxModelCalls !== undefined) out.max_model_calls = adv.maxModelCalls
-    if (adv.maxHistoryTurns !== undefined) out.max_history_turns = adv.maxHistoryTurns
-    if (adv.maxModelRetries !== undefined) out.max_model_retries = adv.maxModelRetries
     if (adv.maxToolRetries !== undefined) out.max_tool_retries = adv.maxToolRetries
     if (adv.researchSearchLimit !== undefined) out.research_search_limit = adv.researchSearchLimit
-    if (adv.toolSelectorMax !== undefined) out.tool_selector_max = adv.toolSelectorMax
     if (adv.subagents !== undefined) out.subagents = adv.subagents
-    if (adv.reflect !== undefined) out.reflect = adv.reflect
     if (adv.browserHeadless !== undefined) out.browser_headless = adv.browserHeadless
-    if (adv.toolCritic !== undefined) out.tool_critic = adv.toolCritic
     if (adv.inputGuard !== undefined) out.input_guard = adv.inputGuard
     if (adv.planFirst !== undefined) out.plan_first = adv.planFirst
-    if (adv.piiRedact !== undefined && adv.piiRedact.trim() !== '') {
-      out.pii_redact = adv.piiRedact.trim()
-    }
   }
   return Object.keys(out).length === 0 ? undefined : out
 }
 
 export async function createLocalRun(
   input: {
+    commandId: string
+    clientMessageId: string
+    threadId?: string
+    assistantMessageId?: string
+    userInput?: string
+    threadTitle?: string
+    threadMetadata?: Record<string, unknown>
+    userItemMetadata?: Record<string, unknown>
+    replaceFromClientId?: string
     goal: string
     workspacePath?: string
     history?: Array<{ role: 'user' | 'assistant'; content: string }>
     parentRunId?: string
     settings?: AgentSettings
     metadata?: LocalRunMetadata
-    /** The model the user picked: 'auto' or a catalog model id. The daemon
-     *  forwards it to the cloud, which resolves 'auto'/unknown → default.
-     *  Omitted → daemon default ('auto'). */
+    /** The model the user picked: 'auto' or a configured catalog model id. */
     mode?: ChatMode
   },
   config: LocalHostConfig,
@@ -236,29 +297,63 @@ export async function createLocalRun(
   // reads as snake_case (mcp_disabled). Everything else (memory /
   // skills / mcp) is already named the same on both sides.
   const settings = serializeAgentSettings(input.settings)
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify({
-      goal: input.goal,
-      workspace_path: input.workspacePath || undefined,
-      history: input.history ?? [],
-      parent_run_id: input.parentRunId || undefined,
-      settings,
-      metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
-      model: input.mode,
-    }),
+  const requiredCapabilities = new Set(['agent.run', 'agent.stream', 'hitl'])
+  if (input.workspacePath) requiredCapabilities.add('workspace.files')
+  if (input.settings?.memory !== 'off') requiredCapabilities.add('memory')
+  if (input.settings?.skills !== 'off') requiredCapabilities.add('skills')
+  if (input.settings?.mcp !== 'off') requiredCapabilities.add('mcp')
+  if (input.settings?.advanced?.subagents !== false) requiredCapabilities.add('subagents')
+  const body = JSON.stringify({
+    command_id: input.commandId,
+    client_message_id: input.clientMessageId,
+    thread_id: input.threadId,
+    assistant_message_id: input.assistantMessageId,
+    protocol_version: LOCAL_RUNTIME_PROTOCOL_VERSION,
+    required_capabilities: [...requiredCapabilities].sort(),
+    goal: input.goal,
+    user_input: input.userInput,
+    thread_title: input.threadTitle,
+    thread_metadata: input.threadMetadata,
+    user_item_metadata: input.userItemMetadata,
+    replace_from_client_id: input.replaceFromClientId,
+    workspace_path: input.workspacePath || undefined,
+    history: input.history ?? [],
+    parent_run_id: input.parentRunId || undefined,
+    settings,
+    metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
+    model: input.mode,
   })
+  const request = () =>
+    fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
+      method: 'POST',
+      headers: localHeaders(config, true),
+      body,
+    })
+  let response: Response
+  try {
+    response = await request()
+  } catch (error) {
+    if (!input.commandId || !input.clientMessageId) throw error
+    // ponytail: one transport retry; replace with the durable pending-command
+    // sender when client history becomes a rebuildable Runtime projection.
+    response = await request()
+  }
   return decodeLocalResponse<LocalRun>(response)
 }
 
 export async function forkLocalRun(
   runID: string,
   input: {
+    commandId: string
+    clientMessageId: string
+    assistantMessageId: string
+    threadId: string
     checkpointId: string
     goal?: string
-    mode?: ChatMode
-    settings?: AgentSettings
+    userInput: string
+    threadTitle?: string
+    threadMetadata?: Record<string, unknown>
+    userItemMetadata?: Record<string, unknown>
     metadata?: LocalRunMetadata
   },
   config: LocalHostConfig,
@@ -268,10 +363,16 @@ export async function forkLocalRun(
     method: 'POST',
     headers: localHeaders(config, true),
     body: JSON.stringify({
+      command_id: input.commandId,
+      client_message_id: input.clientMessageId,
+      assistant_message_id: input.assistantMessageId,
+      thread_id: input.threadId,
       checkpoint_id: input.checkpointId,
       goal: input.goal || undefined,
-      model: input.mode || undefined,
-      settings: input.settings && Object.keys(input.settings).length > 0 ? input.settings : undefined,
+      user_input: input.userInput,
+      thread_title: input.threadTitle,
+      thread_metadata: input.threadMetadata,
+      user_item_metadata: input.userItemMetadata,
       metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
     }),
   })
@@ -471,6 +572,145 @@ export async function listLocalRuns(config: LocalHostConfig, fetcher: Fetcher = 
   return body.runs ?? []
 }
 
+export async function listLocalThreads(
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<{ threads: LocalThread[]; cursor: number }> {
+  const threads: LocalThread[] = []
+  let beforeCreatedAt: string | undefined
+  let beforeID: string | undefined
+  let baselineCursor = 0
+  for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+    const params = new URLSearchParams()
+    if (beforeCreatedAt && beforeID) {
+      params.set('before_created_at', beforeCreatedAt)
+      params.set('before_id', beforeID)
+    }
+    const suffix = params.size ? `?${params.toString()}` : ''
+    const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/threads${suffix}`, {
+      method: 'GET',
+      headers: localHeaders(config, false),
+    })
+    const page = await decodeLocalResponse<{
+      threads: LocalThread[]
+      cursor: number
+      has_more?: boolean
+      next_before_created_at?: string | null
+      next_before_id?: string | null
+    }>(response)
+    if (pageNumber === 0) baselineCursor = page.cursor
+    threads.push(...page.threads)
+    if (!page.has_more) return { threads, cursor: baselineCursor }
+    beforeCreatedAt = page.next_before_created_at ?? undefined
+    beforeID = page.next_before_id ?? undefined
+    if (!beforeCreatedAt || !beforeID) throw new Error('Runtime returned an invalid thread page cursor')
+  }
+  throw new Error('Runtime thread pagination limit exceeded')
+}
+
+export async function getLocalThreadSnapshot(
+  threadID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalThreadSnapshot> {
+  const baseURL = `${normalizeBaseURL(config.baseURL)}/local/v1/threads/${encodeURIComponent(threadID)}`
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const items = new Map<string, LocalThreadSnapshot['items'][number]>()
+    const runs = new Map<string, LocalRun>()
+    const events = new Map<string, LocalThreadSnapshot['events'][number]>()
+    let firstPage: LocalThreadSnapshot | undefined
+    let beforePosition: number | undefined
+    let eventsTruncated = false
+    let retry = false
+    for (let pageNumber = 0; pageNumber < 10_000; pageNumber += 1) {
+      const params = new URLSearchParams()
+      if (beforePosition !== undefined) {
+        params.set('before_position', String(beforePosition))
+        params.set('expected_version', String(firstPage?.thread.version))
+      }
+      const response = await fetcher(`${baseURL}${params.size ? `?${params.toString()}` : ''}`, {
+        method: 'GET',
+        headers: localHeaders(config, false),
+      })
+      if (response.status === 409 && firstPage) {
+        retry = true
+        break
+      }
+      const page = await decodeLocalResponse<LocalThreadSnapshot>(response)
+      firstPage ??= page
+      for (const item of page.items) items.set(item.id, item)
+      for (const run of page.runs) runs.set(run.id, run)
+      for (const event of page.events ?? []) events.set(event.id, event)
+      eventsTruncated ||= Boolean(page.events_truncated)
+      if (!page.has_more_items) {
+        return {
+          ...firstPage,
+          items: [...items.values()].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)),
+          runs: [...runs.values()],
+          events: [...events.values()],
+          has_more_items: false,
+          next_before_position: null,
+          events_truncated: eventsTruncated,
+        }
+      }
+      beforePosition = page.next_before_position ?? undefined
+      if (beforePosition === undefined) throw new Error('Runtime returned an invalid item page cursor')
+    }
+    if (!retry) throw new Error('Runtime item pagination limit exceeded')
+  }
+  throw new Error('Runtime thread changed repeatedly while reading snapshot')
+}
+
+export async function listLocalThreadChanges(
+  afterCursor: number,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<{ changes: LocalThreadChange[]; cursor: number; resetRequired: boolean }> {
+  const changes: LocalThreadChange[] = []
+  let cursor = Math.max(0, afterCursor)
+  for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+    const params = new URLSearchParams({ after: String(cursor), limit: '1000' })
+    const response = await fetcher(
+      `${normalizeBaseURL(config.baseURL)}/local/v1/threads/changes?${params.toString()}`,
+      { method: 'GET', headers: localHeaders(config, false) },
+    )
+    const page = await decodeLocalResponse<{ changes: LocalThreadChange[]; cursor: number }>(response)
+    changes.push(...page.changes)
+    cursor = Math.max(cursor, page.cursor)
+    if (page.changes.length < 1000) return { changes, cursor, resetRequired: false }
+  }
+  return { changes: [], cursor, resetRequired: true }
+}
+
+export async function updateLocalThread(
+  threadID: string,
+  input: { title?: string; metadata?: Record<string, unknown>; archived?: boolean },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<LocalThread> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/threads/${encodeURIComponent(threadID)}`,
+    {
+      method: 'PATCH',
+      headers: localHeaders(config, true),
+      body: JSON.stringify(input),
+    },
+  )
+  return decodeLocalResponse<LocalThread>(response)
+}
+
+export async function deleteLocalThread(
+  threadID: string,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<{ id: string; deleted: true; version: number }> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/threads/${encodeURIComponent(threadID)}`,
+    { method: 'DELETE', headers: localHeaders(config, false) },
+  )
+  return decodeLocalResponse<{ id: string; deleted: true; version: number }>(response)
+}
+
 export async function listLocalSchedules(
   config: LocalHostConfig,
   options: { notifyPending?: boolean; status?: LocalScheduledRun['status'] } = {},
@@ -557,10 +797,10 @@ export async function getLocalRunDiagnostics(
   return decodeLocalResponse<LocalRunDiagnostics>(response)
 }
 
-/** Wipe every persisted note in the agent's long-term memory namespace.
+/** Wipe every persisted note in the authenticated principal's memory namespaces.
  *
  *  Backs the "清空记忆 / Clear memory" button in the agent settings
- *  dialog. The daemon walks ("notes","global") and deletes each key,
+ *  dialog. The daemon walks only that principal's global/workspace namespaces,
  *  returning the count so the UI can show an accurate toast. Idempotent:
  *  calling on an empty store returns `deleted_count: 0`. */
 export async function clearLocalMemory(
@@ -724,18 +964,24 @@ export async function streamLocalRun(
 
 export async function resolveLocalPermission(
   requestID: string,
-  decision: 'approve' | 'deny',
+  decision: LocalPermissionDecision,
   config: LocalHostConfig,
-  optionsOrFetcher: { scope?: LocalPermissionScope } | Fetcher = {},
+  optionsOrFetcher: { scope?: LocalPermissionScope, editedAction?: LocalEditedToolAction } | Fetcher = {},
   maybeFetcher: Fetcher = fetch,
 ): Promise<void> {
   const options = typeof optionsOrFetcher === 'function' ? {} : optionsOrFetcher
   const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : maybeFetcher
   const scope = options.scope === 'run' ? 'run' : 'once'
+  if (decision === 'edit' && !options.editedAction) {
+    throw new Error('editedAction is required for an edit decision')
+  }
+  const body = decision === 'edit'
+    ? { decision, scope: 'once', edited_action: options.editedAction }
+    : scope === 'run' ? { decision, scope } : { decision }
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/permissions/${encodeURIComponent(requestID)}`, {
     method: 'POST',
     headers: localHeaders(config, true),
-    body: JSON.stringify(scope === 'run' ? { decision, scope } : { decision }),
+    body: JSON.stringify(body),
   })
   if (!response.ok) {
     throw new Error(await localErrorMessage(response))
@@ -752,6 +998,22 @@ export async function answerLocalQuestion(
     method: 'POST',
     headers: localHeaders(config, true),
     body: JSON.stringify({ answers }),
+  })
+  if (!response.ok) {
+    throw new Error(await localErrorMessage(response))
+  }
+}
+
+export async function reconcileLocalTool(
+  operationID: string,
+  decision: LocalToolReconciliationDecision,
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<void> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/tool-reconciliations/${encodeURIComponent(operationID)}`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({ decision }),
   })
   if (!response.ok) {
     throw new Error(await localErrorMessage(response))

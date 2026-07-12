@@ -133,6 +133,7 @@ class BackendChatModel(BaseChatModel):
     mode: str = Field(default="auto")
     run_id: str = Field(default="agent_local")
     request_timeout_s: float = Field(default=120.0)
+    max_output_tokens: int = Field(default=8192, ge=128)
 
     # Tools bound via .bind_tools() — populated by langchain's bind_tools path
     bound_tools: list[dict[str, Any]] = Field(default_factory=list)
@@ -200,7 +201,7 @@ class BackendChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_request(messages, **kwargs)
-        async for chunk in self._stream_from_backend(payload):
+        async for chunk in self._stream_from_backend(payload, capture_meta=True):
             if run_manager is not None and chunk.message.content:
                 await run_manager.on_llm_new_token(str(chunk.message.content), chunk=chunk)
             yield chunk
@@ -303,6 +304,7 @@ class BackendChatModel(BaseChatModel):
             "model": kwargs.get("mode", self.mode),
             "messages": [_message_to_dict(m) for m in messages],
             "tools": list(self.bound_tools),
+            "max_output_tokens": self.max_output_tokens,
         }
         return body
 

@@ -13,11 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 RUN_BUDGET_LIMITS: dict[str, tuple[int, int]] = {
     "max_model_calls": (1, 100),
-    "max_history_turns": (1, 200),
-    "max_model_retries": (0, 5),
     "max_tool_retries": (0, 5),
     "research_search_limit": (1, 20),
-    "tool_selector_max_tools": (0, 50),
 }
 
 
@@ -68,10 +65,26 @@ class Settings(BaseSettings):
 
     # Agent runtime knobs
     max_model_calls: int = 20
-    max_history_turns: int = 40
-    max_model_retries: int = 2
     max_tool_retries: int = 2
     research_search_limit: int = 3
+    unknown_model_max_input_tokens: int = Field(
+        default=32_768,
+        alias="SHEJANE_LOCAL_UNKNOWN_MODEL_MAX_INPUT_TOKENS",
+        ge=8_192,
+        le=10_000_000,
+    )
+    unknown_model_max_output_tokens: int = Field(
+        default=8_192,
+        alias="SHEJANE_LOCAL_UNKNOWN_MODEL_MAX_OUTPUT_TOKENS",
+        ge=128,
+        le=1_000_000,
+    )
+    model_request_timeout_seconds: float = Field(
+        default=120.0,
+        alias="SHEJANE_LOCAL_MODEL_REQUEST_TIMEOUT_SECONDS",
+        ge=5.0,
+        le=900.0,
+    )
 
     # Browser
     browser_headless: bool = True
@@ -88,21 +101,17 @@ class Settings(BaseSettings):
     input_guard_mode: str = Field(default="observe", alias="SHEJANE_LOCAL_INPUT_GUARD")
     plan_first_mode: str = Field(default="off", alias="SHEJANE_PLAN_FIRST")
 
-    # Deprecated compatibility field. Local Host intentionally ignores this. If
-    # model fallback is introduced, it must live in the Go gateway/catalog so
-    # provider keys and credit accounting never move into the daemon.
+    # Deprecated compatibility field. Runtime and the optional Go gateway both
+    # reject automatic model switching; changing model requires a new explicit
+    # command from the user/client.
     fallback_models: str = Field(
         default="",
         alias="SHEJANE_LOCAL_FALLBACK_MODELS",
     )
 
-    # Comma-separated list of PII types to detect + redact. Empty ⇒
-    # PIIMiddleware not added. Supported types: email, credit_card, ip,
-    # mac_address, url. Example: "credit_card,email"
-    pii_redact_types: str = Field(
-        default="",
-        alias="SHEJANE_LOCAL_PII_REDACT",
-    )
+    # Compatibility deployment policy. Applied only to the outbound request
+    # copy for external providers; it never rewrites LangGraph state.
+    pii_redact_types: str = Field(default="", alias="SHEJANE_LOCAL_PII_REDACT")
 
     # Comma-separated AGENTS.md paths (or directories containing them) that
     # deepagents' MemoryMiddleware should load into the system prompt at
@@ -111,26 +120,6 @@ class Settings(BaseSettings):
     memory_sources: str = Field(
         default="",
         alias="SHEJANE_LOCAL_MEMORY_PATHS",
-    )
-
-    # LLM-driven tool preselection. When the agent has many tools (we ship
-    # 20+), a cheap LLM first picks `max_tools` relevant ones before the
-    # main model call. 0 ⇒ disabled (default — keep current behavior).
-    # Set to e.g. 8 to enable filtering down to 8 most-relevant tools.
-    tool_selector_max_tools: int = Field(
-        default=0,
-        alias="SHEJANE_LOCAL_TOOL_SELECTOR_MAX",
-    )
-
-    # Mid-loop tool-result critic mode. After each watched tool returns,
-    # a cheap LLM judges whether the result is usable for the task.
-    #   off    — middleware not added (default)
-    #   watch  — run critic + log only, never mutate ToolMessage
-    #   nudge  — prepend ⚠️ warning to ToolMessage when unusable
-    #   block  — replace ToolMessage with "retry" signal when unusable
-    tool_critic_mode: str = Field(
-        default="off",
-        alias="SHEJANE_LOCAL_TOOL_CRITIC",
     )
 
     # Bounded verification repair. When task.verify returns ok=false and the
@@ -144,27 +133,6 @@ class Settings(BaseSettings):
         default=3,
         alias="SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX",
     )
-
-    # Reflection: when enabled, ReflectMiddleware after_agent runs a real
-    # critic-reviser LLM call against the final answer (extra cost).
-    # Default off — keeps current statistics-only behavior.
-    enable_critic_reflection: bool = Field(
-        default=False,
-        alias="SHEJANE_LOCAL_CRITIC",
-    )
-
-    @field_validator("enable_critic_reflection", mode="before")
-    @classmethod
-    def _coerce_bool_env(cls, value: Any) -> Any:
-        # `SHEJANE_LOCAL_CRITIC=` (empty string) is a common shape in
-        # .env files where the key exists as documentation but the user
-        # hasn't opted in. Pydantic's default bool parser rejects empty
-        # strings — that crashes daemon startup AND the test suite. Map
-        # empty / whitespace to False here; let other truthy values
-        # ("1", "true", "yes") flow through to pydantic's parser.
-        if isinstance(value, str) and value.strip() == "":
-            return False
-        return value
 
     @field_validator("verification_repair_max", mode="before")
     @classmethod
@@ -190,16 +158,6 @@ class Settings(BaseSettings):
     def _clamp_repair_workflow_max(cls, value: int) -> int:
         return max(0, min(5, value))
 
-    @field_validator("max_history_turns", mode="before")
-    @classmethod
-    def _coerce_max_history_turns(cls, value: Any) -> Any:
-        return _empty_string_default(value, 40)
-
-    @field_validator("max_history_turns")
-    @classmethod
-    def _clamp_max_history_turns(cls, value: int) -> int:
-        return clamp_run_budget("max_history_turns", value)
-
     @field_validator("max_model_calls", mode="before")
     @classmethod
     def _coerce_max_model_calls(cls, value: Any) -> Any:
@@ -209,16 +167,6 @@ class Settings(BaseSettings):
     @classmethod
     def _clamp_max_model_calls(cls, value: int) -> int:
         return clamp_run_budget("max_model_calls", value)
-
-    @field_validator("max_model_retries", mode="before")
-    @classmethod
-    def _coerce_max_model_retries(cls, value: Any) -> Any:
-        return _empty_string_default(value, 2)
-
-    @field_validator("max_model_retries")
-    @classmethod
-    def _clamp_max_model_retries(cls, value: int) -> int:
-        return clamp_run_budget("max_model_retries", value)
 
     @field_validator("max_tool_retries", mode="before")
     @classmethod
@@ -239,16 +187,6 @@ class Settings(BaseSettings):
     @classmethod
     def _clamp_research_search_limit(cls, value: int) -> int:
         return clamp_run_budget("research_search_limit", value)
-
-    @field_validator("tool_selector_max_tools", mode="before")
-    @classmethod
-    def _coerce_tool_selector_max_tools(cls, value: Any) -> Any:
-        return _empty_string_default(value, 0)
-
-    @field_validator("tool_selector_max_tools")
-    @classmethod
-    def _clamp_tool_selector_max_tools(cls, value: int) -> int:
-        return clamp_run_budget("tool_selector_max_tools", value)
 
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
