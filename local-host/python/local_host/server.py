@@ -1491,7 +1491,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/local/v1/runs/{run_id}/stream")
-    async def stream_run(request: Request, run_id: str) -> EventSourceResponse:
+    async def stream_run(
+        request: Request,
+        run_id: str,
+        after: int = Query(default=0, ge=0),
+    ) -> EventSourceResponse:
         await _owned_run(
             app.state.store,
             principal_id=request.state.principal_id,
@@ -1510,8 +1514,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             #     no-op'd);
             #   • end with `data: [DONE]` so the stream resolves.
             try:
-                async for event in coordinator.stream(run_id):
+                async for event in coordinator.stream(run_id, after_seq=after):
                     yield {
+                        "id": str(event["seq"]),
                         "event": event["event_type"],
                         "data": json.dumps(event, default=str, ensure_ascii=False),
                     }

@@ -1682,7 +1682,7 @@ class RunCoordinator:
             )
             yield
 
-    async def stream(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
+    async def stream(self, run_id: str, *, after_seq: int = 0) -> AsyncIterator[dict[str, Any]]:
         """Yield AgentRunEvent envelopes (matching the TS interface):
             {id, run_id, seq, event_type, payload, created_at}
 
@@ -1691,7 +1691,6 @@ class RunCoordinator:
         daemon restarts recover from the same durable event log.
         """
         wakeup = self._wakeups.get(run_id) or asyncio.Event()
-        after_seq = 0
         while True:
             # Notifications are deliberately lossy. Clear before reading so
             # this subscriber usually observes the next signal; the durable

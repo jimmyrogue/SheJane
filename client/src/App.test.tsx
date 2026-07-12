@@ -1161,10 +1161,11 @@ describe('user client shell', () => {
         {
           id: 'permission-retry-assistant',
           role: 'assistant',
-          content: '',
+          content: '已有回答',
           createdAt: '2026-05-10T00:00:01.000Z',
           status: 'waiting_permission',
           runId: 'local-run',
+          lastEventSeq: 12,
           runOrigin: 'local',
           agentEvents: [{
             type: 'permission.required',
@@ -1206,6 +1207,14 @@ describe('user client shell', () => {
         scope: 'once',
       })),
     )
+    expect(calls.some((call) =>
+      call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/stream?after=12',
+    )).toBe(true)
+    await waitFor(async () => {
+      expect((await localData.get('conv-permission-retry'))?.messages.at(-1)?.content).toContain(
+        '已有回答',
+      )
+    })
   })
 
   it('fires a desktop notification when a local run fails', async () => {
@@ -3292,7 +3301,7 @@ function mockFetch(
     if (url === 'http://127.0.0.1:17371/local/v1/workspaces') {
       return new Response(JSON.stringify({ workspaces }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
-    if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/stream') {
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/runs/local-run/stream')) {
       if (options.localRunStream) {
         return options.localRunStream.response()
       }

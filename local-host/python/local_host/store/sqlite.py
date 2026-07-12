@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS local_thread_items (
     content TEXT NOT NULL DEFAULT '',
     metadata_json TEXT NOT NULL DEFAULT '{}',
     position INTEGER NOT NULL,
+    event_high_watermark INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -653,6 +654,19 @@ class LocalStore:
         if "superseded_by_run_id" not in thread_item_columns:
             await conn.execute(
                 "ALTER TABLE local_thread_items ADD COLUMN superseded_by_run_id TEXT"
+            )
+        if "event_high_watermark" not in thread_item_columns:
+            await conn.execute(
+                "ALTER TABLE local_thread_items "
+                "ADD COLUMN event_high_watermark INTEGER NOT NULL DEFAULT 0"
+            )
+            await conn.execute(
+                "UPDATE local_thread_items SET event_high_watermark = COALESCE(("
+                "SELECT MAX(e.seq) FROM local_events e "
+                "WHERE e.run_id = local_thread_items.run_id "
+                "AND e.event_type IN ('run.waiting', 'run.completed', 'run.failed', "
+                "'run.canceled', 'run.cleanup_required')"
+                "), 0) WHERE item_type = 'assistant_message' AND run_id IS NOT NULL"
             )
         await conn.execute("DROP INDEX IF EXISTS idx_local_thread_items_order")
         await conn.execute(
@@ -2619,7 +2633,7 @@ class LocalStore:
                 "category": "execution_lease_expired",
                 "cleanup": {"status": "unconfirmed"},
             }
-            await self._append_event_uncommitted(
+            event = await self._append_event_uncommitted(
                 conn,
                 job["run_id"],
                 "run.cleanup_required",
@@ -2632,6 +2646,7 @@ class LocalStore:
                 run_status="cleanup_required",
                 change_type="run.cleanup_required",
                 payload=cleanup_payload,
+                event_high_watermark=int(event["seq"]),
                 changed_at=now,
             )
 
@@ -2767,6 +2782,7 @@ class LocalStore:
                 run_status="cleanup_required",
                 change_type="run.cleanup_required",
                 payload=payload,
+                event_high_watermark=int(event["seq"]),
                 changed_at=now,
             )
             cursor = await conn.execute(
@@ -2832,6 +2848,7 @@ class LocalStore:
                     run_status="failed",
                     change_type="run.failed",
                     payload=payload,
+                    event_high_watermark=int(event["seq"]),
                     changed_at=now,
                 )
                 await conn.execute(
@@ -2935,6 +2952,7 @@ class LocalStore:
                             "category": "execution_lease_expired",
                             "cleanup": {"status": "unconfirmed"},
                         },
+                        event_high_watermark=int(event["seq"]),
                         changed_at=now,
                     )
                 await conn.commit()
@@ -3799,7 +3817,7 @@ class LocalStore:
             "WHERE id = ?",
             (requested_at, requested_at, run_id),
         )
-        await self._append_event_uncommitted(
+        event = await self._append_event_uncommitted(
             conn,
             run_id,
             "run.canceled",
@@ -3812,6 +3830,7 @@ class LocalStore:
             run_status="canceled",
             change_type="run.canceled",
             payload={},
+            event_high_watermark=int(event["seq"]),
             changed_at=requested_at,
         )
 
@@ -4037,6 +4056,7 @@ class LocalStore:
             )
             runs: list[aiosqlite.Row] = []
             events: list[aiosqlite.Row] = []
+            event_high_watermarks: dict[str, int] = {}
             events_truncated = False
             if run_ids:
                 placeholders = ",".join("?" for _ in run_ids)
@@ -4063,6 +4083,17 @@ class LocalStore:
                 ).fetchall()
                 events_truncated = len(events) > bounded_event_limit
                 events = events[:bounded_event_limit]
+                watermark_rows = await (
+                    await conn.execute(
+                        "SELECT run_id, MAX(event_high_watermark) AS high_watermark "
+                        "FROM local_thread_items "
+                        f"WHERE run_id IN ({placeholders}) GROUP BY run_id",
+                        run_ids,
+                    )
+                ).fetchall()
+                event_high_watermarks = {
+                    str(row["run_id"]): int(row["high_watermark"]) for row in watermark_rows
+                }
             cursor_row = await (
                 await conn.execute(
                     "SELECT COALESCE(MAX(cursor), 0) FROM local_thread_changes "
@@ -4076,6 +4107,7 @@ class LocalStore:
                 "items": [dict(item) for item in page_items],
                 "runs": [dict(run) for run in runs],
                 "events": [dict(event) for event in events],
+                "event_high_watermarks": event_high_watermarks,
                 "cursor": int(cursor_row[0] if cursor_row else 0),
                 "has_more_items": has_more_items,
                 "next_before_position": int(page_items[0]["position"])
@@ -4343,6 +4375,7 @@ class LocalStore:
                 run_status=status,
                 change_type=event_type,
                 payload=payload,
+                event_high_watermark=int(event["seq"]),
                 changed_at=committed_at,
             )
             if execution_lease is not None:
@@ -4362,6 +4395,7 @@ class LocalStore:
         run_status: str,
         change_type: str,
         payload: dict[str, Any],
+        event_high_watermark: int,
         changed_at: str,
     ) -> None:
         run = await (
@@ -4391,11 +4425,13 @@ class LocalStore:
         }[run_status]
         terminal = run_status in _TERMINAL_RUN_STATUSES
         cursor = await conn.execute(
-            "UPDATE local_thread_items SET status = ?, content = ?, version = version + 1, "
-            "updated_at = ?, completed_at = ? WHERE id = ? AND run_id = ?",
+            "UPDATE local_thread_items SET status = ?, content = ?, event_high_watermark = ?, "
+            "version = version + 1, updated_at = ?, completed_at = ? "
+            "WHERE id = ? AND run_id = ?",
             (
                 item_status,
                 content,
+                event_high_watermark,
                 changed_at,
                 changed_at if terminal else None,
                 run["assistant_item_id"],

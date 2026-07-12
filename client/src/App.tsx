@@ -140,6 +140,7 @@ import {
   type LocalRunDiagnostics,
   type LocalRunMetadata,
   type LocalScheduledRun,
+  type LocalStreamHandlers,
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
@@ -2069,7 +2070,7 @@ function AppContent() {
       scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
       const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalRun(run.id, runLocalHostConfig, {
+      await streamLocalMessage(run.id, runLocalHostConfig, assistantMessage, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, context)
@@ -2265,10 +2266,6 @@ function AppContent() {
     const contentBeforeDecision = message.content
     let commandAccepted = false
     message.status = 'streaming'
-    // The resume stream replays the run's full event history from seq 1, so
-    // rebuild the answer from that replay instead of appending onto the text
-    // the user already saw (otherwise the prior stream is shown twice).
-    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
@@ -2314,7 +2311,7 @@ function AppContent() {
           : t('app.notice.permissionDenied'),
         { id: 'permission-decision', duration: 2000 },
       )
-      await streamLocalRun(message.runId, localHostConfig, {
+      await streamLocalMessage(message.runId, localHostConfig, message, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2371,7 +2368,6 @@ function AppContent() {
     const contentBeforeDecision = message.content
     let commandAccepted = false
     message.status = 'streaming'
-    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
@@ -2405,7 +2401,7 @@ function AppContent() {
         setPendingCommandDeliveryVersion((version) => version + 1)
         throw error
       }
-      await streamLocalRun(message.runId, localHostConfig, {
+      await streamLocalMessage(message.runId, localHostConfig, message, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2488,9 +2484,6 @@ function AppContent() {
     const contentBeforeAnswer = message.content
     let commandAccepted = false
     message.status = 'streaming'
-    // Resume replays the full event history; rebuild from the replay rather
-    // than appending onto already-shown text.
-    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
@@ -2525,7 +2518,7 @@ function AppContent() {
         throw error
       }
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
-      await streamLocalRun(message.runId, localHostConfig, {
+      await streamLocalMessage(message.runId, localHostConfig, message, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2590,7 +2583,6 @@ function AppContent() {
     const contentBeforeDecision = message.content
     let commandAccepted = false
     message.status = 'streaming'
-    message.content = ''
     const renderContext = createConversationRenderContext()
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
@@ -2633,7 +2625,7 @@ function AppContent() {
             ? 'app.notice.planModified'
             : 'app.notice.planRejected'
       toast.success(t(noticeKey), { id: 'plan-approval-decision', duration: 2000 })
-      await streamLocalRun(message.runId, localHostConfig, {
+      await streamLocalMessage(message.runId, localHostConfig, message, {
         onEvent: (event) => {
           appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2702,7 +2694,7 @@ function AppContent() {
     try {
       const seenEventIDs = new Set<string>()
       const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalRun(run.id, localHostConfig, {
+      await streamLocalMessage(run.id, localHostConfig, assistantMessage, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -2903,7 +2895,7 @@ function AppContent() {
       scheduleConversationRender(conversation, renderContext)
       const seenEventIDs = new Set<string>()
       const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalRun(run.id, config, {
+      await streamLocalMessage(run.id, config, assistantMessage, {
         onEvent: (event) => {
           appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
           scheduleConversationRender(conversation, renderContext)
@@ -4049,8 +4041,8 @@ function appendLocalRunEvent(
     // calling the tool is just stalling chatter (incl. guardrail-rejected
     // clarification text). Drop it so the message bubble only shows the real
     // answer that streams in after the user responds. This must run on the
-    // resume replay too (the event is "already seen"), otherwise the rebuilt
-    // content keeps the pre-question chatter.
+    // initial delivery too, so the persisted snapshot and later cursor resume
+    // both start from the real post-question answer.
     if (item.type === 'question.asked') {
       message.content = ''
     }
@@ -4126,6 +4118,31 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
     seenEventIDs.add(event.id)
   }
   message.content += delta
+}
+
+function recordLocalEventCursor(message: ChatMessage, event: AgentRunEvent) {
+  if (Number.isSafeInteger(event.seq) && Number(event.seq) >= 0) {
+    message.lastEventSeq = Math.max(message.lastEventSeq ?? 0, Number(event.seq))
+  }
+}
+
+function streamLocalMessage(
+  runID: string,
+  config: LocalHostConfig,
+  message: ChatMessage,
+  handlers: Pick<LocalStreamHandlers, 'onEvent' | 'onDelta'>,
+) {
+  return streamLocalRun(runID, config, {
+    afterSeq: message.lastEventSeq,
+    onEvent: (event) => {
+      recordLocalEventCursor(message, event)
+      handlers.onEvent(event)
+    },
+    onDelta: (delta, event) => {
+      recordLocalEventCursor(message, event)
+      handlers.onDelta(delta, event)
+    },
+  })
 }
 
 function totalCredits(balance: WalletBalance): number {

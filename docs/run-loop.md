@@ -379,6 +379,7 @@
 | 工具对账 | 客户端持久保存 `tool.reconcile` → Runtime 原子结算工具回执、等待候选、事件和命令回执 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 恢复 | 只接受权限、问题、计划审批和工具对账的类型化决定；通用 `/resume` 已删除 | `test_runs_http` / `test_user_ask` |
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
+| 快照与事件恢复 | 助手消息投影原子记录正文覆盖的事件高水位；客户端保存 `lastEventSeq`，SSE 用 `?after=<seq>` 仅回放后续事件 | `test_run_result_commit` / `test_sse_envelope` / `client.test` / `runtimeProjection.test` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
 
 ### Failure recovery contract

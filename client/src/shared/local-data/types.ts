@@ -141,6 +141,8 @@ export interface ChatMessage {
   status: MessageStatus
   requestId?: string
   runId?: string
+  /** Highest Runtime event sequence already reflected in this cache entry. */
+  lastEventSeq?: number
   runOrigin?: 'cloud' | 'local'
   creditsCost?: number
   tokens?: number

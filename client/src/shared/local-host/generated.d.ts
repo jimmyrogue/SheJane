@@ -1761,6 +1761,10 @@ export interface components {
         LocalThreadSnapshot: {
             /** Cursor */
             cursor: number;
+            /** Event High Watermarks */
+            event_high_watermarks?: {
+                [key: string]: number;
+            };
             /** Events */
             events: components["schemas"]["LocalThreadEvent"][];
             /**
@@ -2984,7 +2988,9 @@ export interface operations {
     };
     stream_run_local_v1_runs__run_id__stream_get: {
         parameters: {
-            query?: never;
+            query?: {
+                after?: number;
+            };
             header?: never;
             path: {
                 run_id: string;

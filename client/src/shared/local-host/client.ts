@@ -101,6 +101,7 @@ export interface LocalHostProbe {
 }
 
 export interface LocalStreamHandlers {
+  afterSeq?: number
   onDelta: (content: string, event: AgentRunEvent) => void
   onEvent: (event: AgentRunEvent) => void
 }
@@ -799,6 +800,7 @@ export async function getLocalThreadSnapshot(
     const items = new Map<string, LocalThreadSnapshot['items'][number]>()
     const runs = new Map<string, LocalRun>()
     const events = new Map<string, LocalThreadSnapshot['events'][number]>()
+    const eventHighWatermarks = new Map<string, number>()
     let firstPage: LocalThreadSnapshot | undefined
     let beforePosition: number | undefined
     let eventsTruncated = false
@@ -822,6 +824,9 @@ export async function getLocalThreadSnapshot(
       for (const item of page.items) items.set(item.id, item)
       for (const run of page.runs) runs.set(run.id, run)
       for (const event of page.events ?? []) events.set(event.id, event)
+      for (const [runID, highWatermark] of Object.entries(page.event_high_watermarks ?? {})) {
+        eventHighWatermarks.set(runID, Math.max(eventHighWatermarks.get(runID) ?? 0, highWatermark))
+      }
       eventsTruncated ||= Boolean(page.events_truncated)
       if (!page.has_more_items) {
         return {
@@ -829,6 +834,7 @@ export async function getLocalThreadSnapshot(
           items: [...items.values()].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)),
           runs: [...runs.values()],
           events: [...events.values()],
+          event_high_watermarks: Object.fromEntries(eventHighWatermarks),
           has_more_items: false,
           next_before_position: null,
           events_truncated: eventsTruncated,
@@ -1176,7 +1182,9 @@ export async function streamLocalRun(
   handlers: LocalStreamHandlers,
   fetcher: Fetcher = fetch,
 ): Promise<{ completed: boolean }> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/stream`, {
+  const afterSeq = Math.max(0, Math.floor(handlers.afterSeq ?? 0))
+  const suffix = afterSeq > 0 ? `?after=${afterSeq}` : ''
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs/${encodeURIComponent(runID)}/stream${suffix}`, {
     method: 'GET',
     headers: localHeaders(config, false),
   })

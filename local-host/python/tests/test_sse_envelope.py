@@ -205,3 +205,26 @@ def test_replay_after_run_completion_has_same_envelope(client: TestClient) -> No
     required = {"event_type", "payload", "id", "run_id", "seq", "created_at"}
     for event in events:
         assert required <= set(event.keys()), event
+
+
+def test_stream_replays_only_events_after_the_client_cursor(client: TestClient) -> None:
+    create = client.post(
+        "/local/v1/runs",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json=run_command("cursor replay"),
+    ).json()
+    run_id = create.get("id") or create.get("run", {}).get("id")
+    first_events, _ = _parse_sse(
+        client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text
+    )
+    assert len(first_events) >= 2
+    after = int(first_events[-2]["seq"])
+
+    resumed_events, has_done = _parse_sse(
+        client.get(f"/local/v1/runs/{run_id}/stream?after={after}", headers=HEADERS).text
+    )
+
+    assert has_done
+    assert [event["seq"] for event in resumed_events] == [
+        event["seq"] for event in first_events if int(event["seq"]) > after
+    ]

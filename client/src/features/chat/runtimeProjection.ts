@@ -28,7 +28,14 @@ export function projectRuntimeThread(
   const existingByID = new Map((existing?.messages ?? []).map((message) => [message.id, message]))
   const messages = [...snapshot.items]
     .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))
-    .map((item) => projectRuntimeItem(item, runs.get(item.run_id ?? ''), eventsByRun, existingByID, t))
+    .map((item) => projectRuntimeItem(
+      item,
+      runs.get(item.run_id ?? ''),
+      eventsByRun,
+      snapshot.event_high_watermarks ?? {},
+      existingByID,
+      t,
+    ))
 
   const metadata = objectValue(snapshot.thread.metadata)
   return {
@@ -48,6 +55,7 @@ function projectRuntimeItem(
   item: LocalThreadItem,
   run: LocalRun | undefined,
   eventsByRun: Map<string, AgentRunEvent[]>,
+  eventHighWatermarks: Record<string, number>,
   existingByID: Map<string, ChatMessage>,
   t: Translator,
 ): ChatMessage {
@@ -83,6 +91,9 @@ function projectRuntimeItem(
     createdAt: item.created_at,
     status,
     ...(item.run_id ? { runId: item.run_id, runOrigin: 'local' as const } : {}),
+    ...(item.run_id && eventHighWatermarks[item.run_id] !== undefined
+      ? { lastEventSeq: Math.max(existing?.lastEventSeq ?? 0, eventHighWatermarks[item.run_id]) }
+      : {}),
     ...(run?.command_id ? { commandId: run.command_id } : {}),
     ...(agentEvents.length ? { agentEvents } : {}),
   }

@@ -278,6 +278,7 @@ class LocalThreadSnapshot(BaseModel):
     items: list[LocalThreadItem]
     runs: list[LocalRun]
     events: list[LocalThreadEvent]
+    event_high_watermarks: dict[str, int] = Field(default_factory=dict)
     cursor: int
     has_more_items: bool = False
     next_before_position: int | None = None

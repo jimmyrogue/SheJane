@@ -69,6 +69,7 @@ describe('Runtime thread projection', () => {
         payload: { final_text: 'Done' },
         created_at: '2026-07-12T00:00:02Z',
       }],
+      event_high_watermarks: { 'run-1': 9 },
       cursor: 2,
       has_more_items: false,
       events_truncated: false,
@@ -91,8 +92,73 @@ describe('Runtime thread projection', () => {
         status: 'done',
         runId: 'run-1',
         commandId: 'cmd-1',
+        lastEventSeq: 9,
         agentEvents: [{ type: 'run.completed' }],
       },
     ])
+  })
+
+  it('does not move a live client cursor backwards when an older snapshot arrives', () => {
+    const snapshot: LocalThreadSnapshot = {
+      thread: {
+        id: 'conversation-live',
+        title: 'Live',
+        metadata: {},
+        version: 1,
+        created_at: '2026-07-12T00:00:00Z',
+        updated_at: '2026-07-12T00:00:01Z',
+      },
+      items: [{
+        id: 'assistant-live',
+        thread_id: 'conversation-live',
+        run_id: 'run-live',
+        client_id: 'assistant-live-client',
+        item_type: 'assistant_message',
+        status: 'in_progress',
+        content: '',
+        metadata: {},
+        position: 1,
+        version: 1,
+        created_at: '2026-07-12T00:00:00Z',
+        updated_at: '2026-07-12T00:00:01Z',
+      }],
+      runs: [{
+        id: 'run-live',
+        goal: 'Live',
+        status: 'running',
+        thread_id: 'conversation-live',
+        history_json: '[]',
+        settings_json: '{}',
+        metadata_json: '{}',
+        created_at: '2026-07-12T00:00:00Z',
+        updated_at: '2026-07-12T00:00:01Z',
+      }],
+      events: [],
+      event_high_watermarks: { 'run-live': 0 },
+      cursor: 1,
+      has_more_items: false,
+      events_truncated: false,
+    }
+    const existing = {
+      id: 'conversation-live',
+      title: 'Live',
+      archived: false,
+      createdAt: '2026-07-12T00:00:00Z',
+      updatedAt: '2026-07-12T00:00:01Z',
+      messages: [{
+        id: 'assistant-live-client',
+        role: 'assistant' as const,
+        content: 'newer live text',
+        createdAt: '2026-07-12T00:00:00Z',
+        status: 'streaming' as const,
+        runId: 'run-live',
+        runOrigin: 'local' as const,
+        lastEventSeq: 8,
+      }],
+    }
+
+    const conversation = projectRuntimeThread(snapshot, existing)
+
+    expect(conversation.messages[0]?.lastEventSeq).toBe(8)
   })
 })

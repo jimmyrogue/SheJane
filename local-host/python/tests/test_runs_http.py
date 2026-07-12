@@ -992,6 +992,7 @@ def test_runtime_thread_snapshot_and_change_cursor_are_authoritative(client: Tes
     user = next(item for item in snapshot.json()["items"] if item["item_type"] == "user_message")
     assert user["content"] == "visible inspect"
     assert snapshot.json()["runs"][0]["id"] == run["id"]
+    assert snapshot.json()["event_high_watermarks"] == {run["id"]: 1}
     assert [change["change_type"] for change in changes.json()["changes"]] == [
         "turn.started",
         "run.completed",

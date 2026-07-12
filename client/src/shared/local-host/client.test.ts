@@ -1241,6 +1241,27 @@ describe('desktop local host client', () => {
     expect(content).toBe('完成')
   })
 
+  it('resumes a local run stream after the last projected event sequence', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+    )
+
+    await streamLocalRun(
+      'run-local',
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      { afterSeq: 17, onEvent: () => undefined, onDelta: () => undefined },
+      fetcher,
+    )
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/runs/run-local/stream?after=17',
+      expect.anything(),
+    )
+  })
+
   it('reads artifacts through the protected API', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(

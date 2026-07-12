@@ -120,6 +120,146 @@ async def test_result_transaction_finalizes_runtime_thread_projection(tmp_path: 
         await store.close()
 
 
+async def test_waiting_projection_records_the_event_watermark_covered_by_its_draft(
+    tmp_path: Path,
+) -> None:
+    store = await _open_store(tmp_path)
+    try:
+        run, _created = await store.accept_run_command(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_waiting_projection",
+            client_message_id="msg_waiting_user",
+            assistant_message_id="msg_waiting_assistant",
+            thread_id="thread_waiting_projection",
+            user_input="ask before continuing",
+            command_payload={"type": "run.start"},
+            goal="ask before continuing",
+            workspace_path=None,
+            mode="auto",
+        )
+        await store.append_event(run["id"], "llm.delta", {"content": "draft answer"})
+        await store.update_assistant_draft(
+            run_id=run["id"],
+            message_key="assistant-waiting-v1",
+            content="draft answer",
+            tool_calls=[],
+        )
+        job = await store.claim_run_job(worker_id="worker-waiting-projection")
+        assert job is not None
+        with store.bind_execution_lease(
+            job_id=job["id"],
+            run_id=run["id"],
+            lease_owner="worker-waiting-projection",
+            lease_generation=int(job["lease_generation"]),
+        ):
+            wait_event, created = await store.commit_run_result(
+                run["id"],
+                status="waiting_input",
+                event_type="run.waiting",
+                payload={"question_id": "question-1"},
+            )
+
+        assert created is True
+        snapshot = await store.get_thread_snapshot(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            thread_id="thread_waiting_projection",
+        )
+        assert snapshot is not None
+        assistant = next(
+            item
+            for item in snapshot["items"]
+            if item["run_id"] == run["id"] and item["item_type"] == "assistant_message"
+        )
+        assert assistant["content"] == "draft answer"
+        assert snapshot["event_high_watermarks"] == {run["id"]: wait_event["seq"]}
+        assert [
+            event["event_type"]
+            for event in await store.events_since(
+                run["id"],
+                after_seq=snapshot["event_high_watermarks"][run["id"]],
+            )
+        ] == []
+    finally:
+        await store.close()
+
+
+async def test_open_backfills_resumed_projection_watermark_from_legacy_events(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "legacy-waiting-watermark.db"
+    store = await LocalStore.open(db_path)
+    run, _created = await store.accept_run_command(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        command_id="cmd_legacy_waiting_projection",
+        client_message_id="msg_legacy_waiting_user",
+        assistant_message_id="msg_legacy_waiting_assistant",
+        thread_id="thread_legacy_waiting_projection",
+        user_input="legacy question",
+        command_payload={"type": "run.start"},
+        goal="legacy question",
+        workspace_path=None,
+        mode="auto",
+    )
+    await store.append_event(run["id"], "llm.delta", {"content": "legacy draft"})
+    await store.update_assistant_draft(
+        run_id=run["id"],
+        message_key="assistant-legacy-waiting-v1",
+        content="legacy draft",
+        tool_calls=[],
+    )
+    job = await store.claim_run_job(worker_id="worker-legacy-waiting")
+    assert job is not None
+    with store.bind_execution_lease(
+        job_id=job["id"],
+        run_id=run["id"],
+        lease_owner="worker-legacy-waiting",
+        lease_generation=int(job["lease_generation"]),
+    ):
+        wait_event, _created = await store.commit_run_result(
+            run["id"],
+            status="waiting_input",
+            event_type="run.waiting",
+            payload={"question_id": "legacy-question-1"},
+        )
+    await store._conn.execute(
+        "UPDATE local_runs SET status = 'running' WHERE id = ?",
+        (run["id"],),
+    )
+    await store._conn.commit()
+    await store.close()
+
+    import aiosqlite
+
+    conn = await aiosqlite.connect(str(db_path))
+    await conn.execute("ALTER TABLE local_thread_items DROP COLUMN event_high_watermark")
+    await conn.commit()
+    await conn.close()
+
+    reopened = await LocalStore.open(db_path)
+    try:
+        snapshot = await reopened.get_thread_snapshot(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            thread_id="thread_legacy_waiting_projection",
+        )
+        assert snapshot is not None
+        assistant = next(
+            item
+            for item in snapshot["items"]
+            if item["run_id"] == run["id"] and item["item_type"] == "assistant_message"
+        )
+        assert assistant["content"] == "legacy draft"
+        assert snapshot["event_high_watermarks"] == {run["id"]: wait_event["seq"]}
+        assert (
+            await reopened.events_since(
+                run["id"],
+                after_seq=snapshot["event_high_watermarks"][run["id"]],
+            )
+            == []
+        )
+    finally:
+        await reopened.close()
+
+
 async def test_runtime_thread_pages_are_bounded_and_version_consistent(tmp_path: Path) -> None:
     store = await _open_store(tmp_path)
     try:
@@ -163,6 +303,7 @@ async def test_runtime_thread_pages_are_bounded_and_version_consistent(tmp_path:
         assert newest["has_more_items"] is True
         assert newest["next_before_position"] == 3
         assert newest["events_truncated"] is True
+        assert newest["event_high_watermarks"][run["id"]] == 2
 
         oldest = await store.get_thread_snapshot(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,

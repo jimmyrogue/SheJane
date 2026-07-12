@@ -2694,6 +2694,13 @@
             "title": "Cursor",
             "type": "integer"
           },
+          "event_high_watermarks": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Event High Watermarks",
+            "type": "object"
+          },
           "events": {
             "items": {
               "$ref": "#/components/schemas/LocalThreadEvent"
@@ -4774,6 +4781,17 @@
             "schema": {
               "title": "Run Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
             }
           }
         ],
