@@ -2230,13 +2230,8 @@ def test_cancel_unknown_run_returns_not_found(client: TestClient) -> None:
     assert r.status_code == 404
 
 
-def test_resume_unknown_run_returns_not_found(client: TestClient) -> None:
-    r = client.post(
-        "/local/v1/runs/run_nope/resume",
-        headers={"Authorization": "Bearer tok"},
-        json={"action": "approve"},
-    )
-    assert r.status_code == 404
+def test_untyped_resume_route_is_not_exposed(client: TestClient) -> None:
+    assert "/local/v1/runs/{run_id}/resume" not in client.app.openapi()["paths"]
 
 
 def test_multi_permission_batch_waits_for_all_decisions_before_resume(

@@ -76,7 +76,6 @@ from .api_schemas import (
     ReconcileToolRequest,
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
-    ResumeRunResponse,
     RuntimeInfo,
     SetCloudSessionRequest,
     SkillDeleteResponse,
@@ -1323,27 +1322,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="run is not active")
         record = await store.create_steering_instruction(run_id=run_id, content=content)
         return {"run_id": run_id, "instruction_id": record["id"], "queued": True}
-
-    @app.post("/local/v1/runs/{run_id}/resume", response_model=ResumeRunResponse)
-    async def resume_run(request: Request, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        run = await _owned_run(
-            app.state.store,
-            principal_id=request.state.principal_id,
-            run_id=run_id,
-        )
-        await _authorized_workspace_path(
-            app.state.store,
-            principal_id=request.state.principal_id,
-            path=run.get("workspace_path"),
-        )
-        # An untyped resume body can bypass permission/question validation and
-        # cannot be made safely idempotent. Every supported wait candidate has
-        # a dedicated endpoint that first persists and validates its decision.
-        del body
-        raise HTTPException(
-            status_code=409,
-            detail="resolve the pending permission or question through its typed endpoint",
-        )
 
     # ---- compatibility shims the client expects (pre-existing Node API) ----
     #

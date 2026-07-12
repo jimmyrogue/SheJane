@@ -827,10 +827,6 @@ class CancelRunCommandReceipt(BaseModel):
     canceled: bool
 
 
-class ResumeRunResponse(BaseModel):
-    resumed: Literal[True] = True
-
-
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------

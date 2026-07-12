@@ -428,23 +428,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/local/v1/runs/{run_id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resume Run */
-        post: operations["resume_run_local_v1_runs__run_id__resume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/local/v1/runs/{run_id}/stream": {
         parameters: {
             query?: never;
@@ -1979,15 +1962,6 @@ export interface components {
             /** Instructions */
             instructions?: string | null;
         };
-        /** ResumeRunResponse */
-        ResumeRunResponse: {
-            /**
-             * Resumed
-             * @default true
-             * @constant
-             */
-            resumed: true;
-        };
         /**
          * RuntimeInfo
          * @description Authenticated Runtime protocol and capability discovery.
@@ -2805,43 +2779,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InjectRunInstructionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    resume_run_local_v1_runs__run_id__resume_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResumeRunResponse"];
                 };
             };
             /** @description Validation Error */

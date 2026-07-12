@@ -3125,18 +3125,6 @@
         "title": "ResolvePlanApprovalRequest",
         "type": "object"
       },
-      "ResumeRunResponse": {
-        "properties": {
-          "resumed": {
-            "const": true,
-            "default": true,
-            "title": "Resumed",
-            "type": "boolean"
-          }
-        },
-        "title": "ResumeRunResponse",
-        "type": "object"
-      },
       "RuntimeInfo": {
         "description": "Authenticated Runtime protocol and capability discovery.",
         "properties": {
@@ -4319,57 +4307,6 @@
           }
         },
         "summary": "Inject Run Instruction"
-      }
-    },
-    "/local/v1/runs/{run_id}/resume": {
-      "post": {
-        "operationId": "resume_run_local_v1_runs__run_id__resume_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "run_id",
-            "required": true,
-            "schema": {
-              "title": "Run Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResumeRunResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Resume Run"
       }
     },
     "/local/v1/runs/{run_id}/stream": {

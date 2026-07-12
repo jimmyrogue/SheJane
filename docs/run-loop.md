@@ -61,9 +61,9 @@
   │       │queued│──▶┌───────┐──┬──▶┌──────────────────┐                            │
   │       └──────┘   │running│  │   │waiting_permission│──┐                          │
   │                  │       │  │   └──────────────────┘  │                          │
-  │                  │       │  │   ┌──────────────────┐  │ POST /resume             │
-  │                  │       │  ├──▶│waiting_input     │──┤ 或 /permissions/:id      │
-  │                  │       │  │   └──────────────────┘  │  Command(resume=)        │
+  │                  │       │  │   ┌──────────────────┐  │ 权限 / 问题决定          │
+  │                  │       │  ├──▶│waiting_input     │──┤ 计划审批 / 工具对账      │
+  │                  │       │  │   └──────────────────┘  │ 校验后创建恢复作业       │
   │                  │       │  ├──▶canceled              │                          │
   │                  │       │  ├──▶failed                │                          │
   │                  │       │  └──▶completed             │                          │
@@ -355,7 +355,7 @@
 | Cloud Tool Gateway 网关层退避 | `web.search` / `image.*` / `pdf.inspect` / `code.execute` 的 gateway transport error 和非 JSON 瞬态 HTTP 响应（429/500/502/503/504）通过统一 retry decision 做有界指数退避，复用 idempotency key；结构化 tool result envelope 缺省 `retryable:false`，只有显式 `retryable:true` 且通过共享 failure policy 才进入工具结果重试 | `test_web_search_tool` / `test_image_tool` / `test_tools_code` / `test_tools_pdf` |
 | **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` ✅ **p50 24.8ms** |
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
-| Resume | POST /resume → Command(resume=) | `test_runs_http` |
+| 恢复 | 只接受权限、问题、计划审批和工具对账的类型化决定；通用 `/resume` 已删除 | `test_runs_http` / `test_user_ask` |
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
 
