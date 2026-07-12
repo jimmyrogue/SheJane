@@ -26,6 +26,7 @@ streamed text. We lock that shape here so it can't regress silently.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -228,3 +229,53 @@ def test_stream_replays_only_events_after_the_client_cursor(client: TestClient) 
     assert [event["seq"] for event in resumed_events] == [
         event["seq"] for event in first_events if int(event["seq"]) > after
     ]
+
+
+def test_stream_rejects_a_cursor_beyond_the_run_event_window(client: TestClient) -> None:
+    create = client.post(
+        "/local/v1/runs",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json=run_command("invalid cursor"),
+    ).json()
+    run_id = create.get("id") or create.get("run", {}).get("id")
+    events, _ = _parse_sse(client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text)
+    latest_seq = int(events[-1]["seq"])
+
+    response = client.get(
+        f"/local/v1/runs/{run_id}/stream?after={latest_seq + 1}",
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "event_cursor_reset_required",
+        "message": "event cursor is outside the retained event window",
+        "requested_after": latest_seq + 1,
+        "first_available_seq": 1,
+        "latest_seq": latest_seq,
+    }
+
+
+def test_stream_rejects_a_cursor_behind_the_retained_event_window(client: TestClient) -> None:
+    create = client.post(
+        "/local/v1/runs",
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json=run_command("expired cursor"),
+    ).json()
+    run_id = create.get("id") or create.get("run", {}).get("id")
+    events, _ = _parse_sse(client.get(f"/local/v1/runs/{run_id}/stream", headers=HEADERS).text)
+    assert len(events) >= 3
+    store = client.app.state.store
+    asyncio.run(
+        store._conn.execute("DELETE FROM local_events WHERE run_id = ? AND seq <= 2", (run_id,))
+    )
+    asyncio.run(store._conn.commit())
+
+    response = client.get(
+        f"/local/v1/runs/{run_id}/stream?after=0",
+        headers=HEADERS,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "event_cursor_reset_required"
+    assert response.json()["detail"]["first_available_seq"] == 3

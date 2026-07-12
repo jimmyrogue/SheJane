@@ -1217,6 +1217,86 @@ describe('user client shell', () => {
     })
   })
 
+  it('rebuilds from the Runtime snapshot when a local stream cursor is invalid', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-cursor-reset',
+      title: '游标恢复',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'cursor-user', role: 'user', content: '继续任务', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'cursor-assistant',
+          role: 'assistant',
+          content: '损坏的本地正文',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_permission',
+          runId: 'local-run',
+          lastEventSeq: 99,
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'permission.required',
+            label: '需要权限：运行命令',
+            permissionRequestId: 'cursor-permission',
+            permissionTool: '运行命令',
+            permissionToolName: 'execute',
+            permissionArguments: { command: 'make test' },
+          }],
+        },
+      ],
+    })
+    const now = '2026-05-10T00:00:02.000Z'
+    const calls = mockFetch('user', {
+      localRunStreamResponses: [
+        new Response(JSON.stringify({
+          detail: {
+            code: 'event_cursor_reset_required',
+            message: 'event cursor is outside the retained event window',
+            first_available_seq: 1,
+            latest_seq: 8,
+          },
+        }), { status: 409, headers: { 'Content-Type': 'application/json' } }),
+        agentSSE([
+          { id: 'cursor-event-11', seq: 11, event_type: 'llm.delta', payload: { content: '，继续完成' } },
+          { id: 'cursor-event-12', seq: 12, event_type: 'run.completed', payload: { final_text: '快照正文，继续完成' } },
+        ], 'local-run'),
+      ],
+      runtimeThreadSnapshots: {
+        'conv-cursor-reset': {
+          thread: { id: 'conv-cursor-reset', title: '游标恢复', metadata: {}, version: 2, created_at: now, updated_at: now },
+          items: [
+            { id: 'runtime-user', thread_id: 'conv-cursor-reset', run_id: 'local-run', client_id: 'cursor-user', item_type: 'user_message', status: 'completed', content: '继续任务', metadata: {}, position: 1, version: 1, created_at: now, updated_at: now },
+            { id: 'runtime-assistant', thread_id: 'conv-cursor-reset', run_id: 'local-run', client_id: 'cursor-assistant', item_type: 'assistant_message', status: 'in_progress', content: '快照正文', metadata: {}, position: 2, version: 2, created_at: now, updated_at: now },
+          ],
+          runs: [{ id: 'local-run', goal: '继续任务', status: 'running', thread_id: 'conv-cursor-reset', history_json: '[]', settings_json: '{}', metadata_json: '{}', created_at: now, updated_at: now }],
+          events: [],
+          event_high_watermarks: { 'local-run': 10 },
+          cursor: 2,
+          has_more_items: false,
+          events_truncated: false,
+        },
+      },
+    })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    fireEvent.click(await screen.findByText('允许一次'))
+
+    await waitFor(() => expect(calls.some((call) =>
+      call.url === 'http://127.0.0.1:17371/local/v1/runs/local-run/stream?after=10',
+    )).toBe(true))
+    await waitFor(async () => {
+      const assistant = (await localData.get('conv-cursor-reset'))?.messages.at(-1)
+      expect(assistant?.content).toBe('快照正文，继续完成')
+      expect(assistant?.lastEventSeq).toBe(12)
+    })
+  })
+
   it('fires a desktop notification when a local run fails', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
@@ -2958,6 +3038,7 @@ function mockFetch(
 	    }>
 	    agentStream?: DeferredAgentStream
 	    localRunStream?: DeferredAgentStream
+	    localRunStreamResponses?: Response[]
 	    localThreadTerminal?: { content: string; status: 'completed' | 'failed'; eventType: 'run.completed' | 'run.failed' }
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
 	    localRunCreateFailures?: number
@@ -2979,6 +3060,7 @@ function mockFetch(
 	  const localRuns = options.localRuns ?? []
 	  const localSchedules = options.localSchedules ?? []
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
+	  const localRunStreamResponses = [...(options.localRunStreamResponses ?? [])]
 	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
 	  let localRunForkFailures = options.localRunForkFailures ?? 0
 	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
@@ -3302,6 +3384,8 @@ function mockFetch(
       return new Response(JSON.stringify({ workspaces }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.startsWith('http://127.0.0.1:17371/local/v1/runs/local-run/stream')) {
+      const response = localRunStreamResponses.shift()
+      if (response) return response
       if (options.localRunStream) {
         return options.localRunStream.response()
       }
@@ -3682,7 +3766,7 @@ function sseResponse(content: string): Response {
   })
 }
 
-function agentSSE(events: Array<{ id?: string; event_type: string; payload: Record<string, unknown> }>, runID = 'run-doc'): Response {
+function agentSSE(events: Array<{ id?: string; seq?: number; event_type: string; payload: Record<string, unknown> }>, runID = 'run-doc'): Response {
   const body = `${events
     .map((event, index) => `event: agent.event\ndata: ${JSON.stringify({ id: event.id ?? `event-${index}`, run_id: runID, seq: index + 1, created_at: '2026-05-10T00:00:00Z', ...event })}`)
     .join('\n\n')}\n\ndata: [DONE]\n\n`

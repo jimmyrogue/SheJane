@@ -1,6 +1,6 @@
 # Client ⇄ local-host SSE 协议
 
-> 本文只记录当前实现，不是目标运行时协议。共享事件队列已经删除；线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复独立游标。目标 P4 尚未完成的无效/过期游标重同步，以及持久状态与临时增量分层，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把 `[DONE]` 或逐字持久化当成目标设计。
+> 本文只记录当前实现，不是目标运行时协议。共享事件队列已经删除；线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复独立游标。游标超出保留窗口时，Runtime 要求客户端重新读取权威快照。目标 P4 尚未完成的是持久状态与临时增量分层，见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 和 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。修复时不得把 `[DONE]` 或逐字持久化当成目标设计。
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
@@ -233,6 +233,7 @@ Runtime 的线程快照是界面事实来源：
 - 助手消息投影在写入正文时原子记录它已覆盖的事件序号；线程快照返回这个安全高水位，客户端把该序号保存到可丢弃缓存。
 - `GET /local/v1/threads/changes?after=<cursor>` 用于发现其他客户端或后台任务提交的变化。
 - `GET /local/v1/runs/{run_id}/stream?after=<seq>` 只回放更大的事件序号，并在 SSE `id` 字段携带序号。SSE 提供低延迟增量，不承担最终一致性。
+- 如果 `after` 大于最新序号，或落在已删除事件形成的缺口之前，Runtime 返回 `409 event_cursor_reset_required`。客户端重新读取完整线程快照，再从快照高水位与首个保留序号前一位中的较大值继续订阅。当前版本尚未主动裁剪事件，但该检查同时覆盖数据库恢复或未来保留策略造成的窗口变化。
 - 正文消息可以完整分页；过程事件只是辅助时间线，达到上限时返回截断标记。
 
 1. **加性兼容**：新增 event_type 不破坏老客户端。Switch 用 fall-through default 忽略未知 type。

@@ -1496,11 +1496,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         run_id: str,
         after: int = Query(default=0, ge=0),
     ) -> EventSourceResponse:
+        store: LocalStore = app.state.store
         await _owned_run(
-            app.state.store,
+            store,
             principal_id=request.state.principal_id,
             run_id=run_id,
         )
+        first_seq, latest_seq = await store.event_sequence_window(run_id)
+        if after > latest_seq or (first_seq is not None and after < first_seq - 1):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "event_cursor_reset_required",
+                    "message": "event cursor is outside the retained event window",
+                    "requested_after": after,
+                    "first_available_seq": first_seq,
+                    "latest_seq": latest_seq,
+                },
+            )
         coordinator: RunCoordinator = app.state.coordinator
 
         async def gen():

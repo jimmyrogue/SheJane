@@ -106,6 +106,17 @@ export interface LocalStreamHandlers {
   onEvent: (event: AgentRunEvent) => void
 }
 
+export class LocalStreamCursorResetRequiredError extends Error {
+  override name = 'LocalStreamCursorResetRequiredError'
+
+  constructor(
+    message: string,
+    readonly resumeAfter: number,
+  ) {
+    super(message)
+  }
+}
+
 type Fetcher = typeof fetch
 export const LOCAL_RUNTIME_PROTOCOL_VERSION = 1
 
@@ -1189,7 +1200,14 @@ export async function streamLocalRun(
     headers: localHeaders(config, false),
   })
   if (!response.ok || !response.body) {
-    throw new Error(await localErrorMessage(response))
+    const error = await localResponseError(response)
+    if (error.code === 'event_cursor_reset_required') {
+      throw new LocalStreamCursorResetRequiredError(
+        error.message,
+        error.resumeAfter ?? 0,
+      )
+    }
+    throw new Error(error.message)
   }
   const result = await streamAgentSSE(response, {
     onEvent: (event) => handlers.onEvent(event),
@@ -1275,6 +1293,14 @@ async function decodeLocalResponse<T>(response: Response): Promise<T> {
 }
 
 async function localErrorMessage(response: Response): Promise<string> {
+  return (await localResponseError(response)).message
+}
+
+async function localResponseError(response: Response): Promise<{
+  message: string
+  code?: string
+  resumeAfter?: number
+}> {
   try {
     // FastAPI's `HTTPException(detail=...)` puts the message in `detail`;
     // some daemon routes use `{error}` or `{message}`. Accept all three —
@@ -1282,12 +1308,23 @@ async function localErrorMessage(response: Response): Promise<string> {
     // failure and the actual reason ("goal required", "permission not
     // found", etc.) gets lost.
     const body = (await response.json()) as {
-      detail?: string
+      detail?: string | {
+        code?: string
+        message?: string
+        first_available_seq?: number | null
+      }
       error?: string
       message?: string
     }
-    return body.message || body.error || body.detail || `Local Host HTTP ${response.status}`
+    const detail = typeof body.detail === 'object' ? body.detail : undefined
+    return {
+      message: body.message || body.error || detail?.message || (typeof body.detail === 'string' ? body.detail : '') || `Local Host HTTP ${response.status}`,
+      ...(detail?.code ? { code: detail.code } : {}),
+      ...(typeof detail?.first_available_seq === 'number'
+        ? { resumeAfter: Math.max(0, detail.first_available_seq - 1) }
+        : {}),
+    }
   } catch {
-    return `Local Host HTTP ${response.status}`
+    return { message: `Local Host HTTP ${response.status}` }
   }
 }

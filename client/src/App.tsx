@@ -105,6 +105,7 @@ import {
   listLocalRuntimeModels,
   listLocalSchedules,
   listMcpServers,
+  LocalStreamCursorResetRequiredError,
   markLocalScheduleNotified,
   injectLocalRunInstruction,
   probeLocalHost,
@@ -140,7 +141,6 @@ import {
   type LocalRunDiagnostics,
   type LocalRunMetadata,
   type LocalScheduledRun,
-  type LocalStreamHandlers,
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
@@ -2068,18 +2068,15 @@ function AppContent() {
       if (!keepConversation) return conversation
       setLocalRuns((items) => upsertLocalRun(items, run))
       scheduleConversationRender(conversation, context)
-      const seenEventIDs = new Set<string>()
-      const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalMessage(run.id, runLocalHostConfig, assistantMessage, {
-        onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, context)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, context)
-        },
-      })
+      await streamLocalMessage(
+        run.id,
+        runLocalHostConfig,
+        conversation,
+        assistantMessage,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, context),
+      )
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, context)
       // OS-level notification when the user has switched away — the
@@ -2267,8 +2264,6 @@ function AppContent() {
     let commandAccepted = false
     message.status = 'streaming'
     const renderContext = createConversationRenderContext()
-    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
-    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       const existing = (await localData.listPendingRuntimeCommands()).find(
         (command): command is PendingPermissionResolveCommand =>
@@ -2311,16 +2306,15 @@ function AppContent() {
           : t('app.notice.permissionDenied'),
         { id: 'permission-decision', duration: 2000 },
       )
-      await streamLocalMessage(message.runId, localHostConfig, message, {
-        onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(message, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        message.runId,
+        localHostConfig,
+        conversation,
+        message,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
@@ -2369,8 +2363,6 @@ function AppContent() {
     let commandAccepted = false
     message.status = 'streaming'
     const renderContext = createConversationRenderContext()
-    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
-    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       const existing = (await localData.listPendingRuntimeCommands()).find(
         (command): command is PendingToolReconcileCommand =>
@@ -2401,16 +2393,15 @@ function AppContent() {
         setPendingCommandDeliveryVersion((version) => version + 1)
         throw error
       }
-      await streamLocalMessage(message.runId, localHostConfig, message, {
-        onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(message, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        message.runId,
+        localHostConfig,
+        conversation,
+        message,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
@@ -2485,8 +2476,6 @@ function AppContent() {
     let commandAccepted = false
     message.status = 'streaming'
     const renderContext = createConversationRenderContext()
-    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
-    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       const existing = (await localData.listPendingRuntimeCommands()).find(
         (command): command is PendingQuestionAnswerCommand =>
@@ -2518,16 +2507,15 @@ function AppContent() {
         throw error
       }
       toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
-      await streamLocalMessage(message.runId, localHostConfig, message, {
-        onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(message, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        message.runId,
+        localHostConfig,
+        conversation,
+        message,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
@@ -2584,8 +2572,6 @@ function AppContent() {
     let commandAccepted = false
     message.status = 'streaming'
     const renderContext = createConversationRenderContext()
-    const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
-    const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
       const existing = (await localData.listPendingRuntimeCommands()).find(
         (command): command is PendingPlanResolveCommand =>
@@ -2625,16 +2611,15 @@ function AppContent() {
             ? 'app.notice.planModified'
             : 'app.notice.planRejected'
       toast.success(t(noticeKey), { id: 'plan-approval-decision', duration: 2000 })
-      await streamLocalMessage(message.runId, localHostConfig, message, {
-        onEvent: (event) => {
-          appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(message, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        message.runId,
+        localHostConfig,
+        conversation,
+        message,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
@@ -2692,18 +2677,15 @@ function AppContent() {
     scheduleConversationRender(conversation, renderContext)
     setNotice('')
     try {
-      const seenEventIDs = new Set<string>()
-      const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalMessage(run.id, localHostConfig, assistantMessage, {
-        onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        run.id,
+        localHostConfig,
+        conversation,
+        assistantMessage,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, renderContext)
       const freshRuns = await listLocalRuns(localHostConfig)
@@ -2893,18 +2875,15 @@ function AppContent() {
 
       const renderContext = createConversationRenderContext()
       scheduleConversationRender(conversation, renderContext)
-      const seenEventIDs = new Set<string>()
-      const toolArgsByCallId: ToolArgsByCallId = new Map()
-      await streamLocalMessage(run.id, config, assistantMessage, {
-        onEvent: (event) => {
-          appendLocalRunEvent(assistantMessage, event, seenEventIDs, toolArgsByCallId, t, openOfficeDocument)
-          scheduleConversationRender(conversation, renderContext)
-        },
-        onDelta: (delta, event) => {
-          appendLocalDelta(assistantMessage, delta, event, seenEventIDs)
-          scheduleConversationRender(conversation, renderContext)
-        },
-      })
+      await streamLocalMessage(
+        run.id,
+        config,
+        conversation,
+        assistantMessage,
+        t,
+        openOfficeDocument,
+        () => scheduleConversationRender(conversation, renderContext),
+      )
       finalizeLocalRunStatus(assistantMessage)
       scheduleConversationRender(conversation, renderContext)
       try {
@@ -4126,23 +4105,57 @@ function recordLocalEventCursor(message: ChatMessage, event: AgentRunEvent) {
   }
 }
 
-function streamLocalMessage(
+async function streamLocalMessage(
   runID: string,
   config: LocalHostConfig,
+  conversation: Conversation,
   message: ChatMessage,
-  handlers: Pick<LocalStreamHandlers, 'onEvent' | 'onDelta'>,
+  t: Translator,
+  onOfficeFileOpened: (ref: LocalOfficeFileRef) => void,
+  onUpdate: () => void,
 ) {
-  return streamLocalRun(runID, config, {
+  let seenEventIDs = new Set(
+    (message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[],
+  )
+  const toolArgsByCallId: ToolArgsByCallId = new Map()
+  const subscribe = () => streamLocalRun(runID, config, {
     afterSeq: message.lastEventSeq,
     onEvent: (event) => {
       recordLocalEventCursor(message, event)
-      handlers.onEvent(event)
+      appendLocalRunEvent(message, event, seenEventIDs, toolArgsByCallId, t, onOfficeFileOpened)
+      onUpdate()
     },
     onDelta: (delta, event) => {
       recordLocalEventCursor(message, event)
-      handlers.onDelta(delta, event)
+      appendLocalDelta(message, delta, event, seenEventIDs)
+      onUpdate()
     },
   })
+
+  try {
+    return await subscribe()
+  } catch (error) {
+    if (!(error instanceof LocalStreamCursorResetRequiredError)) throw error
+    const rebuilt = projectRuntimeThread(
+      await getLocalThreadSnapshot(conversation.id, config),
+      undefined,
+      t,
+    )
+    const projectedMessage = rebuilt.messages.find((item) => item.runId === runID)
+    if (!projectedMessage) throw error
+    for (const key of Object.keys(message)) Reflect.deleteProperty(message, key)
+    Object.assign(message, projectedMessage)
+    message.lastEventSeq = Math.max(message.lastEventSeq ?? 0, error.resumeAfter)
+    rebuilt.messages = rebuilt.messages.map((item) => item.id === projectedMessage.id ? message : item)
+    for (const key of Object.keys(conversation)) Reflect.deleteProperty(conversation, key)
+    Object.assign(conversation, rebuilt)
+    seenEventIDs = new Set(
+      (message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[],
+    )
+    toolArgsByCallId.clear()
+    onUpdate()
+    return subscribe()
+  }
 }
 
 function totalCredits(balance: WalletBalance): number {

@@ -36,6 +36,7 @@ import {
   setLocalCloudSession,
   clearLocalCloudSession,
   forkLocalRun,
+  LocalStreamCursorResetRequiredError,
   streamLocalRun,
   injectLocalRunInstruction,
   resolveLocalPlanCommand,
@@ -1260,6 +1261,33 @@ describe('desktop local host client', () => {
       'http://127.0.0.1:17371/local/v1/runs/run-local/stream?after=17',
       expect.anything(),
     )
+  })
+
+  it('signals that the caller must rebuild from a Runtime snapshot when the cursor is invalid', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        detail: {
+          code: 'event_cursor_reset_required',
+          message: 'event cursor is outside the retained event window',
+          requested_after: 99,
+          first_available_seq: 4,
+          latest_seq: 8,
+        },
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    await expect(streamLocalRun(
+      'run-local',
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      { afterSeq: 99, onEvent: () => undefined, onDelta: () => undefined },
+      fetcher,
+    )).rejects.toMatchObject({
+      name: LocalStreamCursorResetRequiredError.name,
+      resumeAfter: 3,
+    })
   })
 
   it('reads artifacts through the protected API', async () => {

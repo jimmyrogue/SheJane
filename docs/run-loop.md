@@ -380,6 +380,7 @@
 | 恢复 | 只接受权限、问题、计划审批和工具对账的类型化决定；通用 `/resume` 已删除 | `test_runs_http` / `test_user_ask` |
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 快照与事件恢复 | 助手消息投影原子记录正文覆盖的事件高水位；客户端保存 `lastEventSeq`，SSE 用 `?after=<seq>` 仅回放后续事件 | `test_run_result_commit` / `test_sse_envelope` / `client.test` / `runtimeProjection.test` |
+| 游标重同步 | Runtime 拒绝超出事件窗口的游标；客户端读取完整线程快照后继续订阅 | `test_sse_envelope` / `client.test` / `App.test` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
 
 ### Failure recovery contract

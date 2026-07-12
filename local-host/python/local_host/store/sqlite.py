@@ -4772,6 +4772,15 @@ class LocalStore:
         )
         return [dict(row) for row in await cursor.fetchall()]
 
+    async def event_sequence_window(self, run_id: str) -> tuple[int | None, int]:
+        row = await (
+            await self._conn.execute(
+                "SELECT MIN(seq), COALESCE(MAX(seq), 0) FROM local_events WHERE run_id = ?",
+                (run_id,),
+            )
+        ).fetchone()
+        return (int(row[0]) if row and row[0] is not None else None, int(row[1]) if row else 0)
+
     # --- steering ---
 
     async def create_steering_instruction(
