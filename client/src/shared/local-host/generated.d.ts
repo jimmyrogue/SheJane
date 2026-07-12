@@ -1975,6 +1975,62 @@ export interface components {
              */
             decision: "confirmed_completed" | "retry_not_executed" | "abort";
         };
+        /** ResolvePermissionCommand */
+        ResolvePermissionCommand: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "edit" | "deny";
+            edited_action?: components["schemas"]["EditedToolAction"] | null;
+            /** Permission Id */
+            permission_id: string;
+            /**
+             * Scope
+             * @default once
+             * @enum {string}
+             */
+            scope: "once" | "run";
+            /**
+             * Type
+             * @constant
+             */
+            type: "permission.resolve";
+        };
+        /** ResolvePermissionCommandReceipt */
+        ResolvePermissionCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "edit" | "deny";
+            /** Permission Id */
+            permission_id: string;
+            /**
+             * Resolved
+             * @default true
+             * @constant
+             */
+            resolved: true;
+            /** Resumed */
+            resumed: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "once" | "run";
+            /**
+             * Type
+             * @constant
+             */
+            type: "permission.resolve";
+        };
         /** ResolvePermissionRequest */
         ResolvePermissionRequest: {
             /**
@@ -2186,7 +2242,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"];
             };
         };
         responses: {
@@ -2196,7 +2252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"];
                 };
             };
             /** @description Validation Error */

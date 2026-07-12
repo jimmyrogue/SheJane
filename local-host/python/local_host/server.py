@@ -76,6 +76,8 @@ from .api_schemas import (
     PlanApprovalResolution,
     QuestionAnswer,
     ReconcileToolRequest,
+    ResolvePermissionCommand,
+    ResolvePermissionCommandReceipt,
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
     RuntimeInfo,
@@ -1070,14 +1072,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post(
         "/local/v1/commands",
-        response_model=CancelRunCommandReceipt | AnswerQuestionCommandReceipt,
+        response_model=(
+            CancelRunCommandReceipt | AnswerQuestionCommandReceipt | ResolvePermissionCommandReceipt
+        ),
     )
     async def accept_command(
         request: Request,
-        body: CancelRunCommand | AnswerQuestionCommand,
+        body: CancelRunCommand | AnswerQuestionCommand | ResolvePermissionCommand,
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
         coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, ResolvePermissionCommand):
+            edited_action = body.edited_action.model_dump() if body.edited_action else None
+            command_payload: dict[str, Any] = {
+                "type": body.type,
+                "permission_id": body.permission_id,
+                "decision": body.decision,
+                "scope": body.scope,
+            }
+            if edited_action is not None:
+                command_payload["edited_action"] = edited_action
+            try:
+                replay = await store.accepted_command_receipt(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    command_type=body.type,
+                    payload=command_payload,
+                )
+                if replay is not None:
+                    if replay.get("resumed"):
+                        coordinator.wake_jobs()
+                    return replay
+                permission = await store.get_permission(body.permission_id)
+                if permission is None:
+                    raise KeyError(body.permission_id)
+                run = await _owned_run(
+                    store,
+                    principal_id=request.state.principal_id,
+                    run_id=str(permission["run_id"]),
+                    not_found_detail="permission not found",
+                )
+                await _authorized_workspace_path(
+                    store,
+                    principal_id=request.state.principal_id,
+                    path=run.get("workspace_path"),
+                )
+                await coordinator.reconcile_resume_head(str(permission["run_id"]))
+                receipt, _created = await store.request_permission_resolve_command(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    permission_id=body.permission_id,
+                    decision=body.decision,
+                    scope=body.scope,
+                    edited_action=edited_action,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="permission not found") from exc
+            except (CommandConflictError, WaitDecisionConflictError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except WorkspaceAdmissionError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if receipt["resumed"]:
+                coordinator.wake_jobs()
+            return receipt
         if isinstance(body, AnswerQuestionCommand):
             command_payload = {
                 "type": body.type,

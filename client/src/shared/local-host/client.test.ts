@@ -32,7 +32,7 @@ import {
   markLocalScheduleNotified,
   probeLocalHost,
   revokeLocalWorkspace,
-  resolveLocalPermission,
+  resolveLocalPermissionCommand,
   setLocalCloudSession,
   clearLocalCloudSession,
   forkLocalRun,
@@ -45,6 +45,49 @@ import {
 const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
 
 describe('desktop local host client', () => {
+  it('submits permission decisions through the immutable Runtime command endpoint', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'permission.resolve',
+          command_id: 'resolve-permission-1',
+          permission_id: 'permission-1',
+          run_id: 'run-1',
+          resolved: true,
+          decision: 'edit',
+          scope: 'once',
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await expect(
+      resolveLocalPermissionCommand(
+        'resolve-permission-1',
+        'permission-1',
+        'edit',
+        { scope: 'once', editedAction: { name: 'execute', args: { command: 'make test' } } },
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        fetcher,
+      ),
+    ).resolves.toMatchObject({ type: 'permission.resolve', resolved: true, resumed: true })
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/commands',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'permission.resolve',
+          command_id: 'resolve-permission-1',
+          permission_id: 'permission-1',
+          decision: 'edit',
+          scope: 'once',
+          edited_action: { name: 'execute', args: { command: 'make test' } },
+        }),
+      }),
+    )
+  })
+
   it('submits question answers through the immutable Runtime command endpoint', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -448,6 +491,62 @@ describe('desktop local host client', () => {
     expect(acknowledge).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'question.answer', commandId: 'answer-question-restart' }),
       expect.objectContaining({ type: 'question.answer', resumed: true }),
+    )
+  })
+
+  it('redelivers a persisted permission decision with its original scope and action', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: 'permission.resolve',
+          command_id: 'resolve-permission-restart',
+          permission_id: 'permission-restart',
+          run_id: 'run-restart',
+          resolved: true,
+          decision: 'edit',
+          scope: 'once',
+          resumed: true,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingRuntimeCommands(
+        [{
+          type: 'permission.resolve',
+          commandId: 'resolve-permission-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: {
+            permissionId: 'permission-restart',
+            decision: 'edit',
+            scope: 'once',
+            editedAction: { name: 'execute', args: { command: 'make test' } },
+            runId: 'run-restart',
+            threadId: 'thread-restart',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      type: 'permission.resolve',
+      command_id: 'resolve-permission-restart',
+      permission_id: 'permission-restart',
+      decision: 'edit',
+      scope: 'once',
+      edited_action: { name: 'execute', args: { command: 'make test' } },
+    })
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'permission.resolve',
+        commandId: 'resolve-permission-restart',
+      }),
+      expect.objectContaining({ type: 'permission.resolve', resumed: true }),
     )
   })
 
@@ -962,67 +1061,24 @@ describe('desktop local host client', () => {
     expect(content).toBe('完成')
   })
 
-  it('resolves permissions and reads artifacts through protected APIs', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'recorded' }), { status: 202 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: 'artifact-1',
-            title: 'file.read output',
-            content: 'artifact content',
-            tool_name: 'file.read',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-
-    await expect(
-      resolveLocalPermission('perm-1', 'approve', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher),
-    ).resolves.toBeUndefined()
-    await expect(
-      resolveLocalPermission('perm-2', 'approve', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, { scope: 'run' }, fetcher),
-    ).resolves.toBeUndefined()
-    await expect(
-      resolveLocalPermission(
-        'perm-3',
-        'edit',
-        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
-        { editedAction: { name: 'execute', args: { command: 'make test' } } },
-        fetcher,
+  it('reads artifacts through the protected API', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'artifact-1',
+          title: 'file.read output',
+          content: 'artifact content',
+          tool_name: 'file.read',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
-    ).resolves.toBeUndefined()
+    )
+
     await expect(getLocalArtifact('artifact-1', { baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toMatchObject({
       id: 'artifact-1',
       content: 'artifact content',
     })
-    expect(fetcher).toHaveBeenNthCalledWith(
-      1,
-      'http://127.0.0.1:17371/local/v1/permissions/perm-1',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ decision: 'approve' }) }),
-    )
-    expect(fetcher).toHaveBeenNthCalledWith(
-      2,
-      'http://127.0.0.1:17371/local/v1/permissions/perm-2',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ decision: 'approve', scope: 'run' }) }),
-    )
-    expect(fetcher).toHaveBeenNthCalledWith(
-      3,
-      'http://127.0.0.1:17371/local/v1/permissions/perm-3',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          decision: 'edit',
-          scope: 'once',
-          edited_action: { name: 'execute', args: { command: 'make test' } },
-        }),
-      }),
-    )
-    expect(fetcher).toHaveBeenNthCalledWith(
-      4,
+    expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/artifacts/artifact-1',
       expect.objectContaining({ method: 'GET' }),
     )

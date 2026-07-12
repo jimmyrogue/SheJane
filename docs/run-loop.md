@@ -39,14 +39,14 @@
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
   │                                                                                  │
-  │  POST /local/v1/commands  （当前支持 run.cancel 与 question.answer）             │
-  │       ├─ Renderer 先把取消或回答命令写入同一个 IndexedDB 待发队列               │
+  │  POST /local/v1/commands  （支持取消、问题回答与权限决定）                       │
+  │       ├─ Renderer 先把命令写入同一个 IndexedDB 待发队列                         │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
   │       ├─ 等待态取消会同时关闭权限、问题、计划审批和其他等待候选                 │
   │       ├─ 同编号同内容返回原回执；同编号不同内容返回 409                         │
   │       ├─ 回执后协调器停止当前执行；权威终态仍由事件与快照返回                   │
-  │       ├─ 回答事务写回答、事件和回执；等待周期齐全时同事务创建恢复作业           │
-  │       └─ 旧 /runs/{run_id}/cancel 暂时兼容，桌面客户端已不再调用                │
+  │       ├─ 回答和权限事务写决定、事件和回执；等待周期齐全时同事务创建恢复作业     │
+  │       └─ 对应旧接口暂时兼容，桌面客户端已不再调用                              │
   │                                                                                  │
   │  Runtime dispatcher                                                              │
   │       ├─ 先取得本机并发槽位                                                       │
@@ -234,14 +234,14 @@
   │       事务提交后只唤醒 SSE；每个订阅者按自己的数据库游标读取结果事件                │
   │       客户端随后读取 /threads/{id}；漏掉 SSE 也能得到相同结果                       │
   │                                                                                     │
-  │     POST /permissions/:id 流程：                                                     │
-  │       幂等保存 approve / edit / reject 决定和统一等待候选                           │
+  │     permission.resolve 命令流程：                                                    │
+  │       客户端先持久保存不可变决定，再由 /commands 幂等接纳                           │
   │       scope=run 只允许同一参数指纹、同一风险和同一图版本，24 小时且最多复用 20 次   │
   │       event: permission.resolved { request_id, decision, scope }                   │
   │       current_batch = permission.required since latest run.started/run.resumed     │
   │       if any current_batch permission still pending: return {resumed:false}        │
   │       resume_payload = {"decisions": [...]} 按 permission.required 原顺序          │
-  │       coordinator.resume_run(decision=resume_payload)                              │
+  │       接纳事务创建恢复作业，协调器只负责唤醒作业                                   │
   │                                                                                     │
   │     CancelledError                                                                  │
   │       return 候选结果：canceled + run.canceled                                      │
@@ -283,7 +283,7 @@
 | # | 能力 | 触发位置 | 测试 case |
 |---|---|---|---|
 | 1 | **参数化工具确认** | `ToolReviewMiddleware` 在整批执行前生成等待候选 | `capability_1_humanintheloop_pauses_on_destructive_tool` ✅ |
-| 1b | 审批恢复 | `POST /permissions/:id` 幂等保存决定，再翻译成 `{"decisions": [...]}` | `capability_1b_permission_approve_resumes_the_run` ✅ |
+| 1b | 审批恢复 | `permission.resolve` 命令幂等保存决定，再翻译成 `{"decisions": [...]}` | `capability_1b_permission_approve_resumes_the_run` ✅ |
 | 1b2 | HITL 多 action 批次审批 | 当前 pause 批次全部 resolved 后按 `permission.required` 顺序 resume | `test_multi_permission_batch_waits_for_all_decisions_before_resume` ✅ |
 | 1c | `permission.resolved` 清空审批卡 | HTTP 决策事件持久化，并在恢复流先于 `run.resumed` 重放 | `cap_1c_permission_resolved_event_clears_card` ✅ |
 | 1d | **有限运行级授权** | 同参数、同风险、同图版本，24 小时且最多复用 20 次 | `capability_1d_scope_run_does_not_widen_to_new_arguments` ✅ |
@@ -356,6 +356,7 @@
 | Cloud Tool Gateway 网关层退避 | `web.search` / `image.*` / `pdf.inspect` / `code.execute` 的 gateway transport error 和非 JSON 瞬态 HTTP 响应（429/500/502/503/504）通过统一 retry decision 做有界指数退避，复用 idempotency key；结构化 tool result envelope 缺省 `retryable:false`，只有显式 `retryable:true` 且通过共享 failure policy 才进入工具结果重试 | `test_web_search_tool` / `test_image_tool` / `test_tools_code` / `test_tools_pdf` |
 | **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` ✅ **p50 24.8ms** |
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
+| 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 恢复 | 只接受权限、问题、计划审批和工具对账的类型化决定；通用 `/resume` 已删除 | `test_runs_http` / `test_user_ask` |
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |

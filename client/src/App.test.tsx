@@ -945,6 +945,134 @@ describe('user client shell', () => {
     })
   })
 
+  it('keeps one durable permission decision pending across transport failure', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-permission-command',
+      title: '等待授权',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'permission-user', role: 'user', content: '运行检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'permission-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_permission',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'permission.required',
+            label: '需要权限：运行命令',
+            permissionRequestId: 'permission-command',
+            permissionTool: '运行命令',
+            permissionToolName: 'execute',
+            permissionArguments: { command: 'make test' },
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { permissionDecisionFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    fireEvent.click(await screen.findByText('允许一次'))
+    fireEvent.click(screen.getByText('拒绝'))
+
+    await waitFor(() => {
+      const commands = calls.filter((call) =>
+        call.url.endsWith('/local/v1/commands') &&
+        JSON.parse(String(call.init?.body ?? '{}')).type === 'permission.resolve')
+      expect(commands.length).toBeGreaterThan(0)
+      expect(commands.map((command) => JSON.parse(String(command.init?.body ?? '{}')))).toEqual(
+        commands.map(() => ({
+          type: 'permission.resolve',
+          command_id: 'resolve_permission-command',
+          permission_id: 'permission-command',
+          decision: 'approve',
+          scope: 'once',
+        })),
+      )
+    })
+    await waitFor(async () => {
+      expect(await localData.listPendingRuntimeCommands()).toEqual([
+        expect.objectContaining({
+          type: 'permission.resolve',
+          commandId: 'resolve_permission-command',
+          input: expect.objectContaining({ decision: 'approve', scope: 'once' }),
+        }),
+      ])
+      expect((await localData.get('conv-permission-command'))?.messages.at(-1)?.status).toBe(
+        'waiting_permission',
+      )
+    })
+  })
+
+  it('reports the persisted permission decision when a later click redelivers it', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.save({
+      id: 'conv-permission-retry',
+      title: '重试授权',
+      archived: false,
+      createdAt: '2026-05-10T00:00:00.000Z',
+      updatedAt: '2026-05-10T00:00:01.000Z',
+      messages: [
+        { id: 'permission-retry-user', role: 'user', content: '运行检查', createdAt: '2026-05-10T00:00:00.000Z', status: 'done' },
+        {
+          id: 'permission-retry-assistant',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-05-10T00:00:01.000Z',
+          status: 'waiting_permission',
+          runId: 'local-run',
+          runOrigin: 'local',
+          agentEvents: [{
+            type: 'permission.required',
+            label: '需要权限：运行命令',
+            permissionRequestId: 'permission-retry',
+            permissionTool: '运行命令',
+            permissionToolName: 'execute',
+            permissionArguments: { command: 'make test' },
+          }],
+        },
+      ],
+    })
+    const calls = mockFetch('user', { permissionDecisionFailures: 2 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+    fireEvent.click(await screen.findByText('允许一次'))
+    await waitFor(() => expect(calls.filter((call) =>
+      call.url.endsWith('/local/v1/commands') &&
+      JSON.parse(String(call.init?.body ?? '{}')).type === 'permission.resolve',
+    )).toHaveLength(2))
+
+    fireEvent.click(screen.getByText('拒绝'))
+
+    expect(await screen.findByText('已允许本次使用')).toBeInTheDocument()
+    expect(screen.queryByText('已拒绝')).not.toBeInTheDocument()
+    const commands = calls.filter((call) =>
+      call.url.endsWith('/local/v1/commands') &&
+      JSON.parse(String(call.init?.body ?? '{}')).type === 'permission.resolve')
+    expect(commands.map((command) => JSON.parse(String(command.init?.body ?? '{}')))).toEqual(
+      commands.map(() => ({
+        type: 'permission.resolve',
+        command_id: 'resolve_permission-retry',
+        permission_id: 'permission-retry',
+        decision: 'approve',
+        scope: 'once',
+      })),
+    )
+  })
+
   it('fires a desktop notification when a local run fails', async () => {
     const localRunStream = createDeferredAgentStream('local-run')
     mockFetch('user', { localRunStream })
@@ -2613,6 +2741,7 @@ function mockFetch(
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
 	    localRunCreateFailures?: number
 	    questionAnswerFailures?: number
+	    permissionDecisionFailures?: number
 	    localRunCreateGate?: Promise<void>
 	    requireRunCancelBeforeThreadDelete?: boolean
 	    runtimeThreads?: Array<Record<string, unknown>>
@@ -2628,6 +2757,7 @@ function mockFetch(
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
 	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
 	  let questionAnswerFailures = options.questionAnswerFailures ?? 0
+	  let permissionDecisionFailures = options.permissionDecisionFailures ?? 0
 	  let localRunCanceled = false
 	  let uploadCounter = 0
 	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
@@ -2727,6 +2857,9 @@ function mockFetch(
         command_id?: string
         run_id?: string
         question_id?: string
+        permission_id?: string
+        decision?: string
+        scope?: string
       }
       if (body.type === 'question.answer') {
         if (questionAnswerFailures > 0) {
@@ -2739,6 +2872,25 @@ function mockFetch(
           question_id: body.question_id,
           run_id: 'local-run',
           answered: true,
+          resumed: true,
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (body.type === 'permission.resolve') {
+        if (permissionDecisionFailures > 0) {
+          permissionDecisionFailures -= 1
+          throw new TypeError('connection reset')
+        }
+        return new Response(JSON.stringify({
+          type: body.type,
+          command_id: body.command_id,
+          permission_id: body.permission_id,
+          run_id: 'local-run',
+          resolved: true,
+          decision: body.decision,
+          scope: body.scope,
           resumed: true,
         }), {
           status: 200,
@@ -2869,7 +3021,11 @@ function mockFetch(
       if (options.localRunStream) {
         return options.localRunStream.response()
       }
-      const permissionApproved = calls.some((call) => call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell')
+      const permissionApproved = calls.some((call) =>
+        call.url === 'http://127.0.0.1:17371/local/v1/permissions/perm-shell' ||
+        (call.url.endsWith('/local/v1/commands') &&
+          JSON.parse(String(call.init?.body ?? '{}')).type === 'permission.resolve'),
+      )
       return agentSSE(
         permissionApproved
           ? [

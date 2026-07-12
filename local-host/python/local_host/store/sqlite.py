@@ -702,6 +702,10 @@ class LocalStore:
                     f"ALTER TABLE local_permissions ADD COLUMN {column} {definition}"
                 )
         await conn.execute(
+            "UPDATE local_permissions SET wait_cycle_id = COALESCE(wait_cycle_id, id), "
+            "interrupt_id = COALESCE(interrupt_id, id)"
+        )
+        await conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_local_permissions_run_operation "
             "ON local_permissions(run_id, operation_id) "
             "WHERE operation_id IS NOT NULL"
@@ -3053,6 +3057,201 @@ class LocalStore:
                     "(principal_id, id, command_type, client_message_id, payload_json, "
                     "response_json, run_id, created_at) "
                     "VALUES (?, ?, 'question.answer', '', ?, ?, ?, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        payload_json,
+                        _encode_payload(receipt),
+                        run_id,
+                        _now(),
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def request_permission_resolve_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        permission_id: str,
+        decision: str,
+        scope: str,
+        edited_action: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {
+            "type": "permission.resolve",
+            "permission_id": permission_id,
+            "decision": decision,
+            "scope": scope,
+        }
+        if edited_action is not None:
+            command_payload["edited_action"] = edited_action
+        payload_json = _encode_payload(command_payload)
+        if decision == "approve":
+            hitl_decision: dict[str, Any] = {"type": "approve"}
+            permission_status = "approved"
+        elif decision == "edit":
+            hitl_decision = {"type": "edit", "edited_action": edited_action}
+            permission_status = "approved"
+        else:
+            hitl_decision = {
+                "type": "reject",
+                "message": "Tool execution denied by user.",
+            }
+            permission_status = "denied"
+        decision_json = _encode_payload(hitl_decision)
+        grant_max_uses = 20 if scope == "run" and permission_status == "approved" else 0
+        grant_expires_at = (
+            (datetime.now(UTC) + timedelta(hours=24)).isoformat() if grant_max_uses else None
+        )
+
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="permission.resolve",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+
+                record = await (
+                    await conn.execute(
+                        "SELECT p.run_id, p.wait_cycle_id, p.status AS permission_status, "
+                        "p.scope AS permission_scope, p.decision_json, p.tool_name, "
+                        "p.operation_id, r.status AS run_status, r.principal_id, "
+                        "r.goal, r.user_input, r.workspace_path, r.mode, r.history_json, "
+                        "r.settings_json, r.metadata_json "
+                        "FROM local_permissions p JOIN local_runs r ON r.id = p.run_id "
+                        "WHERE p.id = ? AND r.principal_id = ?",
+                        (permission_id, principal_id),
+                    )
+                ).fetchone()
+                if record is None:
+                    raise KeyError(f"unknown permission: {permission_id}")
+                run_id = str(record["run_id"])
+                workspace_error = await self._workspace_owner_error(
+                    conn,
+                    principal_id=principal_id,
+                    path=record["workspace_path"],
+                ) or await self._workspace_path_error(record["workspace_path"])
+                if workspace_error is not None:
+                    raise WorkspaceAdmissionError(workspace_error)
+                if decision == "edit" and (
+                    edited_action is None or edited_action.get("name") != record["tool_name"]
+                ):
+                    raise WaitDecisionConflictError("tool name cannot be changed")
+
+                if record["permission_status"] == "pending":
+                    if record["run_status"] != "waiting_permission":
+                        raise WaitDecisionConflictError("run is not awaiting a permission decision")
+                    now = _now()
+                    permission_cursor = await conn.execute(
+                        "UPDATE local_permissions SET status = ?, scope = ?, decision_json = ?, "
+                        "grant_max_uses = ?, grant_expires_at = ?, resolved_at = ? "
+                        "WHERE id = ? AND status = 'pending'",
+                        (
+                            permission_status,
+                            scope,
+                            decision_json,
+                            grant_max_uses,
+                            grant_expires_at,
+                            now,
+                            permission_id,
+                        ),
+                    )
+                    wait_cursor = await conn.execute(
+                        "UPDATE local_wait_candidates SET status = 'resolved', "
+                        "decision_json = ?, resolved_at = ? "
+                        "WHERE id = ? AND status = 'pending'",
+                        (decision_json, now, permission_id),
+                    )
+                    if permission_cursor.rowcount != 1 or wait_cursor.rowcount != 1:
+                        raise WaitDecisionConflictError("permission was resolved concurrently")
+                    await self._append_event_uncommitted(
+                        conn,
+                        run_id,
+                        "permission.resolved",
+                        payload_json=_encode_payload(
+                            {
+                                "request_id": permission_id,
+                                "tool": record["tool_name"],
+                                "tool_name": record["tool_name"],
+                                "operation_id": record["operation_id"],
+                                "decision": decision,
+                                "scope": scope,
+                            }
+                        ),
+                        created_at=now,
+                    )
+                elif (
+                    record["permission_status"] != permission_status
+                    or record["permission_scope"] != scope
+                    or str(record["decision_json"] or "") != decision_json
+                ):
+                    raise WaitDecisionConflictError(
+                        "permission was already resolved with a different decision"
+                    )
+
+                resume_payload = await self._wait_cycle_resume_payload_uncommitted(
+                    conn,
+                    run_id=run_id,
+                    wait_cycle_id=str(record["wait_cycle_id"]),
+                )
+                resumed = record["run_status"] in {
+                    "queued",
+                    "running",
+                    "completed",
+                    "failed",
+                }
+                if (
+                    record["run_status"] in {"waiting_permission", "waiting_input"}
+                    and resume_payload is not None
+                ):
+                    active_job = await (
+                        await conn.execute(
+                            "SELECT * FROM local_run_jobs WHERE run_id = ? "
+                            "AND status IN ('pending', 'leased')",
+                            (run_id,),
+                        )
+                    ).fetchone()
+                    if active_job is None:
+                        job = self._new_run_job_record(
+                            run_id=run_id,
+                            kind="resume",
+                            input_payload=self._run_job_input(dict(record)),
+                            resume_payload=resume_payload,
+                        )
+                        await self._insert_run_job(conn, job)
+                    elif active_job["kind"] != "resume":
+                        raise WaitDecisionConflictError("run already has a different active job")
+                    resumed = True
+
+                receipt = {
+                    "type": "permission.resolve",
+                    "command_id": command_id,
+                    "permission_id": permission_id,
+                    "run_id": run_id,
+                    "resolved": True,
+                    "decision": decision,
+                    "scope": scope,
+                    "resumed": resumed,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'permission.resolve', '', ?, ?, ?, ?)",
                     (
                         principal_id,
                         command_id,

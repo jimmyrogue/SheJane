@@ -430,6 +430,85 @@ def test_question_answer_command_waits_for_every_candidate_in_the_cycle(
     assert second.json()["resumed"] is True
 
 
+def test_permission_resolve_command_is_idempotent_and_resumes_after_the_batch(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def seed_permissions() -> tuple[str, str, str]:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="approve a batch",
+            workspace_path=None,
+        )
+        first = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call-first",
+            tool_name="write_file",
+            arguments={"path": "a.txt"},
+            wait_cycle_id="permission-batch",
+            interrupt_id="permission-interrupt",
+            action_index=0,
+        )
+        second = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call-second",
+            tool_name="execute",
+            arguments={"command": "make test"},
+            wait_cycle_id="permission-batch",
+            interrupt_id="permission-interrupt",
+            action_index=1,
+        )
+        await store.update_run_status(run["id"], "waiting_permission")
+        return str(run["id"]), str(first["id"]), str(second["id"])
+
+    run_id, first_id, second_id = asyncio.run(seed_permissions())
+    headers = {"Authorization": "Bearer tok"}
+    first_command = {
+        "type": "permission.resolve",
+        "command_id": "resolve_first",
+        "permission_id": first_id,
+        "decision": "approve",
+        "scope": "run",
+    }
+
+    first = client.post("/local/v1/commands", headers=headers, json=first_command)
+    replay = client.post("/local/v1/commands", headers=headers, json=first_command)
+    conflict = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={**first_command, "decision": "deny", "scope": "once"},
+    )
+    second = client.post(
+        "/local/v1/commands",
+        headers=headers,
+        json={
+            "type": "permission.resolve",
+            "command_id": "resolve_second",
+            "permission_id": second_id,
+            "decision": "deny",
+        },
+    )
+
+    assert first.status_code == 200
+    assert first.json() == {
+        "type": "permission.resolve",
+        "command_id": "resolve_first",
+        "permission_id": first_id,
+        "run_id": run_id,
+        "resolved": True,
+        "decision": "approve",
+        "scope": "run",
+        "resumed": False,
+    }
+    assert replay.json() == first.json()
+    assert conflict.status_code == 409
+    assert second.status_code == 200
+    assert second.json()["decision"] == "deny"
+    assert second.json()["scope"] == "once"
+    assert second.json()["resumed"] is True
+
+
 def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
     assert client.get("/local/v1/runtime").status_code == 401
     response = client.get(

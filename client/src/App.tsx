@@ -109,7 +109,7 @@ import {
   injectLocalRunInstruction,
   probeLocalHost,
   resolveLocalPlanApproval,
-  resolveLocalPermission,
+  resolveLocalPermissionCommand,
   reconcileLocalTool,
   setLocalCloudSession,
   streamLocalRun,
@@ -129,6 +129,7 @@ import {
   type PendingRunStartCommand,
   type PendingRunCancelCommand,
   type PendingQuestionAnswerCommand,
+  type PendingPermissionResolveCommand,
   type PendingRuntimeCommand,
   type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
@@ -380,6 +381,7 @@ function AppContent() {
   const runtimeThreadCursorRef = useRef(0)
   const runtimeThreadIDsRef = useRef(new Set<string>())
   const questionAnswersInFlightRef = useRef(new Set<string>())
+  const permissionDecisionsInFlightRef = useRef(new Set<string>())
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
@@ -1284,7 +1286,7 @@ function AppContent() {
     result: RuntimeCommandResult,
     config: LocalHostConfig,
   ): Promise<boolean> {
-    if (command.type === 'question.answer') {
+    if (command.type === 'question.answer' || command.type === 'permission.resolve') {
       await localData.deletePendingRuntimeCommand(command.commandId)
       const projected = await syncRuntimeThreadCache(config)
       setConversations((items) =>
@@ -2213,6 +2215,28 @@ function AppContent() {
     scope: LocalPermissionScope = 'once',
     editedAction?: { name: string, args: Record<string, unknown> },
   ) {
+    if (permissionDecisionsInFlightRef.current.has(requestID)) return
+    permissionDecisionsInFlightRef.current.add(requestID)
+    try {
+      await handlePermissionDecisionOnce(
+        messageID,
+        requestID,
+        decision,
+        scope,
+        editedAction,
+      )
+    } finally {
+      permissionDecisionsInFlightRef.current.delete(requestID)
+    }
+  }
+
+  async function handlePermissionDecisionOnce(
+    messageID: string,
+    requestID: string,
+    decision: 'approve' | 'edit' | 'deny',
+    scope: LocalPermissionScope,
+    editedAction?: { name: string, args: Record<string, unknown> },
+  ) {
     if (!activeID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
@@ -2225,6 +2249,8 @@ function AppContent() {
     }
 
     setNotice('')
+    const contentBeforeDecision = message.content
+    let commandAccepted = false
     message.status = 'streaming'
     // The resume stream replays the run's full event history from seq 1, so
     // rebuild the answer from that replay instead of appending onto the text
@@ -2234,13 +2260,44 @@ function AppContent() {
     const seenEventIDs = new Set((message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[])
     const toolArgsByCallId: ToolArgsByCallId = new Map()
     try {
-      await resolveLocalPermission(requestID, decision, localHostConfig, { scope, editedAction })
+      const existing = (await localData.listPendingRuntimeCommands()).find(
+        (command): command is PendingPermissionResolveCommand =>
+          command.type === 'permission.resolve' && command.input.permissionId === requestID,
+      )
+      const command = existing ?? {
+        type: 'permission.resolve' as const,
+        commandId: `resolve_${requestID}`,
+        createdAt: new Date().toISOString(),
+        input: {
+          permissionId: requestID,
+          decision,
+          scope,
+          editedAction,
+          runId: message.runId,
+          threadId: conversation.id,
+        },
+      }
+      if (!existing) await localData.savePendingRuntimeCommand(command)
+      try {
+        await resolveLocalPermissionCommand(
+          command.commandId,
+          command.input.permissionId,
+          command.input.decision,
+          { scope: command.input.scope, editedAction: command.input.editedAction },
+          localHostConfig,
+        )
+        commandAccepted = true
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      } catch (error) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+        throw error
+      }
       // Decision-acknowledgement toast so the user sees their click landed —
       // the bar disappears the moment the resume stream starts, otherwise
       // there's no feedback at all.
       toast.success(
-        decision === 'approve' || decision === 'edit'
-          ? t(scope === 'run' ? 'app.notice.permissionRunApproved' : 'app.notice.permissionApproved')
+        command.input.decision === 'approve' || command.input.decision === 'edit'
+          ? t(command.input.scope === 'run' ? 'app.notice.permissionRunApproved' : 'app.notice.permissionApproved')
           : t('app.notice.permissionDenied'),
         { id: 'permission-decision', duration: 2000 },
       )
@@ -2257,9 +2314,9 @@ function AppContent() {
       finalizeLocalRunStatus(message)
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
-      message.status = 'error'
-      message.content = error instanceof Error ? error.message : t('app.notice.localPermissionFailed')
-      setNotice(message.content)
+      message.status = commandAccepted ? 'streaming' : 'waiting_permission'
+      if (!commandAccepted) message.content = contentBeforeDecision
+      setNotice(error instanceof Error ? error.message : t('app.notice.localPermissionFailed'))
       scheduleConversationRender(conversation, renderContext)
     } finally {
       conversation.updatedAt = new Date().toISOString()

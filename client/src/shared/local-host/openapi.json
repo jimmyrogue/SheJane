@@ -3140,6 +3140,124 @@
         "title": "ReconcileToolRequest",
         "type": "object"
       },
+      "ResolvePermissionCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "edit",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "edited_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EditedToolAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permission_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Permission Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "once",
+            "enum": [
+              "once",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "type": {
+            "const": "permission.resolve",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "type",
+          "command_id",
+          "permission_id"
+        ],
+        "title": "ResolvePermissionCommand",
+        "type": "object"
+      },
+      "ResolvePermissionCommandReceipt": {
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approve",
+              "edit",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "permission_id": {
+            "title": "Permission Id",
+            "type": "string"
+          },
+          "resolved": {
+            "const": true,
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resumed": {
+            "title": "Resumed",
+            "type": "boolean"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "once",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "type": {
+            "const": "permission.resolve",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "permission_id",
+          "run_id",
+          "decision",
+          "scope",
+          "resumed"
+        ],
+        "title": "ResolvePermissionCommandReceipt",
+        "type": "object"
+      },
       "ResolvePermissionRequest": {
         "properties": {
           "decision": {
@@ -3598,6 +3716,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/AnswerQuestionCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ResolvePermissionCommand"
                   }
                 ],
                 "title": "Body"
@@ -3617,6 +3738,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnswerQuestionCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ResolvePermissionCommandReceipt"
                     }
                   ],
                   "title": "Response Accept Command Local V1 Commands Post"

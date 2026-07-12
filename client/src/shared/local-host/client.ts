@@ -33,6 +33,7 @@ export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
 export type LocalRunDiagnostics = Schemas['LocalRunDiagnostics']
 export type CancelRunCommandReceipt = Schemas['CancelRunCommandReceipt']
 export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt']
+export type ResolvePermissionCommandReceipt = Schemas['ResolvePermissionCommandReceipt']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
 export type McpServerInfo = Schemas['McpServerInfo']
@@ -298,11 +299,28 @@ export interface PendingQuestionAnswerCommand extends PendingRuntimeCommandBase 
   }
 }
 
+export interface PendingPermissionResolveCommand extends PendingRuntimeCommandBase {
+  type: 'permission.resolve'
+  input: {
+    permissionId: string
+    decision: LocalPermissionDecision
+    scope: LocalPermissionScope
+    editedAction?: LocalEditedToolAction
+    runId: string
+    threadId: string
+  }
+}
+
 export type PendingRuntimeCommand =
   | PendingRunStartCommand
   | PendingRunCancelCommand
   | PendingQuestionAnswerCommand
-export type RuntimeCommandResult = LocalRun | CancelRunCommandReceipt | AnswerQuestionCommandReceipt
+  | PendingPermissionResolveCommand
+export type RuntimeCommandResult =
+  | LocalRun
+  | CancelRunCommandReceipt
+  | AnswerQuestionCommandReceipt
+  | ResolvePermissionCommandReceipt
 
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
@@ -401,22 +419,7 @@ export async function deliverPendingRuntimeCommands(
       let count = 0
       for (const command of threadCommands) {
         try {
-          const result = command.type === 'run.start'
-            ? await createLocalRun(command.input, config, fetcher)
-            : command.type === 'run.cancel'
-              ? await cancelLocalRunCommand(
-                  command.commandId,
-                  command.input.runId,
-                  config,
-                  fetcher,
-                )
-              : await answerLocalQuestionCommand(
-                  command.commandId,
-                  command.input.questionId,
-                  command.input.answers,
-                  config,
-                  fetcher,
-                )
+          const result = await deliverRuntimeCommand(command, config, fetcher)
           await settle(command, result)
           count += 1
         } catch {
@@ -427,6 +430,36 @@ export async function deliverPendingRuntimeCommands(
     }),
   )
   return delivered.reduce((total, count) => total + count, 0)
+}
+
+async function deliverRuntimeCommand(
+  command: PendingRuntimeCommand,
+  config: LocalHostConfig,
+  fetcher: Fetcher,
+): Promise<RuntimeCommandResult> {
+  switch (command.type) {
+    case 'run.start':
+      return createLocalRun(command.input, config, fetcher)
+    case 'run.cancel':
+      return cancelLocalRunCommand(command.commandId, command.input.runId, config, fetcher)
+    case 'question.answer':
+      return answerLocalQuestionCommand(
+        command.commandId,
+        command.input.questionId,
+        command.input.answers,
+        config,
+        fetcher,
+      )
+    case 'permission.resolve':
+      return resolveLocalPermissionCommand(
+        command.commandId,
+        command.input.permissionId,
+        command.input.decision,
+        { scope: command.input.scope, editedAction: command.input.editedAction },
+        config,
+        fetcher,
+      )
+  }
 }
 
 export async function forkLocalRun(
@@ -936,6 +969,34 @@ export async function answerLocalQuestionCommand(
   return decodeLocalResponse<AnswerQuestionCommandReceipt>(response)
 }
 
+export async function resolveLocalPermissionCommand(
+  commandID: string,
+  permissionID: string,
+  decision: LocalPermissionDecision,
+  options: { scope?: LocalPermissionScope, editedAction?: LocalEditedToolAction },
+  config: LocalHostConfig,
+  fetcher: Fetcher = fetch,
+): Promise<ResolvePermissionCommandReceipt> {
+  const scope = options.scope === 'run' ? 'run' : 'once'
+  if (decision === 'edit' && !options.editedAction) {
+    throw new Error('editedAction is required for an edit decision')
+  }
+  const body: Record<string, unknown> = {
+    type: 'permission.resolve',
+    command_id: commandID,
+    permission_id: permissionID,
+    decision,
+    scope,
+  }
+  if (options.editedAction) body.edited_action = options.editedAction
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<ResolvePermissionCommandReceipt>(response)
+}
+
 export async function injectLocalRunInstruction(
   runID: string,
   content: string,
@@ -1067,32 +1128,6 @@ export async function streamLocalRun(
     onDelta: (content, event) => handlers.onDelta(content, event),
   })
   return { completed: result.completed }
-}
-
-export async function resolveLocalPermission(
-  requestID: string,
-  decision: LocalPermissionDecision,
-  config: LocalHostConfig,
-  optionsOrFetcher: { scope?: LocalPermissionScope, editedAction?: LocalEditedToolAction } | Fetcher = {},
-  maybeFetcher: Fetcher = fetch,
-): Promise<void> {
-  const options = typeof optionsOrFetcher === 'function' ? {} : optionsOrFetcher
-  const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : maybeFetcher
-  const scope = options.scope === 'run' ? 'run' : 'once'
-  if (decision === 'edit' && !options.editedAction) {
-    throw new Error('editedAction is required for an edit decision')
-  }
-  const body = decision === 'edit'
-    ? { decision, scope: 'once', edited_action: options.editedAction }
-    : scope === 'run' ? { decision, scope } : { decision }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/permissions/${encodeURIComponent(requestID)}`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify(body),
-  })
-  if (!response.ok) {
-    throw new Error(await localErrorMessage(response))
-  }
 }
 
 export async function reconcileLocalTool(

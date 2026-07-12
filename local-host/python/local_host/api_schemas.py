@@ -848,6 +848,29 @@ class AnswerQuestionCommandReceipt(BaseModel):
     resumed: bool
 
 
+class ResolvePermissionCommand(ResolvePermissionRequest):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["permission.resolve"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    permission_id: str = Field(min_length=1, max_length=128)
+
+
+class ResolvePermissionCommandReceipt(BaseModel):
+    type: Literal["permission.resolve"]
+    command_id: str
+    permission_id: str
+    run_id: str
+    resolved: Literal[True] = True
+    decision: PermissionDecision
+    scope: PermissionScope
+    resumed: bool
+
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
