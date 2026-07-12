@@ -1,6 +1,10 @@
 import type { Conversation, ConversationExport } from './types'
+import type { PendingLocalRunCommand } from '../local-host/client'
 
 const STORE_NAME = 'conversations'
+const PENDING_LOCAL_RUN_COMMANDS_STORE_NAME = 'pending-local-run-commands'
+const PENDING_LOCAL_RUN_COMMANDS_THREAD_INDEX = 'threadId'
+const DATABASE_VERSION = 3
 
 export class LocalConversationStore {
   private dbPromise?: Promise<IDBDatabase>
@@ -23,9 +27,99 @@ export class LocalConversationStore {
     await requestToPromise(store.put(conversation))
   }
 
+  async saveWithPendingLocalRunCommand(
+    conversation: Conversation,
+    command: PendingLocalRunCommand,
+  ): Promise<void> {
+    const db = await this.open()
+    const transaction = db.transaction(
+      [STORE_NAME, PENDING_LOCAL_RUN_COMMANDS_STORE_NAME],
+      'readwrite',
+    )
+    transaction.objectStore(STORE_NAME).put(conversation)
+    transaction.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME).put(command)
+    await transactionToPromise(transaction)
+  }
+
+  async saveRuntimeProjection(conversation: Conversation): Promise<boolean> {
+    const db = await this.open()
+    const transaction = db.transaction(
+      [STORE_NAME, PENDING_LOCAL_RUN_COMMANDS_STORE_NAME],
+      'readwrite',
+    )
+    const conversations = transaction.objectStore(STORE_NAME)
+    const commands = transaction
+      .objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME)
+      .index(PENDING_LOCAL_RUN_COMMANDS_THREAD_INDEX)
+      .getAll(conversation.id)
+    let saved = false
+    commands.onsuccess = () => {
+      if (!(commands.result as PendingLocalRunCommand[]).some((command) => command.canceledAt)) {
+        conversations.put(conversation)
+        saved = true
+      }
+    }
+    await transactionToPromise(transaction)
+    return saved
+  }
+
+  async listPendingLocalRunCommands(): Promise<PendingLocalRunCommand[]> {
+    const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readonly')
+    const commands = await requestToPromise<PendingLocalRunCommand[]>(store.getAll())
+    return commands
+      .filter((command) => !command.settledAt)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  async getPendingLocalRunCommand(
+    commandId: string,
+  ): Promise<PendingLocalRunCommand | undefined> {
+    const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readonly')
+    return requestToPromise<PendingLocalRunCommand | undefined>(store.get(commandId))
+  }
+
+  async deletePendingLocalRunCommand(commandId: string): Promise<void> {
+    const store = await this.objectStoreFor(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, 'readwrite')
+    await requestToPromise(store.delete(commandId))
+  }
+
+  async settleCanceledLocalRunCommand(threadId: string, commandId: string): Promise<void> {
+    const db = await this.open()
+    const transaction = db.transaction(
+      [STORE_NAME, PENDING_LOCAL_RUN_COMMANDS_STORE_NAME],
+      'readwrite',
+    )
+    transaction.objectStore(STORE_NAME).delete(threadId)
+    const commands = transaction.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME)
+    const request = commands.get(commandId)
+    request.onsuccess = () => {
+      if (request.result) {
+        commands.put({ ...request.result, settledAt: new Date().toISOString() })
+      }
+    }
+    await transactionToPromise(transaction)
+    // ponytail: settled tombstones are tiny and thread IDs are immutable;
+    // compact them only if measured storage growth justifies another lifecycle.
+  }
+
   async delete(id: string): Promise<void> {
-    const store = await this.objectStore('readwrite')
-    await requestToPromise(store.delete(id))
+    const db = await this.open()
+    const transaction = db.transaction(
+      [STORE_NAME, PENDING_LOCAL_RUN_COMMANDS_STORE_NAME],
+      'readwrite',
+    )
+    transaction.objectStore(STORE_NAME).delete(id)
+    const pendingCommands = transaction.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME)
+    const commands = pendingCommands
+      .index(PENDING_LOCAL_RUN_COMMANDS_THREAD_INDEX)
+      .getAll(id)
+    commands.onsuccess = () => {
+      const canceledAt = new Date().toISOString()
+      for (const command of commands.result as PendingLocalRunCommand[]) {
+        pendingCommands.put({ ...command, canceledAt })
+      }
+    }
+    await transactionToPromise(transaction)
   }
 
   async exportAll(): Promise<ConversationExport> {
@@ -46,8 +140,15 @@ export class LocalConversationStore {
   }
 
   private async objectStore(mode: IDBTransactionMode): Promise<IDBObjectStore> {
+    return this.objectStoreFor(STORE_NAME, mode)
+  }
+
+  private async objectStoreFor(
+    storeName: string,
+    mode: IDBTransactionMode,
+  ): Promise<IDBObjectStore> {
     const db = await this.open()
-    return db.transaction(STORE_NAME, mode).objectStore(STORE_NAME)
+    return db.transaction(storeName, mode).objectStore(storeName)
   }
 
   private open(): Promise<IDBDatabase> {
@@ -56,12 +157,20 @@ export class LocalConversationStore {
     }
 
     this.dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 1)
+      const request = indexedDB.open(this.dbName, DATABASE_VERSION)
       request.onupgradeneeded = () => {
         const db = request.result
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' })
           store.createIndex('updatedAt', 'updatedAt')
+        }
+        const pendingCommands = db.objectStoreNames.contains(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME)
+          ? request.transaction!.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME)
+          : db.createObjectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME, {
+            keyPath: 'commandId',
+          })
+        if (!pendingCommands.indexNames.contains(PENDING_LOCAL_RUN_COMMANDS_THREAD_INDEX)) {
+          pendingCommands.createIndex(PENDING_LOCAL_RUN_COMMANDS_THREAD_INDEX, 'input.threadId')
         }
       }
       request.onsuccess = () => resolve(request.result)
@@ -70,6 +179,14 @@ export class LocalConversationStore {
 
     return this.dbPromise
   }
+}
+
+function transactionToPromise(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error)
+  })
 }
 
 function compareConversations(a: Conversation, b: Conversation): number {

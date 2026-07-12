@@ -1,13 +1,16 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { LocalConversationStore } from './localConversations'
 import type { Conversation } from './types'
+import type { PendingLocalRunCommand } from '../local-host/client'
 
 describe('LocalConversationStore', () => {
-  beforeEach(async () => {
+  beforeAll(async () => {
     await Promise.all([
       deleteDatabase('shejane-test'),
       deleteDatabase('shejane-test-pinned'),
+      deleteDatabase('shejane-test-pending-command'),
+      deleteDatabase('shejane-test-delete-pending-command'),
     ])
   })
 
@@ -49,6 +52,65 @@ describe('LocalConversationStore', () => {
     await store.save(conversation('newest-pinned', '更新固定会话', '2026-05-12T00:00:00.000Z', true))
 
     expect((await store.list()).map((item) => item.id)).toEqual(['newest-pinned', 'older-pinned', 'newer-regular'])
+  })
+
+  it('keeps an unacknowledged Runtime command with its optimistic conversation across restart', async () => {
+    const command: PendingLocalRunCommand = {
+      commandId: 'cmd-restart',
+      createdAt: '2026-05-10T00:00:00.000Z',
+      input: {
+        commandId: 'cmd-restart',
+        clientMessageId: 'msg-restart',
+        threadId: 'conv-restart',
+        goal: 'continue after restart',
+      },
+    }
+    const store = new LocalConversationStore('shejane-test-pending-command')
+
+    await store.saveWithPendingLocalRunCommand(
+      conversation('conv-restart', '恢复投递', '2026-05-10T00:00:00.000Z'),
+      command,
+    )
+
+    const reopened = new LocalConversationStore('shejane-test-pending-command')
+    expect(await reopened.get('conv-restart')).toMatchObject({ title: '恢复投递' })
+    expect(await reopened.listPendingLocalRunCommands()).toEqual([command])
+  })
+
+  it('deletes a conversation and its unacknowledged Runtime commands together', async () => {
+    const store = new LocalConversationStore('shejane-test-delete-pending-command')
+    await store.saveWithPendingLocalRunCommand(
+      conversation('conv-delete', '删除任务', '2026-05-10T00:00:00.000Z'),
+      {
+        commandId: 'cmd-delete',
+        createdAt: '2026-05-10T00:00:00.000Z',
+        input: {
+          commandId: 'cmd-delete',
+          clientMessageId: 'msg-delete',
+          threadId: 'conv-delete',
+          goal: 'must not reappear',
+        },
+      },
+    )
+
+    await store.delete('conv-delete')
+
+    expect(await store.get('conv-delete')).toBeUndefined()
+    expect(await store.listPendingLocalRunCommands()).toEqual([
+      expect.objectContaining({ commandId: 'cmd-delete', canceledAt: expect.any(String) }),
+    ])
+
+    await store.settleCanceledLocalRunCommand('conv-delete', 'cmd-delete')
+    expect(await store.listPendingLocalRunCommands()).toEqual([])
+    expect(await store.getPendingLocalRunCommand('cmd-delete')).toEqual(
+      expect.objectContaining({ settledAt: expect.any(String) }),
+    )
+    expect(
+      await store.saveRuntimeProjection(
+        conversation('conv-delete', '过期投影', '2026-05-10T00:00:01.000Z'),
+      ),
+    ).toBe(false)
+    expect(await store.get('conv-delete')).toBeUndefined()
   })
 })
 

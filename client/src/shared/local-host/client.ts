@@ -251,6 +251,33 @@ export interface AgentSettings {
 
 export type LocalRunMetadata = Record<string, unknown>
 
+export interface CreateLocalRunInput {
+  commandId: string
+  clientMessageId: string
+  threadId?: string
+  assistantMessageId?: string
+  userInput?: string
+  threadTitle?: string
+  threadMetadata?: Record<string, unknown>
+  userItemMetadata?: Record<string, unknown>
+  replaceFromClientId?: string
+  goal: string
+  workspacePath?: string
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  parentRunId?: string
+  settings?: AgentSettings
+  metadata?: LocalRunMetadata
+  mode?: ChatMode
+}
+
+export interface PendingLocalRunCommand {
+  commandId: string
+  createdAt: string
+  input: CreateLocalRunInput
+  canceledAt?: string
+  settledAt?: string
+}
+
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
   if (!src || Object.keys(src).length === 0) return undefined
@@ -278,25 +305,7 @@ function serializeAgentSettings(settings?: AgentSettings): Record<string, unknow
 }
 
 export async function createLocalRun(
-  input: {
-    commandId: string
-    clientMessageId: string
-    threadId?: string
-    assistantMessageId?: string
-    userInput?: string
-    threadTitle?: string
-    threadMetadata?: Record<string, unknown>
-    userItemMetadata?: Record<string, unknown>
-    replaceFromClientId?: string
-    goal: string
-    workspacePath?: string
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>
-    parentRunId?: string
-    settings?: AgentSettings
-    metadata?: LocalRunMetadata
-    /** The model the user picked: 'auto' or a configured catalog model id. */
-    mode?: ChatMode
-  },
+  input: CreateLocalRunInput,
   config: LocalHostConfig,
   fetcher: Fetcher = fetch,
 ): Promise<LocalRun> {
@@ -341,11 +350,42 @@ export async function createLocalRun(
     response = await request()
   } catch (error) {
     if (!input.commandId || !input.clientMessageId) throw error
-    // ponytail: one transport retry; replace with the durable pending-command
-    // sender when client history becomes a rebuildable Runtime projection.
+    // One immediate retry hides brief transport resets; the durable outbox
+    // handles longer outages without creating another command.
     response = await request()
   }
   return decodeLocalResponse<LocalRun>(response)
+}
+
+export async function deliverPendingLocalRunCommands(
+  commands: PendingLocalRunCommand[],
+  config: LocalHostConfig,
+  settle: (command: PendingLocalRunCommand, run: LocalRun) => Promise<void>,
+  fetcher: Fetcher = fetch,
+): Promise<number> {
+  const byThread = new Map<string, PendingLocalRunCommand[]>()
+  for (const command of [...commands].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const key = command.input.threadId ?? command.commandId
+    const threadCommands = byThread.get(key)
+    if (threadCommands) threadCommands.push(command)
+    else byThread.set(key, [command])
+  }
+  const delivered = await Promise.all(
+    [...byThread.values()].map(async (threadCommands) => {
+      let count = 0
+      for (const command of threadCommands) {
+        try {
+          const run = await createLocalRun(command.input, config, fetcher)
+          await settle(command, run)
+          count += 1
+        } catch {
+          break
+        }
+      }
+      return count
+    }),
+  )
+  return delivered.reduce((total, count) => total + count, 0)
 }
 
 export async function forkLocalRun(

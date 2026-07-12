@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createLocalRun,
+  deliverPendingLocalRunCommands,
   authorizeLocalWorkspace,
   diagnoseLocalWorkspace,
   getLocalRunDiagnostics,
@@ -238,6 +239,111 @@ describe('desktop local host client', () => {
       command_id: 'cmd_client_1',
       client_message_id: 'msg_client_1',
     })
+  })
+
+  it('redelivers a persisted command with its stable id and acknowledges only success', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-replayed-after-restart',
+          goal: 'continue after restart',
+          status: 'queued',
+          created_at: '2026-05-11T00:00:00Z',
+          updated_at: '2026-05-11T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingLocalRunCommands(
+        [{
+          commandId: 'cmd-restart',
+          createdAt: '2026-05-10T00:00:00.000Z',
+          input: {
+            commandId: 'cmd-restart',
+            clientMessageId: 'msg-restart',
+            threadId: 'conv-restart',
+            goal: 'continue after restart',
+          },
+        }],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
+      command_id: 'cmd-restart',
+      client_message_id: 'msg-restart',
+    })
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: 'cmd-restart' }),
+      expect.objectContaining({ id: 'run-replayed-after-restart' }),
+    )
+  })
+
+  it('keeps a rejected command while delivering a different thread', async () => {
+    const fetcher = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { command_id?: string }
+      if (body.command_id === 'cmd-rejected') {
+        return new Response(JSON.stringify({ detail: 'workspace revoked' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'run-other-thread',
+          goal: 'other thread',
+          status: 'queued',
+          created_at: '2026-05-11T00:00:00Z',
+          updated_at: '2026-05-11T00:00:00Z',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    const acknowledge = vi.fn().mockResolvedValue(undefined)
+
+    await expect(
+      deliverPendingLocalRunCommands(
+        [
+          {
+            commandId: 'cmd-rejected',
+            createdAt: '2026-05-10T00:00:00.000Z',
+            input: {
+              commandId: 'cmd-rejected',
+              clientMessageId: 'msg-rejected',
+              threadId: 'thread-rejected',
+              goal: 'rejected',
+            },
+          },
+          {
+            commandId: 'cmd-other',
+            createdAt: '2026-05-10T00:00:01.000Z',
+            input: {
+              commandId: 'cmd-other',
+              clientMessageId: 'msg-other',
+              threadId: 'thread-other',
+              goal: 'other thread',
+            },
+          },
+        ],
+        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+        acknowledge,
+        fetcher,
+      ),
+    ).resolves.toBe(1)
+
+    expect(acknowledge).not.toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: 'cmd-rejected' }),
+      expect.anything(),
+    )
+    expect(acknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ commandId: 'cmd-other' }),
+      expect.objectContaining({ id: 'run-other-thread' }),
+    )
   })
 
   it('carries per-run agent settings in the run-create payload', async () => {

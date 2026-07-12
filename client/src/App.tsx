@@ -81,6 +81,7 @@ import {
   clearLocalMemory,
   createLocalSkill,
   createLocalRun,
+  deliverPendingLocalRunCommands,
   createMcpServer,
   deleteLocalSkill,
   deleteLocalThread,
@@ -117,6 +118,7 @@ import {
   updateMcpServer,
   type AdvancedAgentSettings,
   type AgentSettings,
+  type CreateLocalRunInput,
   type LocalArtifact,
   type LocalCloudSession,
   type LocalHostConfig,
@@ -124,6 +126,7 @@ import {
   type LocalHostProbe,
   type LocalPlanApprovalDecision,
   type LocalPermissionScope,
+  type PendingLocalRunCommand,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
   type LocalRunMetadata,
@@ -141,6 +144,7 @@ const runtimeThreadIDsStorageKey = 'shejane.runtime-thread-ids.v1'
 const checkoutRecoveryPollMs = 3000
 const checkoutRecoveryMaxPolls = 40
 const scheduledRunNotificationPollMs = 30_000
+const pendingCommandRetryMs = 2_000
 interface LocalHarnessRunOptions {
   parentRunId?: string
   metadata?: LocalRunMetadata
@@ -436,6 +440,7 @@ function AppContent() {
   const [pendingProject, setPendingProject] = useState<ConversationProject | undefined>()
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
+  const [pendingCommandDeliveryVersion, setPendingCommandDeliveryVersion] = useState(0)
   const scheduledNotificationIDs = useRef(new Set<string>())
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null)
@@ -960,6 +965,38 @@ function AppContent() {
       return
     }
     let disposed = false
+    let retryTimer: number | undefined
+    const config = localHostConfig
+    const deliver = async () => {
+      try {
+        const commands = await localData.listPendingLocalRunCommands()
+        if (disposed || commands.length === 0) return
+        const delivered = await deliverPendingLocalRunCommands(
+          commands,
+          config,
+          (command, run) => settleDeliveredLocalRunCommand(command, run, config).then(() => undefined),
+        )
+        if (!disposed && delivered < commands.length) {
+          retryTimer = window.setTimeout(() => void deliver(), pendingCommandRetryMs)
+        }
+      } catch {
+        if (!disposed) {
+          retryTimer = window.setTimeout(() => void deliver(), pendingCommandRetryMs)
+        }
+      }
+    }
+    void deliver()
+    return () => {
+      disposed = true
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    }
+  }, [isDesktop, localData, localHost?.online, localHostConfig, pendingCommandDeliveryVersion])
+
+  useEffect(() => {
+    if (!isDesktop || !localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
+      return
+    }
+    let disposed = false
     let polling = false
     let interval: number | undefined
     const applyProjected = (projected: Conversation[], deleted = new Set<string>()) => {
@@ -1003,14 +1040,17 @@ function AppContent() {
         const projected = snapshots.map((snapshot) =>
           projectRuntimeThread(snapshot, existing.get(snapshot.thread.id), t),
         )
-        await Promise.all(projected.map((conversation) => localData.save(conversation)))
+        const saved = await Promise.all(
+          projected.map((conversation) => localData.saveRuntimeProjection(conversation)),
+        )
+        const visibleProjected = projected.filter((_conversation, index) => saved[index])
         const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
         for (const threadID of latest.keys()) nextRuntimeThreadIDs.add(threadID)
         for (const threadID of deleted) nextRuntimeThreadIDs.delete(threadID)
         storeRuntimeThreadIDs(nextRuntimeThreadIDs)
         runtimeThreadIDsRef.current = nextRuntimeThreadIDs
         runtimeThreadCursorRef.current = Math.max(runtimeThreadCursorRef.current, result.cursor)
-        applyProjected(projected, deleted)
+        applyProjected(visibleProjected, deleted)
       } catch {
         // Cursor polling is a cache refresh. The next pass retries from the
         // last committed cursor; it never changes Runtime truth.
@@ -1224,11 +1264,50 @@ function AppContent() {
     const projected = snapshots.map((snapshot) =>
       projectRuntimeThread(snapshot, existing.get(snapshot.thread.id), t),
     )
-    await Promise.all(projected.map((conversation) => localData.save(conversation)))
+    const saved = await Promise.all(
+      projected.map((conversation) => localData.saveRuntimeProjection(conversation)),
+    )
+    const visibleProjected = projected.filter((_conversation, index) => saved[index])
     storeRuntimeThreadIDs(nextThreadIDs)
     runtimeThreadIDsRef.current = nextThreadIDs
     runtimeThreadCursorRef.current = Math.max(runtimeThreadCursorRef.current, cursor)
-    return projected
+    return visibleProjected
+  }
+
+  async function settleDeliveredLocalRunCommand(
+    command: PendingLocalRunCommand,
+    run: LocalHarnessRun,
+    config: LocalHostConfig,
+  ): Promise<boolean> {
+    const threadID = command.input.threadId
+    if (threadID) {
+      const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(threadID)
+      storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+      runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+    }
+    const [pending, conversation] = await Promise.all([
+      localData.getPendingLocalRunCommand(command.commandId),
+      threadID ? localData.get(threadID) : Promise.resolve(undefined),
+    ])
+    if (pending?.canceledAt || (threadID && !conversation)) {
+      if (threadID) {
+        await cancelLocalRun(run.id, config)
+        await streamLocalRun(run.id, config, { onDelta: () => undefined, onEvent: () => undefined })
+        await deleteLocalThread(threadID, config)
+        const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current)
+        nextRuntimeThreadIDs.delete(threadID)
+        storeRuntimeThreadIDs(nextRuntimeThreadIDs)
+        runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+      }
+      if (threadID) {
+        await localData.settleCanceledLocalRunCommand(threadID, command.commandId)
+      } else {
+        await localData.deletePendingLocalRunCommand(command.commandId)
+      }
+      return false
+    }
+    await localData.deletePendingLocalRunCommand(command.commandId)
+    return true
   }
 
   function startNewConversation() {
@@ -1853,7 +1932,7 @@ function AppContent() {
       role: 'assistant',
       content: '',
       createdAt: timestamp,
-      status: 'streaming',
+      status: 'pending',
       runOrigin: 'local',
       agentEvents: runOptions?.initialAgentEvents ? [...runOptions.initialAgentEvents] : [],
     }
@@ -1861,7 +1940,6 @@ function AppContent() {
     const priorMessages = conversation.messages
     conversation.messages = [...priorMessages, userMessage, assistantMessage]
     conversation.updatedAt = timestamp
-    await localData.save(conversation)
     scheduleConversationRender(conversation, context)
 
     const parentRunId = runOptions?.parentRunId ?? [...priorMessages]
@@ -1913,41 +1991,46 @@ function AppContent() {
       }
     }
 
+    const runInput: CreateLocalRunInput = {
+      commandId,
+      clientMessageId: userMessage.id,
+      threadId: conversation.id,
+      assistantMessageId: assistantMessage.id,
+      userInput: text,
+      threadTitle: conversation.title,
+      threadMetadata: {
+        archived: conversation.archived,
+        pinned: conversation.pinned ?? false,
+        project: conversation.project,
+        workspace: conversation.workspace,
+      },
+      userItemMetadata: {
+        attachments: userMessage.attachments ?? [],
+      },
+      replaceFromClientId: runOptions?.replaceFromClientId,
+      goal,
+      workspacePath: conversation.workspace?.path.trim() || undefined,
+      history: runtimeThreadIDsRef.current.has(conversation.id)
+        ? undefined
+        : deriveAgentHistory(priorMessages),
+      parentRunId,
+      settings: effectiveSettings,
+      metadata: runOptions?.metadata,
+      mode,
+    }
+    const pendingCommand: PendingLocalRunCommand = {
+      commandId,
+      createdAt: timestamp,
+      input: runInput,
+    }
+    await localData.saveWithPendingLocalRunCommand(conversation, pendingCommand)
+
+    let keepConversation = true
     try {
-      const run = await createLocalRun(
-        {
-          commandId,
-          clientMessageId: userMessage.id,
-          threadId: conversation.id,
-          assistantMessageId: assistantMessage.id,
-          userInput: text,
-          threadTitle: conversation.title,
-          threadMetadata: {
-            archived: conversation.archived,
-            pinned: conversation.pinned ?? false,
-            project: conversation.project,
-            workspace: conversation.workspace,
-          },
-          userItemMetadata: {
-            attachments: userMessage.attachments ?? [],
-          },
-          replaceFromClientId: runOptions?.replaceFromClientId,
-          goal,
-          workspacePath: conversation.workspace?.path.trim() || undefined,
-          history: runtimeThreadIDsRef.current.has(conversation.id)
-            ? undefined
-            : deriveAgentHistory(priorMessages),
-          parentRunId,
-          settings: effectiveSettings,
-          metadata: runOptions?.metadata,
-          mode,
-        },
-        runLocalHostConfig,
-      )
-      assistantMessage.runId = run.id
-      const nextRuntimeThreadIDs = new Set(runtimeThreadIDsRef.current).add(conversation.id)
-      storeRuntimeThreadIDs(nextRuntimeThreadIDs)
-      runtimeThreadIDsRef.current = nextRuntimeThreadIDs
+      const run = await createLocalRun(runInput, runLocalHostConfig)
+      Object.assign(assistantMessage, { runId: run.id, status: 'streaming' as const })
+      keepConversation = await settleDeliveredLocalRunCommand(pendingCommand, run, runLocalHostConfig)
+      if (!keepConversation) return conversation
       setLocalRuns((items) => upsertLocalRun(items, run))
       scheduleConversationRender(conversation, context)
       const seenEventIDs = new Set<string>()
@@ -1972,23 +2055,21 @@ function AppContent() {
       } else if (assistantMessage.status === 'error') {
         notifyAgentFailed(assistantMessage, t)
       }
-    } catch (error) {
-      assistantMessage.status = 'error'
-      assistantMessage.content = error instanceof Error ? error.message : t('app.notice.localRunFailed')
-      scheduleConversationRender(conversation, context)
-      // A network/HTTP drop (vs an in-band run.failed event) lands here —
-      // still notify so a blurred window learns the run died.
-      notifyAgentFailed(assistantMessage, t)
-      throw error
+    } catch {
+      setPendingCommandDeliveryVersion((version) => version + 1)
+      assistantMessage.status = assistantMessage.runId ? 'streaming' : 'pending'
     } finally {
-      try {
-        const snapshot = await getLocalThreadSnapshot(conversation.id, runLocalHostConfig)
-        Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
-        scheduleConversationRender(conversation, context)
-      } catch {
-        conversation.updatedAt = new Date().toISOString()
+      if (keepConversation && await localData.get(conversation.id)) {
+        try {
+          const snapshot = await getLocalThreadSnapshot(conversation.id, runLocalHostConfig)
+          Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
+        } catch {
+          conversation.updatedAt = new Date().toISOString()
+        }
+        if (await localData.saveRuntimeProjection(conversation)) {
+          scheduleConversationRender(conversation, context)
+        }
       }
-      await localData.save(conversation)
     }
 
     return conversation
@@ -2753,6 +2834,7 @@ function AppContent() {
         return
       }
     }
+    pendingConversationRendersRef.current.delete(conversationID)
     await localData.delete(conversationID)
     if (deletedActive) {
       setPendingWorkspace(undefined)

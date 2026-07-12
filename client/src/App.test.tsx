@@ -388,6 +388,205 @@ describe('user client shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/agent/runs'))).toBe(false)
   })
 
+  it('redelivers an unacknowledged Runtime command after the desktop restarts', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.saveWithPendingLocalRunCommand(
+      {
+        id: 'conv-pending-restart',
+        title: '恢复任务',
+        archived: false,
+        createdAt: '2026-05-10T00:00:00.000Z',
+        updatedAt: '2026-05-10T00:00:00.000Z',
+        messages: [
+          {
+            id: 'msg-pending-restart',
+            commandId: 'cmd-pending-restart',
+            role: 'user',
+            content: '继续未确认任务',
+            createdAt: '2026-05-10T00:00:00.000Z',
+            status: 'done',
+          },
+        ],
+      },
+      {
+        commandId: 'cmd-pending-restart',
+        createdAt: '2026-05-10T00:00:00.000Z',
+        input: {
+          commandId: 'cmd-pending-restart',
+          clientMessageId: 'msg-pending-restart',
+          threadId: 'conv-pending-restart',
+          goal: '继续未确认任务',
+        },
+      },
+    )
+    const calls = mockFetch('user')
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+
+    await waitFor(() => {
+      const post = calls.find(
+        (call) => call.url === 'http://127.0.0.1:17371/local/v1/runs' && call.init?.method === 'POST',
+      )
+      expect(JSON.parse(String(post?.init?.body ?? '{}'))).toMatchObject({
+        command_id: 'cmd-pending-restart',
+        client_message_id: 'msg-pending-restart',
+      })
+    })
+    await waitFor(async () => expect(await localData.listPendingLocalRunCommands()).toEqual([]))
+  })
+
+  it('keeps an unacknowledged command pending instead of inventing a failed Run', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    mockFetch('user', { localRunCreateFailures: 10 })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+    render(<App />)
+    expect(await screen.findByText('今天想从哪件事开始？琐事交给石间，你只管要紧的。')).toBeInTheDocument()
+
+    typeComposer('等待运行时确认')
+    fireEvent.click(screen.getByText('发送'))
+
+    await waitFor(async () => {
+      const [conversation] = await localData.list()
+      expect(conversation?.messages.at(-1)).toMatchObject({
+        role: 'assistant',
+        status: 'pending',
+        runOrigin: 'local',
+      })
+      expect(await localData.listPendingLocalRunCommands()).toHaveLength(1)
+    })
+  })
+
+  it('removes a Runtime thread when its conversation is deleted during delivery', async () => {
+    let releaseCreate!: () => void
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve
+    })
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.saveWithPendingLocalRunCommand(
+      {
+        id: 'conv-delete-during-delivery',
+        title: '删除投递中任务',
+        archived: false,
+        createdAt: '2026-05-10T00:00:00.000Z',
+        updatedAt: '2026-05-10T00:00:00.000Z',
+        messages: [],
+      },
+      {
+        commandId: 'cmd-delete-during-delivery',
+        createdAt: '2026-05-10T00:00:00.000Z',
+        input: {
+          commandId: 'cmd-delete-during-delivery',
+          clientMessageId: 'msg-delete-during-delivery',
+          threadId: 'conv-delete-during-delivery',
+          goal: 'must be deleted after acceptance',
+        },
+      },
+    )
+    const calls = mockFetch('user', {
+      localRunCreateGate: createGate,
+      requireRunCancelBeforeThreadDelete: true,
+    })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+    render(<App />)
+    await waitFor(() => expect(calls.some(
+      (call) => call.url.endsWith('/local/v1/runs') && call.init?.method === 'POST',
+    )).toBe(true))
+    await localData.delete('conv-delete-during-delivery')
+    releaseCreate()
+
+    await waitFor(() => expect(calls.some(
+      (call) => call.url.endsWith('/local/v1/threads/conv-delete-during-delivery') &&
+        call.init?.method === 'DELETE',
+    )).toBe(true))
+    const cancelIndex = calls.findIndex((call) => call.url.endsWith('/local/v1/runs/local-run/cancel'))
+    const streamIndex = calls.findIndex((call) => call.url.endsWith('/local/v1/runs/local-run/stream'))
+    const deleteIndex = calls.findIndex((call) =>
+      call.url.endsWith('/local/v1/threads/conv-delete-during-delivery') &&
+      call.init?.method === 'DELETE')
+    expect(cancelIndex).toBeGreaterThanOrEqual(0)
+    expect(streamIndex).toBeGreaterThan(cancelIndex)
+    expect(deleteIndex).toBeGreaterThan(streamIndex)
+    await waitFor(async () => {
+      expect(await localData.get('conv-delete-during-delivery')).toBeUndefined()
+      expect(await localData.listPendingLocalRunCommands()).toEqual([])
+    })
+  })
+
+  it('does not render a stale Runtime snapshot for a canceled conversation', async () => {
+    const localData = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await localData.saveWithPendingLocalRunCommand(
+      {
+        id: 'conv-stale-canceled',
+        title: '已删除对话',
+        archived: false,
+        createdAt: '2026-05-10T00:00:00.000Z',
+        updatedAt: '2026-05-10T00:00:00.000Z',
+        messages: [],
+      },
+      {
+        commandId: 'cmd-stale-canceled',
+        createdAt: '2026-05-10T00:00:00.000Z',
+        input: {
+          commandId: 'cmd-stale-canceled',
+          clientMessageId: 'msg-stale-canceled',
+          threadId: 'conv-stale-canceled',
+          goal: 'must stay deleted',
+        },
+      },
+    )
+    await localData.delete('conv-stale-canceled')
+    await localData.settleCanceledLocalRunCommand('conv-stale-canceled', 'cmd-stale-canceled')
+    const now = '2026-07-12T00:00:00Z'
+    const calls = mockFetch('user', {
+      runtimeThreads: [{
+        id: 'conv-stale-canceled',
+        title: '过期投影',
+        metadata: {},
+        version: 2,
+        created_at: now,
+        updated_at: now,
+      }],
+      runtimeThreadSnapshots: {
+        'conv-stale-canceled': {
+          thread: {
+            id: 'conv-stale-canceled',
+            title: '过期投影',
+            metadata: {},
+            version: 2,
+            created_at: now,
+            updated_at: now,
+          },
+          items: [],
+          runs: [],
+          events: [],
+          cursor: 2,
+        },
+      },
+    })
+    window.shejaneDesktop = {
+      platform: 'darwin',
+      localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop' },
+    }
+
+    render(<App />)
+
+    await waitFor(() => expect(calls.some(
+      (call) => call.url.endsWith('/local/v1/threads/conv-stale-canceled'),
+    )).toBe(true))
+    expect(screen.queryByText('过期投影')).not.toBeInTheDocument()
+    expect(await localData.get('conv-stale-canceled')).toBeUndefined()
+  })
+
   it('renders the auth screen for sign up and sign in', async () => {
     mockFetch('user')
 
@@ -634,7 +833,7 @@ describe('user client shell', () => {
 
     act(() => localRunStream.done())
 
-    expect(await screen.findByText('快照中的权威回答')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('快照中的权威回答')).toBeInTheDocument())
   })
 
   it('fires a desktop notification when a local run fails', async () => {
@@ -2303,6 +2502,11 @@ function mockFetch(
 	    localRunStream?: DeferredAgentStream
 	    localThreadTerminal?: { content: string; status: 'completed' | 'failed'; eventType: 'run.completed' | 'run.failed' }
 	    localSessionResponses?: Array<{ status?: number; body: Record<string, unknown> }>
+	    localRunCreateFailures?: number
+	    localRunCreateGate?: Promise<void>
+	    requireRunCancelBeforeThreadDelete?: boolean
+	    runtimeThreads?: Array<Record<string, unknown>>
+	    runtimeThreadSnapshots?: Record<string, Record<string, unknown>>
 	    emailVerified?: boolean
 	    balance?: WalletBalance | (() => WalletBalance)
 	  } = {},
@@ -2312,6 +2516,8 @@ function mockFetch(
 	  const localRuns = options.localRuns ?? []
 	  const localSchedules = options.localSchedules ?? []
 	  const localSessionResponses = [...(options.localSessionResponses ?? [])]
+	  let localRunCreateFailures = options.localRunCreateFailures ?? 0
+	  let localRunCanceled = false
 	  let uploadCounter = 0
 	  const uploadedDocuments = new Map<string, Record<string, unknown>>()
 	  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -2385,6 +2591,11 @@ function mockFetch(
       return new Response(JSON.stringify({ connected: false }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url === 'http://127.0.0.1:17371/local/v1/runs' && init?.method === 'POST') {
+      await options.localRunCreateGate
+      if (localRunCreateFailures > 0) {
+        localRunCreateFailures -= 1
+        throw new TypeError('connection reset')
+      }
       return new Response(
         JSON.stringify({
           id: 'local-run',
@@ -2399,13 +2610,40 @@ function mockFetch(
     if (url === 'http://127.0.0.1:17371/local/v1/runs') {
       return new Response(JSON.stringify({ runs: localRuns }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
+    if (url === 'http://127.0.0.1:17371/local/v1/runs/local-run/cancel') {
+      localRunCanceled = true
+      return new Response(JSON.stringify({ canceled: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
     if (url === 'http://127.0.0.1:17371/local/v1/threads') {
-      return new Response(JSON.stringify({ threads: [], cursor: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ threads: options.runtimeThreads ?? [], cursor: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.startsWith('http://127.0.0.1:17371/local/v1/threads/changes')) {
       return new Response(JSON.stringify({ changes: [], cursor: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
+    if (url.startsWith('http://127.0.0.1:17371/local/v1/threads/') && init?.method === 'DELETE') {
+      if (options.requireRunCancelBeforeThreadDelete && !localRunCanceled) {
+        return new Response(JSON.stringify({ detail: 'thread has an unsettled run' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ version: 1 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
     if (url.startsWith('http://127.0.0.1:17371/local/v1/threads/') && init?.method === 'GET') {
+      const requestedThreadID = decodeURIComponent(url.split('/').at(-1) ?? '')
+      const runtimeSnapshot = options.runtimeThreadSnapshots?.[requestedThreadID]
+      if (runtimeSnapshot) {
+        return new Response(JSON.stringify(runtimeSnapshot), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
       const terminal = options.localThreadTerminal
       if (!terminal) return new Response(JSON.stringify({ detail: 'thread not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
       const runCall = [...calls].reverse().find((call) => call.url.endsWith('/local/v1/runs') && call.init?.method === 'POST')
