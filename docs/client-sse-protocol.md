@@ -53,8 +53,9 @@ interface AgentRunEvent {
 | `run.started` | run 进入 `running` 状态 | `goal` |
 | `run.resumed` | resume_run 后第一个 frame | `payload`（resume 时传入的 dict） |
 | `run.waiting` | 卡在 HITL interrupt（**通常伴随 `permission.required` 或 `question.asked`**，UI 优先听后者） | `next`, `interrupts`, `handoff` |
-| `run.completed` | 终态 completed | `final_text` |
+| `run.completed` | 终态 completed | `final_text`, `input_tokens`, `output_tokens`, `credits_cost`, `model_calls`, `unmetered_calls`, `outcome_unknown_calls` |
 | `run.failed` | 终态 failed | `error`, `type`, `category?`, `recoverable?`, `retryable?`, `action_kind?`, `suggested_action?` |
+| `run.cleanup_required` | 清理尚未确认，执行代次已隔离 | `error`, `type`, `category`, `retryable=false`, `cleanup` |
 | `run.canceled` | 终态 canceled | _(空)_ |
 | `repair.workflow` | 用户触发的 repair run 进入/结束/失败/被上限拒绝/取消 | `status`, `attempt`, `max_attempts`, `source_run_id?`, `source_message_id?`, `failure_category?`, `reason?` |
 
@@ -72,7 +73,11 @@ run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 | `llm.delta` | 每个 streamed token（assistant content） | `content: string` |
 | `llm.reasoning` | DeepSeek-style thinking-mode chunk | `content: string` |
 | `llm.tool_call_chunk` | 工具调用 args 的部分 JSON 流 | `id, name, args_delta, index` |
+| `llm.usage` | 供应商返回的临时用量，只用于实时显示 | `input_tokens`, `output_tokens`, `credits_cost` |
 | `llm.error` | 流中报错（非致命） | `message` |
+
+`llm.usage` 不是结算事实来源，断线时可以丢失。`run.completed` 中的用量由
+Runtime 持久模型调用账本聚合；重复 SSE 事件不会改变该结果。
 
 ### 工具
 
@@ -87,9 +92,8 @@ run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 
 | event_type | 触发时机 | payload |
 |---|---|---|
-| `permission.required` | HITL middleware 拦到一个 destructive 工具；同一 pause 可连续多条 | `request_id, tool, tool_name, arguments, description` |
+| `permission.required` | 参数化工具确认在整批执行前暂停；同一批可连续多条 | `request_id, tool, tool_name, tool_call_id, operation_id, arguments_hash, arguments, risk, description, allowed_decisions` |
 | `permission.resolved` | `POST /local/v1/permissions/:id` 成功后持久化，并在恢复流中先于 `run.resumed` 出现 | `request_id, tool, tool_name, decision, scope` |
-| `permission.auto_approved` | 同 run 内之前授权过 `scope=run`，本次跳过提示 | `tool, tool_name, arguments` |
 | `question.asked` | `user.ask` 工具触发 interrupt | `request_id, questions: [{question, options, id}]` |
 | `question.answered` | `POST /local/v1/questions/:id` 成功后持久化，并在恢复流中先于 `run.resumed` 出现 | `request_id, answers` |
 
@@ -97,10 +101,9 @@ run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 
 | event_type | 触发时机 | payload |
 |---|---|---|
-| `graph.node` | LangGraph 节点状态更新（中间件 before/after hooks） | `node, delta` |
 | `agent.custom` | middleware 通过 `get_stream_writer()` 推送 | _(任意)_ |
 
-> ⚠️ `graph.node` 量大但客户端 UI 通常不需要 —— 用作 LangSmith / 诊断面板的素材。`chatStore.ts` 默认忽略。
+LangGraph 原始节点更新不进入产品 SSE；它们保留在 checkpoint 和 tracing 诊断层。
 
 ---
 
@@ -145,7 +148,7 @@ while (true) {
         })
         break
       case 'permission.resolved':
-      case 'permission.auto_approved':
+      case 'tool.reconciliation_resolved':
         clearApprovalCard(payload.request_id)
         break
       case 'question.asked':
@@ -174,7 +177,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 
 | 方法 + 路径 | body | 触发的 SSE |
 |---|---|---|
-| `POST /local/v1/runs` | `{goal, history?, settings?, ...}` | 创建后开 stream → `run.started` |
+| `POST /local/v1/runs` | `{command_id, client_message_id, goal, history?, settings?, ...}` | 创建后开 stream → `run.started` |
 | `GET /local/v1/runs/:id/stream` | — | （本协议） |
 | `POST /local/v1/runs/:id/cancel` | _(空)_ | 当前 stream 收到 `run.canceled` |
 | `POST /local/v1/permissions/:id` | `{decision: "approve"\|"deny", scope?: "once"\|"run"}` | `permission.resolved`；同批权限全部 resolved 后才有 `run.resumed` |
@@ -192,8 +195,8 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
    → run.waiting {handoff: {ledger_state, ledger_message, feature_ledger}}
    → [DONE]   ← stream 暂时关闭
 
-[user clicks Approve "always"] → POST /permissions/P {decision: "approve", scope: "run"}
-   (daemon: persist permission.resolved, grant_tool_scope, resume_run)
+[user clicks "allow same arguments in this run"] → POST /permissions/P {decision: "approve", scope: "run"}
+   (daemon: 幂等保存决定；授权只绑定同参数指纹、同风险和稳定图定义，并有时限与次数上限)
    GET /runs/R/stream  ← 客户端重新订阅
    → permission.resolved {request_id: P, decision: "approve", scope: "run"}
    → run.resumed
@@ -207,24 +210,31 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 `run.waiting` 前发多条 `permission.required`。每次 `POST /permissions/:id`
 只 resolve 对应的一张卡；只要当前批次还有 `pending` permission，响应为
 `resumed:false`，不会发 `run.resumed`。最后一个同批权限 resolved 后，
-daemon 按 `permission.required` 出现顺序构造
-`{"decisions": [...]}` 并 resume。
+daemon 按 LangGraph `interrupt_id` 和动作顺序构造恢复映射并 resume。
 
-后续 turn 再触发同一个 tool 时：
+后续 turn 再触发同一个工具且参数指纹、风险和图定义完全相同时，可消耗有界运行级授权直接执行，不再产生额外事件。若副作用工具结果不确定，则进入显式核对：
 
 ```
    → llm.tool_call_chunk
-   → permission.auto_approved {tool: "write_file"}   ← 跳过用户提示
-   → tool.completed
-   → ...
+   → tool.reconciliation_required {operation_id, tool_name}
+   ← POST /local/v1/tool-reconciliations/:operation_id
+   → tool.reconciliation_resolved {decision}
 ```
 
 ---
 
 ## 设计原则
 
+Runtime 的线程快照是界面事实来源：
+
+- `GET /local/v1/threads` 使用稳定游标分页列出对话，并返回全局变化高水位。
+- `GET /local/v1/threads/{thread_id}` 按消息位置分页；后续页携带线程版本，版本变化返回冲突并由客户端重读。
+- `GET /local/v1/threads/changes?after=<cursor>` 用于发现其他客户端或后台任务提交的变化。
+- SSE 提供低延迟增量，不承担最终一致性。客户端在流结束后读取线程快照，后台也按变化游标刷新。
+- 正文消息可以完整分页；过程事件只是辅助时间线，达到上限时返回截断标记。
+
 1. **加性兼容**：新增 event_type 不破坏老客户端。Switch 用 fall-through default 忽略未知 type。
 2. **窄 schema**：不暴露 LangGraph 内部类（`AIMessageChunk` / `StateGraph` / ...）；payload 字段都是普通 JSON 标量 + 字典。
-3. **Persist + stream 同源**：每条业务 SSE 事件同时写 `local_events` 表，重连可重放完整事件序列；`[DONE]` 是传输层结束标记，不写库。
+3. **Persist + stream 同源**：每条业务 SSE 事件同时写 `local_events` 表，重连可重放完整事件序列；等待和终态事件与运行状态在同一事务提交，提交后才通知实时订阅者；`[DONE]` 是传输层结束标记，不写库。
 4. **失败可观测**：`run.failed` 一定带 `error` + `type`，并尽量附带 `category` / `recoverable` / `retryable` / `action_kind` / `suggested_action`，让事件流消费者无需再请求 diagnostics 也能先判断是重试、用户处理、修复、运维处理还是继续排查；客户端普通失败文案会保留原始错误并追加本地化的短策略标签；`tool.failed` 一定带 `content` + `status="error"`，结构化工具 envelope 失败还会尽量带 `error_code` / `recoverable` / `retryable`；用户触发的 repair run 另有 `repair.workflow`，避免 UI 把修复尝试误读成普通 retry 或裸露内部事件名。
 5. **HITL 双轨**：`run.waiting` 是兜底（curl 友好），`permission.required` / `question.asked` 是窄信号 — UI 永远听窄的；同一 pause 批次内的多张 permission 卡必须全部 resolved 后才 resume。

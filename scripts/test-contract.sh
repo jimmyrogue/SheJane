@@ -19,6 +19,7 @@ TOKEN="${CONTRACT_LOCAL_HOST_TOKEN:-contract-token}"
 URL="http://127.0.0.1:${PORT}"
 LOG_DIR="${SHEJANE_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
 LOG_FILE="${LOG_DIR}/contract-daemon.log"
+DATA_DIR="$(mktemp -d)"
 mkdir -p "$LOG_DIR"
 
 DAEMON_PID=""
@@ -28,6 +29,7 @@ cleanup() {
   fi
   # Belt-and-suspenders: free the port even if the PID moved.
   lsof -ti :"$PORT" 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+  rm -rf "$DATA_DIR"
 }
 trap cleanup EXIT
 
@@ -55,6 +57,7 @@ echo "→ Starting contract daemon at ${URL}"
     "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
     "SHEJANE_LOCAL_HOST_PORT=$PORT" \
     "SHEJANE_LOCAL_HOST_URL=$URL" \
+    "SHEJANE_LOCAL_DATA_DIR=$DATA_DIR" \
     "SHEJANE_CLOUD_BASE_URL=http://127.0.0.1:8080" \
     "SHEJANE_FAKE_LLM=1" \
     "PYTHONUNBUFFERED=1" \

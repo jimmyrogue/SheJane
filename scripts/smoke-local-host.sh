@@ -57,6 +57,7 @@ echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL
     "SHEJANE_LOCAL_HOST_ADDR=$HOST" \
     "SHEJANE_LOCAL_HOST_PORT=$PORT" \
     "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
+    "SHEJANE_FAKE_LLM=true" \
     "PYTHONUNBUFFERED=1" \
     uv run python -m local_host >"${TMP_DIR}/local-host.log" 2>&1
 ) &
@@ -94,26 +95,29 @@ node - "${TMP_DIR}/tools.json" <<'NODE'
 const fs = require('fs');
 const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const names = new Set((payload.tools ?? []).map((tool) => tool.name));
-// Tool registry was renamed during the Python rewrite — these are the
-// names the deepagents/langchain agent registers via @tool("...").
-// `file.read`/`shell.run`/`mcp.call` were Node-daemon names; they no
-// longer exist (filesystem access goes through deepagents
-// FilesystemMiddleware, shell is intentionally absent, MCP is auto-
-// surfaced from SHEJANE_LOCAL_MCP_SERVERS).
-for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch', 'web.search', 'image.generate']) {
+// This daemon has no cloud session, so only locally executable tools may be
+// advertised. Cloud-backed tools must not leak into the model's tool list.
+for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch']) {
   if (!names.has(name)) {
     console.error(`Missing expected tool: ${name}`);
+    process.exit(1);
+  }
+}
+for (const name of ['web.search', 'image.generate', 'image.edit', 'pdf.inspect', 'code.execute']) {
+  if (names.has(name)) {
+    console.error(`Unexpected cloud tool without a cloud session: ${name}`);
     process.exit(1);
   }
 }
 NODE
 
 echo "Creating and streaming a deterministic local run"
+COMMAND_SUFFIX="$(date +%s)-$$"
 RUN_RESPONSE="$(
   curl -fsS -X POST "${BASE_URL}/local/v1/runs" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    --data '{"goal":"smoke local harness"}'
+    --data "{\"command_id\":\"cmd_smoke_${COMMAND_SUFFIX}\",\"client_message_id\":\"msg_smoke_${COMMAND_SUFFIX}\",\"protocol_version\":1,\"required_capabilities\":[\"agent.run\",\"agent.stream\"],\"goal\":\"smoke local harness\",\"settings\":{\"memory\":\"off\",\"skills\":\"off\",\"mcp\":\"off\"}}"
 )"
 RUN_ID="$(
   RUN_RESPONSE="$RUN_RESPONSE" node <<'NODE'
