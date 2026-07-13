@@ -1,3 +1,7 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
 /*
  * ICON LIBRARY CONVENTION: this project uses @tabler/icons-react, NOT lucide.
  * components.json says "iconLibrary": "lucide" only because shadcn has no
@@ -13,6 +17,8 @@
  * never applied. Do not add a `.dark {}` token block unless dark mode is a
  * deliberate, fully-scoped feature.
  */
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
   color-scheme: light;
