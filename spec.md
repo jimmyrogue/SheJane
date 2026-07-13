@@ -19,9 +19,6 @@ SheJane 是一个可独立运行的桌面 Agent Harness：
 | `services/runtime/` | Python Harness Runtime | 是 |
 | `apps/desktop/` | Electron 桌面客户端 | 是 |
 | `packages/runtime-client/` | Runtime TypeScript SDK | 是 |
-| `services/cloud/` | 账号、计费、对象存储等可选 Go 服务 | 否 |
-| `apps/admin/` | 可选 Cloud 管理后台 | 否 |
-| `infra/cloud/` | 可选 Cloud 部署配置 | 否 |
 
 ## 核心原则
 
@@ -35,10 +32,8 @@ SheJane 是一个可独立运行的桌面 Agent Harness：
 
 ## 配置
 
-- Desktop、Runtime、Runtime SDK 和 Admin 默认不需要环境变量。
+- Desktop、Runtime 和 Runtime SDK 默认不需要环境变量。
 - Runtime 的供应商和运行设置通过本地接口保存。
-- Cloud 密钥只放在 `services/cloud/.env`。
-- Cloud 部署值只放在 `infra/cloud/.env`。
 - 仓库根目录没有共享 `.env.example`。
 
 ## 当前不做

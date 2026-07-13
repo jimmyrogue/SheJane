@@ -31,7 +31,7 @@ Runtime 不接收 Cloud 地址、Cloud Token 或供应商环境变量。BYOK 密
 - 安装包只包含锁定版本的 Runtime；
 - Runtime 校验文件匹配；
 - 清空用户环境变量后能够启动；
-- 阻断 Go Cloud 后仍能完成 BYOK“模型 → 工具 → 模型”；
+- 在没有任何 SheJane 云服务的环境中完成 BYOK“模型 → 工具 → 模型”；
 - Runtime 只监听 loopback；
 - Renderer 无法读取配对 Token 明文；
 - 外部 Runtime 不会在 Desktop 退出时被停止。

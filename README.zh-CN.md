@@ -16,7 +16,7 @@
 </div>
 
 > [!NOTE]
-> Desktop 与 Runtime 已可独立运行。Go Cloud 和 Admin 作为可选服务保留在仓库中并独立发布，不再是桌面 Harness 的运行条件。
+> SheJane 现在只发布独立的 Desktop、Runtime 和公共 Runtime SDK。已经退役的 Cloud 与 Admin 方案保存在[历史文档](./docs/history/cloud-admin-architecture.md)中。
 
 ## 为什么做 SheJane
 
@@ -32,7 +32,6 @@ flowchart LR
     R --> W["本地工作区<br/>文件 · 工具 · 检查点"]
     R --> E["扩展能力<br/>技能 · MCP · 子 Agent"]
     R --> B["BYOK 供应商<br/>OpenAI 兼容接口 · 本地模型端点"]
-    C["可选 Go Cloud + Admin"] -. "仅通过标准供应商或 MCP 接入" .-> R
 ```
 
 桌面客户端通过 loopback HTTP 和配对凭证连接 Runtime。本地 Runtime 失败时应明确报告本地错误，不应静默创建云端任务。
@@ -45,14 +44,13 @@ flowchart LR
 | 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
 | 扩展能力 | 技能、MCP、子 Agent 和可配置中间件 |
 | 桌面端 | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
-| 可选 Cloud | 鉴权、计费、文档、服务工具和管理接口，独立发布 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 
 Runtime 不再内置业务平台连接器。未来统一通过标准工具或 MCP 接入。
 
 ## 快速开始
 
-桌面开发需要**支持 Corepack 的 Node.js 22+**、**Python 3.12+** 与 [uv](https://docs.astral.sh/uv/)。只有开发可选 Cloud 服务时才需要 Go 和 Docker。
+桌面开发需要**支持 Corepack 的 Node.js 22+**、**Python 3.12+** 与 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 make setup-hooks
@@ -66,7 +64,7 @@ make dev-electron
 
 ```bash
 make lint        # 格式、静态检查和密钥边界检查
-make test        # Go、Python、桌面客户端和管理端测试
+make test        # Python Runtime、Desktop 和 Runtime SDK 测试
 make build       # 生产构建
 ```
 

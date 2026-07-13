@@ -16,7 +16,7 @@ English · [简体中文](./README.zh-CN.md)
 </div>
 
 > [!NOTE]
-> Desktop and Runtime are standalone. Go Cloud and Admin remain in this repository as optional, separately released services; neither is required to run the desktop harness.
+> SheJane now ships only the standalone Desktop, Runtime, and public Runtime SDK. The retired Cloud and Admin design is preserved in [the history document](./docs/history/cloud-admin-architecture.md).
 
 ## Why SheJane
 
@@ -32,7 +32,6 @@ flowchart LR
     R --> W["Local workspace<br/>Files · Tools · Checkpoints"]
     R --> E["Extensions<br/>Skills · MCP · Subagents"]
     R --> B["BYOK providers<br/>OpenAI-compatible APIs · local endpoints"]
-    C["Optional Go Cloud + Admin"] -. "standard provider or MCP only" .-> R
 ```
 
 The desktop client and Runtime communicate over loopback HTTP with a pairing token. A failed local Runtime should surface as a local error, not silently create a cloud task.
@@ -45,14 +44,13 @@ The desktop client and Runtime communicate over loopback HTTP with a pairing tok
 | Local tools | Workspace files, shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
 | Extensions | Skills, MCP servers, subagents, and configurable middleware |
 | Desktop | Electron and React client, local Runtime conversation projection, previews, provider settings, and workspace controls |
-| Optional Cloud | Authentication, billing, documents, service tools, and Admin APIs, released independently |
 | Runtime SDK | Public TypeScript client for commands, SSE, snapshots, errors, and generated protocol types |
 
 Business-platform connectors are not built into the Runtime. Future integrations should use standard tools or MCP.
 
 ## Quick start
 
-Desktop development requires **Node.js 22+ with Corepack**, **Python 3.12+**, and [uv](https://docs.astral.sh/uv/). Go and Docker are only needed for the optional Cloud services.
+Desktop development requires **Node.js 22+ with Corepack**, **Python 3.12+**, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 make setup-hooks
@@ -66,7 +64,7 @@ No root `.env` is required. Start Desktop, add an OpenAI-compatible provider in 
 
 ```bash
 make lint        # format, static checks, and secret-boundary checks
-make test        # Go, Python, desktop client, and admin tests
+make test        # Python Runtime, Desktop, and Runtime SDK tests
 make build       # production builds
 ```
 

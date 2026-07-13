@@ -11,20 +11,18 @@ ownership of their work.
 
 ## Architecture in one minute
 
-SheJane is a desktop agent harness with optional Cloud services:
+SheJane is a standalone desktop agent harness:
 
 ```
 Electron/React Desktop ──/local/v1/*──▶ Python Harness Runtime ──▶ BYOK providers
                                              │
                                              └── Skills / MCP / local tools
 
-Optional Go Cloud + Admin ──▶ Postgres / S3 / Stripe
 ```
 
-- `services/cloud/` — optional Go Cloud: auth, credit ledger, LLM routing, Tool Gateway, Stripe billing, documents (S3), admin APIs.
 - `services/runtime/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
 - `apps/desktop/` — Electron + React + Vite + Tailwind client with a local projection of Runtime-owned conversations.
-- `apps/admin/` — standalone React/Vite admin panel (shadcn/ui).
+- `packages/runtime-client/` — public TypeScript client for the Runtime protocol.
 
 **Read [CLAUDE.md](./CLAUDE.md) first** — it has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend/frontend/testing rules.
 
@@ -33,7 +31,6 @@ Optional Go Cloud + Admin ──▶ Postgres / S3 / Stripe
 - **Node** 22+
 - **pnpm** 11.7.0 through Corepack
 - **Python** 3.12+ with [`uv`](https://docs.astral.sh/uv/)
-- **Go** 1.25+ and **Docker** only when working on optional Cloud services
 - macOS or Linux (the dev launcher is macOS-tuned; Linux works with minor tweaks)
 
 ## First-time setup
@@ -51,15 +48,15 @@ If anything looks wrong, `make doctor` is the first stop.
 
 ## The four invariants (don't break these)
 
-1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store; optional Cloud service keys live in `services/cloud/.env`. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
+1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
 2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `packages/runtime-client/src/generated.ts`.
 3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
-4. **The credit ledger reserves before the external call and settles/releases after**, on every exit path including errors (`services/cloud/internal/billing/`).
+4. **Runtime owns accepted commands, conversations, task state, checkpoints, and tool receipts.** Desktop stores only pending commands and a disposable projection.
 
 ## Workflow
 
 1. Branch off `main` (`feat/…`, `fix/…`, `chore/…`, `docs/…`).
-2. Make your change with a focused test where practical (we lean TDD for auth, wallet/ledger, Stripe, admin, SSE/chat-store, and import/export).
+2. Make your change with a focused test where practical (we lean TDD for Runtime state, permissions, SSE/chat-store, providers, and import/export).
 3. Run the checks below until green.
 4. Open a PR against `main` and include this statement in the description:
 
@@ -72,14 +69,13 @@ If anything looks wrong, `make doctor` is the first stop.
 ## Tests & lint
 
 ```bash
-make lint                   # ruff + gofmt + go vet + the no-platform-keys guard
-make test                   # all four stacks (Go + Python + client + admin)
+make lint                   # ruff + the no-platform-keys guard
+make test                   # Runtime + Desktop + Runtime SDK
 
 # focused:
-make api-test               # go test ./...
 make local-host-test        # uv run python -m pytest
 make client-test            # client vitest
-make admin-test             # admin vitest
+make runtime-client-test    # public SDK vitest
 ```
 
 CI runs the same lint + deterministic-test + contract jobs on every PR.

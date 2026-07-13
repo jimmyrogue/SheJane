@@ -12,7 +12,7 @@ Please include:
 
 - A description of the issue and its impact.
 - Steps to reproduce (a proof-of-concept if you have one).
-- Affected component (Runtime, Desktop, optional Cloud, Admin, or Runtime SDK) and version/commit.
+- Affected component (Runtime, Desktop, or Runtime SDK) and version/commit.
 
 We aim to acknowledge reports within a few business days and will keep
 you updated on remediation. Coordinated disclosure is appreciated — we
@@ -20,20 +20,19 @@ will credit reporters who want it.
 
 ## Scope & sensitive areas
 
-This project handles credentials and money. Findings in these areas are
+This project handles credentials and local tool execution. Findings in these areas are
 especially valued:
 
-- **Auth**: JWT issuance/validation, refresh-token handling, the
-  `ADMIN_EMAILS` promotion path, disabled-user enforcement.
-- **Billing**: the credit ledger (reserve → settle → release), Stripe
-  webhook idempotency, the cloud Tool Gateway's per-call billing.
 - **Secret boundaries**: Runtime BYOK keys must stay in the operating-system
-  credential store; optional Cloud keys must not reach Runtime or Desktop.
-- **Tool sandbox**: code execution runs in E2B microVMs; file uploads
-  are screened by a sensitive-pattern blacklist before leaving the
-  machine.
-- **Document storage**: S3 presigned URLs, per-user ownership checks,
-  expiry/TTL enforcement.
+  credential store and must not reach task records or Desktop storage.
+- **Tool permissions**: risky local operations must pause for an explicit,
+  correctly scoped user decision.
+- **Workspace boundaries**: file and Office tools must stay within the
+  authorized workspace, including symlink and path traversal cases.
+- **Outbound requests**: web tools must block credentials, loopback/private
+  targets, unsafe redirects, and DNS rebinding.
+- **Runtime pairing**: local HTTP endpoints must enforce loopback access and
+  the current pairing token.
 
 ## What is not a vulnerability
 

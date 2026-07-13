@@ -6,8 +6,7 @@ SheJane 首先是独立的 Desktop Agent Harness：
 
 - Desktop 只连接 Runtime；
 - Runtime 拥有任务、对话、模型供应商、工具、MCP、Skills、工作区和持久状态；
-- Go Cloud 与 Admin 是可选服务，不是本地 Harness 的启动条件；
-- 远程能力只能通过标准模型供应商或 MCP 接入，不能恢复产品私有 Gateway。
+- 远程能力只能通过标准模型供应商或 MCP 接入，不能恢复已经退役的产品私有 Gateway。
 
 ## 已完成
 
@@ -18,8 +17,9 @@ SheJane 首先是独立的 Desktop Agent Harness：
 - Runtime Go 模型网关、Cloud 会话和 Cloud 工具网关删除。
 - Runtime BYOK 供应商与操作系统凭据存储。
 - Runtime 高级默认设置进入 SQLite/API。
-- Runtime、Desktop、Cloud、Admin 和 Runtime SDK 独立发布工作流。
-- 模块化环境配置；Desktop、Runtime、SDK 和 Admin 默认零环境变量。
+- Runtime、Desktop 和 Runtime SDK 独立发布工作流。
+- Desktop、Runtime 和 SDK 默认零环境变量。
+- 已删除 Go Cloud、Admin、云端部署和相关发布维护面；旧方案保存在历史文档中。
 
 ## 当前优先级
 
