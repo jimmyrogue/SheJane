@@ -21,7 +21,7 @@ async def test_plan_approval_store_get_or_create(tmp_path) -> None:
     try:
         run = await store.create_run(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,
-            goal="Refactor billing",
+            goal="Refactor task handling",
             workspace_path=None,
         )
         todos = [

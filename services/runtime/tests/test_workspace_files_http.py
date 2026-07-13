@@ -47,7 +47,7 @@ def client(monkeypatch) -> TestClient:
                 **{k: v for k, v in kw.items() if k != "transport"},
             )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _Patched)
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _Patched)
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",

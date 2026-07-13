@@ -14,7 +14,7 @@ a live agent or a paid LLM):
 
 Two judges ship:
   • heuristic_judge — deterministic, objective checks (answer substrings,
-    tools used, step/credit budget). The dependable backbone; no LLM cost.
+    tools used and step budget). The dependable backbone; no LLM cost.
   • llm_judge — an LLM rates correctness/tool-choice/efficiency against the
     case rubric. Pluggable `complete` fn so tests inject a fake and nightly
     wires the real model.
@@ -39,7 +39,6 @@ class Expectation:
     # Tool names expected to appear in the trajectory.
     tools_used: list[str] = field(default_factory=list)
     max_steps: int | None = None
-    max_credits: int | None = None
 
 
 @dataclass
@@ -62,7 +61,6 @@ class Trajectory:
     steps: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
-    credits: int = 0
     failed: bool = False
     error: str = ""
 
@@ -152,10 +150,6 @@ def heuristic_judge(case: EvalCase, traj: Trajectory) -> Judgment:
     if case.expect.max_steps is not None and traj.steps > case.expect.max_steps:
         efficiency = 0.5
         reasons.append(f"steps {traj.steps} over budget {case.expect.max_steps}")
-    if case.expect.max_credits is not None and traj.credits > case.expect.max_credits:
-        efficiency = min(efficiency, 0.5)
-        reasons.append(f"credits {traj.credits} over budget {case.expect.max_credits}")
-
     passed = correctness >= 0.999 and tool_choice >= 0.999 and efficiency >= 0.5
     return Judgment(
         round(correctness, 3), round(tool_choice, 3), round(efficiency, 3), passed, reasons
@@ -172,7 +166,7 @@ def build_judge_prompt(case: EvalCase, traj: Trajectory) -> str:
         f"RUBRIC:\n{case.rubric or '(use general judgement)'}\n\n"
         f"AGENT FINAL ANSWER:\n{traj.final_text}\n\n"
         f"TOOLS USED: {', '.join(traj.tool_calls) or '(none)'}\n"
-        f"STEPS: {traj.steps}  CREDITS: {traj.credits}\n"
+        f"STEPS: {traj.steps}\n"
     )
 
 

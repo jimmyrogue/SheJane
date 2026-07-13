@@ -56,7 +56,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,

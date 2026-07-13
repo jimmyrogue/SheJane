@@ -37,7 +37,8 @@ from deepagents.middleware.subagents import (
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from ..middleware import ToolExecutionMiddleware, ToolReviewMiddleware
+from ..middleware.tool_execution import ToolExecutionMiddleware
+from ..middleware.tool_review import ToolReviewMiddleware
 from .context_builder import identity_safety_prompt
 
 log = logging.getLogger("local_host.agent.subagents")
@@ -89,16 +90,16 @@ def build_subagents(
 ) -> list[SubAgent]:
     """Assemble the built-in + configured subagent roster.
 
-        Args:
-            main_tools: the parent agent's full tool list — researcher reuses
-                        the web / browser / verify subset from here.
-            main_model: model name or instance to share across subagents.
-                        Keeping the same model means subagent LLM calls flow
-    through the same Runtime model binding as the parent (so
-                        credits/throttling stay coherent).
-            agent_roots: optional roots to scan for `*.md` subagent definitions.
-                         `None` uses the runtime resolver; tests pass `[]` to
-                         exercise only the built-ins.
+    Args:
+        main_tools: the parent agent's full tool list — researcher reuses
+                    the web / browser / verify subset from here.
+        main_model: model name or instance to share across subagents.
+                    Keeping the same model means subagent LLM calls flow
+                    through the same Runtime model binding as the parent,
+                    so provider throttling and usage accounting stay coherent.
+        agent_roots: optional roots to scan for `*.md` subagent definitions.
+                     `None` uses the runtime resolver; tests pass `[]` to
+                     exercise only the built-ins.
     """
     # Durable memory is a top-level user capability. A configured or generic
     # subagent receives a model-authored task description, never the original

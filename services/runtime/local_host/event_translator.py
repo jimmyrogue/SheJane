@@ -92,7 +92,6 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
                     "data": {
                         "input_tokens": usage.get("input_tokens", 0),
                         "output_tokens": usage.get("output_tokens", 0),
-                        "credits_cost": usage.get("credits_cost", 0),
                     },
                 }
             )

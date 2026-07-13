@@ -22,7 +22,7 @@ describe('desktop shell', () => {
     vi.unstubAllGlobals()
   })
 
-  it('opens the local desktop shell without a cloud login gate', async () => {
+  it('opens the local desktop shell without an account gate', async () => {
     render(<App />)
 
     expect(await screen.findAllByText('新对话')).not.toHaveLength(0)
@@ -30,7 +30,7 @@ describe('desktop shell', () => {
     expect(screen.queryByText('注册')).not.toBeInTheDocument()
   })
 
-  it('does not expose cloud billing actions', async () => {
+  it('does not expose purchase or usage-billing actions', async () => {
     render(<App />)
 
     await screen.findAllByText('新对话')

@@ -64,7 +64,7 @@ describe('DocPreviewPanel', () => {
 
   it('mounts the Excel renderer when kind=excel', () => {
     const doc = makeDoc({
-      sourceKey: 'cloud:doc_xy',
+      sourceKey: 'local:/tmp/q4.xlsx',
       kind: 'excel',
       name: 'q4.xlsx',
     })
@@ -73,7 +73,7 @@ describe('DocPreviewPanel', () => {
         <DocPreviewPanel doc={doc} onClose={vi.fn()} />
       </I18nProvider>,
     )
-    expect(screen.getByTestId('xlsx-preview-stub')).toHaveTextContent('xlsx:cloud:doc_xy')
+    expect(screen.getByTestId('xlsx-preview-stub')).toHaveTextContent('xlsx:local:/tmp/q4.xlsx')
     expect(screen.queryByTestId('docx-preview-stub')).not.toBeInTheDocument()
     expect(screen.getByText('Excel 表格')).toBeInTheDocument()
   })
@@ -123,7 +123,7 @@ describe('DocPreviewPanel', () => {
 
   it('mounts the PDF renderer and shows the metadata badge in the subtitle', () => {
     const doc = makeDoc({
-      sourceKey: 'cloud:doc_pdf',
+      sourceKey: 'local:/tmp/paper.pdf',
       kind: 'pdf',
       name: 'paper.pdf',
       metadata: { pages: 15, author: 'Vaswani et al.' },
@@ -133,7 +133,7 @@ describe('DocPreviewPanel', () => {
         <DocPreviewPanel doc={doc} onClose={vi.fn()} />
       </I18nProvider>,
     )
-    expect(screen.getByTestId('pdf-preview-stub')).toHaveTextContent('pdf:cloud:doc_pdf')
+    expect(screen.getByTestId('pdf-preview-stub')).toHaveTextContent('pdf:local:/tmp/paper.pdf')
     // Subtitle = kind label · pages · author (proves Layer A
     // metadata threaded all the way to the header).
     expect(screen.getByText('PDF 文档 · 15 页 · Vaswani et al.')).toBeInTheDocument()
@@ -141,7 +141,7 @@ describe('DocPreviewPanel', () => {
 
   it('omits the metadata badge for a PDF with no metadata', () => {
     const doc = makeDoc({
-      sourceKey: 'cloud:doc_bare',
+      sourceKey: 'local:/tmp/bare.pdf',
       kind: 'pdf',
       name: 'bare.pdf',
       // no metadata field

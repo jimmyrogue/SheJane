@@ -164,7 +164,7 @@
   │     │   OpenAI 兼容供应商流式接口                                               │     │
   │     │       ▼                                                                  │     │
   │     │   返回 llm.delta × N  +  llm.tool_call  +  llm.done                      │     │
-  │     │       ↓ 完整结束时结算 token/费用；中断或重启标记结果不明       │     │
+  │     │       ↓ 完整结束时结算 token 用量；中断或重启标记结果不明     │     │
   │     │       ↓ 顶层完整 AIMessage 按版本写入 local_assistant_drafts               │     │
   │     │       ↓                                                                  │     │
   │     │ after_model：仅 CompletionRouter 可决定最终候选、修复或明确失败          │     │

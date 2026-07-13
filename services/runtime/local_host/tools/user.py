@@ -40,7 +40,7 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
           * "帮我订机票"       → ask origin / destination / date
 
     Skipping this and calling another tool
-        with incomplete inputs wastes user credits, clutters the context
+        with incomplete inputs wastes provider quota, clutters the context
         with irrelevant results, and forces you to ask anyway one turn
         later — a real failure mode this codebase has shipped.
 

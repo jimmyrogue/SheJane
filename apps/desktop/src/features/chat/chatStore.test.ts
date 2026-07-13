@@ -27,7 +27,7 @@ describe('runtime timeline', () => {
   })
 
   it('uses the daemon run.failed error text in the timeline', () => {
-    expect(timelineItem({ event_type: 'run.failed', payload: { error: 'missing API key', type: 'BackendLLMError' } })).toMatchObject({
+    expect(timelineItem({ event_type: 'run.failed', payload: { error: 'missing API key', type: 'ModelProviderError' } })).toMatchObject({
       label: 'missing API key',
     })
   })
@@ -54,7 +54,7 @@ describe('runtime timeline', () => {
         event_type: 'run.failed',
         payload: {
           error: 'missing API key',
-          type: 'BackendLLMError',
+          type: 'ModelProviderError',
           category: 'configuration',
           retryable: false,
           action_kind: 'user_action',

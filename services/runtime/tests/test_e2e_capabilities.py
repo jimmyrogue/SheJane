@@ -6,9 +6,8 @@ verifies one wired-up capability:
 
   1. HumanInTheLoopMiddleware  — destructive tool triggers `run.waiting`
   2. SubAgentMiddleware        — `task` tool call surfaces `subagent.spawned`
-  3. PromptCaching             — Go Anthropic gateway adds `cache_control`
-  4. Local direct fallback     — ignored even when stale env supplies models
-                                  before the LLM sees it
+  3. PromptCaching             — provider-specific cache markers stay outside
+                                  the Runtime wire contract
   6. MemoryMiddleware          — AGENTS.md content lands in the outgoing
                                   system prompt
   7. TodoListMiddleware        — `write_todos` tool is in the agent toolset
@@ -82,7 +81,7 @@ def _make_client(monkeypatch, handler) -> TestClient:
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -762,15 +761,13 @@ def test_capability_2c_subagent_tools_share_review_and_receipt_boundary(
     }
 
 
-# ---- capability 3: prompt caching stays in the cloud gateway ----
+# ---- capability 3: prompt caching stays in the provider adapter ----
 
 
-def test_capability_3_prompt_caching_is_gateway_owned(
+def test_capability_3_prompt_caching_is_provider_adapter_owned(
     monkeypatch,
 ) -> None:
-    """The daemon should keep provider-specific prompt caching out of its wire
-    contract. The Go Anthropic gateway adds top-level cache_control for long
-    requests so local and web/cloud loops share one caching policy."""
+    """Runtime keeps provider-specific prompt caching out of its wire contract."""
     handler = RecordingHandler(
         scripts=[
             [
@@ -784,30 +781,6 @@ def test_capability_3_prompt_caching_is_gateway_owned(
 
     assert len(handler.requests) >= 1
     assert "cache_control" not in json.dumps(handler.requests)
-
-
-# ---- capability 4: local direct ModelFallback is disabled ----
-
-
-def test_capability_4_local_direct_modelfallback_ignored(monkeypatch, caplog) -> None:
-    """Local Host must not instantiate vendor fallback clients.
-
-    Provider fallback belongs in the Go model gateway/catalog so provider keys
-    and credit accounting stay in the cloud control plane. A stale
-    SHEJANE_LOCAL_FALLBACK_MODELS value should be tolerated for compatibility,
-    but ignored.
-    """
-    monkeypatch.setenv(
-        "SHEJANE_LOCAL_FALLBACK_MODELS",
-        "anthropic:claude-haiku-4,openai:gpt-4o-mini",
-    )
-    from local_host.agent.builder import _custom_middleware
-    from local_host.config import Settings
-
-    s = Settings()
-    middleware = _custom_middleware(s)
-    assert not any(type(item).__name__ == "ModelFallbackMiddleware" for item in middleware)
-    assert "SHEJANE_LOCAL_FALLBACK_MODELS is ignored" in caplog.text
 
 
 # ---- capability 6: AGENTS.md memory loads into system prompt ----

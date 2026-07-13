@@ -610,7 +610,6 @@ async def test_settlement_uses_durable_assistant_and_ledgers(tmp_path: Path) -> 
             provider_request_id="provider-1",
             input_tokens=7,
             output_tokens=3,
-            credits_cost=2,
         )
 
         outcome = await coordinator._settle_execution_outcome(

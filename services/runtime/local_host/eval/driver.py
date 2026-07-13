@@ -81,7 +81,6 @@ def _apply_event(traj: Trajectory, event: dict) -> None:
     elif event_type == "llm.usage":
         traj.input_tokens += int(payload.get("input_tokens", 0) or 0)
         traj.output_tokens += int(payload.get("output_tokens", 0) or 0)
-        traj.credits += int(payload.get("credits_cost", 0) or 0)
     elif event_type == "run.completed":
         final = payload.get("final_text")
         if final:
@@ -90,8 +89,6 @@ def _apply_event(traj: Trajectory, event: dict) -> None:
         if payload.get("input_tokens") or payload.get("output_tokens"):
             traj.input_tokens = int(payload.get("input_tokens", 0) or 0)
             traj.output_tokens = int(payload.get("output_tokens", 0) or 0)
-        if payload.get("credits_cost"):
-            traj.credits = int(payload.get("credits_cost", 0) or 0)
     elif event_type == "run.failed":
         traj.failed = True
         traj.error = str(payload.get("message", "run failed"))

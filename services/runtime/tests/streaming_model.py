@@ -1,23 +1,14 @@
-"""Test-only model that replays the retired Go Gateway SSE protocol.
+"""Test-only streaming model for Runtime integration tests.
 
-BackendChatModel — LangChain `BaseChatModel` that streams from our Go
-backend at `POST /api/v1/agent/llm/stream`.
-
-Why this exists
----------------
-LangChain ships ChatAnthropic / ChatOpenAI etc., but all of them hit the
-upstream LLM provider directly. That would bypass our cloud's credit
-reserve/settle accounting. Instead, every LLM call goes through the
-backend gateway we shipped in Phase 1 (commit d944b25): the backend
-reserves credits, calls the upstream provider, settles on done, and
-returns SSE deltas to us.
+The artificial SSE transport lets tests exercise partial output, tool calls,
+usage, provider errors, cancellation, and timeouts without a live provider.
 
 Wire protocol
 -------------
 We send a POST with:
     {
       "run_id":  str,
-      "model":    str,    # catalog model id or "auto" (resolved cloud-side)
+      "model":    str,
       "messages": [...]   # role/content/toolCalls/toolCallId
       "tools":    [...]   # name/description/inputSchema
     }
@@ -25,7 +16,7 @@ We send a POST with:
 We receive SSE events:
     event: llm.delta         data: {content_delta, reasoning_delta}
     event: llm.tool_call     data: {id, name, arguments}
-    event: llm.usage         data: {input_tokens, output_tokens, credits_cost}
+    event: llm.usage         data: {input_tokens, output_tokens}
     event: llm.done          data: {request_id, finish_reason}
     event: llm.error         data: {request_id, message}
 
@@ -62,21 +53,18 @@ from pydantic import Field
 
 from local_host.llm.errors import ModelProviderError
 
-log = logging.getLogger("tests.gateway_model")
+log = logging.getLogger("tests.streaming_model")
 
 
-BackendLLMError = ModelProviderError
+TestProviderError = ModelProviderError
 
 
-class BackendChatModel(BaseChatModel):
-    """ChatModel that talks to our cloud backend gateway."""
+class TestStreamingChatModel(BaseChatModel):
+    """Chat model backed by the artificial test SSE transport."""
 
-    cloud_base_url: str = Field(default="http://127.0.0.1:8080")
-    cloud_token: str = Field(default="")
-    # The model selection forwarded to the cloud LLM endpoint: a catalog model
-    # id or "auto" (resolved cloud-side). Was a fast/deep Literal; now a free
-    # string so any catalog id passes through.
-    mode: str = Field(default="auto")
+    endpoint_base_url: str = Field(default="http://test-provider")
+    api_token: str = Field(default="")
+    mode: str = Field(default="test-model")
     run_id: str = Field(default="agent_local")
     request_timeout_s: float = Field(default=120.0)
     max_output_tokens: int = Field(default=8192, ge=128)
@@ -86,7 +74,7 @@ class BackendChatModel(BaseChatModel):
 
     @property
     def _llm_type(self) -> str:
-        return "shejane-backend"
+        return "shejane-test-streaming-model"
 
     def bind_tools(
         self,
@@ -95,9 +83,7 @@ class BackendChatModel(BaseChatModel):
     ) -> BaseChatModel:
         """Bind tools by recording their schema on a model copy.
 
-        We don't actually do any function-calling protocol negotiation
-        here — the backend handles that and the upstream provider sees
-        whatever schema we forward.
+        The test transport receives the same tool schemas the Runtime binds.
         """
         serialized: list[dict[str, Any]] = []
         for t in tools or []:
@@ -110,7 +96,7 @@ class BackendChatModel(BaseChatModel):
                         # Some tools — notably deepagents' `task` —
                         # have Callable in their args schema which
                         # pydantic can't serialize to JSON Schema.
-                        # The backend gets concrete args at call time,
+                        # The transport gets concrete args at call time,
                         # so a permissive placeholder is fine here.
                         log.debug(
                             "tool %s args_schema not JSON-serializable (%s); "
@@ -147,7 +133,7 @@ class BackendChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         payload = self._build_request(messages, **kwargs)
-        async for chunk in self._stream_from_backend(payload, capture_meta=True):
+        async for chunk in self._stream_from_provider(payload, capture_meta=True):
             if run_manager is not None and chunk.message.content:
                 await run_manager.on_llm_new_token(str(chunk.message.content), chunk=chunk)
             yield chunk
@@ -166,7 +152,7 @@ class BackendChatModel(BaseChatModel):
         usage: dict[str, Any] = {}
 
         payload = self._build_request(messages, **kwargs)
-        async for chunk in self._stream_from_backend(payload, capture_meta=True):
+        async for chunk in self._stream_from_provider(payload, capture_meta=True):
             content = chunk.message.content
             if isinstance(content, str) and content:
                 accumulated_content.append(content)
@@ -244,10 +230,6 @@ class BackendChatModel(BaseChatModel):
         body = {
             "run_id": kwargs.get("run_id", self.run_id),
             "prompt_owner": "runtime-v1",
-            # The cloud LLM endpoint now routes by model id (flat catalog). We
-            # forward the daemon's current tier value here; the cloud maps an
-            # unknown id (incl. legacy "fast"/"deep"/"auto") to the default
-            # model. Real per-model selection arrives with the client picker.
             "model": kwargs.get("mode", self.mode),
             "messages": [_message_to_dict(m) for m in messages],
             "tools": list(self.bound_tools),
@@ -255,30 +237,30 @@ class BackendChatModel(BaseChatModel):
         }
         return body
 
-    async def _stream_from_backend(
+    async def _stream_from_provider(
         self,
         payload: dict[str, Any],
         *,
         capture_meta: bool = False,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        url = f"{self.cloud_base_url.rstrip('/')}/api/v1/agent/llm/stream"
+        url = f"{self.endpoint_base_url.rstrip('/')}/v1/test/chat/stream"
         headers = {"Accept": "text/event-stream"}
-        if self.cloud_token:
-            headers["Authorization"] = f"Bearer {self.cloud_token}"
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
 
         async with httpx.AsyncClient(timeout=self.request_timeout_s) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
                     raise httpx.HTTPStatusError(
-                        f"backend returned {resp.status_code}: {body.decode('utf-8', errors='replace')}",
+                        f"provider returned {resp.status_code}: {body.decode('utf-8', errors='replace')}",
                         request=resp.request,
                         response=resp,
                     )
 
                 async for event, data in _parse_sse_stream(resp):
                     if event == "llm.error":
-                        raise BackendLLMError.from_payload(data)
+                        raise TestProviderError.from_payload(data)
                     chunk = _event_to_chunk(event, data, capture_meta)
                     if chunk is not None:
                         yield chunk

@@ -108,7 +108,6 @@ async def test_stream_settles_usage_without_reading_sse(tmp_path: Path) -> None:
         assert await store.model_usage_summary(str(run["id"])) == {
             "input_tokens": 7,
             "output_tokens": 3,
-            "credits_cost": 0,
             "unmetered_calls": 0,
             "outcome_unknown_calls": 0,
             "model_calls": 1,
@@ -183,7 +182,6 @@ async def test_declared_tiny_context_fails_before_provider_call(tmp_path: Path) 
         assert await store.model_usage_summary(str(run["id"])) == {
             "input_tokens": 0,
             "output_tokens": 0,
-            "credits_cost": 0,
             "unmetered_calls": 0,
             "outcome_unknown_calls": 0,
             "model_calls": 0,

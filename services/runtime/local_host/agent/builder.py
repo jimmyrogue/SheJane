@@ -60,18 +60,18 @@ from langgraph.store.sqlite.aio import AsyncSqliteStore
 from ..config import Settings, get_settings
 from ..llm.ledger import LedgerChatModel
 from ..llm.runtime import RuntimeModelProxy
-from ..middleware import (
+from ..middleware.completion_router import (
     CompletionRouterMiddleware,
-    InputGuardMiddleware,
-    OutboundPolicyMiddleware,
-    PlanFirstMiddleware,
-    SteeringMiddleware,
-    ToolExecutionMiddleware,
-    ToolResultRetryMiddleware,
-    ToolReviewMiddleware,
-    ToolVisibilityMiddleware,
+    completion_repair_instruction,
 )
-from ..middleware.completion_router import completion_repair_instruction
+from ..middleware.input_guard import InputGuardMiddleware
+from ..middleware.outbound_policy import OutboundPolicyMiddleware
+from ..middleware.plan_first import PlanFirstMiddleware
+from ..middleware.steering import SteeringMiddleware
+from ..middleware.tool_execution import ToolExecutionMiddleware
+from ..middleware.tool_result_retry import ToolResultRetryMiddleware
+from ..middleware.tool_review import ToolReviewMiddleware
+from ..middleware.tool_visibility import ToolVisibilityMiddleware
 from ..store.sqlite import LocalStore
 from ..tools.mcp import build_validated_mcp_tools
 from ..tools.registry import build_tools, tool_definition
@@ -379,11 +379,6 @@ def _custom_middleware(
             ),
         ]
     )
-    if settings.fallback_models.strip():
-        log.warning(
-            "SHEJANE_LOCAL_FALLBACK_MODELS is ignored; automatic model switching "
-            "is disabled, so changing model requires a new explicit command"
-        )
     middleware.extend(
         [
             CompletionRouterMiddleware(max_verification_repairs=settings.verification_repair_max),

@@ -1,7 +1,7 @@
 """Tests for /v1/runs endpoints.
 
 These exercise the full HTTP -> RunCoordinator -> build_agent -> mocked
-BackendChatModel -> SSE response path. Crucially: this validates Phase 3'
+TestStreamingChatModel -> SSE response path. Crucially: this validates Phase 3'
 parts 1+2+3+4 together.
 """
 
@@ -75,7 +75,7 @@ def client(monkeypatch) -> TestClient:
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -133,7 +133,7 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert stored["principal_id"] == LOCAL_OWNER_PRINCIPAL_ID
     snapshot = json.loads(stored["settings_json"])
     assert snapshot["_snapshot_version"] == 1
-    assert snapshot["_model_binding"]["credential_ref"] == "tests:gateway_model"
+    assert snapshot["_model_binding"]["credential_ref"] == "tests:streaming_model"
     assert snapshot["_model_binding"]["required_capabilities"] == [
         "streaming",
         "tool_calling",
@@ -1360,7 +1360,7 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -1447,7 +1447,7 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -1508,7 +1508,7 @@ def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> N
         captured_requests.append(json.loads(request.read()))
         return _stream_response([("llm.delta", '{"content_delta": "should not run"}')])
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -2146,7 +2146,7 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
         await store.append_event(
             run["id"],
             "run.failed",
-            {"error_code": "insufficient_credits", "message": "provider quota exhausted"},
+            {"error_code": "provider_quota_exceeded", "message": "provider quota exhausted"},
         )
         await store.update_run_status(run["id"], "failed")
         return run["id"]
@@ -2162,7 +2162,7 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
     assert diag.status_code == 200
     failure = diag.json()["handoff"]["failure"]
     assert failure["category"] == "quota"
-    assert failure["code"] == "insufficient_credits"
+    assert failure["code"] == "provider_quota_exceeded"
     assert failure["recoverable"] is True
     assert failure["retryable"] is False
     assert failure["action_kind"] == "user_action"
@@ -2424,7 +2424,7 @@ def test_run_diagnostics_classifies_transient_failures(client: TestClient) -> No
     assert "Retry" in failure["suggested_action"]
 
 
-def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None:
+def test_model_provider_error_becomes_structured_run_failure(monkeypatch) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="jdl-runs-model-error-"))
     os.environ["SHEJANE_LOCAL_HOST_TOKEN"] = "tok"
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
@@ -2450,7 +2450,7 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -3102,7 +3102,7 @@ def test_history_is_not_pretruncated_before_token_aware_compaction(
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
@@ -3170,7 +3170,7 @@ def test_removed_history_limit_setting_does_not_change_model_input(monkeypatch) 
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
@@ -3240,7 +3240,7 @@ def test_transport_omission_marker_passes_through_without_daemon_rewrite(
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",

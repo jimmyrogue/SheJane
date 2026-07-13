@@ -136,7 +136,6 @@ class LedgerChatModel(BaseChatModel):
                 provider_request_id=_request_id_from_message(message),
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
-                credits_cost=usage.get("credits_cost"),
             )
             return ChatResult(generations=[ChatGeneration(message=message)])
         except BaseException as exc:
@@ -187,7 +186,6 @@ class LedgerChatModel(BaseChatModel):
                 provider_request_id=provider_request_id,
                 input_tokens=usage.get("input_tokens"),
                 output_tokens=usage.get("output_tokens"),
-                credits_cost=usage.get("credits_cost"),
             )
         except BaseException as exc:
             await asyncio.shield(
@@ -269,7 +267,6 @@ def _usage_from_message(message: BaseMessage) -> dict[str, int | None]:
     return {
         "input_tokens": _int_or_none(raw.get("input_tokens")),
         "output_tokens": _int_or_none(raw.get("output_tokens")),
-        "credits_cost": _int_or_none(raw.get("credits_cost")),
     }
 
 

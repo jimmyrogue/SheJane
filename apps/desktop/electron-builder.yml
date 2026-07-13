@@ -1,12 +1,5 @@
 # electron-builder config for the SheJane (石间) desktop app.
-# See docs/desktop-distribution.md for the phased plan.
-#
-# Phase 1 (here): build the Electron SHELL only — loads the prod-pointed
-#   renderer (cloud chat). The local-agent daemon is NOT bundled yet.
-# Phase 2: add the PyInstaller-frozen daemon via `extraResources` (stub below).
-# Phase 4: turn on macOS hardenedRuntime + entitlements + notarization,
-#   and Windows signing.
-# Phase 5: add `publish:` for electron-updater.
+# See docs/desktop-distribution.md for packaging and release details.
 
 appId: com.shejane.desktop
 productName: 石间
@@ -28,7 +21,7 @@ files:
 
 asar: true
 
-# The frozen Python daemon, shipped OUTSIDE the asar so main.cjs can spawn it
+# The frozen Python Runtime, shipped outside the asar so main.cjs can spawn it
 # from process.resourcesPath/runtime. Build it FIRST with `make build-daemon`
 # (per-OS/arch — the bundle is native-wheel specific, so CI must build it on a
 # native runner for each target before electron-builder runs).
@@ -45,7 +38,7 @@ mac:
       arch: [arm64, x64]
     - target: zip # required by electron-updater (Phase 5)
       arch: [arm64, x64]
-  # Phase 4 turns these on (do NOT enable before the daemon is signed too):
+  # Enable only after the bundled Runtime is signed too.
   hardenedRuntime: false
   # entitlements: build/entitlements.mac.plist
   # entitlementsInherit: build/entitlements.mac.inherit.plist

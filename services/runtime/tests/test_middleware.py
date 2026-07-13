@@ -494,8 +494,8 @@ async def test_tool_result_retry_uses_failure_policy_for_retryable_envelope() ->
             content=json.dumps(
                 {
                     "ok": False,
-                    "error_code": "insufficient_credits",
-                    "content": "HTTP 429: insufficient credits",
+                    "error_code": "provider_quota_exceeded",
+                    "content": "Provider quota exhausted",
                     "retryable": True,
                 }
             ),
@@ -508,4 +508,4 @@ async def test_tool_result_retry_uses_failure_policy_for_retryable_envelope() ->
 
     assert attempts == 1
     assert isinstance(result, ToolMessage)
-    assert json.loads(str(result.content))["error_code"] == "insufficient_credits"
+    assert json.loads(str(result.content))["error_code"] == "provider_quota_exceeded"

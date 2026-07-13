@@ -23,11 +23,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep legacy run-loop fixtures hermetic without shipping a Cloud adapter."""
+def _install_test_streaming_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep streaming integration fixtures hermetic without a live provider."""
     from local_host.agent import builder
     from local_host.llm.fake import FakeBackendChatModel
-    from tests.gateway_model import BackendChatModel
+    from tests.streaming_model import TestStreamingChatModel
 
     original_build_chat_model = builder._build_chat_model
 
@@ -48,9 +48,9 @@ def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
                     "max_output_tokens": settings.unknown_model_max_output_tokens,
                 }
             )
-        return BackendChatModel(
-            cloud_base_url="http://test-backend",
-            cloud_token="test-only",
+        return TestStreamingChatModel(
+            endpoint_base_url="http://test-provider",
+            api_token="test-only",
             mode=mode,
             run_id=run_id,
             request_timeout_s=settings.model_request_timeout_seconds,
@@ -77,9 +77,9 @@ def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
         if mode in {"auto", "local:test:model"}:
             return (
                 {
-                    "provider": "test_gateway",
+                    "provider": "test_stream",
                     "model_id": "test-model",
-                    "credential_ref": "tests:gateway_model",
+                    "credential_ref": "tests:streaming_model",
                     "requested_model": mode,
                     "profile": {
                         "tool_calling": True,
@@ -123,7 +123,7 @@ def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
         settings_snapshot: dict[str, Any],
     ) -> tuple[str | None, str | None]:
         binding = settings_snapshot.get("_model_binding")
-        if isinstance(binding, dict) and binding.get("provider") == "test_gateway":
+        if isinstance(binding, dict) and binding.get("provider") == "test_stream":
             return None, None
         return await original_model_binding_error(coordinator, principal_id, settings_snapshot)
 

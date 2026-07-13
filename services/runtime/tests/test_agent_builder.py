@@ -413,7 +413,7 @@ def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeyp
             ]
         )
 
-    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.streaming_model.httpx.AsyncClient", _patched_async_client(handler))
 
     async def run() -> str:
         from local_host.agent.context_builder import RuntimeContext

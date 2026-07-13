@@ -2766,7 +2766,7 @@ function AppContent() {
                 </div>
               ) : null}
             </header>
-            {/* Runtime failure is explicit; Desktop never falls back to Cloud. */}
+            {/* Runtime failure is explicit; Desktop never falls back to another execution service. */}
             {isDesktop && !localHost?.online ? (
               <div className="status-banner status-banner-warning" role="status">
                 <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>

@@ -4260,7 +4260,7 @@ button:active {
   /* Flex column (not a positional grid): topbar + any number of status
    * banners sit at their natural height, and .chat-surface takes the rest.
    * The old `grid-template-rows: auto minmax(0,1fr) auto auto` assumed a
-   * FIXED child order — the moment an offline/credits/email banner was
+   * FIXED child order — the moment an offline/provider banner was
    * inserted as the 2nd child, the banner (not the chat) landed in the 1fr
    * row and ballooned to fill the viewport. Flex + per-child flex-basis is
    * resilient to however many banners are showing. */
@@ -4327,8 +4327,8 @@ button:active {
   font-weight: 400;
 }
 
-/* Right-aligned status group on the topbar: daemon-online dot +
- * credits chip. Pushes itself to the trailing edge via margin-left:
+/* Right-aligned status group on the topbar: Runtime status + usage.
+ * Pushes itself to the trailing edge via margin-left:
  * auto; the title takes whatever room is left. */
 .topbar-status {
   display: flex;
@@ -4353,8 +4353,8 @@ button:active {
   box-shadow: 0 0 0 2px var(--accent-danger-bg);
 }
 /* Status banner — drops in between topbar and chat-surface when
- * something's wrong at the system level (daemon offline, credits
- * exhausted, etc). Single-line, soft warning palette, dismisses
+ * something's wrong at the system level (Runtime offline, provider
+ * unavailable, etc). Single-line, soft warning palette, dismisses
  * itself when the underlying condition clears (no close button). */
 .status-banner {
   flex: 0 0 auto;
@@ -4402,8 +4402,8 @@ button:active {
   opacity: 0.55;
   cursor: default;
 }
-/* Inline call-to-action inside a status banner (e.g. "充值" when credits
- * run out). Subtle outline pill in the banner's own palette; hover
+/* Inline call-to-action inside a status banner. Subtle outline pill in
+ * the banner's own palette; hover
  * darkens via background so there's no layout shift. */
 .status-banner-action {
   flex: 0 0 auto;
@@ -4850,7 +4850,7 @@ button:active {
   cursor: default;
 }
 
-/* Per-turn usage chip (credits · tool calls). Informational. */
+/* Per-turn usage chip (tokens · tool calls). Informational. */
 .message-meta-usage {
   color: var(--sj-ink-faint, #A8A39A);
   font-size: 11.5px;

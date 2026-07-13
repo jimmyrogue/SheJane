@@ -243,7 +243,6 @@ CREATE TABLE IF NOT EXISTS local_model_calls (
     provider_request_id TEXT,
     input_tokens INTEGER,
     output_tokens INTEGER,
-    credits_cost INTEGER,
     error_code TEXT,
     created_at TEXT NOT NULL,
     first_output_at TEXT,
@@ -1260,21 +1259,19 @@ class LocalStore:
         provider_request_id: str | None,
         input_tokens: int | None,
         output_tokens: int | None,
-        credits_cost: int | None,
     ) -> None:
         usage_known = input_tokens is not None or output_tokens is not None
         status = "completed" if usage_known else "completed_unmetered"
         async with self.run_write_transaction(run_id) as conn:
             cursor = await conn.execute(
                 "UPDATE local_model_calls SET status = ?, provider_request_id = ?, "
-                "input_tokens = ?, output_tokens = ?, credits_cost = ?, completed_at = ? "
+                "input_tokens = ?, output_tokens = ?, completed_at = ? "
                 "WHERE id = ? AND run_id = ? AND status IN ('reserved', 'streaming')",
                 (
                     status,
                     provider_request_id,
                     input_tokens,
                     output_tokens,
-                    credits_cost,
                     _now(),
                     call_id,
                     run_id,
@@ -1304,7 +1301,6 @@ class LocalStore:
             await self._conn.execute(
                 "SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens, "
                 "COALESCE(SUM(output_tokens), 0) AS output_tokens, "
-                "COALESCE(SUM(credits_cost), 0) AS credits_cost, "
                 "SUM(CASE WHEN status = 'completed_unmetered' THEN 1 ELSE 0 END) "
                 "AS unmetered_calls, "
                 "SUM(CASE WHEN status = 'outcome_unknown' THEN 1 ELSE 0 END) "
@@ -1318,7 +1314,6 @@ class LocalStore:
             for key in (
                 "input_tokens",
                 "output_tokens",
-                "credits_cost",
                 "unmetered_calls",
                 "outcome_unknown_calls",
                 "model_calls",

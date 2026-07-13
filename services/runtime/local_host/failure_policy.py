@@ -39,7 +39,13 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     retryable = False
     suggested_action = "Inspect the diagnostic events and logs before retrying."
 
-    if _contains_any(haystack, "insufficient_credits", "quota", "credit", "billing"):
+    if _contains_any(
+        haystack,
+        "provider_quota_exceeded",
+        "insufficient_quota",
+        "quota exceeded",
+        "quota exhausted",
+    ):
         category = "quota"
         recoverable = True
         suggested_action = "Check the provider quota or choose another Runtime model."

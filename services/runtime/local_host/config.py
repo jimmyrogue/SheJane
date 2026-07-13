@@ -104,14 +104,6 @@ class Settings(BaseSettings):
     input_guard_mode: str = Field(default="observe", alias="SHEJANE_LOCAL_INPUT_GUARD")
     plan_first_mode: str = Field(default="off", alias="SHEJANE_PLAN_FIRST")
 
-    # Deprecated compatibility field. Runtime and the optional Go gateway both
-    # reject automatic model switching; changing model requires a new explicit
-    # command from the user/client.
-    fallback_models: str = Field(
-        default="",
-        alias="SHEJANE_LOCAL_FALLBACK_MODELS",
-    )
-
     # Compatibility deployment policy. Applied only to the outbound request
     # copy for external providers; it never rewrites LangGraph state.
     pii_redact_types: str = Field(default="", alias="SHEJANE_LOCAL_PII_REDACT")

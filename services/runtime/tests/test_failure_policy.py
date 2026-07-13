@@ -10,7 +10,7 @@ from local_host.failure_policy import (
 def test_quota_and_configuration_failures_are_not_retryable_even_with_429_text() -> None:
     quota = classify_failure_payload(
         "run.failed",
-        {"error_code": "insufficient_credits", "message": "HTTP 429: insufficient credits"},
+        {"error_code": "provider_quota_exceeded", "message": "Provider quota exhausted"},
     )
     assert quota["category"] == "quota"
     assert quota["recoverable"] is True
@@ -59,7 +59,7 @@ def test_explicit_nonrecoverable_blocks_retryable_true() -> None:
 
 def test_explicit_retryable_true_cannot_override_user_or_operator_action_categories() -> None:
     cases = [
-        ("quota", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
+        ("quota", {"error_code": "provider_quota_exceeded", "message": "quota exhausted"}),
         ("auth", {"error_code": "unauthorized", "message": "provider token rejected"}),
         ("configuration", {"error_code": "missing_api_key", "message": "api key missing"}),
         ("workspace", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
@@ -100,7 +100,10 @@ def test_failure_policy_exposes_action_kind_for_policy_layers() -> None:
 def test_failure_policy_exposes_recovery_action_for_ui() -> None:
     cases = [
         ("retry", {"error_code": "rate_limit", "message": "provider returned 429"}),
-        ("diagnostics", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
+        (
+            "diagnostics",
+            {"error_code": "provider_quota_exceeded", "message": "quota exhausted"},
+        ),
         ("diagnostics", {"error_code": "unauthorized", "message": "provider token rejected"}),
         ("workspace", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
         ("retry", {"error_code": "permission_denied", "message": "permission denied"}),
@@ -157,8 +160,8 @@ def test_retry_decision_fails_fast_for_user_action_even_when_retryable_is_set() 
     decision = build_retry_decision(
         "tool.failed",
         {
-            "error_code": "insufficient_credits",
-            "message": "HTTP 429: insufficient credits",
+            "error_code": "provider_quota_exceeded",
+            "message": "Provider quota exhausted",
             "retryable": True,
         },
         attempt=0,
