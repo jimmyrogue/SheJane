@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE_FILE="${ROOT_DIR}/infra/cloud/docker-compose.yml"
+
 if [[ "${COMPOSE_PROJECT_NAME:-}" == "shejane" && "${ALLOW_EXISTING_COMPOSE_PROJECT:-}" != "1" ]]; then
   echo "Refusing to run smoke cleanup against COMPOSE_PROJECT_NAME=shejane. Use a disposable project name or set ALLOW_EXISTING_COMPOSE_PROJECT=1." >&2
   exit 2
@@ -25,7 +28,7 @@ PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
-  docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -58,8 +61,8 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 echo "Starting Docker Compose smoke stack (${COMPOSE_PROJECT_NAME})"
-docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-docker compose up -d --build
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+docker compose -f "$COMPOSE_FILE" up -d --build
 
 echo "Waiting for API health at ${API_BASE_URL}"
 for _ in $(seq 1 120); do

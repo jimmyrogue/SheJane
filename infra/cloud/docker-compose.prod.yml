@@ -14,6 +14,8 @@
 # external managed database instead, drop the postgres service and set
 # DATABASE_URL on the api service to your DB.
 
+name: shejane
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -52,7 +54,7 @@ services:
     # Real values come from .env (required). The block below pins the
     # in-compose topology + flips two dev defaults to production-safe.
     env_file:
-      - path: .env
+      - path: ../../.env
         required: true
     environment:
       HTTP_ADDR: ":8080"

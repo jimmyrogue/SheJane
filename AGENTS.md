@@ -51,8 +51,8 @@ pnpm --filter shejane-admin test --run
 Local Docker:
 
 ```bash
-docker compose up -d --build
-docker compose ps
+docker compose -f infra/cloud/docker-compose.yml up -d --build
+docker compose -f infra/cloud/docker-compose.yml ps
 ```
 
 Smoke tests:

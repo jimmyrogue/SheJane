@@ -67,7 +67,7 @@ for port in 17371 55173 5174; do
 done
 
 echo "[dev-fresh] rebuilding Docker images (api, admin, postgres)…"
-docker compose up -d --build
+docker compose -f infra/cloud/docker-compose.yml up -d --build
 
 echo "[dev-fresh] launching dev stack (client + local-host + electron)…"
 exec env SKIP_DOCKER=1 "$ROOT_DIR/scripts/dev-electron.sh"

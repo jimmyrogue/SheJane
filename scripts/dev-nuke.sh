@@ -84,13 +84,13 @@ for port in 17371 55173 5174; do
 done
 
 echo "[dev-nuke] docker compose down --remove-orphans (volumes kept)…"
-docker compose down --remove-orphans
+docker compose -f infra/cloud/docker-compose.yml down --remove-orphans
 
 echo "[dev-nuke] docker compose build --no-cache (this takes a while)…"
-docker compose build --no-cache
+docker compose -f infra/cloud/docker-compose.yml build --no-cache
 
 echo "[dev-nuke] docker compose up -d --force-recreate…"
-docker compose up -d --force-recreate
+docker compose -f infra/cloud/docker-compose.yml up -d --force-recreate
 
 echo "[dev-nuke] launching dev stack (client + local-host + electron)…"
 exec env SKIP_DOCKER=1 "$ROOT_DIR/scripts/dev-electron.sh"

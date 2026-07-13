@@ -27,9 +27,10 @@
 	logs-api logs-local-host logs-client logs-llm-errors logs-dev
 
 # docker compose invocation for the production stack (pulls prebuilt
-# GHCR images — see docker-compose.prod.yml). Override IMAGE_TAG to pin
+# GHCR images — see infra/cloud/docker-compose.prod.yml). Override IMAGE_TAG to pin
 # a version: `make deploy IMAGE_TAG=v0.3.1`.
-COMPOSE_PROD ?= docker compose -f docker-compose.prod.yml
+COMPOSE_DEV ?= docker compose -f infra/cloud/docker-compose.yml
+COMPOSE_PROD ?= docker compose -f infra/cloud/docker-compose.prod.yml
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -61,10 +62,10 @@ doctor: ## One-shot diagnostic: "why isn't dev working?"
 	@./scripts/doctor.sh
 
 docker-up: ## Bring up the dev Docker stack (build + foreground)
-	docker compose up --build
+	$(COMPOSE_DEV) up --build
 
 docker-down: ## Stop the dev Docker stack
-	docker compose down
+	$(COMPOSE_DEV) down
 
 ##@ Test
 test: api-test client-test admin-test local-host-test ## Fast unit suites (Go + client + admin + daemon)

@@ -70,7 +70,7 @@ make dev-electron
 
 # After daemon code edits where stragglers might be running, OR after
 # Docker images need rebuild (api/admin/postgres). Does
-# `docker compose up -d --build` (rebuild WITH layer cache).
+# `docker compose -f infra/cloud/docker-compose.yml up -d --build` (rebuild WITH layer cache).
 make dev-fresh
 
 # Scorched-earth reset — when dev-fresh isn't enough: a poisoned
@@ -79,7 +79,7 @@ make dev-fresh
 # container. Does `down --remove-orphans` + `build --no-cache` +
 # `up --force-recreate`, then relaunches native. Keeps DB volumes
 # (uploaded docs / conversations survive); for an empty DB run
-# `docker compose down -v` first.
+# `docker compose -f infra/cloud/docker-compose.yml down -v` first.
 make dev-nuke
 
 # One-shot diagnostic — answers "why isn't dev working?"
@@ -122,14 +122,14 @@ make smoke-docker-local      # full Docker stack
 make smoke-real-llm          # real LLM provider
 make smoke-stripe-webhook    # Stripe webhook simulation
 
-# Deploy / release (production — GHCR images + docker-compose.prod.yml)
+# Deploy / release (production — GHCR images + infra/cloud/docker-compose.prod.yml)
 make release VERSION=v0.1.0  # tag + push → CI builds & pushes images to GHCR
 make deploy                  # pull prebuilt images + (re)start prod stack
 make deploy-logs             # tail the prod stack
 
 # Logs
 make logs-local-host         # tail .tmp/dev/local-host.log
-make logs-api                # tail docker compose api
+make logs-api                # tail docker compose -f infra/cloud/docker-compose.yml api
 make logs-llm-errors         # query llm_call_records table
 make logs-dev                # snapshot of all of the above
 ```

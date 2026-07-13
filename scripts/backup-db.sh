@@ -27,7 +27,7 @@ fi
 
 BACKUP_DIR="${SHEJANE_BACKUP_DIR:-$HOME/shejane-backups}"
 KEEP="${SHEJANE_BACKUP_KEEP:-14}"
-COMPOSE="${COMPOSE_PROD:-docker compose -f docker-compose.prod.yml}"
+COMPOSE="${COMPOSE_PROD:-docker compose -f infra/cloud/docker-compose.prod.yml}"
 
 mkdir -p "$BACKUP_DIR"
 ts="$(date +%Y%m%d-%H%M%S)"

@@ -168,7 +168,7 @@ start_cloud_stack() {
   fi
 
   echo "Starting cloud control plane with Docker Compose in detached mode"
-  (cd "$ROOT_DIR" && docker compose up -d --build)
+  (cd "$ROOT_DIR" && docker compose -f infra/cloud/docker-compose.yml up -d --build)
   wait_for_url "${API_BASE_URL}/health" "API"
 }
 

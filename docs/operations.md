@@ -18,8 +18,8 @@ SheJane 长期采用 Local Agent Harness + Cloud Control Plane。普通用户 cl
 
 ```bash
 cp .env.example .env
-docker compose up --build -d
-docker compose ps
+docker compose -f infra/cloud/docker-compose.yml up --build -d
+docker compose -f infra/cloud/docker-compose.yml ps
 ```
 
 访问：
@@ -43,7 +43,7 @@ ADMIN_BASE_URL=http://localhost:5174
 重启 API：
 
 ```bash
-docker compose up -d --build api
+docker compose -f infra/cloud/docker-compose.yml up -d --build api
 ```
 
 然后在 `http://localhost:5174` 用该邮箱注册或登录。后端会在注册、登录、刷新会话时自动把命中的用户提权为 `role=admin`，独立后台会进入运营面板。
@@ -132,7 +132,7 @@ POST https://你的 API 域名/api/v1/payment/webhook
 本地合成 webhook smoke：
 
 ```bash
-docker compose up -d --build
+docker compose -f infra/cloud/docker-compose.yml up -d --build
 make smoke-stripe-webhook
 ```
 
@@ -192,7 +192,7 @@ S3 bucket CORS 需要允许普通用户 Web 的 origin，例如本地：
 
 本地验证流程：
 
-1. 配好 `.env` 后运行 `docker compose up -d --build`。
+1. 配好 `.env` 后运行 `docker compose -f infra/cloud/docker-compose.yml up -d --build`。
 2. 登录普通用户 Web：`http://localhost:5173`。
 3. 在普通聊天 composer 的“上传附件”入口上传一个或多个 PDF / DOCX / XLSX。
 4. 确认 bucket 中出现 `documents/<user_id>/<document_id>/source.*` 和 `extracted.txt`。
@@ -300,7 +300,7 @@ uv run python -m local_host
 make dev-electron
 ```
 
-这条命令会用 `docker compose up -d --build` 在后台启动云端控制面，启动 Local Host，使用隔离端口 `55173` 启动 client dev server，最后打开 Electron。关闭 Electron 窗口后，本次脚本启动的本地 helper 进程会自动退出；Docker 栈可用 `make docker-down` 关闭。如果你已经手动启动 API，可以用 `SKIP_DOCKER=1 make dev-electron` 只启动 Local Host、client dev server 和 Electron。
+这条命令会用 `docker compose -f infra/cloud/docker-compose.yml up -d --build` 在后台启动云端控制面，启动 Local Host，使用隔离端口 `55173` 启动 client dev server，最后打开 Electron。关闭 Electron 窗口后，本次脚本启动的本地 helper 进程会自动退出；Docker 栈可用 `make docker-down` 关闭。如果你已经手动启动 API，可以用 `SKIP_DOCKER=1 make dev-electron` 只启动 Local Host、client dev server 和 Electron。
 
 登录成功后，client 会调用 `POST /local/v1/session` 注入短期云端 session。Local Host 不会把 access token 写入 SQLite、diagnostics 或 API 响应；`GET /local/v1/session` 只返回是否已连接、cloud base URL 和更新时间。
 
@@ -484,13 +484,13 @@ Nightly External Smoke 在 GitHub Actions 中会把缺失配置显式降级为 w
 查看 API 日志：
 
 ```bash
-docker compose logs -f api
+docker compose -f infra/cloud/docker-compose.yml logs -f api
 ```
 
 查看数据库记录：
 
 ```bash
-docker compose exec postgres psql -U shejane -d shejane
+docker compose -f infra/cloud/docker-compose.yml exec postgres psql -U shejane -d shejane
 ```
 
 常用查询：
@@ -613,14 +613,14 @@ limit 20;
 停止服务：
 
 ```bash
-docker compose down
+docker compose -f infra/cloud/docker-compose.yml down
 ```
 
 清空本地数据库并重新来过：
 
 ```bash
-docker compose down -v
-docker compose up --build -d
+docker compose -f infra/cloud/docker-compose.yml down -v
+docker compose -f infra/cloud/docker-compose.yml up --build -d
 ```
 
 ## 管理后台能力
@@ -647,7 +647,7 @@ docker compose up --build -d
 
 Provider key 会通过后台模型配置表单进入 API 并加密落库，但不会从 API 响应返回给浏览器，也不应出现在日志、诊断导出或文档示例中。`.env` / 部署平台 secret 仍可作为首次空库种子和静态兜底；生产部署必须配置 `CONFIG_ENCRYPTION_KEY`，后台只显示布尔状态，便于判断当前 API 是否可能走真实 provider。
 
-## 生产部署（GHCR 镜像 + docker-compose.prod.yml）
+## 生产部署（GHCR 镜像 + infra/cloud/docker-compose.prod.yml）
 
 生产采用「CI 构建镜像 → 服务器拉取运行」的模式，不在服务器上从源码构建。Local Agent Harness daemon 不在此发布——它随 Electron 桌面端分发，不是服务端容器。
 
@@ -687,7 +687,7 @@ cp .env.example .env
 make deploy
 ```
 
-`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。生产 compose 会给 API 注入 `SHEJANE_ENV=production`，因此 `JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 若为空、过短或仍是常见占位值，API 会 fail-fast 而不是带着弱配置启动。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。Caddy 会给 apps/desktop/admin 静态站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy；Go API 也会直接返回 API 侧安全头，避免绕过 Caddy 时裸奔。API 进程使用显式 `http.Server`：`ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`IdleTimeout=120s`，收到 SIGINT/SIGTERM 时最多等待 10s graceful shutdown；`WriteTimeout` 保持 0，避免长 SSE / streaming 响应被服务器定时切断。
+`make deploy` = `docker compose -f infra/cloud/docker-compose.prod.yml pull && up -d`。生产 compose 会给 API 注入 `SHEJANE_ENV=production`，因此 `JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 若为空、过短或仍是常见占位值，API 会 fail-fast 而不是带着弱配置启动。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。Caddy 会给 apps/desktop/admin 静态站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy；Go API 也会直接返回 API 侧安全头，避免绕过 Caddy 时裸奔。API 进程使用显式 `http.Server`：`ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`IdleTimeout=120s`，收到 SIGINT/SIGTERM 时最多等待 10s graceful shutdown；`WriteTimeout` 保持 0，避免长 SSE / streaming 响应被服务器定时切断。
 
 迁移由 API 镜像内置的 `/app/shejane-migrate` 执行，SQL 文件随同一 API 镜像发布在 `/app/migrations`。runner 会先创建 `schema_migrations`，再按文件版本顺序执行未应用版本；已应用且 checksum 一致的版本会跳过，checksum 与数据库记录不一致会 fail-fast，避免“改旧迁移文件后静默漂移”。首次升级到版本表 runner 的已有数据库会重放一次当前 idempotent 迁移并补齐版本记录，之后只执行新增迁移。`make migrate` 和 CI Postgres conformance 也使用同一个 runner。
 
@@ -705,7 +705,7 @@ make deploy-logs               # 跟踪日志
 make deploy-down               # 停栈（保留数据卷）
 ```
 
-数据（Postgres）落在命名卷 `postgres-data`，`deploy-down` 不会删它；要彻底清空需 `docker compose -f docker-compose.prod.yml down -v`（危险）。Postgres、client、admin 都不对外暴露端口，只有 Caddy 的 80/443 和 api 的 `127.0.0.1:8080`（给本机反代或巡检用）对外可达。
+数据（Postgres）落在命名卷 `postgres-data`，`deploy-down` 不会删它；要彻底清空需 `docker compose -f infra/cloud/docker-compose.prod.yml down -v`（危险）。Postgres、client、admin 都不对外暴露端口，只有 Caddy 的 80/443 和 api 的 `127.0.0.1:8080`（给本机反代或巡检用）对外可达。
 
 **备份与恢复**：持久卷不等于备份。仓库提供：
 
