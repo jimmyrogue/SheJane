@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 const releases = {
   runtime: '.github/workflows/release-runtime.yml',
   desktop: '.github/workflows/release-desktop.yml',
-  cloud: '.github/workflows/release-cloud.yml',
   'runtime-client': '.github/workflows/release-runtime-client.yml',
 }
 

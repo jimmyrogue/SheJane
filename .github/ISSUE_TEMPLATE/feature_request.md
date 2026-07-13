@@ -19,5 +19,5 @@ Other approaches you thought about.
 
 ### Scope
 
-- Component(s): <!-- Go API / Python daemon / client / admin -->
-- Does this touch billing, auth, or the secret boundary? <!-- yes/no -->
+- Component(s): <!-- Runtime / Desktop / Runtime SDK -->
+- Does this touch permissions, remote access, or the secret boundary? <!-- yes/no -->

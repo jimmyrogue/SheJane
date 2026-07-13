@@ -10,20 +10,6 @@
 
 version: 2
 updates:
-  # --- Go (API backend) ---
-  - package-ecosystem: gomod
-    directory: /services/cloud
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
-    groups:
-      go-minor-patch:
-        update-types: [minor, patch]
-    labels: [dependencies, go]
-
   # --- npm workspaces ---
   - package-ecosystem: npm
     directory: /apps/desktop

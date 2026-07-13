@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Defense in depth: Runtime must never read provider keys from its process
 # environment. BYOK credentials belong in the Runtime credential store;
-# optional Cloud service keys belong in services/cloud/.env.
+# provider keys belong in the operating-system credential store.
 #
 # This check is a guardrail against the pattern coming back. Allowed
 # locations:
@@ -44,7 +44,7 @@ cat >&2 <<EOF
 ❌ Daemon code reads a platform-paid key directly from env.
 
 Provider keys belong in Runtime's credential store. Optional Cloud service
-keys belong in services/cloud/.env and must not cross the module boundary.
+keys belong in the Runtime credential store and must not enter process env.
 
 Offending lines (real reads, not docstrings):
 EOF

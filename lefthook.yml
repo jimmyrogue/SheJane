@@ -35,27 +35,6 @@ pre-commit:
       glob: "*.py"
       run: uv run ruff format --check {staged_files}
 
-    # --- Go (api/) ---
-    # gofmt -l prints unformatted files; assert the list is empty.
-    # `go vet` catches a handful of correctness issues without needing
-    # full type-checking (unreachable code, printf format mismatches).
-    gofmt:
-      root: api
-      glob: "*.go"
-      run: |
-        unformatted=$(gofmt -l {staged_files})
-        if [ -n "$unformatted" ]; then
-          echo "gofmt -w needed on:" >&2
-          echo "$unformatted" >&2
-          exit 1
-        fi
-    go-vet:
-      root: api
-      glob: "*.go"
-      # vet on whole packages, not individual files — that's how go's
-      # type-checking is scoped. We don't pass {staged_files}.
-      run: go vet ./...
-
     # --- Custom project guard ---
     # Defense in depth: no platform-paid keys read from daemon env.
     # The architecture is gateway-only; this script catches the

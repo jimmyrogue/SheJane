@@ -76,14 +76,6 @@ out/
 *.pkg
 *.AppImage
 *.exe
-# Go build/test artifacts
-services/cloud/api
-services/cloud/migrate
-services/cloud/shejane-api
-*.test
-*.prof
-coverage.out
-
 # Python / uv
 .venv/
 *.egg-info/
@@ -104,18 +96,6 @@ services/runtime/large_tool_results/
 *.db
 *.sqlite
 *.sqlite3
-postgres-data/
-
-# Docker / deployment local overrides
-docker-compose.override.yml
-Caddyfile.local
-
-# Local Postgres dumps — never commit DB data. Backups default to
-# $HOME/shejane-backups (outside the repo); these patterns guard against
-# anyone pointing SHEJANE_BACKUP_DIR back into the tree.
-backup-*.sql.gz
-shejane-*.sql.gz
-shejane-backups/
 
 # PyInstaller intermediate build dir for the frozen daemon (dist/ already ignored)
 services/runtime/build/

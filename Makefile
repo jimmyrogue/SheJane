@@ -5,7 +5,6 @@
 #   make ci         → run everything CI runs, locally
 #   make dev-electron / restart-daemon → run / hot-restart the dev stack
 #   make release COMPONENT=runtime VERSION=X.Y.Z → push runtime-vX.Y.Z
-#   make deploy     → pull prebuilt images + (re)start the prod stack
 #
 # Targets are grouped with `##@ Section` headers and self-document via the
 # `## description` after each name — `make help` parses those. Keep new
@@ -15,22 +14,14 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help \
-	dev dev-electron dev-fresh dev-nuke restart-daemon doctor docker-up docker-down \
-	test test-race test-e2e test-contract ci test-ci build \
-	api-test client-test runtime-client-test local-host-test \
+	dev dev-electron restart-daemon doctor \
+	test test-e2e test-contract ci test-ci build \
+	client-test runtime-client-test local-host-test \
 	client-build runtime-client-build local-host-build \
 	lint schemas setup-hooks \
-	release deploy deploy-pull deploy-down deploy-logs migrate \
-	backup deploy-backup deploy-restore backup-cron-install \
-	smoke-local-host smoke-docker-local smoke-real-llm smoke-stripe-webhook smoke-s3-document smoke-external \
+	release smoke-local-host \
 	eval \
-	logs-api logs-local-host logs-client logs-llm-errors logs-dev
-
-# docker compose invocation for the production stack (pulls prebuilt
-# GHCR image — see infra/cloud/docker-compose.prod.yml). Pin Cloud with
-# CLOUD_IMAGE_VERSION.
-COMPOSE_DEV ?= docker compose -f infra/cloud/docker-compose.yml
-COMPOSE_PROD ?= docker compose --env-file infra/cloud/.env -f infra/cloud/docker-compose.prod.yml
+	logs-local-host logs-client logs-dev
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -44,16 +35,9 @@ dev: ## Print the manual Runtime + Desktop recipe
 	@echo "Run Runtime and Desktop in separate terminals:"
 	@echo "  cd services/runtime && uv run shejane-runtime"
 	@echo "  pnpm --filter @shejane/desktop dev"
-	@echo "The retired Cloud is preserved only in Git history."
 
 dev-electron: ## Runtime + Vite + Electron (hard-restarts; no Cloud required)
 	./scripts/dev-electron.sh
-
-dev-fresh: ## Rebuild optional Cloud, then launch Runtime + Desktop
-	./scripts/dev-fresh.sh
-
-dev-nuke: ## Clean-rebuild optional Cloud, then launch Runtime + Desktop (keeps DB volumes)
-	./scripts/dev-nuke.sh
 
 restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit — seconds, not a full relaunch
 	./scripts/restart-daemon.sh
@@ -61,17 +45,8 @@ restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit
 doctor: ## One-shot diagnostic: "why isn't dev working?"
 	@./scripts/doctor.sh
 
-docker-up: ## Bring up the dev Docker stack (build + foreground)
-	$(COMPOSE_DEV) up --build
-
-docker-down: ## Stop the dev Docker stack
-	$(COMPOSE_DEV) down
-
 ##@ Test
-test: api-test client-test runtime-client-test local-host-test ## Fast unit suites
-
-test-race: ## Go tests with the race detector (guards the credit ledger's concurrency)
-	cd services/cloud && go test -race ./...
+test: client-test runtime-client-test local-host-test ## Fast unit suites
 
 test-e2e: ## Playwright simulated E2E (boots isolated Desktop + Runtime route mocks)
 	pnpm --filter shejane-e2e test
@@ -79,19 +54,15 @@ test-e2e: ## Playwright simulated E2E (boots isolated Desktop + Runtime route mo
 test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)
 	./scripts/test-contract.sh
 
-ci: lint test test-race build test-e2e test-contract ## Run EVERYTHING CI runs, locally (before pushing a PR)
+ci: lint test build test-e2e test-contract ## Run EVERYTHING CI runs, locally (before pushing a PR)
 
 # Back-compat alias — older docs/muscle-memory call `make test-ci`.
 test-ci: ci ## Alias of `ci` (kept for back-compat)
 
-build: ## Build Cloud, Runtime SDK, Desktop, and Runtime dependencies
-	cd services/cloud && go build ./cmd/api
+build: ## Build Runtime SDK, Desktop, and Runtime dependencies
 	pnpm --filter @shejane/runtime-client build
 	pnpm --filter @shejane/desktop build
 	cd services/runtime && uv sync
-
-api-test: ## Go unit tests
-	cd services/cloud && go test ./...
 
 client-test: ## Client vitest (run once)
 	pnpm --filter @shejane/desktop test --run
@@ -116,11 +87,9 @@ build-daemon: ## Freeze the Runtime into a standalone bundle for the desktop app
 	@echo "✅ Runtime frozen → services/runtime/dist/shejane-runtime/ (run it on THIS OS/arch only)"
 
 ##@ Lint & schemas
-lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-keys)
+lint: ## Run the same lint checks CI runs (ruff + no-platform-keys)
 	@echo "→ ruff (Python)"
 	@cd services/runtime && uv run ruff check . && uv run ruff format --check .
-	@echo "→ gofmt + go vet (Go)"
-	@cd services/cloud && test -z "$$(gofmt -l .)" && go vet ./...
 	@echo "→ no-platform-keys guard"
 	@./scripts/check-no-platform-keys-in-daemon.sh
 	@echo "→ independent release tags"
@@ -146,83 +115,28 @@ setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 	@lefthook install
 	@echo "✅ Pre-commit hooks wired. Bypass once with: LEFTHOOK=0 git commit"
 
-##@ Deploy & release (production)
+##@ Release
 release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
-	@case "$(COMPONENT)" in runtime|desktop|cloud|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, cloud, or runtime-client" >&2; exit 1 ;; esac
+	@case "$(COMPONENT)" in runtime|desktop|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, or runtime-client" >&2; exit 1 ;; esac
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "❌ VERSION must look like X.Y.Z" >&2; exit 1 ;; esac
 	@if [ -n "$$(git status --porcelain)" ]; then echo "❌ Working tree not clean — commit or stash first." >&2; exit 1; fi
 	@branch=$$(git rev-parse --abbrev-ref HEAD); if [ "$$branch" != "main" ]; then echo "❌ Releases must be cut from main (currently on '$$branch')." >&2; exit 1; fi
 	git tag -a "$(COMPONENT)-v$(VERSION)" -m "$(COMPONENT) v$(VERSION)"
 	git push origin "$(COMPONENT)-v$(VERSION)"
 	@echo "✅ Pushed $(COMPONENT)-v$(VERSION). Only that module's release workflow will run."
-
-deploy: ## Pull the Cloud image and restart
-	$(COMPOSE_PROD) pull
-	$(COMPOSE_PROD) up -d
-	@echo "✅ Deployed Cloud=$${CLOUD_IMAGE_VERSION:-latest}."
-
-deploy-pull: ## Pull the latest prod images without restarting
-	$(COMPOSE_PROD) pull
-
-deploy-down: ## Stop the prod stack (keeps named volumes / data)
-	$(COMPOSE_PROD) down
-
-deploy-logs: ## Tail the prod stack logs
-	$(COMPOSE_PROD) logs -f
-
-backup deploy-backup: ## Dump prod Postgres OUTSIDE the repo + copy off-site to S3 (scripts/backup-db.sh)
-	./scripts/backup-db.sh
-
-backup-cron-install: ## Install a daily 03:00 cron entry that runs the backup script
-	@line="0 3 * * * cd $(CURDIR) && ./scripts/backup-db.sh >> $$HOME/shejane-backup.log 2>&1"; \
-	( crontab -l 2>/dev/null | grep -v 'scripts/backup-db.sh' || true; echo "$$line" ) | crontab -; \
-	echo "✅ Installed daily backup cron (03:00). Current entries:"; crontab -l | grep 'backup-db.sh'
-
-deploy-restore: ## DANGER: overwrite prod Postgres from BACKUP=<file.sql.gz>
-	@test -n "$$BACKUP" || { echo "Usage: make deploy-restore BACKUP=backup-YYYYMMDD-HHMMSS.sql.gz"; exit 1; }
-	@test -f "$$BACKUP" || { echo "No such file: $$BACKUP"; exit 1; }
-	@printf '⚠️  This OVERWRITES the prod database from %s. Type yes to continue: ' "$$BACKUP"; \
-	read ok; [ "$$ok" = "yes" ] || { echo "aborted"; exit 1; }
-	@gunzip -c "$$BACKUP" | $(COMPOSE_PROD) exec -T postgres psql -v ON_ERROR_STOP=1 -U shejane -d shejane >/dev/null
-	@echo "✅ Restored from $$BACKUP"
-
-migrate: ## Apply pending SQL migrations against DATABASE_URL and record schema_migrations
-	cd services/cloud && go run ./cmd/migrate -dir ./migrations
-
-##@ Smoke (opt-in; some hit real services)
+##@ Smoke
 smoke-local-host: ## Standalone daemon HTTP smoke (health / auth / a deterministic run)
 	./scripts/smoke-local-host.sh
-
-smoke-docker-local: ## Optional Cloud/Admin health and auth smoke on disposable ports
-	./scripts/smoke-docker-local.sh
-
-smoke-real-llm: ## Optional Cloud real-model smoke (needs SMOKE_MODEL_ID configured through Admin)
-	./scripts/smoke-real-llm.sh
 
 eval: ## Run the agent eval suite against a Runtime with a real provider
 	cd services/runtime && uv run python -m local_host.eval
 
-smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify one-time top-up credit grant
-	./scripts/smoke-stripe-webhook.sh
-
-smoke-s3-document: ## Presigned upload to real S3 + best-effort cleanup
-	./scripts/smoke-s3-document.sh
-
-smoke-external: ## Chain the real-service smokes (RUN_EXTERNAL_SMOKE=1 required)
-	./scripts/smoke-external.sh
-
 ##@ Logs
-logs-api: ## Tail the API (docker compose) logs
-	./scripts/dev-logs.sh api
-
 logs-local-host: ## Tail the daemon log (.tmp/dev/local-host.log)
 	./scripts/dev-logs.sh local-host
 
 logs-client: ## Tail the client Vite log
 	./scripts/dev-logs.sh client
-
-logs-llm-errors: ## Query the llm_call_records table for recent failures
-	./scripts/dev-logs.sh llm-errors
 
 logs-dev: ## Snapshot of all dev logs at once
 	./scripts/dev-logs.sh all

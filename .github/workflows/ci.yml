@@ -25,11 +25,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: services/cloud/go.mod
-          cache-dependency-path: services/cloud/go.sum
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -50,20 +45,6 @@ jobs:
       - name: ruff format --check
         run: uv run ruff format --check .
         working-directory: services/runtime
-
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt -w needed on:"
-            echo "$unformatted"
-            exit 1
-          fi
-        working-directory: services/cloud
-
-      - name: go vet
-        run: go vet ./...
-        working-directory: services/cloud
 
       - name: No platform-paid keys in daemon
         run: ./scripts/check-no-platform-keys-in-daemon.sh
@@ -86,38 +67,13 @@ jobs:
             exit 1
           fi
 
-  # Unit + race + build. Split out from E2E so a Playwright flake can't
-  # mask a unit failure (and vice-versa) — each surfaces as its own
-  # check. `test-race` runs `go test -race ./...`, which supersedes the
-  # plain Go pass, so we run the non-Go unit suites + the race suite +
-  # a full build (compile check) and skip the redundant non-race run.
+  # Unit + build. Split out from E2E so a Playwright flake cannot mask a
+  # unit failure; each surfaces as its own check.
   test:
-    name: Tests (unit + race + build)
+    name: Tests (unit + build)
     runs-on: ubuntu-latest
-    # Postgres for the store dual-impl conformance cross-check. Image matches
-    # the dev/prod compose (pgvector/pg16) so migrations apply identically.
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: shejane
-          POSTGRES_USER: shejane
-          POSTGRES_PASSWORD: shejane
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U shejane -d shejane"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: services/cloud/go.mod
-          cache-dependency-path: services/cloud/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -144,21 +100,8 @@ jobs:
         run: uv sync
         working-directory: services/runtime
 
-      - name: Unit suites + race + build
-        run: make client-test local-host-test test-race build
-
-      # Cross-check memory.go vs postgres.go via the store conformance suite.
-      # Migrations apply with the same versioned runner as `make migrate`; the
-      # suite skips Postgres when TEST_DATABASE_URL is unset (so local runs stay
-      # DB-free), so this step is where the Postgres path actually runs.
-      - name: Store conformance (postgres cross-check)
-        env:
-          TEST_DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
-          DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
-        run: |
-          cd services/cloud
-          go run ./cmd/migrate -dir ./migrations
-          go test ./internal/store/ -run TestStoreConformance -v
+      - name: Unit suites + build
+        run: make test build
 
   # Playwright simulated E2E. Its webServer launches the Desktop Vite app.
   e2e:

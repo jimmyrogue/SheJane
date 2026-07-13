@@ -2,11 +2,11 @@
 
 SheJane includes and depends on third-party software, fonts, and tools. Those components remain under their own licenses and are not relicensed under the SheJane community or commercial license.
 
-This file summarizes the direct dependencies and notable transitive license families found in the repository on 2026-07-12. Exact versions are recorded in `package-lock.json`, `go.mod`, `go.sum`, `pyproject.toml`, and `uv.lock`. Distributions must retain the license and notice files supplied with each dependency.
+This file summarizes the direct dependencies and notable transitive license families found in the repository on 2026-07-13. Exact versions are recorded in `pnpm-lock.yaml`, `pyproject.toml`, and `uv.lock`. Distributions must retain the license and notice files supplied with each dependency.
 
 ## JavaScript and Electron
 
-The client, admin application, and end-to-end tests use packages under the MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, 0BSD, BlueOak-1.0.0, Python-2.0, Unlicense, CC0-1.0, and similar permissive licenses.
+The Desktop client, Runtime SDK, and end-to-end tests use packages under the MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, 0BSD, BlueOak-1.0.0, Python-2.0, Unlicense, CC0-1.0, and similar permissive licenses.
 
 Direct runtime dependencies include React, Lexical, Radix UI, Tailwind CSS, Tabler Icons, Lucide, ExcelJS, docx-preview, highlight.js, react-markdown, Electron Updater, and related utilities. Their package metadata and installed license files contain the applicable copyright notices and terms.
 
@@ -23,10 +23,6 @@ The following items need separate attention:
 Direct Python dependencies include LangChain, LangGraph, Deep Agents, FastAPI, Uvicorn, HTTPX, Pydantic, aiosqlite, MarkItDown, python-docx, python-pptx, openpyxl, PyYAML, Structlog, pyperclip, and SSE-Starlette.
 
 Their declared licenses are primarily MIT, BSD, or Apache-2.0. Optional browser support also brings its own Playwright, browser, and Chromium notices when installed.
-
-## Go API
-
-Direct Go dependencies include AWS SDK for Go v2, Sentry Go, golang-jwt, pgx, `ledongthuc/pdf`, and `golang.org/x/crypto`. Their repository license files declare Apache-2.0, MIT, or BSD-family terms.
 
 ## Project assets and external services
 

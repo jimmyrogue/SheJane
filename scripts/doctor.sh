@@ -54,16 +54,15 @@ else
   # `ps eww` reads the process's environment block.
   DAEMON_ENV="$(ps eww -p "$DAEMON_PID" 2>/dev/null | tr ' ' '\n' || true)"
   LEAKS=()
-  for forbidden in OPENAI_API_KEY TAVILY_API_KEY ANTHROPIC_API_KEY \
-                   AWS_ACCESS_KEY_ID STRIPE_SECRET_KEY JWT_SECRET; do
+  for forbidden in OPENAI_API_KEY TAVILY_API_KEY ANTHROPIC_API_KEY; do
     if echo "$DAEMON_ENV" | grep -q "^${forbidden}="; then
       LEAKS+=("$forbidden")
     fi
   done
   if [[ ${#LEAKS[@]} -eq 0 ]]; then
-    row "✅" "no platform keys in env" "OPENAI/TAVILY/ANTHROPIC/AWS/STRIPE/JWT clean"
+    row "✅" "no provider keys in env" "OPENAI/TAVILY/ANTHROPIC clean"
   else
-    row "❌" "secrets leaked" "${LEAKS[*]} — use Runtime credentials or Cloud service env"
+    row "❌" "secrets leaked" "${LEAKS[*]} — use the Runtime credential store"
   fi
 
 fi

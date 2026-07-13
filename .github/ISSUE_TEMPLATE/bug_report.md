@@ -23,10 +23,10 @@ What you expected to happen instead.
 
 ### Environment
 
-- Component: <!-- Go API / Python daemon / client / admin -->
+- Component: <!-- Runtime / Desktop / Runtime SDK -->
 - OS:
 - Commit / version:
-- `MOCK_LLM`: <!-- true / false -->
+- Provider kind and model ID:
 
 ### Logs / screenshots
 
