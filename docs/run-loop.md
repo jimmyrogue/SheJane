@@ -1,13 +1,13 @@
 # Run Loop —— 当前能力实现态
 
-创建 Run 前，daemon 现在会先检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。`local:<供应商编号>:<模型编号>` 会直连 Runtime 本地供应商，当前支持 OpenAI 兼容接口；旧模型编号仍走 Go 中转。两条路径都是显式选择，不会在失败时互相回退。快照还会记录接纳时是否真实绑定云工具；没有云会话的任务不会看到 `web.search`、图片、云端 PDF 和云端代码执行。作业开始或恢复时会重新核对工作区、设置快照、供应商版本、凭据引用和当前云会话，然后才进入下面的模型循环。
+创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`，当前支持 OpenAI 兼容接口。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。Runtime 不再包含 Go 模型中转、云会话或 Cloud 工具网关，也不会在失败时切换到 Cloud。
 
 > **范围**：`services/runtime/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
 > **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) · [client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
 > **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
 
-桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点和一次性配对 Token，并启动对应进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。Runtime 配置本身也拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败不会回退云端任务，而是创建离线桌面界面，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
+桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点、数据目录和一次性配对 Token，并通过源码与打包产物共用的命令行入口启动进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。Runtime 配置本身也拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败不会回退云端任务，而是创建离线桌面界面，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
 
 ---
 
@@ -147,7 +147,7 @@
   │   ❷ 每一轮 LLM 调用                                                                  │
   │     ┌─────────────────────────────────────────────────────────────────────────┐     │
   │     │ before_model                                                             │     │
-  │     │  • ToolCallLimitMiddleware(tavily, run_limit=3)  ← P8 research 收敛       │     │
+  │     │  • ToolCallLimitMiddleware(web.search, run_limit=3) ← 仅在 MCP 提供同名工具时生效 │     │
   │     │  • ToolRetryMiddleware       transient 工具异常重试（max_tool_retries）    │     │
   │     │  • ToolResultRetryMiddleware retryable tool envelope 重试                 │     │
   │     │  • 模型自动重试已禁用；产生输出后不得从头重试               │     │
@@ -161,11 +161,7 @@
   │     │       ↓                                                                  │     │
   │     │ LedgerChatModel 记录首次输出 → 已绑定的唯一供应商模型               │     │
   │     │       ↓                                                                  │     │
-  │     │   可选 POST /api/v1/agent/llm/stream   (runtime-v1 标记后只转发并计费)    │     │
-  │     │       │  ├─ 信用 reserve（前置扣额度）                                    │     │
-  │     │       │  ├─ Anthropic gateway 对长 request 加顶层 cache_control ✅cap3 │     │
-  │     │       │  ├─ vendor LLM stream                                            │     │
-  │     │       │  └─ 信用 settle（实际 token 结算）                                 │     │
+  │     │   OpenAI 兼容供应商流式接口                                               │     │
   │     │       ▼                                                                  │     │
   │     │   返回 llm.delta × N  +  llm.tool_call  +  llm.done                      │     │
   │     │       ↓ 完整结束时结算 token/费用；中断或重启标记结果不明       │     │
@@ -311,23 +307,13 @@
 | 1g | **参数前置校验** | 无效参数不询问用户、不进入工具 | `capability_1g_invalid_tool_arguments_fail_before_review` ✅ |
 | 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` ✅ |
 | 2c | **子 Agent 同一执行边界** | 子 Agent 内工具也经过确认和回执 | `capability_2c_subagent_tools_share_review_and_receipt_boundary` ✅ |
-| 3 | Anthropic prompt 缓存 | Go Anthropic gateway 对长 request 加顶层 `cache_control`；daemon wire contract 不带 provider-specific cache 标记 | `cap_3_prompt_caching_is_gateway_owned` ✅ |
-| 4 | 自动模型回退禁用 | `SHEJANE_LOCAL_FALLBACK_MODELS` 被兼容性忽略；daemon 直连和可选 Go 中转都不会在失败后自行换模型 | `cap_4_local_direct_modelfallback_ignored` / `TestAgentLLMStreamDoesNotSwitchModelOnProviderFailure` ✅ |
+| 3 | 供应商缓存边界 | Runtime 不注入供应商私有缓存标记，由标准供应商适配器决定 | `capability_3_prompt_caching_is_gateway_owned` ✅ |
+| 4 | 自动模型回退禁用 | Runtime 不会在失败后自行更换模型或切换 Cloud | `capability_4_local_direct_modelfallback_ignored` ✅ |
 | 6 | **AGENTS.md 注入** | `MemoryMiddleware` → system prompt | `cap_6_memory_md` ✅（出站 system 含 marker） |
 | 7 | TodoList | `before_agent` 注入 write_todos 工具 | `cap_7_write_todos` ✅ |
 | 8 | 快路径 happy run | 全链 | `cap_8_happy_path` ✅ |
 
-### 平台付费工具 — cloud Tool Gateway 代理（`tests/test_image_tool.py` + `test_web_search_tool.py`）
-
-| 工具 | 路径 | 代理 |
-|---|---|---|
-| `image.generate` / `image.edit` | daemon → `POST /api/v1/agent/tools/execute` | OpenAI key 在 API 的 model registry，不入 daemon env |
-| `web.search` | 同上（tool="web.search"） | Tavily key 在 API .env，不入 daemon env |
-| 共享代理实现 | `local_host/tools/_gateway.py:call_tool_gateway` | 同一套 idempotency + reserve/settle 计费 |
-
-防回归测试断言：`OPENAI_API_KEY` / `TAVILY_API_KEY` 即使被恶意注入 daemon env，**也不会**触发对 openai.com / tavily.com 的直连请求。
-
-### SSE wire 契约（`tests/test_sse_envelope.py` + `test_session_http.py`）
+### SSE wire 契约（`tests/test_sse_envelope.py`）
 
 | 契约 | 验证 |
 |---|---|
@@ -336,7 +322,6 @@
 | `seq` 单调递增（dedupe） | `test_seq_monotonic_per_run` ✅ |
 | run 完成后 stream replay 也用 envelope | `test_replay_after_run_completion_has_same_envelope` ✅ |
 | 多个实时订阅者各自收到完整、有序的同一事件日志 | `test_each_live_stream_subscriber_receives_the_complete_ordered_event_log` ✅ |
-| `POST/GET/DELETE /local/v1/session` 返 `LocalCloudSession` shape | 7 case ✅ |
 
 ### 间接 / 单测覆盖
 
@@ -350,7 +335,7 @@
 | 上下文压缩 | Runtime 把已接纳历史原样交给 Deep Agents 的令牌感知摘要；不再按消息数二次截断或生成关键词摘要。旧对话首次迁入 Runtime 时，client 只保留 256 条 / 750000 字符的传输安全边界 | `test_runs_http` / `conversationHistory.test` |
 | 工具结构可见性 | 完整工具集固定属于图定义；Runtime 只在模型请求副本中按当前目标、保留历史和既有工具调用确定性隐藏无关的 Office 工具结构，并在供应商边界覆盖所有子 Agent，不改变 checkpoint 或图指纹 | `test_tool_visibility` / `test_model_ledger` / `test_agent_builder` |
 | 供应商上下文硬限制 | 每次真实模型调用前按声明窗口扣除工具结构并裁剪请求副本；剩余空间不足最小合法请求时在预留调用账本和联系供应商之前明确失败 | `test_model_ledger` |
-| 输出、时间与费用边界 | 模型资料限制最大输出，所有供应商调用有硬超时；中转服务预留并按真实用量结算额度，BYOK 记录 token 并用调用次数、输出和时间限制资源 | `test_backend_llm` / `agent_stream_test` / provider tests |
+| 输出、时间与用量边界 | 模型资料限制最大输出，所有供应商调用有硬超时；Runtime 记录 token，并用调用次数、输出和时间限制资源 | `test_model_ledger` / provider tests |
 | research 收敛 | `before_model` per-tool 计数 | `test_middleware` |
 | 大工具结果转存与摘要 | Deep Agents `FilesystemMiddleware` + `SummarizationMiddleware` | `test_agent_builder` / `test_runs_http` |
 | orphan tool_call 自愈 | `before_agent` 扫 messages | `test_middleware` |
@@ -360,8 +345,6 @@
 | 用户确认 retry workflow | `metadata.intent=retry` → `<state>` 重试上下文；普通恢复重试携带 source run/message、attempt 和失败分类，帮助模型避免盲目重复失败路径 | `test_runs_http` / `App.test` |
 | 编辑重跑 | 复用持久 `run.start`，以当前未替换的用户消息为前置条件；Runtime 原子隐藏旧投影并创建新 Run，旧记录不删除 | `test_run_result_commit` / `App.test` |
 | 检查点分叉 | 客户端持久保存 `run.fork`；Runtime 从公开检查点创建新产品对话和明确分支头，同编号重放返回原 Run | `test_runs_http` / `client.test` / `App.test` |
-| Billing recovery observer | quota 失败打开 checkout 时，client 按 `{conversation_id, assistant_message_id}` 给 checkout 创建请求加 in-flight guard，避免同一失败消息连续点击创建多个 Stripe session；打开后静默做有界 wallet polling，只有后端余额/套餐容量改善后才刷新显式 retry 提示，不自动创建替换 run | `App.test` |
-| Auth/session recovery observer | auth 类失败点击刷新会话但尚未连上时，client 保留失败 turn 的 recovery target；后续重新登录或 token 修复触发自动 session sync 成功后，只刷新显式 retry 提示，不自动创建替换 run | `App.test` |
 | 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |
 | 结束前进展账本 guard | `@after_model + jump_to="model"`，有非 `task.progress` 工具工作且最后一次工具后没有刷新账本时，最多要求模型调用一次 `task.progress` | `test_middleware` / `test_agent_builder` |
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
@@ -371,10 +354,9 @@
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |
 | 错误分类诊断 | `handoff.failure` 将最近 `run.failed` / `tool.failed` 归类并标记 recoverable / retryable / action_kind / recovery_action / suggested action；同一模块也输出 runtime retry decision（`should_retry` / `delay_s` / fail-fast reason） | `test_runs_http` / `test_failure_policy` |
-| 模型错误 durable failure | 云端 `llm.error` 抛 `BackendLLMError`，模型重试和 `handoff.failure` 共用 `failure_policy.build_retry_decision`；重试耗尽后写入结构化 `run.failed` | `test_backend_llm` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
+| 模型错误 durable failure | 供应商错误进入统一失败策略；不可恢复或重试耗尽后写入结构化 `run.failed` | `test_model_ledger` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |
-| Cloud Tool Gateway 网关层退避 | `web.search` / `image.*` / `pdf.inspect` / `code.execute` 的 gateway transport error 和非 JSON 瞬态 HTTP 响应（429/500/502/503/504）通过统一 retry decision 做有界指数退避，复用 idempotency key；结构化 tool result envelope 缺省 `retryable:false`，只有显式 `retryable:true` 且通过共享 failure policy 才进入工具结果重试 | `test_web_search_tool` / `test_image_tool` / `test_tools_code` / `test_tools_pdf` |
 | **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` ✅ **p50 24.8ms** |
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
 | 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
@@ -408,7 +390,7 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 | build_agent + middleware 装配 | [`local_host/agent/builder.py`](../services/runtime/local_host/agent/builder.py) |
 | Subagent 定义 | [`local_host/agent/subagents.py`](../services/runtime/local_host/agent/subagents.py) |
 | 6 个自写 middleware | [`local_host/middleware/`](../services/runtime/local_host/middleware/) |
-| BackendChatModel | [`local_host/llm/backend.py`](../services/runtime/local_host/llm/backend.py) |
+| 模型适配、上下文与调用账本 | [`local_host/llm/`](../services/runtime/local_host/llm/) |
 | LangGraph → 客户端事件翻译 | [`local_host/event_translator.py`](../services/runtime/local_host/event_translator.py) |
 | structlog + DaemonObserver | [`local_host/observability.py`](../services/runtime/local_host/observability.py) |
 | 工具注册 | [`local_host/tools/registry.py`](../services/runtime/local_host/tools/registry.py) |
@@ -420,10 +402,8 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 
 | 维度 | 为什么 mock 不够 |
 |---|---|
-| Anthropic prompt cache 真命中率 | Go gateway 已加自动 `cache_control`，但命中率需看 `usage.cache_read_input_tokens` —— 只有真 Anthropic API 才返回 |
-| ModelFallback 真切到备用 vendor | 需 2 个真工作的 vendor model + 主模型真故障 |
 | TodoList 真分解复杂任务 | 需真 LLM 推理决定 todos 内容 |
 | SubAgent 真完成研究 | 需真 LLM 推理在 researcher 子 agent 里跑完 |
 | Memory AGENTS.md 真被遵守 | 验证规则真改变模型输出，需真 LLM |
 
-这五项是"会不会真跑通"的问题，框架接入正确性已被本图所示的 mock e2e 覆盖。
+这些是“真模型是否按预期行动”的问题，框架接入正确性已被本图所示的 mock e2e 覆盖。

@@ -1,29 +1,20 @@
-# Document And Tool Combination Policy
+# 文档与工具策略
 
-> Updated: 2026-06-13
+Desktop 已删除 Cloud 文档上传和 S3 附件路径。Runtime 只处理用户授权工作区中的本地文件。
 
-This page defines how SheJane combines uploaded attachments with agent tools. The goal is to avoid ambiguous prompts where the user expects both document-grounded answers and open-ended tool execution in the same turn.
+## 当前行为
 
-## Matrix
+| 输入 | 处理方式 |
+|---|---|
+| 工作区中的 DOCX / XLSX / PPTX | 使用 Runtime Office 工具读取、预览或生成编辑副本 |
+| 工作区中的普通文本文件 | 使用 Runtime 文件工具读取 |
+| URL | 使用本地 `web.fetch`，或由用户配置的 MCP 工具处理 |
+| Desktop 附件按钮 | 当前隐藏，直到存在明确的 Runtime 本地附件协议 |
+| 图片生成、网页搜索、云端 PDF、云端代码执行 | Runtime 不内置；需要时通过 MCP 或标准外部工具接入 |
 
-| Input | Web/cloud tools | Local tools / MCP / Skills | Product behavior |
-|---|---|---|---|
-| Plain text, no attachment | Supported when configured. | Supported on desktop when Local Host is connected. | Normal tool-capable agent path. |
-| One or more uploaded PDF / DOCX / XLSX files | Not mixed in the same turn. | Not mixed in the same turn. | Document Q&A mode. The cloud agent run receives `attachments[]`, reads each document with `document.read`, and injects the extracted text into one context. |
-| Uploaded document plus slash-command skill or cloud tool intent | Deferred. | Deferred. | The composer shows attachment mode. The send path omits `cloudTools` so the run stays document-grounded. |
-| Uploaded image files only | Not a document Q&A case. | Supported only through the Local Host image-edit path when connected. | The client may route image attachments to the local harness so tools can inspect/edit the image. |
-| URL pasted as plain text | Supported when configured. | Supported on desktop when Local Host is connected. | Treated as text unless the user attaches an uploaded document. |
+## 约束
 
-## UX Contract
-
-- The composer may show a compact "attachment mode" status when attachments are present and tool entry points would otherwise be available.
-- The status is informational, not a blocking dialog.
-- A turn with uploaded documents should prefer grounded document answering over web search, image generation, code execution, or local workspace mutation.
-- To combine document analysis with tools later, add an explicit staged workflow: first extract/summarize the attachments, then ask the user to continue with tools using the derived summary.
-
-## Implementation Hooks
-
-- `apps/desktop/src/App.tsx` disables `cloudTools` when uploaded documents are sent through the cloud agent path.
-- `apps/desktop/src/features/chat/chatStore.ts` maps `documents[]` into run `attachments[]`.
-- `services/cloud/internal/httpapi/server.go` reads every document attachment in `loadAgentDocumentContext`.
-- `apps/desktop/src/features/chat/components/Composer.tsx` surfaces the attachment-mode status.
+- 文件必须位于已授权工作区。
+- Desktop 不把文件上传到 SheJane Cloud。
+- Runtime 不接收 S3 文档编号或 Cloud 下载地址。
+- 新附件能力必须先定义 Runtime 所有的持久协议、权限和生命周期，不能恢复 Desktop → Cloud 私有路径。

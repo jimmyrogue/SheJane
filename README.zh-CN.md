@@ -16,7 +16,7 @@
 </div>
 
 > [!NOTE]
-> Agent 循环已经运行在本地 Python daemon 中。模型路由、平台计费工具、鉴权和文档目前仍使用 Go API。独立 Runtime 接入、BYOK 和本地模型是目标架构，尚未全部完成。
+> Desktop 与 Runtime 已可独立运行。Go Cloud 和 Admin 作为可选服务保留在仓库中并独立发布，不再是桌面 Harness 的运行条件。
 
 ## 为什么做 SheJane
 
@@ -31,9 +31,8 @@ flowchart LR
     D["桌面客户端<br/>Electron + React"] -->|"本地 HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
     R --> W["本地工作区<br/>文件 · 工具 · 检查点"]
     R --> E["扩展能力<br/>技能 · MCP · 子 Agent"]
-    R --> G["当前模型路径<br/>Go API"]
-    G --> M["模型 · 云端工具 · 文档"]
-    R -. "目标" .-> B["BYOK · 本地模型<br/>第三方中转服务"]
+    R --> B["BYOK 供应商<br/>OpenAI 兼容接口 · 本地模型端点"]
+    C["可选 Go Cloud + Admin"] -. "仅通过标准供应商或 MCP 接入" .-> R
 ```
 
 桌面客户端通过 loopback HTTP 和配对凭证连接 Runtime。本地 Runtime 失败时应明确报告本地错误，不应静默创建云端任务。
@@ -43,25 +42,25 @@ flowchart LR
 | 领域 | 当前实现 |
 |---|---|
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
-| 本地工具 | 工作区文件、Shell、Office、PDF、网页抓取、剪贴板审批和定时任务 |
+| 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
 | 扩展能力 | 技能、MCP、子 Agent 和可配置中间件 |
-| 桌面端 | Electron 和 React、本地优先聊天记录、附件预览与工作区控制 |
-| Go 服务 | 鉴权、模型目录与路由、积分账本、云端工具网关、Stripe、文档和管理接口 |
+| 桌面端 | Electron 和 React、本地优先聊天记录、文件预览、供应商设置与工作区控制 |
+| 可选 Cloud | 鉴权、计费、文档、服务工具和管理接口，独立发布 |
+| Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 
 Runtime 不再内置业务平台连接器。未来统一通过标准工具或 MCP 接入。
 
 ## 快速开始
 
-需要 **Go 1.25+**、**支持 Corepack 的 Node.js 22+**、**Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)**，以及 **Docker**。
+桌面开发需要**支持 Corepack 的 Node.js 22+**、**Python 3.12+** 与 [uv](https://docs.astral.sh/uv/)。只有开发可选 Cloud 服务时才需要 Go 和 Docker。
 
 ```bash
 make setup-hooks
 corepack enable && pnpm install
-cp .env.example .env
 make dev-electron
 ```
 
-默认配置 `MOCK_LLM=true`，不需要外部模型密钥。启动异常时运行 `make doctor`。不要提交 `.env`。
+根目录不需要 `.env`。启动 Desktop 后，在 Runtime 设置中添加 OpenAI 兼容供应商并选择模型即可。启动异常时运行 `make doctor`。
 
 ## 开发检查
 

@@ -1,164 +1,45 @@
-# SheJane Roadmap
+# SheJane 路线图
 
-> 更新日期：2026-07-12
->
-> 结构约定：**未完成的事项按优先级 P0 → P4 排在前面**，每项附实现思路与参考方向；已完成的事项收在文末「已完成存档」，作为实现记录保留。完成一项就把它移到存档，避免双份状态。
-> 这里的 P0-P4 是路线图优先级，不是 Harness Runtime 的 P1-P12 阶段编号。
->
-> 本次优先级吸收了 2026-06-13 与现代 agent harness（Claude Code / Codex CLI / Cursor）的能力对标结论：P1 = 高收益低成本（基建现成），P2 = 中收益跟进，P4 = 高成本战略投资。
+## 当前产品边界
 
-## 当前事实
+SheJane 首先是独立的 Desktop Agent Harness：
 
-- 旧 P0/P1/P2 主线已经完成：CI 修复、充值入口、欢迎页磁贴、安全与计费护栏、监控探针、自动备份、Stripe webhook 原子化、P2 体验功能和质量测试都已落地。
-- 模型选择已经切到 **Auto 意图 + 后台模型目录**。用户端始终有 `Auto`，并提供 `更快` / `更强` 两个 Auto 意图（wire 值 `auto.fast` / `auto.smart`），具体模型页按厂商显示后台启用的 chat 模型，厂商名后的 info 图标展示后台 `vendor_info` 厂商简介。管理员用「模型 ID + 显示名 + 厂商 + 厂商简介 + 能力档位 + provider_kind + key + base_url + model_name + CNY/1M token 成本价」配置模型；数据库字段仍叫 `slot`，只是历史字段名。
-- `chat.fast` / `chat.deep` 仍作为种子模型 ID 保留，保证老配置可用；它们不再代表固定的产品层级。新的 chat 模型 ID 可以是 `gpt-4o`、`claude-sonnet`、`deepseek-v4` 等。
-- `Auto` 由 Go API 统一解析：`POST /api/v1/models/resolve` 在 run 开始时从 enabled chat 模型里选一个，并发出 `model.selected`。中性 `auto` 按用户问题难度映射到 `fast` / `balanced` / `reasoning` / `max`；`auto.fast` 优先 `fast/balanced`，`auto.smart` 优先 `reasoning/max`，再扣入最近 LLM 调用失败率/延迟和 token 成本；`/agent/llm/stream` 遇到上游模型失败会按同一排序降级一次并再次发出 `model.selected`。daemon、本地 run、web cloud tool loop 都只传 Auto sentinel 或具体模型 ID。
-- image 模型不进入聊天选择器。当前 resolver 只支持 `image.default`，后台也只允许 image capability 使用这个模型 ID。
-- 平台付费 provider key 仍只在 Go API 侧使用。后台模型配置可以写入 provider key，但 key 加密存储且不回显；daemon 不读取这些 key。
-- Local Host 已支持本机定时 run：`local_scheduled_runs` 存 SQLite，daemon 内置 dispatcher 到点复用普通 `RunCoordinator.start_run()`，Electron 轮询 completed/failed schedule 后发系统通知并标记已提醒。当前只做本机最小版，不做云端推送或跨设备同步。
-- Web / desktop composer 已支持一次附加多个上传文档；cloud agent run 会把 `attachments[]` 中每个 document 逐个读取并注入同一轮文档上下文。当前仍不做向量库或团队文档库。
-- 附件与工具组合策略已明确：上传文档走 document-grounded Q&A，不与 web search、image generation、code execution、本地项目工具、MCP 或 Skills 在同一 turn 混用；composer 在有附件且工具入口可用时显示「附件模式」状态。
-- 用户端已支持核心全局快捷键：`Cmd/Ctrl+N` 新建对话、`Cmd/Ctrl+K` 打开并聚焦会话搜索、`Esc` 停止当前任务或关闭快捷键面板、`?` 打开快捷键帮助。
-- Electron 主进程文案已接入桌面端共享 locale 资源：menu、daemon 错误弹窗、workspace 选择弹窗和 auth bridge generic error 统一走 `apps/desktop/shared/desktop-i18n.json`；启动时优先读取上次 renderer 写入的 locale，没有记录时按系统语言归一到 zh/en。
-- Release workflow 已对 GHCR 镜像增加供应链守门：Trivy HIGH / CRITICAL 漏洞扫描作为签名前 gate，Syft 生成 SPDX JSON SBOM 并附到 tag 的 GitHub Release，Cosign 使用 GitHub OIDC keyless 签名镜像 digest。
-- Nightly External Smoke 在 GitHub Actions 中会对缺失 secret 显式降级：缺 `SHEJANE_API_BASE_URL` 跳过整套并写 warning / job summary，缺 `STRIPE_WEBHOOK_SECRET` 只跳过 Stripe webhook smoke，避免金丝雀因未配置 secret 直接红掉。
-- 文档入口收敛为 `CLAUDE.md`、`AGENTS.md`、`docs/harness-runtime-stages.md`（目标 P1-P12 唯一编号）、`docs/harness-stage-improvement-notes.md`（待优化记录）、`docs/run-loop.md`（当前实现）、`docs/client-sse-protocol.md`、`docs/document-tool-policy.md`、`docs/operations.md` 和本路线图。旧状态快照、迁移记录、差距报告和分散研究文档已删除。
-- 飞书连接器、消息同步、待办提取、“今日待办”界面及相关专用接口已经删除。业务平台集成不再进入运行内核，未来统一通过标准工具或 MCP 接入。
-- 发布标签已对齐：`v0.1.9`（`3438f02`）包含生图重复回复修复（`3ec14c7`）和可配置模型目录（`1ff449d`）；main 仅领先一个 UI polish 提交（`151ec96`），下次打 tag 带上即可。
-- 2026-06-13 harness 对标结论：HITL 权限、checkpoint/恢复、MCP 多源发现、Skills、中间件式自我纠错栈（plan-first / tool-critic / verification-loop / progress-ledger）已对齐甚至领先现代 harness；多 provider 模型目录和 Reserve→Settle 计费是参照物没有的差异化资产。主要缺口（mid-run steering、计划审批、subagent 配置化、语义摘要/记忆、Auto 可靠性路由）已按收益 × 难度编入下面的 P1/P2/P4。
+- Desktop 只连接 Runtime；
+- Runtime 拥有任务、对话、模型供应商、工具、MCP、Skills、工作区和持久状态；
+- Go Cloud 与 Admin 是可选服务，不是本地 Harness 的启动条件；
+- 远程能力只能通过标准模型供应商或 MCP 接入，不能恢复产品私有 Gateway。
 
-## P0：发布与部署守门
+## 已完成
 
-当前暂无可在本地代码仓库内完成的 P0 任务。服务器部署后验证已在本轮执行中跳过，记录见「本轮执行记录」。
+- Monorepo 目录拆分：`apps/`、`services/`、`packages/`、`tests/`、`infra/`。
+- pnpm 11.7 工作区和唯一根锁文件。
+- 公共 `@shejane/runtime-client`，包含命令、SSE、快照、错误与生成协议类型。
+- Desktop Web Agent、云账号、计费和云文档路径删除。
+- Runtime Go 模型网关、Cloud 会话和 Cloud 工具网关删除。
+- Runtime BYOK 供应商与操作系统凭据存储。
+- Runtime 高级默认设置进入 SQLite/API。
+- Runtime、Desktop、Cloud、Admin 和 Runtime SDK 独立发布工作流。
+- 模块化环境配置；Desktop、Runtime、SDK 和 Admin 默认零环境变量。
 
-## P1：高收益低成本的 harness 能力（基建现成，建议本周期内做）
+## 当前优先级
 
-当前暂无未完成的 P1 任务。本轮已完成 #1-#4，记录见「本轮执行记录」。
+1. 完成真实 Runtime HTTP 契约测试，覆盖认证、命令、SSE 重连、快照和等待决定。
+2. 增加真实 BYOK“模型 → 工具 → 模型”离线 Cloud 验证。
+3. 继续收敛 Runtime 状态所有权，减少 Desktop 的本地投影兼容代码。
+4. 完善 Runtime 安装包、Desktop Runtime 锁定和跨平台发布验证。
+5. 审计第三方依赖、许可证、签名、SBOM 和供应链安全。
 
-## P2：中收益跟进（第一梯队完成后）
+## 后续方向
 
-当前暂无未完成的 P2 任务。本轮已完成 #5-#11，记录见「本轮执行记录」。
+- 移动端先作为 Remote Client，连接用户自己的 Runtime。
+- 远程 Runtime 服务必须是独立产品和独立安全边界。
+- 需要新能力时优先使用 MCP、Skills 或标准供应商接口。
+- 不预建移动端、远程网关或托管 Runtime 空目录。
 
-## P3：运维硬化与产品补全
+## 明确不做
 
-当前暂无未完成的 P3 任务。本轮已完成运维硬化与产品补全项，记录见「本轮执行记录」。
-
-## P4：战略投资（高成本，需要专门排期）
-
-| 任务 | 收益/难度 | 实现思路 / 参考方向 |
-|---|---|---|
-| 语义记忆基建 | 高 / 高 | 当前上下文压缩已统一使用 Deep Agents 的令牌感知摘要，不再另建 `max_history_turns` 触发的第二套摘要。未来如做语义记忆，embedding 必须作为普通 BYOK 供应商能力接入 Runtime，并经模型调用账本独立预留和结算。 |
-| 失败后的一键恢复工作流（统一 orchestrator） | 中 / 高 | 入口按钮已齐、单类恢复（retry/repair/quota/auth/workspace）已能用，缺跨 category 的统一编排。思路：把现有 per-target in-flight guard、pending target、余额观察等散点收敛成一个恢复状态机（failure category → 前置条件 → 确认 → 重跑），可继续按 category 渐进，不必整体重写。现状细节见存档对应项。 |
-| 远程 Runtime 连接与跨设备会话 | 中 / 高 | 对话正文已由本机 Runtime 保存，IndexedDB 只是缓存。下一步不是再建云端聊天库，而是让移动端通过远程认证连接用户自己的 Runtime；未来托管 Runtime 仍复用同一协议。公网暴露、设备撤销和端到端传输安全需单独设计。 |
-
-## 用户侧操作
-
-| 状态 | 任务 | 备注 |
-|---|---|---|
-| [ ] | 轮换泄露过的 AWS key。 | 这是账号侧操作，代码无法代做。 |
-| [ ] | tu-zi 图像令牌分组改到支持图片的分组。 | 后台账号侧配置。 |
-| [ ] | GitHub Release 草稿 review / publish。 | 标签已对齐到 `v0.1.9`，可以直接 review / publish。 |
-
-## 暂缓项
-
-| 事项 | 处置 |
-|---|---|
-| macOS 签名公证 | 暂缓。需要 Apple Developer 账号和完整 notarization 流程，非当前阻塞。 |
-| Windows 代码签名 | 暂缓。未签名会受 SmartScreen 影响，但可等分发链路稳定后处理。 |
-| 移动端 App | 暂缓。本地 harness 跑在用户机器上，全移动端是另一条产品线。 |
-| 会话分享/协作 | 先做产品决策。本地优先隐私模型天然不适合默认分享链接。 |
-| 订单退款/取消 admin 动作 | 暂缓。当前 admin 订单保持只读，符合运维边界。 |
-| 细粒度 admin RBAC | 暂缓。当前单一 admin 角色足够早期运营。 |
-| 用户可配置生命周期 Hooks | 暂缓。中间件点位（before_agent / before_model / wrap_tool_call / after_model / after_agent）已存在，缺的只是暴露成用户配置；等高级用户/企业定制需求出现再做。 |
-| 分支对比与并行探索 UI | 暂缓。检查点分叉已经可用；不提供会改写历史的可变回退。只有用户确实需要同时比较多个分支时再增加对比界面。 |
-
----
-
-## 本轮执行记录
-
-| 优先级 | 任务 | 结果 | 记录 |
-|---|---|---|---|
-| P0 | 服务器部署后验证 | 跳过 | 需要真实服务器部署路径、目标机器会话和生产/预发环境凭证；当前仅有本地仓库上下文，不能可靠执行 `make deploy` 后的线上 wire contract 验证。后续拿到部署环境后再按 `docs/operations.md` 清单补跑，并可沉淀 `make smoke-deploy`。 |
-| P1 #1 | Mid-run steering：运行中追加用户指令 | 成功 | daemon 新增 `POST /local/v1/runs/{run_id}/inject`，把追加指令写入 `local_steering` SQLite 队列；`SteeringMiddleware.abefore_model` 在下一次模型调用前 claim pending 指令并以用户消息注入上下文，同时发 `steering.injected` SSE；client local-host helper、Composer active-run「追加指示」模式和 timeline 文案已接入。验证：`make schemas`、`uv run python -m pytest tests/test_steering.py -q`、`npm test -- --run src/shared/local-host/client.test.ts src/features/chat/components/Composer.test.tsx src/features/chat/chatStore.test.ts`。 |
-| P1 #2 | 计划审批模式（旧实现） | 已停用 | `PlanApprovalMiddleware` 曾在 `write_todos` 后产生独立审批中断，但计划不是副作用权限，且它与完成路由、危险工具审批形成重复控制面。P9 已停止装配并删除该中间件；历史表、接口和客户端显示暂时只保留为旧数据兼容，P10 再统一人工等待协议。 |
-| P10 | 工具执行、人工确认和回执 | 成功 | 删除按工具名判断危险和协调器内运行级工具名缓存，改为整批参数化检查与统一等待周期。主 Agent 和子 Agent 共用版本化工具回执；重复调用编号提前拒绝，冲突调用按模型原始顺序执行，纯读取可并行。结果不明必须人工选择确认完成、确认未执行并重试或终止；核对沿真实父任务链验证所有者，并在一个事务中更新回执和等待状态。运行级授权绑定工具、参数、风险和图版本，24 小时且最多 20 次。大结果转为有配额的工作产物；MCP 的 HTTP、SSE 和本地进程响应均有解析前大小边界。Electron 支持工具确认和结果核对。验证：Python 592 项、Go 215 项、client 443 项通过且 11 项跳过、admin 15 项通过；完整生产构建与 `git diff --check` 通过。 |
-| P1 #3 | Artifact 面板升级 | 成功 | `ArtifactPanel` 从纯文本 `<pre>` 升级为格式感知视图：Markdown 用 `react-markdown` + GFM/breaks 渲染并复用 `CodeBlock` 高亮，HTML/SVG 进入无权限 sandbox iframe，JSON/代码按扩展名走高亮代码块；header 增加复制、下载、关闭 icon 操作，面板宽度从窄栏扩到 720px 以便阅读产物。验证：`npm test -- --run src/features/chat/components/ArtifactPanel.test.tsx src/features/chat/components/MessageBubble.test.tsx`、`cd apps/desktop && npm run build`、in-app Browser 打开 `http://127.0.0.1:5173/` smoke（标题「石间 SheJane」，无 console error）。 |
-| P1 #4 | subagent 配置化 | 成功 | `agent/subagents.py` 从硬编码列表升级为“内置 researcher/writer + Markdown 配置”组合：默认扫描 `~/.shejane/agents/*.md`，也支持 `SHEJANE_LOCAL_AGENTS_PATH` 完整覆盖；每个文件用 frontmatter 声明 `name`、`description`、`tools` 白名单，正文作为 subagent system prompt，同名配置可覆盖内置项。`docs/operations.md` 已补文件格式与工具白名单说明，`pyyaml` 作为 Local Host 直接依赖写入 lockfile。验证：先红后绿 `uv run python -m pytest tests/test_subagents.py -q`，以及 `uv run ruff check local_host/agent/subagents.py tests/test_subagents.py --fix`。 |
-| P2 #5 | checkpoint fork：从检查点重试 | 成功 | daemon 新增 `POST /local/v1/runs/{run_id}/fork`，接收 `checkpoint_id` 后为新 run 创建独立 thread_id，并把源 run 指定 checkpoint 及其 parent 链、pending writes 从 LangGraph SQLite checkpointer 复制到新 thread；新 run 继承源 workspace/settings/model，metadata 标记 `intent=checkpoint_fork`、源 run 和源 checkpoint。client 新增 `forkLocalRun` helper，诊断面板的最新检查点旁提供「从这里重试」按钮，点击后在当前会话追加 fork run 并自动 stream。验证：`make schemas`、`uv run python -m pytest tests/test_runs_http.py::test_fork_run_missing_checkpoint_returns_404 tests/test_runs_http.py::test_fork_run_from_checkpoint_creates_child_thread -q`、`uv run ruff check local_host/runs.py local_host/server.py local_host/api_schemas.py tests/test_runs_http.py`、`npm test -- --run src/shared/local-host/client.test.ts src/features/chat/components/DiagnosticsPanel.test.tsx`、`cd apps/desktop && npm run build`。 |
-| P2 #6 | Extended thinking 统一适配 | 成功 | Go Anthropic provider 新增可选 `AnthropicProviderOptions`，支持从后台模型 `params` 配置 `thinking_type`、`thinking_budget_tokens`、`thinking_display`、`thinking_effort`；手动 `enabled` 会发送 `budget_tokens`，`adaptive` 会发送 `thinking:{type:"adaptive"}` 并把 effort 放入 `output_config`。流式 `thinking_delta` 和非流式 `thinking` block 都解析到统一 `ReasoningContent`，agent SSE 层会把 reasoning-only chunk 写成现有 `llm.delta.reasoning_delta`，daemon/client 沿用原 `llm.reasoning` 路径。验证：先红后绿 `go test ./internal/llm -run 'TestAnthropic(CompleteWithToolsIncludesThinkingAndParsesReasoning|StreamEnablesAdaptiveThinkingAndEmitsReasoning|CompleteWithToolsRoundTrip|StreamReportsInputTokensAndMaxTokens)'`、`go test ./internal/httpapi -run TestRunAgentLLMStreamEmitsReasoningOnlyChunks`。 |
-| P2 #7 | MCP / Skills 在 UI 内增删改 | 成功 | daemon 新增 SheJane 自有配置源 CRUD：`POST/PUT/DELETE /local/v1/mcp-servers` 写 `~/.shejane/mcp-servers.json`，`POST/GET/PUT/DELETE /local/v1/skills/{name}` 写 `~/.shejane/skills/<name>/SKILL.md`；外部 Claude Desktop / Cursor / Codex / `.claude/skills` 来源保持只读。client 新增 local-host helper、MCP inline server 表单（stdio command+args / URL）和 Skills `SKILL.md` 编辑器，只有 `source=shejane` 行显示编辑/删除。验证：先红后绿 `uv run python -m pytest tests/test_mcp.py::test_http_mcp_server_crud_writes_only_shejane_config tests/test_skills.py::test_http_skill_crud_writes_personal_skill -q`、`make schemas`、`uv run python -m pytest tests/test_mcp.py tests/test_skills.py -q`、`npm test -- --run src/shared/local-host/client.test.ts src/features/mcp/MCPView.test.tsx src/features/skills/SkillsView.test.tsx`、`cd apps/desktop && npm run build`；Browser harness smoke：Skills 表单可打开，MCP 页面/行操作渲染且无 console error，截图与 MCP click 因 Browser 后端 CDP 超时未完成。 |
-| P2 #8 | web cloud tool loop 步数上限策略 | 成功 | Go API 新增 `WEB_TOOL_LOOP_MAX_STEPS`（默认 5，夹在 1-50）并通过 `/api/v1/agent/tool-capabilities` 下发 `web_tool_loop_max_steps`；web client 按该值分段运行 browser-orchestrated cloud tool loop。触顶时不再直接 done，而是在同一 assistant message 里写入 `run.budget_warning` + `question.asked`，复用现有输入框上方 question card 显示「继续 N 步？」；确认后用同一 `runId`、保存的模型/工具 history 和后续 Reserve/Settle 计费继续下一段，跳过则保留已有结果并结束。验证：先红后绿 `go test ./internal/config -run TestLoadWebToolLoopMaxSteps`、`go test ./internal/httpapi -run TestAgentToolCapabilitiesRequireAuthAndHideUnconfiguredTavily`、`npm test -- --run src/shared/cloudAgentLoop.test.ts src/shared/api/client.test.ts src/features/chat/chatStore.test.ts`、`cd apps/desktop && npm run build`。 |
-| P2 #9 | Auto 候选排序 | 已收窄 | Auto 首次解析仍可参考目录优先级、近期可靠性和成本，但选定后即冻结为本次调用的唯一模型。旧的“上游失败后自动选择下一候选并重跑”已删除；中转会释放原额度预留、记录失败并明确返回错误，改用其他模型必须由新的显式命令触发。验证：`go test ./internal/app`、`go test ./internal/httpapi -run 'TestAgentLLMStream(DoesNotSwitchModelOnProviderFailure|EmitsDeltaUsageAndDoneAndSettlesCredits|EmitsReasoningOnlyChunks)'`。 |
-| P2 #9 后续 | 模型目录厂商分组 + Auto 难度分层 | 成功 | 模型配置新增 `vendor`、`vendor_info` 与 `capability_tier`（`fast` / `balanced` / `reasoning` / `max`）并通过迁移、memory/Postgres store、admin API、`GET /models` 全链路透出；用户端模型选择器改为 Auto 置顶、按厂商分组展示 enabled chat 模型，厂商名后的 info 图标悬浮展示后台厂商简介，后台模型配置表单/列表可编辑并展示厂商和档位。后端基于 OpenRouter 使用量与强模型线索补齐默认停用模板：DeepSeek V4 Flash/Pro、Mimo V2.5、MiniMax M3、GPT-5.5、Claude Opus 4.8、Kimi K2、Qwen3 Coder、Gemini 3.1 Pro。Auto 解析先按用户目标难度筛选能力档位，再复用现有健康/成本/priority 排序和 classifier；空目标仍保持原默认模型逻辑。后续补入用户端 `更快` / `更强` Auto 意图：`auto.fast` 优先 `fast/balanced`，`auto.smart` 优先 `reasoning/max`，不静态绑定具体模型。验证：`go test ./internal/store ./internal/modelreg ./internal/app ./internal/httpapi ./internal/dbmigrations`、`npm test -- --run src/features/chat/components/ModeSelector.test.tsx src/App.test.tsx`、`cd apps/admin && npm test -- --run src/App.test.tsx src/shared/api/client.test.ts`、`make test`、`make build`、`git diff --check`、Browser harness smoke 打开模型菜单并选择 Mimo。 |
-| P2 #10 | 定时任务与结果通知 | 成功 | Local Host 新增 `local_scheduled_runs` SQLite 表、`ScheduledRunDispatcher` 和 `GET/POST/DELETE /local/v1/schedules` / `/notified` API。dispatcher 每 5 秒 claim 到期 schedule，复用普通 `RunCoordinator.start_run()` 创建本地 run，并主动消费 stream 防止后台任务无人 drain 时堵住队列；完成后写 `result_text`，失败写 `error_message`，等待权限/输入会作为需要人工介入的 failed schedule 暴露。client 新增 local-host schedule helper，Electron renderer 轮询 `notify_pending=true` 后复用系统通知桥提醒结果并回写 notified。验证：先红后绿 `uv run python -m pytest tests/test_scheduled_runs.py`、`make schemas`、`npm test -- --run src/shared/local-host/client.test.ts src/App.test.tsx`。 |
-| P2 #11 | 多文件附件 | 成功 | Composer 支持一次选择/拖入多个文件并渲染多个附件 tile；App 按文档 ID 维护多附件和预览，发送 cloud agent run 时把多个上传文档写入 `documents` / `attachments[]`，删除或回滚时按单个文档清理。Go agent run API 原本已接收 `attachments[]`，本轮补充双文档 stream 回归测试，确认每个文档都会触发 `document.read` 并注入同一轮文档上下文；`docs/operations.md` 已把单文件边界更新为多文件上下文边界。验证：`npm test -- --run src/features/chat/chatStore.test.ts src/features/chat/components/Composer.test.tsx src/App.test.tsx`、`go test ./internal/httpapi -run 'TestAgentRunWith(DocumentAttachment|MultipleDocumentAttachments)EmitsDocumentToolEvents'`、`cd apps/desktop && npm run build`。 |
-| P3 | 镜像签名、SBOM、漏洞扫描 | 成功 | Cloud 与 Admin 现由 `release-cloud.yml` / `release-admin.yml` 独立发布；两条链路都执行 Trivy 高危漏洞守门、Syft SPDX SBOM 和 Cosign OIDC 无密钥签名。
-| P3 | 修 nightly external smoke 配置 | 成功 | `scripts/smoke-external.sh` 新增 GitHub Actions 预检与显式 skip：在 Actions 中缺 `SHEJANE_API_BASE_URL` 时整套 external smoke 退出 0 并写 `::warning` / job summary；缺 `STRIPE_WEBHOOK_SECRET` 时只跳过 Stripe webhook smoke，real LLM 与 S3 document smoke 仍继续；也提供 `SKIP_REAL_LLM_SMOKE` / `SKIP_STRIPE_WEBHOOK_SMOKE` / `SKIP_S3_DOCUMENT_SMOKE` 便于手动隔离。`.github/workflows/external-smoke.yml` 去掉硬失败的 `test -n "$API_BASE_URL"`，`docs/operations.md` 已补 skip 语义。验证：`bash -n scripts/smoke-external.sh`、模拟 GitHub Actions 缺 API URL / 缺 Stripe secret 两个场景、`ruby -e 'require "yaml"; YAML.load_file(".github/workflows/external-smoke.yml")'`、`go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/external-smoke.yml`、`git diff --check`。 |
-| P3 | web 文档问答与工具组合策略 | 成功 | 新增 `docs/document-tool-policy.md`，明确附件 × 工具矩阵：纯文本可走 web/cloud/local tools；上传 PDF/DOCX/XLSX 进入 document-grounded Q&A，多个文档注入同一个上下文，但本 turn 不混用 web search、image generation、code execution、本地项目工具、MCP 或 Skills；图片附件仍保留 Local Host image-edit 路径。Composer 在有附件且工具入口可用时显示紧凑「附件模式」状态 chip，tooltip 说明本 turn 暂停网页/图片工具；dev harness 增加 `?attachment=1` 便于 UI QA。验证：`npm test -- --run src/features/chat/components/Composer.test.tsx`、`cd apps/desktop && npm run build`、Browser 打开 `http://127.0.0.1:5174/harness.html?view=chat&attachment=1`，确认页面标题、DOM 中唯一「附件模式」状态、tooltip、输入交互和移动宽度状态均正常且 console 无 error/warn；Browser 截图接口两次因 CDP `Page.captureScreenshot` 超时未产出截图。 |
-| P3 | 键盘快捷键与帮助面板 | 成功 | App 全局快捷键扩展为 `Cmd/Ctrl+N` 新建对话、`Cmd/Ctrl+K` 展开侧栏并聚焦会话搜索、`Esc` 关闭快捷键面板或停止当前可取消 run、`?` 打开快捷键帮助面板；输入框/可编辑区域不会触发 `?` 帮助。`ConversationSidebar` 新增受控 `searchRequestVersion`，复用现有搜索 UI；帮助面板复用 shadcn Dialog，以动作 + `kbd` 键位列表展示。验证：`npm test -- --run src/App.test.tsx`、`cd apps/desktop && npm run build`、`git diff --check`、Browser 重新加载 `harness.html?view=chat&attachment=1` 确认页面无 console error/warn。 |
-| P3 | Electron 主进程中文串接入 i18n | 成功 | 新增 `apps/desktop/shared/desktop-i18n.json` 作为 Electron main/preload 与 renderer 可共享的桌面文案资源，`apps/desktop/electron/desktop-i18n.cjs` 负责 locale 归一、模板插值和文案读取；menu、daemon 错误弹窗、workspace 选择弹窗与 auth bridge generic fallback 都改为读取共享文案。启动 locale 改为优先使用 renderer 之前写入的 dock-lang，没有记录时读取系统 locale（`en-US` 等归一为 `en`，其余归一为 `zh`）。`electron-builder.yml` 已把 `shared/**/*` 纳入 asar。验证：`npm test -- --run electron/menu.test.ts src/shared/api/electronAuthBridge.test.ts`、`node -e "const i18n=require('./apps/desktop/electron/desktop-i18n.cjs'); console.log(i18n.normalizeDesktopLocale('en-US'), i18n.desktopText('en-US','dialogs.selectWorkspaceTitle'))"`、`rg` 确认主进程中文只剩共享资源和测试断言、`cd apps/desktop && npm run build`。 |
-| P3 | 中间件说明归档 | 成功 | 当前装配和事件统一保留在 `docs/run-loop.md`；目标保留、替换和删除决定已经合并进 `docs/harness-stage-improvement-notes.md` 的 P8-P11，不再维护单独的中间件说明。 |
-| P4 | 语义记忆 | 跳过 | 当前只有 workspace 命名空间隔离、显式 `user_fact` 和关键词/时间检索。上下文摘要已交给 Deep Agents，不再与语义记忆绑成另一套压缩机制。后续只需单独评估 embedding 供应商、账本、向量索引和事实过期规则。 |
-| P4 | 失败后的一键恢复工作流（统一 orchestrator） | 跳过 | 本轮可行性核对后未实施：现有 retry/repair/quota/auth/workspace 已有入口、metadata、per-target in-flight guard 和观察器，但统一 orchestrator 会改动失败分类、UI recovery target、钱包/session/workspace 前置条件、确认流与 run 重启编排，跨 client、daemon 和测试面较大；仓促合并会比现状的显式按钮更容易造成误重跑。该项保留在 P4 backlog，建议先写状态机 spec，再按一个 category 一次迁移。依据：`rg retry/repair/recovery/failure/action_kind`、`docs/run-loop.md`、`docs/operations.md`、`apps/desktop/src/App.tsx`、`apps/desktop/src/features/chat/components/AgentProgress.tsx`。 |
-| P4 | 远程 Runtime 连接与跨设备会话 | 跳过 | 本机 Runtime 已拥有完整对话、任务和分支，Electron 可从快照重建缓存。移动端仍按既定方向只做 Remote Client；后续需要补远程认证、设备撤销、传输加密、网络发现或中继，而不是把聊天正文重新复制到 Go 云服务。 |
-
-## 已完成存档
-
-> 以下是已落地事项的实现记录，按原主题分组保留，作为「为什么是现在这个样子」的文档。
-
-### 发布与 web loop
-
-| 任务 | 实现记录 |
-|---|---|
-| 发布标签与 main 对齐 | 已发到 `v0.1.9`（`3438f02`），包含 `3ec14c7` 生图重复回复修复和 `1ff449d` 可配置模型目录。main 仅领先一个 UI polish 提交（`151ec96`），下次打 tag 带上即可。 |
-| web 工具循环可中断 | `chatStore` 为 web cloud tool loop 持有 `AbortController`，Stop 会中断 LLM stream 和 Tool Gateway fetch，并把消息收束为 `run.canceled`。 |
-| web 循环恢复兜底 | `chatStore` 会在会话加载/刷新时把 client-generated web tool-loop `run_...` streaming 消息收束为失败；server-backed cloud run 和 local run 不会被误伤。 |
-| `hitStepCap` 给用户提示 | web loop 撞 5 步上限时会发 `run.budget_warning(reason=max_steps_reached)`，前端可展示预算上限提示。（上限策略本身仍在 P2 #8。） |
-
-### 成本与契约
-
-| 任务 | 实现记录 |
-|---|---|
-| prompt caching 全链路梳理 | Anthropic 自动 prompt caching 归 Go 模型网关统一处理：长 request 会加顶层 `cache_control={"type":"ephemeral"}`；daemon 不再暴露 provider-specific cache 标记。web/cloud loop 仍发送累计 history，Claude 路由可复用稳定前缀，真命中率需看真实 Anthropic usage。 |
-| token 估算改进 | reservation 和 provider fallback 用完整 request 估算：messages、reasoning、tool call 参数、工具 name/description/inputSchema 都计入，减少工具密集轮的系统性少预留。 |
-| Local Host 工具命名契约收敛 | `/local/v1/tools` 列出 deepagents filesystem/shell 当前名称和 schema，UI 标签覆盖 `glob` / `grep` / `file_path`，`fs.*` 留作未来 primitive 规范。 |
-| web cloud 工具 schema 单一来源 | 生产代码已移除 `WEB_TOOL_DEFINITIONS`；web build 从 `/api/v1/agent/tool-capabilities` 读取 `description` / `inputSchema`。 |
-| daemon / API gateway 工具 schema 契约测试 | `api/internal/httpapi/cloud_tool_schemas.json` 是 cloud gateway 工具的模型可见 schema artifact；Go capabilities 从它 embed，Python contract test 校验 `web.search`、`image.*`、`pdf.inspect`、`code.execute` 本地 schema 覆盖同一字段，并统一 `web.search.max_results`。 |
-| run 级链路追踪 | `usage_reservations`、`llm_call_records` 与 `external_tool_call_records` 都保存 `run_id`；admin 可通过单 run trace 聚合 run 事件、LLM 调用、Tool Gateway 调用和该 run 相关钱包流水。 |
-| 真 HTTP 契约测试覆盖 web cloud tool loop | client 有 `cloudToolLoop.contract.test.ts`，用真实 `fetch` / named SSE / 工具 response envelope 跑通 model→tool→model，并断言 Auto resolve、snake_case tool execute body、第二轮 history 和汇总 usage。 |
-
-### 生产运维硬化
-
-| 任务 | 实现记录 |
-|---|---|
-| Go API 带超时的 `http.Server` + 优雅关闭 | API 入口使用显式 `http.Server`，设置 read-header/read/idle timeout，并在 SIGINT/SIGTERM 下用 10s graceful shutdown；`WriteTimeout` 保持 0，避免误杀 SSE/streaming。 |
-| 安全响应头 | Go API middleware 统一设置 API 安全头；Caddy 对 apps/desktop/admin 站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy。 |
-| 生产弱默认密钥 fail-fast | 生产栈注入 `SHEJANE_ENV=production`；API 启动用 strict config loader，`JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 为空、过短或常见占位值时直接启动失败。 |
-| 数据库迁移版本表 | API 镜像内置 `shejane-migrate` 和 SQL migrations；`make migrate`、dev compose、prod compose 和 CI 走同一个 runner，写入 `schema_migrations(version,name,checksum,applied_at)`，已应用且 checksum 一致的版本跳过，checksum 漂移 fail-fast。 |
-
-### 产品体验
-
-| 任务 | 实现记录 |
-|---|---|
-| client 对 429 专门处理 | `SheJaneAPI` 抛带 `status` / `retryAfterSeconds` 的 `APIError`，解析 `Retry-After` 秒数或 HTTP date；chat store 把 429 显示成“请求太频繁，请在 X 后再试”的本地化提示。 |
-
-### Agent 引擎深度
-
-| 任务 | 实现记录 |
-|---|---|
-| 旧历史截断机制（已删除） | `max_history_turns`、daemon 二次截断和关键词摘要已删除。Runtime 使用 Deep Agents 令牌感知摘要；client 只在旧对话首次迁入 Runtime 时保留请求大小安全边界。 |
-| 长任务交接摘要首版 | `/local/v1/runs/{id}/diagnostics` 返回 `handoff`，从状态、事件类型、权限、artifact metadata 和最近失败派生交接摘要；诊断面板展示，不暴露 artifact 正文或 checkpoint messages。 |
-| 长任务进展账本首版 | 新增 `task.progress`，agent 可主动记录验收标准、关键决策、涉及文件、验证命令、未解决风险和下一步；最新 `progress_ledger` 作为 `feature_ledger` 出现在 diagnostics 和诊断面板。 |
-| 交接账本新鲜度检查 | `handoff.ledger_state` 标记 `not_required` / `fresh` / `missing` / `stale`；需要交接的完成、失败、取消或等待权限 run 中，缺失/陈旧账本进入 blockers 和 next actions；等待中的本地 run 也会在聊天进度行提示缺失/陈旧账本风险，权限审批仍在独立 approval bar。 |
-| 结束前进展账本刷新 guard | 已删除。进展记录仍是可选工具，不再为了内部账本强制增加模型回合。 |
-| 长期记忆身份与工作区隔离 | `memory.search` / `memory.write` 先按认证身份哈希隔离，再按工作区哈希隔离；无工作区任务使用该身份自己的全局空间，清空操作不能跨身份删除。 |
-| 显式用户事实记忆 | 删除普通任务自动摘要和结束时隐藏回写。主任务入口只从真实用户输入的肯定式行首指令提取精确事实，工具必须写入同一原文；否定或引用文字不授权，子 Agent 不拥有 `memory.write`。完全相同的事实跳过重复写入。 |
-| 验证回环首版 | 已被唯一 `CompletionRouterMiddleware` 取代。失败回执保存在 checkpoint，修复指令进入 Runtime 状态和系统上下文，不再插入伪用户消息。 |
-| 错误分类诊断首版 | `handoff.failure` 把最近 `run.failed` / `tool.failed` 分成 transient、auth、quota、permission、configuration、workspace、validation、fatal 或 unknown，给出 recoverable / retryable / action_kind / suggested action；诊断面板和失败进度文案渲染本地化策略标签，`ok:false` 工具结果 envelope 进入 `tool.failed`。 |
-| Cloud Tool Gateway 网关层退避重试 | Local Host 调 `web.search`、`image.*`、`pdf.inspect`、`code.execute` 时，transport 层 `httpx.HTTPError` 和非 JSON 瞬态 HTTP 响应（429/500/502/503/504）按 `max_tool_retries` 有界指数退避重试，复用同一个 idempotency key；结构化 tool result envelope 不自动重试。 |
-| 旧模型自动重试（已删除） | `ModelRetryMiddleware`、`max_model_retries` 和客户端开关已删除。在持久调用账本能证明“尚未输出”之前，模型异常明确失败，不从头重试。 |
-| 自动退避策略首版 | `failure_policy.build_retry_decision` 统一把 `handoff.failure.action_kind` / category / retryable 映射成 `should_retry`、退避秒数和 fail-fast reason；模型错误、结构化 tool-result 重试、Cloud Tool Gateway transport / 非 JSON 瞬态 HTTP 重试走同一策略，quota/auth/config/workspace/validation/fatal 即使误带 `retryable:true` 也不自动重试。 |
-| 失败后的用户动作引导首版 | `run.failed` 即使没有工具事件也会在聊天进度条出现；`user_action` / `repair` / `operator_action` 根据 failure category 显示本地化下一步（重新登录、补充额度、补齐配置、授权工作区、修正参数、查看日志）。 |
-| 失败后的动作按钮首版 | 失败进度条把 retry / repair / quota / auth / workspace / diagnostics 类失败转成显式按钮：重试、尝试修复、充值、刷新本地云端会话、选择工作区或查看诊断；按钮只在用户点击时触发，不自动重跑副作用工具。恢复确认绑定失败来源 conversation/message，retry/repair run 写入 `metadata.intent`、source run/message、attempt 与失败分类，daemon 在 `<state>` 注入重试/修复上下文；同一失败消息的 checkout / retry / repair 均有 per-target in-flight guard；充值后的“重试”先刷新钱包余额，repair 受 `SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 约束并发出 `repair.workflow` 生命周期事件。（统一 orchestrator 在 P4。） |
-| browser.task 未配置时下架 | `browser-use` + browser LLM 未接线时，registry 不把 stub 暴露给 `/local/v1/tools` 或 agent toolset；真正浏览器自动化另起接入任务。 |
-| HITL 多工具审批批次恢复 | deepagents 同一个 interrupt 可带多个 `action_requests`；daemon 等待当前 pause 批次所有 `permission.required` 都 resolved，再按原顺序用 `{"decisions": [...]}` resume。`permission.resolved` / `question.answered` 持久化并在恢复流中先于 `run.resumed` 出现。 |
+- 不恢复 Web Agent。
+- 不要求用户登录 SheJane Cloud 才能使用 Desktop。
+- 不由 SheJane Cloud 默认提供模型服务。
+- 不把 Runtime 直接暴露到公网。
+- 不在 Desktop 或 Runtime 恢复 Auto、fast/deep 或 Go Cloud 模型目录。

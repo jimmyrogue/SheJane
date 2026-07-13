@@ -11,12 +11,14 @@ ownership of their work.
 
 ## Architecture in one minute
 
-SheJane is an agentic-chat product split across four stacks:
+SheJane is a desktop agent harness with optional Cloud services:
 
 ```
-Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph daemon ──▶ Go API ──▶ Postgres / S3 / Stripe
-        │                                          (local agent harness)        (cloud control plane)
-        └────────────────────── HTTPS (auth / billing / documents) ────────────────────────┘
+Electron/React Desktop ──/local/v1/*──▶ Python Harness Runtime ──▶ BYOK providers
+                                             │
+                                             └── Skills / MCP / local tools
+
+Optional Go Cloud + Admin ──▶ Postgres / S3 / Stripe
 ```
 
 - `services/cloud/` — optional Go Cloud: auth, credit ledger, LLM routing, Tool Gateway, Stripe billing, documents (S3), admin APIs.
@@ -28,11 +30,10 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 
 ## Prerequisites
 
-- **Go** 1.25+
 - **Node** 22+
 - **pnpm** 11.7.0 through Corepack
 - **Python** 3.12+ with [`uv`](https://docs.astral.sh/uv/)
-- **Docker** + Docker Compose (Postgres, API)
+- **Go** 1.25+ and **Docker** only when working on optional Cloud services
 - macOS or Linux (the dev launcher is macOS-tuned; Linux works with minor tweaks)
 
 ## First-time setup
@@ -40,18 +41,17 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 ```bash
 make setup-hooks            # installs lefthook + wires git hooks
 corepack enable && pnpm install
-cp .env.example .env        # optional local overrides
-make dev-electron           # Docker + daemon + Vite + Electron, with log tail
+make dev-electron           # Runtime + Vite + Electron, with log tail
 ```
 
-The development Compose stack uses mock model responses by default, so it runs
-without provider keys.
+Configure an OpenAI-compatible provider from Desktop after startup. Runtime
+stores provider secrets in the operating-system credential store.
 
 If anything looks wrong, `make doctor` is the first stop.
 
 ## The four invariants (don't break these)
 
-1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS, E2B) live in the Go API only** — never in the Python daemon. Billed tools proxy through the cloud Tool Gateway (`services/runtime/local_host/tools/_gateway.py`). Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (pre-commit + CI).
+1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store; optional Cloud service keys live in `services/cloud/.env`. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
 2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `packages/runtime-client/src/generated.ts`.
 3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
 4. **The credit ledger reserves before the external call and settles/releases after**, on every exit path including errors (`services/cloud/internal/billing/`).

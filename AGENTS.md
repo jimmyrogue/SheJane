@@ -62,13 +62,14 @@ make smoke-real-llm
 make smoke-stripe-webhook
 ```
 
-`make smoke-real-llm` requires `MOCK_LLM=false` and a real provider key. `make smoke-stripe-webhook` can run against local synthetic events and auto-reads `STRIPE_WEBHOOK_SECRET` from `.env` when the shell variable is not set.
+`make smoke-real-llm` requires `SMOKE_MODEL_ID` naming a model already configured through Admin. `make smoke-stripe-webhook` can run against local synthetic events and reads `STRIPE_WEBHOOK_SECRET` from `services/cloud/.env` when the shell variable is not set.
 
 ## Environment And Secrets
 
-- Never print or commit real secrets from `.env`.
-- Safe to mention variable names: `JWT_SECRET`, `CONFIG_ENCRYPTION_KEY`, `FAST_PROVIDER_API_KEY`, `DEEP_PROVIDER_API_KEY`, `ANTHROPIC_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `ADMIN_EMAILS`.
-- Provider keys may be entered through the admin model-config form or seeded from `.env` on first empty-db boot. They must never be printed, returned from APIs, or committed. The admin UI may show only whether a key is configured. Stripe keys remain environment/deployment secrets only.
+- There is no root `.env`. Never print or commit real secrets from module env files.
+- Runtime BYOK keys enter through Runtime settings and live in the operating-system credential store.
+- Cloud service secrets live in `services/cloud/.env`; deployment-only values live in `infra/cloud/.env`.
+- Safe to mention variable names: `JWT_SECRET`, `CONFIG_ENCRYPTION_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `ADMIN_EMAILS`.
 - `ADMIN_EMAILS` promotes matching users to `role=admin` on register/login/refresh. Removing an email from env does not auto-demote existing admins.
 - Local default ports:
   - User web: `http://localhost:5173`
@@ -92,13 +93,12 @@ make smoke-stripe-webhook
 - Do not add manual order mutation endpoints in the admin API unless the phase explicitly asks for it.
 - Disabled users must not be able to login, refresh, or use old bearer tokens.
 
-## Model Catalog Rules
+## Runtime Model Rules
 
-- User-facing model selection is `Auto` plus enabled chat models from `GET /api/v1/models`.
+- Desktop reads enabled models from Runtime and submits concrete `local:<provider>:<model>` selections.
 - The stable model ID is stored in `model_configs.slot` for compatibility, but UI/docs should call it "model ID".
 - Chat model IDs are admin-defined strings such as `gpt-4o`, `claude-sonnet`, `deepseek-v4`, or legacy `chat.fast`; they must not be `auto`, blank, contain whitespace, or exceed the current `VARCHAR(40)` database limit.
-- `Auto` and the `auto.` prefix are reserved. The Go API resolves `auto`, `auto.fast`, and `auto.smart` once per run through `POST /api/v1/models/resolve` and emits `model.selected`; the latter two are Auto intent sentinels, not concrete model IDs.
-- Do not reintroduce fast/deep UX or daemon-side model classifiers. `chat.fast` and `chat.deep` are seed IDs, not fixed product tiers.
+- Do not reintroduce Auto, fast/deep UX, Go Cloud model discovery, or daemon-side model classifiers in Desktop/Runtime.
 - Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
 - Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields. Legacy input/output token multipliers and `credit_multiplier` remain fallback only. Global markup remains the product margin knob.
 - Keep model catalog behavior behind `services/cloud/internal/modelreg.Registry` and store changes behind `services/cloud/internal/store.Store`; memory and Postgres implementations must stay in lockstep.

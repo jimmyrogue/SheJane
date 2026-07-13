@@ -12,7 +12,7 @@ Please include:
 
 - A description of the issue and its impact.
 - Steps to reproduce (a proof-of-concept if you have one).
-- Affected component (Go API, Python daemon, client, admin) and version/commit.
+- Affected component (Runtime, Desktop, optional Cloud, Admin, or Runtime SDK) and version/commit.
 
 We aim to acknowledge reports within a few business days and will keep
 you updated on remediation. Coordinated disclosure is appreciated — we
@@ -27,9 +27,8 @@ especially valued:
   `ADMIN_EMAILS` promotion path, disabled-user enforcement.
 - **Billing**: the credit ledger (reserve → settle → release), Stripe
   webhook idempotency, the cloud Tool Gateway's per-call billing.
-- **Secret boundaries**: platform-paid provider keys must never reach
-  the Python daemon or the client (see invariant #1 in
-  [CONTRIBUTING.md](./CONTRIBUTING.md)).
+- **Secret boundaries**: Runtime BYOK keys must stay in the operating-system
+  credential store; optional Cloud keys must not reach Runtime or Desktop.
 - **Tool sandbox**: code execution runs in E2B microVMs; file uploads
   are screened by a sensitive-pattern blacklist before leaving the
   machine.
@@ -39,10 +38,9 @@ especially valued:
 ## What is not a vulnerability
 
 - Issues that require a malicious local process already running as the
-  user (the loopback daemon trusts localhost by design).
+  user and already possessing the Runtime pairing token.
 - Missing rate limits on local-only endpoints.
-- Anything reproducible only with secrets the reporter supplied
-  themselves into their own `.env`.
+- Anything reproducible only with secrets the reporter supplied themselves.
 
 ## Supported versions
 

@@ -4,33 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-石间 / SheJane — an Agentic Chat product. A Go API backend handles auth/billing/LLM routing/document storage, a Python LangGraph daemon (the "local agent harness") runs the agent loop with tools and middleware, and an Electron/React renderer is what users see. Each layer has a distinct technology, distinct boundary, and the failure mode "things look fine but the next layer disagrees about the contract" is the single most common bug class this codebase has produced.
+石间 / SheJane is a standalone desktop Agent Harness. Electron/React is the official client, the Python LangGraph Runtime owns execution and state, and the TypeScript Runtime SDK owns the public client protocol. The Go Cloud and Admin modules are optional, independently released services.
 
 ## Architecture
 
-The diagram below describes the **current implementation**, including cloud dependencies that the target Runtime architecture intends to remove or make optional. Target P1-P12 stage numbering and migration boundaries live only in [docs/harness-runtime-stages.md](docs/harness-runtime-stages.md).
+The diagram below describes the current implementation. Target P1-P12 stage numbering lives only in [docs/harness-runtime-stages.md](docs/harness-runtime-stages.md).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Electron renderer (apps/desktop/) — React 18 + Vite + Tailwind 4    │
-│  Talks to local-host over loopback HTTP for agent flow,         │
-│  talks to Go API directly for auth / billing / documents.       │
+│  Electron renderer (apps/desktop/) — React + Vite + Tailwind     │
+│  Talks only to Runtime through the public Runtime SDK.           │
 └──────────┬──────────────────────────────────────────────┬───────┘
-           │ /local/v1/* (loopback only, bearer token)    │ HTTPS
-           ▼                                              ▼
-┌─────────────────────────────────┐         ┌──────────────────────┐
-│ Local-host daemon               │ ──────▶ │ Go Cloud             │
+           │ /local/v1/* (loopback only, bearer token)
+           ▼
+┌─────────────────────────────────┐
+│ SheJane Runtime                 │
 │ services/runtime/local_host/   │         │ Postgres +           │
 │ FastAPI + uvicorn               │         │ S3 (documents) +     │
 │ LangGraph 1.2 + deepagents      │         │ Stripe (billing)     │
 │ AsyncSqliteSaver (checkpoints)  │         │                      │
-│                                 │         │ The cloud API holds  │
-│ Tools either run locally        │         │ ALL platform-paid    │
-│ (filesystem, workspace,         │         │ provider keys —      │
-│  memory, optional MCP) OR proxy │         │ never the daemon.    │
-│ through cloud Tool Gateway      │         │                      │
-│ (image.*, web.search)           │         │                      │
-└─────────────────────────────────┘         └──────────────────────┘
+│ BYOK provider registry + OS credential store                      │
+│ Local tools, Skills, MCP, memory, approvals and checkpoints       │
+└─────────────────────────────────┘
+
+Optional: apps/admin/ ──▶ services/cloud/ ──▶ Postgres / S3 / Stripe
 ```
 
 There's also an admin panel (`apps/admin/`) — separate Vite/React app for the model catalog, credit-rate tuning, audit logs, and user/account operations.
@@ -48,7 +45,7 @@ Never use `run-loop.md` to invent target phase numbers, and never describe unimp
 
 These are not arbitrary style rules — each one corresponds to a class of bug that has actually shipped and burned hours in this repo.
 
-1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS) MUST live in the Go API only.** The daemon proxies through `POST /api/v1/agent/tools/execute` for anything that bills credits. Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (lefthook + CI). See `services/runtime/local_host/tools/_gateway.py` for the proxy pattern; new platform-paid tools should call `call_tool_gateway()`, not `os.environ.get(...)`.
+1. **Runtime provider keys MUST live in the Runtime credential store, never process env.** Optional Cloud service keys live only in `services/cloud/.env`. Runtime has no private Go Gateway path. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
 
 2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `packages/runtime-client/src/generated.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.ts`. CI's lint job fails the PR if they drift.
 
@@ -56,16 +53,16 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 
 4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `SHEJANE_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
 
-5. **`.env` audit is honest.** Every key in `.env` corresponds to a real `os.getenv` / `getEnvInt` / pydantic alias somewhere in the code. Don't add dead keys; don't read undocumented keys. See `.env.example` for the schema with section comments.
+5. **Configuration has one owner.** There is no root `.env`. Desktop, Runtime, Runtime SDK, and Admin require zero user env by default. Cloud service env lives in `services/cloud/.env`; deployment-only values live in `infra/cloud/.env`.
 
-6. **Model selection is a catalog, not fast/deep tiers.** Client requests send an Auto sentinel (`auto`, `auto.fast`, `auto.smart`) or a concrete catalog model id. Auto sentinels are resolved by the Go API against enabled chat models and emit `model.selected`; `auto.fast` / `auto.smart` are speed/capability preferences, not fixed tiers or model IDs. The daemon and web loop must not reintroduce their own fast/deep classifiers. The stable model id is still stored in `model_configs.slot` for migration safety, but docs and UI call it "model ID". Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields, with legacy input/output multipliers and `credit_multiplier` only as fallback; the global markup remains the margin knob. Image models are not shown in the chat picker; the current image resolver only supports `image.default`.
+6. **Runtime model selection is BYOK-owned.** Desktop reads models from Runtime and submits a concrete `local:<provider>:<model>` selection. Do not restore Go Cloud catalog discovery, Auto resolution, or fast/deep classifiers in Desktop or Runtime.
 
 7. **Product-specific connectors do not belong in the runtime core.** The retired Lark/Feishu message-sync and todo pipeline must not be restored as private daemon routes, dedicated tables, or client state. Future business-platform integrations should use standard tools or MCP.
 
 ## Common commands
 
 ```bash
-# Full dev stack — Docker compose + daemon + Vite + Electron + auto-tail log
+# Standalone Runtime + Vite + Electron + auto-tail log
 make dev-electron
 
 # After daemon code edits where stragglers might be running, OR after
@@ -144,10 +141,10 @@ make logs-dev                # snapshot of all of the above
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
-| Model catalog / provider routing | `services/cloud/internal/modelreg/`, `services/cloud/internal/llm/router.go`, `services/cloud/internal/app/model_resolver.go`, `services/cloud/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `apps/desktop/src/features/chat/components/ModeSelector.tsx` |
+| Runtime model providers | `services/runtime/local_host/server.py`, `services/runtime/local_host/runs.py`, `services/runtime/local_host/llm/`, `apps/desktop/src/features/settings/ModelProvidersSettings.tsx` |
 | Daemon code | `services/runtime/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
 | Cloud code | `services/cloud/internal/` — `app/` wiring, `httpapi/` routes, `store/`, `billing/`, `llm/`, `modelreg/`, `documents/`, `e2b/` and `secrets/` |
-| Client code | `apps/desktop/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
+| Client code | `apps/desktop/src/` — `App.tsx` is the chat shell, `features/` holds chat, MCP, skills and settings, and `shared/local-host/client.ts` adapts `@shejane/runtime-client` to Electron |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
 | Admin panel | `apps/admin/` — separate Vite app; model configs, credit rate, audit logs |
 | Contract tests (real HTTP, not MockTransport) | `apps/desktop/src/shared/local-host/client.contract.test.ts` |
@@ -160,8 +157,7 @@ make logs-dev                # snapshot of all of the above
 - Lint: ruff (configured in `pyproject.toml`). Format: ruff format. `make lint` enforces.
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
-- New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
-- Gateway-billed tools today (proxy through `_gateway.py`, keys in the optional Go Cloud only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), and `code.execute` (E2B, brokered by `services/cloud/internal/e2b`). Everything else runs locally in the daemon.
+- New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/` and append it to `tools/registry.py`. Remote capabilities should use MCP; do not add product-private Cloud routes.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
 ### Go (services/cloud/)
@@ -176,7 +172,7 @@ make logs-dev                # snapshot of all of the above
 - Vite + React 18 + TypeScript strict mode. Tailwind 4 + shadcn/ui.
 - Daemon types come from `packages/runtime-client/src/generated.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
 - Hand-written types in `client.ts` are documented at the top of the file (DesktopBridge, LocalHostConfig, LocalHostProbe, LocalStreamHandlers) — these have no daemon equivalent.
-- SSE: see `shared/api/sse.ts` for parsing and the `AgentRunEvent` union. New event types added on the daemon need a `case` in `features/chat/chatStore.ts:timelineItem` AND/OR `App.tsx:appendLocalRunEvent` to surface in the UI.
+- SSE parsing and the `AgentRunEvent` union live in `packages/runtime-client`. New Runtime events also need a Desktop projection in `features/chat/chatStore.ts` and/or `App.tsx`.
 
 ### Commits
 
@@ -202,19 +198,17 @@ make logs-dev                # snapshot of all of the above
 ```bash
 # Once
 make setup-hooks          # installs lefthook (brew) and wires git hooks
-cp .env.example .env      # optional local overrides
-
 # Start everything
-make dev-electron         # opens Electron + Vite + daemon + auto-tail log
+make dev-electron         # opens Electron + Vite + Runtime + auto-tail log
 ```
 
-If anything's wrong, `make doctor` is the first stop. The output tells you whether Docker is up, the daemon is on the new code, the LangSmith key is valid, and whether platform keys have leaked into the daemon env.
+If anything is wrong, `make doctor` checks Runtime, Desktop ports, workspace dependencies, and secret leakage.
 
 ## Things to never do
 
-- Don't add `os.environ.get("OPENAI_API_KEY")` or any other platform-paid key to daemon code. Use `tools/_gateway.py:call_tool_gateway`. Lefthook will block the commit.
+- Don't read provider keys from Runtime env or restore a private Go Gateway adapter. Use the Runtime credential store and standard provider/MCP interfaces.
 - Don't hand-edit `packages/runtime-client/src/generated.ts` or `packages/runtime-client/openapi.json`. They're build artifacts of `make schemas`.
-- Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
+- Don't `pkill -f 'shejane-runtime'` and assume the process died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.
-- Don't add new user-visible `fast` / `deep` model branches. Keep model selection as `auto` plus catalog model IDs from `GET /api/v1/models`.
+- Don't add Auto, fast/deep, or Cloud catalog model branches to Desktop or Runtime. Use concrete Runtime BYOK model selections.

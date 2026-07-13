@@ -1,7 +1,6 @@
 # SheJane Monorepo 模块边界
 
-本文锁定仓库拆分目标和迁移约束。迁移完成前，当前实现仍以
-[`run-loop.md`](./run-loop.md) 为准；Runtime 阶段编号只由
+本文记录当前仓库边界。实际执行链路以 [`run-loop.md`](./run-loop.md) 为准；Runtime 阶段编号只由
 [`harness-runtime-stages.md`](./harness-runtime-stages.md) 定义。
 
 ## 目标目录
@@ -14,7 +13,7 @@ services/
   runtime/                 Python Harness Runtime
   cloud/                   可选 Go Cloud
 packages/
-  runtime-apps/desktop/          公共 TypeScript Runtime SDK
+  runtime-client/          公共 TypeScript Runtime SDK
 tests/
   e2e/
 infra/
@@ -63,8 +62,7 @@ Runtime 发布 macOS arm64/x64、Windows x64 和 Linux x64 自包含产物。Des
 一个 Runtime 版本，正式打包下载对应产物，本地开发运行当前源码。Cloud 和 Admin 分别发布
 独立镜像。
 
-## 迁移纪律
+## 兼容纪律
 
-目录迁移会影响 P1 的 Desktop→Runtime 启动与连接，以及 P3-P4 的协议客户端路径，但不得改变
-`/local/v1`、持久命令、事件游标、检查点和 SQLite 数据格式。完成结构迁移后，再独立删除 Desktop
-云账号、计费、云文档和 Web Agent 路径，最后删除 Runtime 专用 Cloud 会话与 Gateway 路径。
+目录重组没有改变 `/local/v1`、持久命令、事件游标、检查点和 SQLite 数据格式。Desktop 已删除
+Web Agent、云账号、计费和云文档路径；Runtime 已删除专用 Cloud 会话、Go 模型网关和 Cloud 工具网关。

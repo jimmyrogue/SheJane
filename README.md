@@ -16,7 +16,7 @@ English · [简体中文](./README.zh-CN.md)
 </div>
 
 > [!NOTE]
-> The agent loop already runs in a local Python daemon. Model routing, platform-billed tools, authentication, and documents still use the Go API. Standalone Runtime access, BYOK, and local-model support are the target architecture and are not fully shipped yet.
+> Desktop and Runtime are standalone. Go Cloud and Admin remain in this repository as optional, separately released services; neither is required to run the desktop harness.
 
 ## Why SheJane
 
@@ -31,9 +31,8 @@ flowchart LR
     D["Desktop client<br/>Electron + React"] -->|"Loopback HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
     R --> W["Local workspace<br/>Files · Tools · Checkpoints"]
     R --> E["Extensions<br/>Skills · MCP · Subagents"]
-    R --> G["Current provider path<br/>Go API"]
-    G --> M["Models · Cloud tools · Documents"]
-    R -. "Target" .-> B["BYOK · Local models<br/>Third-party gateways"]
+    R --> B["BYOK providers<br/>OpenAI-compatible APIs · local endpoints"]
+    C["Optional Go Cloud + Admin"] -. "standard provider or MCP only" .-> R
 ```
 
 The desktop client and Runtime communicate over loopback HTTP with a pairing token. A failed local Runtime should surface as a local error, not silently create a cloud task.
@@ -43,25 +42,25 @@ The desktop client and Runtime communicate over loopback HTTP with a pairing tok
 | Area | Current implementation |
 |---|---|
 | Runtime | LangGraph and Deep Agents loop, streaming events, checkpoints, recovery, planning, verification, memory, and human approval |
-| Local tools | Workspace files, shell execution, Office and PDF operations, web fetch, clipboard approval, and scheduled runs |
+| Local tools | Workspace files, shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
 | Extensions | Skills, MCP servers, subagents, and configurable middleware |
-| Desktop | Electron and React client, local-first chat history, attachments, previews, and workspace controls |
-| Go services | Authentication, model catalog and routing, credit ledger, cloud Tool Gateway, Stripe, documents, and admin APIs |
+| Desktop | Electron and React client, local-first chat history, previews, provider settings, and workspace controls |
+| Optional Cloud | Authentication, billing, documents, service tools, and Admin APIs, released independently |
+| Runtime SDK | Public TypeScript client for commands, SSE, snapshots, errors, and generated protocol types |
 
 Business-platform connectors are not built into the Runtime. Future integrations should use standard tools or MCP.
 
 ## Quick start
 
-Requires **Go 1.25+**, **Node.js 22+ with Corepack**, **Python 3.12+ with [uv](https://docs.astral.sh/uv/)**, and **Docker**.
+Desktop development requires **Node.js 22+ with Corepack**, **Python 3.12+**, and [uv](https://docs.astral.sh/uv/). Go and Docker are only needed for the optional Cloud services.
 
 ```bash
 make setup-hooks
 corepack enable && pnpm install
-cp .env.example .env
 make dev-electron
 ```
 
-The default `MOCK_LLM=true` configuration runs without external provider keys. Use `make doctor` when the local stack does not start cleanly. Never commit `.env`.
+No root `.env` is required. Start Desktop, add an OpenAI-compatible provider in Runtime settings, then select one of its models. Use `make doctor` when the local stack does not start cleanly.
 
 ## Development
 
