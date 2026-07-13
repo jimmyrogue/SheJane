@@ -465,9 +465,9 @@ export function SettingsView({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
-                          <SelectItem value="off">off</SelectItem>
-                          <SelectItem value="auto">auto</SelectItem>
-                          <SelectItem value="always">always</SelectItem>
+                          <SelectItem value="off">Off</SelectItem>
+                          <SelectItem value="auto">Auto</SelectItem>
+                          <SelectItem value="always">Always</SelectItem>
                         </SelectContent>
                       </Select>
                     </SettingRow>
@@ -503,9 +503,9 @@ export function SettingsView({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
-                          <SelectItem value="off">off</SelectItem>
-                          <SelectItem value="observe">observe</SelectItem>
-                          <SelectItem value="block">block</SelectItem>
+                          <SelectItem value="off">Off</SelectItem>
+                          <SelectItem value="observe">Observe</SelectItem>
+                          <SelectItem value="block">Block</SelectItem>
                         </SelectContent>
                       </Select>
                     </SettingRow>

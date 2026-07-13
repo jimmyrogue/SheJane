@@ -4,7 +4,7 @@
 
 ### A local-first desktop Agent Runtime
 
-Run tool-using agents with workspaces, permissions, checkpoints, skills, and MCP on your own machine.
+Run tool-using agents with workspaces, permissions, checkpoints, Skills, and MCP on your own machine.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jimmyrogue/SheJane?style=flat-square&logo=github&label=release)](https://github.com/jimmyrogue/SheJane/releases)
@@ -67,7 +67,7 @@ make build       # production builds
 
 ## Documentation
 
-- [Runtime stages](./docs/harness-runtime-stages.md) defines the target P1–P12 architecture.
+- [Runtime stages](./docs/harness-runtime-stages.md) defines the target P1-P12 architecture.
 - [Current run loop](./docs/run-loop.md) describes what the code does today.
 - [Runtime protocol](./docs/runtime-protocol.md) defines HTTP, SSE, events, and recovery cursors.
 - [Contributor guide](./CONTRIBUTING.md) covers setup, testing, and the CLA process.

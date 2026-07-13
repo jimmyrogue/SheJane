@@ -27,7 +27,7 @@ describe('SettingsView', () => {
       </I18nProvider>,
     )
 
-    expect(screen.getAllByText('运行时')).not.toHaveLength(0)
+    expect(screen.getAllByText('Runtime')).not.toHaveLength(0)
     expect(screen.getAllByText('模型供应商')).not.toHaveLength(0)
     expect(screen.queryByText('账户')).not.toBeInTheDocument()
     expect(screen.queryByText('退出登录')).not.toBeInTheDocument()

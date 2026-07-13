@@ -88,7 +88,7 @@
   │     ├─ RuntimeContext                    ← P7 注入身份、任务和本次执行依赖          │
   │     ├─ backend factory → FilesystemBackend(授权工作区或本次执行临时目录)            │
   │     │                                      ← 文件工具和子代理共享当前执行边界      │
-  │     ├─ SkillsMiddleware sources = [skills_dir]   ← 只读挂载，渐进披露 md skills    │
+  │     ├─ SkillsMiddleware sources = [skills_dir]   ← 只读挂载，渐进披露 Markdown Skills │
   │     ├─ MemoryMiddleware  sources = [AGENTS.md]   ← 只读挂载，注入 system prompt    │
   │     ├─ SubAgentMiddleware subagents = [general-purpose, researcher, writer]       │
   │     ├─ ToolReviewMiddleware + ToolExecutionMiddleware                            │
@@ -132,7 +132,7 @@
   │     │  • Runtime identity + safety         ← 主 Agent/子 Agent、所有供应商共用 │     │
   │     │ before_agent (顺序)                                                      │     │
   │     │  • TodoListMiddleware                  ┐  ✅ cap 7  写 write_todos 工具  │     │
-  │     │  • SkillsMiddleware                    ├  ✅ cap 6  md skills 注入        │     │
+  │     │  • SkillsMiddleware                    ├  ✅ cap 6  Markdown Skills 注入  │     │
   │     │  • FilesystemMiddleware                ├  注入 ls/read_file/write_file/  │     │
   │     │                                        │   edit_file/glob/grep/execute    │     │
   │     │  • SubAgentMiddleware + AsyncSubAgent  ┤  ✅ cap 2  注入 task 工具         │     │

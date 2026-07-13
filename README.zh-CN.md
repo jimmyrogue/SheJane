@@ -4,7 +4,7 @@
 
 ### 本地优先的桌面 Agent Runtime
 
-在自己的电脑上运行带工作区、权限、检查点、技能和 MCP 的工具型 Agent。
+在自己的电脑上运行带工作区、权限、检查点、Skill 和 MCP 的工具型 Agent。
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jimmyrogue/SheJane?style=flat-square&logo=github&label=release)](https://github.com/jimmyrogue/SheJane/releases)
@@ -19,7 +19,7 @@
 
 - 本地 Runtime 负责 Agent 循环、工具执行、权限、检查点和工作区访问。
 - Electron 是官方桌面客户端，不是执行内核。未来其他客户端可以使用同一套 Runtime 协议。
-- 技能、MCP 和子 Agent 负责扩展能力，业务平台集成不进入 Runtime 内核。
+- Skill、MCP 和 Subagent 负责扩展能力，业务平台集成不进入 Runtime 内核。
 
 ## 整体结构
 
@@ -27,7 +27,7 @@
 flowchart LR
     D["桌面客户端<br/>Electron + React"] -->|"本地 HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
     R --> W["本地工作区<br/>文件 · 工具 · 检查点"]
-    R --> E["扩展能力<br/>技能 · MCP · 子 Agent"]
+    R --> E["扩展能力<br/>Skill · MCP · Subagent"]
     R --> B["BYOK 供应商<br/>OpenAI 兼容接口 · 本地模型端点"]
 ```
 
@@ -39,7 +39,7 @@ flowchart LR
 |---|---|
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
 | 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
-| 扩展能力 | 技能、MCP、子 Agent 和可配置中间件 |
+| 扩展能力 | Skill、MCP、Subagent 和可配置 middleware |
 | 桌面端 | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 

@@ -46,7 +46,6 @@ import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
-import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
 import { SettingsView } from './features/settings/SettingsView'
 import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './features/settings/runtimeSettings'
@@ -331,7 +330,7 @@ function AppContent() {
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [runtimeSettingsConfig, setRuntimeSettingsConfig] = useState<LocalHostConfig | null>(null)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'settings'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
@@ -2618,7 +2617,6 @@ function AppContent() {
             isDesktop={isDesktop}
             onOpenSkills={() => setMainView('skills')}
             onOpenMcp={() => setMainView('mcp')}
-            onOpenConnections={() => setMainView('connections')}
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
             searchRequestVersion={sidebarSearchRequestVersion}
@@ -2638,6 +2636,20 @@ function AppContent() {
               />
             )}
           />
+
+          {sidebarCollapsed ? (
+            <div className="topbar-expand-hotspot">
+              <button
+                type="button"
+                className="topbar-expand-button"
+                title={t('app.expandSidebar')}
+                aria-label={t('app.expandSidebar')}
+                onClick={expandSidebar}
+              >
+                <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
 
           {/* `key={mainView}` remounts this wrapper on view change so the
               `.view-transition` enter animation fires on every switch. */}
@@ -2704,8 +2716,6 @@ function AppContent() {
                 }
               }}
             />
-          ) : mainView === 'connections' ? (
-            <ConnectionsView />
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop={isDesktop}
@@ -2739,19 +2749,6 @@ function AppContent() {
           ) : (
           <section className="workspace">
             <header className="topbar">
-              {sidebarCollapsed ? (
-                <div className="topbar-expand-hotspot">
-                  <button
-                    type="button"
-                    className="topbar-expand-button"
-                    title={t('app.expandSidebar')}
-                    aria-label={t('app.expandSidebar')}
-                    onClick={expandSidebar}
-                  >
-                    <IconLayoutSidebarLeftExpand size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              ) : null}
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
               </div>

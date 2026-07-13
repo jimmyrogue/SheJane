@@ -9,13 +9,13 @@ export const SKILL_CLOSE = ''
 
 // Token = OPEN, then a name with no sentinel chars, then CLOSE.
 // Function (capability) inline tokens use a separate PUA sentinel pair so the
-// menu can offer two distinct kinds ("功能" above "技能") and the send path can
+// menu can offer two distinct kinds ("功能" above "Skill") and the send path can
 // inject a per-function directive. Extensible: more function ids later.
 export const FUNC_OPEN = ''
 export const FUNC_CLOSE = ''
 
 // MCP server inline tokens — third sentinel pair so the slash menu can
-// render three distinct groups (功能 / 技能 / MCP) and the send path can
+// render three distinct groups (功能 / Skill / MCP) and the send path can
 // flip the per-server allowlist + inject a "prefer these MCP tools"
 // directive. Kept as a separate token kind rather than collapsing into
 // skill: directive text differs, and the per-run settings overrides

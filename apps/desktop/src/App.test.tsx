@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 
 describe('desktop shell', () => {
   beforeEach(() => {
+    window.localStorage.clear()
     indexedDB = new IDBFactory()
     Object.defineProperty(window, 'shejaneDesktop', {
       configurable: true,
@@ -36,5 +37,14 @@ describe('desktop shell', () => {
     await screen.findAllByText('新对话')
     expect(screen.queryByText('充值')).not.toBeInTheDocument()
     expect(screen.queryByText('消费记录')).not.toBeInTheDocument()
+  })
+
+  it('keeps the sidebar expand control available outside the chat view', async () => {
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }))
+
+    expect(screen.getByRole('button', { name: '展开侧栏' })).toBeInTheDocument()
   })
 })

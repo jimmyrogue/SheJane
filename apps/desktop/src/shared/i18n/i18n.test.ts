@@ -28,4 +28,16 @@ describe('i18n', () => {
     expect(visibleCopy).toContain('产物')
     expect(visibleCopy).not.toMatch(/Credits|Local-first|Agent 设置|Artifact|default off|default observe|daemon/)
   })
+
+  it('keeps product terminology casing consistent in both locales', () => {
+    for (const locale of ['zh', 'en'] as const) {
+      const t = createTranslator(locale)
+      expect(t('sidebar.skills')).toBe('Skill')
+      expect(t('skills.title')).toBe('Skill')
+      expect(t('sidebar.agentSettings.skills.label')).toBe('Skill')
+      expect(t('sidebar.mcp')).toBe('MCP')
+      expect(t('mcp.title')).toBe('MCP')
+      expect(t('settings.group.runtime')).toBe('Runtime')
+    }
+  })
 })

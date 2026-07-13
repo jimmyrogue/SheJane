@@ -20,7 +20,7 @@ data: <JSON object — AgentRunEvent envelope>
 
 **关键点**：
 - `event:` 行只是装饰（给 `curl -N` 看的）。**客户端只读 `data:` 里 JSON 的 `event_type` 字段** —— `parseAgentSSEChunk` 在 `sse.ts:58-72` 完全不解析 `event:` 行。
-- 帧之间用 **LF** 双换行分隔（`\n\n`）。daemon 用 sse-starlette 的 `sep="\n"` 覆盖了默认的 `\r\n`，因为客户端的 `split(/\n\n/)` 不匹配 CRLF。
+- 帧之间用 **LF** 双换行分隔（`\n\n`）。Runtime 使用 sse-starlette 的 `sep="\n"` 覆盖默认的 `\r\n`，因为客户端的 `split(/\n\n/)` 不匹配 CRLF。
 - 终止信号是单独一行 `data: [DONE]`（没有 `event:`）。客户端识别到 `[DONE]` 后才会 resolve stream Promise。`event: stream.end` 已**废弃**。
 
 ## AgentRunEvent envelope
@@ -193,7 +193,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
    → [DONE]   ← stream 暂时关闭
 
 [user clicks "allow same arguments in this run"] → POST /commands {type: "permission.resolve", permission_id: P, decision: "approve", scope: "run"}
-   (daemon: 幂等保存决定；授权只绑定同参数指纹、同风险和稳定图定义，并有时限与次数上限)
+   (Runtime：幂等保存决定；授权只绑定同参数指纹、同风险和稳定图定义，并有时限与次数上限)
    GET /runs/R/stream?after=<last_seq>  ← 客户端从快照高水位继续订阅
    → permission.resolved {request_id: P, decision: "approve", scope: "run"}
    → run.resumed
@@ -203,11 +203,11 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
    → [DONE]
 ```
 
-如果一个 HITL pause 同时包含多个 `action_requests`，daemon 会在同一个
+如果一次 HITL 暂停同时包含多个 `action_requests`，Runtime 会在同一个
 `run.waiting` 前发多条 `permission.required`。每次提交 `permission.resolve`
 只 resolve 对应的一张卡；只要当前批次还有 `pending` permission，响应为
 `resumed:false`，不会发 `run.resumed`。最后一个同批权限 resolved 后，
-daemon 按 LangGraph `interrupt_id` 和动作顺序构造恢复映射并 resume。
+Runtime 按 LangGraph `interrupt_id` 和动作顺序构造恢复映射并继续执行。
 
 后续 turn 再触发同一个工具且参数指纹、风险和图定义完全相同时，可消耗有界运行级授权直接执行，不再产生额外事件。若副作用工具结果不确定，则进入显式核对：
 

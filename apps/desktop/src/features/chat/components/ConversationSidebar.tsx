@@ -5,7 +5,6 @@ import {
   IconDownload,
   IconLayoutSidebarLeftCollapse,
   IconLoader2,
-  IconMessageCircle,
   IconPencil,
   IconPin,
   IconPlus,
@@ -66,7 +65,6 @@ export function ConversationSidebar({
   isDesktop = true,
   onOpenSkills,
   onOpenMcp,
-  onOpenConnections,
   onOpenSettings,
   activeView = 'chat',
   searchRequestVersion = 0,
@@ -87,11 +85,10 @@ export function ConversationSidebar({
   isDesktop?: boolean
   onOpenSkills?: () => void
   onOpenMcp?: () => void
-  onOpenConnections?: () => void
-/** Navigate to the full 设置 page. Runtime, agent configuration, and data
+  /** Navigate to the full 设置 page. Runtime, agent configuration, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
-  activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings'
+  activeView?: 'chat' | 'skills' | 'mcp' | 'settings'
   searchRequestVersion?: number
   resizeHandle?: ReactNode
 }) {
@@ -399,14 +396,6 @@ export function ConversationSidebar({
             >
               <IconAffiliate size={14} />
               <span>{t('sidebar.mcp')}</span>
-            </button>
-            <button
-              className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'connections' ? ' active' : ''}`}
-              type="button"
-              onClick={() => onOpenConnections?.()}
-            >
-              <IconMessageCircle size={14} />
-              <span>{t('sidebar.connections')}</span>
             </button>
           </div>
         ) : null}

@@ -82,7 +82,7 @@ describe('ConversationSidebar', () => {
 
     // Section labels in document order: 已固定 (when there are pins),
     // 对话 (the unified list — projects and casual chats share that one
-    // list, sorted by recency). The v4 shell moves skills/connections to
+    // list, sorted by recency). The v4 shell moves Skills and MCP to
     // the footer island instead of a labeled top nav section.
     const sectionLabels = Array.from(container.querySelectorAll('.sidebar-section-label')) as HTMLElement[]
     const labelTexts = sectionLabels.map((el) => el.textContent?.trim())
@@ -98,9 +98,8 @@ describe('ConversationSidebar', () => {
     expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-    expect(screen.getByRole('button', { name: '技能' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Skill' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '连接' })).toBeInTheDocument()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 普通对话')).toHaveLength(1)
@@ -132,9 +131,9 @@ describe('ConversationSidebar', () => {
       </I18nProvider>,
     )
 
-    // Local-daemon footer actions (技能 + MCP + 连接) are gone on web.
+    // Local-daemon footer actions (Skill + MCP) are gone on web.
     expect(screen.queryByText('工具')).not.toBeInTheDocument()
-    expect(screen.queryByText('技能')).not.toBeInTheDocument()
+    expect(screen.queryByText('Skill')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('连接')).not.toBeInTheDocument()
 
@@ -199,32 +198,8 @@ describe('ConversationSidebar', () => {
         />
       </I18nProvider>,
     )
-    const skillsItem = screen.getByRole('button', { name: '技能' })
+    const skillsItem = screen.getByRole('button', { name: 'Skill' })
     expect(skillsItem.className).toContain('active')
-  })
-
-  it('marks the Connections nav as active separately from MCP', () => {
-    render(
-      <I18nProvider>
-        <ConversationSidebar
-          conversations={[]}
-          onNewConversation={vi.fn()}
-          onSelectConversation={vi.fn()}
-          onExportConversation={vi.fn()}
-          onImportLocalData={vi.fn()}
-          onTogglePinConversation={vi.fn()}
-          onRenameConversation={vi.fn()}
-          onDeleteConversation={vi.fn()}
-          onCollapseSidebar={vi.fn()}
-          onOpenMcp={vi.fn()}
-          onOpenConnections={vi.fn()}
-          activeView="connections"
-        />
-      </I18nProvider>,
-    )
-
-    expect(screen.getByRole('button', { name: '连接' }).className).toContain('active')
-    expect(screen.getByRole('button', { name: 'MCP' }).className).not.toContain('active')
   })
 
   describe('search', () => {

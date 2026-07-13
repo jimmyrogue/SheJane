@@ -99,7 +99,7 @@ describe('SkillsView — grouped catalog', () => {
   it('keeps the search box visible even when no skills exist', async () => {
     renderView({ listInstalled: vi.fn().mockResolvedValue(catalog([])) })
     await screen.findByText('系统')
-    expect(screen.getByLabelText('搜索技能')).toBeInTheDocument()
+    expect(screen.getByLabelText('搜索 Skill')).toBeInTheDocument()
   })
 
   it('opens the personal skills folder from the new-skill action', async () => {
@@ -108,17 +108,17 @@ describe('SkillsView — grouped catalog', () => {
       onOpenFolder,
       listInstalled: vi.fn().mockResolvedValue(catalog([shejaneSkill, claudeSkill])),
     })
-    fireEvent.click(await screen.findByRole('button', { name: '新建技能' }))
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Skill' }))
     expect(onOpenFolder).toHaveBeenCalledWith('/u/.shejane/skills')
   })
 
-  it('filters skills by search query and shows 找不到技能 on empty match', async () => {
+  it('filters Skills by search query and shows the empty state', async () => {
     renderView({
       listInstalled: vi.fn().mockResolvedValue(catalog([shejaneSkill, claudeSkill])),
     })
     await screen.findByText('my-skill')
-    fireEvent.change(screen.getByLabelText('搜索技能'), { target: { value: 'nonexistent' } })
-    expect(await screen.findByText('找不到技能')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('搜索 Skill'), { target: { value: 'nonexistent' } })
+    expect(await screen.findByText('未找到 Skill')).toBeInTheDocument()
     expect(screen.queryByText('my-skill')).not.toBeInTheDocument()
     expect(screen.queryByText('claude-skill')).not.toBeInTheDocument()
   })
@@ -136,11 +136,11 @@ describe('SkillsView — grouped catalog', () => {
     const onCreateSkill = vi.fn().mockResolvedValue(undefined)
     renderView({ listInstalled, onCreateSkill })
 
-    fireEvent.click(await screen.findByRole('button', { name: '新建技能' }))
-    fireEvent.change(screen.getByLabelText('技能名称'), { target: { value: 'daily-digest' } })
+    fireEvent.click(await screen.findByRole('button', { name: '新建 Skill' }))
+    fireEvent.change(screen.getByLabelText('Skill 名称'), { target: { value: 'daily-digest' } })
     fireEvent.change(screen.getByLabelText('描述'), { target: { value: '整理每日摘要' } })
     fireEvent.change(screen.getByLabelText('SKILL.md'), { target: { value: '# Daily\n' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存技能' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存 Skill' }))
 
     await waitFor(() => {
       expect(onCreateSkill).toHaveBeenCalledWith({
@@ -170,11 +170,11 @@ describe('SkillsView — grouped catalog', () => {
     })
 
     await screen.findByText('my-skill')
-    expect(screen.queryByRole('button', { name: '编辑 claude-skill' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '编辑 my-skill' }))
+    expect(screen.queryByRole('button', { name: '编辑 Skill：claude-skill' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '编辑 Skill：my-skill' }))
     await waitFor(() => expect(onLoadSkill).toHaveBeenCalledWith('my-skill'))
     fireEvent.change(await screen.findByLabelText('SKILL.md'), { target: { value: '# Updated\n' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存技能' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存 Skill' }))
     await waitFor(() => {
       expect(onUpdateSkill).toHaveBeenCalledWith('my-skill', {
         name: 'my-skill',
@@ -183,7 +183,7 @@ describe('SkillsView — grouped catalog', () => {
       })
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '删除 my-skill' }))
+    fireEvent.click(screen.getByRole('button', { name: '删除 Skill：my-skill' }))
     await waitFor(() => expect(onDeleteSkill).toHaveBeenCalledWith('my-skill'))
   })
 })
