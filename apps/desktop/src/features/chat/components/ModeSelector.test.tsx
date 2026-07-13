@@ -7,8 +7,8 @@ import type { ChatMode } from '@/shared/local-data/types'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
-  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI', capability_tier: 'max' },
-  { id: 'local:ollama:qwen3', label: 'Qwen 3', vendor: 'Ollama', capability_tier: 'reasoning' },
+  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI' },
+  { id: 'local:ollama:qwen3', label: 'Qwen 3', vendor: 'Ollama' },
 ]
 
 function withProviders(children: ReactNode) {

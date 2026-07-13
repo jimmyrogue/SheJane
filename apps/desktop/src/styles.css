@@ -5981,15 +5981,6 @@ button.agent-progress-summary:focus-visible {
   outline: none;
   background: var(--surface-2, rgba(120, 120, 130, 0.12));
 }
-.composer-mode-tier-indicator {
-  color: var(--text-tertiary);
-  font-size: 10.5px;
-  font-weight: 500;
-  line-height: 1;
-  text-align: right;
-  white-space: nowrap;
-}
-
 /* Concrete model badge. Provider details can be shown in a tooltip. */
 .message-meta-mode {
   display: inline-flex;

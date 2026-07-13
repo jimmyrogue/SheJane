@@ -23,7 +23,6 @@ export interface ModelOption {
   description?: string
   vendor?: string
   vendor_info?: string
-  capability_tier?: string
 }
 
 /**
@@ -55,7 +54,6 @@ export function ModeSelector({
   }
 
   const renderModel = (model: ModelOption) => {
-    const tier = tierIndicator(model.capability_tier)
     const active = model.id === mode
     return (
       <DropdownMenuItem
@@ -69,7 +67,6 @@ export function ModeSelector({
           </span>
         </span>
         <span className="composer-mode-item-side">
-          {tier ? <span className="composer-mode-tier-indicator">{tier}</span> : null}
           {active ? (
             <IconCheck size={14} aria-hidden="true" className="composer-mode-item-check" />
           ) : (
@@ -147,7 +144,6 @@ function groupModelsByVendor(models: ModelOption[]): Array<{ vendor: string; ven
   }
   for (const group of groups) {
     if (!group.vendorInfo) group.vendorInfo = vendorInfo(group.vendor)
-    group.models.sort((a, b) => capabilityRank(a.capability_tier) - capabilityRank(b.capability_tier))
   }
   return groups
 }
@@ -177,36 +173,6 @@ function canonicalVendorName(vendor?: string): string {
       return 'Gemini'
     default:
       return trimmed || '其他'
-  }
-}
-
-function capabilityRank(tier?: string): number {
-  switch (tier) {
-    case 'max':
-      return 0
-    case 'reasoning':
-      return 1
-    case 'balanced':
-      return 2
-    case 'fast':
-      return 3
-    default:
-      return 4
-  }
-}
-
-function tierIndicator(tier?: string): string {
-  switch (tier) {
-    case 'max':
-      return '智力高'
-    case 'reasoning':
-      return '推理'
-    case 'balanced':
-      return '均衡'
-    case 'fast':
-      return '速度快'
-    default:
-      return ''
   }
 }
 

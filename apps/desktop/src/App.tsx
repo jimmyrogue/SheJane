@@ -353,6 +353,7 @@ function AppContent() {
   const [pendingCommandDeliveryVersion, setPendingCommandDeliveryVersion] = useState(0)
   const scheduledNotificationIDs = useRef(new Set<string>())
   const runtimeSettingsWriteRef = useRef<Promise<void>>(Promise.resolve())
+  const localHostConfigRef = useRef<LocalHostConfig | null>(null)
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null)
   // Bumped on `doc.changed` (Phase 2 territory) to force the renderer to
@@ -414,15 +415,39 @@ function AppContent() {
     runtimeSettingsWriteRef.current = runtimeSettingsWriteRef.current
       .catch(() => undefined)
       .then(async () => {
-        await updateRuntimeSettings(
+        const settings = await updateRuntimeSettings(
           runtimePatch,
           config,
         )
+        if (localHostConfigRef.current === config) {
+          setAgentSettings((current) => ({
+            ...current,
+            advanced: advancedSettingsFromRuntime(settings),
+          }))
+        }
       })
-      .catch((error) => {
+      .catch(async (error) => {
         setNotice(error instanceof Error ? error.message : String(error))
+        try {
+          const settings = await getRuntimeSettings(config)
+          if (localHostConfigRef.current === config) {
+            setAgentSettings((current) => ({
+              ...current,
+              advanced: advancedSettingsFromRuntime(settings),
+            }))
+            setRuntimeSettingsConfig(config)
+          }
+        } catch {
+          if (localHostConfigRef.current === config) {
+            setRuntimeSettingsConfig(null)
+          }
+        }
       })
   }
+
+  useEffect(() => {
+    localHostConfigRef.current = localHostConfig
+  }, [localHostConfig])
 
   // Runtime owns the complete BYOK model catalog.
   useEffect(() => {
@@ -442,7 +467,6 @@ function AppContent() {
             description: t('settings.models.localDescription'),
             vendor: model.provider_name,
             vendor_info: t('settings.models.localVendorInfo'),
-            capability_tier: 'balanced',
           }]
         })
         setModels(catalog)
