@@ -319,8 +319,8 @@ function pickFreePort() {
 }
 
 function daemonBinaryPath() {
-  const exe = process.platform === 'win32' ? 'shejane-local-host.exe' : 'shejane-local-host'
-  return path.join(process.resourcesPath, 'local-host', exe)
+  const exe = process.platform === 'win32' ? 'shejane-runtime.exe' : 'shejane-runtime'
+  return path.join(process.resourcesPath, 'runtime', exe)
 }
 
 // Allowlist env forward (mirrors dev-electron.sh's `env -i`): the daemon never

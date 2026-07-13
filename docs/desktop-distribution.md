@@ -17,7 +17,7 @@
 
 1. 选一个空闲环回端口(`net.createServer().listen(0)`,不再硬编码 17371)。
 2. 生成**一次性随机配对 token**(`crypto.randomBytes(32).toString('hex')`)。
-3. `child_process.spawn` 冻结的 daemon(`process.resourcesPath/local-host/shejane-local-host[.exe]`),**scrubbed 环境**:
+3. `child_process.spawn` 冻结的 Runtime(`process.resourcesPath/runtime/shejane-runtime[.exe]`),**scrubbed 环境**:
    `SHEJANE_LOCAL_HOST_ADDR=127.0.0.1`、`SHEJANE_LOCAL_HOST_PORT=<freePort>`、`SHEJANE_LOCAL_HOST_TOKEN=<token>`、`SHEJANE_CLOUD_BASE_URL=https://app.shejane.com`、`PYTHONUNBUFFERED=1`、`PATH/HOME/TMPDIR` —— **绝不转发任何 provider 密钥**(Invariant #1)。
 4. Electron Main 保管 `SHEJANE_LOCAL_HOST_TOKEN`，并只对目标 Runtime 地址注入认证头；`preload.cjs` 仅把 URL 和不含秘密的桌面会话标记交给渲染层。
 5. 轮询 `GET /local/v1/health`(免鉴权路径)直到 200,期间显示 splash;超时弹 `dialog.showErrorBox`。
@@ -66,8 +66,8 @@
 - 先出 unsigned/ad-hoc 产物验证构建,再接 Developer ID 签名(壳很小,先在小包上验证签名身份)。
 
 ### Phase 2 — 冻结 daemon + 主进程拉起(核心里程碑)
-- `services/runtime/shejane-local-host.spec`:onedir(**不能 onefile** —— 破坏 uvicorn 信号处理 + 每次启动重解压),collect/hidden-import 见「关键现实 3、4」。
-- 新 `make build-daemon`(`uv run pyinstaller`)。electron-builder `extraResources` 把 onedir 放到 `process.resourcesPath/local-host`。
+- `services/runtime/shejane-runtime.spec`:onedir(**不能 onefile** —— 破坏 uvicorn 信号处理 + 每次启动重解压),collect/hidden-import 见「关键现实 3、4」。
+- `make build-daemon`(`uv run pyinstaller`)。electron-builder `extraResources` 把 onedir 放到 `process.resourcesPath/runtime`。
 - main.cjs 实现完整生命周期(见「目标架构」)。
 - 冒烟:安装 → 登录 → 跑一次 SSE run(`POST /local/v1/runs` → stream)+ 一个网关计费工具(web.search),验证 daemon→cloud 代理 + JWT-via-`/local/v1/session`。
 

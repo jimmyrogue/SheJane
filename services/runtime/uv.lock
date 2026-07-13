@@ -6083,7 +6083,7 @@ wheels = [
 ]
 
 [[package]]
-name = "shejane-local-host"
+name = "shejane-runtime"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the SheJane local-agent daemon.
+# PyInstaller spec for the SheJane Runtime.
 #
-# Produces a self-contained ONEDIR bundle (dist/local-host/) that runs WITHOUT a
+# Produces a self-contained ONEDIR bundle (dist/shejane-runtime/) that runs WITHOUT a
 # system Python — it's what the Electron desktop app spawns. Build it with
-# `make build-daemon` (= `uv run pyinstaller shejane-local-host.spec`).
+# `make build-daemon` (= `uv run pyinstaller shejane-runtime.spec`).
 #
 # onedir (not onefile) on purpose: onefile re-extracts to a temp dir on every
 # launch (slow + AV re-scan) and breaks uvicorn's signal handling; onedir starts
@@ -69,7 +69,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # onedir: deps live beside the exe, not inside it
-    name="shejane-local-host",
+    name="shejane-runtime",
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -80,5 +80,5 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    name="local-host",  # → dist/local-host/
+    name="shejane-runtime",  # → dist/shejane-runtime/
 )

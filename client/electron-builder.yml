@@ -29,13 +29,13 @@ files:
 asar: true
 
 # The frozen Python daemon, shipped OUTSIDE the asar so main.cjs can spawn it
-# from process.resourcesPath/local-host. Build it FIRST with `make build-daemon`
+# from process.resourcesPath/runtime. Build it FIRST with `make build-daemon`
 # (per-OS/arch — the bundle is native-wheel specific, so CI must build it on a
 # native runner for each target before electron-builder runs).
 #
 extraResources:
-  - from: ../services/runtime/dist/local-host
-    to: local-host
+  - from: ../services/runtime/dist/shejane-runtime
+    to: runtime
 
 mac:
   category: public.app-category.productivity

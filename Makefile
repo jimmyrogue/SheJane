@@ -110,9 +110,9 @@ admin-build: ## Build only the admin
 local-host-build: ## Sync only the daemon deps
 	cd services/runtime && uv sync
 
-build-daemon: ## Freeze the local-agent daemon into a standalone bundle for the desktop app (PyInstaller onedir → services/runtime/dist/local-host/)
-	cd services/runtime && uv run pyinstaller shejane-local-host.spec --noconfirm --clean
-	@echo "✅ Daemon frozen → services/runtime/dist/local-host/ (run it on THIS OS/arch only)"
+build-daemon: ## Freeze the Runtime into a standalone bundle for the desktop app (PyInstaller onedir → services/runtime/dist/shejane-runtime/)
+	cd services/runtime && uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+	@echo "✅ Runtime frozen → services/runtime/dist/shejane-runtime/ (run it on THIS OS/arch only)"
 
 ##@ Lint & schemas
 lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-keys)

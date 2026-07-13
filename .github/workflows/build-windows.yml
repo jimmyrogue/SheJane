@@ -41,7 +41,7 @@ jobs:
         working-directory: services/runtime
         run: |
           uv sync
-          uv run pyinstaller shejane-local-host.spec --noconfirm --clean
+          uv run pyinstaller shejane-runtime.spec --noconfirm --clean
 
       - name: Set up Node
         uses: actions/setup-node@v4

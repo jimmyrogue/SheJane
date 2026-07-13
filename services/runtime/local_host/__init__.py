@@ -1,6 +1,6 @@
 """Local Agent Harness — Python daemon (LangGraph + create_agent).
 
-Entry point: `python -m local_host` or `shejane-local-host` CLI script.
+Source entry point: `python -m local_host`. Release bundles expose `shejane-runtime`.
 HTTP surface defined in `local_host.server`.
 """
 

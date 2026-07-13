@@ -256,7 +256,7 @@ Runtime 还会根据所选模型的能力资料，在供应商边界执行硬限
 ```bash
 cd services/runtime
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
-uv run shejane-local-host
+uv run python -m local_host
 ```
 
 Electron client 连接本地 Host：
@@ -291,7 +291,7 @@ cd services/runtime
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
 SHEJANE_CLOUD_TOKEN=用户 access token \
-uv run shejane-local-host
+uv run python -m local_host
 ```
 
 上面的 `SHEJANE_CLOUD_TOKEN` 只用于无 UI 调试或 smoke。Electron 手动测试推荐走正常登录流程：
