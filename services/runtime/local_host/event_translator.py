@@ -12,8 +12,8 @@ place that translation happens.
 
 Client SSE event types — names MUST match what the TypeScript
 streamTransport.ts and chatStore.ts switch on (see
-client/src/shared/streaming/streamTransport.ts:61 and
-client/src/features/chat/chatStore.ts):
+apps/desktop/src/shared/streaming/streamTransport.ts:61 and
+apps/desktop/src/features/chat/chatStore.ts):
 
   llm.delta            — one streamed token of assistant content (was
                          `llm.token` pre-Block-3 — client looks for

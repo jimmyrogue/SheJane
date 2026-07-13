@@ -247,7 +247,7 @@ start_client_dev_server() {
   local log_file="${LOG_DIR}/client-vite.log"
   echo "Starting client dev server at ${CLIENT_DEV_URL}"
   (
-    cd "${ROOT_DIR}/client"
+    cd "${ROOT_DIR}/apps/desktop"
     env -i \
       "PATH=$PATH" \
       "HOME=$HOME" \
@@ -264,7 +264,7 @@ start_client_dev_server() {
 launch_electron() {
   echo "Launching Electron. Close the app window to stop local dev helper processes."
   (
-    cd "${ROOT_DIR}/client"
+    cd "${ROOT_DIR}/apps/desktop"
     env -i \
       "PATH=$PATH" \
       "HOME=$HOME" \

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLIENT_DIR="${ROOT_DIR}/client"
+CLIENT_DIR="${ROOT_DIR}/apps/desktop"
 DOCK_LANG_FILE="${ROOT_DIR}/.tmp/dev/dock-lang"
 APP_LANG="zh"
 if [[ -f "$DOCK_LANG_FILE" ]]; then
@@ -25,8 +25,8 @@ WRAPPER_VERSION_FILE="${WRAPPER_APP}/Contents/Resources/.shejane-electron-versio
 # Switcher, the Dock, "About" panel and Finder. The runtime
 # `new Notification({icon: ...})` field is IGNORED on macOS — the OS
 # always pulls from the bundle's icon resource. Generated once from
-# client/electron/assets/app-icon.png; regenerate via:
-#   cd client/electron/assets && mkdir -p app-icon.iconset && \
+# apps/desktop/electron/assets/app-icon.png; regenerate via:
+#   cd apps/desktop/electron/assets && mkdir -p app-icon.iconset && \
 #     for s in 16 32 128 256 512; do
 #       sips -z "$s" "$s" app-icon.png --out "app-icon.iconset/icon_${s}x${s}.png"
 #       d=$((s*2)); sips -z "$d" "$d" app-icon.png --out "app-icon.iconset/icon_${s}x${s}@2x.png"

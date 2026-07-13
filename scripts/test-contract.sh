@@ -82,7 +82,7 @@ fi
 
 echo "→ Running client contract suite"
 (
-  cd client
+  cd apps/desktop
   VITE_TEST_LOCAL_HOST_URL="$URL" \
   VITE_TEST_LOCAL_HOST_TOKEN="$TOKEN" \
   pnpm test:contract

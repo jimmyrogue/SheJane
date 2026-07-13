@@ -14,7 +14,7 @@ services/
   runtime/                 Python Harness Runtime
   cloud/                   可选 Go Cloud
 packages/
-  runtime-client/          公共 TypeScript Runtime SDK
+  runtime-apps/desktop/          公共 TypeScript Runtime SDK
 tests/
   e2e/
 infra/

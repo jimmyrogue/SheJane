@@ -27,7 +27,7 @@ export default defineConfig({
   webServer: [
     {
       command: `pnpm dev --host 127.0.0.1 --port ${clientPort}`,
-      cwd: '../../client',
+      cwd: '../../apps/desktop',
       url: clientURL,
       reuseExistingServer: false,
       timeout: 120_000,

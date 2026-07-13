@@ -5,7 +5,7 @@ Why this module exists:
   Before this file, every handler returned `dict[str, Any]`. That made
   `app.openapi()` output useless (just `additionalProperties: True`
   with no field names), so the client couldn't generate types from it
-  and had to hand-maintain interfaces in `client/src/shared/local-host/
+  and had to hand-maintain interfaces in `apps/desktop/src/shared/local-host/
   client.ts`. The 2026-05-22 contract repair session was the result —
   9+ silent shape drifts between hand-written TS interfaces and
   daemon dict returns.
@@ -31,7 +31,7 @@ Conventions:
     `event_type` don't roundtrip cleanly through openapi. The wire
     format is documented in `docs/client-sse-protocol.md` and the
     TS `AgentRunEvent` interface stays hand-written in
-    `client/src/shared/api/sse.ts`.
+    `apps/desktop/src/shared/api/sse.ts`.
 """
 
 from __future__ import annotations

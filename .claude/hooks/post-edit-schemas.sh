@@ -44,8 +44,8 @@ fi
 # Tell Claude WHAT changed in the generated artifacts so it knows
 # whether to update consumers.
 diff_summary=$(git diff --stat -- \
-  client/src/shared/local-host/openapi.json \
-  client/src/shared/local-host/generated.d.ts 2>/dev/null | tail -5)
+  apps/desktop/src/shared/local-host/openapi.json \
+  apps/desktop/src/shared/local-host/generated.d.ts 2>/dev/null | tail -5)
 if [[ -n "$diff_summary" ]]; then
   echo "→ make schemas regenerated openapi.json + generated.d.ts:" >&2
   echo "$diff_summary" >&2

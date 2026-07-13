@@ -308,7 +308,7 @@ export interface paths {
          * List Runs
          * @description Recent runs newest-first.
          *
-         *     Client `listLocalRuns()` (client/src/shared/local-host/client.ts:283)
+         *     Client `listLocalRuns()` (apps/desktop/src/shared/local-host/client.ts:283)
          *     reads `{runs: LocalRun[]}` on every boot. Previously this route
          *     didn't exist — every Electron launch silently 404'd here and
          *     the conversation history sidebar came up empty.
@@ -377,7 +377,7 @@ export interface paths {
          * Run Diagnostics
          * @description Return the full `LocalRunDiagnostics` payload.
          *
-         *     Shape (per TS interface `client/src/shared/local-host/client.ts`):
+         *     Shape (per TS interface `apps/desktop/src/shared/local-host/client.ts`):
          *         { schema_version: 1, exported_at, local_host_version?,
          *           run, events, permissions, artifacts, latest_checkpoint, handoff }
          *

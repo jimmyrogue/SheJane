@@ -12,7 +12,7 @@ The diagram below describes the **current implementation**, including cloud depe
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Electron renderer (client/) — React 18 + Vite + Tailwind 4    │
+│  Electron renderer (apps/desktop/) — React 18 + Vite + Tailwind 4    │
 │  Talks to local-host over loopback HTTP for agent flow,         │
 │  talks to Go API directly for auth / billing / documents.       │
 └──────────┬──────────────────────────────────────────────┬───────┘
@@ -50,7 +50,7 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 
 1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS) MUST live in the Go API only.** The daemon proxies through `POST /api/v1/agent/tools/execute` for anything that bills credits. Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (lefthook + CI). See `services/runtime/local_host/tools/_gateway.py` for the proxy pattern; new platform-paid tools should call `call_tool_gateway()`, not `os.environ.get(...)`.
 
-2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `client/src/shared/local-host/generated.d.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.d.ts`. CI's lint job fails the PR if they drift.
+2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `apps/desktop/src/shared/local-host/generated.d.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.d.ts`. CI's lint job fails the PR if they drift.
 
 3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "created_at": ...}`; durable events also carry a monotonic `seq`, while temporary model output deliberately has no replay cursor. The separator is **LF** double-newline (not CRLF), and the terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
 
@@ -144,13 +144,13 @@ make logs-dev                # snapshot of all of the above
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
-| Model catalog / provider routing | `services/cloud/internal/modelreg/`, `services/cloud/internal/llm/router.go`, `services/cloud/internal/app/model_resolver.go`, `services/cloud/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
+| Model catalog / provider routing | `services/cloud/internal/modelreg/`, `services/cloud/internal/llm/router.go`, `services/cloud/internal/app/model_resolver.go`, `services/cloud/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `apps/desktop/src/features/chat/components/ModeSelector.tsx` |
 | Daemon code | `services/runtime/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
 | Cloud code | `services/cloud/internal/` — `app/` wiring, `httpapi/` routes, `store/`, `billing/`, `llm/`, `modelreg/`, `documents/`, `e2b/` and `secrets/` |
-| Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
+| Client code | `apps/desktop/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
 | Admin panel | `apps/admin/` — separate Vite app; model configs, credit rate, audit logs |
-| Contract tests (real HTTP, not MockTransport) | `client/src/shared/local-host/client.contract.test.ts` |
+| Contract tests (real HTTP, not MockTransport) | `apps/desktop/src/shared/local-host/client.contract.test.ts` |
 
 ## Conventions
 
@@ -171,10 +171,10 @@ make logs-dev                # snapshot of all of the above
 - `services/cloud/internal/store` has memory and Postgres implementations that must stay in lockstep.
 - Stripe webhook handling must stay idempotent: dedupe on `stripe_events`, set `processed_at` only after local processing succeeds, and key credit grants with `wallet_transactions.idempotency_key = stripe:<event_id>`. See AGENTS.md for the full lifecycle + admin-audit rules.
 
-### TypeScript (client/, apps/admin/)
+### TypeScript (apps/desktop/, apps/admin/)
 
 - Vite + React 18 + TypeScript strict mode. Tailwind 4 + shadcn/ui.
-- Daemon types come from `client/src/shared/local-host/generated.d.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
+- Daemon types come from `apps/desktop/src/shared/local-host/generated.d.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
 - Hand-written types in `client.ts` are documented at the top of the file (DesktopBridge, LocalHostConfig, LocalHostProbe, LocalStreamHandlers) — these have no daemon equivalent.
 - SSE: see `shared/api/sse.ts` for parsing and the `AgentRunEvent` union. New event types added on the daemon need a `case` in `features/chat/chatStore.ts:timelineItem` AND/OR `App.tsx:appendLocalRunEvent` to surface in the UI.
 
@@ -213,7 +213,7 @@ If anything's wrong, `make doctor` is the first stop. The output tells you wheth
 ## Things to never do
 
 - Don't add `os.environ.get("OPENAI_API_KEY")` or any other platform-paid key to daemon code. Use `tools/_gateway.py:call_tool_gateway`. Lefthook will block the commit.
-- Don't hand-edit `client/src/shared/local-host/generated.d.ts` or `client/src/shared/local-host/openapi.json`. They're build artifacts of `make schemas`.
+- Don't hand-edit `apps/desktop/src/shared/local-host/generated.d.ts` or `apps/desktop/src/shared/local-host/openapi.json`. They're build artifacts of `make schemas`.
 - Don't `pkill -f 'python -m local_host'` and assume the daemon died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.

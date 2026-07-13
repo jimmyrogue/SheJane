@@ -4,7 +4,7 @@
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
-> **文档版本**：post-Phase-5'+，对应客户端 `parseAgentSSEBuffer`（`client/src/shared/api/sse.ts`）+ daemon `RunCoordinator.stream` + `event_translator.translate`。
+> **文档版本**：post-Phase-5'+，对应客户端 `parseAgentSSEBuffer`（`apps/desktop/src/shared/api/sse.ts`）+ daemon `RunCoordinator.stream` + `event_translator.translate`。
 >
 > **历史**：Phase 4' 之前使用 `llm.token` / `tool.end` 等命名，且 `data:` 体直接放裸 payload；2026-05-22 重写后改为 `llm.delta` / `tool.completed` + AgentRunEvent envelope。如果你看到代码里还有旧名，那是漂移，请按本协议为准。
 
@@ -40,7 +40,7 @@ interface AgentRunEvent {
 
 状态变化持久化在 `local_events` 表，每条都有 `seq`；replay 路径只返回这些持久事件。临时事件仍有唯一 `id`，但没有 `seq`，不会写入数据库或在重连后重放。Runtime 升级时会清理旧版本曾错误持久化的临时事件，序号空洞不影响后续游标。
 
-完整 TS 类型见 `client/src/shared/api/sse.ts:6-13`。
+完整 TS 类型见 `apps/desktop/src/shared/api/sse.ts:6-13`。
 
 ---
 

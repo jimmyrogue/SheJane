@@ -7,7 +7,7 @@ the `data:` line, NOT from the `event:` line. It also recognizes only
 stream hung.
 
 These tests pin the contract to the AgentRunEvent interface defined
-in `client/src/shared/api/sse.ts:6-13`:
+in `apps/desktop/src/shared/api/sse.ts:6-13`:
 
     interface AgentRunEvent {
       event_type: string

@@ -13,7 +13,7 @@
 
 > **系统要求(Windows):Windows 10 或更高(仅 64 位)。** 本应用基于 **Electron 33**,而 **Electron 23 起已彻底移除 Windows 7/8/8.1 支持**(最后一个支持 Win7 的大版本是已 EOL 的 Electron 22)。因此 NSIS 安装包通过 `build/installer.nsh` 在 `< Win10` 上**直接拒绝安装并给出中文提示**,避免老系统上"装得上、打不开"+ 创建快捷方式报"未指定的错误"的困惑。**不提供 32 位(ia32)构建** —— 现代 Windows 基本都是 64 位。若未来要支持 Win7,只能单独维护一条 Electron 22 旧版构建线(EOL、无安全补丁,需评估风险)。
 
-启动流程(`client/electron/main.cjs`,在开窗前完成 —— 把现在只在 `scripts/dev-electron.sh` 里的逻辑搬进来):
+启动流程(`apps/desktop/electron/main.cjs`,在开窗前完成 —— 把现在只在 `scripts/dev-electron.sh` 里的逻辑搬进来):
 
 1. 选一个空闲环回端口(`net.createServer().listen(0)`,不再硬编码 17371)。
 2. 生成**一次性随机配对 token**(`crypto.randomBytes(32).toString('hex')`)。
@@ -62,7 +62,7 @@
 
 ### Phase 1 — electron-builder 骨架
 - `package.json` 加 `main: electron/main.cjs`、devDeps `electron-builder` + `cross-env`、脚本 `dist` / `dist:dir`。
-- `client/electron-builder.yml`:`appId: com.shejane.desktop`、`productName`、`files`(dist + electron/*.cjs + assets)、`mac.target [dmg, zip]`、`win.target nsis`、图标复用 `electron/assets/app-icon.icns`(mac)+ `app-icon.png`(win 自动转 .ico)。
+- `apps/desktop/electron-builder.yml`:`appId: com.shejane.desktop`、`productName`、`files`(dist + electron/*.cjs + assets)、`mac.target [dmg, zip]`、`win.target nsis`、图标复用 `electron/assets/app-icon.icns`(mac)+ `app-icon.png`(win 自动转 .ico)。
 - 先出 unsigned/ad-hoc 产物验证构建,再接 Developer ID 签名(壳很小,先在小包上验证签名身份)。
 
 ### Phase 2 — 冻结 daemon + 主进程拉起(核心里程碑)

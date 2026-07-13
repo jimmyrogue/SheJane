@@ -3947,7 +3947,7 @@ class LocalStore:
     async def list_runs(self, *, principal_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent runs newest-first with a per-row events_count.
 
-        The client's `listLocalRuns()` (`client/src/shared/local-host/
+        The client's `listLocalRuns()` (`apps/desktop/src/shared/local-host/
         client.ts:283`) reads `{runs: LocalRun[]}` on every boot to
         repopulate the conversation history sidebar. Each row must
         include the `LocalRun` fields the renderer reads:

@@ -55,7 +55,7 @@ jobs:
         run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Build the renderer (→ prod API)
-        working-directory: client
+        working-directory: apps/desktop
         shell: bash
         run: |
           # On a tag build, pin the package version to the tag so the installer
@@ -69,7 +69,7 @@ jobs:
           pnpm build:desktop
 
       - name: Package the Windows installer
-        working-directory: client
+        working-directory: apps/desktop
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build
@@ -84,7 +84,7 @@ jobs:
       # reviews the draft and clicks Publish.
       - name: Publish installer to a single draft Release (tag builds only)
         if: github.ref_type == 'tag'
-        working-directory: client
+        working-directory: apps/desktop
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -101,6 +101,6 @@ jobs:
         with:
           name: shejane-windows-installer
           path: |
-            client/release/*.exe
+            apps/desktop/release/*.exe
           if-no-files-found: error
           retention-days: 14

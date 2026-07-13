@@ -54,8 +54,8 @@ Radius and depth:
 
 Use the "圆相" mark: an unclosed ink circle with one seal-red stone at the gap.
 
-- Renderer assets: `client/src/shared/assets/logo.png` (ring mark, transparent background) and `client/src/shared/assets/logo-lockup.png` (horizontal lockup: mark + 石间 + SHEJANE, used on the auth page). Both come from the brand delivery as PNG — there is no SVG source in-repo.
-- Electron assets: `client/electron/assets/app-icon.png`/`.icns` (dark squircle, off-white ring), `client/electron/assets/app-tray*.png`.
+- Renderer assets: `apps/desktop/src/shared/assets/logo.png` (ring mark, transparent background) and `apps/desktop/src/shared/assets/logo-lockup.png` (horizontal lockup: mark + 石间 + SHEJANE, used on the auth page). Both come from the brand delivery as PNG — there is no SVG source in-repo.
+- Electron assets: `apps/desktop/electron/assets/app-icon.png`/`.icns` (dark squircle, off-white ring), `apps/desktop/electron/assets/app-tray*.png`.
 - The tray icon is a black transparent mask because Electron sets it as a macOS template image.
 
 ## App Shell

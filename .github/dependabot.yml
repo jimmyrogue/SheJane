@@ -26,7 +26,7 @@ updates:
 
   # --- npm (3 workspaces share no root package.json) ---
   - package-ecosystem: npm
-    directory: /client
+    directory: /apps/desktop
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:

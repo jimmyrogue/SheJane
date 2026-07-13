@@ -23,7 +23,7 @@ This page defines how SheJane combines uploaded attachments with agent tools. Th
 
 ## Implementation Hooks
 
-- `client/src/App.tsx` disables `cloudTools` when uploaded documents are sent through the cloud agent path.
-- `client/src/features/chat/chatStore.ts` maps `documents[]` into run `attachments[]`.
+- `apps/desktop/src/App.tsx` disables `cloudTools` when uploaded documents are sent through the cloud agent path.
+- `apps/desktop/src/features/chat/chatStore.ts` maps `documents[]` into run `attachments[]`.
 - `services/cloud/internal/httpapi/server.go` reads every document attachment in `loadAgentDocumentContext`.
-- `client/src/features/chat/components/Composer.tsx` surfaces the attachment-mode status.
+- `apps/desktop/src/features/chat/components/Composer.tsx` surfaces the attachment-mode status.

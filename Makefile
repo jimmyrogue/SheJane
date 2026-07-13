@@ -72,7 +72,7 @@ test: api-test client-test admin-test local-host-test ## Fast unit suites (Go + 
 test-race: ## Go tests with the race detector (guards the credit ledger's concurrency)
 	cd services/cloud && go test -race ./...
 
-test-e2e: ## Playwright simulated E2E (boots isolated client/admin vite + route mocks)
+test-e2e: ## Playwright simulated E2E (boots isolated apps/desktop/admin vite + route mocks)
 	pnpm --filter shejane-e2e test
 
 test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)

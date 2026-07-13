@@ -262,7 +262,7 @@ uv run python -m local_host
 Electron client 连接本地 Host：
 
 ```bash
-cd client
+cd apps/desktop
 SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 pnpm --filter shejane-client electron
@@ -444,13 +444,13 @@ make ci            # 本地跑一遍 CI 的全部（推 PR 前的总门禁）
 
 含义：
 
-- `make test`：运行 API Go test、client/admin Vitest、Local Host Vitest。适合日常开发中频繁跑。
+- `make test`：运行 API Go test、apps/desktop/admin Vitest、Local Host Vitest。适合日常开发中频繁跑。
 - `make test-race`：`go test -race ./...`，专门抓信用账本这类并发竞态。CI 的 `test` job 跑它（已涵盖普通 Go run，不再重复跑非 race 版）。
-- `make test-e2e`：运行 `tests/e2e/` Playwright Chromium simulated E2E。测试会启动隔离的 client/admin dev server（默认 `55173/55174`），并用 route mocking 模拟 API、S3 PUT、Agent SSE 和 Local Host loopback API。
+- `make test-e2e`：运行 `tests/e2e/` Playwright Chromium simulated E2E。测试会启动隔离的 apps/desktop/admin dev server（默认 `55173/55174`），并用 route mocking 模拟 API、S3 PUT、Agent SSE 和 Local Host loopback API。
 - `make test-contract`：在专用端口 `:17399` 启动一个真实 daemon，用 TypeScript client 跑契约套件（真 HTTP，无 MockTransport），抓 client↔daemon 的 shape drift。
 - `make ci`：把 CI 的全部检查在本地跑一遍 —— `lint` + 单元 + race + build + e2e + contract。`make test-ci` 是它的兼容别名。
 - `make smoke-local-host`：启动真实 Local Host daemon，检查 `/health`、未配对 `/tools` 返回 401、配对后工具列表包含 `mcp.call`，并创建/stream 一个 deterministic local run。
-- `make smoke-docker-local`：用 disposable Docker Compose project 启动 API/client/admin/postgres，强制 `MOCK_LLM=true`，验证注册、mock chat 扣额度和 admin overview。默认端口是 API `18080`、client `15173`、admin `15174`，避免影响普通开发栈。
+- `make smoke-docker-local`：用 disposable Docker Compose project 启动 API/apps/desktop/admin/postgres，强制 `MOCK_LLM=true`，验证注册、mock chat 扣额度和 admin overview。默认端口是 API `18080`、client `15173`、admin `15174`，避免影响普通开发栈。
 
 CI（`.github/workflows/ci.yml`）现在拆成 4 个并行 job：`lint` / `test`（单元 + race + build）/ `e2e`（Playwright）/ `contract`（真实 daemon 往返）。拆开后，一个浏览器抖动不会再淹没单元信号，每个失败也各自成独立的 PR check。
 
@@ -687,7 +687,7 @@ cp .env.example .env
 make deploy
 ```
 
-`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。生产 compose 会给 API 注入 `SHEJANE_ENV=production`，因此 `JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 若为空、过短或仍是常见占位值，API 会 fail-fast 而不是带着弱配置启动。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。Caddy 会给 client/admin 静态站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy；Go API 也会直接返回 API 侧安全头，避免绕过 Caddy 时裸奔。API 进程使用显式 `http.Server`：`ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`IdleTimeout=120s`，收到 SIGINT/SIGTERM 时最多等待 10s graceful shutdown；`WriteTimeout` 保持 0，避免长 SSE / streaming 响应被服务器定时切断。
+`make deploy` = `docker compose -f docker-compose.prod.yml pull && up -d`。生产 compose 会给 API 注入 `SHEJANE_ENV=production`，因此 `JWT_SECRET` / `CONFIG_ENCRYPTION_KEY` 若为空、过短或仍是常见占位值，API 会 fail-fast 而不是带着弱配置启动。Caddy 在 80/443 终止 TLS（首次访问真实域名时自动签发 Let's Encrypt 证书，联系邮箱在 `Caddyfile` 的全局 `email`，可用 `ACME_EMAIL` 覆盖），把 `APP_DOMAIN` 路由到 `client`、`ADMIN_DOMAIN` 路由到 `admin`，两者的 `/api/*` 都转给 `api`。Caddy 会给 apps/desktop/admin 静态站点设置 HSTS、CSP、X-Frame-Options、X-Content-Type-Options、Referrer-Policy 和 Permissions-Policy；Go API 也会直接返回 API 侧安全头，避免绕过 Caddy 时裸奔。API 进程使用显式 `http.Server`：`ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`IdleTimeout=120s`，收到 SIGINT/SIGTERM 时最多等待 10s graceful shutdown；`WriteTimeout` 保持 0，避免长 SSE / streaming 响应被服务器定时切断。
 
 迁移由 API 镜像内置的 `/app/shejane-migrate` 执行，SQL 文件随同一 API 镜像发布在 `/app/migrations`。runner 会先创建 `schema_migrations`，再按文件版本顺序执行未应用版本；已应用且 checksum 一致的版本会跳过，checksum 与数据库记录不一致会 fail-fast，避免“改旧迁移文件后静默漂移”。首次升级到版本表 runner 的已有数据库会重放一次当前 idempotent 迁移并补齐版本记录，之后只执行新增迁移。`make migrate` 和 CI Postgres conformance 也使用同一个 runner。
 

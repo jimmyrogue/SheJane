@@ -22,7 +22,7 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 
 - `services/cloud/` — optional Go Cloud: auth, wallet/credit ledger, model catalog + LLM routing, Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
-- `client/` — Electron/React user app; local-first chat history.
+- `apps/desktop/` — Electron/React user app; local-first chat history.
 - `apps/admin/` — standalone React/Vite admin app (shadcn/ui).
 - `services/cloud/migrations/` — sequential, idempotent PostgreSQL migrations.
 - `docs/operations.md` — operator runbook.
@@ -138,7 +138,7 @@ The admin app shows orders and audit logs read-only. Refunds, manual subscriptio
 
 There are two separate web apps:
 
-- `client/`: normal user app. Do not put admin views or admin entry points here.
+- `apps/desktop/`: normal user app. Do not put admin views or admin entry points here.
 - `apps/admin/`: standalone admin app. Keep it shadcn/ui based.
 
 Admin UI expectations:
@@ -185,6 +185,6 @@ Add or update tests when touching:
 
 - Do not revert user changes.
 - Do not commit or reset unless the user asks.
-- Do not check in build output from `client/dist` or `apps/admin/dist`.
+- Do not check in build output from `apps/desktop/dist` or `apps/admin/dist`.
 - Prefer `rg` and `rg --files` for repository searches.
 - Use `apply_patch` for manual edits.

@@ -37,14 +37,14 @@ jobs:
             context: ./services/cloud
             dockerfile: services/cloud/Dockerfile
             build-args: ""
-          # client/admin are static SPAs: building with an EMPTY
+          # apps/desktop/admin are static SPAs: building with an EMPTY
           # VITE_API_BASE_URL makes them issue RELATIVE, same-origin
           # /api/* requests, which Caddy routes to the api container.
           # That's what makes one published image work for any deployer
           # (no per-site API URL baked in at build time).
           - service: client
             context: .
-            dockerfile: client/Dockerfile
+            dockerfile: apps/desktop/Dockerfile
             build-args: |
               VITE_API_BASE_URL=
           - service: admin

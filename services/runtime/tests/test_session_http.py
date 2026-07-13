@@ -1,7 +1,7 @@
 """Contract tests for `/local/v1/session` (POST / GET / DELETE).
 
 These lock the response shape to the TypeScript `LocalCloudSession`
-interface in `client/src/shared/local-host/client.ts`:
+interface in `apps/desktop/src/shared/local-host/client.ts`:
 
     interface LocalCloudSession {
       connected: boolean
@@ -134,7 +134,7 @@ def test_delete_session_returns_connected_false(client: TestClient) -> None:
     )
     resp = client.delete("/local/v1/session", headers=HEADERS)
     assert resp.status_code == 200
-    # Mirrors the TS test in client/src/shared/local-host/client.test.ts:239
+    # Mirrors the TS test in apps/desktop/src/shared/local-host/client.test.ts:239
     assert resp.json() == {"connected": False}
 
     # GET after DELETE: still must have `connected` key (now false).

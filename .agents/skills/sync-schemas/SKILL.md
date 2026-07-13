@@ -6,7 +6,7 @@ user-invocable: false
 
 # sync-schemas
 
-The daemon's pydantic models are the single source of truth. `make schemas` regenerates `client/src/shared/local-host/openapi.json` and `client/src/shared/local-host/generated.d.ts` from them. CI's lint job rejects PRs where the committed files drift from regenerated output.
+The daemon's pydantic models are the single source of truth. `make schemas` regenerates `apps/desktop/src/shared/local-host/openapi.json` and `apps/desktop/src/shared/local-host/generated.d.ts` from them. CI's lint job rejects PRs where the committed files drift from regenerated output.
 
 ## When to invoke
 
@@ -29,8 +29,8 @@ That runs `scripts/export-daemon-openapi.sh` (dumps `openapi.json`) then `npx op
 Then check:
 
 ```bash
-git status -- client/src/shared/local-host/openapi.json client/src/shared/local-host/generated.d.ts
-git diff --stat -- client/src/shared/local-host/openapi.json client/src/shared/local-host/generated.d.ts
+git status -- apps/desktop/src/shared/local-host/openapi.json apps/desktop/src/shared/local-host/generated.d.ts
+git diff --stat -- apps/desktop/src/shared/local-host/openapi.json apps/desktop/src/shared/local-host/generated.d.ts
 ```
 
 ## Report back
@@ -41,7 +41,7 @@ Tell the user:
 
 2. **What changed in the wire shape?** Read the diff and translate to plain English: "added optional `canceled_at: string` to `LocalRun`", "changed `reason` enum from 3 to 4 values", "new endpoint `POST /local/v1/skills/install` surfaces".
 
-3. **Any TypeScript callers broken?** Run `cd client && npx tsc -b --noEmit 2>&1 | head -20`. If a field rename / type narrowing broke a consumer, point to the line.
+3. **Any TypeScript callers broken?** Run `cd apps/desktop && pnpm exec tsc -b --noEmit 2>&1 | head -20`. If a field rename / type narrowing broke a consumer, point to the line.
 
 4. **Reminder to commit**: both `openapi.json` and `generated.d.ts` need to be staged alongside the pydantic change. The CI drift check fails the PR otherwise.
 

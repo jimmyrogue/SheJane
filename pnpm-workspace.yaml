@@ -1,5 +1,5 @@
 packages:
-  - client
+  - apps/desktop
   - apps/admin
   - tests/e2e
 

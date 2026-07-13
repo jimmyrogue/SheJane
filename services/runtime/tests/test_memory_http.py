@@ -2,7 +2,7 @@
 
 Backs the "清空记忆 / Clear memory" button in the agent settings dialog.
 Locks the response shape to the TypeScript `ClearMemoryResponse` aliased
-in `client/src/shared/local-host/client.ts` and verifies the underlying
+in `apps/desktop/src/shared/local-host/client.ts` and verifies the underlying
 BaseStore is actually wiped.
 """
 

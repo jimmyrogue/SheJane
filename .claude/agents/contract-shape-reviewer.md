@@ -29,8 +29,8 @@ Three layers communicate over HTTP/SSE:
 Three source-of-truth files for shape:
 
 - **Daemon**: `services/runtime/local_host/api_schemas.py` (pydantic) + `services/runtime/local_host/server.py` (`response_model=...` per route)
-- **Client (generated)**: `client/src/shared/local-host/generated.d.ts` — produced by `make schemas` from the daemon's openapi.json. Must NOT be hand-edited.
-- **Client (hand-written)**: `client/src/shared/local-host/client.ts` re-exports from `generated.d.ts`. Hand-written types (DesktopBridge, LocalHostConfig, AgentRunEvent) are documented at the top of the file.
+- **Client (generated)**: `apps/desktop/src/shared/local-host/generated.d.ts` — produced by `make schemas` from the daemon's openapi.json. Must NOT be hand-edited.
+- **Client (hand-written)**: `apps/desktop/src/shared/local-host/client.ts` re-exports from `generated.d.ts`. Hand-written types (DesktopBridge, LocalHostConfig, AgentRunEvent) are documented at the top of the file.
 - **Go API**: `api/internal/httpapi/*.go` — particularly `agent_stream.go`, `tool_gateway.go`, `image_gateway.go`. The daemon calls these for LLM streaming and tool execution; the client also calls some directly (`/api/v1/agent/runs/...`).
 
 ## What to check
@@ -39,8 +39,8 @@ When invoked, examine the change set (`git diff main...HEAD` or the user's recen
 
 ### 1. Field rename / removal not propagated
 
-- A pydantic field was renamed or removed → was `generated.d.ts` regenerated? Run `git status -- client/src/shared/local-host/generated.d.ts` to check.
-- A TS callsite reads the old field name → grep `client/src/` for the old name.
+- A pydantic field was renamed or removed → was `generated.d.ts` regenerated? Run `git status -- apps/desktop/src/shared/local-host/generated.d.ts` to check.
+- A TS callsite reads the old field name → grep `apps/desktop/src/` for the old name.
 - A SQL column the daemon serializes from was renamed → check the `store/sqlite.py` schema row vs the pydantic field name.
 
 ### 2. Optional vs required mismatch
@@ -60,7 +60,7 @@ When invoked, examine the change set (`git diff main...HEAD` or the user's recen
 
 ### 5. SSE event vocabulary
 
-The `AgentRunEvent` discriminated union in `client/src/shared/api/sse.ts` lists event types the client recognizes. The daemon emits via `services/runtime/local_host/event_translator.py` and `runs.py`. Names must match exactly:
+The `AgentRunEvent` discriminated union in `apps/desktop/src/shared/api/sse.ts` lists event types the client recognizes. The daemon emits via `services/runtime/local_host/event_translator.py` and `runs.py`. Names must match exactly:
 
 - `llm.delta` (NOT `llm.token` — that's the pre-2026-05-22 name)
 - `tool.completed` (NOT `tool.end`)
@@ -79,7 +79,7 @@ The SSE wire envelope must be `data: {"event_type": ..., "payload": {...}, "id":
 - Client POSTs to `/api/v1/X` on the cloud — does Go register it?
 - Daemon proxies to `/api/v1/agent/tools/execute` — does the Go handler accept the body keys the daemon sends?
 
-Run `grep -rn 'app.(get|post|delete)' services/runtime/local_host/server.py` and `grep -rn 's.mux.HandleFunc' api/internal/` to enumerate routes; then `grep -rn "fetcher(\\\`" client/src/shared/local-host/client.ts` to enumerate client call sites. Cross-reference.
+Run `grep -rn 'app.(get|post|delete)' services/runtime/local_host/server.py` and `grep -rn 's.mux.HandleFunc' api/internal/` to enumerate routes; then `grep -rn "fetcher(\\\`" apps/desktop/src/shared/local-host/client.ts` to enumerate client call sites. Cross-reference.
 
 ## Output format
 
