@@ -1,6 +1,6 @@
 packages:
   - client
-  - admin
+  - apps/admin
   - tests/e2e
 
 allowBuilds:

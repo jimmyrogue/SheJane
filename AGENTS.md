@@ -23,7 +23,7 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 - `api/` — Go API: auth, wallet/credit ledger, model catalog + LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron/React user app; local-first chat history.
-- `admin/` — standalone React/Vite admin app (shadcn/ui).
+- `apps/admin/` — standalone React/Vite admin app (shadcn/ui).
 - `api/migrations/` — sequential, idempotent PostgreSQL migrations.
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
@@ -139,11 +139,11 @@ The admin app shows orders and audit logs read-only. Refunds, manual subscriptio
 There are two separate web apps:
 
 - `client/`: normal user app. Do not put admin views or admin entry points here.
-- `admin/`: standalone admin app. Keep it shadcn/ui based.
+- `apps/admin/`: standalone admin app. Keep it shadcn/ui based.
 
 Admin UI expectations:
 
-- Use existing shadcn primitives under `admin/src/components/ui/`.
+- Use existing shadcn primitives under `apps/admin/src/components/ui/`.
 - Keep feature areas as real tabs/sections: overview, users, usage, orders, models, audit.
 - Orders, provider status, and audit logs are read-only.
 - Admin write forms must require a reason where backend requires one.
@@ -185,6 +185,6 @@ Add or update tests when touching:
 
 - Do not revert user changes.
 - Do not commit or reset unless the user asks.
-- Do not check in build output from `client/dist` or `admin/dist`.
+- Do not check in build output from `client/dist` or `apps/admin/dist`.
 - Prefer `rg` and `rg --files` for repository searches.
 - Use `apply_patch` for manual edits.

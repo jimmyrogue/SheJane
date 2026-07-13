@@ -22,7 +22,7 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 - `api/` — Go API: auth, credit ledger, LLM routing, cloud Tool Gateway, Stripe billing, documents (S3), admin APIs.
 - `local-host/python/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron + React + Vite + Tailwind user app (local-first chat history).
-- `admin/` — standalone React/Vite admin panel (shadcn/ui).
+- `apps/admin/` — standalone React/Vite admin panel (shadcn/ui).
 
 **Read [CLAUDE.md](./CLAUDE.md) first** — it has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend/frontend/testing rules.
 

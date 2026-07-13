@@ -35,7 +35,7 @@ updates:
     labels: [dependencies, client]
 
   - package-ecosystem: npm
-    directory: /admin
+    directory: /apps/admin
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:

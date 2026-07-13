@@ -146,7 +146,7 @@ done
 
 # ---------------------------------------------------------------------------
 section "📁  Dependencies"
-for path in client admin local-host/python; do
+for path in client apps/admin local-host/python; do
   case "$path" in
     local-host/python)
       [[ -d "$path/.venv" ]] && row "✅" "$path" "uv venv ready" \

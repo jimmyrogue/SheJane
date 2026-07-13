@@ -33,7 +33,7 @@ The diagram below describes the **current implementation**, including cloud depe
 └─────────────────────────────────┘         └──────────────────────┘
 ```
 
-There's also an admin panel (`admin/`) — separate Vite/React app for the model catalog, credit-rate tuning, audit logs, and user/account operations.
+There's also an admin panel (`apps/admin/`) — separate Vite/React app for the model catalog, credit-rate tuning, audit logs, and user/account operations.
 
 The two runtime truth sources answer different questions:
 
@@ -144,12 +144,12 @@ make logs-dev                # snapshot of all of the above
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
-| Model catalog / provider routing | `api/internal/modelreg/`, `api/internal/llm/router.go`, `api/internal/app/model_resolver.go`, `api/internal/httpapi/admin_modelconfig.go`, `admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
+| Model catalog / provider routing | `api/internal/modelreg/`, `api/internal/llm/router.go`, `api/internal/app/model_resolver.go`, `api/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
 | Daemon code | `local-host/python/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
 | API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |
 | Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
-| Admin panel | `admin/` — separate Vite app; model configs, credit rate, audit logs |
+| Admin panel | `apps/admin/` — separate Vite app; model configs, credit rate, audit logs |
 | Contract tests (real HTTP, not MockTransport) | `client/src/shared/local-host/client.contract.test.ts` |
 
 ## Conventions
@@ -171,7 +171,7 @@ make logs-dev                # snapshot of all of the above
 - `api/internal/store` is an interface (`store.go`) with two implementations that MUST stay in lockstep: `memory.go` (tests/dev) and `postgres.go` (prod), plus their `*_modelconfig.go` siblings for the model registry. Add a method to the interface → implement it in both, or the Postgres path silently diverges from a green in-memory test suite. This is the contract-drift bug class from the intro, living inside one stack.
 - Stripe webhook handling must stay idempotent: dedupe on `stripe_events`, set `processed_at` only after local processing succeeds, and key credit grants with `wallet_transactions.idempotency_key = stripe:<event_id>`. See AGENTS.md for the full lifecycle + admin-audit rules.
 
-### TypeScript (client/, admin/)
+### TypeScript (client/, apps/admin/)
 
 - Vite + React 18 + TypeScript strict mode. Tailwind 4 + shadcn/ui.
 - Daemon types come from `client/src/shared/local-host/generated.d.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.

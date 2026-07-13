@@ -34,7 +34,7 @@ export default defineConfig({
     },
     {
       command: `pnpm dev --host 127.0.0.1 --port ${adminPort}`,
-      cwd: '../../admin',
+      cwd: '../../apps/admin',
       url: adminURL,
       reuseExistingServer: false,
       timeout: 120_000,
