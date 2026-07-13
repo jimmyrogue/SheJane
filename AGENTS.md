@@ -11,8 +11,7 @@ For any work touching Desktop ↔ Runtime startup, Commands, Runs, Events, Worke
 1. Read **[docs/harness-runtime-stages.md](./docs/harness-runtime-stages.md)** and identify one canonical `primary_stage` before changing code.
 2. Read the stage's immediate upstream and downstream contracts in order.
 3. Compare the target stage with the current implementation in **[docs/run-loop.md](./docs/run-loop.md)**.
-4. Check existing decisions in **[docs/harness-stage-improvement-notes.md](./docs/harness-stage-improvement-notes.md)**.
-5. Record the primary stage, affected adjacent stages, canonical state owner, and old path being replaced in the implementation plan or handoff.
+4. Record the primary stage, affected adjacent stages, canonical state owner, and old path being replaced in the implementation plan or handoff.
 
 Do not invent a second P1-P12 numbering scheme. `run-loop.md` describes current code; `harness-runtime-stages.md` alone owns target stage numbers.
 
@@ -57,7 +56,7 @@ pnpm --filter @shejane/runtime-sdk test
 ## Runtime Model Rules
 
 - Desktop reads enabled models from Runtime and submits concrete `local:<provider>:<model>` selections.
-- Do not reintroduce Auto, fast/deep UX, Go Cloud model discovery, or daemon-side model classifiers in Desktop/Runtime.
+- Do not add automatic model selection or silent provider fallback in Desktop or Runtime.
 - Runtime provider configuration lives in SQLite; provider secrets live in the operating-system credential store.
 
 ## Frontend Rules
@@ -66,7 +65,7 @@ Desktop UI expectations:
 
 - Runtime owns authoritative conversations and task state; Desktop stores a disposable local projection and pending commands.
 - Keep import/export behavior intact.
-- Local documents stay inside authorized Runtime workspaces; Desktop must not upload them to a private cloud path.
+- Local documents stay inside authorized Runtime workspaces; Desktop must not upload them to an external private path.
 - New attachment support must use a Runtime-owned persistence and permission protocol, not S3 IDs or product-specific download URLs.
 - Follow the SheJane visual system in `docs/ui/shejane-design-system.md`: warm paper + ink, seal red only for brand/running/critical states, moss only for online/success, and single-color typographic attachment glyphs instead of colorful file icons.
 

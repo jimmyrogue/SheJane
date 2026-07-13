@@ -30,7 +30,7 @@ help: ## Show this help
 	@echo ""
 
 ##@ Dev & restart
-dev-electron: ## Runtime + Vite + Electron (hard-restarts; no Cloud required)
+dev-electron: ## Runtime + Vite + Electron with a clean local restart
 	./scripts/dev.sh start
 
 restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit — seconds, not a full relaunch

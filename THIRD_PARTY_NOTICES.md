@@ -2,13 +2,13 @@
 
 SheJane includes and depends on third-party software, fonts, and tools. Those components remain under their own licenses and are not relicensed under the SheJane community or commercial license.
 
-This file summarizes the direct dependencies and notable transitive license families found in the repository on 2026-07-13. Exact versions are recorded in `pnpm-lock.yaml`, `pyproject.toml`, and `uv.lock`. Distributions must retain the license and notice files supplied with each dependency.
+Exact dependency versions are recorded in `pnpm-lock.yaml`, `pyproject.toml`, and `uv.lock`. Distributions must retain the license and notice files supplied with each dependency.
 
 ## JavaScript and Electron
 
-The Desktop client, Runtime SDK, and end-to-end tests use packages under the MIT, ISC, BSD-2-Clause, BSD-3-Clause, Apache-2.0, 0BSD, BlueOak-1.0.0, Python-2.0, Unlicense, CC0-1.0, and similar permissive licenses.
+The Desktop client and Runtime SDK use packages under the MIT, ISC, BSD, Apache-2.0, and other permissive licenses.
 
-Direct runtime dependencies include React, Lexical, Radix UI, Tailwind CSS, Tabler Icons, Lucide, ExcelJS, docx-preview, highlight.js, react-markdown, Electron Updater, and related utilities. Their package metadata and installed license files contain the applicable copyright notices and terms.
+Direct runtime dependencies include React, Lexical, Radix UI, Tailwind CSS, Tabler Icons, ExcelJS, docx-preview, highlight.js, react-markdown, Electron Updater, and related utilities. Their package metadata and installed license files contain the applicable copyright notices and terms.
 
 The following items need separate attention:
 

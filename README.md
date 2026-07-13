@@ -15,9 +15,6 @@ English · [简体中文](./README.zh-CN.md)
 
 </div>
 
-> [!NOTE]
-> SheJane now ships only the standalone Desktop, Runtime, and public Runtime SDK. The retired Cloud and Admin design is preserved in [the history document](./docs/history/cloud-admin-architecture.md).
-
 ## Why SheJane
 
 - The local Runtime owns the agent loop, tool execution, permissions, checkpoints, and workspace access.
@@ -34,7 +31,7 @@ flowchart LR
     R --> B["BYOK providers<br/>OpenAI-compatible APIs · local endpoints"]
 ```
 
-The desktop client and Runtime communicate over loopback HTTP with a pairing token. A failed local Runtime should surface as a local error, not silently create a cloud task.
+The desktop client and Runtime communicate over loopback HTTP with a pairing token. A failed Runtime surfaces as a local error and never switches execution paths silently.
 
 ## What is included
 
@@ -72,7 +69,7 @@ make build       # production builds
 
 - [Runtime stages](./docs/harness-runtime-stages.md) defines the target P1–P12 architecture.
 - [Current run loop](./docs/run-loop.md) describes what the code does today.
-- [Improvement notes](./docs/harness-stage-improvement-notes.md) records keep, replace, and delete decisions.
+- [Runtime protocol](./docs/runtime-protocol.md) defines HTTP, SSE, events, and recovery cursors.
 - [Contributor guide](./CONTRIBUTING.md) covers setup, testing, and the CLA process.
 - [Operations](./docs/operations.md) covers deployment and troubleshooting.
 

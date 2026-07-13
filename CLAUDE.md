@@ -24,8 +24,6 @@ The diagram below describes the current implementation. Target P1-P12 stage numb
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The retired Go Cloud and Admin design is preserved only in `docs/history/cloud-admin-architecture.md` and Git history.
-
 The two runtime truth sources answer different questions:
 
 - **[docs/harness-runtime-stages.md](docs/harness-runtime-stages.md)** — canonical target P1-P12 stages, migration seams, and the mandatory pre-change comparison order.
@@ -33,7 +31,7 @@ The two runtime truth sources answer different questions:
 
 Never use `run-loop.md` to invent target phase numbers, and never describe unimplemented target behavior as current code.
 
-**Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook. [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. Current priorities live in [docs/roadmap.md](docs/roadmap.md). The product spec is [spec.md](spec.md).
+**Sibling guides:** this file is the architecture + invariants. [AGENTS.md](AGENTS.md) is the day-to-day rulebook. [CONTRIBUTING.md](CONTRIBUTING.md) has dev setup + PR workflow. Current priorities live in [docs/roadmap.md](docs/roadmap.md).
 
 ## Critical invariants
 
@@ -43,15 +41,15 @@ These are not arbitrary style rules — each one corresponds to a class of bug t
 
 2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `packages/runtime-sdk/src/generated.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.ts`. CI's lint job fails the PR if they drift.
 
-3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "created_at": ...}`; durable events also carry a monotonic `seq`, while temporary model output deliberately has no replay cursor. The separator is **LF** double-newline (not CRLF), and the terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
+3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "created_at": ...}`; durable events also carry a monotonic `seq`, while temporary model output deliberately has no replay cursor. The separator is **LF** double-newline (not CRLF), and the terminator is `data: [DONE]`. Full spec in `docs/runtime-protocol.md`.
 
 4. **`make dev-electron` always hard-restarts.** It SIGKILLs any straggler daemon/vite/electron processes and frees ports before starting. Opt out only with `SHEJANE_DEV_REUSE=1`. The reason: uvicorn traps SIGTERM and can outlive a "graceful" restart, leaving the next session attached to a daemon with stale code in memory. If you suspect this, run `make doctor` to see the daemon's PID + start time.
 
 5. **Configuration has one owner.** There is no root `.env`. Desktop, Runtime, and Runtime SDK require zero user env by default.
 
-6. **Runtime model selection is BYOK-owned.** Desktop reads models from Runtime and submits a concrete `local:<provider>:<model>` selection. Do not restore Go Cloud catalog discovery, Auto resolution, or fast/deep classifiers in Desktop or Runtime.
+6. **Runtime model selection is BYOK-owned.** Desktop reads models from Runtime and submits a concrete `local:<provider>:<model>` selection. Runtime does not silently choose another model or provider.
 
-7. **Product-specific connectors do not belong in the runtime core.** The retired Lark/Feishu message-sync and todo pipeline must not be restored as private daemon routes, dedicated tables, or client state. Future business-platform integrations should use standard tools or MCP.
+7. **Product-specific connectors do not belong in the runtime core.** Business-platform integrations use standard tools or MCP, not private Runtime routes, tables, or client state.
 
 ## Common commands
 
@@ -80,8 +78,7 @@ make logs-client
 |---|---|
 | Canonical target P1-P12 chain, stage number for a change, pre-change comparison checklist | `docs/harness-runtime-stages.md` |
 | One run from POST to terminal — middleware order, HITL, scope=run, SSE events | `docs/run-loop.md` |
-| Existing keep/delete/migrate decisions by target stage | `docs/harness-stage-improvement-notes.md` |
-| Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
+| Runtime HTTP and SSE — event names, envelope keys, endpoints, and cursors | `docs/runtime-protocol.md` |
 | Runtime packaging and local operations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
 | Runtime model providers | `services/runtime/local_host/server.py`, `services/runtime/local_host/runs.py`, `services/runtime/local_host/llm/`, `apps/desktop/src/features/settings/ModelProvidersSettings.tsx` |
@@ -98,7 +95,7 @@ make logs-client
 - Lint: ruff (configured in `pyproject.toml`). Format: ruff format. `make lint` enforces.
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
-- New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/` and append it to `tools/registry.py`. Remote capabilities should use MCP; do not add product-private Cloud routes.
+- New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/` and append it to `tools/registry.py`. External capabilities should use MCP instead of product-private routes.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
 ### TypeScript (apps/desktop/, packages/runtime-sdk/)
@@ -144,4 +141,4 @@ If anything is wrong, `make doctor` checks Runtime, Desktop ports, workspace dep
 - Don't `pkill -f 'shejane-runtime'` and assume the process died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.
-- Don't add Auto, fast/deep, or Cloud catalog model branches to Desktop or Runtime. Use concrete Runtime BYOK model selections.
+- Don't add automatic model selection or silent provider fallback. Use concrete Runtime BYOK model selections.

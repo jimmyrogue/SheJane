@@ -15,4 +15,5 @@ const info = await runtime.getRuntimeInfo()
 
 Electron, React, IndexedDB, and SheJane product UI types are intentionally outside this package. A caller may provide its own authenticated `fetcher` instead of a token.
 
-See [`openapi.json`](./openapi.json) for the complete Runtime protocol.
+See [`openapi.json`](./openapi.json) for generated HTTP types and
+[`docs/runtime-protocol.md`](../../docs/runtime-protocol.md) for HTTP and SSE behavior.

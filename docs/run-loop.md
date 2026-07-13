@@ -1,13 +1,13 @@
 # Run Loop —— 当前能力实现态
 
-创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`，当前支持 OpenAI 兼容接口。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。Runtime 不再包含 Go 模型中转、云会话或 Cloud 工具网关，也不会在失败时切换到 Cloud。
+创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。模型失败不会触发静默回退。
 
 > **范围**：`services/runtime/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
-> **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) · [client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
-> **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
-> **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
+> **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [runtime-protocol.md](runtime-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
+> **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。阶段编号以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准。
+> **边界**：业务平台连接器不属于 Runtime 核心，通过标准工具或 MCP 接入。
 
-桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点、数据目录和一次性配对 Token，并通过源码与打包产物共用的命令行入口启动进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。Runtime 配置本身也拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败不会回退云端任务，而是创建离线桌面界面，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
+桌面发行版默认由 Electron Main 为自带 Runtime 分配本机端点、数据目录和一次性配对 Token，并通过源码与打包产物共用的命令行入口启动进程。用户也可以在设置中选择自己管理的 loopback Runtime；新 Token 只从密码输入框经一次 IPC 提交，已保存 Token 不会回传 Renderer。外部地址和加密 Token 由 Main 保存，Electron 不关闭外部进程。Runtime 配置本身也拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败时 Desktop 进入离线状态，让用户修正连接或切回自带 Runtime。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
 
 ---
 
@@ -293,7 +293,7 @@
 
 ## 能力清单（测试覆盖）
 
-### e2e 直接验证（`tests/test_e2e_capabilities.py`）
+### Runtime 集成测试（`tests/test_e2e_capabilities.py`）
 
 | # | 能力 | 触发位置 | 测试 case |
 |---|---|---|---|
@@ -308,7 +308,7 @@
 | 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` ✅ |
 | 2c | **子 Agent 同一执行边界** | 子 Agent 内工具也经过确认和回执 | `capability_2c_subagent_tools_share_review_and_receipt_boundary` ✅ |
 | 3 | 供应商缓存边界 | Runtime 不注入供应商私有缓存标记，由标准供应商适配器决定 | `capability_3_prompt_caching_is_gateway_owned` ✅ |
-| 4 | 自动模型回退禁用 | Runtime 不会在失败后自行更换模型或切换 Cloud | `capability_4_local_direct_modelfallback_ignored` ✅ |
+| 4 | 自动模型回退禁用 | Runtime 不会在失败后自行更换模型或供应商 | `capability_4_local_direct_modelfallback_ignored` ✅ |
 | 6 | **AGENTS.md 注入** | `MemoryMiddleware` → system prompt | `cap_6_memory_md` ✅（出站 system 含 marker） |
 | 7 | TodoList | `before_agent` 注入 write_todos 工具 | `cap_7_write_todos` ✅ |
 | 8 | 快路径 happy run | 全链 | `cap_8_happy_path` ✅ |
@@ -357,7 +357,7 @@
 | 模型错误 durable failure | 供应商错误进入统一失败策略；不可恢复或重试耗尽后写入结构化 `run.failed` | `test_model_ledger` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |
-| **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` ✅ **p50 24.8ms** |
+| **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` |
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
 | 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 计划审批 | 客户端持久保存 `plan.resolve` → Runtime 原子保存决定、事件与回执；与同一等待周期的其他候选共同结算 | `test_runs_http` / `test_plan_approval` / `client.test` / `App.test` |
@@ -389,7 +389,7 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 | RunCoordinator + driver loop | [`local_host/runs.py`](../services/runtime/local_host/runs.py) |
 | build_agent + middleware 装配 | [`local_host/agent/builder.py`](../services/runtime/local_host/agent/builder.py) |
 | Subagent 定义 | [`local_host/agent/subagents.py`](../services/runtime/local_host/agent/subagents.py) |
-| 6 个自写 middleware | [`local_host/middleware/`](../services/runtime/local_host/middleware/) |
+| Runtime middleware | [`local_host/middleware/`](../services/runtime/local_host/middleware/) |
 | 模型适配、上下文与调用账本 | [`local_host/llm/`](../services/runtime/local_host/llm/) |
 | LangGraph → 客户端事件翻译 | [`local_host/event_translator.py`](../services/runtime/local_host/event_translator.py) |
 | structlog + DaemonObserver | [`local_host/observability.py`](../services/runtime/local_host/observability.py) |
@@ -406,4 +406,4 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 | SubAgent 真完成研究 | 需真 LLM 推理在 researcher 子 agent 里跑完 |
 | Memory AGENTS.md 真被遵守 | 验证规则真改变模型输出，需真 LLM |
 
-这些是“真模型是否按预期行动”的问题，框架接入正确性已被本图所示的 mock e2e 覆盖。
+这些是“真模型是否按预期行动”的问题；框架接入正确性由 Runtime 集成测试覆盖。

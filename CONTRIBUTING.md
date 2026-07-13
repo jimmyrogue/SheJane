@@ -50,7 +50,7 @@ If anything looks wrong, `make doctor` is the first stop.
 
 1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store. Enforced by `scripts/check.sh`.
 2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `packages/runtime-sdk/src/generated.ts`.
-3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
+3. **The SSE wire envelope is fixed.** See `docs/runtime-protocol.md` before touching streaming.
 4. **Runtime owns accepted commands, conversations, task state, checkpoints, and tool receipts.** Desktop stores only pending commands and a disposable projection.
 
 ## Workflow
@@ -69,13 +69,13 @@ If anything looks wrong, `make doctor` is the first stop.
 ## Tests & lint
 
 ```bash
-make lint                   # ruff + the no-platform-keys guard
+make lint                   # ruff + project guards
 make test                   # Runtime + Desktop + Runtime SDK
 
 # focused:
 make local-host-test        # uv run python -m pytest
 make client-test            # client vitest
-make runtime-sdk-test    # public SDK vitest
+make runtime-sdk-test       # public SDK vitest
 ```
 
 CI runs the same lint + deterministic-test + contract jobs on every PR.

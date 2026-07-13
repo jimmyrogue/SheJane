@@ -29,7 +29,7 @@ Conventions:
     consistency with PEP 604 + the rest of the codebase.
   • SSE event payloads are NOT in here — discriminated unions over
     `event_type` don't roundtrip cleanly through openapi. The wire
-    format is documented in `docs/client-sse-protocol.md` and the
+    format is documented in `docs/runtime-protocol.md` and the
     TS `AgentRunEvent` interface stays hand-written in
     `packages/runtime-sdk/src/client.ts`.
 """

@@ -2,7 +2,7 @@
 SSE stream into a Trajectory. Used by `make eval` against the live stack
 (needs a Runtime with a real configured provider for a meaningful score).
 
-The SSE wire format is the daemon's canonical envelope (docs/client-sse-protocol.md):
+The SSE wire format is the Runtime's canonical envelope (docs/runtime-protocol.md):
 each `data:` line is JSON {event_type, payload, ...}; `data: [DONE]` ends it.
 """
 

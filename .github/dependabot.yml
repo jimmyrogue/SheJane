@@ -2,7 +2,7 @@
 #
 # Why grouped: a typical week brings 10+ minor bumps; reviewing them as
 # one PR per ecosystem keeps the review queue manageable AND lets
-# `make test-ci` validate the whole batch at once.
+# `make ci` validates the whole batch at once.
 #
 # Why weekly (not daily): security advisories still page out
 # immediately via Dependabot's separate alert channel; the weekly

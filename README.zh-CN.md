@@ -15,9 +15,6 @@
 
 </div>
 
-> [!NOTE]
-> SheJane 现在只发布独立的 Desktop、Runtime 和公共 Runtime SDK。已经退役的 Cloud 与 Admin 方案保存在[历史文档](./docs/history/cloud-admin-architecture.md)中。
-
 ## 为什么做 SheJane
 
 - 本地 Runtime 负责 Agent 循环、工具执行、权限、检查点和工作区访问。
@@ -34,7 +31,7 @@ flowchart LR
     R --> B["BYOK 供应商<br/>OpenAI 兼容接口 · 本地模型端点"]
 ```
 
-桌面客户端通过 loopback HTTP 和配对凭证连接 Runtime。本地 Runtime 失败时应明确报告本地错误，不应静默创建云端任务。
+桌面客户端通过 loopback HTTP 和配对凭证连接 Runtime。Runtime 失败时明确报告本地错误，不静默切换执行路径。
 
 ## 当前包含什么
 
@@ -46,7 +43,7 @@ flowchart LR
 | 桌面端 | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 
-Runtime 不再内置业务平台连接器。未来统一通过标准工具或 MCP 接入。
+业务平台连接器统一通过标准工具或 MCP 接入。
 
 ## 快速开始
 
@@ -72,7 +69,7 @@ make build       # 生产构建
 
 - [Runtime 阶段总览](./docs/harness-runtime-stages.md) 定义目标 P1–P12 架构。
 - [当前运行链路](./docs/run-loop.md) 说明代码现在如何运行。
-- [待优化记录](./docs/harness-stage-improvement-notes.md) 保存保留、替换和删除决定。
+- [Runtime 协议](./docs/runtime-protocol.md) 定义 HTTP、SSE、事件与恢复游标。
 - [贡献指南](./CONTRIBUTING.md) 说明开发、测试和 CLA 流程。
 - [运维手册](./docs/operations.md) 说明部署和排障。
 

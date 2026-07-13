@@ -1,13 +1,11 @@
-# Client ⇄ local-host SSE 协议
+# Runtime HTTP 与 SSE 协议
 
-> 本文只记录当前实现，不是目标运行时协议。线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复持久状态；游标超出保留窗口时重新读取权威快照。逐字文本、推理、临时用量、工具参数片段和子 Agent 启动片段只通过有界实时通道发送，断线后不重放。P4 目标和后续边界见 [`harness-runtime-stages.md`](harness-runtime-stages.md) 与 [`harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md)。
+> 本文记录当前公开协议。线程快照返回每个 Run 的安全事件高水位，客户端通过 `?after=<seq>` 恢复持久状态；游标超出保留窗口时重新读取权威快照。逐字文本、推理、临时用量和未完成调用片段只通过有界实时通道发送，断线后不重放。P4 的阶段边界见 [`harness-runtime-stages.md`](harness-runtime-stages.md)。
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
 > **文档版本**：对应 `@shejane/runtime-sdk` 的 SSE 解析、Runtime `RunCoordinator.stream` 与 `event_translator.translate`。
 >
-> **历史**：Phase 4' 之前使用 `llm.token` / `tool.end` 等命名，且 `data:` 体直接放裸 payload；2026-05-22 重写后改为 `llm.delta` / `tool.completed` + AgentRunEvent envelope。如果你看到代码里还有旧名，那是漂移，请按本协议为准。
-
 ---
 
 ## Wire 格式

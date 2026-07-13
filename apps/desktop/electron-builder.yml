@@ -1,5 +1,5 @@
 # electron-builder config for the SheJane (石间) desktop app.
-# See docs/desktop-distribution.md for packaging and release details.
+# See docs/operations.md for packaging and release details.
 
 appId: com.shejane.desktop
 productName: 石间

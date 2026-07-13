@@ -1,13 +1,6 @@
 # SheJane UI Design System
 
-This is the source-of-truth style reference for the SheJane (石间) user app UI. It is distilled from the June 2026 redesign package, especially `SheJane 原型 v4.html`; `石间 设计交付.html` is the index and decision record.
-
-Source materials:
-
-- `石间 设计交付.html` — final tokens, logo decision, direction C "间", and delivery notes.
-- `SheJane 原型 v4.html` — primary app shell prototype: chat, sidebar, todo references, preview island, rich text, and tweaks.
-- `SheJane 设计探索 v1.html` — exploration board for brand options, three chat directions, admin/settings surfaces, palette, and type.
-- `SheJane 每日摘要探索.html` — daily-summary/today-product exploration; keep it as future product scope until data and backend support exist.
+This is the source of truth for the SheJane (石间) Desktop visual system.
 
 ## Visual Thesis
 
@@ -54,7 +47,7 @@ Radius and depth:
 
 Use the "圆相" mark: an unclosed ink circle with one seal-red stone at the gap.
 
-- Renderer assets: `apps/desktop/src/shared/assets/logo.png` (ring mark, transparent background) and `apps/desktop/src/shared/assets/logo-lockup.png` (horizontal lockup: mark + 石间 + SHEJANE, used on the auth page). Both come from the brand delivery as PNG — there is no SVG source in-repo.
+- Renderer assets: `apps/desktop/src/shared/assets/logo.png` and `logo-lockup.png`. Both are PNG assets; there is no SVG source in the repository.
 - Electron assets: `apps/desktop/electron/assets/app-icon.png`/`.icns` (dark squircle, off-white ring), `apps/desktop/electron/assets/app-tray*.png`.
 - The tray icon is a black transparent mask because Electron sets it as a macOS template image.
 
@@ -84,11 +77,3 @@ Attachments and generated artifacts use single-color type glyphs instead of colo
 - Code: `{}`
 
 Cards should be small raised-paper objects with a hairline, not colored badges. Clicking previewable files opens the right floating preview panel; non-previewable files keep the external/download action.
-
-## Future Product Surfaces
-
-When these features are implemented:
-
-- Todo priority should be conveyed by ink depth and a seal-red count only for "now" items.
-- A message can carry a small todo reference card.
-- Daily summaries should prioritize at most three "现在回" items.
