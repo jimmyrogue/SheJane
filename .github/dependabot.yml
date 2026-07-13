@@ -10,24 +10,15 @@
 
 version: 2
 updates:
-  # --- npm workspaces ---
+  # --- pnpm workspace ---
   - package-ecosystem: npm
-    directory: /apps/desktop
+    directory: /
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:
-      client-minor-patch:
+      workspace-minor-patch:
         update-types: [minor, patch]
-    labels: [dependencies, client]
-
-  - package-ecosystem: npm
-    directory: /tests/e2e
-    schedule: { interval: weekly, day: monday }
-    open-pull-requests-limit: 3
-    groups:
-      e2e-minor-patch:
-        update-types: [minor, patch]
-    labels: [dependencies, e2e]
+    labels: [dependencies, workspace]
 
   # --- Python (local-host daemon, managed by uv but pip-compatible) ---
   - package-ecosystem: pip
