@@ -630,7 +630,7 @@ class RunCoordinator:
 
         `history`, `parent_run_id`, `settings` are the optional fields
         the client sends in the POST /runs body (see TS `createLocalRun`
-        in packages/runtime-client/src/client.ts). Previously they
+        in packages/runtime-sdk/src/client.ts). Previously they
         were silently dropped — meaning every conversation turn restarted
         the agent with zero context (multi-turn memory broken in local
         mode). We persist them on the run row and feed `history` into

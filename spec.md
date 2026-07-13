@@ -14,11 +14,11 @@ SheJane 是一个可独立运行的桌面 Agent Harness：
 
 ## 模块边界
 
-| 模块 | 职责 | 是否为核心依赖 |
-|---|---|---:|
-| `services/runtime/` | Python Harness Runtime | 是 |
-| `apps/desktop/` | Electron 桌面客户端 | 是 |
-| `packages/runtime-client/` | Runtime TypeScript SDK | 是 |
+| 模块 | 职责 | 定位 |
+|---|---|---|
+| `services/runtime/` | Python Harness Runtime | 核心 |
+| `apps/desktop/` | Electron 桌面客户端 | 官方客户端 |
+| `packages/runtime-sdk/` | Runtime TypeScript SDK | 可选开发工具包 |
 
 ## 核心原则
 

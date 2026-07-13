@@ -1,9 +1,9 @@
-export * from '@shejane/runtime-client'
+export * from '@shejane/runtime-sdk'
 
 import {
   SheJaneRuntimeClient,
   type RuntimeClientConfig,
-} from '@shejane/runtime-client'
+} from '@shejane/runtime-sdk'
 
 export interface DesktopBridge {
   platform: string

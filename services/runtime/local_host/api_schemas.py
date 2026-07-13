@@ -31,7 +31,7 @@ Conventions:
     `event_type` don't roundtrip cleanly through openapi. The wire
     format is documented in `docs/client-sse-protocol.md` and the
     TS `AgentRunEvent` interface stays hand-written in
-    `packages/runtime-client/src/client.ts`.
+    `packages/runtime-sdk/src/client.ts`.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
-name: Release Runtime Client
+name: Release Runtime SDK
 
 on:
   push:
-    tags: ["runtime-client-v*"]
+    tags: ["runtime-sdk-v*"]
   workflow_dispatch:
 
 permissions:
@@ -24,18 +24,18 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @shejane/runtime-client test
-      - run: pnpm --filter @shejane/runtime-client build
+      - run: pnpm --filter @shejane/runtime-sdk test
+      - run: pnpm --filter @shejane/runtime-sdk build
       - name: Verify tag matches package version
         if: github.ref_type == 'tag'
         shell: bash
         run: |
-          expected="${GITHUB_REF_NAME#runtime-client-v}"
-          actual="$(node -p "require('./packages/runtime-client/package.json').version")"
+          expected="${GITHUB_REF_NAME#runtime-sdk-v}"
+          actual="$(node -p "require('./packages/runtime-sdk/package.json').version")"
           test "$actual" = "$expected"
       - name: Publish npm package
         if: github.ref_type == 'tag'
-        working-directory: packages/runtime-client
+        working-directory: packages/runtime-sdk
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm publish --access public --provenance --no-git-checks

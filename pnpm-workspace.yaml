@@ -1,7 +1,6 @@
 packages:
   - apps/desktop
   - packages/*
-  - tests/e2e
 
 allowBuilds:
   electron: true

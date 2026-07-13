@@ -39,9 +39,9 @@ Never use `run-loop.md` to invent target phase numbers, and never describe unimp
 
 These are not arbitrary style rules — each one corresponds to a class of bug that has actually shipped and burned hours in this repo.
 
-1. **Runtime provider keys MUST live in the Runtime credential store, never process env.** Runtime has no private platform Gateway path. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
+1. **Runtime provider keys MUST live in the Runtime credential store, never process env.** Runtime has no private platform Gateway path. Enforced by `scripts/check.sh`.
 
-2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `packages/runtime-client/src/generated.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.ts`. CI's lint job fails the PR if they drift.
+2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `packages/runtime-sdk/src/generated.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.ts`. CI's lint job fails the PR if they drift.
 
 3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "created_at": ...}`; durable events also carry a monotonic `seq`, while temporary model output deliberately has no replay cursor. The separator is **LF** double-newline (not CRLF), and the terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
 
@@ -62,14 +62,12 @@ make doctor              # local diagnostic
 make help                # list commands
 
 make test                # Runtime + Desktop + Runtime SDK
-make test-e2e           # Playwright Desktop flow
 make test-contract      # real Desktop client ↔ Runtime HTTP
 make build
 make lint
 make ci
 
 make schemas            # regenerate OpenAPI + TypeScript types
-make smoke-local-host   # deterministic Runtime HTTP smoke
 
 make release COMPONENT=runtime VERSION=0.1.0
 make logs-local-host
@@ -88,7 +86,7 @@ make logs-client
 | Current priorities | `docs/roadmap.md` |
 | Runtime model providers | `services/runtime/local_host/server.py`, `services/runtime/local_host/runs.py`, `services/runtime/local_host/llm/`, `apps/desktop/src/features/settings/ModelProvidersSettings.tsx` |
 | Daemon code | `services/runtime/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
-| Client code | `apps/desktop/src/` — `App.tsx` is the chat shell, `features/` holds chat, MCP, skills and settings, and `shared/local-host/client.ts` adapts `@shejane/runtime-client` to Electron |
+| Client code | `apps/desktop/src/` — `App.tsx` is the chat shell, `features/` holds chat, MCP, skills and settings, and `shared/local-host/client.ts` adapts `@shejane/runtime-sdk` to Electron |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
 | Contract tests (real HTTP, not MockTransport) | `apps/desktop/src/shared/local-host/client.contract.test.ts` |
 
@@ -103,12 +101,12 @@ make logs-client
 - New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/` and append it to `tools/registry.py`. Remote capabilities should use MCP; do not add product-private Cloud routes.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
-### TypeScript (apps/desktop/, packages/runtime-client/)
+### TypeScript (apps/desktop/, packages/runtime-sdk/)
 
 - Vite + React 18 + TypeScript strict mode. Tailwind 4 + shadcn/ui.
-- Daemon types come from `packages/runtime-client/src/generated.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
+- Daemon types come from `packages/runtime-sdk/src/generated.ts` — re-exported as aliases in `client.ts`. Don't hand-write a new interface for daemon data; add it to `api_schemas.py` and regenerate.
 - Hand-written types in `client.ts` are documented at the top of the file (DesktopBridge, LocalHostConfig, LocalHostProbe, LocalStreamHandlers) — these have no daemon equivalent.
-- SSE parsing and the `AgentRunEvent` union live in `packages/runtime-client`. New Runtime events also need a Desktop projection in `features/chat/chatStore.ts` and/or `App.tsx`.
+- SSE parsing and the `AgentRunEvent` union live in `packages/runtime-sdk`. New Runtime events also need a Desktop projection in `features/chat/chatStore.ts` and/or `App.tsx`.
 
 ### Commits
 
@@ -121,7 +119,7 @@ make logs-client
 |---|---|---|
 | Pre-commit | `lefthook.yml` | ruff/no-platform-keys/no-env-files |
 | CI | `.github/workflows/ci.yml` | lint / unit + build / e2e / contract round-trip |
-| Release | `.github/workflows/release-*.yml` | independent `runtime-v*`, `desktop-v*`, and `runtime-client-v*` releases |
+| Release | `.github/workflows/release-*.yml` | independent `runtime-v*`, `desktop-v*`, and `runtime-sdk-v*` releases |
 | Deps | `.github/dependabot.yml` | weekly grouped PRs for npm/pip/github-actions |
 | Skills (Claude Code) | `.claude/skills/` | `sync-schemas`, `daemon-restart` |
 | Subagents (Claude Code) | `.claude/agents/` | `contract-shape-reviewer` |
@@ -142,7 +140,7 @@ If anything is wrong, `make doctor` checks Runtime, Desktop ports, workspace dep
 ## Things to never do
 
 - Don't read provider keys from Runtime env or restore a private platform Gateway adapter. Use the Runtime credential store and standard provider/MCP interfaces.
-- Don't hand-edit `packages/runtime-client/src/generated.ts` or `packages/runtime-client/openapi.json`. They're build artifacts of `make schemas`.
+- Don't hand-edit `packages/runtime-sdk/src/generated.ts` or `packages/runtime-sdk/openapi.json`. They're build artifacts of `make schemas`.
 - Don't `pkill -f 'shejane-runtime'` and assume the process died — uvicorn traps SIGTERM. Use `make restart-daemon` (or `lsof -ti :17371 | xargs kill -9`). The `daemon-restart` skill encapsulates this.
 - Don't change SSE event names without checking `chatStore.ts` and `App.tsx` for switch cases that match. The whole pipeline silently no-ops on a typo'd event name.
 - Don't return raw `dict[str, Any]` from a new endpoint — declare a pydantic response model. Otherwise `openapi.json` says `additionalProperties: true` and the schema pipeline has nothing to generate types from.

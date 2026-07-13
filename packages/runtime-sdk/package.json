@@ -1,13 +1,13 @@
 {
-  "name": "@shejane/runtime-client",
+  "name": "@shejane/runtime-sdk",
   "version": "0.1.0",
-  "description": "TypeScript client for the SheJane Harness Runtime HTTP protocol.",
+  "description": "TypeScript SDK for the SheJane Harness Runtime HTTP and SSE protocols.",
   "license": "AGPL-3.0-only",
   "author": "TAO LIANG <tliang92@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",
-    "directory": "packages/runtime-client"
+    "directory": "packages/runtime-sdk"
   },
   "type": "module",
   "files": [

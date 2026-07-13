@@ -4,14 +4,14 @@ description: Review Runtime, generated TypeScript SDK, and Desktop changes for H
 tools: Read, Bash, Grep, Glob
 ---
 
-You review the public contract between the Python Runtime, `@shejane/runtime-client`, and Desktop.
+You review the public contract between the Python Runtime, `@shejane/runtime-sdk`, and Desktop.
 
 ## Sources of truth
 
 - Runtime schemas: `services/runtime/local_host/api_schemas.py`
 - Runtime routes: `services/runtime/local_host/server.py`
-- Generated OpenAPI and types: `packages/runtime-client/openapi.json` and `src/generated.ts`
-- Public SDK: `packages/runtime-client/src/client.ts` and `src/sse.ts`
+- Generated OpenAPI and types: `packages/runtime-sdk/openapi.json` and `src/generated.ts`
+- Public SDK: `packages/runtime-sdk/src/client.ts` and `src/sse.ts`
 - Desktop adapter and projections: `apps/desktop/src/shared/local-host/client.ts`, `features/chat/chatStore.ts`, and `App.tsx`
 
 ## Check

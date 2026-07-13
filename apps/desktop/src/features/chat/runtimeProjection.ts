@@ -1,4 +1,4 @@
-import type { AgentRunEvent } from '@shejane/runtime-client'
+import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
 import type { ChatMessage, Conversation, MessageStatus } from '../../shared/local-data/types'
 import type { LocalRun, LocalThreadItem, LocalThreadSnapshot } from '../../shared/local-host/client'

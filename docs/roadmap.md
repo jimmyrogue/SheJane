@@ -10,9 +10,9 @@ SheJane 首先是独立的 Desktop Agent Harness：
 
 ## 已完成
 
-- Monorepo 目录拆分：`apps/`、`services/`、`packages/`、`tests/`、`infra/`。
+- Monorepo 目录拆分：`apps/`、`services/` 和 `packages/`。
 - pnpm 11.7 工作区和唯一根锁文件。
-- 公共 `@shejane/runtime-client`，包含命令、SSE、快照、错误与生成协议类型。
+- 公共 `@shejane/runtime-sdk`，包含命令、SSE、快照、错误与生成协议类型。
 - Desktop Web Agent、云账号、计费和云文档路径删除。
 - Runtime Go 模型网关、Cloud 会话和 Cloud 工具网关删除。
 - Runtime BYOK 供应商与操作系统凭据存储。
@@ -20,14 +20,14 @@ SheJane 首先是独立的 Desktop Agent Harness：
 - Runtime、Desktop 和 Runtime SDK 独立发布工作流。
 - Desktop、Runtime 和 SDK 默认零环境变量。
 - 已删除 Go Cloud、Admin、云端部署和相关发布维护面；旧方案保存在历史文档中。
+- 真实 Runtime HTTP 契约测试已覆盖认证、命令、SSE、快照和等待决定。
 
 ## 当前优先级
 
-1. 完成真实 Runtime HTTP 契约测试，覆盖认证、命令、SSE 重连、快照和等待决定。
-2. 增加真实 BYOK“模型 → 工具 → 模型”离线 Cloud 验证。
-3. 继续收敛 Runtime 状态所有权，减少 Desktop 的本地投影兼容代码。
-4. 完善 Runtime 安装包、Desktop Runtime 锁定和跨平台发布验证。
-5. 审计第三方依赖、许可证、签名、SBOM 和供应链安全。
+1. 增加真实 BYOK“模型 → 工具 → 模型”离线验证。
+2. 继续收敛 Runtime 状态所有权，减少 Desktop 的本地投影兼容代码。
+3. 完善 Runtime 安装包、Desktop Runtime 锁定和跨平台发布验证。
+4. 审计第三方依赖、许可证、签名、SBOM 和供应链安全。
 
 ## 后续方向
 

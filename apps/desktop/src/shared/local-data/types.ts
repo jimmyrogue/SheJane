@@ -1,4 +1,4 @@
-import type { RuntimeModelSpec } from '@shejane/runtime-client'
+import type { RuntimeModelSpec } from '@shejane/runtime-sdk'
 
 export type MessageRole = 'system' | 'user' | 'assistant'
 /** Concrete Runtime model selection (`local:<provider>:<model>`). */

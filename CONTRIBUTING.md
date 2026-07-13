@@ -22,7 +22,7 @@ Electron/React Desktop ──/local/v1/*──▶ Python Harness Runtime ──�
 
 - `services/runtime/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
 - `apps/desktop/` — Electron + React + Vite + Tailwind client with a local projection of Runtime-owned conversations.
-- `packages/runtime-client/` — public TypeScript client for the Runtime protocol.
+- `packages/runtime-sdk/` — public TypeScript SDK for the Runtime protocol.
 
 **Read [CLAUDE.md](./CLAUDE.md) first** — it has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend/frontend/testing rules.
 
@@ -48,8 +48,8 @@ If anything looks wrong, `make doctor` is the first stop.
 
 ## The four invariants (don't break these)
 
-1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store. Enforced by `scripts/check-no-platform-keys-in-daemon.sh`.
-2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `packages/runtime-client/src/generated.ts`.
+1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store. Enforced by `scripts/check.sh`.
+2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `packages/runtime-sdk/src/generated.ts`.
 3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
 4. **Runtime owns accepted commands, conversations, task state, checkpoints, and tool receipts.** Desktop stores only pending commands and a disposable projection.
 
@@ -75,7 +75,7 @@ make test                   # Runtime + Desktop + Runtime SDK
 # focused:
 make local-host-test        # uv run python -m pytest
 make client-test            # client vitest
-make runtime-client-test    # public SDK vitest
+make runtime-sdk-test    # public SDK vitest
 ```
 
 CI runs the same lint + deterministic-test + contract jobs on every PR.

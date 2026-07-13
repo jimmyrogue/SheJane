@@ -7,7 +7,7 @@ the `data:` line, NOT from the `event:` line. It also recognizes only
 stream hung.
 
 These tests pin the contract to the AgentRunEvent interface defined
-in `packages/runtime-client/src/client.ts`:
+in `packages/runtime-sdk/src/client.ts`:
 
     interface AgentRunEvent {
       event_type: string

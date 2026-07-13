@@ -4712,7 +4712,7 @@
     },
     "/local/v1/runs": {
       "get": {
-        "description": "Recent runs newest-first.\n\nClient `listLocalRuns()` (packages/runtime-client/src/client.ts:283)\nreads `{runs: LocalRun[]}` on every boot. Previously this route\ndidn't exist — every Electron launch silently 404'd here and\nthe conversation history sidebar came up empty.",
+        "description": "Recent runs newest-first.\n\nClient `listLocalRuns()` (packages/runtime-sdk/src/client.ts:283)\nreads `{runs: LocalRun[]}` on every boot. Previously this route\ndidn't exist — every Electron launch silently 404'd here and\nthe conversation history sidebar came up empty.",
         "operationId": "list_runs_local_v1_runs_get",
         "responses": {
           "200": {
@@ -4847,7 +4847,7 @@
     },
     "/local/v1/runs/{run_id}/diagnostics": {
       "get": {
-        "description": "Return the full `LocalRunDiagnostics` payload.\n\nShape (per TS interface `packages/runtime-client/src/client.ts`):\n    { schema_version: 1, exported_at, local_host_version?,\n      run, events, permissions, artifacts, latest_checkpoint, handoff }\n\nPhase 5'+ used to return only `{run, events}`, so the\n`DiagnosticsPanel` rendered NaN counts (permissions.length on\nundefined) and the \"latest checkpoint\" tab was always missing.",
+        "description": "Return the full `LocalRunDiagnostics` payload.\n\nShape (per TS interface `packages/runtime-sdk/src/client.ts`):\n    { schema_version: 1, exported_at, local_host_version?,\n      run, events, permissions, artifacts, latest_checkpoint, handoff }\n\nPhase 5'+ used to return only `{run, events}`, so the\n`DiagnosticsPanel` rendered NaN counts (permissions.length on\nundefined) and the \"latest checkpoint\" tab was always missing.",
         "operationId": "run_diagnostics_local_v1_runs__run_id__diagnostics_get",
         "parameters": [
           {

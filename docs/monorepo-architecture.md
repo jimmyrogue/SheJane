@@ -11,10 +11,8 @@ apps/
 services/
   runtime/                 Python Harness Runtime
 packages/
-  runtime-client/          公共 TypeScript Runtime SDK
-tests/
-  e2e/
-scripts/                   跨模块开发与发布脚本
+  runtime-sdk/             公共 TypeScript Runtime SDK
+scripts/                   跨模块开发与验证脚本
 ```
 
 不为移动端、远程网关或托管 Runtime 创建空目录。根 `Makefile` 继续作为统一命令入口。
@@ -46,7 +44,7 @@ scripts/                   跨模块开发与发布脚本
 
 - `runtime-vX.Y.Z`
 - `desktop-vX.Y.Z`
-- `runtime-client-vX.Y.Z`
+- `runtime-sdk-vX.Y.Z`
 
 Runtime 发布 macOS arm64/x64、Windows x64 和 Linux x64 自包含产物。Desktop 显式锁定
 一个 Runtime 版本，正式打包下载对应产物，本地开发运行当前源码。

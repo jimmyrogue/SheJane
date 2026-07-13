@@ -22,7 +22,7 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 
 - `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `apps/desktop/` — Electron/React client; local projection of Runtime-owned conversations.
-- `packages/runtime-client/` — public TypeScript SDK for Runtime commands, SSE, snapshots, and generated protocol types.
+- `packages/runtime-sdk/` — public TypeScript SDK for Runtime commands, SSE, snapshots, and generated protocol types.
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
 
@@ -43,10 +43,8 @@ Useful focused checks:
 ```bash
 cd services/runtime && uv run python -m pytest
 pnpm --filter @shejane/desktop test --run
-pnpm --filter @shejane/runtime-client test
+pnpm --filter @shejane/runtime-sdk test
 ```
-
-Use `make smoke-local-host` for a deterministic Runtime HTTP smoke.
 
 ## Environment And Secrets
 
@@ -68,6 +66,8 @@ Desktop UI expectations:
 
 - Runtime owns authoritative conversations and task state; Desktop stores a disposable local projection and pending commands.
 - Keep import/export behavior intact.
+- Local documents stay inside authorized Runtime workspaces; Desktop must not upload them to a private cloud path.
+- New attachment support must use a Runtime-owned persistence and permission protocol, not S3 IDs or product-specific download URLs.
 - Follow the SheJane visual system in `docs/ui/shejane-design-system.md`: warm paper + ink, seal red only for brand/running/critical states, moss only for online/success, and single-color typographic attachment glyphs instead of colorful file icons.
 
 ## Testing Expectations

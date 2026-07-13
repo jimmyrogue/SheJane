@@ -14,13 +14,12 @@
 .DEFAULT_GOAL := help
 
 .PHONY: help \
-	dev dev-electron restart-daemon doctor \
-	test test-e2e test-contract ci test-ci build \
-	client-test runtime-client-test local-host-test \
-	client-build runtime-client-build local-host-build \
+	dev-electron restart-daemon doctor \
+	test test-contract ci build \
+	client-test runtime-sdk-test local-host-test \
+	client-build runtime-sdk-build local-host-build \
 	lint schemas setup-hooks \
-	release smoke-local-host \
-	eval \
+	release eval \
 	logs-local-host logs-client logs-dev
 
 help: ## Show this help
@@ -31,44 +30,33 @@ help: ## Show this help
 	@echo ""
 
 ##@ Dev & restart
-dev: ## Print the manual Runtime + Desktop recipe
-	@echo "Run Runtime and Desktop in separate terminals:"
-	@echo "  cd services/runtime && uv run shejane-runtime"
-	@echo "  pnpm --filter @shejane/desktop dev"
-
 dev-electron: ## Runtime + Vite + Electron (hard-restarts; no Cloud required)
-	./scripts/dev-electron.sh
+	./scripts/dev.sh start
 
 restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit — seconds, not a full relaunch
-	./scripts/restart-daemon.sh
+	./scripts/dev.sh restart
 
 doctor: ## One-shot diagnostic: "why isn't dev working?"
-	@./scripts/doctor.sh
+	@./scripts/dev.sh doctor
 
 ##@ Test
-test: client-test runtime-client-test local-host-test ## Fast unit suites
-
-test-e2e: ## Playwright simulated E2E (boots isolated Desktop + Runtime route mocks)
-	pnpm --filter shejane-e2e test
+test: client-test runtime-sdk-test local-host-test ## Fast unit suites
 
 test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)
 	./scripts/test-contract.sh
 
-ci: lint test build test-e2e test-contract ## Run EVERYTHING CI runs, locally (before pushing a PR)
-
-# Back-compat alias — older docs/muscle-memory call `make test-ci`.
-test-ci: ci ## Alias of `ci` (kept for back-compat)
+ci: lint test build test-contract ## Run EVERYTHING CI runs, locally (before pushing a PR)
 
 build: ## Build Runtime SDK, Desktop, and Runtime dependencies
-	pnpm --filter @shejane/runtime-client build
+	pnpm --filter @shejane/runtime-sdk build
 	pnpm --filter @shejane/desktop build
 	cd services/runtime && uv sync
 
 client-test: ## Client vitest (run once)
 	pnpm --filter @shejane/desktop test --run
 
-runtime-client-test: ## Runtime TypeScript SDK tests
-	pnpm --filter @shejane/runtime-client test
+runtime-sdk-test: ## Runtime TypeScript SDK tests
+	pnpm --filter @shejane/runtime-sdk test
 
 local-host-test: ## Daemon pytest
 	cd services/runtime && uv run python -m pytest
@@ -76,8 +64,8 @@ local-host-test: ## Daemon pytest
 client-build: ## Build only the client
 	pnpm --filter @shejane/desktop build
 
-runtime-client-build: ## Build the public Runtime TypeScript SDK
-	pnpm --filter @shejane/runtime-client build
+runtime-sdk-build: ## Build the public Runtime TypeScript SDK
+	pnpm --filter @shejane/runtime-sdk build
 
 local-host-build: ## Sync only the daemon deps
 	cd services/runtime && uv sync
@@ -87,18 +75,16 @@ build-daemon: ## Freeze the Runtime into a standalone bundle for the desktop app
 	@echo "✅ Runtime frozen → services/runtime/dist/shejane-runtime/ (run it on THIS OS/arch only)"
 
 ##@ Lint & schemas
-lint: ## Run the same lint checks CI runs (ruff + no-platform-keys)
+lint: ## Run the same lint checks CI runs
 	@echo "→ ruff (Python)"
 	@cd services/runtime && uv run ruff check . && uv run ruff format --check .
-	@echo "→ no-platform-keys guard"
-	@./scripts/check-no-platform-keys-in-daemon.sh
-	@echo "→ independent release tags"
-	@node ./scripts/check-release-tags.mjs
+	@echo "→ project guards"
+	@./scripts/check.sh
 	@echo "✅ all lints pass"
 
 schemas: ## Regenerate openapi.json + generated.ts from the daemon's pydantic models
 	@./scripts/export-daemon-openapi.sh
-	@pnpm --filter @shejane/runtime-client generate
+	@pnpm --filter @shejane/runtime-sdk generate
 	@echo "✅ schemas regenerated. Commit openapi.json + generated.ts."
 
 setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
@@ -117,26 +103,23 @@ setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 
 ##@ Release
 release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
-	@case "$(COMPONENT)" in runtime|desktop|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, or runtime-client" >&2; exit 1 ;; esac
+	@case "$(COMPONENT)" in runtime|desktop|runtime-sdk) ;; *) echo "❌ COMPONENT must be runtime, desktop, or runtime-sdk" >&2; exit 1 ;; esac
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "❌ VERSION must look like X.Y.Z" >&2; exit 1 ;; esac
 	@if [ -n "$$(git status --porcelain)" ]; then echo "❌ Working tree not clean — commit or stash first." >&2; exit 1; fi
 	@branch=$$(git rev-parse --abbrev-ref HEAD); if [ "$$branch" != "main" ]; then echo "❌ Releases must be cut from main (currently on '$$branch')." >&2; exit 1; fi
 	git tag -a "$(COMPONENT)-v$(VERSION)" -m "$(COMPONENT) v$(VERSION)"
 	git push origin "$(COMPONENT)-v$(VERSION)"
 	@echo "✅ Pushed $(COMPONENT)-v$(VERSION). Only that module's release workflow will run."
-##@ Smoke
-smoke-local-host: ## Standalone daemon HTTP smoke (health / auth / a deterministic run)
-	./scripts/smoke-local-host.sh
-
+##@ Eval
 eval: ## Run the agent eval suite against a Runtime with a real provider
 	cd services/runtime && uv run python -m local_host.eval
 
 ##@ Logs
 logs-local-host: ## Tail the daemon log (.tmp/dev/local-host.log)
-	./scripts/dev-logs.sh local-host
+	./scripts/dev.sh logs local-host
 
 logs-client: ## Tail the client Vite log
-	./scripts/dev-logs.sh client
+	./scripts/dev.sh logs client
 
 logs-dev: ## Snapshot of all dev logs at once
-	./scripts/dev-logs.sh all
+	./scripts/dev.sh logs all

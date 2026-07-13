@@ -61,7 +61,7 @@ Desktop 的模型供应商设置会调用 Runtime 的 `/local/v1/model-providers
 ```text
 runtime-vX.Y.Z
 desktop-vX.Y.Z
-runtime-client-vX.Y.Z
+runtime-sdk-vX.Y.Z
 ```
 
 Desktop 的 `apps/desktop/runtime-version.json` 锁定 Runtime Release。正式打包会下载并校验该版本；源码开发直接运行当前 Runtime。

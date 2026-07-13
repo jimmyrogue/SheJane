@@ -1,9 +1,9 @@
-# @shejane/runtime-client
+# @shejane/runtime-sdk
 
-TypeScript client for the public SheJane Harness Runtime HTTP protocol.
+TypeScript SDK for the public SheJane Harness Runtime HTTP and SSE protocols.
 
 ```ts
-import { SheJaneRuntimeClient } from '@shejane/runtime-client'
+import { SheJaneRuntimeClient } from '@shejane/runtime-sdk'
 
 const runtime = new SheJaneRuntimeClient({
   baseURL: 'http://127.0.0.1:17371',

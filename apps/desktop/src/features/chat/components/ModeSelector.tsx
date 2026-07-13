@@ -14,7 +14,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
-import type { RuntimeModelSpec } from '@shejane/runtime-client'
+import type { RuntimeModelSpec } from '@shejane/runtime-sdk'
 
 /** One selectable Runtime model. */
 export interface ModelOption {

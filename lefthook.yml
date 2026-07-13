@@ -43,7 +43,7 @@ pre-commit:
       # Run unconditionally on every commit touching daemon code —
       # cheap (sub-50ms grep) and protects the Runtime credential boundary.
       glob: "services/runtime/**/*.py"
-      run: ./scripts/check-no-platform-keys-in-daemon.sh
+      run: ./scripts/check.sh platform-keys
 
     # --- Forbidden files ---
     # Block accidental commits of secret-y files. .env is gitignored

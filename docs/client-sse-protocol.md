@@ -4,7 +4,7 @@
 
 适用于 `GET /local/v1/runs/{run_id}/stream`（`Content-Type: text/event-stream`）。
 
-> **文档版本**：对应 `@shejane/runtime-client` 的 SSE 解析、Runtime `RunCoordinator.stream` 与 `event_translator.translate`。
+> **文档版本**：对应 `@shejane/runtime-sdk` 的 SSE 解析、Runtime `RunCoordinator.stream` 与 `event_translator.translate`。
 >
 > **历史**：Phase 4' 之前使用 `llm.token` / `tool.end` 等命名，且 `data:` 体直接放裸 payload；2026-05-22 重写后改为 `llm.delta` / `tool.completed` + AgentRunEvent envelope。如果你看到代码里还有旧名，那是漂移，请按本协议为准。
 
@@ -40,7 +40,7 @@ interface AgentRunEvent {
 
 状态变化持久化在 `local_events` 表，每条都有 `seq`；replay 路径只返回这些持久事件。临时事件仍有唯一 `id`，但没有 `seq`，不会写入数据库或在重连后重放。Runtime 升级时会清理旧版本曾错误持久化的临时事件，序号空洞不影响后续游标。
 
-完整 TS 类型见 `packages/runtime-client/src/sse.ts`。
+完整 TS 类型见 `packages/runtime-sdk/src/sse.ts`。
 
 ---
 
@@ -112,7 +112,7 @@ LangGraph 原始节点更新不进入产品 SSE；它们保留在 checkpoint 和
 ## 客户端消费骨架
 
 ```ts
-import { parseAgentSSEBuffer } from '@shejane/runtime-client'
+import { parseAgentSSEBuffer } from '@shejane/runtime-sdk'
 
 const resp = await fetch(`/local/v1/runs/${runID}/stream`, { signal })
 const reader = resp.body!.getReader()

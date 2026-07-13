@@ -95,7 +95,7 @@ function createTrayIcon(platform = process.platform) {
  *  the main window without searching every time. */
 let mainWindow = null
 let tray = null
-// Bundled local-agent daemon (packaged builds spawn it; dev uses dev-electron.sh).
+// Bundled local-agent daemon (packaged builds spawn it; dev uses scripts/dev.sh).
 let daemonProcess = null
 let daemonURL = null
 let daemonToken = null
@@ -253,7 +253,7 @@ if (!hasSingleInstanceLock) {
 // Packaged builds spawn the frozen daemon (shipped via electron-builder
 // extraResources) on a fresh loopback port with a one-time pairing token, then
 // keep its token in Main, and expose only an authenticated desktop-session
-// marker to the renderer. Dev still relies on scripts/dev-electron.sh to spawn.
+// marker to the renderer. Dev still relies on scripts/dev.sh to spawn.
 
 function pickFreePort() {
   return new Promise((resolve, reject) => {
@@ -271,7 +271,7 @@ function daemonBinaryPath() {
   return path.join(process.resourcesPath, 'runtime', exe)
 }
 
-// Allowlist env forward (mirrors dev-electron.sh's `env -i`): the daemon never
+// Allowlist env forward (mirrors scripts/dev.sh's `env -i`): the daemon never
 // inherits unrelated application or shell secrets.
 function daemonEnv(extra) {
   const allow =
@@ -704,7 +704,7 @@ ipcMain.handle('shejane:notify', async (_event, payload) => {
   }
   // `icon` is only honored on Windows + Linux; macOS pulls the icon
   // from the bundle's .icns. The branded .icns gets dropped into the
-  // wrapper bundle by scripts/run-branded-electron.sh during dev.
+  // wrapper bundle by electron/run-dev.sh during dev.
   const notification = new Notification({ title, body, silent: false, icon: appIconPath })
   notification.on('click', () => {
     showOrCreateMainWindow()

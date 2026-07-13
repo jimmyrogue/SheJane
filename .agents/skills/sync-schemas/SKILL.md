@@ -6,7 +6,7 @@ user-invocable: false
 
 # sync-schemas
 
-The daemon's pydantic models are the single source of truth. `make schemas` regenerates `packages/runtime-client/openapi.json` and `packages/runtime-client/src/generated.ts` from them. CI's lint job rejects PRs where the committed files drift from regenerated output.
+The daemon's pydantic models are the single source of truth. `make schemas` regenerates `packages/runtime-sdk/openapi.json` and `packages/runtime-sdk/src/generated.ts` from them. CI's lint job rejects PRs where the committed files drift from regenerated output.
 
 ## When to invoke
 
@@ -29,8 +29,8 @@ That runs `scripts/export-daemon-openapi.sh` (dumps `openapi.json`) then `npx op
 Then check:
 
 ```bash
-git status -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.ts
-git diff --stat -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.ts
+git status -- packages/runtime-sdk/openapi.json packages/runtime-sdk/src/generated.ts
+git diff --stat -- packages/runtime-sdk/openapi.json packages/runtime-sdk/src/generated.ts
 ```
 
 ## Report back

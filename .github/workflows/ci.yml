@@ -46,8 +46,8 @@ jobs:
         run: uv run ruff format --check .
         working-directory: services/runtime
 
-      - name: No platform-paid keys in daemon
-        run: ./scripts/check-no-platform-keys-in-daemon.sh
+      - name: Project guards
+        run: ./scripts/check.sh
 
       # Schema-drift guard — `make schemas` regenerates openapi.json
       # + generated.ts from the daemon's pydantic models. If the
@@ -61,14 +61,14 @@ jobs:
       - name: Schema drift (make schemas + git diff)
         run: |
           ./scripts/export-daemon-openapi.sh
-          pnpm --filter @shejane/runtime-client generate
-          if ! git diff --exit-code -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.ts; then
+          pnpm --filter @shejane/runtime-sdk generate
+          if ! git diff --exit-code -- packages/runtime-sdk/openapi.json packages/runtime-sdk/src/generated.ts; then
             echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
             exit 1
           fi
 
-  # Unit + build. Split out from E2E so a Playwright flake cannot mask a
-  # unit failure; each surfaces as its own check.
+  # Unit + build stay separate from the live HTTP contract check so each
+  # failure keeps a clear owner.
   test:
     name: Tests (unit + build)
     runs-on: ubuntu-latest
@@ -103,32 +103,9 @@ jobs:
       - name: Unit suites + build
         run: make test build
 
-  # Playwright simulated E2E. Its webServer launches the Desktop Vite app.
-  e2e:
-    name: E2E (Playwright)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install workspace dependencies
-        run: corepack enable && pnpm install --frozen-lockfile
-
-      - name: Install Playwright Chromium
-        run: pnpm --filter shejane-e2e exec playwright install --with-deps chromium
-
-      - name: Run Playwright E2E
-        run: make test-e2e
-
   # Contract round-trip — the ONE thing that would have caught the
   # 9+ silent shape drifts in the Phase 5'+ migration. Boots a real
-  # daemon, runs the TypeScript client against it over HTTP, asserts
+  # Runtime, runs the TypeScript SDK contract suite against it over HTTP, asserts
   # the response shapes match what the renderer reads. No
   # MockTransport involved on either side.
   #

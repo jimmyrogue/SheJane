@@ -1,4 +1,4 @@
-import type { AgentRunEvent } from '@shejane/runtime-client'
+import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { createTranslator, type TranslationKey, type Translator } from '../../shared/i18n/i18n'
 import type { AgentQuestionItem, AgentPlanTodo, AgentTimelineItem, AgentToolDetail } from '../../shared/local-data/types'
 export function timelineItem(event: AgentRunEvent, t: Translator = createTranslator('zh')): AgentTimelineItem | null {
