@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { IconLogout, IconTrash } from '@tabler/icons-react'
+import { IconTrash } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,11 +21,10 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useI18n, type Locale } from '@/shared/i18n/i18n'
-import type { WalletBalance } from '@/shared/api/client'
 import type { AdvancedAgentSettings, AgentSettings, LocalHostConfig } from '@/shared/local-host/client'
 import { ModelProvidersSettings } from './ModelProvidersSettings'
 
-type SettingsSectionID = 'account' | 'runtime' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+type SettingsSectionID = 'runtime' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
 
 const SETTINGS_SECTION_TOP_OFFSET = 72
 
@@ -97,14 +96,6 @@ function SettingsSection({
       <div className="settings-card">{children}</div>
     </section>
   )
-}
-
-function formatCredits(value: number): string {
-  return Math.max(0, Math.round(value)).toLocaleString()
-}
-
-function displayInitial(email: string): string {
-  return (email.trim().charAt(0) || 'S').toUpperCase()
 }
 
 type RuntimeConnectionSummary = Awaited<ReturnType<NonNullable<NonNullable<Window['shejaneDesktop']>['runtimeConnection']>['get']>>
@@ -226,28 +217,18 @@ function RuntimeConnectionSettings() {
 
 export function SettingsView({
   isDesktop = true,
-  userEmail,
-  balance,
   agentSettings,
   onAgentSettingsChange,
   onClearMemory,
-  onRecharge,
-  onShowSpendHistory,
-  onLogout,
   onImportLocalData,
   onExportLocalData,
   localHostConfig,
   onModelProvidersChange,
 }: {
   isDesktop?: boolean
-  userEmail?: string
-  balance?: WalletBalance | null
   agentSettings: Required<AgentSettings>
   onAgentSettingsChange: (next: Required<AgentSettings>) => void
   onClearMemory?: () => Promise<number>
-  onRecharge?: () => void
-  onShowSpendHistory?: () => void
-  onLogout?: () => void
   onImportLocalData: (file?: File) => void
   onExportLocalData?: () => void
   localHostConfig?: LocalHostConfig | null
@@ -257,10 +238,9 @@ export function SettingsView({
   const importInputRef = useRef<HTMLInputElement>(null)
   const settingsScrollRef = useRef<HTMLDivElement>(null)
   const [activeSection, setActiveSection] = useState<SettingsSectionID>(
-    userEmail ? 'account' : isDesktop ? 'models' : 'general',
+    isDesktop ? 'models' : 'general',
   )
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
-  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
 
   const memoryEnabled = (agentSettings.memory ?? 'on') === 'on'
@@ -269,11 +249,9 @@ export function SettingsView({
   const adv: AdvancedAgentSettings = agentSettings.advanced ?? {}
   const setAdv = (patch: Partial<AdvancedAgentSettings>) =>
     onAgentSettingsChange({ ...agentSettings, advanced: { ...adv, ...patch } })
-  const availableCredits = Math.max(0, (balance?.monthly_remaining ?? 0) + (balance?.extra_credits_balance ?? 0))
 
   const navItems = useMemo<Array<{ id: SettingsSectionID, label: string }>>(
     () => [
-      ...(userEmail ? [{ id: 'account' as const, label: t('settings.group.account') }] : []),
       ...(isDesktop
         ? [
             { id: 'runtime' as const, label: t('settings.group.runtime') },
@@ -291,7 +269,7 @@ export function SettingsView({
       { id: 'general', label: t('settings.group.general') },
       { id: 'data', label: t('settings.group.dataSecurity') },
     ],
-    [isDesktop, t, userEmail],
+    [isDesktop, t],
   )
 
   const updateActiveSectionFromScroll = useCallback(() => {
@@ -382,36 +360,6 @@ export function SettingsView({
 
           <div className="settings-main-scroll">
             <div className="settings-main">
-              {userEmail ? (
-                <SettingsSection id="account" title={t('settings.group.account')}>
-                  <div className="settings-account-head">
-                    <div className="settings-avatar" aria-hidden="true">{displayInitial(userEmail)}</div>
-                    <div className="settings-account-copy">
-                      <div className="settings-account-email">{userEmail}</div>
-                      <div className="settings-account-type">{t('settings.accountType')}</div>
-                    </div>
-                  </div>
-                  <div className="settings-balance-row">
-                    <div>
-                      <div className="settings-balance-label">{t('settings.balanceCredits')}</div>
-                      <div className="settings-balance-value">{formatCredits(availableCredits)}</div>
-                    </div>
-                    <div className="settings-account-actions">
-                      {onShowSpendHistory ? (
-                        <button type="button" className="settings-inline-button" onClick={onShowSpendHistory}>
-                          {t('sidebar.account.spendHistory')}
-                        </button>
-                      ) : null}
-                      {onRecharge ? (
-                        <button type="button" className="settings-primary-button" onClick={onRecharge}>
-                          {t('sidebar.account.recharge')}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </SettingsSection>
-              ) : null}
-
               {isDesktop ? (
                 <SettingsSection
                   id="runtime"
@@ -605,17 +553,6 @@ export function SettingsView({
                     </SettingsRowButton>
                   </SettingRow>
                 ) : null}
-                {onLogout ? (
-                  <SettingRow
-                    label={t('sidebar.account.logout')}
-                    hint={t('settings.logoutHint')}
-                    danger
-                  >
-                    <SettingsRowButton danger onClick={() => setLogoutConfirmOpen(true)}>
-                      {t('settings.logoutAction')}
-                    </SettingsRowButton>
-                  </SettingRow>
-                ) : null}
               </SettingsSection>
             </div>
           </div>
@@ -658,33 +595,6 @@ export function SettingsView({
         </AlertDialogContent>
       </AlertDialog>
 
-      {onLogout ? (
-        <AlertDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
-          <AlertDialogContent className="conversation-delete-dialog">
-            <AlertDialogHeader className="conversation-delete-header">
-              <AlertDialogMedia className="conversation-delete-media">
-                <IconLogout aria-hidden="true" />
-              </AlertDialogMedia>
-              <AlertDialogTitle>{t('sidebar.account.logoutConfirmTitle')}</AlertDialogTitle>
-              <AlertDialogDescription>{t('sidebar.account.logoutConfirmBody')}</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter className="conversation-delete-footer">
-              <AlertDialogCancel variant="outline" autoFocus>
-                <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
-              </AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  setLogoutConfirmOpen(false)
-                  onLogout()
-                }}
-              >
-                <span className="conversation-delete-button-label">{t('sidebar.account.logoutConfirmAction')}</span>
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : null}
     </section>
   )
 }

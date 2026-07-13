@@ -21,22 +21,12 @@ import {
 } from '@/components/ui/dialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import {
-  SheJaneAPI,
-  type AuthPayload,
-  type BillingCheckoutOptions,
-  type ChatModelInfo,
-  type UserDocument,
-  type WalletBalance,
-} from './shared/api/client'
-import { createAuthClient } from './shared/api/authClient'
-import { uploadWithProgress } from './shared/api/uploadWithProgress'
-import { createChatStore, recoverOrphanCloudStreamingConversations, timelineItem } from './features/chat/chatStore'
-import { AuthScreen } from './features/auth/AuthScreen'
+import { timelineItem } from './features/chat/chatStore'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
 import { Composer } from './features/chat/components/Composer'
+import type { ModelOption } from './features/chat/components/ModeSelector'
 import { deriveAgentHistory } from './features/chat/conversationHistory'
 import { recentRecoverableFailures } from './features/chat/recoverableFailures'
 import {
@@ -46,17 +36,12 @@ import {
   latestRunFailureEvent,
   nextRepairAttempt,
   nextRetryAttempt,
-  queueCloudSessionRecovery,
   recoveryTargetKey,
-  takeCloudSessionRecovery,
   type AgentFailureAction,
   type RecoveryTarget,
 } from './features/chat/recovery'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
-import { RechargeDialog, type RechargeCheckoutInput } from './features/billing/RechargeDialog'
-import { RechargePendingDialog } from './features/billing/RechargePendingDialog'
-import { SpendHistoryDialog, type HistoryFilter } from './features/billing/SpendHistoryDialog'
 import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
@@ -71,13 +56,12 @@ import { findConversationPendingQuestion } from './features/chat/pendingQuestion
 import type { AgentRunEvent } from './shared/api/sse'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, CloudOfficeAttachmentRef, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
 import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
   answerLocalQuestionCommand,
   cancelLocalRunCommand,
-  clearLocalCloudSession,
   clearLocalMemory,
   createLocalSkill,
   createLocalRun,
@@ -91,7 +75,6 @@ import {
   forkLocalRun,
   getLocalRunDiagnostics,
   getLocalThreadSnapshot,
-  getLocalRuntimeInfo,
   getDesktopLocalHostConfig,
   hasLocalHostAuthorization,
   getLocalArtifact,
@@ -111,7 +94,6 @@ import {
   resolveLocalPlanCommand,
   resolveLocalPermissionCommand,
   reconcileLocalToolCommand,
-  setLocalCloudSession,
   streamLocalRun,
   updateLocalSkill,
   updateLocalThread,
@@ -120,7 +102,6 @@ import {
   type AgentSettings,
   type CreateLocalRunInput,
   type LocalArtifact,
-  type LocalCloudSession,
   type LocalHostConfig,
   type LocalToolReconciliationDecision,
   type LocalHostProbe,
@@ -145,13 +126,10 @@ import {
 } from './shared/local-host/client'
 import { projectRuntimeThread } from './features/chat/runtimeProjection'
 
-const documentMaxBytes = 30 * 1024 * 1024
 const appNoticeToastID = 'shejane-app-notice'
 const sidebarWidthStorageKey = 'shejane.sidebar.width.v2'
 const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 const runtimeThreadIDsStorageKey = 'shejane.runtime-thread-ids.v1'
-const checkoutRecoveryPollMs = 3000
-const checkoutRecoveryMaxPolls = 40
 const scheduledRunNotificationPollMs = 30_000
 const pendingCommandRetryMs = 2_000
 interface LocalHarnessRunOptions {
@@ -351,34 +329,14 @@ export function App() {
 function AppContent() {
   const { t, locale } = useI18n()
   const isDesktop = Boolean(window.shejaneDesktop)
-  const api = useMemo(() => new SheJaneAPI(), [])
-  // Stable reference so SpendHistoryDialog's fetch-on-open effect doesn't
-  // re-run on every parent render.
-  const fetchSpendHistory = useMemo(() => () => api.billingActivities(), [api])
-  const authClient = useMemo(() => createAuthClient(api), [api])
-  const [auth, setAuth] = useState<AuthPayload | null>(null)
-  const [authRestoreComplete, setAuthRestoreComplete] = useState(false)
-  // Desktop conversations belong to the stable local Runtime principal.
-  // Optional cloud identity must never swap the visible local transcript DB.
-  const localData = useMemo(
-    () => new LocalConversationStore(
-      isDesktop
-        ? 'shejane-local:runtime:local-owner'
-        : `shejane-local:${auth?.user?.id ?? 'anonymous'}`,
-    ),
-    [auth?.user?.id, isDesktop],
-  )
-  const chat = useMemo(() => createChatStore({ localData, api, t }), [api, localData, t])
+  const localData = useMemo(() => new LocalConversationStore('shejane-local:runtime:local-owner'), [])
   const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
   const conversationInitializationCompleteRef = useRef(false)
-  const desktopMigrationChainRef = useRef<Promise<void>>(Promise.resolve())
   const recoveryStateRef = useRef(createRecoveryState())
   const startupRecoveryNoticeShownRef = useRef(false)
-  const checkoutRecoveryTimerRef = useRef<number>()
-  const checkoutRecoveryGenerationRef = useRef(0)
   const sidebarResizeStateRef = useRef<{ startX: number, startWidth: number } | null>(null)
   const sidebarMotionTimerRef = useRef<number>()
   const runtimeThreadCursorRef = useRef(0)
@@ -399,30 +357,9 @@ function AppContent() {
     setMode(next)
     writeChatMode(next)
   }
-  const [documents, setDocuments] = useState<UserDocument[]>([])
-  const [attachedDocumentIDs, setAttachedDocumentIDs] = useState<string[]>([])
-  const [attachedPreviews, setAttachedPreviews] = useState<Record<string, string | undefined>>({})
-  const [balance, setBalance] = useState<WalletBalance | null>(null)
-  const [billingCheckoutOptions, setBillingCheckoutOptions] = useState<BillingCheckoutOptions | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [checkpointForking, setCheckpointForking] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
-  const [spendHistoryOpen, setSpendHistoryOpen] = useState(false)
-  const [spendHistoryInitialFilter, setSpendHistoryInitialFilter] = useState<HistoryFilter>('all')
-  const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false)
-  const [rechargePendingOpen, setRechargePendingOpen] = useState(false)
-  const [rechargeCompletionChecking, setRechargeCompletionChecking] = useState(false)
-  const [emailBannerDismissed, setEmailBannerDismissed] = useState(false)
-  const [emailVerifySent, setEmailVerifySent] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
-  // 0..100 during an S3 PUT, undefined when idle. Fed by the XHR
-  // upload progress listener in uploadDocument(); rendered as a
-  // ring + percent overlay on the attachment chip so users get
-  // continuous feedback for slow cross-border uploads (typical
-  // China → AWS Singapore takes tens of seconds even with Transfer
-  // Acceleration). Without it the chip just spins indefinitely and
-  // users wonder if the app froze.
-  const [uploadProgress, setUploadProgress] = useState<number | undefined>(undefined)
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
@@ -431,14 +368,12 @@ function AppContent() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
-  // The chat model catalog (GET /api/v1/models), feeding the composer picker.
-  // 'auto' is always offered on top of these.
-  const [models, setModels] = useState<ChatModelInfo[]>([])
+  // Runtime model catalog feeding the composer picker.
+  const [models, setModels] = useState<ModelOption[]>([])
   const [autoModelAvailable, setAutoModelAvailable] = useState(true)
   const [modelCatalogVersion, setModelCatalogVersion] = useState(0)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
-  const [localCloudSession, setLocalCloudSessionState] = useState<LocalCloudSession | null>(null)
   const [pendingWorkspace, setPendingWorkspace] = useState<ConversationWorkspace | undefined>()
   /** Project (= workspace) the user picked in the composer before a
    *  conversation existed. Drained when `sendMessage` creates the
@@ -488,67 +423,6 @@ function AppContent() {
     setDocPreviewRefreshKey((k) => k + 1)
   }
 
-  /** Open the preview panel for a CLOUD-uploaded previewable file
-   *  (.docx, .xlsx, .pdf). Used by MessageBubble for attachment-chip
-   *  clicks. The byte loader hits the Go API's document-source
-   *  endpoint; PdfPreview wraps the bytes in a blob URL for
-   *  Chromium's built-in PDF viewer. */
-  function openCloudOfficeDocument(spec: CloudOfficeAttachmentRef) {
-    // Look up the full document record (if still in the user's
-    // recent list) to surface its server-captured metadata —
-    // pdfinfo's page count / author drive the preview header
-    // badge. Missing from the list (old/expired) → undefined,
-    // and the header simply omits the badge.
-    const record = documents.find((document) => document.id === spec.documentId)
-    setActiveDocument({
-      sourceKey: `cloud:${spec.documentId}`,
-      kind: spec.kind,
-      name: spec.name,
-      tooltip: spec.name,
-      loadBytes: () => api.fetchDocumentBytes(spec.documentId),
-      metadata: record?.metadata,
-    })
-    setDocPreviewRefreshKey((k) => k + 1)
-  }
-
-  /** Download a cloud attachment to the user's Downloads folder with
-   *  its original filename. Powers the small "external open" button
-   *  next to every message-bubble attachment chip — the escape hatch
-   *  for files we can't preview in-app AND for power users who'd
-   *  rather open the file in their native app (e.g. .docx in real
-   *  Word with track-changes).
-   *
-   *  Implementation: fetch bytes via the existing authenticated
-   *  endpoint, wrap in a blob, click a synthetic <a download> with
-   *  the original filename. No Electron bridge needed — Chromium's
-   *  download path handles this and writes to the OS default
-   *  Downloads directory.
-   *
-   *  Cloud files have no stable local path so `showItemInFolder`
-   *  isn't an option; the closest faithful mapping of "open the
-   *  containing folder" is "let the user find it in Downloads".
-   */
-  async function openAttachmentExternally(ref: { documentId: string; name: string }) {
-    try {
-      const bytes = await api.fetchDocumentBytes(ref.documentId)
-      const blob = new Blob([bytes])
-      const url = URL.createObjectURL(blob)
-      const anchor = window.document.createElement('a')
-      anchor.href = url
-      anchor.download = ref.name
-      // Append + click + remove pattern: some Chromium builds need the
-      // element to be in the DOM for the download to fire reliably.
-      window.document.body.appendChild(anchor)
-      anchor.click()
-      window.document.body.removeChild(anchor)
-      // Revoke a tick later so the download has time to grab the
-      // URL before we invalidate it.
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : t('app.notice.downloadFailed'))
-    }
-  }
-
   function setNotice(message: string, options: NoticeOptions = {}) {
     if (!message.trim()) {
       toast.dismiss(appNoticeToastID)
@@ -562,55 +436,38 @@ function AppContent() {
     })
   }
 
-  // Desktop merges Runtime-owned BYOK models with the optional cloud catalog.
-  // The two reads are independent, so start them together.
+  // Runtime owns the complete BYOK model catalog.
   useEffect(() => {
-    if (!auth?.access_token && !localHostConfig) {
+    if (!localHostConfig) {
       setModels([])
       return
     }
     let cancelled = false
-    const cloudModels = auth?.access_token ? api.listModels().catch(() => []) : Promise.resolve([])
-    const runtimeModels = localHostConfig
-      ? Promise.all([
-          listLocalRuntimeModels(localHostConfig).catch(() => []),
-          getLocalRuntimeInfo(localHostConfig).catch(() => null),
-        ])
-      : Promise.resolve([[], null] as const)
-    void Promise.all([cloudModels, runtimeModels]).then(([cloudCatalog, [localCatalog, runtime]]) => {
+    void listLocalRuntimeModels(localHostConfig).then((localCatalog) => {
         if (cancelled) return
-        const localModels: ChatModelInfo[] = localCatalog
+        const catalog: ModelOption[] = localCatalog
           .filter((model) => model.available)
-          .map((model, index) => ({
+          .map((model) => ({
             id: model.spec,
             label: model.display_name,
             description: t('settings.models.localDescription'),
             vendor: model.provider_name,
             vendor_info: t('settings.models.localVendorInfo'),
             capability_tier: 'balanced',
-            priority: 10_000 + index,
           }))
-        const localIDs = new Set(localModels.map((model) => model.id))
-        const usableCloudCatalog = !isDesktop || runtime?.gateway_provider_configured
-          ? cloudCatalog
-          : []
-        const catalog = [...localModels, ...usableCloudCatalog.filter((model) => !localIDs.has(model.id))]
-        const nextAutoAvailable = isDesktop
-          ? runtime?.gateway_provider_configured === true
-          : true
         setModels(catalog)
-        setAutoModelAvailable(nextAutoAvailable)
+        setAutoModelAvailable(true)
         setMode((current) => {
-          if ((nextAutoAvailable && isAutoMode(current)) || catalog.some((m) => m.id === current)) return current
-          const next: ChatMode = nextAutoAvailable ? 'auto' : (catalog[0]?.id ?? 'auto')
+          if (isAutoMode(current) || catalog.some((m) => m.id === current)) return current
+          const next: ChatMode = 'auto'
           writeChatMode(next)
           return next
         })
-      })
+      }).catch(() => setModels([]))
     return () => {
       cancelled = true
     }
-  }, [api, auth?.access_token, isDesktop, localCloudSession?.connected, localHostConfig, modelCatalogVersion, t])
+  }, [localHostConfig, modelCatalogVersion, t])
 
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
@@ -718,7 +575,6 @@ function AppContent() {
       if (liveRenderTimerRef.current !== undefined) {
         window.clearTimeout(liveRenderTimerRef.current)
       }
-      stopCheckoutRecoveryWatcher()
       pendingConversationRendersRef.current.clear()
     }
   }, [])
@@ -731,10 +587,7 @@ function AppContent() {
     let disposed = false
     const navigationVersion = navigationVersionRef.current
     const maySelectInitialConversation = !conversationInitializationCompleteRef.current
-    void (async () => {
-      await migrateDesktopConversations(auth?.user?.id)
-      return recoverOrphanCloudStreamingConversations(localData, { t })
-    })().then((items) => {
+    void localData.list().then((items) => {
       if (disposed) {
         return
       }
@@ -758,7 +611,7 @@ function AppContent() {
       ) {
         setActiveConversationID(items[0]?.id)
       }
-      const [failure] = auth?.user?.id && !startupRecoveryNoticeShownRef.current
+      const [failure] = !startupRecoveryNoticeShownRef.current
         ? recentRecoverableFailures(items, 1)
         : []
       if (failure) {
@@ -778,140 +631,7 @@ function AppContent() {
     return () => {
       disposed = true
     }
-  }, [auth?.user?.id, localData, t])
-
-  // Reset transient session state when the signed-in user changes, so leftovers
-  // from the previous account (draft, attached doc, etc.) don't bleed across.
-  useEffect(() => {
-    if (!isDesktop) {
-      setDraft('')
-      setAttachedDocumentIDs([])
-      setAttachedPreviews({})
-      setPendingWorkspace(undefined)
-      setPendingProject(undefined)
-    }
-    setDocuments([])
-    setBillingCheckoutOptions(null)
-  }, [auth?.user?.id, isDesktop])
-
-  // Let the API client silently renew an expired access token mid-session
-  // (15-min TTL) using the long-lived refresh cookie, instead of bouncing
-  // the user to "登录已过期". A genuinely-dead refresh token drops to login.
-  useEffect(() => {
-    api.setTokenRefresher(async () => {
-      try {
-        const payload = await authClient.refresh()
-        await migrateDesktopConversations(payload.user.id)
-        api.setAccessToken(payload.access_token)
-        setAuth(payload)
-        return payload.access_token
-      } catch {
-        setAuth(null)
-        return null
-      }
-    })
-  }, [api, authClient])
-
-  useEffect(() => {
-    authClient
-      .refresh()
-      .then(async (payload) => {
-        await migrateDesktopConversations(payload.user.id)
-        api.setAccessToken(payload.access_token)
-        setAuth(payload)
-        return Promise.all([api.balance(), api.listDocuments()])
-      })
-      .then(([wallet, items]) => {
-        setBalance(wallet)
-        setDocuments(items)
-      })
-      .catch(() => undefined)
-      .finally(() => setAuthRestoreComplete(true))
-  }, [api, authClient])
-
-  useEffect(() => {
-    if (!auth) {
-      return
-    }
-    let cancelled = false
-    api.billingCheckoutOptions()
-      .then((options) => {
-        if (!cancelled) {
-          setBillingCheckoutOptions(options)
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [api, auth?.user?.id])
-
-  useEffect(() => {
-    if (!auth || !rechargeDialogOpen) {
-      return
-    }
-    let cancelled = false
-    api.billingCheckoutOptions()
-      .then((options) => {
-        if (!cancelled) {
-          setBillingCheckoutOptions(options)
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [api, auth?.user?.id, rechargeDialogOpen])
-
-  useEffect(() => {
-    const unsubscribe = window.shejaneDesktop?.onDeepLink?.((rawURL) => {
-      let parsed: URL
-      try {
-        parsed = new URL(rawURL)
-      } catch {
-        return
-      }
-      if (parsed.protocol !== 'shejane:' || parsed.hostname !== 'billing') {
-        return
-      }
-      if (parsed.pathname === '/success') {
-        setNotice(t('billing.recharge.returnSuccess'))
-        if (auth) {
-          void api.balance().then(setBalance).catch(() => undefined)
-        }
-        return
-      }
-      if (parsed.pathname === '/cancel') {
-        setNotice(t('billing.recharge.returnCancel'))
-      }
-    })
-    return unsubscribe
-  }, [api, auth, t])
-
-  // One-shot: if the app was opened from an email verification link
-  // (CLIENT_BASE_URL/verify?token=…), confirm it. The endpoint is
-  // unauthenticated, so this works signed-in or out. On success we clear the
-  // banner optimistically + notify, then strip the token from the URL.
-  useEffect(() => {
-    const token = readVerifyTokenFromURL()
-    if (!token) {
-      return
-    }
-    void api
-      .confirmEmailVerification({ token })
-      .then(() => {
-        setAuth((current) =>
-          current ? { ...current, user: { ...current.user, email_verified: true } } : current,
-        )
-        setNotice(t('topbar.verifySuccess'))
-      })
-      .catch(() => setNotice(t('topbar.verifyFailed')))
-      .finally(() => {
-        if (typeof window !== 'undefined') {
-          window.history.replaceState({}, '', window.location.pathname)
-        }
-      })
-  }, [api, t])
+  }, [localData, t])
 
   useEffect(() => {
     const desktop = window.shejaneDesktop
@@ -1097,65 +817,6 @@ function AppContent() {
     }
   }, [localHost?.online, localHostConfig, t])
 
-  useEffect(() => {
-    if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig) || !authRestoreComplete) {
-      return
-    }
-    let disposed = false
-    if (!auth?.access_token) {
-      void clearLocalCloudSession(localHostConfig)
-        .then((session) => {
-          if (!disposed) {
-            setLocalCloudSessionState(session)
-            setModelCatalogVersion((version) => version + 1)
-          }
-        })
-        .catch(() => {
-          if (!disposed) {
-            setLocalCloudSessionState({ connected: false })
-          }
-        })
-      return () => {
-        disposed = true
-      }
-    }
-    void setLocalCloudSession(
-      {
-        cloudBaseURL: api.baseURL,
-        accessToken: auth.access_token,
-      },
-      localHostConfig,
-    )
-      .then((session) => {
-        if (!disposed) {
-          setLocalCloudSessionState(session)
-          setModelCatalogVersion((version) => version + 1)
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setLocalCloudSessionState({ connected: false })
-        }
-      })
-    return () => {
-      disposed = true
-    }
-  }, [api, auth, authRestoreComplete, localHost?.online, localHostConfig])
-
-  useEffect(() => {
-    if (!localCloudSession?.connected) {
-      return
-    }
-    const recoveryTarget = takeCloudSessionRecovery(recoveryStateRef.current, auth?.user?.id)
-    if (!recoveryTarget) {
-      return
-    }
-    setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
-      duration: 8000,
-      action: recoveryRetryAction(recoveryTarget),
-    })
-  }, [auth?.user?.id, localCloudSession?.connected, t])
-
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
   // A local daemon run can stay cancelable after `isSending` flips false
   // because HITL permission/question pauses block the SSE stream while the
@@ -1174,9 +835,6 @@ function AppContent() {
   const pendingApproval = findConversationPendingApproval(activeConversation, t)
   const pendingPlanApproval = pendingApproval ? null : findConversationPendingPlanApproval(activeConversation)
   const pendingQuestion = pendingApproval || pendingPlanApproval ? null : findConversationPendingQuestion(activeConversation)
-  const attachedDocuments = attachedDocumentIDs
-    .map((id) => documents.find((document) => document.id === id))
-    .filter((document): document is UserDocument => Boolean(document))
   const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
   const selectedWorkspace = activeWorkspace ? findWorkspaceByPath(authorizedWorkspaces, activeWorkspace.path) : undefined
   const localProject = activeWorkspace
@@ -1187,50 +845,8 @@ function AppContent() {
       }
     : undefined
 
-  async function handleAuth(payload: AuthPayload) {
-    await migrateDesktopConversations(payload.user.id)
-    api.setAccessToken(payload.access_token)
-    setAuth(payload)
-    const [wallet, items] = await Promise.all([api.balance(), api.listDocuments()])
-    setBalance(wallet)
-    setDocuments(items)
-  }
-
-  async function migrateDesktopConversations(userID?: string): Promise<boolean> {
-    if (!isDesktop) return false
-    const migrate = async (): Promise<boolean> => {
-      const sourceNames = [
-        'shejane-local:anonymous',
-        ...(userID ? [`shejane-local:${userID}`] : []),
-      ]
-      let changed = false
-      const current = new Map((await localData.list()).map((item) => [item.id, item]))
-      for (const sourceName of sourceNames) {
-        const marker = `shejane.localDataMigrated.v1:${sourceName}`
-        if (localStorage.getItem(marker) === 'done') continue
-        const source = new LocalConversationStore(sourceName)
-        for (const conversation of await source.list()) {
-          const existing = current.get(conversation.id)
-          if (!existing || conversation.updatedAt > existing.updatedAt) {
-            await localData.save(conversation)
-            current.set(conversation.id, conversation)
-            changed = true
-          }
-        }
-        localStorage.setItem(marker, 'done')
-      }
-      return changed
-    }
-    const operation = desktopMigrationChainRef.current.then(migrate)
-    desktopMigrationChainRef.current = operation.then(
-      () => undefined,
-      () => undefined,
-    )
-    return operation
-  }
-
   async function refreshConversations(nextActiveID?: string, options: { preserveEmptyActive?: boolean } = {}) {
-    const items = await recoverOrphanCloudStreamingConversations(localData, { t })
+    const items = await localData.list()
     setConversations(items)
     setActiveConversationID(nextActiveID ?? (options.preserveEmptyActive ? undefined : items[0]?.id))
   }
@@ -1319,8 +935,6 @@ function AppContent() {
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
     setDraft('')
-    setAttachedDocumentIDs([])
-    setAttachedPreviews({})
     setMainView('chat')
   }
 
@@ -1376,14 +990,6 @@ function AppContent() {
   }
 
   async function sendMessage() {
-    if (!auth && !isDesktop) {
-      setNotice(t('app.notice.loginBeforeSending'))
-      return
-    }
-    if (attachedDocuments.some((document) => document.status !== 'ready')) {
-      setNotice(t('app.notice.documentNotReady'))
-      return
-    }
     const content = draft
     // Snapshot the attachment before we optimistically clear it so we
     // can roll back if the send fails. The chip used to linger until
@@ -1392,58 +998,23 @@ function AppContent() {
     // draft mirrors the message-bar behaviour: the prompt + its
     // attachment vanish from the composer the instant Enter fires;
     // the catch path restores both if the request never landed.
-    const sentDocumentIDs = attachedDocumentIDs
-    const sentPreviews = attachedPreviews
     setIsSending(true)
     setNotice('')
     setDraft('')
-    setAttachedDocumentIDs([])
-    setAttachedPreviews({})
     const renderContext = createConversationRenderContext()
     try {
-      // Image attachments go through the tool-capable local harness (so the
-      // agent can image.edit them); other documents keep the cloud text path.
-      const attachmentsAreImages = attachedDocuments.length > 0 &&
-        attachedDocuments.every((document) => document.content_type.startsWith('image/'))
-      if (isDesktop && attachedDocuments.length > 0 && !attachmentsAreImages) {
-        throw new Error(t('app.notice.localDocumentUnsupported'))
-      }
-      if (isDesktop && (!localHost?.online || !hasLocalHostAuthorization(localHostConfig))) {
+      if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
         throw new Error(t('app.notice.localHostDisconnected'))
       }
       if (
-        isDesktop &&
         !((autoModelAvailable && isAutoMode(mode)) || models.some((model) => model.id === mode))
       ) {
         throw new Error(t('app.notice.localModelUnavailable'))
       }
-      const conversation = isDesktop
-        ? await sendLocalHarnessMessage(content, renderContext)
-        : await chat.sendMessage({
-            conversationId: activeID,
-            content: parseSkillDraft(content).text,
-            mode,
-            scene: 'chat',
-            documents: attachedDocuments.map((document) => ({
-              id: document.id,
-              name: document.original_name,
-              contentType: document.content_type,
-            })),
-            onConversationUpdate: (nextConversation) => {
-              scheduleConversationRender(nextConversation, renderContext)
-            },
-          })
+      const conversation = await sendLocalHarnessMessage(content, renderContext)
       await refreshConversationsAfterStream(conversation.id, renderContext)
-      if (auth) {
-        setBalance(await api.balance())
-      }
     } catch (error) {
       setDraft((current) => current || content)
-      // Only restore the attachment if the user hasn't picked a new
-      // one in the meantime (same guard the draft uses) — otherwise
-      // we'd clobber the new pick on a failed retry.
-      setAttachedDocumentIDs((current) => current.length > 0 ? current : sentDocumentIDs)
-      setAttachedPreviews((current) => Object.keys(current).length > 0 ? current : sentPreviews)
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
       await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
@@ -1491,25 +1062,14 @@ function AppContent() {
     setIsSending(true)
     setNotice('')
     try {
-      const next = preferLocal
-        ? await sendLocalHarnessMessage(
-            text,
-            renderContext,
-            agentSettings,
-            { ...localRunOptions, replaceFromClientId: userMessageID },
-            targetConversationID,
-          )
-        : await chat.sendMessage({
-            conversationId: targetConversationID,
-            content: parseSkillDraft(text).text,
-            mode,
-            scene: 'chat',
-            onConversationUpdate: (nextConversation) => {
-              scheduleConversationRender(nextConversation, renderContext)
-            },
-          })
+      const next = await sendLocalHarnessMessage(
+        text,
+        renderContext,
+        agentSettings,
+        { ...localRunOptions, replaceFromClientId: userMessageID },
+        targetConversationID,
+      )
       await refreshConversationsAfterStream(next.id, renderContext)
-      setBalance(await api.balance())
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       await refreshConversations(targetConversationID)
@@ -1523,10 +1083,6 @@ function AppContent() {
       return undefined
     }
     return { conversationID: activeConversation.id, assistantMessageID }
-  }
-
-  function queueCloudSessionRecoveryTarget(target?: RecoveryTarget) {
-    queueCloudSessionRecovery(recoveryStateRef.current, target, auth?.user?.id)
   }
 
   async function retryRecoveryTarget(target: RecoveryTarget) {
@@ -1546,59 +1102,6 @@ function AppContent() {
       label: t('agent.failureAction.retry'),
       onClick: () => void retryRecoveryTarget(target),
     }
-  }
-
-  function rechargeRetryAction(target: RecoveryTarget, walletBefore: WalletBalance | null) {
-    return {
-      label: t('agent.failureAction.retry'),
-      onClick: () => void confirmRechargeAndRetry(target, walletBefore),
-    }
-  }
-
-  function stopCheckoutRecoveryWatcher() {
-    checkoutRecoveryGenerationRef.current += 1
-    if (checkoutRecoveryTimerRef.current !== undefined) {
-      window.clearTimeout(checkoutRecoveryTimerRef.current)
-      checkoutRecoveryTimerRef.current = undefined
-    }
-  }
-
-  function startCheckoutRecoveryWatcher(target: RecoveryTarget, walletBefore: WalletBalance | null) {
-    stopCheckoutRecoveryWatcher()
-    const generation = checkoutRecoveryGenerationRef.current
-    let attempts = 0
-    const poll = async () => {
-      attempts += 1
-      try {
-        const walletAfter = await api.balance()
-        if (checkoutRecoveryGenerationRef.current !== generation) {
-          return
-        }
-        setBalance(walletAfter)
-        if (walletShowsRechargeCompletion(walletBefore, walletAfter)) {
-          stopCheckoutRecoveryWatcher()
-          setNotice(t('app.notice.checkoutCompletedWithRetry'), {
-            duration: 8000,
-            action: recoveryRetryAction(target),
-          })
-          return
-        }
-      } catch {
-        if (checkoutRecoveryGenerationRef.current !== generation) {
-          return
-        }
-        // Keep this observer quiet. The explicit retry action still performs
-        // its own balance check and reports failures to the user.
-      }
-      if (checkoutRecoveryGenerationRef.current === generation && attempts < checkoutRecoveryMaxPolls) {
-        checkoutRecoveryTimerRef.current = window.setTimeout(() => {
-          void poll()
-        }, checkoutRecoveryPollMs)
-      } else if (checkoutRecoveryGenerationRef.current === generation) {
-        checkoutRecoveryTimerRef.current = undefined
-      }
-    }
-    void poll()
   }
 
   function handleRegenerateMessage(assistantMessageID: string) {
@@ -1632,12 +1135,11 @@ function AppContent() {
     }
     const userMessage = messages[userIndex]
     const assistantMessage = messages[assistantIndex]
-    const preferLocal = assistantMessage.runOrigin !== 'cloud'
     void resendFromUserMessage(
       userMessage.id,
       userMessage.content,
-      preferLocal,
-      preferLocal ? retryRunOptionsFor(assistantMessage) : undefined,
+      true,
+      retryRunOptionsFor(assistantMessage),
       conversationID,
     )
   }
@@ -1698,7 +1200,6 @@ function AppContent() {
       }
       const assistantMessage = messages[assistantIndex]
       const userMessage = messages[userIndex]
-      const preferLocal = assistantMessage.runOrigin !== 'cloud'
       const failure = latestRunFailureEvent(assistantMessage)
       const attempt = nextRepairAttempt(assistantMessage)
       const repairAction = t('agent.repairAttemptLabel', { attempt })
@@ -1714,7 +1215,7 @@ function AppContent() {
       await resendFromUserMessage(
         userMessage.id,
         userMessage.content,
-        preferLocal,
+        true,
         {
           parentRunId: assistantMessage.runId,
           metadata: {
@@ -1734,46 +1235,6 @@ function AppContent() {
     }
   }
 
-  async function refreshLocalCloudSessionNow(recoveryTarget?: RecoveryTarget) {
-    const config = localHostConfig ?? getDesktopLocalHostConfig()
-    if (!auth?.access_token || !hasLocalHostAuthorization(config)) {
-      queueCloudSessionRecoveryTarget(recoveryTarget)
-      setNotice(t('app.notice.cloudSessionRefreshUnavailable'))
-      return
-    }
-    if (!localHostConfig) {
-      setLocalHostConfig(config)
-    }
-    try {
-      const session = await setLocalCloudSession(
-        {
-          cloudBaseURL: api.baseURL,
-          accessToken: auth.access_token,
-        },
-        config,
-      )
-      setLocalCloudSessionState(session)
-      if (session.connected) {
-        takeCloudSessionRecovery(recoveryStateRef.current, auth?.user?.id)
-        if (recoveryTarget) {
-          setNotice(t('app.notice.cloudSessionRefreshedWithRetry'), {
-            duration: 8000,
-            action: recoveryRetryAction(recoveryTarget),
-          })
-          return
-        }
-        setNotice(t('app.notice.cloudSessionRefreshed'))
-        return
-      }
-      queueCloudSessionRecoveryTarget(recoveryTarget)
-      setNotice(t('app.notice.cloudSessionRefreshFailed'))
-    } catch {
-      setLocalCloudSessionState({ connected: false })
-      queueCloudSessionRecoveryTarget(recoveryTarget)
-      setNotice(t('app.notice.cloudSessionRefreshFailed'))
-    }
-  }
-
   function handleAgentFailureAction(action: AgentFailureAction, assistantMessageID: string) {
     const recoveryTarget = recoveryTargetFor(assistantMessageID)
     if (!recoveryTarget) {
@@ -1785,14 +1246,6 @@ function AppContent() {
     }
     if (action === 'repair') {
       void repairRecoveryTarget(recoveryTarget)
-      return
-    }
-    if (action === 'recharge') {
-      void startRecharge(recoveryTarget)
-      return
-    }
-    if (action === 'refresh_session') {
-      void refreshLocalCloudSessionNow(recoveryTarget)
       return
     }
     if (action === 'workspace') {
@@ -1811,9 +1264,7 @@ function AppContent() {
     if (!activeConversation) {
       return
     }
-    const lastAssistant = [...activeConversation.messages].reverse().find((message) => message.role === 'assistant')
-    const preferLocal = lastAssistant ? lastAssistant.runOrigin !== 'cloud' : true
-    void resendFromUserMessage(userMessageID, newText, preferLocal)
+    void resendFromUserMessage(userMessageID, newText, true)
   }
 
   async function handleDeleteMessage(messageID: string) {
@@ -1894,15 +1345,6 @@ function AppContent() {
       content: text,
       createdAt: timestamp,
       status: 'done',
-      attachments:
-        !settingsOverride && attachedDocuments.length > 0
-          ? attachedDocuments.map((document) => ({
-              documentId: document.id,
-              name: document.original_name,
-              contentType: document.content_type,
-              previewDataUrl: attachedPreviews[document.id],
-            }))
-          : undefined,
     }
     const assistantMessage: ChatMessage = {
       id: createLocalID('msg'),
@@ -1935,16 +1377,6 @@ function AppContent() {
     }
     if (mcpsForRun.length > 0) {
       directives.push(t('mcp.useDirective', { names: mcpsForRun.join('、') }))
-    }
-    if (!settingsOverride) {
-      for (const document of attachedDocuments) {
-        if (!document.content_type.startsWith('image/')) {
-          continue
-        }
-        directives.push(
-          t('functions.imageEditDirective', { documentId: document.id, name: document.original_name }),
-        )
-      }
     }
     const goal = directives.length > 0 ? `${directives.join('\n\n')}\n\n${text}` : text
     // Layered settings overrides — later wins. settingsOverride is used
@@ -3075,110 +2507,7 @@ function AppContent() {
     setNotice(t('app.notice.localDataExported'))
   }
 
-  async function uploadDocument(input: File | File[] | FileList | undefined) {
-    const files = normalizeUploadFiles(input)
-    if (files.length === 0) {
-      return
-    }
-    if (!auth) {
-      setNotice(t('app.notice.loginBeforeUpload'))
-      return
-    }
-    const prepared: Array<{ file: File; contentType: string }> = []
-    for (const file of files) {
-      const contentType = normalizeDocumentContentType(file)
-      if (!contentType) {
-        setNotice(t('app.notice.unsupportedDocument'))
-        return
-      }
-      if (file.size <= 0 || file.size > documentMaxBytes) {
-        setNotice(t('app.notice.documentTooLarge'))
-        return
-      }
-      prepared.push({ file, contentType })
-    }
-    setNotice('')
-    setIsUploading(true)
-    try {
-      for (const { file, contentType } of prepared) {
-        setUploadProgress(0)
-        const upload = await api.createDocumentUpload({
-          filename: file.name,
-          content_type: contentType,
-          size_bytes: file.size,
-        })
-        setDocuments((items) => upsertDocument(items, upload.document))
-        setAttachedDocumentIDs((ids) => appendUnique(ids, upload.document.id))
-        // XHR-based PUT so we can render a progress ring on the
-        // attachment chip. Slow cross-border S3 uploads (typical
-        // China → Singapore, even with Transfer Acceleration on)
-        // would otherwise just spin for ~30s with no feedback and
-        // the user would assume the app is frozen.
-        const uploadResponse = await uploadWithProgress({
-          method: upload.upload.method,
-          url: upload.upload.url,
-          headers: upload.upload.headers,
-          body: file,
-          onProgress: ({ percent }) => {
-            setUploadProgress(Number.isFinite(percent) ? percent : undefined)
-          },
-        })
-        if (!uploadResponse.ok) {
-          throw new Error(t('app.notice.s3UploadFailed', { status: uploadResponse.status }))
-        }
-        const completed = await api.completeDocument(upload.document.id)
-        setDocuments((items) => upsertDocument(items, completed))
-        setAttachedDocumentIDs((ids) => appendUnique(ids, completed.id))
-        const preview = await makeImageThumbnail(file)
-        setAttachedPreviews((current) => {
-          const next = { ...current }
-          if (preview) {
-            next[completed.id] = preview
-          } else {
-            delete next[completed.id]
-          }
-          return next
-        })
-      }
-      setNotice(prepared.length > 1
-        ? t('app.notice.documentsReady', { count: String(prepared.length) })
-        : t('app.notice.documentReady'))
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : t('app.notice.documentUploadFailed'))
-    } finally {
-      setIsUploading(false)
-      setUploadProgress(undefined)
-    }
-  }
-
-  async function deleteDocument(document: UserDocument) {
-    const deleted = await api.deleteDocument(document.id)
-    setDocuments((items) => items.filter((item) => item.id !== deleted.id))
-    setAttachedDocumentIDs((ids) => ids.filter((id) => id !== deleted.id))
-    setAttachedPreviews((current) => {
-      const next = { ...current }
-      delete next[deleted.id]
-      return next
-    })
-    setNotice(t('app.notice.documentDeleted'))
-  }
-
-  const desktopRuntimeOnly = isDesktop && Boolean(localHostConfig) && localHost !== null
-  if (!auth && !desktopRuntimeOnly) {
-    return (
-      <AuthScreen
-        onAuthed={handleAuth}
-        authClient={authClient}
-        onRequestPasswordReset={(email) => api.requestPasswordReset({ email })}
-        onConfirmPasswordReset={(token, password) => api.confirmPasswordReset({ token, password })}
-      />
-    )
-  }
-
-  // Desktop = the Electron build (preload injects window.shejaneDesktop). The
-  // web build (app.shejane.com) has NO local daemon, so the whole local-agent
-  // surface — skills, MCP, IM connections, workspace — can never work there
-  // and must be hidden.
+  // The renderer is always hosted by Electron; Runtime is its only execution backend.
   const shellClassName = isDesktop ? 'app-window-shell electron-window-shell' : 'app-window-shell'
   const appShellStyle = { '--sidebar-width': `${sidebarWidth}px` } as CSSProperties
   const shortcutModifier = keyboardShortcutModifier()
@@ -3242,106 +2571,6 @@ function AppContent() {
     setSidebarMotion('opening')
     setSidebarCollapsed(false)
     sidebarMotionTimerRef.current = window.setTimeout(() => setSidebarMotion('idle'), sidebarMotionMs)
-  }
-
-  // Open the Stripe one-time top-up page. Credits are granted only by
-  // the Stripe webhook after payment completion.
-  async function openBillingCheckoutURL(checkoutURL: string) {
-    const bridge = window.shejaneDesktop
-    if (bridge?.openExternal) {
-      await bridge.openExternal(checkoutURL)
-      return
-    }
-    if (bridge) {
-      window.open(checkoutURL, '_blank', 'noopener,noreferrer')
-      return
-    }
-    window.location.href = checkoutURL
-  }
-
-  function openSpendHistory(filter: HistoryFilter = 'all') {
-    setSpendHistoryInitialFilter(filter)
-    setSpendHistoryOpen(true)
-  }
-
-  async function startRecharge(inputOrRecoveryTarget?: RechargeCheckoutInput | RecoveryTarget, nextRecoveryTarget?: RecoveryTarget) {
-    const checkoutInput = isRechargeCheckoutInput(inputOrRecoveryTarget) ? inputOrRecoveryTarget : { amount: 10 }
-    const recoveryTarget = isRechargeCheckoutInput(inputOrRecoveryTarget) ? nextRecoveryTarget : inputOrRecoveryTarget
-    const recoveryStarted = recoveryTarget ? beginRecoveryAction(recoveryStateRef.current, 'recharge', recoveryTarget) : false
-    if (recoveryTarget && !recoveryStarted) {
-      setNotice(t('app.notice.recoveryRetryAlreadyRunning'))
-      return
-    }
-    const walletBeforeCheckout = balance
-    try {
-      const { checkout_url } = await api.createBillingCheckout({
-        ...checkoutInput,
-        returnTarget: window.shejaneDesktop ? 'electron' : 'web',
-      })
-      if (!checkout_url) {
-        throw new Error('missing checkout url')
-      }
-      await openBillingCheckoutURL(checkout_url)
-      if (recoveryTarget) {
-        setNotice(t('app.notice.checkoutOpenedWithRetry'), {
-          duration: 8000,
-          action: rechargeRetryAction(recoveryTarget, walletBeforeCheckout),
-        })
-        startCheckoutRecoveryWatcher(recoveryTarget, walletBeforeCheckout)
-      } else {
-        setRechargePendingOpen(true)
-      }
-    } catch {
-      setNotice(t('billing.rechargeFailed'))
-    } finally {
-      if (recoveryTarget && recoveryStarted) {
-        endRecoveryAction(recoveryStateRef.current, 'recharge', recoveryTarget)
-      }
-    }
-  }
-
-  async function confirmRechargeCompleted() {
-    setRechargeCompletionChecking(true)
-    try {
-      const walletAfter = await api.balance()
-      setBalance(walletAfter)
-      setRechargePendingOpen(false)
-      openSpendHistory('topup')
-    } catch {
-      setNotice(t('app.notice.checkoutStatusCheckFailed'))
-    } finally {
-      setRechargeCompletionChecking(false)
-    }
-  }
-
-  async function confirmRechargeAndRetry(recoveryTarget: RecoveryTarget, walletBefore: WalletBalance | null) {
-    stopCheckoutRecoveryWatcher()
-    try {
-      const walletAfter = await api.balance()
-      setBalance(walletAfter)
-      if (walletShowsRechargeCompletion(walletBefore, walletAfter)) {
-        void retryRecoveryTarget(recoveryTarget)
-        return
-      }
-      setNotice(t('app.notice.checkoutNotCompleted'), {
-        duration: 8000,
-        action: rechargeRetryAction(recoveryTarget, walletAfter),
-      })
-    } catch {
-      setNotice(t('app.notice.checkoutStatusCheckFailed'), {
-        duration: 8000,
-        action: rechargeRetryAction(recoveryTarget, walletBefore),
-      })
-    }
-  }
-
-  async function resendVerificationEmail() {
-    try {
-      await api.requestEmailVerification()
-      setEmailVerifySent(true)
-    } catch {
-      setNotice(t('topbar.bannerEmailResendFailed'))
-    }
   }
 
   return (
@@ -3459,8 +2688,6 @@ function AppContent() {
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop={isDesktop}
-              userEmail={auth?.user.email}
-              balance={balance}
               agentSettings={agentSettings}
               localHostConfig={localHostConfig}
               onModelProvidersChange={() => setModelCatalogVersion((version) => version + 1)}
@@ -3468,13 +2695,6 @@ function AppContent() {
                 setAgentSettings(next)
                 writeAgentSettings(next)
               }}
-              onRecharge={auth ? () => setRechargeDialogOpen(true) : undefined}
-              onShowSpendHistory={auth ? () => openSpendHistory() : undefined}
-              onLogout={auth
-                ? () => {
-                    void authClient.logout().finally(() => setAuth(null))
-                  }
-                : undefined}
               onImportLocalData={(file) => void importLocalData(file)}
               onExportLocalData={() => void exportLocalData()}
               onClearMemory={
@@ -3519,8 +2739,8 @@ function AppContent() {
                 <div className="topbar-status">
                   <span
                     className={`topbar-daemon-dot${localHost?.online ? ' is-online' : ' is-offline'}`}
-                    title={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
-                    aria-label={localHostStatusLabel(localHost, localHostConfig, localCloudSession, t)}
+                    title={localHostStatusLabel(localHost, localHostConfig, t)}
+                    aria-label={localHostStatusLabel(localHost, localHostConfig, t)}
                   />
                 </div>
               ) : null}
@@ -3532,37 +2752,6 @@ function AppContent() {
               <div className="status-banner status-banner-warning" role="status">
                 <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>
               </div>
-            ) : balance && totalCredits(balance) <= 0 ? (
-              <div className="status-banner status-banner-warning" role="status">
-                <span className="status-banner-text">{t('topbar.bannerCreditsEmpty')}</span>
-                <button type="button" className="status-banner-action" onClick={() => void startRecharge()}>
-                  {t('sidebar.account.recharge')}
-                </button>
-              </div>
-            ) : null}
-            {/* Advisory (non-blocking) email-verification nudge. Only shown
-             *  when the server explicitly reports the email as unverified
-             *  (=== false, so older payloads without the field don't nag). */}
-            {auth?.user.email_verified === false && !emailBannerDismissed ? (
-              <div className="status-banner status-banner-info" role="status">
-                <span className="status-banner-text">{t('topbar.bannerEmailUnverified')}</span>
-                <button
-                  type="button"
-                  className="status-banner-action"
-                  disabled={emailVerifySent}
-                  onClick={() => void resendVerificationEmail()}
-                >
-                  {emailVerifySent ? t('topbar.bannerEmailSent') : t('topbar.bannerEmailResend')}
-                </button>
-                <button
-                  type="button"
-                  className="status-banner-dismiss"
-                  aria-label={t('topbar.bannerDismiss')}
-                  onClick={() => setEmailBannerDismissed(true)}
-                >
-                  <IconX size={14} aria-hidden="true" />
-                </button>
-              </div>
             ) : null}
 
             <ChatThread
@@ -3570,8 +2759,6 @@ function AppContent() {
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
               onPreviewLocalFile={openOfficeDocument}
-              onPreviewCloudAttachment={openCloudOfficeDocument}
-              onOpenAttachmentExternally={(ref) => void openAttachmentExternally(ref)}
               onPickSuggestion={setDraft}
               onRegenerateMessage={handleRegenerateMessage}
               onEditResendMessage={handleEditResendMessage}
@@ -3661,24 +2848,9 @@ function AppContent() {
               onDraftChange={setDraft}
               isSending={isSending}
               hasActiveRun={hasActiveRun}
-              attachedDocuments={attachedDocuments}
-              attachedPreviews={attachedPreviews}
-              isUploading={isUploading}
-              uploadProgress={uploadProgress}
-              onUploadDocument={(file) => void uploadDocument(file)}
-              onDetachDocument={(documentID) => {
-                if (!documentID) {
-                  setAttachedDocumentIDs([])
-                  setAttachedPreviews({})
-                  return
-                }
-                setAttachedDocumentIDs((ids) => ids.filter((id) => id !== documentID))
-                setAttachedPreviews((current) => {
-                  const next = { ...current }
-                  delete next[documentID]
-                  return next
-                })
-              }}
+              isUploading={false}
+              onUploadDocument={() => setNotice(t('app.notice.localDocumentUnsupported'))}
+              onDetachDocument={() => undefined}
               onSend={() => void sendMessage()}
               onAppendInstruction={hasActiveRun ? () => void appendInstructionToActiveRun() : undefined}
               onStop={() => void cancelActiveRun()}
@@ -3709,25 +2881,6 @@ function AppContent() {
           </section>
           )}
           </div>
-          <SpendHistoryDialog
-            open={spendHistoryOpen}
-            onOpenChange={setSpendHistoryOpen}
-            fetchActivities={fetchSpendHistory}
-            initialFilter={spendHistoryInitialFilter}
-          />
-          <RechargeDialog
-            open={rechargeDialogOpen}
-            onOpenChange={setRechargeDialogOpen}
-            balance={balance}
-            checkoutOptions={billingCheckoutOptions}
-            onConfirm={(input) => startRecharge(input)}
-          />
-          <RechargePendingDialog
-            open={rechargePendingOpen}
-            onOpenChange={setRechargePendingOpen}
-            onComplete={confirmRechargeCompleted}
-            checking={rechargeCompletionChecking}
-          />
           <Dialog open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
             <DialogContent className="keyboard-shortcuts-dialog sm:max-w-[420px]">
               <DialogHeader>
@@ -3777,7 +2930,6 @@ function keyboardShortcutModifier(): string {
 function localHostStatusLabel(
   localHost: LocalHostProbe | null,
   config: LocalHostConfig | null,
-  session: LocalCloudSession | null,
   t: Translator,
 ): string {
   if (!localHost?.online) {
@@ -3785,9 +2937,6 @@ function localHostStatusLabel(
   }
   if (!hasLocalHostAuthorization(config)) {
     return t('app.localStatus.unpaired')
-  }
-  if (!session?.connected) {
-    return t('app.localStatus.loginPending')
   }
   return t('app.localStatus.connected')
 }
@@ -4066,52 +3215,6 @@ async function streamLocalMessage(
   }
 }
 
-function totalCredits(balance: WalletBalance): number {
-  return Math.max(0, (balance.monthly_remaining ?? 0) + (balance.extra_credits_balance ?? 0))
-}
-
-function isRechargeCheckoutInput(value: RechargeCheckoutInput | RecoveryTarget | undefined): value is RechargeCheckoutInput {
-  if (!value) {
-    return false
-  }
-  return 'amount' in value || 'credits' in value
-}
-
-function walletShowsRechargeCompletion(before: WalletBalance | null, after: WalletBalance): boolean {
-  const afterCredits = totalCredits(after)
-  if (!before) {
-    return afterCredits > 0
-  }
-  const beforeCredits = totalCredits(before)
-  if (afterCredits > beforeCredits) {
-    return true
-  }
-  if (afterCredits <= 0) {
-    return false
-  }
-  if (after.monthly_credit_limit > before.monthly_credit_limit) {
-    return true
-  }
-  return after.plan_code !== before.plan_code && after.plan_code !== 'free_trial'
-}
-
-/** Token from an email-verification link (CLIENT_BASE_URL/verify?token=…).
- *  Gated on the /verify path so it never collides with the /reset?token= link
- *  consumed by AuthScreen. */
-function readVerifyTokenFromURL(): string {
-  if (typeof window === 'undefined') {
-    return ''
-  }
-  try {
-    if (!window.location.pathname.includes('/verify')) {
-      return ''
-    }
-    return new URLSearchParams(window.location.search).get('token') ?? ''
-  } catch {
-    return ''
-  }
-}
-
 /** Fire a system notification when an assistant turn finishes. The
  *  Electron main process internally drops the call when the window is
  *  focused, so this is safe to call on every completion. We trim the
@@ -4248,22 +3351,8 @@ function downloadLocalRunDiagnostics(diagnostics: LocalRunDiagnostics) {
   URL.revokeObjectURL(url)
 }
 
-function upsertDocument(items: UserDocument[], document: UserDocument): UserDocument[] {
-  return [document, ...items.filter((item) => item.id !== document.id)]
-}
-
 function appendUnique(items: string[], item: string): string[] {
   return items.includes(item) ? items : [...items, item]
-}
-
-function normalizeUploadFiles(input: File | File[] | FileList | undefined): File[] {
-  if (!input) {
-    return []
-  }
-  if (input instanceof File) {
-    return [input]
-  }
-  return Array.from(input).filter((file): file is File => file instanceof File)
 }
 
 function upsertWorkspace(items: LocalWorkspaceAuthorization[], workspace: LocalWorkspaceAuthorization): LocalWorkspaceAuthorization[] {
@@ -4375,64 +3464,4 @@ function pathBasename(path: string): string {
   const trimmed = path.replace(/[/\\]+$/, '')
   const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
-}
-
-async function makeImageThumbnail(file: File): Promise<string | undefined> {
-  if (!file.type.startsWith('image/')) {
-    return undefined
-  }
-  try {
-    const bitmap = await createImageBitmap(file)
-    const maxDim = 768
-    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
-    const width = Math.max(1, Math.round(bitmap.width * scale))
-    const height = Math.max(1, Math.round(bitmap.height * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return undefined
-    }
-    ctx.drawImage(bitmap, 0, 0, width, height)
-    return canvas.toDataURL('image/webp', 0.82)
-  } catch {
-    return undefined
-  }
-}
-
-function normalizeDocumentContentType(file: File): string {
-  const byType = file.type.toLowerCase()
-  if (byType === 'application/pdf') {
-    return byType
-  }
-  if (byType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-    return byType
-  }
-  if (byType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
-    return byType
-  }
-  if (byType === 'image/png' || byType === 'image/jpeg' || byType === 'image/webp') {
-    return byType
-  }
-  const name = file.name.toLowerCase()
-  if (name.endsWith('.pdf')) {
-    return 'application/pdf'
-  }
-  if (name.endsWith('.docx')) {
-    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  }
-  if (name.endsWith('.xlsx')) {
-    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  }
-  if (name.endsWith('.png')) {
-    return 'image/png'
-  }
-  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) {
-    return 'image/jpeg'
-  }
-  if (name.endsWith('.webp')) {
-    return 'image/webp'
-  }
-  return ''
 }

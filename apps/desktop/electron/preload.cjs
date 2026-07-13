@@ -1,9 +1,4 @@
 const { contextBridge, ipcRenderer } = require('electron')
-const { unwrapAuthIPCResult } = require('./auth-bridge.cjs')
-
-async function invokeAuth(channel, input) {
-  return unwrapAuthIPCResult(await ipcRenderer.invoke(channel, input))
-}
 
 // Main passes only the Runtime address and an opaque session marker. The
 // pairing token never crosses into the renderer process.
@@ -30,12 +25,6 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
     set: (input) => ipcRenderer.invoke('shejane:runtime-connection-set', input),
     restartApp: () => ipcRenderer.invoke('shejane:restart-app'),
   },
-  auth: {
-    register: (input) => invokeAuth('shejane:auth-register', input),
-    login: (input) => invokeAuth('shejane:auth-login', input),
-    refresh: () => invokeAuth('shejane:auth-refresh'),
-    logout: () => invokeAuth('shejane:auth-logout'),
-  },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('shejane:select-workspace-directory'),
   openExternal: (url) => ipcRenderer.invoke('shejane:open-external', url),
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
@@ -58,10 +47,5 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
     const wrapped = () => handler()
     ipcRenderer.on('shejane:new-chat', wrapped)
     return () => ipcRenderer.removeListener('shejane:new-chat', wrapped)
-  },
-  onDeepLink: (handler) => {
-    const wrapped = (_event, url) => handler(url)
-    ipcRenderer.on('shejane:deep-link', wrapped)
-    return () => ipcRenderer.removeListener('shejane:deep-link', wrapped)
   },
 })

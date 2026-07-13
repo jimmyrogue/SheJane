@@ -16,7 +16,6 @@ const path = require('node:path')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const net = require('node:net')
-const { authIPCResult, createElectronAuthHandlers } = require('./auth-bridge.cjs')
 const { installLocalRuntimeAuthorization } = require('./local-runtime-auth.cjs')
 const {
   isPortConflictError,
@@ -107,7 +106,6 @@ let runtimeSessionReady = false
 let runtimeTarget = { mode: 'bundled', source: 'default' }
 let runtimeConnectionError = null
 const runtimeConnectionUpdateGate = createRuntimeConnectionUpdateGate()
-let pendingDeepLinkURL = null
 const appWindowButtonPosition = { x: 29, y: 27 }
 const authWindowButtonPosition = { x: 29, y: 20 }
 
@@ -178,11 +176,6 @@ function createWindow() {
   } else {
     window.loadFile(path.join(__dirname, '../dist/index.html'))
   }
-  window.webContents.once('did-finish-load', () => {
-    if (pendingDeepLinkURL) {
-      window.webContents.send('shejane:deep-link', pendingDeepLinkURL)
-    }
-  })
 }
 
 function showOrCreateMainWindow() {
@@ -205,26 +198,6 @@ function requestNewChat() {
   if (mainWindow) {
     mainWindow.webContents.send('shejane:new-chat')
   }
-}
-
-function handleDeepLink(rawURL) {
-  if (!isAllowedExternalURL(rawURL)) {
-    return
-  }
-  pendingDeepLinkURL = rawURL
-  showOrCreateMainWindow()
-  if (mainWindow) {
-    mainWindow.webContents.send('shejane:deep-link', rawURL)
-  }
-}
-
-function registerDeepLinkProtocol() {
-  const scheme = 'shejane'
-  if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(scheme, process.execPath, [path.resolve(process.argv[1])])
-    return
-  }
-  app.setAsDefaultProtocolClient(scheme)
 }
 
 function configureApplicationMenu() {
@@ -267,38 +240,13 @@ function applyDesktopLocale(locale) {
 }
 
 app.setName(currentAppName())
-registerDeepLinkProtocol()
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
   app.quit()
 } else {
-  app.on('second-instance', (_event, argv) => {
-    const deepLink = argv.find((arg) => typeof arg === 'string' && arg.startsWith('shejane://'))
-    if (deepLink) {
-      handleDeepLink(deepLink)
-      return
-    }
+  app.on('second-instance', () => {
     showOrCreateMainWindow()
   })
-}
-
-app.on('open-url', (event, rawURL) => {
-  event.preventDefault()
-  handleDeepLink(rawURL)
-})
-
-// The cloud API the main-process auth bridge (register/login/refresh) talks to.
-// Must match the renderer's build-time VITE_API_BASE_URL or auth cookies bind to
-// one origin while data calls hit another (silent session-refresh breakage).
-// Packaged builds default to production; dev stays on the local API. An explicit
-// env var still overrides either.
-const PROD_API_BASE_URL = 'https://app.shejane.com'
-function apiBaseURL() {
-  return (
-    process.env.SHEJANE_API_BASE_URL ||
-    process.env.VITE_API_BASE_URL ||
-    (app.isPackaged ? PROD_API_BASE_URL : 'http://localhost:8080')
-  )
 }
 
 // ─── Bundled local-agent daemon ────────────────────────────────────────────
@@ -324,8 +272,7 @@ function daemonBinaryPath() {
 }
 
 // Allowlist env forward (mirrors dev-electron.sh's `env -i`): the daemon never
-// inherits platform-paid keys (Invariant #1). It proxies LLM + paid tools
-// through the cloud API with the user's JWT, never a provider key.
+// inherits unrelated application or shell secrets.
 function daemonEnv(extra) {
   const allow =
     process.platform === 'win32'
@@ -411,7 +358,6 @@ async function startBundledDaemon() {
       SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
       SHEJANE_LOCAL_HOST_PORT: String(port),
       SHEJANE_LOCAL_HOST_TOKEN: daemonToken,
-      SHEJANE_CLOUD_BASE_URL: apiBaseURL(),
       PYTHONUNBUFFERED: '1',
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -533,20 +479,6 @@ async function startBundledRuntime() {
   })
 }
 
-function registerAuthHandlers() {
-  const auth = createElectronAuthHandlers({
-    apiBaseURL: apiBaseURL(),
-    cookies: session.defaultSession.cookies,
-    fetchImpl: globalThis.fetch,
-    locale: () => currentLocale,
-  })
-
-  ipcMain.handle('shejane:auth-register', (_event, input) => authIPCResult(() => auth.register(input), currentLocale))
-  ipcMain.handle('shejane:auth-login', (_event, input) => authIPCResult(() => auth.login(input), currentLocale))
-  ipcMain.handle('shejane:auth-refresh', () => authIPCResult(() => auth.refresh(), currentLocale))
-  ipcMain.handle('shejane:auth-logout', () => authIPCResult(() => auth.logout(), currentLocale))
-}
-
 function registerRuntimeConnectionHandlers() {
   ipcMain.handle('shejane:runtime-connection-get', () => publicRuntimeConnection())
   ipcMain.handle('shejane:runtime-connection-set', async (_event, input) => {
@@ -622,7 +554,6 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
   }
-  registerAuthHandlers()
   registerRuntimeConnectionHandlers()
   try {
     runtimeTarget = loadRuntimeTarget()
