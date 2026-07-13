@@ -1371,7 +1371,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 coordinator.wake_jobs()
             return receipt
         try:
-            receipt, _created = await store.request_run_cancel_command(
+            receipt, created = await store.request_run_cancel_command(
                 principal_id=request.state.principal_id,
                 command_id=body.command_id,
                 run_id=body.run_id,
@@ -1380,7 +1380,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="run not found") from exc
         except CommandConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if receipt["canceled"]:
+        if created and receipt["canceled"]:
             await coordinator.cancel_run(body.run_id)
         return receipt
 

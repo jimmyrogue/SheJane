@@ -142,7 +142,20 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert "test-cloud-token" not in stored["settings_json"]
 
 
-def test_cancel_command_is_idempotent_and_rejects_retargeting(client: TestClient) -> None:
+def test_cancel_command_is_idempotent_and_rejects_retargeting(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = client.app.state.coordinator
+    original_cancel_run = coordinator.cancel_run
+    cancel_run_calls = 0
+
+    async def cancel_run_once(run_id: str) -> bool:
+        nonlocal cancel_run_calls
+        cancel_run_calls += 1
+        return await original_cancel_run(run_id)
+
+    monkeypatch.setattr(coordinator, "cancel_run", cancel_run_once)
     headers = {"Authorization": "Bearer tok"}
     start_command = run_command(
         "first cancel target",
@@ -162,6 +175,7 @@ def test_cancel_command_is_idempotent_and_rejects_retargeting(client: TestClient
 
     accepted = client.post("/local/v1/commands", headers=headers, json=command)
     replay = client.post("/local/v1/commands", headers=headers, json=command)
+    assert cancel_run_calls == 1
     second_run = client.post(
         "/local/v1/runs",
         headers=headers,
