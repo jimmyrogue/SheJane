@@ -5,7 +5,7 @@
 
 Exits non-zero if any case fails, so it gates CI / `make eval`. Uses the
 heuristic judge (objective, no extra LLM cost). For a meaningful score the
-daemon must run against a real provider (MOCK_LLM=false) — otherwise the
+Runtime must run against a real configured provider — otherwise the
 mock-provider tell trips the `answer_excludes` check and cases fail loudly.
 """
 

@@ -18,7 +18,6 @@ export CLIENT_BASE_URL="${CLIENT_BASE_URL:-http://localhost:${CLIENT_PORT}}"
 export ADMIN_BASE_URL="${ADMIN_BASE_URL:-http://localhost:${ADMIN_PORT}}"
 export JWT_SECRET="${JWT_SECRET:-shejane-smoke-jwt-secret-change-me}"
 export ADMIN_EMAILS="${ADMIN_EMAILS:-admin-smoke@shejane.local}"
-export MOCK_LLM=true
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:${API_PORT}}"
 RUN_ID="$(date +%s)_$$"
@@ -85,52 +84,6 @@ if [[ "$ROLE" != "user" ]]; then
   echo "Expected normal smoke user role=user, got ${ROLE}" >&2
   exit 1
 fi
-
-BALANCE_BEFORE="$(
-  curl -fsS "${API_BASE_URL}/api/v1/billing/balance" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}"
-)"
-USED_BEFORE="$(json_field "$BALANCE_BEFORE" "data.monthly_credits_used")"
-
-echo "Sending deterministic mock chat"
-curl -fsS -N -X POST "${API_BASE_URL}/api/v1/chat/completions" \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "model": "fast",
-    "messages": [{"role": "user", "content": "docker smoke"}],
-    "stream": true,
-    "client_conversation_id": "smoke-docker-local",
-    "client_message_id": "smoke-1",
-    "scene": "chat"
-  }' >"${TMP_DIR}/chat.sse"
-
-node - "${TMP_DIR}/chat.sse" <<'NODE'
-const fs = require('fs');
-const raw = fs.readFileSync(process.argv[2], 'utf8');
-if (!raw.includes('[DONE]')) {
-  console.error('Missing chat SSE [DONE] sentinel');
-  process.exit(1);
-}
-if (!raw.includes('Mock SheJane response')) {
-  console.error('Expected mock provider response in deterministic Docker smoke');
-  process.exit(1);
-}
-NODE
-
-BALANCE_AFTER="$(
-  curl -fsS "${API_BASE_URL}/api/v1/billing/balance" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}"
-)"
-USED_AFTER="$(json_field "$BALANCE_AFTER" "data.monthly_credits_used")"
-USED_BEFORE="$USED_BEFORE" USED_AFTER="$USED_AFTER" node <<'NODE'
-const before = Number(process.env.USED_BEFORE);
-const after = Number(process.env.USED_AFTER);
-if (!Number.isFinite(before) || !Number.isFinite(after) || after <= before) {
-  console.error(`Expected credits to increase after chat, before=${before}, after=${after}`);
-  process.exit(1);
-}
-NODE
 
 echo "Registering admin smoke user ${ADMIN_EMAIL}"
 ADMIN_RESPONSE="$(

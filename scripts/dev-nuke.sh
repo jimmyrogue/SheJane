@@ -21,7 +21,7 @@
 #
 # Steps:
 #   1. Ensure Docker is up (auto-start Docker Desktop on macOS).
-#   2. Kill stale native dev processes (daemon / vite / electron)
+#   2. Kill stale native dev processes (Runtime / Vite / Electron)
 #      and free their ports — same prelude as dev-fresh.
 #   3. `docker compose down --remove-orphans` — stop + remove all
 #      containers (keeps named volumes).
@@ -29,8 +29,7 @@
 #      scratch, ignoring the layer cache.
 #   5. `docker compose up -d --force-recreate` — recreate all
 #      containers from the fresh images.
-#   6. Launch the native dev stack (client vite + local-host +
-#      electron) via dev-electron.sh with SKIP_DOCKER=1.
+#   6. Launch the standalone Runtime + Desktop stack.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -68,7 +67,7 @@ echo "[dev-nuke] stopping stale dev processes…"
 # SIGKILL (-9): uvicorn traps SIGTERM and can outlive a graceful
 # kill; the same applies to the Electron main process. Don't be
 # polite — see dev-fresh.sh / daemon-restart skill for the war story.
-pkill -9 -f 'python -m local_host' 2>/dev/null || true
+pkill -9 -f 'shejane-runtime' 2>/dev/null || true
 pkill -9 -f 'vite' 2>/dev/null || true
 # Scope the Electron kill to THIS app's main script so we don't take
 # down Docker Desktop (also an Electron app) right before we need it.
@@ -92,5 +91,5 @@ docker compose -f infra/cloud/docker-compose.yml build --no-cache
 echo "[dev-nuke] docker compose up -d --force-recreate…"
 docker compose -f infra/cloud/docker-compose.yml up -d --force-recreate
 
-echo "[dev-nuke] launching dev stack (client + local-host + electron)…"
-exec env SKIP_DOCKER=1 "$ROOT_DIR/scripts/dev-electron.sh"
+echo "[dev-nuke] launching Runtime + Desktop…"
+exec "$ROOT_DIR/scripts/dev-electron.sh"

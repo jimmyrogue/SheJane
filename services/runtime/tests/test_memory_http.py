@@ -29,7 +29,6 @@ def client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_BASE_URL="http://localhost:8080",
         data_dir=tmp,
     )
     app = create_app(settings)

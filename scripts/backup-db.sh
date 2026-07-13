@@ -16,12 +16,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Load .env so the off-site copy gets S3_BUCKET + AWS_* (the AWS CLI reads
+# Load the Cloud service env so the off-site copy gets S3_BUCKET + AWS_* (the AWS CLI reads
 # credentials from the environment). Values are never printed.
-if [ -f .env ]; then
+if [ -f services/cloud/.env ]; then
   set -a
   # shellcheck disable=SC1091
-  . ./.env
+  . ./services/cloud/.env
   set +a
 fi
 

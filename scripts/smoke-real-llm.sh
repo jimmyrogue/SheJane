@@ -2,6 +2,7 @@
 set -euo pipefail
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:8080}"
+MODEL_ID="${SMOKE_MODEL_ID:-}"
 EMAIL="${SMOKE_EMAIL:-smoke+$(date +%s)@shejane.local}"
 PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
 TMP_DIR="$(mktemp -d)"
@@ -20,6 +21,11 @@ require_command() {
 
 require_command curl
 require_command node
+
+if [[ -z "$MODEL_ID" ]]; then
+  echo "SMOKE_MODEL_ID is required and must name a model configured through Admin." >&2
+  exit 2
+fi
 
 echo "Checking API health at ${API_BASE_URL}"
 curl -fsS "${API_BASE_URL}/health" >"${TMP_DIR}/health.json"
@@ -48,14 +54,14 @@ echo "Sending real LLM chat request"
 curl -fsS -N -X POST "${API_BASE_URL}/api/v1/chat/completions" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
-  --data '{
-    "model": "fast",
-    "messages": [{"role": "user", "content": "请用一句中文回答：2+2 等于几？"}],
-    "stream": true,
-    "client_conversation_id": "smoke-real-llm",
-    "client_message_id": "smoke-1",
-    "scene": "chat"
-  }' >"${STREAM_FILE}"
+  --data "{
+    \"model\": \"${MODEL_ID}\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"请用一句中文回答：2+2 等于几？\"}],
+    \"stream\": true,
+    \"client_conversation_id\": \"smoke-real-llm\",
+    \"client_message_id\": \"smoke-1\",
+    \"scene\": \"chat\"
+  }" >"${STREAM_FILE}"
 
 node - "${STREAM_FILE}" <<'NODE'
 const fs = require('fs');
@@ -82,7 +88,7 @@ if (!text.trim()) {
   process.exit(1);
 }
 if (text.includes('Mock SheJane response')) {
-  console.error('The response is still using the mock provider. Set MOCK_LLM=false and configure FAST_PROVIDER_API_KEY.');
+  console.error('The configured model returned a mock response. Check the Admin model configuration.');
   process.exit(2);
 }
 

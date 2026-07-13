@@ -1,7 +1,4 @@
-"""Daemon configuration loaded from environment.
-
-All env vars use the `SHEJANE_LOCAL_` prefix.
-"""
+"""Runtime boot configuration and internal defaults."""
 
 from __future__ import annotations
 
@@ -33,8 +30,6 @@ def _empty_string_default(value: Any, default: int) -> Any:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SHEJANE_LOCAL_",
-        env_file=".env",
-        env_file_encoding="utf-8",
         validate_by_alias=True,
         validate_by_name=True,
         extra="ignore",

@@ -1,6 +1,6 @@
 """Real eval driver — drives a RUNNING local daemon over HTTP and parses its
 SSE stream into a Trajectory. Used by `make eval` against the live stack
-(needs MOCK_LLM=false + a real provider key for a meaningful score).
+(needs a Runtime with a real configured provider for a meaningful score).
 
 The SSE wire format is the daemon's canonical envelope (docs/client-sse-protocol.md):
 each `data:` line is JSON {event_type, payload, ...}; `data: [DONE]` ends it.

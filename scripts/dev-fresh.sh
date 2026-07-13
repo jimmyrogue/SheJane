@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# One-shot clean rebuild + relaunch of the whole dev stack.
+# Rebuild the optional Cloud/Admin stack, then launch Runtime + Desktop.
 #
-#   1. Kill stale dev processes (tsx local-host, vite, electron) and free their
-#      ports — local-host's `tsx` has no file-watch and the dev script reuses a
-#      live port, so a stale process is the #1 "my changes didn't take" trap.
-#   2. Rebuild every Docker image (api, admin, postgres) so backend / admin
-#      static build changes actually ship.
-#   3. Launch the dev stack (client + local-host + electron) via dev-electron.sh
-#      with SKIP_DOCKER=1 (compose was just rebuilt here, no need to do it twice).
+#   1. Kill stale Runtime, Vite, and Electron processes.
+#   2. Rebuild the independent Cloud/Admin containers.
+#   3. Launch the standalone Runtime + Desktop stack.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,7 +45,7 @@ echo "[dev-fresh] stopping stale dev processes…"
 # zombie daemon stays bound to 17371 with stale code, and the next
 # launch's `start_local_host` "already running" short-circuit silently
 # attaches to it. Don't be polite.
-pkill -9 -f 'python -m local_host' 2>/dev/null || true
+pkill -9 -f 'shejane-runtime' 2>/dev/null || true
 pkill -9 -f 'vite' 2>/dev/null || true
 # Scope the Electron kill to THIS app's main script. A bare `pkill -f electron`
 # also matches Docker Desktop (an Electron app) and would take the Docker daemon
@@ -66,8 +62,8 @@ for port in 17371 55173 5174; do
   fi
 done
 
-echo "[dev-fresh] rebuilding Docker images (api, admin, postgres)…"
+echo "[dev-fresh] rebuilding optional Cloud/Admin images…"
 docker compose -f infra/cloud/docker-compose.yml up -d --build
 
-echo "[dev-fresh] launching dev stack (client + local-host + electron)…"
-exec env SKIP_DOCKER=1 "$ROOT_DIR/scripts/dev-electron.sh"
+echo "[dev-fresh] launching Runtime + Desktop…"
+exec "$ROOT_DIR/scripts/dev-electron.sh"

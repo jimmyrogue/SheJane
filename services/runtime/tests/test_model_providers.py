@@ -140,7 +140,6 @@ def test_provider_api_persists_config_but_not_api_key(
 ) -> None:
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         data_dir=tmp_path,
     )
     monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
@@ -203,7 +202,6 @@ def test_provider_api_rejects_invalid_models_and_deletes_credential(
 ) -> None:
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         data_dir=tmp_path,
     )
     monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
@@ -266,7 +264,6 @@ def test_provider_update_restores_credential_when_database_write_fails(
 ) -> None:
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         data_dir=tmp_path,
     )
     monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
@@ -354,7 +351,6 @@ def test_provider_validation_error_does_not_echo_api_key(
     del credential_vault
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         data_dir=tmp_path,
     )
     monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
@@ -538,7 +534,6 @@ def test_openai_compatible_provider_completes_model_tool_model_loop(
     thread.start()
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         data_dir=tmp_path,
     )
     try:

@@ -8,10 +8,10 @@ PASSWORD="${SMOKE_PASSWORD:-SheJane123!}"
 TMP_DIR="$(mktemp -d)"
 
 load_env_secret() {
-  if [[ -n "${STRIPE_WEBHOOK_SECRET:-}" || ! -f .env ]]; then
+  if [[ -n "${STRIPE_WEBHOOK_SECRET:-}" || ! -f services/cloud/.env ]]; then
     return 0
   fi
-  STRIPE_WEBHOOK_SECRET="$(grep -E '^[[:space:]]*STRIPE_WEBHOOK_SECRET[[:space:]]*=' .env | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d '\r' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
+  STRIPE_WEBHOOK_SECRET="$(grep -E '^[[:space:]]*STRIPE_WEBHOOK_SECRET[[:space:]]*=' services/cloud/.env | tail -n 1 | sed -E 's/^[^=]*=//' | tr -d '\r' | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')"
   export STRIPE_WEBHOOK_SECRET
 }
 

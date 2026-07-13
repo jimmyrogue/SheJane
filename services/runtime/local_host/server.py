@@ -569,7 +569,7 @@ def _write_local_skill(route_name: str | None, request: SkillWriteRequest) -> Sk
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
+    settings: Settings = app.state.bootstrap_settings
     settings.ensure_data_dir()
     # Make sure the canonical user-managed skills dir exists from boot —
     # otherwise it's invisible to the UI until the user manually creates
@@ -631,6 +631,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+    app.state.bootstrap_settings = settings
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(
@@ -657,7 +658,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     #   2. Even authenticated-but-401 responses still ship the
     #      Access-Control-Allow-Origin header, otherwise the browser
     #      hides the error body from the JS layer.
-    app.add_middleware(PairingTokenAuthMiddleware)
+    app.add_middleware(PairingTokenAuthMiddleware, token=settings.pairing_token)
 
     # CORS — the daemon binds loopback only, but the Vite dev server (and
     # the production Electron renderer when loaded over file://) live on a
@@ -1456,7 +1457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 goal=goal,
                 run_at=_normalize_schedule_time(body.run_at),
                 workspace_path=workspace_path,
-                model=body.model.strip() or "auto",
+                model=body.model.strip(),
                 history=body.history or [],
                 settings=freeze_run_settings(app.state.settings, body.settings),
                 metadata=sanitize_run_metadata(body.metadata),

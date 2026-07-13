@@ -17,22 +17,21 @@ from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .config import get_settings
-
 EXEMPT_PATHS = frozenset({"/local/v1/health", "/v1/health", "/health"})
 LOCAL_OWNER_PRINCIPAL_ID = "local:owner"
 
 
 class PairingTokenAuthMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, token: str) -> None:
         self.app = app
+        self.token = token
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope.get("path") in EXEMPT_PATHS:
             await self.app(scope, receive, send)
             return
 
-        expected = get_settings().pairing_token
+        expected = self.token
         if not expected:
             # Daemon started without a token configured — refuse everything
             # except /health. Lets the Electron host detect "not yet paired".

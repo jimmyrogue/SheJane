@@ -54,14 +54,10 @@ echo "→ Starting contract daemon at ${URL}"
   # a deterministic in-process model (no cloud upstream needed).
   nohup env -i \
     "PATH=$PATH" "HOME=$HOME" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
-    "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
-    "SHEJANE_LOCAL_HOST_PORT=$PORT" \
-    "SHEJANE_LOCAL_HOST_URL=$URL" \
-    "SHEJANE_LOCAL_DATA_DIR=$DATA_DIR" \
-    "SHEJANE_CLOUD_BASE_URL=http://127.0.0.1:8080" \
     "SHEJANE_FAKE_LLM=1" \
     "PYTHONUNBUFFERED=1" \
-    uv run python -m local_host >"$LOG_FILE" 2>&1 &
+    uv run shejane-runtime --host 127.0.0.1 --port "$PORT" \
+      --token "$TOKEN" --data-dir "$DATA_DIR" >"$LOG_FILE" 2>&1 &
   echo "$!" >"${LOG_DIR}/contract-daemon.pid"
 )
 DAEMON_PID="$(cat "${LOG_DIR}/contract-daemon.pid")"

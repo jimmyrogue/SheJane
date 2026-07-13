@@ -30,7 +30,7 @@
 # GHCR images — see infra/cloud/docker-compose.prod.yml). Pin Cloud and Admin
 # independently with CLOUD_IMAGE_VERSION and ADMIN_IMAGE_VERSION.
 COMPOSE_DEV ?= docker compose -f infra/cloud/docker-compose.yml
-COMPOSE_PROD ?= docker compose -f infra/cloud/docker-compose.prod.yml
+COMPOSE_PROD ?= docker compose --env-file infra/cloud/.env -f infra/cloud/docker-compose.prod.yml
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"} \
@@ -40,19 +40,19 @@ help: ## Show this help
 	@echo ""
 
 ##@ Dev & restart
-dev: ## Print the manual 3-terminal dev recipe (prefer `make dev-electron`)
-	@echo "Run API, client, and admin in three terminals:"
-	@echo "  cd services/cloud && HTTP_ADDR=:8080 go run ./cmd/api"
+dev: ## Print the manual Runtime + Desktop recipe
+	@echo "Run Runtime and Desktop in separate terminals:"
+	@echo "  cd services/runtime && uv run shejane-runtime"
 	@echo "  pnpm --filter @shejane/desktop dev"
-	@echo "  pnpm --filter shejane-admin dev"
+	@echo "Cloud/Admin are optional: make docker-up"
 
-dev-electron: ## Full dev stack: Docker + daemon + Vite + Electron (hard-restarts)
+dev-electron: ## Runtime + Vite + Electron (hard-restarts; no Cloud required)
 	./scripts/dev-electron.sh
 
-dev-fresh: ## Like dev-electron but `docker compose up -d --build` (rebuild WITH cache)
+dev-fresh: ## Rebuild optional Cloud/Admin, then launch Runtime + Desktop
 	./scripts/dev-fresh.sh
 
-dev-nuke: ## Scorched earth: down --remove-orphans + build --no-cache + force-recreate (keeps DB volumes)
+dev-nuke: ## Clean-rebuild optional Cloud/Admin, then launch Runtime + Desktop (keeps DB volumes)
 	./scripts/dev-nuke.sh
 
 restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit — seconds, not a full relaunch
@@ -200,13 +200,13 @@ migrate: ## Apply pending SQL migrations against DATABASE_URL and record schema_
 smoke-local-host: ## Standalone daemon HTTP smoke (health / auth / a deterministic run)
 	./scripts/smoke-local-host.sh
 
-smoke-docker-local: ## Full Docker stack smoke on disposable ports (MOCK_LLM=true)
+smoke-docker-local: ## Optional Cloud/Admin health and auth smoke on disposable ports
 	./scripts/smoke-docker-local.sh
 
-smoke-real-llm: ## Real LLM provider smoke (needs MOCK_LLM=false + a real key)
+smoke-real-llm: ## Optional Cloud real-model smoke (needs SMOKE_MODEL_ID configured through Admin)
 	./scripts/smoke-real-llm.sh
 
-eval: ## Run the agent eval suite vs a RUNNING daemon (needs MOCK_LLM=false + SHEJANE_EVAL_TOKEN)
+eval: ## Run the agent eval suite against a Runtime with a real provider
 	cd services/runtime && uv run python -m local_host.eval
 
 smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify one-time top-up credit grant

@@ -8,35 +8,18 @@
 # the full dev launcher uses.
 #
 # Use this instead of `make dev-electron` when ONLY the daemon changed —
-# it's seconds, not a full Docker + Vite + Electron relaunch. After it
-# finishes, Cmd+R the Electron window so the renderer re-pairs (the
-# restart wiped the daemon's in-memory cloud_token).
+# it's seconds, not a full Vite + Electron relaunch. After it finishes,
+# Cmd+R the Electron window so the renderer reconnects.
 #
 # SAFETY (CLAUDE.md Invariant #1): the daemon is spawned under `env -i`
-# with an explicit allowlist — NO platform-paid provider keys (OpenAI /
-# Tavily / Anthropic / Stripe / AWS / E2B) are forwarded. Those live in
-# the Go API only; the daemon proxies through the cloud Tool Gateway.
-# This mirrors scripts/dev-electron.sh exactly. (Do NOT `source .env`
-# straight into the daemon's environment — that would leak the keys.)
+# with an explicit allowlist. Runtime provider credentials come from its
+# credential store, never the shell environment.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Populate the shell with .env values so the selective-forward block
-# below can see SHEJANE_LOCAL_* / LANGSMITH_* etc. The daemon itself
-# is still launched with `env -i` + allowlist, so platform keys present
-# here never reach it.
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
-
-API_PORT="${API_PORT:-8080}"
 TOKEN="${SHEJANE_LOCAL_HOST_TOKEN:-dev-local-token}"
-API_BASE_URL="${SHEJANE_CLOUD_BASE_URL:-http://localhost:${API_PORT}}"
 LOCAL_HOST_PORT="${SHEJANE_LOCAL_HOST_PORT:-17371}"
 LOCAL_HOST_URL="${SHEJANE_LOCAL_HOST_URL:-http://127.0.0.1:${LOCAL_HOST_PORT}}"
 LOG_DIR="${SHEJANE_DEV_LOG_DIR:-${ROOT_DIR}/.tmp/dev}"
@@ -73,34 +56,15 @@ echo "→ Starting Local Agent Harness at ${LOCAL_HOST_URL}"
     "USER=${USER:-}"
     "TMPDIR=${TMPDIR:-/tmp}"
     "SHELL=${SHELL:-/bin/zsh}"
-    "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN"
-    "SHEJANE_LOCAL_HOST_PORT=$LOCAL_HOST_PORT"
-    "SHEJANE_LOCAL_HOST_URL=$LOCAL_HOST_URL"
-    "SHEJANE_CLOUD_BASE_URL=$API_BASE_URL"
     "PYTHONUNBUFFERED=1"
   )
-  # Pairing / cloud + skills / MCP (forward only if set).
-  [[ -n "${SHEJANE_LOCAL_HOST_ADDR:-}" ]] && env_cmd+=("SHEJANE_LOCAL_HOST_ADDR=$SHEJANE_LOCAL_HOST_ADDR")
-  [[ -n "${SHEJANE_CLOUD_TOKEN:-}" ]] && env_cmd+=("SHEJANE_CLOUD_TOKEN=$SHEJANE_CLOUD_TOKEN")
+  # Development-only discovery overrides remain opt-in.
   [[ -n "${SHEJANE_LOCAL_MCP_SERVERS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_MCP_SERVERS=$SHEJANE_LOCAL_MCP_SERVERS")
   [[ -n "${SHEJANE_LOCAL_SKILLS_PATH:-}" ]] && env_cmd+=("SHEJANE_LOCAL_SKILLS_PATH=$SHEJANE_LOCAL_SKILLS_PATH")
-  # Middleware tuning.
-  [[ -n "${SHEJANE_LOCAL_INPUT_GUARD:-}" ]] && env_cmd+=("SHEJANE_LOCAL_INPUT_GUARD=$SHEJANE_LOCAL_INPUT_GUARD")
-  [[ -n "${SHEJANE_PLAN_FIRST:-}" ]] && env_cmd+=("SHEJANE_PLAN_FIRST=$SHEJANE_PLAN_FIRST")
-  [[ -n "${SHEJANE_LOCAL_CRITIC:-}" ]] && env_cmd+=("SHEJANE_LOCAL_CRITIC=$SHEJANE_LOCAL_CRITIC")
-  [[ -n "${SHEJANE_LOCAL_FALLBACK_MODELS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_FALLBACK_MODELS=$SHEJANE_LOCAL_FALLBACK_MODELS")
-  [[ -n "${SHEJANE_LOCAL_PII_REDACT:-}" ]] && env_cmd+=("SHEJANE_LOCAL_PII_REDACT=$SHEJANE_LOCAL_PII_REDACT")
-  [[ -n "${SHEJANE_LOCAL_MEMORY_PATHS:-}" ]] && env_cmd+=("SHEJANE_LOCAL_MEMORY_PATHS=$SHEJANE_LOCAL_MEMORY_PATHS")
-  # Observability.
-  [[ -n "${LANGSMITH_TRACING:-}" ]] && env_cmd+=("LANGSMITH_TRACING=$LANGSMITH_TRACING")
-  [[ -n "${LANGSMITH_ENDPOINT:-}" ]] && env_cmd+=("LANGSMITH_ENDPOINT=$LANGSMITH_ENDPOINT")
-  [[ -n "${LANGSMITH_API_KEY:-}" ]] && env_cmd+=("LANGSMITH_API_KEY=$LANGSMITH_API_KEY")
-  [[ -n "${LANGSMITH_PROJECT:-}" ]] && env_cmd+=("LANGSMITH_PROJECT=$LANGSMITH_PROJECT")
-  [[ -n "${LANGFUSE_PUBLIC_KEY:-}" ]] && env_cmd+=("LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY")
-  [[ -n "${LANGFUSE_SECRET_KEY:-}" ]] && env_cmd+=("LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY")
-  [[ -n "${SHEJANE_DISABLE_OBSERVABILITY:-}" ]] && env_cmd+=("SHEJANE_DISABLE_OBSERVABILITY=$SHEJANE_DISABLE_OBSERVABILITY")
 
-  nohup "${env_cmd[@]}" uv run python -m local_host >"$LOG_FILE" 2>&1 &
+  nohup "${env_cmd[@]}" uv run shejane-runtime \
+    --host 127.0.0.1 --port "$LOCAL_HOST_PORT" --token "$TOKEN" \
+    >"$LOG_FILE" 2>&1 &
   echo "$!" >"${LOG_DIR}/local-host.pid"
 )
 
@@ -110,7 +74,7 @@ for _ in $(seq 1 60); do
     NEW_PID="$(lsof -ti :"$LOCAL_HOST_PORT" 2>/dev/null | head -1 || true)"
     echo "✅ Daemon up. New PID ${NEW_PID:-?} started: $(ps -p "${NEW_PID:-0}" -o lstart= 2>/dev/null || echo now)"
     echo "   Logs: make logs-local-host   (file: $LOG_FILE)"
-    echo "   👉 Now Cmd+R the Electron window so the renderer re-pairs (cloud_token was reset)."
+    echo "   👉 Now Cmd+R the Electron window so the renderer reconnects."
     exit 0
   fi
   sleep 1

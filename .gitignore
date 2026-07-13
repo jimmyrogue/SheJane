@@ -30,6 +30,7 @@ output/
 .env
 .env.*
 !.env.example
+!**/.env.example
 
 # Logs and runtime temp files
 *.log
@@ -76,15 +77,16 @@ out/
 *.AppImage
 *.exe
 # Go build/test artifacts
-api/api
-api/migrate
-api/shejane-api
+services/cloud/api
+services/cloud/migrate
+services/cloud/shejane-api
 *.test
 *.prof
 coverage.out
 
 # Python / uv
 .venv/
+*.egg-info/
 **/.venv/
 __pycache__/
 **/__pycache__/

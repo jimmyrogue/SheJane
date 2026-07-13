@@ -7,7 +7,7 @@ the `data:` line, NOT from the `event:` line. It also recognizes only
 stream hung.
 
 These tests pin the contract to the AgentRunEvent interface defined
-in `apps/desktop/src/shared/api/sse.ts:6-13`:
+in `packages/runtime-client/src/client.ts`:
 
     interface AgentRunEvent {
       event_type: string
@@ -68,7 +68,7 @@ def client(monkeypatch) -> TestClient:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        # Mock cloud backend — emits two text deltas then done.
+        # Test-only streaming model emits two text deltas then done.
         return _stream_response(
             [
                 ("llm.delta", '{"content_delta": "Hello "}'),
@@ -82,7 +82,6 @@ def client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)

@@ -6,7 +6,8 @@
 #   make deploy-logs            # tail
 #
 # Before the first deploy, on the server:
-#   1. cp .env.example .env and replace every production placeholder.
+#   1. Copy infra/cloud/.env.example to infra/cloud/.env.
+#   2. Copy services/cloud/.env.example to services/cloud/.env.
 #   2. Point your DNS A record for ADMIN_DOMAIN at the
 #      host — Caddy auto-provisions Let's Encrypt TLS on first hit.
 #
@@ -54,7 +55,7 @@ services:
     # Real values come from .env (required). The block below pins the
     # in-compose topology and production cookie security.
     env_file:
-      - path: ../../.env
+      - path: ../../services/cloud/.env
         required: true
     environment:
       HTTP_ADDR: ":8080"
@@ -92,6 +93,7 @@ services:
       - "443:443"
     environment:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

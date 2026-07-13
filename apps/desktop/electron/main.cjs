@@ -353,11 +353,13 @@ async function startBundledDaemon() {
   daemonToken = crypto.randomBytes(32).toString('hex')
   daemonURL = `http://127.0.0.1:${port}`
 
-  const child = spawn(daemonBinaryPath(), [], {
+  const child = spawn(daemonBinaryPath(), [
+    '--host', '127.0.0.1',
+    '--port', String(port),
+    '--token', daemonToken,
+    '--data-dir', path.join(app.getPath('userData'), 'runtime'),
+  ], {
     env: daemonEnv({
-      SHEJANE_LOCAL_HOST_ADDR: '127.0.0.1',
-      SHEJANE_LOCAL_HOST_PORT: String(port),
-      SHEJANE_LOCAL_HOST_TOKEN: daemonToken,
       PYTHONUNBUFFERED: '1',
     }),
     stdio: ['ignore', 'pipe', 'pipe'],

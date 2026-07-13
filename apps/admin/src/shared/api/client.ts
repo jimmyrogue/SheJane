@@ -260,7 +260,7 @@ export class AdminAPI {
   private tokenRefresher?: () => Promise<string | null>
   private refreshInFlight: Promise<string | null> | null = null
 
-  constructor(private readonly baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080') {}
+  constructor(private readonly baseURL = '') {}
 
   setAccessToken(token: string): void {
     this.accessToken = token

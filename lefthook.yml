@@ -62,8 +62,7 @@ pre-commit:
     # pattern slipping back via copy-paste or careless refactor.
     no-platform-keys:
       # Run unconditionally on every commit touching daemon code —
-      # cheap (sub-50ms grep) and the failure mode is catastrophic
-      # (the entire image.* / web.search architecture broken).
+      # cheap (sub-50ms grep) and protects the Runtime credential boundary.
       glob: "services/runtime/**/*.py"
       run: ./scripts/check-no-platform-keys-in-daemon.sh
 
@@ -75,7 +74,7 @@ pre-commit:
         blocked=$(echo "{staged_files}" | tr ' ' '\n' | grep -E '(^|/)\.env($|\.)' | grep -vE '(^|/)\.env\.example$' || true)
         if [ -n "$blocked" ]; then
           echo "$blocked" >&2
-          echo "❌ refusing to commit .env (only .env.example is tracked)" >&2
+          echo "❌ refusing to commit secret env files (only module .env.example files are tracked)" >&2
           exit 1
         fi
 

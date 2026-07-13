@@ -54,12 +54,10 @@ echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL
     "USER=${USER:-}" \
     "TMPDIR=${TMPDIR:-/tmp}" \
     "SHELL=${SHELL:-/bin/zsh}" \
-    "SHEJANE_LOCAL_HOST_ADDR=$HOST" \
-    "SHEJANE_LOCAL_HOST_PORT=$PORT" \
-    "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
     "SHEJANE_FAKE_LLM=true" \
     "PYTHONUNBUFFERED=1" \
-    uv run python -m local_host >"${TMP_DIR}/local-host.log" 2>&1
+    uv run shejane-runtime --host "$HOST" --port "$PORT" --token "$TOKEN" \
+      --data-dir "$TMP_DIR/data" >"${TMP_DIR}/local-host.log" 2>&1
 ) &
 PID="$!"
 
@@ -95,8 +93,7 @@ node - "${TMP_DIR}/tools.json" <<'NODE'
 const fs = require('fs');
 const payload = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const names = new Set((payload.tools ?? []).map((tool) => tool.name));
-// This daemon has no cloud session, so only locally executable tools may be
-// advertised. Cloud-backed tools must not leak into the model's tool list.
+// Standalone Runtime advertises only tools it can execute itself.
 for (const name of ['time.now', 'memory.search', 'user.ask', 'web.fetch']) {
   if (!names.has(name)) {
     console.error(`Missing expected tool: ${name}`);
@@ -117,7 +114,7 @@ RUN_RESPONSE="$(
   curl -fsS -X POST "${BASE_URL}/local/v1/runs" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "Content-Type: application/json" \
-    --data "{\"command_id\":\"cmd_smoke_${COMMAND_SUFFIX}\",\"client_message_id\":\"msg_smoke_${COMMAND_SUFFIX}\",\"protocol_version\":1,\"required_capabilities\":[\"agent.run\",\"agent.stream\"],\"goal\":\"smoke local harness\",\"settings\":{\"memory\":\"off\",\"skills\":\"off\",\"mcp\":\"off\"}}"
+    --data "{\"command_id\":\"cmd_smoke_${COMMAND_SUFFIX}\",\"client_message_id\":\"msg_smoke_${COMMAND_SUFFIX}\",\"protocol_version\":1,\"required_capabilities\":[\"agent.run\",\"agent.stream\"],\"goal\":\"smoke local harness\",\"model\":\"local:test:model\",\"settings\":{\"memory\":\"off\",\"skills\":\"off\",\"mcp\":\"off\"}}"
 )"
 RUN_ID="$(
   RUN_RESPONSE="$RUN_RESPONSE" node <<'NODE'
