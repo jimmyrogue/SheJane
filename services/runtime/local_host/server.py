@@ -1592,11 +1592,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finally:
                 yield {"data": "[DONE]"}
 
-        # `sep="\n"` (LF) — matches the cloud Go SSE endpoint at
-        # /api/v1/agent/runs/:id/stream AND what the client's
-        # parseAgentSSEBuffer expects (it splits on `/\n\n/`, which does
-        # NOT match CRLF). sse-starlette's default `\r\n` is technically
-        # spec-correct but breaks this client.
+        # `sep="\n"` (LF) matches the Runtime SDK parser, which splits on
+        # `/\n\n/`. sse-starlette's default `\r\n` is spec-correct but does
+        # not match that protocol contract.
         return EventSourceResponse(gen(), sep="\n")
 
     @app.post("/local/v1/runs/{run_id}/cancel", response_model=CancelRunResponse)

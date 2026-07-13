@@ -22,7 +22,7 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 
 - `services/cloud/` — optional Go Cloud: auth, wallet/credit ledger, model catalog + LLM routing, Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
-- `apps/desktop/` — Electron/React user app; local-first chat history.
+- `apps/desktop/` — Electron/React client; local projection of Runtime-owned conversations.
 - `apps/admin/` — standalone React/Vite admin app (shadcn/ui).
 - `services/cloud/migrations/` — sequential, idempotent PostgreSQL migrations.
 - `docs/operations.md` — operator runbook.
@@ -44,7 +44,7 @@ Useful focused checks:
 
 ```bash
 cd services/cloud && go test ./internal/httpapi
-pnpm --filter shejane-client test --run
+pnpm --filter @shejane/desktop test --run
 pnpm --filter shejane-admin test --run
 ```
 
@@ -96,9 +96,13 @@ make smoke-stripe-webhook
 ## Runtime Model Rules
 
 - Desktop reads enabled models from Runtime and submits concrete `local:<provider>:<model>` selections.
-- The stable model ID is stored in `model_configs.slot` for compatibility, but UI/docs should call it "model ID".
-- Chat model IDs are admin-defined strings such as `gpt-4o`, `claude-sonnet`, `deepseek-v4`, or legacy `chat.fast`; they must not be `auto`, blank, contain whitespace, or exceed the current `VARCHAR(40)` database limit.
 - Do not reintroduce Auto, fast/deep UX, Go Cloud model discovery, or daemon-side model classifiers in Desktop/Runtime.
+- Runtime provider configuration lives in SQLite; provider secrets live in the operating-system credential store.
+
+## Optional Cloud Model Rules
+
+- The stable Cloud model ID is stored in `model_configs.slot` for compatibility, but UI/docs should call it "model ID".
+- Cloud chat model IDs are admin-defined strings; they must not be `auto`, blank, contain whitespace, or exceed the current `VARCHAR(40)` database limit.
 - Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
 - Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields. Legacy input/output token multipliers and `credit_multiplier` remain fallback only. Global markup remains the product margin knob.
 - Keep model catalog behavior behind `services/cloud/internal/modelreg.Registry` and store changes behind `services/cloud/internal/store.Store`; memory and Postgres implementations must stay in lockstep.
@@ -151,8 +155,8 @@ Admin UI expectations:
 
 Client UI expectations:
 
-- Chat history remains local-first.
-- Backend stores usage metadata and billing data, not full chat body history.
+- Runtime owns authoritative conversations and task state; Desktop stores a disposable local projection and pending commands.
+- Optional Cloud stores usage metadata and billing data, not Desktop chat history.
 - Keep import/export behavior intact.
 - Follow the SheJane visual system in `docs/ui/shejane-design-system.md`: warm paper + ink, seal red only for brand/running/critical states, moss only for online/success, and single-color typographic attachment glyphs instead of colorful file icons.
 
@@ -171,8 +175,8 @@ Add or update tests when touching:
 - wallet balances or ledger logic
 - Stripe webhook behavior
 - admin permissions, admin writes, or admin read views
-- model catalog validation, Auto resolution, or model picker behavior
-- local-first data import/export
+- Runtime provider/model validation or model picker behavior
+- local conversation projection and data import/export
 - SSE parsing or chat store behavior
 
 ## Documentation Expectations

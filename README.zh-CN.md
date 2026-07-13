@@ -44,7 +44,7 @@ flowchart LR
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
 | 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
 | 扩展能力 | 技能、MCP、子 Agent 和可配置中间件 |
-| 桌面端 | Electron 和 React、本地优先聊天记录、文件预览、供应商设置与工作区控制 |
+| 桌面端 | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | 可选 Cloud | 鉴权、计费、文档、服务工具和管理接口，独立发布 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 

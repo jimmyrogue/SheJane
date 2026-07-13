@@ -44,7 +44,7 @@ The desktop client and Runtime communicate over loopback HTTP with a pairing tok
 | Runtime | LangGraph and Deep Agents loop, streaming events, checkpoints, recovery, planning, verification, memory, and human approval |
 | Local tools | Workspace files, shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
 | Extensions | Skills, MCP servers, subagents, and configurable middleware |
-| Desktop | Electron and React client, local-first chat history, previews, provider settings, and workspace controls |
+| Desktop | Electron and React client, local Runtime conversation projection, previews, provider settings, and workspace controls |
 | Optional Cloud | Authentication, billing, documents, service tools, and Admin APIs, released independently |
 | Runtime SDK | Public TypeScript client for commands, SSE, snapshots, errors, and generated protocol types |
 

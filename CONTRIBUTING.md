@@ -23,7 +23,7 @@ Optional Go Cloud + Admin ──▶ Postgres / S3 / Stripe
 
 - `services/cloud/` — optional Go Cloud: auth, credit ledger, LLM routing, Tool Gateway, Stripe billing, documents (S3), admin APIs.
 - `services/runtime/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
-- `apps/desktop/` — Electron + React + Vite + Tailwind user app (local-first chat history).
+- `apps/desktop/` — Electron + React + Vite + Tailwind client with a local projection of Runtime-owned conversations.
 - `apps/admin/` — standalone React/Vite admin panel (shadcn/ui).
 
 **Read [CLAUDE.md](./CLAUDE.md) first** — it has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend/frontend/testing rules.
