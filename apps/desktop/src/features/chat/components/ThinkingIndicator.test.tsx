@@ -15,7 +15,6 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: new Date(Date.now() - 65_000).toISOString(),
     status: 'streaming',
     runId: 'run-1',
-    runOrigin: 'local',
     agentEvents: [],
     ...overrides,
   }

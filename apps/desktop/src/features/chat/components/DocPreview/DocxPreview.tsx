@@ -17,7 +17,7 @@ interface Props {
  * Renders a .docx inline using docx-preview. The component is source-
  * agnostic — it just takes a `loadBytes` async function. App.tsx wraps
  * `fetchWorkspaceFile` (for workspace files) or `api.fetchDocumentBytes`
- * (for cloud uploads) into that signature.
+ * into that signature.
  */
 export function DocxPreview({ sourceKey, loadBytes, refreshKey = 0, onStatus }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)

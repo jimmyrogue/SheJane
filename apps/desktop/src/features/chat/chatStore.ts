@@ -406,7 +406,7 @@ function repairWorkflowLabelKey(
 
 /** Extract base64-encoded image payloads from a code.execute tool
  *  result payload. The wire envelope is set by
- *  services/cloud/internal/httpapi/code_gateway.go:codeExecData → JSON-encoded
+ *  Runtime code-execution events → JSON-encoded
  *  into `payload.content` AND mirrored on `payload.data`. We try both
  *  so older daemon builds still produce images; current daemons
  *  populate `data.results[].data["image/png" | "image/jpeg" | "image/svg+xml"]`.

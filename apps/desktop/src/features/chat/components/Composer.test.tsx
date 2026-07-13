@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { I18nProvider, createTranslator } from '@/shared/i18n/i18n'
-import { Composer, formatDocumentExpiry, type AttachmentDocument } from './Composer'
+import { I18nProvider } from '@/shared/i18n/i18n'
+import { Composer } from './Composer'
 import { skillToken } from '../skillDraft'
 import type { InstalledSkill } from '@/shared/local-host/client'
 
@@ -12,22 +12,6 @@ const sampleSkills: InstalledSkill[] = [
   { name: 'hunt', description: 'Diagnose before you fix', path: '/s/hunt/SKILL.md' },
   { name: 'write', description: 'Strip AI writing patterns', path: '/s/write/SKILL.md' },
 ]
-
-function documentFixture(id: string, name: string, contentType: string): AttachmentDocument {
-  return {
-    id,
-    user_id: 'user-1',
-    original_name: name,
-    content_type: contentType,
-    size_bytes: 128,
-    status: 'ready',
-    source_object_key: `documents/user/${id}/source`,
-    text_object_key: `documents/user/${id}/text`,
-    expires_at: '2026-05-28T12:00:00Z',
-    created_at: '2026-05-26T12:00:00Z',
-    updated_at: '2026-05-26T12:00:00Z',
-  }
-}
 
 function Harness({
   initialDraft = '',
@@ -56,9 +40,6 @@ function Harness({
           setDraft(value)
         }}
         isSending={false}
-        isUploading={false}
-        onUploadDocument={vi.fn()}
-        onDetachDocument={vi.fn()}
         onSend={onSend}
         onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
@@ -138,9 +119,6 @@ describe('Composer (Lexical skill editor)', () => {
           onDraftChange={vi.fn()}
           isSending={false}
           hasActiveRun
-          isUploading={false}
-          onUploadDocument={vi.fn()}
-          onDetachDocument={vi.fn()}
           onSend={vi.fn()}
           onStop={onStop}
           listSkills={vi.fn().mockResolvedValue([])}
@@ -164,9 +142,6 @@ describe('Composer (Lexical skill editor)', () => {
           onDraftChange={vi.fn()}
           isSending
           hasActiveRun
-          isUploading={false}
-          onUploadDocument={vi.fn()}
-          onDetachDocument={vi.fn()}
           onSend={vi.fn()}
           onAppendInstruction={onAppendInstruction}
           onStop={onStop}
@@ -192,9 +167,6 @@ describe('Composer (Lexical skill editor)', () => {
           onDraftChange={vi.fn()}
           isSending={false}
           hasActiveRun
-          isUploading={false}
-          onUploadDocument={vi.fn()}
-          onDetachDocument={vi.fn()}
           onSend={vi.fn()}
           onAppendInstruction={vi.fn()}
           onStop={vi.fn()}
@@ -214,148 +186,5 @@ describe('Composer (Lexical skill editor)', () => {
     expect(screen.queryByRole('button', { name: '停止生成' })).not.toBeInTheDocument()
   })
 
-  it('renders multiple attachment tiles and accepts multiple files from picker', () => {
-    const onDetachDocument = vi.fn()
-    const onUploadDocument = vi.fn()
-    render(
-      <I18nProvider>
-        <Composer
-          draft=""
-          onDraftChange={vi.fn()}
-          isSending={false}
-          isUploading={false}
-          attachedDocuments={[
-            documentFixture('doc-1', 'roadmap.pdf', 'application/pdf'),
-            documentFixture('doc-2', 'budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-          ]}
-          attachedPreviews={{ 'doc-1': 'data:image/png;base64,abc' }}
-          onUploadDocument={onUploadDocument}
-          onDetachDocument={onDetachDocument}
-          onSend={vi.fn()}
-          listSkills={vi.fn().mockResolvedValue([])}
-          mode="local:test:model"
-          onModeChange={vi.fn()}
-        />
-      </I18nProvider>,
-    )
 
-    expect(screen.getByTitle(/roadmap\.pdf/)).toBeInTheDocument()
-    expect(screen.getByTitle(/budget\.xlsx/)).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('附件模式')
-    expect(screen.getByRole('status')).toHaveAttribute(
-      'title',
-      '带附件的提问会走附件上下文，本次不混用网页搜索或生成图片工具。',
-    )
-    const removeButtons = screen.getAllByRole('button', { name: '移除附件' })
-    fireEvent.click(removeButtons[1])
-    expect(onDetachDocument).toHaveBeenCalledWith('doc-2')
-
-    const input = screen.getByLabelText('上传附件') as HTMLInputElement
-    expect(input.multiple).toBe(true)
-    const files = [
-      new File(['a'], 'a.pdf', { type: 'application/pdf' }),
-      new File(['b'], 'b.pdf', { type: 'application/pdf' }),
-    ]
-    fireEvent.change(input, { target: { files } })
-    expect(onUploadDocument).toHaveBeenCalledWith(files)
-  })
-})
-
-describe('formatDocumentExpiry', () => {
-  // Locked to the Chinese translator so the assertions read in one
-  // language. The behaviour is identical for `en` modulo wording.
-  const t = createTranslator('zh')
-  const now = new Date('2026-05-26T12:00:00Z')
-
-  it('returns null for empty/invalid expires_at', () => {
-    expect(formatDocumentExpiry('', now, t)).toBeNull()
-    expect(formatDocumentExpiry(undefined, now, t)).toBeNull()
-    expect(formatDocumentExpiry(null, now, t)).toBeNull()
-    expect(formatDocumentExpiry('not-a-date', now, t)).toBeNull()
-  })
-
-  it('reports "expired" when expires_at is in the past', () => {
-    const past = new Date(now.getTime() - 60_000).toISOString()
-    expect(formatDocumentExpiry(past, now, t)).toBe('已过期')
-  })
-
-  it('reports "expires soon" when expires_at is within the next hour', () => {
-    const in30Min = new Date(now.getTime() + 30 * 60_000).toISOString()
-    expect(formatDocumentExpiry(in30Min, now, t)).toBe('即将过期')
-  })
-
-  it('reports hours when expires_at is within the next 24h', () => {
-    const in5Hours = new Date(now.getTime() + 5 * 60 * 60_000).toISOString()
-    expect(formatDocumentExpiry(in5Hours, now, t)).toBe('5 小时后过期')
-  })
-
-  it('reports days when expires_at is more than 24h out', () => {
-    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60_000).toISOString()
-    expect(formatDocumentExpiry(in7Days, now, t)).toBe('7 天后过期')
-  })
-
-  it('rounds down to the floor day count (3.9 days → "3 天")', () => {
-    // 3 days + 22 hours — still shy of the 4-day mark, so floor(3.9)=3.
-    const partial = new Date(now.getTime() + (3 * 24 + 22) * 60 * 60_000).toISOString()
-    expect(formatDocumentExpiry(partial, now, t)).toBe('3 天后过期')
-  })
-})
-
-describe('Composer attachment chip expiry caption', () => {
-  function makeReadyDoc(overrides: Partial<AttachmentDocument> = {}): AttachmentDocument {
-    return {
-      id: 'doc-1',
-      user_id: 'user-1',
-      original_name: 'report.pdf',
-      content_type: 'application/pdf',
-      size_bytes: 1024,
-      status: 'ready',
-      source_object_key: 'documents/user-1/doc-1/source.pdf',
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      ...overrides,
-    }
-  }
-
-  function renderWithDoc(doc: AttachmentDocument) {
-    return render(
-      <I18nProvider>
-        <Composer
-          draft=""
-          onDraftChange={vi.fn()}
-          isSending={false}
-          attachedDocument={doc}
-          isUploading={false}
-          onUploadDocument={vi.fn()}
-          onDetachDocument={vi.fn()}
-          onSend={vi.fn()}
-          listSkills={vi.fn().mockResolvedValue([])}
-          mode="local:test:model"
-          onModeChange={vi.fn()}
-        />
-      </I18nProvider>,
-    )
-  }
-
-  it('renders a visible expiry caption when the document is ready', () => {
-    renderWithDoc(makeReadyDoc())
-    // We rendered with a roughly-7-day window — the caption text should
-    // start with the digit count and include "天后过期".
-    const caption = screen.getByText(/天后过期/)
-    expect(caption).toBeInTheDocument()
-    expect(caption.classList.contains('attachment-expiry-caption')).toBe(true)
-  })
-
-  it('skips the caption while the document is still uploading', () => {
-    renderWithDoc(makeReadyDoc({ status: 'uploading' }))
-    // Spinner overlay + chip render, but no expiry caption — showing
-    // "expires in 7 days" next to a still-uploading file reads wrong.
-    expect(screen.queryByText(/过期/)).not.toBeInTheDocument()
-  })
-
-  it('skips the caption when the upload failed', () => {
-    renderWithDoc(makeReadyDoc({ status: 'failed' }))
-    expect(screen.queryByText(/过期/)).not.toBeInTheDocument()
-  })
 })

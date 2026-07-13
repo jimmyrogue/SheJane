@@ -4,7 +4,7 @@ import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { IconCalendar, IconFileText, IconMessage } from '@tabler/icons-react'
-import type { CloudOfficeAttachmentRef, Conversation, LocalOfficeFileRef } from '@/shared/local-data/types'
+import type { Conversation, LocalOfficeFileRef } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
@@ -14,8 +14,6 @@ export function ChatThread({
   onOpenArtifact,
   onOpenDiagnostics,
   onPreviewLocalFile,
-  onPreviewCloudAttachment,
-  onOpenAttachmentExternally,
   onPickSuggestion,
   onRegenerateMessage,
   onEditResendMessage,
@@ -30,16 +28,6 @@ export function ChatThread({
    *  openOfficeDocument; MessageBubble calls this when the user clicks
    *  a `.docx` / `.xlsx` reference rendered inside agent markdown. */
   onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
-  /** Open the DocPreviewPanel for a CLOUD-uploaded previewable
-   *  attachment (.docx / .xlsx / .pdf). Wired from App.tsx →
-   *  openCloudOfficeDocument; MessageBubble calls this when the user
-   *  clicks the attachment chip body. */
-  onPreviewCloudAttachment?: (ref: CloudOfficeAttachmentRef) => void
-  /** Download a cloud attachment to the user's Downloads folder.
-   *  Powers the small external-link button rendered next to every
-   *  attachment chip — the escape hatch for non-previewable files
-   *  + power users who'd rather open the file in their native app. */
-  onOpenAttachmentExternally?: (ref: { documentId: string; name: string }) => void
   /** Welcome-screen suggestion tiles: prefill the composer with a concrete
    *  example prompt (the user edits/sends). Wired from App.tsx → setDraft. */
   onPickSuggestion?: (prompt: string) => void
@@ -132,8 +120,6 @@ export function ChatThread({
                 onStreamTextCommit={handleStreamTextCommit}
                 workspaceRoot={workspaceRoot}
                 onPreviewLocalFile={onPreviewLocalFile}
-                onPreviewCloudAttachment={onPreviewCloudAttachment}
-                onOpenAttachmentExternally={onOpenAttachmentExternally}
                 onRegenerate={onRegenerateMessage}
                 onEditResend={onEditResendMessage}
                 onDelete={onDeleteMessage}

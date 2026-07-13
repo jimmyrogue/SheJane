@@ -1,89 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
 import {
   IconArrowUp,
   IconFolder,
   IconFolderPlus,
-  IconInfoCircle,
-  IconLoader2,
-  IconPaperclip,
   IconPlayerStopFilled,
-  IconX,
 } from '@tabler/icons-react'
-import { Button } from '@/components/ui/button'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
-import { useI18n, type Translator } from '@/shared/i18n/i18n'
-import { fileIconFor } from '@/shared/files/fileIcons'
+import { useI18n } from '@/shared/i18n/i18n'
 import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
-
-export interface AttachmentDocument {
-  id: string
-  original_name: string
-  content_type: string
-  status: string
-  expires_at?: string
-  [key: string]: unknown
-}
 import type { ChatMode } from '@/shared/local-data/types'
-
-/**
- * Format the time-until-expiry of a document into a human-readable
- * hint string. Granularity steps down as the expiry approaches:
- *   - > 24h: "Expires in {days} days" (rounded, never zero — at
- *     <24h we drop into the hours branch instead)
- *   - 1-24h: "Expires in {hours}h"
- *   - 0-1h: "Expires soon"
- *   - past: "Expired"
- *
- * Returns `null` if expiresAtIso is empty/invalid so the caller can
- * choose to render nothing. Pulled out as a pure function so the
- * tests can lock in the cutoffs without rendering a whole chip.
- *
- * `t` is the i18n lookup — Composer hands in its `useI18n` callback
- * so the wording matches the rest of the UI's locale.
- */
-export function formatDocumentExpiry(
-  expiresAtIso: string | undefined | null,
-  now: Date,
-  t: Translator,
-): string | null {
-  if (!expiresAtIso) {
-    return null
-  }
-  const expiresAt = new Date(expiresAtIso)
-  if (Number.isNaN(expiresAt.getTime())) {
-    return null
-  }
-  const diffMs = expiresAt.getTime() - now.getTime()
-  if (diffMs <= 0) {
-    return t('composer.expired')
-  }
-  const oneHourMs = 60 * 60 * 1000
-  const oneDayMs = 24 * oneHourMs
-  if (diffMs < oneHourMs) {
-    return t('composer.expiresSoon')
-  }
-  if (diffMs < oneDayMs) {
-    const hours = Math.max(1, Math.floor(diffMs / oneHourMs))
-    return t('composer.expiresInHours', { hours: String(hours) })
-  }
-  const days = Math.max(1, Math.floor(diffMs / oneDayMs))
-  return t('composer.expiresInDays', { days: String(days) })
-}
 
 export function Composer({
   draft,
   onDraftChange,
   isSending,
   hasActiveRun = false,
-  attachedDocument,
-  attachedDocuments,
-  attachedPreview,
-  attachedPreviews,
-  isUploading = false,
-  uploadProgress,
-  onUploadDocument,
-  onDetachDocument,
   onSend,
   onAppendInstruction,
   onStop,
@@ -100,272 +31,32 @@ export function Composer({
   draft: string
   onDraftChange: (value: string) => void
   isSending: boolean
-  /** True when an agent run is still cancelable even if the current
-   *  `sendMessage()` promise has already resolved. Local runs can pause
-   *  at HITL `permission.required` or `question.requested` boundaries.
-   *  Driving the stop button off `isSending || hasActiveRun` keeps the
-   *  button visible across those pauses. */
+  /** Runtime runs remain cancelable while paused for permission or input. */
   hasActiveRun?: boolean
-  attachedDocument?: AttachmentDocument
-  attachedDocuments?: AttachmentDocument[]
-  /** Inline data: URL for image previews. Non-image documents leave
-   *  this undefined and we fall back to a file-icon tile. */
-  attachedPreview?: string
-  attachedPreviews?: Record<string, string | undefined>
-  isUploading?: boolean
-  /** 0..100 percentage during an in-flight local import. */
-  uploadProgress?: number
-  onUploadDocument?: (file?: File | File[] | FileList) => void
-  onDetachDocument?: (documentId?: string) => void
   onSend: () => void
-  /** Append a user instruction into the currently active local run. */
+  /** Append a user instruction into the currently active Runtime run. */
   onAppendInstruction?: () => void
-  /** Cancel the in-flight run. Shown as a "stop" button in place of
-   *  "send" while `isSending` OR `hasActiveRun` is true. */
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
-  /** Optional — when omitted the MCP slash group hides instead of
-   *  rendering an empty section. Provided by App.tsx only when the
-   *  daemon is online. */
   listMcpServers?: () => Promise<McpServerInfo[]>
   mode: ChatMode
-  /** Concrete Runtime models for the picker. */
   models?: ModelOption[]
   onModeChange: (mode: ChatMode) => void
-  /** Project (workspace) currently bound to this chat. When undefined,
-   *  the toolbar shows an "add project" button that opens the directory
-   *  picker. When set, the button locks into a chip showing the project
-   *  name — switching projects requires a new chat. */
   projectName?: string
-  /** Open the OS directory picker and bind the chosen workspace as this
-   *  chat's project. Only invoked when `projectName` is undefined; the
-   *  locked-chip click is a no-op (disabled). */
   onSelectProject?: () => void
-  /** Electron build flag. The web build has no daemon, so the workspace/
-   *  project picker is hidden when false. */
   isDesktop?: boolean
-  /** Whether the slash-command menu (functions/skills/MCP) is offered. On
-   *  desktop always true; on web true only when a cloud tool (image gen) is
-   *  configured, since skills/MCP are daemon-only and absent there anyway. */
   slashCommandsEnabled?: boolean
 }) {
   const { t } = useI18n()
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const composerRef = useRef<HTMLElement | null>(null)
-  // Stop is offered while the send promise is still awaiting (covers
-  // the brief window before the stream has produced its first message)
-  // OR while a run is still cancelable outside that promise (local HITL
-  // pauses, or a web cloud tool loop with an active AbortController).
   const canStop = (isSending || hasActiveRun) && Boolean(onStop)
   const steeringMode = hasActiveRun && Boolean(onAppendInstruction)
   const sendLabel = steeringMode ? t('composer.appendInstruction') : t('composer.send')
   const sendTitle = steeringMode ? t('composer.appendInstruction') : t('composer.kbdHint')
   const handleSend = steeringMode ? onAppendInstruction : onSend
-  const [isDragging, setIsDragging] = useState(false)
-  const dragDepthRef = useRef(0)
-  const visibleAttachments = attachedDocuments ?? (attachedDocument ? [attachedDocument] : [])
-  const attachmentToolHint =
-    visibleAttachments.length > 0 && slashCommandsEnabled && !steeringMode
-      ? {
-          label: t('composer.attachmentToolStatus'),
-          title: t('composer.attachmentToolStatusTitle'),
-        }
-      : null
-
-  function openFilePicker() {
-    if (isUploading || !onUploadDocument) {
-      return
-    }
-    fileInputRef.current?.click()
-  }
-
-  /** Paste an image straight into the composer — typical for screenshot
-   *  workflows where the clipboard already holds the image bitmap.
-   *  Capture-phase listener so we run before Lexical's own paste
-   *  handling and can claim the event for non-text content. */
-  useEffect(() => {
-    const node = composerRef.current
-    if (!node) {
-      return
-    }
-    const handler = (event: ClipboardEvent) => {
-      if (isUploading) {
-        return
-      }
-      const items = event.clipboardData?.items
-      if (!items) {
-        return
-      }
-      for (const item of Array.from(items)) {
-        if (item.kind === 'file' && item.type.startsWith('image/')) {
-          const file = item.getAsFile()
-          if (file) {
-            event.preventDefault()
-            event.stopPropagation()
-            onUploadDocument?.(file)
-            return
-          }
-        }
-      }
-    }
-    node.addEventListener('paste', handler, { capture: true })
-    return () => node.removeEventListener('paste', handler, { capture: true })
-  }, [isUploading, onUploadDocument])
-
-  /** Drag-and-drop handlers — drop a file anywhere on the composer to
-   *  upload it. dragDepthRef counts nested dragenter/dragleave fires
-   *  so the highlight only clears when the cursor really leaves the
-   *  composer, not when it crosses an inner child boundary. */
-  function handleDragEnter(event: React.DragEvent<HTMLElement>) {
-    if (!event.dataTransfer.types.includes('Files')) {
-      return
-    }
-    dragDepthRef.current += 1
-    setIsDragging(true)
-  }
-
-  function handleDragLeave(event: React.DragEvent<HTMLElement>) {
-    if (!event.dataTransfer.types.includes('Files')) {
-      return
-    }
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
-    if (dragDepthRef.current === 0) {
-      setIsDragging(false)
-    }
-  }
-
-  function handleDragOver(event: React.DragEvent<HTMLElement>) {
-    if (event.dataTransfer.types.includes('Files')) {
-      event.preventDefault()
-      event.dataTransfer.dropEffect = 'copy'
-    }
-  }
-
-  function handleDrop(event: React.DragEvent<HTMLElement>) {
-    if (!event.dataTransfer.types.includes('Files')) {
-      return
-    }
-    event.preventDefault()
-    dragDepthRef.current = 0
-    setIsDragging(false)
-    if (isUploading) {
-      return
-    }
-    const files = event.dataTransfer.files
-    if (files && files.length > 0) {
-      onUploadDocument?.(files)
-    }
-  }
 
   return (
-    <footer
-      className={`composer${isDragging ? ' composer-dragging' : ''}`}
-      ref={composerRef}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
+    <footer className="composer">
       <div className="composer-input">
-        {visibleAttachments.length > 0 ? (
-          <div className="composer-chips">
-            {visibleAttachments.map((document) => {
-              // Compute the expiry hint once per render. Only surface
-              // it after the document is "ready" — while uploading or
-              // processing, the expires_at field exists but is moot
-              // (the user can't even reuse the file yet), and showing
-              // "expires in 7 days" next to a spinner reads as noise.
-              const expiryHint =
-                document.status === 'ready'
-                  ? formatDocumentExpiry(document.expires_at, new Date(), t)
-                  : null
-              const tooltip = expiryHint
-                ? `${document.original_name} · ${expiryHint}`
-                : document.original_name
-              const preview = attachedPreviews?.[document.id] ?? (
-                visibleAttachments.length === 1 ? attachedPreview : undefined
-              )
-              return (
-            <div className="attachment-tile" key={document.id}>
-            <div
-              className={`attachment-thumb status-${document.status}`}
-              title={tooltip}
-            >
-              {preview ? (
-                <img src={preview} alt={document.original_name} className="attachment-thumb-image" />
-              ) : (
-                (() => {
-                  const { colorKey, glyph, label } = fileIconFor(
-                    document.original_name,
-                    document.content_type,
-                  )
-                  return (
-                    <div
-                      className={`attachment-thumb-placeholder file-icon-${colorKey}`}
-                      role="img"
-                      aria-label={label}
-                    >
-                      {glyph}
-                    </div>
-                  )
-                })()
-              )}
-              {document.status !== 'ready' && document.status !== 'failed' ? (
-                <div
-                  className="attachment-thumb-overlay"
-                  aria-hidden="true"
-                  aria-label={
-                    typeof uploadProgress === 'number'
-                      ? t('composer.uploadProgress', { percent: String(Math.round(uploadProgress)) })
-                      : t('composer.uploading')
-                  }
-                >
-                  {typeof uploadProgress === 'number' ? (
-                    // Determinate: show the rounded percentage so users
-                    // can tell whether the upload is making progress.
-                    // The conic-gradient ring under it is driven by a
-                    // CSS custom property so we don't trigger React
-                    // reconciliation on every byte chunk — the
-                    // attachment-thumb-progress class reads --percent.
-                    <span
-                      className="attachment-thumb-progress"
-                      style={{ ['--percent' as never]: `${Math.round(uploadProgress)}%` }}
-                    >
-                      {Math.round(uploadProgress)}%
-                    </span>
-                  ) : (
-                    <IconLoader2 size={18} className="attachment-thumb-spin" />
-                  )}
-                </div>
-              ) : null}
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                className="attachment-thumb-remove"
-                aria-label={t('composer.removeAttachment')}
-                title={t('composer.removeAttachment')}
-                onClick={() => onDetachDocument?.(document.id)}
-              >
-                <IconX size={12} aria-hidden="true" />
-              </Button>
-            </div>
-              {expiryHint ? (
-                // Visible caption below the chip so the retention
-                // window is discoverable without hovering. Cloud
-                // documents auto-expire ~7 days after upload; without
-                // this, users only learned the limit when a stale
-                // attachment failed mid-run. No aria-label needed —
-                // the visible text content is already accessible to
-                // screen readers; adding aria-label would double-read.
-                <span className="attachment-expiry-caption">{expiryHint}</span>
-              ) : null}
-            </div>
-              )
-            })}
-          </div>
-        ) : null}
         <SkillEditor
           draft={draft}
           onDraftChange={onDraftChange}
@@ -376,39 +67,9 @@ export function Composer({
           placeholder={steeringMode ? t('composer.steeringPlaceholder') : t('composer.placeholder')}
         />
       </div>
-      {/* Tools row below the input — borderless, hover-darken icons; the
-       *  send / stop button sits at the trailing edge of this row (next to
-       *  the model selector), matching the v4 prototype's input bar. */}
+
       <div className="composer-toolbar">
-        {onUploadDocument ? <button
-          type="button"
-          className="composer-tool"
-          aria-label={t('composer.attachmentTitle')}
-          title={t('composer.attachmentTitle')}
-          disabled={isUploading || steeringMode}
-          onClick={openFilePicker}
-        >
-          {isUploading ? (
-            <IconLoader2 size={16} aria-hidden="true" className="attachment-thumb-spin" />
-          ) : (
-            <IconPaperclip size={16} aria-hidden="true" />
-          )}
-        </button> : null}
-        {attachmentToolHint ? (
-          <span
-            className="composer-capability-chip"
-            role="status"
-            title={attachmentToolHint.title}
-          >
-            <IconInfoCircle size={14} aria-hidden="true" />
-            <span>{attachmentToolHint.label}</span>
-          </span>
-        ) : null}
-        {/* Workspace/project binding is a local-daemon concept — hidden on web. */}
         {!isDesktop ? null : projectName ? (
-          // Locked chip — once bound, project can't be changed without
-          // starting a new chat (the daemon already has the workspace
-          // path attached to this conversation's run state).
           <span
             className="composer-tool composer-project-chip"
             title={t('composer.projectPicker.locked', { name: projectName })}
@@ -429,12 +90,14 @@ export function Composer({
             <IconFolderPlus size={16} aria-hidden="true" />
           </button>
         )}
+
         <ModeSelector
           mode={mode}
           models={models}
           onChange={onModeChange}
           disabled={isSending || steeringMode}
         />
+
         {canStop ? (
           <button
             type="button"
@@ -447,6 +110,7 @@ export function Composer({
             <span className="sr-only">{t('composer.stop')}</span>
           </button>
         ) : null}
+
         {!canStop || steeringMode ? (
           <button
             type="button"
@@ -460,26 +124,7 @@ export function Composer({
             <span className="sr-only">{sendLabel}</span>
           </button>
         ) : null}
-        {/* Hidden native file picker — clicking the attach tool above
-            triggers it via openFilePicker(). aria-label kept so tests
-            and screen readers can find it. */}
-        {onUploadDocument ? <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept={documentAccept}
-          aria-label={t('composer.upload')}
-          disabled={isUploading}
-          style={{ display: 'none' }}
-          onChange={(event) => {
-            onUploadDocument(event.currentTarget.files ?? undefined)
-            event.currentTarget.value = ''
-          }}
-        /> : null}
       </div>
     </footer>
   )
 }
-
-const documentAccept =
-  'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg,image/webp,.pdf,.docx,.xlsx,.png,.jpg,.jpeg,.webp'

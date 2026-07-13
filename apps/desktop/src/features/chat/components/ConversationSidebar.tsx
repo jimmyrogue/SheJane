@@ -88,7 +88,7 @@ export function ConversationSidebar({
   onOpenSkills?: () => void
   onOpenMcp?: () => void
   onOpenConnections?: () => void
-  /** Navigate to the full 设置 page. Account, billing, agent config, and data
+/** Navigate to the full 设置 page. Runtime, agent configuration, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
   activeView?: 'chat' | 'skills' | 'mcp' | 'connections' | 'settings'

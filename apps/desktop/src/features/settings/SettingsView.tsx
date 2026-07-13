@@ -488,7 +488,7 @@ export function SettingsView({
                       <Select
                         value={adv.inputGuard ?? '__default__'}
                         onValueChange={(value) =>
-                          setAdv({ inputGuard: value === '__default__' ? undefined : (value as 'observe' | 'block') })
+                          setAdv({ inputGuard: value === '__default__' ? undefined : (value as 'off' | 'observe' | 'block') })
                         }
                       >
                         <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.inputGuard.label')}>
@@ -496,6 +496,7 @@ export function SettingsView({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
+                          <SelectItem value="off">off</SelectItem>
                           <SelectItem value="observe">observe</SelectItem>
                           <SelectItem value="block">block</SelectItem>
                         </SelectContent>

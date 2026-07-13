@@ -49,6 +49,7 @@ import { PendingQuestionBar } from './features/chat/components/PendingQuestionBa
 import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
 import { SettingsView } from './features/settings/SettingsView'
+import { advancedSettingsFromRuntime, advancedSettingsToRuntime } from './features/settings/runtimeSettings'
 import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
@@ -73,6 +74,7 @@ import {
   fetchWorkspaceFile,
   forkLocalRun,
   getLocalRunDiagnostics,
+  getRuntimeSettings,
   getLocalThreadSnapshot,
   getDesktopLocalHostConfig,
   hasLocalHostAuthorization,
@@ -89,6 +91,7 @@ import {
   LocalStreamCursorResetRequiredError,
   markLocalScheduleNotified,
   injectLocalRunInstruction,
+  parseRuntimeModelSpec,
   probeLocalHost,
   resolveLocalPlanCommand,
   resolveLocalPermissionCommand,
@@ -97,7 +100,7 @@ import {
   updateLocalSkill,
   updateLocalThread,
   updateMcpServer,
-  type AdvancedAgentSettings,
+  updateRuntimeSettings,
   type AgentSettings,
   type CreateLocalRunInput,
   type LocalArtifact,
@@ -138,16 +141,9 @@ interface LocalHarnessRunOptions {
   replaceFromClientId?: string
 }
 
-// v7 — dropped the codeExec field. Cloud code execution is now always
-// on (no user-facing toggle): in practice every test confirmed the
-// flow works, and the original opt-in friction was hurting first-run
-// experience more than it was protecting privacy (files are only
-// uploaded when the LLM explicitly calls code.execute with files_in,
-// which already passes through the daemon-side sensitive-filename
-// blacklist + size cap). Bumping the storage key wipes any leftover
-// `codeExec: 'off'` from v6 storage so legacy users don't end up
-// silently disabled.
-const agentSettingsStorageKey = 'shejane.agentSettings.v7'
+// v8 stores only Desktop-owned per-run capability choices. Advanced defaults
+// are authoritative in Runtime SQLite and are loaded through its settings API.
+const agentSettingsStorageKey = 'shejane.agentSettings.v8'
 // Concrete Runtime model selection. Stale values are reconciled against the
 // Runtime catalog after connection.
 const chatModeStorageKey = 'shejane.chatMode.v2'
@@ -224,35 +220,6 @@ function writeSidebarWidth(width: number) {
   }
 }
 
-function readAdvancedAgentSettings(raw: unknown): AdvancedAgentSettings {
-  // Defensive read — localStorage can be hand-edited / stale. Keep only
-  // well-typed, in-range values; everything else falls back to the daemon
-  // default by being omitted.
-  if (!raw || typeof raw !== 'object') {
-    return {}
-  }
-  const a = raw as Record<string, unknown>
-  const out: AdvancedAgentSettings = {}
-  if (typeof a.maxModelCalls === 'number' && Number.isFinite(a.maxModelCalls)) {
-    out.maxModelCalls = a.maxModelCalls
-  }
-  if (typeof a.maxToolRetries === 'number' && Number.isFinite(a.maxToolRetries)) {
-    out.maxToolRetries = a.maxToolRetries
-  }
-  if (typeof a.researchSearchLimit === 'number' && Number.isFinite(a.researchSearchLimit)) {
-    out.researchSearchLimit = a.researchSearchLimit
-  }
-  if (typeof a.subagents === 'boolean') out.subagents = a.subagents
-  if (typeof a.browserHeadless === 'boolean') out.browserHeadless = a.browserHeadless
-  if (a.inputGuard === 'observe' || a.inputGuard === 'block') {
-    out.inputGuard = a.inputGuard
-  }
-  if (a.planFirst === 'off' || a.planFirst === 'auto' || a.planFirst === 'always') {
-    out.planFirst = a.planFirst
-  }
-  return out
-}
-
 function readAgentSettings(): Required<AgentSettings> {
   if (typeof window === 'undefined') {
     return { ...defaultAgentSettings }
@@ -274,7 +241,7 @@ function readAgentSettings(): Required<AgentSettings> {
       mcpDisabled: Array.isArray(parsed.mcpDisabled)
         ? parsed.mcpDisabled.filter((name): name is string => typeof name === 'string')
         : [],
-      advanced: readAdvancedAgentSettings((parsed as { advanced?: unknown }).advanced),
+      advanced: {},
     }
   } catch {
     return { ...defaultAgentSettings }
@@ -283,7 +250,12 @@ function readAgentSettings(): Required<AgentSettings> {
 
 function writeAgentSettings(settings: Required<AgentSettings>) {
   try {
-    window.localStorage.setItem(agentSettingsStorageKey, JSON.stringify(settings))
+    window.localStorage.setItem(agentSettingsStorageKey, JSON.stringify({
+      memory: settings.memory,
+      skills: settings.skills,
+      mcp: settings.mcp,
+      mcpDisabled: settings.mcpDisabled,
+    }))
   } catch {
     // Local storage can be unavailable in restricted browser contexts.
   }
@@ -296,9 +268,7 @@ function readChatMode(): ChatMode {
   try {
     const raw = window.localStorage.getItem(chatModeStorageKey)?.trim()
     // The Runtime catalog reconciles selections that are no longer available.
-    if (raw) {
-      return raw
-    }
+    if (raw) return parseRuntimeModelSpec(raw) ?? defaultChatMode
   } catch {
     // Local storage can be unavailable in restricted browser contexts.
   }
@@ -381,6 +351,7 @@ function AppContent() {
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [pendingCommandDeliveryVersion, setPendingCommandDeliveryVersion] = useState(0)
   const scheduledNotificationIDs = useRef(new Set<string>())
+  const runtimeSettingsWriteRef = useRef<Promise<void>>(Promise.resolve())
   const [artifactPreview, setArtifactPreview] = useState<LocalArtifact | null>(null)
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null)
   // Bumped on `doc.changed` (Phase 2 territory) to force the renderer to
@@ -431,6 +402,25 @@ function AppContent() {
     })
   }
 
+  function changeAgentSettings(next: Required<AgentSettings>) {
+    setAgentSettings(next)
+    writeAgentSettings(next)
+    if (!localHostConfig) return
+
+    const config = localHostConfig
+    runtimeSettingsWriteRef.current = runtimeSettingsWriteRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await updateRuntimeSettings(
+          advancedSettingsToRuntime(next.advanced),
+          config,
+        )
+      })
+      .catch((error) => {
+        setNotice(error instanceof Error ? error.message : String(error))
+      })
+  }
+
   // Runtime owns the complete BYOK model catalog.
   useEffect(() => {
     if (!localHostConfig) {
@@ -440,16 +430,18 @@ function AppContent() {
     let cancelled = false
     void listLocalRuntimeModels(localHostConfig).then((localCatalog) => {
         if (cancelled) return
-        const catalog: ModelOption[] = localCatalog
-          .filter((model) => model.available)
-          .map((model) => ({
-            id: model.spec,
+        const catalog: ModelOption[] = localCatalog.flatMap((model) => {
+          const spec = parseRuntimeModelSpec(model.spec)
+          if (!model.available || !spec) return []
+          return [{
+            id: spec,
             label: model.display_name,
             description: t('settings.models.localDescription'),
             vendor: model.provider_name,
             vendor_info: t('settings.models.localVendorInfo'),
             capability_tier: 'balanced',
-          }))
+          }]
+        })
         setModels(catalog)
         setMode((current) => {
           if (catalog.some((m) => m.id === current)) return current
@@ -462,6 +454,26 @@ function AppContent() {
       cancelled = true
     }
   }, [localHostConfig, modelCatalogVersion, t])
+
+  // Runtime owns advanced defaults. Desktop only projects them into the form;
+  // localStorage is intentionally not a competing source of truth.
+  useEffect(() => {
+    if (!localHostConfig || !hasLocalHostAuthorization(localHostConfig)) return
+    let cancelled = false
+    void getRuntimeSettings(localHostConfig)
+      .then((settings) => {
+        if (!cancelled) {
+          setAgentSettings((current) => ({
+            ...current,
+            advanced: advancedSettingsFromRuntime(settings),
+          }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [localHostConfig])
 
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
@@ -812,16 +824,12 @@ function AppContent() {
   }, [localHost?.online, localHostConfig, t])
 
   const activeConversation = conversations.find((conversation) => conversation.id === activeID)
-  // A local daemon run can stay cancelable after `isSending` flips false
-  // because HITL permission/question pauses block the SSE stream while the
-  // daemon run remains alive. Web cloud tool loops are cancelable during the
-  // active send promise via `isSending`; after reload they need the separate
-  // orphan-streaming recovery path, not a stale Stop button.
+  // A Runtime run can stay cancelable after `isSending` flips false because
+  // HITL permission/question pauses block the SSE stream while the run lives.
   const hasActiveRun = Boolean(
     activeConversation?.messages.some(
       (msg) =>
         msg.role === 'assistant' &&
-        msg.runOrigin === 'local' &&
         Boolean(msg.runId) &&
         (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
     ),
@@ -985,13 +993,6 @@ function AppContent() {
 
   async function sendMessage() {
     const content = draft
-    // Snapshot the attachment before we optimistically clear it so we
-    // can roll back if the send fails. The chip used to linger until
-    // the assistant stream finished — that read as "the file's still
-    // attached for some reason" to users. Clearing right after the
-    // draft mirrors the message-bar behaviour: the prompt + its
-    // attachment vanish from the composer the instant Enter fires;
-    // the catch path restores both if the request never landed.
     setIsSending(true)
     setNotice('')
     setDraft('')
@@ -1344,7 +1345,6 @@ function AppContent() {
       content: '',
       createdAt: timestamp,
       status: 'pending',
-      runOrigin: 'local',
       agentEvents: runOptions?.initialAgentEvents ? [...runOptions.initialAgentEvents] : [],
     }
 
@@ -1355,7 +1355,7 @@ function AppContent() {
 
     const parentRunId = runOptions?.parentRunId ?? [...priorMessages]
       .reverse()
-      .find((message) => message.role === 'assistant' && message.runOrigin === 'local' && Boolean(message.runId))?.runId
+      .find((message) => message.role === 'assistant' && Boolean(message.runId))?.runId
 
     const skillsForRun = !settingsOverride ? draftSkills : []
     const functionsForRun = !settingsOverride ? draftFunctions : []
@@ -1404,9 +1404,6 @@ function AppContent() {
         pinned: conversation.pinned ?? false,
         project: conversation.project,
         workspace: conversation.workspace,
-      },
-      userItemMetadata: {
-        attachments: userMessage.attachments ?? [],
       },
       replaceFromClientId: runOptions?.replaceFromClientId,
       goal,
@@ -1489,7 +1486,6 @@ function AppContent() {
         (msg) =>
           msg.role === 'assistant' &&
           Boolean(msg.runId) &&
-          msg.runOrigin === 'local' &&
           (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
       )
     if (!activeMessage?.runId) {
@@ -1556,7 +1552,6 @@ function AppContent() {
       .find(
         (msg) =>
           msg.role === 'assistant' &&
-          msg.runOrigin === 'local' &&
           Boolean(msg.runId) &&
           (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
       )
@@ -2000,7 +1995,6 @@ function AppContent() {
       createdAt: timestamp,
       status: 'streaming',
       runId: run.id,
-      runOrigin: 'local',
       agentEvents: [],
     }
     conversation.messages = [userMessage, assistantMessage]
@@ -2151,7 +2145,6 @@ function AppContent() {
       content: '',
       createdAt: timestamp,
       status: 'pending',
-      runOrigin: 'local',
       agentEvents: [],
     }
     const pendingCommand: PendingRunForkCommand = {
@@ -2684,8 +2677,7 @@ function AppContent() {
               localHostConfig={localHostConfig}
               onModelProvidersChange={() => setModelCatalogVersion((version) => version + 1)}
               onAgentSettingsChange={(next) => {
-                setAgentSettings(next)
-                writeAgentSettings(next)
+                changeAgentSettings(next)
               }}
               onImportLocalData={(file) => void importLocalData(file)}
               onExportLocalData={() => void exportLocalData()}
@@ -2726,7 +2718,7 @@ function AppContent() {
               <div className="chat-toolbar-title">
                 <span>{activeConversation?.title ?? t('app.newChat')}</span>
               </div>
-              {/* Daemon status dot is meaningless on web (no daemon ever). */}
+              {/* Runtime connection status. */}
               {isDesktop ? (
                 <div className="topbar-status">
                   <span
@@ -2737,9 +2729,7 @@ function AppContent() {
                 </div>
               ) : null}
             </header>
-            {/* Offline banner only on desktop — on web the daemon is never
-             *  expected, so it would show permanently. Credits-empty banner
-             *  still applies to web (cloud chat bills credits too). */}
+            {/* Runtime failure is explicit; Desktop never falls back to Cloud. */}
             {isDesktop && !localHost?.online ? (
               <div className="status-banner status-banner-warning" role="status">
                 <span className="status-banner-text">{t('topbar.bannerDaemonOffline')}</span>
@@ -2982,12 +2972,8 @@ function appendLocalRunEvent(
     const payload = event.payload ?? {}
     const input = Number(payload.input_tokens) || 0
     const output = Number(payload.output_tokens) || 0
-    const credits = Number(payload.credits_cost) || 0
     if (input > 0 || output > 0) {
       message.tokens = (message.tokens ?? 0) + input + output
-    }
-    if (credits > 0) {
-      message.creditsCost = (message.creditsCost ?? 0) + credits
     }
     return
   }
@@ -2999,13 +2985,9 @@ function appendLocalRunEvent(
     const payload = event.payload ?? {}
     const input = Number(payload.input_tokens) || 0
     const output = Number(payload.output_tokens) || 0
-    const credits = Number(payload.credits_cost) || 0
     // Authoritative per-turn totals (sum of the turn's llm.usage events).
     if (input > 0 || output > 0) {
       message.tokens = input + output
-    }
-    if (credits > 0) {
-      message.creditsCost = credits
     }
   }
   // Optional concrete model label for the completed turn.
@@ -3043,8 +3025,7 @@ function appendLocalRunEvent(
     // Reads (office.read / office.outline) intentionally do NOT
     // auto-open the preview — that was noisy. Preview opens only on:
     //   1. user clicking a filename in agent text
-    //   2. user clicking an attachment chip
-    //   3. an edit completing (this branch)
+    //   2. an edit completing (this branch)
     if (event.event_type === 'tool.completed' && !alreadySeen) {
       const detected = detectOfficeFileEdited(event.payload)
       if (detected) {

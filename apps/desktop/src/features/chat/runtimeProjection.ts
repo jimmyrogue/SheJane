@@ -1,6 +1,6 @@
 import type { AgentRunEvent } from '@shejane/runtime-client'
 import { createTranslator, type Translator } from '../../shared/i18n/i18n'
-import type { ChatMessage, Conversation, MessageAttachment, MessageStatus } from '../../shared/local-data/types'
+import type { ChatMessage, Conversation, MessageStatus } from '../../shared/local-data/types'
 import type { LocalRun, LocalThreadItem, LocalThreadSnapshot } from '../../shared/local-host/client'
 import { timelineItem } from './chatStore'
 
@@ -62,8 +62,6 @@ function projectRuntimeItem(
   const id = item.client_id || item.id
   const existing = existingByID.get(id)
   if (item.item_type === 'user_message') {
-    const metadata = objectValue(item.metadata)
-    const attachments = attachmentValues(metadata.attachments)
     return {
       ...(existing ?? {}),
       id,
@@ -71,7 +69,6 @@ function projectRuntimeItem(
       content: item.content,
       createdAt: item.created_at,
       status: 'done',
-      ...(attachments.length ? { attachments } : {}),
     }
   }
 
@@ -90,7 +87,7 @@ function projectRuntimeItem(
     content: item.content || (status === 'error' ? fallback ?? '' : ''),
     createdAt: item.created_at,
     status,
-    ...(item.run_id ? { runId: item.run_id, runOrigin: 'local' as const } : {}),
+    ...(item.run_id ? { runId: item.run_id } : {}),
     ...(item.run_id && eventHighWatermarks[item.run_id] !== undefined
       ? { lastEventSeq: Math.max(existing?.lastEventSeq ?? 0, eventHighWatermarks[item.run_id]) }
       : {}),
@@ -127,18 +124,4 @@ function workspaceValue(value: unknown): Conversation['workspace'] | undefined {
     label: item.label,
     authorized: Boolean(item.authorized),
   }
-}
-
-function attachmentValues(value: unknown): MessageAttachment[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((raw) => {
-    const item = objectValue(raw)
-    if (typeof item.documentId !== 'string' || typeof item.name !== 'string') return []
-    return [{
-      documentId: item.documentId,
-      name: item.name,
-      contentType: typeof item.contentType === 'string' ? item.contentType : '',
-      ...(typeof item.previewDataUrl === 'string' ? { previewDataUrl: item.previewDataUrl } : {}),
-    }]
-  })
 }

@@ -1,6 +1,8 @@
+import type { RuntimeModelSpec } from '@shejane/runtime-client'
+
 export type MessageRole = 'system' | 'user' | 'assistant'
 /** Concrete Runtime model selection (`local:<provider>:<model>`). */
-export type ChatMode = string
+export type ChatMode = RuntimeModelSpec | ''
 export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
 
 export interface AgentQuestionChoice {
@@ -97,14 +99,6 @@ export interface AgentTimelineItem {
   codeExecImages?: string[]
 }
 
-export interface MessageAttachment {
-  documentId: string
-  name: string
-  contentType: string
-  /** Small inline data: URL for image previews (durable across reload). */
-  previewDataUrl?: string
-}
-
 export interface ChatMessage {
   id: string
   /** Stable id for retrying the Runtime command that created this message. */
@@ -117,11 +111,8 @@ export interface ChatMessage {
   runId?: string
   /** Highest Runtime event sequence already reflected in this cache entry. */
   lastEventSeq?: number
-  runOrigin?: 'cloud' | 'local'
-  creditsCost?: number
   tokens?: number
   agentEvents?: AgentTimelineItem[]
-  attachments?: MessageAttachment[]
   /** Thinking-mode trace from the model (DeepSeek `reasoning_content`).
    *  Accumulated from `llm.reasoning` SSE events for backend round-trip
    *  to subsequent LLM calls (DeepSeek API requires reasoning_content
@@ -148,25 +139,17 @@ export interface ConversationWorkspace {
  * Currently-previewed office document.
  *
  * Set whenever something in the UI wants to surface a .docx / .xlsx in
- * the right-side DocPreviewPanel — three known triggers:
+ * the right-side DocPreviewPanel — two known triggers:
  *  1. Successful `office.read` tool call (App.tsx mines the tool result
  *     and opens with a local-file loader).
  *  2. Click on a recognized filename in agent text (MessageBubble
  *     resolves it against `conversation.workspace.path` and opens).
- *  3. Click on a user-uploaded office attachment (MessageBubble passes a
- *     cloud-fetch loader).
- *
  * The renderer (DocxPreview / XlsxPreview) consumes `loadBytes()` and
  * doesn't care where the bytes come from. `sourceKey` lets the panel
- * dedupe — opening the same path/document twice doesn't trigger a
+ * dedupe — opening the same path twice doesn't trigger a
  * spurious reload (we just bump the refresh key).
  */
-/** Sparse, all-optional view of the server-side pdfinfo parse
- *  (services/cloud/internal/documents/extract.go::parsePDFInfo). Lives here
- *  (the dependency-free leaf module) rather than in api/client.ts
- *  so OpenDocument can reference it without a circular import;
- *  client.ts re-exports it for API-response typing. Encrypted /
- *  legacy / corrupted PDFs may surface only a subset. */
+/** Sparse, all-optional PDF metadata shown in the local preview. */
 export interface PdfDocumentMetadata {
   title?: string
   author?: string
@@ -181,9 +164,7 @@ export interface PdfDocumentMetadata {
 }
 
 export interface OpenDocument {
-  /** Stable identifier for this document — used to dedupe opens.
-   *  Format: `local:<absolute-path>` for workspace files,
-   *  `cloud:<documentId>` for uploaded ones. */
+  /** Stable identifier for this document — `local:<absolute-path>`. */
   sourceKey: string
   /** "word", "excel", "powerpoint", or "pdf" — drives which preview
    *  component the panel mounts (DocxPreview / XlsxPreview /
@@ -193,15 +174,9 @@ export interface OpenDocument {
   name: string
   /** Optional full path or description shown as tooltip on the header. */
   tooltip?: string
-  /** Optional document metadata (currently PDFs only — pdfinfo
-   *  output captured server-side at upload). The preview header
-   *  renders a "15 页 · Author" badge when present. Undefined for
-   *  local workspace files and for cloud docs missing from the
-   *  current documents list. */
+  /** Optional PDF metadata shown in the preview header. */
   metadata?: PdfDocumentMetadata
-  /** Resolves with the file's raw bytes. Closure over whatever
-   *  authenticated fetch backs this source (workspace endpoint, S3
-   *  presigned GET, etc.).
+  /** Resolves with the workspace file's raw bytes.
    *
    *  For .pptx the preview uses the outline endpoint instead of these
    *  bytes (no mature pure-browser pptx renderer exists), but the
@@ -212,8 +187,7 @@ export interface OpenDocument {
   /** Absolute filesystem path on the user's machine. Required when
    *  `kind === 'powerpoint'` so the preview can call the outline
    *  endpoint + the "open natively" button can hand the path to the
-   *  Electron shell. Optional for cloud-sourced docs (which lack a
-   *  local path). */
+   *  Electron shell. */
   localPath?: string
 }
 
@@ -241,18 +215,6 @@ export interface PptxSlideOutline {
   notes: string
   shape_count: number
   image_count: number
-}
-
-/** Reference to a previewable file in the cloud documents service
- *  (uploaded via the composer's attachment flow). Originally only
- *  office types; PDF was added when the side-panel learned to
- *  render PDFs via Chromium's embedded viewer. Name kept as
- *  `CloudOfficeAttachmentRef` for git-blame continuity, but the
- *  scope is wider than "office" now. */
-export interface CloudOfficeAttachmentRef {
-  documentId: string
-  kind: 'word' | 'excel' | 'pdf'
-  name: string
 }
 
 /**

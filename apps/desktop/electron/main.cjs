@@ -752,23 +752,6 @@ ipcMain.handle('shejane:open-file-with-default-app', async (_event, filePath) =>
   }
 })
 
-ipcMain.handle('shejane:show-item-in-folder', async (_event, filePath) => {
-  // Used by the message-bubble attachment chip's external-open
-  // button (LOCAL files only — Finder / Explorer pops open with the
-  // file highlighted). Returns 'ok' on success, an error string
-  // otherwise. shell.showItemInFolder is sync + returns void so we
-  // wrap defensively to match the openFileWithDefaultApp contract.
-  if (typeof filePath !== 'string' || filePath.length === 0) {
-    return 'path required'
-  }
-  try {
-    shell.showItemInFolder(filePath)
-    return 'ok'
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err)
-  }
-})
-
 app.on('window-all-closed', () => {
   // Intentionally do NOT app.quit() here — the tray keeps the app
   // alive across all OSes after the user "closes" the window. Real

@@ -13,6 +13,17 @@ import type { components } from './generated.js'
 // readable (`LocalRun` vs `components['schemas']['LocalRun']`).
 type Schemas = components['schemas']
 
+/** Concrete BYOK model identifier accepted by Runtime run commands. */
+export type RuntimeModelSpec = `local:${string}:${string}`
+
+/** Validate untrusted storage or catalog data before it becomes a model selection. */
+export function parseRuntimeModelSpec(value: string): RuntimeModelSpec | undefined {
+  const trimmed = value.trim()
+  return trimmed.length <= 128 && /^local:[^:]+:.+$/.test(trimmed)
+    ? trimmed as RuntimeModelSpec
+    : undefined
+}
+
 export type LocalRun = Schemas['LocalRun']
 export type LocalThread = Schemas['LocalThread']
 export type LocalThreadItem = Schemas['LocalThreadItem']
@@ -251,7 +262,7 @@ export interface AdvancedAgentSettings {
   /** Run the browser tool headless. Daemon default on. */
   browserHeadless?: boolean
   /** Prompt-injection input guard. Daemon default observe. */
-  inputGuard?: 'observe' | 'block'
+  inputGuard?: 'off' | 'observe' | 'block'
   /** Plan-first middleware. Daemon default off. */
   planFirst?: 'off' | 'auto' | 'always'
 }

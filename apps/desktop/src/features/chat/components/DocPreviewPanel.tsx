@@ -173,7 +173,7 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
 
   // Download / "save a copy" lives in the opened detail view (not on
   // the chat chip). Reuses the doc's own byte loader so it works for
-  // every source (cloud presigned GET, workspace file, …) without
+  // every workspace source without
   // threading the documentId down — fetch bytes, blob, click a
   // synthetic <a download> with the original filename.
   const downloadDoc = useCallback(async () => {

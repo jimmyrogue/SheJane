@@ -13,7 +13,6 @@ export interface DesktopBridge {
     ready?: boolean
   }
   openFileWithDefaultApp?: (filePath: string) => Promise<string>
-  showItemInFolder?: (filePath: string) => Promise<string>
 }
 
 export interface LocalHostConfig extends RuntimeClientConfig {

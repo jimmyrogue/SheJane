@@ -14,10 +14,11 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
+import type { RuntimeModelSpec } from '@shejane/runtime-client'
 
 /** One selectable Runtime model. */
 export interface ModelOption {
-  id: string
+  id: RuntimeModelSpec
   label: string
   description?: string
   vendor?: string

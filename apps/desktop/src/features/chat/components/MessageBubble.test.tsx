@@ -225,37 +225,32 @@ describe('MessageBubble meta', () => {
     expect(screen.getByRole('button', { name: '删除' })).toBeDisabled()
   })
 
-  it('shows credits on a settled plain model turn', () => {
+  it('shows token usage on a settled model turn', () => {
     render(
       <I18nProvider>
         <MessageBubble
           message={message({
             tokens: 1234,
-            creditsCost: 3,
           })}
         />
       </I18nProvider>,
     )
 
-    expect(screen.getByText('3 积分')).toBeInTheDocument()
-    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
+    expect(screen.getByText('1,234 个 token')).toBeInTheDocument()
   })
 
-  it('shows only tool count when a settled assistant turn used tools', () => {
+  it('shows token and tool counts when a settled assistant turn used tools', () => {
     render(
       <I18nProvider>
         <MessageBubble
           message={message({
             tokens: 1234,
-            creditsCost: 3,
             agentEvents: [{ type: 'tool.completed', label: 'ran' }],
           })}
         />
       </I18nProvider>,
     )
-    expect(screen.getByText('1 次工具')).toBeInTheDocument()
-    expect(screen.queryByText('3 积分')).not.toBeInTheDocument()
-    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
+    expect(screen.getByText('1,234 个 token · 1 次工具')).toBeInTheDocument()
   })
 
   it('treats failed tools as tool usage in the settled usage chip', () => {
@@ -264,15 +259,13 @@ describe('MessageBubble meta', () => {
         <MessageBubble
           message={message({
             tokens: 1234,
-            creditsCost: 3,
             agentEvents: [{ type: 'tool.failed', label: '工具失败：读取网页' }],
           })}
         />
       </I18nProvider>,
     )
 
-    expect(screen.getByText('1 次工具')).toBeInTheDocument()
-    expect(screen.queryByText('3 积分')).not.toBeInTheDocument()
+    expect(screen.getByText('1,234 个 token · 1 次工具')).toBeInTheDocument()
   })
 
   it('shows the concrete model badge on a settled assistant turn', () => {
@@ -420,126 +413,5 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByRole('button', { name: 'report.docx' })).not.toBeInTheDocument()
     // The text itself is still visible.
     expect(screen.getByText(/See report\.docx/)).toBeInTheDocument()
-  })
-
-  it('renders office-type attachment chips as clickable buttons that fire onPreviewCloudAttachment', () => {
-    const onPreviewCloudAttachment = vi.fn()
-    render(
-      <I18nProvider>
-        <MessageBubble
-          message={message({
-            role: 'user',
-            content: '看下这个',
-            attachments: [
-              {
-                documentId: 'doc_1',
-                name: 'spec.docx',
-                contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-              },
-              {
-                documentId: 'doc_2',
-                name: 'notes.txt',
-                contentType: 'text/plain',
-              },
-            ],
-          })}
-          onPreviewCloudAttachment={onPreviewCloudAttachment}
-        />
-      </I18nProvider>,
-    )
-
-    // .docx chip → clickable button.
-    const docxChip = screen.getByRole('button', { name: /spec\.docx/ })
-    fireEvent.click(docxChip)
-    expect(onPreviewCloudAttachment).toHaveBeenCalledWith({
-      documentId: 'doc_1',
-      kind: 'word',
-      name: 'spec.docx',
-    })
-
-    // .txt chip → NOT a button (we don't preview plain text via the panel).
-    expect(screen.queryByRole('button', { name: /notes\.txt/ })).not.toBeInTheDocument()
-    expect(screen.getByText(/notes\.txt/)).toBeInTheDocument()
-  })
-
-  it('renders PDF attachment chips as clickable previewable buttons (kind=pdf)', () => {
-    // Regression: PDFs used to fall through to the non-clickable
-    // path because previewableKindFromAttachment didn't know about
-    // them. After Plan 1, PDF is a first-class previewable kind
-    // routed to the side panel's PdfPreview.
-    const onPreviewCloudAttachment = vi.fn()
-    render(
-      <I18nProvider>
-        <MessageBubble
-          message={message({
-            role: 'user',
-            content: '',
-            attachments: [
-              {
-                documentId: 'doc_pdf',
-                name: 'paper.pdf',
-                contentType: 'application/pdf',
-              },
-            ],
-          })}
-          onPreviewCloudAttachment={onPreviewCloudAttachment}
-        />
-      </I18nProvider>,
-    )
-    const chip = screen.getByRole('button', { name: /paper\.pdf/ })
-    fireEvent.click(chip)
-    expect(onPreviewCloudAttachment).toHaveBeenCalledWith({
-      documentId: 'doc_pdf',
-      kind: 'pdf',
-      name: 'paper.pdf',
-    })
-  })
-
-  it('renders the external-open button when onOpenAttachmentExternally is provided', () => {
-    const onOpenAttachmentExternally = vi.fn()
-    render(
-      <I18nProvider>
-        <MessageBubble
-          message={message({
-            role: 'user',
-            content: '',
-            attachments: [
-              {
-                documentId: 'doc_x',
-                name: 'archive.zip',
-                contentType: 'application/zip',
-              },
-            ],
-          })}
-          onOpenAttachmentExternally={onOpenAttachmentExternally}
-        />
-      </I18nProvider>,
-    )
-    // The chip itself is NOT a button (.zip isn't previewable) but
-    // the external-open button next to it IS, regardless of preview
-    // support — that's the escape hatch we just added.
-    const externalBtn = screen.getByRole('button', { name: '下载到本机' })
-    fireEvent.click(externalBtn)
-    expect(onOpenAttachmentExternally).toHaveBeenCalledWith({
-      documentId: 'doc_x',
-      name: 'archive.zip',
-    })
-  })
-
-  it('hides the external-open button entirely when no handler is supplied', () => {
-    render(
-      <I18nProvider>
-        <MessageBubble
-          message={message({
-            role: 'user',
-            content: '',
-            attachments: [
-              { documentId: 'doc_x', name: 'something.docx', contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-            ],
-          })}
-        />
-      </I18nProvider>,
-    )
-    expect(screen.queryByRole('button', { name: '下载到本机' })).not.toBeInTheDocument()
   })
 })

@@ -572,7 +572,7 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
   const sourcesCount = uniqueCount(events, (event) => (event.type === 'source.collected' ? event.sourceUrl || event.sourceTitle || event.eventId : undefined))
   const artifacts = uniqueValues(events, (event) => event.artifactId)
   const latestArtifactID = [...events].reverse().find((event) => event.artifactId)?.artifactId
-  const diagnosticsRunID = message.runOrigin === 'local' ? message.runId : undefined
+  const diagnosticsRunID = message.runId
 
   if (!events.length && !message.runId) {
     return null

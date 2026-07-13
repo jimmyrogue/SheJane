@@ -34,13 +34,6 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
    *  right-side PptxPreview's "Open in PowerPoint" button. */
   openFileWithDefaultApp: (filePath) =>
     ipcRenderer.invoke('shejane:open-file-with-default-app', filePath),
-  /** Reveal a file in Finder / Explorer (file highlighted in the
-   *  folder). Used by the message-bubble attachment chip's external-
-   *  open button for LOCAL workspace files. Cloud-only files don't
-   *  have a stable path so they go through a browser download
-   *  instead — this bridge is local-files-only. */
-  showItemInFolder: (filePath) =>
-    ipcRenderer.invoke('shejane:show-item-in-folder', filePath),
   /** Subscribe to the tray's "New Chat" action. Returns an unsubscribe
    *  fn so React effects can clean up properly. */
   onNewChatRequest: (handler) => {

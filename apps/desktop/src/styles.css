@@ -1,7 +1,3 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-
 /*
  * ICON LIBRARY CONVENTION: this project uses @tabler/icons-react, NOT lucide.
  * components.json says "iconLibrary": "lucide" only because shadcn has no
@@ -17,7 +13,6 @@
  * never applied. Do not add a `.dark {}` token block unless dark mode is a
  * deliberate, fully-scoped feature.
  */
-@custom-variant dark (&:is(.dark *));
 
 :root {
   color-scheme: light;
@@ -614,8 +609,7 @@ a {
 }
 
 .document-select,
-.document-delete,
-.attachment-chip button {
+.document-delete {
   border: 0;
   background: transparent;
   color: inherit;
@@ -1575,23 +1569,6 @@ select {
   border-radius: 3px;
   outline: none;
   text-decoration-style: solid;
-}
-
-/* Clickable variant of the attachment chip. Keeps the card look
- * from the base rule (the old override stripped the background to
- * `none`, which is what left the PDF chip bare); just adds the
- * pointer + a lift on hover so it reads as "open me". */
-.message-attachment-chip.clickable {
-  cursor: pointer;
-  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
-}
-
-.message-attachment-chip.clickable:hover,
-.message-attachment-chip.clickable:focus-visible {
-  border-color: var(--border-strong, rgba(0, 0, 0, 0.18));
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
-  outline: none;
 }
 
 /* Project picker — sidebar button with active project chip + the
@@ -2564,7 +2541,6 @@ select {
   color: var(--muted-foreground);
 }
 
-.attachment-chip,
 .local-project-chip {
   display: grid;
   width: fit-content;
@@ -2579,18 +2555,15 @@ select {
   padding: 8px 9px;
 }
 
-.attachment-chip.pending,
 .local-project-chip.pending {
   background: var(--muted);
 }
 
-.attachment-chip span,
 .local-project-chip span {
   font-weight: 720;
   white-space: nowrap;
 }
 
-.attachment-chip small,
 .local-project-chip small {
   min-width: 0;
   overflow: hidden;
@@ -2599,7 +2572,6 @@ select {
   white-space: nowrap;
 }
 
-.attachment-chip button,
 .local-project-chip button {
   display: inline-grid;
   width: 24px;
@@ -2794,7 +2766,6 @@ select {
   gap: 10px;
 }
 
-.attachment-dialog-body,
 .conversation-action-list {
   display: grid;
   gap: 10px;
@@ -2861,11 +2832,6 @@ select {
   pointer-events: none;
   user-select: none;
 }
-
-/* When an attachment chip occupies the top of the composer-input, the
- * placeholder needs to drop below it instead of overlapping. 56 (thumb
- * height) + 10 (chip top padding) + 9 (editor padding-top in the
- * single-line composer) ≈ first text line position. */
 .composer-input:has(.composer-chips) .composer-editor-ph {
   top: 75px;
 }
@@ -2876,9 +2842,6 @@ select {
  * placeholder further down so it doesn't overlap the caption.
  * Source order beats specificity here — both selectors are class+
  * descendant, so this rule wins when the caption is in the DOM. */
-.composer-input:has(.attachment-expiry-caption) .composer-editor-ph {
-  top: 95px;
-}
 
 .skill-chip--inline {
   display: inline-flex;
@@ -2947,113 +2910,13 @@ select {
   color: #4f46e5;
 }
 
-.message-attachments {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-/* User attachments hug the right edge under the text bubble; the
- * 6px column gap on .message-bubble-inner already spaces them from
- * the text, so zero the row's own top margin to avoid a double gap. */
-.message.user .message-attachments {
-  justify-content: flex-end;
-  margin-top: 0;
-}
-
-.message-attachment-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 11px;
-  border-radius: 10px;
-  /* Elevated white card (not a flat muted pill) so the attachment
-   * reads as a tidy, secondary object beneath the message text —
-   * the small type glyph carries the file kind, the card itself stays
-   * quiet. */
-  background: var(--bg-elevated, #ffffff);
-  border: 1px solid var(--border-hairline, rgba(0, 0, 0, 0.08));
-  box-shadow: var(--shadow-xs);
-  color: var(--text-primary, var(--foreground));
-  font-size: 12.5px;
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Wrap = chip + small external-open button sitting side by side.
  * Hover on the wrap reveals the button (which is muted by default
  * so it doesn't compete with the chip itself for attention). */
-.message-attachment-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.message-attachment-icon {
-  display: inline-grid;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  place-items: center;
-  border-radius: 5px;
-  background: var(--sj-paper-sunken);
-  color: var(--sj-ink-soft);
-  font-family: var(--sj-font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-
-.message-attachment-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
 
 /* External-open: small ghost-button, gray by default, hover state
  * darkens. Aria-label provides the accessible name; the icon is
  * hidden from AT to avoid double-announce. */
-.message-attachment-external {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 0;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.message-attachment-external:hover,
-.message-attachment-external:focus-visible {
-  background: var(--muted);
-  color: var(--text-primary);
-}
-
-/* Attachment glyph compatibility hooks. Used by:
- *   - .message-attachment-icon (chat-bubble chip)
- *   - .attachment-thumb-placeholder.file-icon-* (composer chip)
- * These classes intentionally resolve to one muted ink color; file
- * type is expressed through the glyph text, not app-brand colors. */
-.file-icon-pdf,
-.file-icon-word,
-.file-icon-excel,
-.file-icon-powerpoint,
-.file-icon-image,
-.file-icon-other {
-  color: var(--sj-ink-soft);
-}
-
-.message-attachments .chat-image {
-  max-width: min(320px, 100%);
-}
 
 .chat-image-wrap {
   display: inline-block;
@@ -3252,7 +3115,6 @@ label {
     white-space: normal;
   }
 
-  .attachment-chip,
   .local-project-chip {
     width: 100%;
     grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto;
@@ -4676,7 +4538,6 @@ button:active {
 .icon-button,
 .conversation-more,
 .document-delete,
-.attachment-chip button,
 .local-project-chip button,
 .send-button {
   align-items: center;
@@ -4786,14 +4647,6 @@ button:active {
   box-shadow: none;
   padding: 0;
 }
-
-/* User message: stack the text bubble + attachment chip as a
- * RIGHT-aligned column. Without align-items:flex-end the
- * bubble-inner shrink-wraps to its widest child (the attachment
- * chip) and short text ("111") floats to the LEFT edge of that
- * block — so the message reads as left-aligned and gets visually
- * dominated by the chip. flex-end pins both the text bubble and the
- * chip to the right, and the gap replaces per-child margins. */
 .message.user .message-bubble-inner {
   display: flex;
   flex-direction: column;
@@ -5038,52 +4891,6 @@ button:active {
 }
 
 /* ── Billing dialogs ── */
-.billing-modal {
-  max-width: 560px;
-  overflow: hidden;
-  border-color: var(--sj-line, #E8E5DE);
-  border-radius: var(--sj-r-l, 14px);
-  background: var(--sj-paper, #FAF9F6);
-  padding: 0;
-  color: var(--sj-ink, #2B2A28);
-  box-shadow: var(--sj-shadow-3, 0 8px 28px rgba(43, 42, 40, 0.10));
-}
-
-.spend-history-dialog {
-  max-width: min(720px, calc(100vw - 32px));
-}
-
-.billing-modal-header {
-  padding: 18px 20px 16px;
-  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
-}
-
-.billing-modal-header [data-slot="dialog-title"] {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.billing-modal-header [data-slot="dialog-description"] {
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 12.5px;
-}
-
-.billing-modal-body {
-  max-height: min(62vh, 520px);
-  overflow-y: auto;
-  padding: 18px 20px;
-}
-
-.billing-modal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 0.5px solid var(--sj-line, #E8E5DE);
-  padding: 14px 20px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-}
 
 .keyboard-shortcuts-dialog {
   overflow: hidden;
@@ -5130,392 +4937,6 @@ button:active {
   line-height: 23px;
   text-align: center;
   letter-spacing: 0;
-}
-
-.billing-section-label {
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-}
-
-.spend-history-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-
-.spend-history-total {
-  margin-top: 2px;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 22px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.spend-history-filter {
-  display: inline-flex;
-  flex: none;
-  gap: 2px;
-  padding: 2px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: var(--sj-paper-sunken, #F3F1EC);
-}
-
-.spend-history-filter button {
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  padding: 5px 9px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.spend-history-filter button.active {
-  background: var(--sj-paper-raised, #FFFFFF);
-  color: var(--sj-ink, #2B2A28);
-  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
-}
-
-.spend-history-empty {
-  padding: 28px 4px;
-  text-align: center;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 13px;
-}
-
-.spend-history-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.spend-history-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 11px 0;
-  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
-}
-
-.spend-history-row-usage {
-  padding: 13px 0;
-}
-
-.spend-history-row:last-child {
-  border-bottom: 0;
-}
-
-.spend-history-icon {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--sj-paper-sunken, #F3F1EC);
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 16px;
-  line-height: 1;
-}
-
-.spend-history-icon.positive {
-  color: var(--sj-moss, #5E7A6E);
-}
-
-.spend-history-main {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.spend-history-type {
-  overflow: hidden;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.spend-history-desc {
-  overflow: hidden;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.spend-history-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.spend-history-metrics span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 24px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 7px;
-  background: var(--sj-paper-sunken, #F3F1EC);
-  padding: 3px 7px;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.spend-history-metrics b {
-  color: var(--sj-ink-faint, #A8A39A);
-  font-weight: 500;
-}
-
-.spend-history-amount {
-  flex: none;
-  margin-top: 5px;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.spend-history-amount.negative {
-  color: var(--sj-ink, #2B2A28);
-}
-
-.spend-history-amount.positive {
-  color: var(--sj-moss, #5E7A6E);
-}
-
-.recharge-section + .recharge-section {
-  margin-top: 18px;
-}
-
-.recharge-mode-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 9px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--sj-paper-muted, #F7F3EA) 76%, var(--sj-paper-raised, #FFFFFF));
-  padding: 4px;
-}
-
-.recharge-mode-toggle button {
-  min-height: 32px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
-}
-
-.recharge-mode-toggle button.active {
-  background: var(--sj-paper-raised, #FFFFFF);
-  color: var(--sj-ink, #2B2A28);
-  box-shadow: 0 3px 10px rgba(43, 42, 40, 0.06);
-}
-
-.recharge-amount-field {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin-top: 8px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.recharge-amount-field input {
-  width: 100%;
-  height: 44px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: var(--sj-paper-raised, #FFFFFF);
-  color: var(--sj-ink, #2B2A28);
-  font-size: 16px;
-  font-variant-numeric: tabular-nums;
-  outline: none;
-  padding: 0 12px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.recharge-amount-field input:focus {
-  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 45%, var(--sj-line, #E8E5DE));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sj-seal, #B3532F) 10%, transparent);
-}
-
-.recharge-amount-field input[aria-invalid='true'] {
-  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 58%, var(--sj-line, #E8E5DE));
-}
-
-.recharge-credit-preview {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 10px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: var(--sj-paper-raised, #FFFFFF);
-  padding: 10px 12px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-}
-
-.recharge-credit-preview strong {
-  color: var(--sj-ink, #2B2A28);
-  font-size: 18px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.recharge-credit-preview.invalid {
-  grid-template-columns: auto minmax(0, 1fr);
-  color: var(--sj-seal, #B3532F);
-}
-
-.recharge-credit-preview.invalid strong {
-  display: none;
-}
-
-.recharge-preset-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.recharge-credit-preset-grid {
-  margin-top: 10px;
-}
-
-.recharge-empty-state {
-  grid-column: 1 / -1;
-  display: grid;
-  min-height: 54px;
-  place-items: center;
-  border: 0.5px dashed var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--sj-paper-muted, #F7F3EA) 66%, transparent);
-  color: var(--sj-ink-muted, #706B63);
-  font-size: 12px;
-  text-align: center;
-}
-
-.recharge-preset {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  min-height: 54px;
-  border: 0.5px solid var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: var(--sj-paper-raised, #FFFFFF);
-  color: var(--sj-ink, #2B2A28);
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  padding: 8px 6px;
-  transition: border-color 150ms ease, background 150ms ease;
-}
-
-.recharge-preset-amount {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.recharge-preset-credits {
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-  text-align: center;
-}
-
-.recharge-preset:hover,
-.recharge-preset.selected {
-  border-color: color-mix(in srgb, var(--sj-seal, #B3532F) 42%, var(--sj-line, #E8E5DE));
-  background: color-mix(in srgb, var(--sj-seal, #B3532F) 5%, var(--sj-paper-raised, #FFFFFF));
-}
-
-.recharge-note {
-  margin: 14px 0 0;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.recharge-pending-dialog {
-  max-width: 420px;
-}
-
-.recharge-pending-body {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-}
-
-.recharge-pending-body p {
-  margin: 0;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.recharge-pending-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border: 0.5px solid color-mix(in srgb, var(--sj-seal, #B3532F) 35%, var(--sj-line, #E8E5DE));
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--sj-seal, #B3532F) 8%, var(--sj-paper-raised, #FFFFFF));
-  color: var(--sj-seal, #B3532F);
-  font-size: 18px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-@media (max-width: 560px) {
-  .billing-modal-footer,
-  .spend-history-summary {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .recharge-preset-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .recharge-pending-body {
-    grid-template-columns: 1fr;
-  }
-
-  .spend-history-row {
-    gap: 9px;
-  }
-
-  .spend-history-amount {
-    font-size: 12px;
-  }
 }
 
 
@@ -6152,29 +5573,11 @@ button.agent-progress-summary:focus-visible {
   padding: 10px 12px 0;
 }
 
-/* attachment-tile groups the thumbnail with its expiry caption so
- * they stack vertically. The thumb itself stays a fixed 56×56; the
- * caption sits beneath in muted gray text. flex-direction:column
- * keeps the caption flush under the chip without disturbing the
- * surrounding flex row of multiple chips (future). */
-.attachment-tile {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
 /* Expiry caption — small, muted, single-line. Allowed to grow past
  * the 56px chip width: at 11px system text the English variants
  * ("Expires in 7 days", ~95px) need the room or they'd truncate to
  * "Expires in 7 d…". The parent .composer-chips is flex-wrap:wrap,
  * so multi-chip layouts wrap to a new row instead of clipping. */
-.attachment-expiry-caption {
-  font-size: 11px;
-  line-height: 1.2;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-}
 
 /* Compact thumbnail tile shown above the composer for the attached
  * document. Images use their data: URL as the tile background; other
@@ -6182,106 +5585,8 @@ button.agent-progress-summary:focus-visible {
  * Filename / size / status are intentionally hidden — file name lives
  * on the `title` attribute (browser tooltip on long hover), the remove
  * button only appears on hover/focus. */
-.attachment-thumb {
-  position: relative;
-  width: 56px;
-  height: 56px;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 0.5px solid var(--border-strong);
-  background: var(--bg-elevated, #FFFFFF);
-  display: inline-block;
-  flex: 0 0 auto;
-}
-.attachment-thumb-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.attachment-thumb-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--sj-ink-soft);
-  background: var(--sj-paper-sunken);
-  font-family: var(--sj-font-mono);
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0;
-}
-.attachment-thumb-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--text-primary);
-}
-.attachment-thumb-spin {
-  animation: reasoning-dot 1.2s linear infinite;
-}
-/* Determinate upload progress on the attachment chip. A conic-gradient
-   ring around the percentage number — `--percent` is set inline by
-   the renderer on every chunk. Mid-color is the brand accent; the
-   trailing arc fades to a near-transparent gray so the ring still
-   reads against any thumbnail underneath. Number is monospaced so
-   incrementing digits don't jitter the layout. */
-.attachment-thumb-progress {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text-primary);
-  background:
-    radial-gradient(circle, var(--surface-1, #fff) 60%, transparent 61%),
-    conic-gradient(
-      var(--accent, #4f46e5) var(--percent, 0%),
-      rgba(120, 120, 130, 0.18) 0
-    );
-}
-.attachment-thumb.status-failed {
-  border-color: var(--accent-danger-border);
-}
-.attachment-thumb.status-failed::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: rgba(184, 113, 108, 0.18);
-}
 /* Remove button — absolute, hidden by default, faded in on hover/focus
  * of the tile. Keyboard-focusable so it's reachable without a mouse. */
-.attachment-thumb-remove {
-  position: absolute !important;
-  top: 2px !important;
-  right: 2px !important;
-  width: 16px !important;
-  min-width: 16px !important;
-  height: 16px !important;
-  min-height: 16px !important;
-  padding: 0 !important;
-  border-radius: 50% !important;
-  background: rgba(0, 0, 0, 0.62) !important;
-  color: #FFFFFF !important;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-.attachment-thumb:hover .attachment-thumb-remove,
-.attachment-thumb:focus-within .attachment-thumb-remove,
-.attachment-thumb-remove:focus-visible {
-  opacity: 1;
-}
-.attachment-thumb-remove:hover {
-  background: rgba(0, 0, 0, 0.78) !important;
-}
 
 /* Input frame — a self-contained pill: full rounded border, white
  * background, padding-right reserves space for the absolutely-positioned
@@ -6822,7 +6127,6 @@ button.agent-progress-summary:focus-visible {
   border-radius: 0;
 }
 
-.attachment-chip,
 .local-project-chip {
   border: 0.5px solid var(--border-hairline);
   border-radius: var(--radius-md);
@@ -6831,13 +6135,11 @@ button.agent-progress-summary:focus-visible {
   padding: 7px 9px;
 }
 
-.attachment-chip.pending,
 .local-project-chip.pending {
   background: var(--accent-warning-bg);
   color: var(--accent-warning-text);
 }
 
-.attachment-chip span,
 .local-project-chip span {
   font-weight: 500;
 }
@@ -10383,12 +9685,6 @@ button.settings-row-button:focus-visible,
   min-width: 78px;
   max-width: min(220px, 58vw);
   margin-left: auto;
-}
-
-.attachment-thumb {
-  border-color: var(--sj-line, #E8E5DE);
-  border-radius: 8px;
-  background: var(--sj-paper-raised, #FFFFFF);
 }
 
 [data-slot="sheet-content"].doc-preview-panel,

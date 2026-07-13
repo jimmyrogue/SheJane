@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { SheJaneRuntimeClient, parseAgentSSEBuffer } from './index'
+import { parseRuntimeModelSpec, SheJaneRuntimeClient, parseAgentSSEBuffer } from './index'
+
+describe('parseRuntimeModelSpec', () => {
+  it('accepts only concrete Runtime model identifiers', () => {
+    expect(parseRuntimeModelSpec(' local:openai:gpt-4.1 ')).toBe('local:openai:gpt-4.1')
+    expect(parseRuntimeModelSpec('auto')).toBeUndefined()
+    expect(parseRuntimeModelSpec('local::gpt-4.1')).toBeUndefined()
+  })
+})
 
 describe('SheJaneRuntimeClient', () => {
   it('normalizes the Runtime URL and applies caller-provided authentication', async () => {

@@ -14,7 +14,6 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: '2026-05-16T00:00:00Z',
     status: 'done',
     runId: 'run-1',
-    runOrigin: 'local',
     agentEvents: [],
     ...overrides,
   }

@@ -13,7 +13,6 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     createdAt: '2026-05-13T00:00:00.000Z',
     status: 'streaming',
     runId: 'run-local',
-    runOrigin: 'local',
     agentEvents: [],
     ...overrides,
   }

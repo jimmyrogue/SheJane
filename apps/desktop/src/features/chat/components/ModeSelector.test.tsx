@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { I18nProvider } from '@/shared/i18n/i18n'
+import type { ChatMode } from '@/shared/local-data/types'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
@@ -14,7 +15,7 @@ function withProviders(children: ReactNode) {
   return <I18nProvider><TooltipProvider>{children}</TooltipProvider></I18nProvider>
 }
 
-function renderSelector(mode: string, onChange = vi.fn()) {
+function renderSelector(mode: ChatMode, onChange = vi.fn()) {
   render(withProviders(<ModeSelector mode={mode} models={MODELS} onChange={onChange} />))
   return onChange
 }
