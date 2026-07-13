@@ -1,8 +1,5 @@
-"""HTTP-shaped tools.
+"""Local HTTP tools.
 
-- `web.search` — proxies through the cloud `/api/v1/agent/tools/execute`
-  gateway. The Tavily key lives in the API's env, never in the
-  daemon's; per-search credit cost is debited from the user's wallet.
 - `web.fetch` — custom HTTP GET/POST with SSRF guards (no private IPs, no
   link-local, scheme allow-list, response size cap, timeout). Stays
   local — semantically this is "agent reads a URL the user mentioned",
@@ -14,15 +11,12 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
-from typing import Annotated, Any
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpcore
 import httpx
-from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import InjectedToolCallId, tool
-
-from ._gateway import call_tool_gateway, run_id_from_config
+from langchain_core.tools import tool
 
 log = logging.getLogger("local_host.tools.web")
 
@@ -207,57 +201,4 @@ async def web_fetch(
         return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
 
 
-async def _invoke_web_search(
-    *,
-    query: str,
-    max_results: int,
-    run_id: str,
-    tool_call_id: str,
-) -> dict[str, Any]:
-    """Test-friendly wrapper around the shared gateway helper. Tests
-    target this directly so they don't have to construct a LangChain
-    ToolCall envelope just to exercise the proxy."""
-    return await call_tool_gateway(
-        "web.search",
-        # Shared model-facing schema uses `max_results`; the Go gateway also
-        # accepts legacy `maxResults` for older clients.
-        # Clamp here to [1, 10] so a malformed call doesn't waste the
-        # round-trip; the gateway also clamps.
-        {"query": query, "max_results": max(1, min(int(max_results), 10))},
-        run_id=run_id,
-        tool_call_id=tool_call_id,
-    )
-
-
-@tool("web.search")
-async def web_search(
-    query: str,
-    max_results: int = 5,
-    tool_call_id: Annotated[str, InjectedToolCallId] = "",
-    config: RunnableConfig | None = None,
-) -> dict[str, Any]:
-    """Search the web via Tavily through the cloud Tool Gateway.
-
-    The user's credits cover the per-search fee (debited only on
-    success via the same reserve/settle ledger as image.*). The cloud
-    API holds the Tavily key — the daemon never sees it.
-
-    Args:
-        query: Free-text search query.
-        max_results: Up to 10 results. Defaults to 5.
-
-    Returns: `{ok, content, data?, errorCode?, recoverable?}` matching
-    `agentToolExecuteResult`. On success, `content` is a Markdown-ish
-    block listing each result with title/URL/snippet plus Tavily's
-    one-paragraph synthesized "Answer" at the top; `data.results` (when
-    present) carries the structured rows for UI rendering.
-    """
-    return await _invoke_web_search(
-        query=query,
-        max_results=max_results,
-        run_id=run_id_from_config(config),
-        tool_call_id=tool_call_id,
-    )
-
-
-WEB_TOOLS = [web_fetch, web_search]
+WEB_TOOLS = [web_fetch]

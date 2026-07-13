@@ -57,7 +57,6 @@ from .api_schemas import (
     ListThreadsResponse,
     ListWorkspacesResponse,
     LocalArtifact,
-    LocalCloudSession,
     LocalModelProvider,
     LocalRun,
     LocalRunDiagnostics,
@@ -84,7 +83,6 @@ from .api_schemas import (
     ResolvePlanApprovalRequest,
     RuntimeInfo,
     RuntimeSettingsResponse,
-    SetCloudSessionRequest,
     SkillDeleteResponse,
     SkillFile,
     SkillWriteRequest,
@@ -120,7 +118,6 @@ from .runs import (
     RunCoordinator,
     RunNotFoundError,
     freeze_run_settings,
-    model_provider_configuration_error,
     runtime_capabilities,
     sanitize_run_metadata,
 )
@@ -608,9 +605,6 @@ async def lifespan(app: FastAPI):
     coordinator.start()
     await scheduler.recover_running()
     scheduler.start()
-    # Filled by POST /local/v1/session; cleared by DELETE. Surfaces in the
-    # GET response so the client can show "paired Xs ago".
-    app.state.cloud_session_updated_at = None
     log.info(
         "local-host started host=%s port=%s data=%s",
         settings.host,
@@ -668,8 +662,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # CORS — the daemon binds loopback only, but the Vite dev server (and
     # the production Electron renderer when loaded over file://) live on a
     # different origin than `:17371`. Without these headers, every
-    # browser-side fetch fails preflight and the pairing handshake
-    # (`POST /local/v1/session`) never reaches us. Bearer-token auth
+    # browser-side fetch fails preflight. Bearer-token auth
     # (PairingTokenAuthMiddleware above) is the real gate; CORS is just
     # plumbing.
     #
@@ -709,33 +702,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/local/v1/runtime", response_model=RuntimeInfo)
     async def runtime_info(request: Request) -> RuntimeInfo:
         runtime_settings: Settings = app.state.settings
-        gateway_configured = model_provider_configuration_error(runtime_settings) is None
-        provider_configured = gateway_configured
-        if not provider_configured:
-            store: LocalStore = app.state.store
-            try:
-                providers = await store.list_model_providers(
-                    principal_id=request.state.principal_id
-                )
-                for provider in providers:
-                    if bool(provider.get("enabled")) and (
-                        not bool(provider.get("requires_api_key"))
-                        or await get_model_api_key(
-                            request.state.principal_id,
-                            str(provider["id"]),
-                            str(provider["credential_ref"]),
-                        )
-                    ):
-                        provider_configured = True
-                        break
-            except CredentialStoreError:
-                provider_configured = False
+        provider_configured = False
+        store: LocalStore = app.state.store
+        try:
+            providers = await store.list_model_providers(principal_id=request.state.principal_id)
+            for provider in providers:
+                if bool(provider.get("enabled")) and (
+                    not bool(provider.get("requires_api_key"))
+                    or await get_model_api_key(
+                        request.state.principal_id,
+                        str(provider["id"]),
+                        str(provider["credential_ref"]),
+                    )
+                ):
+                    provider_configured = True
+                    break
+        except CredentialStoreError:
+            provider_configured = False
         return RuntimeInfo(
             protocol_version=RUNTIME_PROTOCOL_VERSION,
             runtime_version=__version__,
             capabilities=sorted(runtime_capabilities(runtime_settings)),
             model_provider_configured=provider_configured,
-            gateway_provider_configured=gateway_configured,
         )
 
     @app.get("/local/v1/settings", response_model=RuntimeSettingsResponse)
@@ -1414,8 +1402,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 user_item_metadata=body.user_item_metadata,
                 replace_from_client_id=body.replace_from_client_id,
                 workspace_path=workspace_path,
-                # The daemon's internal `mode` plumbing now carries the model id
-                # (or "auto"); resolution happens cloud-side.
+                # The daemon's legacy `mode` column carries the Runtime model selection.
                 mode=body.model,
                 history=body.history or [],
                 parent_run_id=body.parent_run_id,
@@ -2120,67 +2107,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "feature_ledger": _latest_feature_ledger(artifacts),
             "reflection": reflection,
         }
-
-    @app.post(
-        "/local/v1/session",
-        response_model=LocalCloudSession,
-        response_model_exclude_none=True,
-    )
-    async def set_cloud_session(body: SetCloudSessionRequest) -> dict[str, Any]:
-        """Stash a cloud bearer token (+ base URL) for outbound LLM calls.
-
-        Response shape MUST match the client's `LocalCloudSession` TypeScript
-        interface — the client gates its "use local agent" feature flag on
-        `session.connected === true`. The pydantic model + response_model
-        now enforce that.
-        """
-        token = body.access_token.strip()
-        if not token:
-            raise HTTPException(status_code=400, detail="token required")
-        settings = app.state.settings
-        settings.cloud_token = token  # type: ignore[misc]
-        # Allow the client to override the daemon's default cloud base URL —
-        # the JWT was issued against THAT cloud, so we must talk to the
-        # same one.
-        incoming_base = body.cloud_base_url.strip()
-        if incoming_base:
-            settings.cloud_base_url = incoming_base  # type: ignore[misc]
-        updated_at = datetime.now(UTC).isoformat()
-        app.state.cloud_session_updated_at = updated_at
-        return {
-            "connected": True,
-            "cloud_base_url": settings.cloud_base_url,
-            "auth": "bearer",
-            "updated_at": updated_at,
-        }
-
-    @app.delete(
-        "/local/v1/session",
-        response_model=LocalCloudSession,
-        response_model_exclude_none=True,
-    )
-    async def clear_cloud_session() -> dict[str, Any]:
-        settings = app.state.settings
-        settings.cloud_token = ""  # type: ignore[misc]
-        app.state.cloud_session_updated_at = None
-        return {"connected": False}
-
-    @app.get(
-        "/local/v1/session",
-        response_model=LocalCloudSession,
-        response_model_exclude_none=True,
-    )
-    async def get_cloud_session() -> dict[str, Any]:
-        settings = app.state.settings
-        connected = bool(getattr(settings, "cloud_token", ""))
-        payload: dict[str, Any] = {"connected": connected}
-        if connected:
-            payload["cloud_base_url"] = settings.cloud_base_url
-            payload["auth"] = "bearer"
-            updated_at = getattr(app.state, "cloud_session_updated_at", None)
-            if updated_at:
-                payload["updated_at"] = updated_at
-        return payload
 
     @app.post(
         "/local/v1/workspaces/diagnose",

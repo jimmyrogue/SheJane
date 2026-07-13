@@ -43,7 +43,7 @@ describe('DiagnosticsPanel', () => {
         ledger_message: null,
         next_actions: [
           'Inspect blockers and recent failed events before retrying.',
-          'Sign in to the Electron app or refresh the local cloud session, then retry.',
+          'Check the Runtime provider credential, then retry.',
         ],
         blockers: [],
         recent_event_types: ['run.failed'],
@@ -52,20 +52,20 @@ describe('DiagnosticsPanel', () => {
           recoverable: true,
           retryable: false,
           action_kind: 'user_action',
-          recovery_action: 'refresh_session',
-          code: 'cloud_session_required',
-          message: 'cloud session required',
+          recovery_action: 'diagnostics',
+          code: 'unauthorized',
+          message: 'provider credential rejected',
           source_event_type: 'run.failed',
           tool: null,
-          suggested_action: 'Sign in to the Electron app or refresh the local cloud session, then retry.',
+          suggested_action: 'Check the Runtime provider credential, then retry.',
         },
         verification: null,
       },
     })
 
-    expect(screen.getByText('登录状态')).toBeInTheDocument()
+    expect(screen.getByText('供应商凭据')).toBeInTheDocument()
     expect(screen.getByText('需要你处理')).toBeInTheDocument()
-    expect(screen.getByText('请重新登录或刷新本地云端会话，然后重试。')).toBeInTheDocument()
+    expect(screen.getByText('请检查 Runtime 中的模型供应商凭据，然后重试。')).toBeInTheDocument()
     expect(screen.getByText('请先查看阻塞项和最近失败事件，再重试。')).toBeInTheDocument()
     expect(screen.queryByText('auth')).not.toBeInTheDocument()
     expect(screen.queryByText('需先处理')).not.toBeInTheDocument()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconAlertCircle, IconChevronDown, IconChevronRight, IconCreditCard, IconFolderPlus, IconInfoCircle, IconRefresh, IconReload, IconStethoscope, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
+import { IconAlertCircle, IconChevronDown, IconChevronRight, IconFolderPlus, IconInfoCircle, IconReload, IconStethoscope, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
@@ -739,10 +739,6 @@ function failureActionLabel(action: AgentFailureAction, t: Translator): string {
       return t('agent.failureAction.retry')
     case 'repair':
       return t('agent.failureAction.repair')
-    case 'recharge':
-      return t('agent.failureAction.recharge')
-    case 'refresh_session':
-      return t('agent.failureAction.refreshSession')
     case 'workspace':
       return t('agent.failureAction.chooseWorkspace')
     case 'diagnostics':
@@ -756,10 +752,6 @@ function failureActionIcon(action: AgentFailureAction) {
       return <IconReload size={13} aria-hidden="true" />
     case 'repair':
       return <IconTool size={13} aria-hidden="true" />
-    case 'recharge':
-      return <IconCreditCard size={13} aria-hidden="true" />
-    case 'refresh_session':
-      return <IconRefresh size={13} aria-hidden="true" />
     case 'workspace':
       return <IconFolderPlus size={13} aria-hidden="true" />
     case 'diagnostics':

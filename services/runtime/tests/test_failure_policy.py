@@ -60,7 +60,7 @@ def test_explicit_nonrecoverable_blocks_retryable_true() -> None:
 def test_explicit_retryable_true_cannot_override_user_or_operator_action_categories() -> None:
     cases = [
         ("quota", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
-        ("auth", {"error_code": "cloud_session_required", "message": "sign in first"}),
+        ("auth", {"error_code": "unauthorized", "message": "provider token rejected"}),
         ("configuration", {"error_code": "missing_api_key", "message": "api key missing"}),
         ("workspace", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
         ("validation", {"error_code": "validation_failed", "message": "invalid arguments"}),
@@ -85,7 +85,7 @@ def test_explicit_retryable_true_cannot_override_user_or_operator_action_categor
 
 def test_failure_policy_exposes_action_kind_for_policy_layers() -> None:
     cases = [
-        ("user_action", {"error_code": "cloud_session_required", "message": "login first"}),
+        ("user_action", {"error_code": "unauthorized", "message": "provider token rejected"}),
         ("user_action", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
         ("repair", {"error_code": "validation_failed", "message": "invalid tool arguments"}),
         ("operator_action", {"error_code": "RuntimeError", "message": "RuntimeError: boom"}),
@@ -100,8 +100,8 @@ def test_failure_policy_exposes_action_kind_for_policy_layers() -> None:
 def test_failure_policy_exposes_recovery_action_for_ui() -> None:
     cases = [
         ("retry", {"error_code": "rate_limit", "message": "provider returned 429"}),
-        ("recharge", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
-        ("refresh_session", {"error_code": "cloud_session_required", "message": "login first"}),
+        ("diagnostics", {"error_code": "insufficient_credits", "message": "quota exhausted"}),
+        ("diagnostics", {"error_code": "unauthorized", "message": "provider token rejected"}),
         ("workspace", {"error_code": "path_outside_workspace", "message": "workspace denied"}),
         ("retry", {"error_code": "permission_denied", "message": "permission denied"}),
         ("repair", {"error_code": "validation_failed", "message": "invalid tool arguments"}),

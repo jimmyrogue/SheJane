@@ -18,25 +18,20 @@ from langchain_core.tools import BaseTool
 from ..config import get_settings
 from ..store.sqlite import LocalStore
 from .browser import make_browser_tool_if_configured
-from .code import CODE_TOOLS_for_workspace
-from .image import IMAGE_TOOLS
 from .mcp import build_mcp_tools
 from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
-from .pdf import PDF_TOOLS
 from .progress import PROGRESS_TOOLS, make_progress_tool
 from .trivial import TRIVIAL_TOOLS
 from .user import USER_TOOLS
 from .verify import VERIFY_TOOLS
-from .web import web_fetch, web_search
+from .web import web_fetch
 
 log = logging.getLogger("local_host.tools.registry")
 
 
-def core_tools(*, include_cloud_tools: bool | None = None) -> list[BaseTool]:
+def core_tools() -> list[BaseTool]:
     """Tools that should always be available — no external deps required."""
-    if include_cloud_tools is None:
-        include_cloud_tools = bool(get_settings().cloud_token.strip())
     tools = [
         *TRIVIAL_TOOLS,
         web_fetch,
@@ -49,8 +44,6 @@ def core_tools(*, include_cloud_tools: bool | None = None) -> list[BaseTool]:
         *OFFICE_WRITE_TOOLS,
         *PROGRESS_TOOLS,
     ]
-    if include_cloud_tools:
-        tools.extend([web_search, *IMAGE_TOOLS, *PDF_TOOLS])
     return tools
 
 
@@ -58,8 +51,6 @@ async def build_tools(
     *,
     include_mcp: bool = True,
     mcp_disabled_servers: set[str] | None = None,
-    include_code_exec: bool = False,
-    include_cloud_tools: bool = True,
     browser_llm: Any = None,
     browser_headless: bool = True,
 ) -> list[BaseTool]:
@@ -70,10 +61,6 @@ async def build_tools(
     `browser.task` is intentionally omitted until both browser-use and a
     browser-specific LLM binding are configured.
 
-    `include_code_exec` gates the code.execute tool — defaulted to
-    False so legacy callers (curl / tests / older client builds) don't
-    accidentally expose it. The client's "Code Execution" agent-setting
-    toggle drives this via runs.py → build_agent.
     """
     tools: list[BaseTool] = []
     tools.extend(TRIVIAL_TOOLS)
@@ -83,26 +70,12 @@ async def build_tools(
     tools.extend(USER_TOOLS)
     tools.extend(OFFICE_READ_TOOLS)
     tools.extend(OFFICE_WRITE_TOOLS)
-    # Gateway-backed tools are visible only when this Run froze a real
-    # cloud binding. Local-only agents should never plan around tools that
-    # can only return cloud_session_missing.
-    if include_cloud_tools:
-        tools.extend([web_search, *IMAGE_TOOLS, *PDF_TOOLS])
     tools.append(make_progress_tool())
-    if include_code_exec and include_cloud_tools:
-        # Bind code.execute to the run's workspace so files_in/files_out
-        # can read/write against the correct directory. The closure
-        # form is required because LangChain tools can't pull arbitrary
-        # runtime state out of RunnableConfig without an InjectedToolArg,
-        # and we also need the workspace AFTER the tool returns (to
-        # write files_out).
-        tools.extend(CODE_TOOLS_for_workspace(None))
     # ls/read_file/write_file/edit_file/glob/grep/execute are provided by
     # deepagents FilesystemMiddleware
     # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
     # tools here — that would collide on `read_file` / `write_file` names.
-    # `web.search` is proxied through the optional cloud gateway; web.fetch
-    # remains a local, SSRF-guarded tool.
+    # web.fetch remains a local, SSRF-guarded tool.
 
     browser_tool = make_browser_tool_if_configured(llm=browser_llm, headless=browser_headless)
     if browser_tool is not None:

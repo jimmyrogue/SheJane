@@ -1,21 +1,15 @@
 import type { AgentTimelineItem, ChatMessage } from '@/shared/local-data/types'
 
-export type AgentFailureAction = 'retry' | 'repair' | 'recharge' | 'refresh_session' | 'workspace' | 'diagnostics'
-export type RecoveryAction = 'retry' | 'repair' | 'recharge'
+export type AgentFailureAction = 'retry' | 'repair' | 'workspace' | 'diagnostics'
+export type RecoveryAction = 'retry' | 'repair'
 
 export interface RecoveryTarget {
   conversationID: string
   assistantMessageID: string
 }
 
-interface PendingCloudSessionRecoveryTarget {
-  target: RecoveryTarget
-  userID?: string
-}
-
 export interface RecoveryState {
   inFlight: Set<string>
-  pendingCloudSession?: PendingCloudSessionRecoveryTarget
 }
 
 export function createRecoveryState(): RecoveryState {
@@ -39,25 +33,6 @@ export function endRecoveryAction(state: RecoveryState, action: RecoveryAction, 
   state.inFlight.delete(`${action}:${recoveryTargetKey(target)}`)
 }
 
-export function queueCloudSessionRecovery(state: RecoveryState, target: RecoveryTarget | undefined, userID?: string): void {
-  if (!target) {
-    return
-  }
-  state.pendingCloudSession = { target, userID }
-}
-
-export function takeCloudSessionRecovery(state: RecoveryState, userID?: string): RecoveryTarget | undefined {
-  const pending = state.pendingCloudSession
-  if (!pending) {
-    return undefined
-  }
-  state.pendingCloudSession = undefined
-  if (pending.userID && pending.userID !== userID) {
-    return undefined
-  }
-  return pending.target
-}
-
 export function failureRecoveryAction(event: AgentTimelineItem | undefined): AgentFailureAction | undefined {
   if (!event) {
     return undefined
@@ -73,9 +48,8 @@ export function failureRecoveryAction(event: AgentTimelineItem | undefined): Age
   }
   switch (event.failureCategory) {
     case 'quota':
-      return 'recharge'
     case 'auth':
-      return 'refresh_session'
+      return 'diagnostics'
     case 'workspace':
       return 'workspace'
     case 'permission':
@@ -92,8 +66,6 @@ export function failureRecoveryAction(event: AgentTimelineItem | undefined): Age
 function isAgentFailureAction(value: unknown): value is AgentFailureAction {
   return value === 'retry' ||
     value === 'repair' ||
-    value === 'recharge' ||
-    value === 'refresh_session' ||
     value === 'workspace' ||
     value === 'diagnostics'
 }

@@ -2,7 +2,7 @@
 actually interrupts a run that's mid-flight (not just returns false on
 unknown ids).
 
-Approach: monkey-patch `BackendChatModel._astream` to sleep between
+Approach: monkey-patch the deterministic test model to sleep between
 yielded chunks, so the run is provably "in progress" when we cancel.
 Then drive cancel from a background thread while the main thread reads
 the SSE stream until termination.
@@ -34,7 +34,7 @@ from tests.helpers import run_command
 
 
 async def _slow_astream(self, messages, stop=None, run_manager=None, **kwargs):
-    """Patched BackendChatModel._astream: yields slowly so cancel races in.
+    """Patched test model stream: yields slowly so cancel races in.
 
     Sleeps 0.3s between chunks for a total runtime around 1.5s — plenty
     of room to fire a cancel in the middle.
@@ -55,7 +55,7 @@ def slow_client(monkeypatch) -> TestClient:
 
     # Patch the LLM stream to be artificially slow so cancel can interrupt.
     monkeypatch.setattr(
-        "local_host.llm.backend.BackendChatModel._astream",
+        "local_host.llm.fake.FakeBackendChatModel._astream",
         _slow_astream,
     )
 
@@ -63,7 +63,7 @@ def slow_client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
+        SHEJANE_FAKE_LLM=True,
         data_dir=tmp,
     )
     app = create_app(settings)

@@ -8,8 +8,6 @@ import {
   latestRunFailureEvent,
   nextRepairAttempt,
   nextRetryAttempt,
-  queueCloudSessionRecovery,
-  takeCloudSessionRecovery,
   type RecoveryTarget,
 } from './recovery'
 
@@ -30,22 +28,11 @@ describe('chat recovery state', () => {
     expect(beginRecoveryAction(state, 'retry', target)).toBe(true)
   })
 
-  it('keeps queued cloud-session recovery scoped to the original user', () => {
-    const state = createRecoveryState()
-
-    queueCloudSessionRecovery(state, target, 'user-1')
-    expect(takeCloudSessionRecovery(state, 'user-2')).toBeUndefined()
-    expect(takeCloudSessionRecovery(state, 'user-1')).toBeUndefined()
-
-    queueCloudSessionRecovery(state, target, 'user-1')
-    expect(takeCloudSessionRecovery(state, 'user-1')).toEqual(target)
-  })
-
   it('maps failure policy fields to the smallest recovery action', () => {
     expect(failureRecoveryAction({ type: 'run.failed', label: 'busy', failureActionKind: 'retry' })).toBe('retry')
     expect(failureRecoveryAction({ type: 'run.failed', label: 'bad args', failureActionKind: 'repair' })).toBe('repair')
-    expect(failureRecoveryAction({ type: 'run.failed', label: 'credits', failureCategory: 'quota' })).toBe('recharge')
-    expect(failureRecoveryAction({ type: 'run.failed', label: 'login', failureCategory: 'auth' })).toBe('refresh_session')
+    expect(failureRecoveryAction({ type: 'run.failed', label: 'quota', failureCategory: 'quota' })).toBe('diagnostics')
+    expect(failureRecoveryAction({ type: 'run.failed', label: 'credential', failureCategory: 'auth' })).toBe('diagnostics')
     expect(failureRecoveryAction({ type: 'run.failed', label: 'workspace', failureCategory: 'workspace' })).toBe('workspace')
     expect(failureRecoveryAction({ type: 'run.failed', label: 'permission', failureCategory: 'permission' })).toBe('retry')
     expect(failureRecoveryAction({ type: 'run.failed', label: 'config', failureCategory: 'configuration' })).toBe('diagnostics')

@@ -42,13 +42,9 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     if _contains_any(haystack, "insufficient_credits", "quota", "credit", "billing"):
         category = "quota"
         recoverable = True
-        suggested_action = (
-            "Add credits, upgrade billing, or switch to a lower-cost model before retrying."
-        )
+        suggested_action = "Check the provider quota or choose another Runtime model."
     elif _contains_any(
         haystack,
-        "cloud_session_required",
-        "cloud_session",
         "unauthorized",
         "401",
         "token",
@@ -58,15 +54,11 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     ):
         category = "auth"
         recoverable = True
-        suggested_action = (
-            "Sign in to the Electron app or refresh the local cloud session, then retry."
-        )
+        suggested_action = "Check the Runtime provider credential, then retry."
     elif _contains_any(haystack, "not_configured", "missing_api_key", "api key", "configuration"):
         category = "configuration"
         recoverable = True
-        suggested_action = (
-            "Configure the missing service or key in the cloud/admin settings, then retry."
-        )
+        suggested_action = "Configure the missing provider or key in Runtime settings, then retry."
     elif _contains_any(
         haystack,
         "timeout",
@@ -246,10 +238,8 @@ def _recovery_action(category: str, action_kind: str) -> str:
         return "retry"
     if action_kind == "repair":
         return "repair"
-    if category == "quota":
-        return "recharge"
-    if category == "auth":
-        return "refresh_session"
+    if category in {"quota", "auth"}:
+        return "diagnostics"
     if category == "workspace":
         return "workspace"
     if category == "permission":

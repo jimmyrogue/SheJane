@@ -26,56 +26,56 @@ from langgraph.types import interrupt
 def user_ask(question: str, options: list[str] | None = None) -> str:
     """Ask the human a clarifying question and wait for their answer.
 
-    CALL THIS *BEFORE* OTHER TOOLS when the user's request is missing
-    a key input. The full "input audit" rule lives in the developer
-    system prompt under "动手前的输入盘点"; in short — list what your
-    answer needs, list what you have, ask for the gap before reaching
-    for web.search / read_file / image.generate.
+        CALL THIS *BEFORE* OTHER TOOLS when the user's request is missing
+        a key input. The full "input audit" rule lives in the developer
+        system prompt under "动手前的输入盘点"; in short — list what your
+        answer needs, list what you have, ask for the gap before reaching
+    for tools that need missing user context.
 
-    Common cases where this tool runs first:
-      * "今天天气怎么样"   → ask city BEFORE web.search
-      * "总结这个文档"     → ask file path BEFORE read_file
-      * "帮我写个 PPT"     → ask topic / audience BEFORE drafting
-      * "搜一下最新进展"   → ask the actual subject BEFORE web.search
-      * "帮我订机票"       → ask origin / destination / date
+        Common cases where this tool runs first:
+    * "今天天气怎么样"   → ask city before using a configured research tool
+          * "总结这个文档"     → ask file path BEFORE read_file
+          * "帮我写个 PPT"     → ask topic / audience BEFORE drafting
+    * "搜一下最新进展"   → ask the actual subject before research
+          * "帮我订机票"       → ask origin / destination / date
 
-    Skipping this and calling web.search / read_file / image.generate
-    with incomplete inputs wastes user credits, clutters the context
-    with irrelevant results, and forces you to ask anyway one turn
-    later — a real failure mode this codebase has shipped.
+    Skipping this and calling another tool
+        with incomplete inputs wastes user credits, clutters the context
+        with irrelevant results, and forces you to ask anyway one turn
+        later — a real failure mode this codebase has shipped.
 
-    The client renders the question as a clickable card above the
-    composer with the supplied options as buttons — much better UX
-    than writing the question as markdown in your reply.
+        The client renders the question as a clickable card above the
+        composer with the supplied options as buttons — much better UX
+        than writing the question as markdown in your reply.
 
-    HARD RULES (see "向用户澄清" in the developer system prompt for
-    full guidance):
-      * One question per call. If you have two questions, make two
-        calls; never stack questions inside the `question` text.
-      * `options` must be the clickable answers to THIS question.
-        Don't put long descriptions in `options`; put short labels.
-      * Keep using this tool across rounds — don't switch to prose
-        questions after a few calls.
+        HARD RULES (see "向用户澄清" in the developer system prompt for
+        full guidance):
+          * One question per call. If you have two questions, make two
+            calls; never stack questions inside the `question` text.
+          * `options` must be the clickable answers to THIS question.
+            Don't put long descriptions in `options`; put short labels.
+          * Keep using this tool across rounds — don't switch to prose
+            questions after a few calls.
 
-    Examples of GOOD usage:
-        user_ask(question="你想在普吉岛待几天？", options=["3天", "5天", "7天"])
-        user_ask(question="选择行程风格", options=["放松", "探索", "均衡"])
+        Examples of GOOD usage:
+            user_ask(question="你想在普吉岛待几天？", options=["3天", "5天", "7天"])
+            user_ask(question="选择行程风格", options=["放松", "探索", "均衡"])
 
-    AVOID:
-        user_ask(question="A) 几天 B) 风格", options=["3天","5天","放松","探索"])
-        (multiple questions in one call; options answer only some of them)
+        AVOID:
+            user_ask(question="A) 几天 B) 风格", options=["3天","5天","放松","探索"])
+            (multiple questions in one call; options answer only some of them)
 
-    Args:
-        question: The question text shown to the user. Keep it short
-                  and focused on a single decision.
-        options: Suggested answers, each a short label (≤20 chars).
-                 Required when there are discrete choices; pass None
-                 only when free-form text is the natural input.
+        Args:
+            question: The question text shown to the user. Keep it short
+                      and focused on a single decision.
+            options: Suggested answers, each a short label (≤20 chars).
+                     Required when there are discrete choices; pass None
+                     only when free-form text is the natural input.
 
-    Returns:
-        The user's answer as a string. May be one of the supplied
-        options, free-form text, or — if the user closed the prompt
-        without answering — the empty string.
+        Returns:
+            The user's answer as a string. May be one of the supplied
+            options, free-form text, or — if the user closed the prompt
+            without answering — the empty string.
     """
     payload: dict[str, Any] = {
         "kind": "question",

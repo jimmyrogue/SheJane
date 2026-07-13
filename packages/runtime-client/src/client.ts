@@ -26,7 +26,6 @@ export type LocalModelProfile = Schemas['LocalModelProfile']
 export type LocalRuntimeModel = Schemas['LocalRuntimeModel']
 export type UpsertLocalModelProviderRequest = Schemas['UpsertLocalModelProviderRequest']
 export type LocalScheduledRun = Schemas['LocalScheduledRun']
-export type LocalCloudSession = Schemas['LocalCloudSession']
 export type LocalArtifact = Schemas['LocalArtifact']
 export type LocalWorkspaceAuthorization = Schemas['LocalWorkspaceAuthorization']
 export type LocalWorkspaceDiagnosis = Schemas['LocalWorkspaceDiagnosis']
@@ -736,31 +735,6 @@ export async function deleteLocalSkill(
   })
   return decodeLocalResponse<SkillDeleteResponse>(response)
 }
-
-export async function setLocalCloudSession(
-  input: { cloudBaseURL: string; accessToken: string },
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<LocalCloudSession> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/session`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify({
-      cloud_base_url: input.cloudBaseURL,
-      access_token: input.accessToken,
-    }),
-  })
-  return decodeLocalResponse<LocalCloudSession>(response)
-}
-
-export async function clearLocalCloudSession(config: RuntimeClientConfig, fetcher: Fetcher = fetch): Promise<LocalCloudSession> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/session`, {
-    method: 'DELETE',
-    headers: localHeaders(config, false),
-  })
-  return decodeLocalResponse<LocalCloudSession>(response)
-}
-
 
 export async function listLocalRuns(config: RuntimeClientConfig, fetcher: Fetcher = fetch): Promise<LocalRun[]> {
   const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {

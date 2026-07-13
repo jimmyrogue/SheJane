@@ -1,6 +1,5 @@
-"""LLM adapter — talks to the cloud backend over SSE so credit reserve/
-settle stays the only price gate. See `backend.BackendChatModel`."""
+"""Model-provider adapters used by the local Runtime."""
 
-from .backend import BackendChatModel
+from .errors import ModelProviderError
 
-__all__ = ["BackendChatModel"]
+__all__ = ["ModelProviderError"]

@@ -40,11 +40,11 @@ describe('recentRecoverableFailures', () => {
 
     expect(result).toHaveLength(2)
     expect(result[0]).toMatchObject({
-      action: 'refresh_session',
+      action: 'diagnostics',
       target: { conversationID: 'new', assistantMessageID: 'new-fail' },
     })
     expect(result[1]).toMatchObject({
-      action: 'recharge',
+      action: 'diagnostics',
       target: { conversationID: 'old', assistantMessageID: 'old-fail' },
     })
   })

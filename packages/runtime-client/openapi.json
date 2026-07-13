@@ -1766,54 +1766,6 @@
         "title": "LocalArtifact",
         "type": "object"
       },
-      "LocalCloudSession": {
-        "description": "Pairing state between the daemon and the cloud API.\n\n`connected: false` is the only field on an unpaired response; the\nrest become present once the user logs in via the Electron app\nand the renderer POSTs the JWT to /local/v1/session.",
-        "properties": {
-          "auth": {
-            "anyOf": [
-              {
-                "const": "bearer",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Auth"
-          },
-          "cloud_base_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cloud Base Url"
-          },
-          "connected": {
-            "title": "Connected",
-            "type": "boolean"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          }
-        },
-        "required": [
-          "connected"
-        ],
-        "title": "LocalCloudSession",
-        "type": "object"
-      },
       "LocalModelProfile": {
         "additionalProperties": false,
         "properties": {
@@ -3472,10 +3424,6 @@
             "title": "Capabilities",
             "type": "array"
           },
-          "gateway_provider_configured": {
-            "title": "Gateway Provider Configured",
-            "type": "boolean"
-          },
           "model_provider_configured": {
             "title": "Model Provider Configured",
             "type": "boolean"
@@ -3493,8 +3441,7 @@
           "protocol_version",
           "runtime_version",
           "capabilities",
-          "model_provider_configured",
-          "gateway_provider_configured"
+          "model_provider_configured"
         ],
         "title": "RuntimeInfo",
         "type": "object"
@@ -3601,24 +3548,6 @@
           }
         },
         "title": "RuntimeSettingsResponse",
-        "type": "object"
-      },
-      "SetCloudSessionRequest": {
-        "properties": {
-          "access_token": {
-            "title": "Access Token",
-            "type": "string"
-          },
-          "cloud_base_url": {
-            "title": "Cloud Base Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "cloud_base_url",
-          "access_token"
-        ],
-        "title": "SetCloudSessionRequest",
         "type": "object"
       },
       "SkillDeleteResponse": {
@@ -5285,77 +5214,6 @@
           }
         },
         "summary": "Mark Schedule Notified"
-      }
-    },
-    "/local/v1/session": {
-      "delete": {
-        "operationId": "clear_cloud_session_local_v1_session_delete",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocalCloudSession"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Clear Cloud Session"
-      },
-      "get": {
-        "operationId": "get_cloud_session_local_v1_session_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocalCloudSession"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Get Cloud Session"
-      },
-      "post": {
-        "description": "Stash a cloud bearer token (+ base URL) for outbound LLM calls.\n\nResponse shape MUST match the client's `LocalCloudSession` TypeScript\ninterface — the client gates its \"use local agent\" feature flag on\n`session.connected === true`. The pydantic model + response_model\nnow enforce that.",
-        "operationId": "set_cloud_session_local_v1_session_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SetCloudSessionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocalCloudSession"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Cloud Session"
       }
     },
     "/local/v1/settings": {

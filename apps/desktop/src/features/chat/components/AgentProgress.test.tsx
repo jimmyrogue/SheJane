@@ -345,10 +345,10 @@ describe('AgentProgress', () => {
       agentEvents: [
         {
           type: 'run.failed',
-          label: 'cloud session required · 需要你处理',
+          label: 'provider credential rejected · 需要你处理',
           failureCategory: 'auth',
           failureActionKind: 'user_action',
-          failureSuggestedAction: 'Sign in to the Electron app or refresh the local cloud session, then retry.',
+          failureSuggestedAction: 'Check the Runtime provider credential, then retry.',
         },
       ],
     })
@@ -361,12 +361,12 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('登录状态')).toBeInTheDocument()
-    expect(screen.queryByText('cloud session required')).not.toBeInTheDocument()
-    expect(screen.queryByText('请重新登录或刷新本地云端会话，然后重试。')).not.toBeInTheDocument()
+    expect(screen.getByText('供应商凭据')).toBeInTheDocument()
+    expect(screen.queryByText('provider credential rejected')).not.toBeInTheDocument()
+    expect(screen.queryByText('请检查 Runtime 中的模型供应商凭据，然后重试。')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    expect(screen.getByText('cloud session required')).toBeInTheDocument()
-    expect(screen.getByText('请重新登录或刷新本地云端会话，然后重试。')).toBeInTheDocument()
+    expect(screen.getByText('provider credential rejected')).toBeInTheDocument()
+    expect(screen.getByText('请检查 Runtime 中的模型供应商凭据，然后重试。')).toBeInTheDocument()
   })
 
   it('does not render the duplicate drawer diagnostics button when the failure CTA opens diagnostics', () => {
@@ -402,14 +402,14 @@ describe('AgentProgress', () => {
     expect(screen.queryByRole('button', { name: '展开步骤' })).not.toBeInTheDocument()
   })
 
-  it('offers a top-up action for quota failures', () => {
+  it('offers diagnostics for provider quota failures', () => {
     const onFailureAction = vi.fn()
     const current = message({
       status: 'error',
       agentEvents: [
         {
           type: 'run.failed',
-          label: 'credits exhausted · 需要你处理',
+          label: 'provider quota exhausted · 需要你处理',
           failureCategory: 'quota',
           failureActionKind: 'user_action',
         },
@@ -426,8 +426,8 @@ describe('AgentProgress', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    fireEvent.click(screen.getByRole('button', { name: '充值' }))
-    expect(onFailureAction).toHaveBeenCalledWith('recharge', current)
+    fireEvent.click(screen.getByRole('button', { name: '查看诊断' }))
+    expect(onFailureAction).toHaveBeenCalledWith('diagnostics', current)
   })
 
   it('offers a retry action for retryable failures', () => {

@@ -6,9 +6,9 @@ batteries-included middleware stack and the SubAgent / Skills /
 Filesystem / Shell integrations we need anyway. Our
 remaining job is to:
 
-  1. Pick the model (BackendChatModel pointed at the cloud SSE endpoint).
+  1. Bind the Runtime-selected BYOK model provider.
   2. Build a *narrow* tool list (everything outside the deepagents auto
-     stack: time, env, clipboard, web, image, MCP, browser).
+     stack: time, environment, clipboard, local web fetch, MCP, browser).
   3. Pass per-run config: `subagents=`, `skills=`, `backend=`,
      `checkpointer=`.
   4. Append our custom middleware (5 phase hooks + retry/limit knobs)
@@ -24,7 +24,7 @@ What deepagents auto-adds for us (we no longer wire these manually):
   SummarizationMiddleware         ← auto context compaction
   PatchToolCallsMiddleware        ← orphan tool_call self-heal
   ToolExclusionMiddleware         ← conditional tool gating
-  Prompt caching                  ← Go Anthropic gateway adds cache_control
+  Prompt caching                  ← provider middleware when supported
   MemoryMiddleware                ← AGENTS.md loader
   Tool review + durable receipts  ← our Runtime middleware, including subagents
 """
@@ -58,7 +58,6 @@ from langgraph.store.base import BaseStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from ..config import Settings, get_settings
-from ..llm.backend import BackendChatModel
 from ..llm.ledger import LedgerChatModel
 from ..llm.runtime import RuntimeModelProxy
 from ..middleware import (
@@ -108,7 +107,6 @@ _DEEPAGENTS_TOOL_NAMES = {
 # exception and convert it to a ToolMessage, defeating the pause.
 RETRY_ELIGIBLE_TOOLS: list[str] = [
     "web.fetch",
-    "web.search",
     "read_file",
 ]
 
@@ -458,10 +456,7 @@ def _build_chat_model(
     model_binding: dict[str, Any] | None = None,
     model_api_key: str | None = None,
 ) -> Any:
-    """The agent's chat model — the real cloud-backed one, or a deterministic
-    network-free fake when settings.fake_llm is set (SSE contract test). Used
-    for the main model AND the selector/critic models so a faked run makes no
-    cloud calls at all."""
+    """Build the selected BYOK model, or the deterministic test model."""
     if settings.fake_llm:
         from ..llm.fake import FakeBackendChatModel
 
@@ -497,18 +492,7 @@ def _build_chat_model(
             timeout=settings.model_request_timeout_seconds,
             profile=profile,
         )
-    return BackendChatModel(
-        cloud_base_url=settings.cloud_base_url,
-        cloud_token=settings.cloud_token,
-        run_id=run_id,
-        mode=mode,
-        request_timeout_s=settings.model_request_timeout_seconds,
-        max_output_tokens=settings.unknown_model_max_output_tokens,
-        profile={
-            "max_input_tokens": settings.unknown_model_max_input_tokens,
-            "max_output_tokens": settings.unknown_model_max_output_tokens,
-        },
-    )
+    raise RuntimeError("Runtime BYOK model binding is required")
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -533,7 +517,7 @@ def _outbound_is_external(
 ) -> bool:
     if settings.fake_llm or (model_binding or {}).get("provider") == "fake":
         return False
-    if (model_binding or {}).get("provider") == "gateway" or model_binding is None:
+    if model_binding is None:
         return True
     raw_url = str((model_binding or {}).get("base_url") or "")
     hostname = (urlparse(raw_url).hostname or "").strip().lower()
@@ -570,8 +554,6 @@ async def build_agent(
     skills_enabled: bool = True,
     mcp_enabled: bool = True,
     mcp_disabled_servers: set[str] | None = None,
-    code_exec_enabled: bool = False,
-    cloud_tools_enabled: bool = True,
     settings: Settings | None = None,
     model_binding: dict[str, Any] | None = None,
     model_api_key: str | None = None,
@@ -593,7 +575,7 @@ async def build_agent(
                          deepagents' built-in FilesystemMiddleware + shell
                          execute use as their sandbox. None ⇒ virtual_mode.
         run_id:          LangGraph `thread_id` — unique per logical run.
-        mode:            "fast" | "deep" — passed through to BackendChatModel.
+        mode:            Runtime model selection stored with the run.
         task_goal:       Current user goal for this run. Echoed into the
                          <task> layer of the prompt so it survives long
                          tool-call chains.
@@ -639,8 +621,6 @@ async def build_agent(
 
     tools = await build_tools(
         include_mcp=False,
-        include_code_exec=code_exec_enabled,
-        include_cloud_tools=cloud_tools_enabled,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
         browser_headless=settings.browser_headless,
     )
@@ -742,16 +722,7 @@ async def build_agent(
             tool_mutation_lock=AsyncToolExecutionGate(),
             outbound_is_external=_outbound_is_external(settings, model_binding),
             outbound_pii_types=_outbound_pii_types(settings.pii_redact_types),
-            outbound_secrets=tuple(
-                value
-                for value in (
-                    model_api_key,
-                    settings.cloud_token
-                    if (model_binding or {}).get("provider") == "gateway" or model_binding is None
-                    else None,
-                )
-                if isinstance(value, str) and value
-            ),
+            outbound_secrets=(model_api_key,) if model_api_key else (),
             memory_enabled=memory_enabled,
             workspace_root=workspace_root,
             enabled_skills=_active_skill_names(skills_arg),
@@ -785,16 +756,7 @@ async def build_agent(
             runtime_context.tool_mutation_lock = AsyncToolExecutionGate()
         runtime_context.outbound_is_external = _outbound_is_external(settings, model_binding)
         runtime_context.outbound_pii_types = _outbound_pii_types(settings.pii_redact_types)
-        runtime_context.outbound_secrets = tuple(
-            value
-            for value in (
-                model_api_key,
-                settings.cloud_token
-                if (model_binding or {}).get("provider") == "gateway" or model_binding is None
-                else None,
-            )
-            if isinstance(value, str) and value
-        )
+        runtime_context.outbound_secrets = (model_api_key,) if model_api_key else ()
         runtime_context.dynamic_tools = {item.name: item.tool for item in dynamic_tools}
         runtime_context.memory_enabled = memory_enabled
 

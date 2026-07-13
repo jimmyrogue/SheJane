@@ -89,16 +89,16 @@ def build_subagents(
 ) -> list[SubAgent]:
     """Assemble the built-in + configured subagent roster.
 
-    Args:
-        main_tools: the parent agent's full tool list — researcher reuses
-                    the web / browser / verify subset from here.
-        main_model: model name or instance to share across subagents.
-                    Keeping the same model means subagent LLM calls flow
-                    through the same backend gateway as the parent (so
-                    credits/throttling stay coherent).
-        agent_roots: optional roots to scan for `*.md` subagent definitions.
-                     `None` uses the runtime resolver; tests pass `[]` to
-                     exercise only the built-ins.
+        Args:
+            main_tools: the parent agent's full tool list — researcher reuses
+                        the web / browser / verify subset from here.
+            main_model: model name or instance to share across subagents.
+                        Keeping the same model means subagent LLM calls flow
+    through the same Runtime model binding as the parent (so
+                        credits/throttling stay coherent).
+            agent_roots: optional roots to scan for `*.md` subagent definitions.
+                         `None` uses the runtime resolver; tests pass `[]` to
+                         exercise only the built-ins.
     """
     # Durable memory is a top-level user capability. A configured or generic
     # subagent receives a model-authored task description, never the original
@@ -127,7 +127,6 @@ def _builtin_subagents(
 ) -> list[SubAgent]:
     research_tool_names = {
         "web.fetch",
-        "web.search",
         "browser.task",
         "task.verify",
         "time.now",
@@ -153,7 +152,7 @@ def _builtin_subagents(
             "name": "researcher",
             "description": (
                 "USE THIS FOR ANY INDEPENDENT RESEARCH QUESTION. Prefer "
-                "this over calling web.search yourself when you have ≥2 "
+                "this when you have at least two independent research "
                 "questions that can be answered separately — emit multiple "
                 "`task` calls in one message to run them in parallel. Each "
                 "subagent has its own context window so raw search dumps "

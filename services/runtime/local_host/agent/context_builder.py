@@ -31,7 +31,7 @@ RuntimeContext, not in static markdown.
 
 The output of `ContextBuilder.build()` is a single string passed as
 `instructions=` to `create_deep_agent`. Deep Agents turns it into the
-same leading SystemMessage for local, BYOK, and optional gateway models.
+same leading SystemMessage for every configured BYOK model.
 
 Budget Management
 -----------------
@@ -197,7 +197,7 @@ class RuntimeContext:
 
     # Layer 50 — run state. These are the things the model can't see
     # but needs to know about the current run.
-    mode: str | None = None  # the resolved mode ("fast" / "deep")
+    mode: str | None = None  # Runtime model selection stored with the run
     turn_count: int | None = None  # message count incl. current turn
     repair_intent: bool = False
     repair_attempt: int | None = None

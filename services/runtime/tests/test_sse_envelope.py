@@ -77,7 +77,7 @@ def client(monkeypatch) -> TestClient:
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,

@@ -13,7 +13,7 @@
  * What it catches: every shape drift this codebase has seen across
  * the Phase 5'+ migration — `data: [DONE]` sentinel, AgentRunEvent
  * envelope keys, flat-vs-wrapped POST /runs response,
- * LocalCloudSession `connected` field, etc.
+ * Runtime response fields and endpoint contracts.
  */
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'

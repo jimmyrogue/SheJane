@@ -30,7 +30,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from langchain_core.load.dump import dumps as lc_dumps
 from langchain_core.messages import HumanMessage
@@ -43,8 +42,7 @@ from .agent.context_builder import RuntimeContext
 from .config import Settings, clamp_run_budget, get_settings
 from .event_translator import translate
 from .failure_policy import classify_failure_payload
-from .llm.backend import BackendLLMError
-from .llm.resolve import resolve_auto_model
+from .llm.errors import ModelProviderError
 from .llm.runtime import bind_runtime_model
 from .model_credentials import (
     CredentialStoreError,
@@ -78,7 +76,6 @@ RUNTIME_CAPABILITIES = frozenset(
         "skills",
         "mcp",
         "subagents",
-        "code.execute",
         "schedules",
         "hitl",
     }
@@ -87,9 +84,7 @@ RUNTIME_CAPABILITIES = frozenset(
 
 def runtime_capabilities(settings: Settings) -> frozenset[str]:
     """Return capabilities backed by resources that are available now."""
-    if settings.cloud_token.strip():
-        return RUNTIME_CAPABILITIES
-    return RUNTIME_CAPABILITIES - {"code.execute"}
+    return RUNTIME_CAPABILITIES
 
 
 class ExecutionIdentityError(RuntimeError):
@@ -126,37 +121,6 @@ class RunOutcome:
     status: str
     event_type: str
     payload: dict[str, Any]
-
-
-def model_provider_configuration_error(settings: Settings) -> str | None:
-    if settings.fake_llm:
-        return None
-    if not settings.cloud_token.strip():
-        return "model provider is not configured"
-    parsed = urlparse(settings.cloud_base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return "model provider base URL is invalid"
-    return None
-
-
-def _is_auto_model(model: str) -> bool:
-    return model in {"", "auto", "auto.fast", "auto.smart"}
-
-
-def _auto_intent_from_model(model: str) -> str:
-    if model == "auto.fast":
-        return "fast"
-    if model == "auto.smart":
-        return "smart"
-    return ""
-
-
-def _auto_requested_label(model: str) -> str:
-    if model == "auto.fast":
-        return "更快"
-    if model == "auto.smart":
-        return "更强"
-    return "自动"
 
 
 class RunNotFoundError(Exception):
@@ -263,7 +227,6 @@ _PUBLIC_RUN_SETTING_KEYS = frozenset(
         "skills",
         "mcp",
         "mcp_disabled",
-        "code_exec",
         "max_model_calls",
         "max_tool_retries",
         "research_search_limit",
@@ -325,12 +288,10 @@ def freeze_run_settings(base: Settings, raw: dict[str, Any] | None) -> dict[str,
 
     return {
         "_snapshot_version": 1,
-        "_cloud_tools_available": bool(base.cloud_token.strip()),
         "memory": toggle("memory"),
         "skills": toggle("skills"),
         "mcp": toggle("mcp"),
         "mcp_disabled": disabled,
-        "code_exec": toggle("code_exec"),
         "max_model_calls": effective.max_model_calls,
         "max_tool_retries": effective.max_tool_retries,
         "research_search_limit": effective.research_search_limit,
@@ -471,23 +432,10 @@ class RunCoordinator:
                     requested_model=requested_model,
                 )
 
-        configuration_error = model_provider_configuration_error(self.settings)
-        if configuration_error == "model provider is not configured":
-            return {}, RunAdmissionError(
-                "model_provider_missing",
-                configuration_error,
-            )
-        if configuration_error is not None:
-            return {}, RunAdmissionError(
-                "model_provider_invalid",
-                configuration_error,
-            )
-        return {
-            "provider": "gateway",
-            "credential_ref": "runtime:cloud_session",
-            "requested_model": requested_model,
-            "required_capabilities": ["streaming", "tool_calling"],
-        }, None
+        return {}, RunAdmissionError(
+            "model_provider_missing",
+            "select a Runtime BYOK model before starting a run",
+        )
 
     @asynccontextmanager
     async def _model_admission(
@@ -616,11 +564,7 @@ class RunCoordinator:
                     provider_id=provider_id,
                     binding=binding,
                 )
-        if binding.get("credential_ref") != "runtime:cloud_session":
-            return "run model credential reference is invalid", None
-        if not self.settings.cloud_token.strip():
-            return "model provider credential is no longer configured", None
-        return None, None
+        return "run model provider is no longer supported", None
 
     async def _model_binding_error_locked(
         self,
@@ -1819,47 +1763,9 @@ class RunCoordinator:
                     )
                 retry_context = _retry_context_from_metadata(self._run_metadata.get(run_id) or {})
 
-            # The cloud owns model resolution (flat catalog). The daemon
-            # forwards the user's selection; "pro" stays a wire alias for the
-            # legacy "deep" tier for any old caller.
-            resolved_model = "deep" if mode == "pro" else mode
-            requested_model = resolved_model or "auto"
+            resolved_model = mode
             run_settings = self._settings_overrides.get(run_id) or {}
             model_binding = run_settings.get("_model_binding")
-
-            # "Auto": ask the cloud's task-aware classifier ONCE per run which
-            # catalog model fits this goal, and surface model.selected so the
-            # UI badges "Auto → <label> · reason". On any failure we stay on
-            # "auto" — the cloud LLM endpoint maps that to the default model
-            # per turn, so the run still works (just without the badge).
-            if (
-                resume_payload is None
-                and not settings.fake_llm
-                and isinstance(model_binding, dict)
-                and model_binding.get("provider") == "gateway"
-                and _is_auto_model(resolved_model)
-            ):
-                picked = await resolve_auto_model(
-                    goal,
-                    cloud_base_url=settings.cloud_base_url,
-                    cloud_token=settings.cloud_token,
-                    intent=_auto_intent_from_model(resolved_model),
-                    run_id=run_id,
-                )
-                if picked:
-                    resolved_model = picked["model_id"]
-                    await self._enqueue(
-                        wakeup,
-                        run_id,
-                        "model.selected",
-                        {
-                            "requested_model": requested_model,
-                            "requested_label": _auto_requested_label(requested_model),
-                            "resolved_model_id": picked["model_id"],
-                            "label": picked["label"],
-                            "reason": picked["reason"],
-                        },
-                    )
 
             # Persist the resolved value so a resume (incl. after a daemon
             # restart) continues with the same model instead of a default.
@@ -1896,17 +1802,6 @@ class RunCoordinator:
             mcp_enabled = str(run_settings.get("mcp", "on")).lower() != "off"
             # Code execution defaults ON now (since v7 of the client
             # storage, ~2026-05-26). The original opt-in toggle was
-            # removed from the UI — first-call friction was costing
-            # more than it was protecting (files only upload when the
-            # LLM explicitly calls code.execute with files_in, which
-            # already passes the daemon-side sensitive-filename
-            # blacklist + size cap). The setting is still honored if
-            # explicitly passed as "off" — leaves an env-level kill
-            # switch for future enterprise/regulated deployments.
-            code_exec_enabled = str(run_settings.get("code_exec", "on")).lower() != "off"
-            cloud_tools_enabled = bool(run_settings.get("_cloud_tools_available")) and bool(
-                self.settings.cloud_token.strip()
-            )
             # Per-server opt-out from the MCP tab. The client persists
             # a list of names the user disabled and ships it on every
             # run. Defensive coercion: drop non-strings and dedupe so
@@ -1958,8 +1853,6 @@ class RunCoordinator:
                 skills_enabled=skills_enabled,
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
-                code_exec_enabled=code_exec_enabled,
-                cloud_tools_enabled=cloud_tools_enabled,
                 settings=effective_settings,
                 model_binding=model_binding if isinstance(model_binding, dict) else None,
                 model_api_key=model_api_key,
@@ -2219,7 +2112,7 @@ class RunCoordinator:
                 )
             else:
                 log.exception("run %s failed", run_id)
-            if isinstance(exc, BackendLLMError):
+            if isinstance(exc, ModelProviderError):
                 await self._enqueue(wakeup, run_id, "llm.error", failure_payload)
             if repair_context is not None:
                 await self._enqueue(
@@ -2696,7 +2589,7 @@ def _run_failed_payload(
     *,
     secrets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    if isinstance(exc, BackendLLMError):
+    if isinstance(exc, ModelProviderError):
         payload = exc.to_event_payload()
     else:
         payload = {"error": str(exc), "type": type(exc).__name__}

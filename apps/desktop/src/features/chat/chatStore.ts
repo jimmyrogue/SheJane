@@ -306,8 +306,6 @@ function knownFailureRecoveryAction(value: unknown): AgentTimelineItem['failureR
   switch (value) {
     case 'retry':
     case 'repair':
-    case 'recharge':
-    case 'refresh_session':
     case 'workspace':
     case 'diagnostics':
       return value

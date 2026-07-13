@@ -33,8 +33,6 @@ import {
   probeLocalHost,
   revokeLocalWorkspace,
   resolveLocalPermissionCommand,
-  setLocalCloudSession,
-  clearLocalCloudSession,
   forkLocalRun,
   LocalStreamCursorResetRequiredError,
   streamLocalRun,
@@ -242,7 +240,6 @@ describe('desktop local host client', () => {
           runtime_version: '0.1.3',
           capabilities: ['agent.run', 'agent.stream'],
           model_provider_configured: true,
-          gateway_provider_configured: true,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
@@ -1163,51 +1160,6 @@ describe('desktop local host client', () => {
       4,
       'http://127.0.0.1:17371/local/v1/skills/daily',
       expect.objectContaining({ method: 'DELETE' }),
-    )
-  })
-
-  it('sets and clears the Local Host cloud session through protected APIs', async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            connected: true,
-            cloud_base_url: 'http://localhost:8080',
-            auth: 'bearer',
-            updated_at: '2026-05-11T00:00:00Z',
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      .mockResolvedValueOnce(new Response(JSON.stringify({ connected: false }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
-
-    await expect(
-      setLocalCloudSession(
-        {
-          cloudBaseURL: 'http://localhost:8080',
-          accessToken: 'cloud-user-token',
-        },
-        { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
-        fetcher,
-      ),
-    ).resolves.toMatchObject({ connected: true, cloud_base_url: 'http://localhost:8080' })
-    await expect(clearLocalCloudSession({ baseURL: 'http://127.0.0.1:17371', token: 'local-token' }, fetcher)).resolves.toEqual({
-      connected: false,
-    })
-    expect(fetcher).toHaveBeenNthCalledWith(
-      1,
-      'http://127.0.0.1:17371/local/v1/session',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ Authorization: 'Bearer local-token' }),
-        body: JSON.stringify({ cloud_base_url: 'http://localhost:8080', access_token: 'cloud-user-token' }),
-      }),
-    )
-    expect(fetcher).toHaveBeenNthCalledWith(
-      2,
-      'http://127.0.0.1:17371/local/v1/session',
-      expect.objectContaining({ method: 'DELETE', headers: expect.objectContaining({ Authorization: 'Bearer local-token' }) }),
     )
   })
 

@@ -65,15 +65,8 @@ class Settings(BaseSettings):
     store_db_filename: str = "store.db"
     local_db_filename: str = "local-host.db"
 
-    # Cloud backend (Phase 1 SSE LLM endpoint)
-    cloud_base_url: str = Field(
-        default="http://127.0.0.1:8080",
-        alias="SHEJANE_CLOUD_BASE_URL",
-    )
-    cloud_token: str = Field(default="", alias="SHEJANE_CLOUD_TOKEN")
-
     # When set, the agent uses a deterministic in-process fake LLM instead of
-    # the cloud gateway — no network, no key. Used by the SSE contract test to
+    # any model provider — no network, no key. Used by the SSE contract test to
     # exercise the real run/stream pipeline (event names + envelope) without a
     # live upstream. NEVER enable in production.
     fake_llm: bool = Field(default=False, alias="SHEJANE_FAKE_LLM")

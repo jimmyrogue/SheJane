@@ -3,9 +3,8 @@
 The Electron renderer loads from the Vite dev server at
 `http://127.0.0.1:55173` (or `file://` in production). The daemon binds
 loopback at `:17371` — different origin. Without proper CORS headers,
-every browser-side fetch fails at the preflight step and the pairing
-handshake (`POST /local/v1/session`) never reaches the server, leaving
-chat silently routed through the cloud-only path.
+every browser-side fetch fails at the preflight step and the Desktop
+cannot reach its Runtime.
 
 These tests lock the default CORS allow-list to "any loopback origin +
 file:// (`null`)" and verify the SHEJANE_LOCAL_CORS_ORIGINS env
@@ -130,10 +129,10 @@ def test_cors_allows_authorization_header(monkeypatch) -> None:
     it and the daemon 401s."""
     with _build_client(monkeypatch) as client:
         resp = client.options(
-            "/local/v1/session",
+            "/local/v1/runtime",
             headers={
                 "Origin": "http://127.0.0.1:55173",
-                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Method": "GET",
                 "Access-Control-Request-Headers": "authorization,content-type",
             },
         )

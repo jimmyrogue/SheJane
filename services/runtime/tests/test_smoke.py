@@ -277,18 +277,6 @@ def test_web_fetch_rejects_invalid_method() -> None:
     assert "method" in out["error"]
 
 
-def test_web_search_always_registered(monkeypatch: Any) -> None:
-    """web.search no longer depends on TAVILY_API_KEY in the daemon env
-    — it proxies through the cloud Tool Gateway. The tool must be
-    present in the registry unconditionally; the *cloud* decides
-    whether to honor the call based on its own Tavily key.
-    """
-    from local_host.tools.web import web_search
-
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    assert web_search.name == "web.search"
-
-
 # --- task.verify ---
 
 
@@ -440,39 +428,6 @@ def test_skill_catalog_returns_empty_when_dir_missing(monkeypatch: Any, tmp_path
     assert _list_skill_files() == []
 
 
-# --- image tools (missing-key path only; live API not exercised) ---
-
-
-def test_image_generate_without_cloud_session(monkeypatch: Any) -> None:
-    """image.generate now proxies through the cloud Tool Gateway — when
-    no cloud session is paired (cloud_token empty), the tool must
-    surface a recoverable error instead of trying to call OpenAI
-    directly. See `tools/image.py` + `test_image_tool.py` for the full
-    gateway contract.
-    """
-    import asyncio
-
-    from local_host.config import reset_settings_for_tests
-    from local_host.tools.image import _invoke_image_tool
-
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    reset_settings_for_tests(
-        SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_BASE_URL="http://api.test",
-        SHEJANE_CLOUD_TOKEN="",  # unpaired
-    )
-    out = asyncio.run(
-        _invoke_image_tool(
-            "image.generate",
-            {"prompt": "a cat"},
-            run_id="r",
-            tool_call_id="c",
-        )
-    )
-    assert out["ok"] is False
-    assert out["errorCode"] == "cloud_session_missing"
-
-
 # --- MCP wiring ---
 
 
@@ -569,8 +524,6 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
         "clipboard.write",
         "web.fetch",
         "task.verify",
-        "image.generate",
-        "image.edit",
         "memory.search",
         "user.ask",
     }

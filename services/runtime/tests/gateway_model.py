@@ -1,4 +1,6 @@
-"""BackendChatModel — LangChain `BaseChatModel` that streams from our Go
+"""Test-only model that replays the retired Go Gateway SSE protocol.
+
+BackendChatModel — LangChain `BaseChatModel` that streams from our Go
 backend at `POST /api/v1/agent/llm/stream`.
 
 Why this exists
@@ -58,68 +60,12 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.tools import BaseTool
 from pydantic import Field
 
-log = logging.getLogger("local_host.llm.backend")
+from local_host.llm.errors import ModelProviderError
+
+log = logging.getLogger("tests.gateway_model")
 
 
-class BackendLLMError(RuntimeError):
-    """Structured error emitted by the cloud LLM gateway."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str | None = None,
-        request_id: str | None = None,
-        provider: str | None = None,
-        recoverable: bool | None = None,
-        retryable: bool | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.message = message
-        self.code = code
-        self.request_id = request_id
-        self.provider = provider
-        self.recoverable = recoverable
-        self.retryable = retryable
-
-    @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> BackendLLMError:
-        message = _first_string(payload.get("message"), payload.get("error"), payload.get("detail"))
-        code = _first_string(
-            payload.get("code"), payload.get("error_code"), payload.get("errorCode")
-        )
-        return cls(
-            message or code or "backend LLM error",
-            code=code,
-            request_id=_first_string(payload.get("request_id"), payload.get("requestId")),
-            provider=_first_string(payload.get("provider")),
-            recoverable=payload.get("recoverable")
-            if isinstance(payload.get("recoverable"), bool)
-            else None,
-            retryable=payload.get("retryable")
-            if isinstance(payload.get("retryable"), bool)
-            else None,
-        )
-
-    def to_event_payload(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "message": self.message,
-            "error": self.message,
-            "type": type(self).__name__,
-            "source": "model_gateway",
-        }
-        if self.code:
-            payload["code"] = self.code
-            payload["error_code"] = self.code
-        if self.request_id:
-            payload["request_id"] = self.request_id
-        if self.provider:
-            payload["provider"] = self.provider
-        if self.recoverable is not None:
-            payload["recoverable"] = self.recoverable
-        if self.retryable is not None:
-            payload["retryable"] = self.retryable
-        return payload
+BackendLLMError = ModelProviderError
 
 
 class BackendChatModel(BaseChatModel):

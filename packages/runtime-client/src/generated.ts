@@ -514,33 +514,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/local/v1/session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Cloud Session */
-        get: operations["get_cloud_session_local_v1_session_get"];
-        put?: never;
-        /**
-         * Set Cloud Session
-         * @description Stash a cloud bearer token (+ base URL) for outbound LLM calls.
-         *
-         *     Response shape MUST match the client's `LocalCloudSession` TypeScript
-         *     interface — the client gates its "use local agent" feature flag on
-         *     `session.connected === true`. The pydantic model + response_model
-         *     now enforce that.
-         */
-        post: operations["set_cloud_session_local_v1_session_post"];
-        /** Clear Cloud Session */
-        delete: operations["clear_cloud_session_local_v1_session_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/local/v1/settings": {
         parameters: {
             query?: never;
@@ -1456,24 +1429,6 @@ export interface components {
             /** Tool Name */
             tool_name?: string | null;
         };
-        /**
-         * LocalCloudSession
-         * @description Pairing state between the daemon and the cloud API.
-         *
-         *     `connected: false` is the only field on an unpaired response; the
-         *     rest become present once the user logs in via the Electron app
-         *     and the renderer POSTs the JWT to /local/v1/session.
-         */
-        LocalCloudSession: {
-            /** Auth */
-            auth?: "bearer" | null;
-            /** Cloud Base Url */
-            cloud_base_url?: string | null;
-            /** Connected */
-            connected: boolean;
-            /** Updated At */
-            updated_at?: string | null;
-        };
         /** LocalModelProfile */
         LocalModelProfile: {
             /** Display Name */
@@ -2137,8 +2092,6 @@ export interface components {
         RuntimeInfo: {
             /** Capabilities */
             capabilities: string[];
-            /** Gateway Provider Configured */
-            gateway_provider_configured: boolean;
             /** Model Provider Configured */
             model_provider_configured: boolean;
             /** Protocol Version */
@@ -2223,13 +2176,6 @@ export interface components {
              * @default 0
              */
             version: number;
-        };
-        /** SetCloudSessionRequest */
-        SetCloudSessionRequest: {
-            /** Access Token */
-            access_token: string;
-            /** Cloud Base Url */
-            cloud_base_url: string;
         };
         /** SkillDeleteResponse */
         SkillDeleteResponse: {
@@ -3287,79 +3233,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_cloud_session_local_v1_session_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocalCloudSession"];
-                };
-            };
-        };
-    };
-    set_cloud_session_local_v1_session_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetCloudSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocalCloudSession"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_cloud_session_local_v1_session_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocalCloudSession"];
                 };
             };
         };

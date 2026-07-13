@@ -59,7 +59,7 @@ def client_with_tokens(monkeypatch) -> tuple[TestClient, list[str]]:
     def handler(request: httpx.Request) -> httpx.Response:
         return _stream_response(_build_token_stream(tokens))
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",

@@ -17,8 +17,95 @@ unit tests into networked trace ingestion and can produce rate-limit noise.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep legacy run-loop fixtures hermetic without shipping a Cloud adapter."""
+    from local_host.agent import builder
+    from local_host.llm.fake import FakeBackendChatModel
+    from tests.gateway_model import BackendChatModel
+
+    original_build_chat_model = builder._build_chat_model
+
+    def _build_test_model(
+        settings: Any,
+        run_id: str,
+        mode: str,
+        **kwargs: Any,
+    ) -> Any:
+        model_binding = kwargs.get("model_binding")
+        if isinstance(model_binding, dict) and model_binding.get("provider") == "openai_compatible":
+            return original_build_chat_model(settings, run_id, mode, **kwargs)
+        if settings.fake_llm:
+            return FakeBackendChatModel(
+                profile={
+                    "tool_calling": True,
+                    "max_input_tokens": settings.unknown_model_max_input_tokens,
+                    "max_output_tokens": settings.unknown_model_max_output_tokens,
+                }
+            )
+        return BackendChatModel(
+            cloud_base_url="http://test-backend",
+            cloud_token="test-only",
+            mode=mode,
+            run_id=run_id,
+            request_timeout_s=settings.model_request_timeout_seconds,
+            max_output_tokens=settings.unknown_model_max_output_tokens,
+            profile={
+                "tool_calling": True,
+                "max_input_tokens": settings.unknown_model_max_input_tokens,
+                "max_output_tokens": settings.unknown_model_max_output_tokens,
+            },
+        )
+
+    monkeypatch.setattr(builder, "_build_chat_model", _build_test_model)
+
+    from local_host.runs import RunCoordinator
+
+    original_model_binding = RunCoordinator._model_binding
+    original_model_binding_error = RunCoordinator._model_binding_error
+
+    async def _model_binding(
+        coordinator: Any,
+        principal_id: str,
+        mode: str,
+    ) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
+        if mode == "auto":
+            return (
+                {
+                    "provider": "test_gateway",
+                    "model_id": "test-model",
+                    "credential_ref": "tests:gateway_model",
+                    "requested_model": mode,
+                    "profile": {
+                        "tool_calling": True,
+                        "streaming": True,
+                        "max_input_tokens": 128_000,
+                        "max_output_tokens": 8_192,
+                    },
+                    "required_capabilities": ["streaming", "tool_calling"],
+                },
+                None,
+            )
+        return await original_model_binding(coordinator, principal_id, mode)
+
+    monkeypatch.setattr(RunCoordinator, "_model_binding", _model_binding)
+
+    async def _model_binding_error(
+        coordinator: Any,
+        principal_id: str,
+        settings_snapshot: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        binding = settings_snapshot.get("_model_binding")
+        if isinstance(binding, dict) and binding.get("provider") == "test_gateway":
+            return None, None
+        return await original_model_binding_error(coordinator, principal_id, settings_snapshot)
+
+    monkeypatch.setattr(RunCoordinator, "_model_binding_error", _model_binding_error)
 
 
 @pytest.fixture(autouse=True)
@@ -48,23 +135,3 @@ def _disable_external_tracing_by_default(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
     monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
     monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _disable_cloud_auto_resolve_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No-op the cloud Auto-model resolution in every test.
-
-    Runs created with model="auto" (the schema default) fire one POST to
-    {cloud}/api/v1/models/resolve at run start. Tests patch httpx at the
-    module-global boundary (`local_host.llm.backend.httpx.AsyncClient` IS
-    the shared httpx module), so that extra request would land in their
-    sequence-scripted fake transports and shift the scripts. Returning None
-    keeps the run on "auto" (the cloud maps it to the default model per
-    turn). Tests that exercise resolution re-patch this themselves (see
-    test_model_resolve.py).
-    """
-
-    async def _noop(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr("local_host.runs.resolve_auto_model", _noop)

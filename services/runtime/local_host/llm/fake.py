@@ -2,7 +2,7 @@
 
 Gated by SHEJANE_FAKE_LLM (config.fake_llm). Streams a fixed reply so the
 real run → SSE pipeline (event names + envelope) can be contract-tested
-without a live cloud LLM. NEVER enabled in production.
+without a live provider. NEVER enabled in production.
 """
 
 from __future__ import annotations

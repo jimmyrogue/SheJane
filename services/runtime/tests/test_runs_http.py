@@ -75,7 +75,7 @@ def client(monkeypatch) -> TestClient:
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -134,7 +134,7 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert stored["principal_id"] == LOCAL_OWNER_PRINCIPAL_ID
     snapshot = json.loads(stored["settings_json"])
     assert snapshot["_snapshot_version"] == 1
-    assert snapshot["_model_binding"]["credential_ref"] == "runtime:cloud_session"
+    assert snapshot["_model_binding"]["credential_ref"] == "tests:gateway_model"
     assert snapshot["_model_binding"]["required_capabilities"] == [
         "streaming",
         "tool_calling",
@@ -673,7 +673,7 @@ def test_run_admission_requires_a_configured_model_provider(tmp_path: Path) -> N
         response = local_client.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
-            json=run_command("hello"),
+            json=run_command("hello", model="local:missing:model"),
         )
 
         assert response.status_code == 409
@@ -689,13 +689,11 @@ def test_run_admission_requires_a_configured_model_provider(tmp_path: Path) -> N
         ).json() == {"runs": []}
 
 
-def test_runtime_discovery_matches_invalid_model_provider_admission(
+def test_runtime_discovery_matches_missing_model_provider_admission(
     tmp_path: Path,
 ) -> None:
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="configured-token",
-        SHEJANE_CLOUD_BASE_URL="not-a-url",
         data_dir=tmp_path,
     )
     with TestClient(create_app(settings)) as local_client:
@@ -704,15 +702,15 @@ def test_runtime_discovery_matches_invalid_model_provider_admission(
         response = local_client.post(
             "/local/v1/runs",
             headers=headers,
-            json=run_command("hello"),
+            json=run_command("hello", model="local:missing:model"),
         )
 
         assert runtime.json()["model_provider_configured"] is False
         assert response.status_code == 409
-        assert response.json()["detail"]["code"] == "model_provider_invalid"
+    assert response.json()["detail"]["code"] == "model_provider_missing"
 
 
-def test_idempotent_replay_precedes_current_model_provider_admission(
+def test_idempotent_replay_returns_the_original_run(
     client: TestClient,
 ) -> None:
     headers = {"Authorization": "Bearer tok"}
@@ -720,7 +718,6 @@ def test_idempotent_replay_precedes_current_model_provider_admission(
     first = client.post("/local/v1/runs", headers=headers, json=command)
     assert first.status_code == 200
 
-    client.app.state.settings.cloud_token = ""
     replay = client.post("/local/v1/runs", headers=headers, json=command)
 
     assert replay.status_code == 200
@@ -1362,7 +1359,7 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -1450,7 +1447,7 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -1512,7 +1509,7 @@ def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> N
         captured_requests.append(json.loads(request.read()))
         return _stream_response([("llm.delta", '{"content_delta": "should not run"}')])
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -2145,13 +2142,13 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
     async def create_failed_run() -> str:
         run = await store.create_run(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,
-            goal="Spend credits",
+            goal="Call a quota-limited provider",
             workspace_path=None,
         )
         await store.append_event(
             run["id"],
             "run.failed",
-            {"error_code": "insufficient_credits", "message": "额度不足，请升级或充值"},
+            {"error_code": "insufficient_credits", "message": "provider quota exhausted"},
         )
         await store.update_run_status(run["id"], "failed")
         return run["id"]
@@ -2171,8 +2168,8 @@ def test_run_diagnostics_classifies_quota_failures(client: TestClient) -> None:
     assert failure["recoverable"] is True
     assert failure["retryable"] is False
     assert failure["action_kind"] == "user_action"
-    assert failure["recovery_action"] == "recharge"
-    assert "credits" in failure["suggested_action"]
+    assert failure["recovery_action"] == "diagnostics"
+    assert "provider quota" in failure["suggested_action"]
 
 
 def test_run_diagnostics_reports_latest_task_verification_pass(
@@ -2361,16 +2358,15 @@ def test_run_diagnostics_classifies_auth_failures(client: TestClient) -> None:
     async def create_failed_run() -> str:
         run = await store.create_run(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,
-            goal="Search web",
+            goal="Call model provider",
             workspace_path=None,
         )
         await store.append_event(
             run["id"],
-            "tool.failed",
+            "run.failed",
             {
-                "tool": "web.search",
-                "error_code": "cloud_session_required",
-                "content": "Sign in to the Electron app first, then retry.",
+                "error_code": "unauthorized",
+                "content": "The model provider rejected its credential.",
             },
         )
         await store.update_run_status(run["id"], "failed")
@@ -2387,11 +2383,11 @@ def test_run_diagnostics_classifies_auth_failures(client: TestClient) -> None:
     assert diag.status_code == 200
     failure = diag.json()["handoff"]["failure"]
     assert failure["category"] == "auth"
-    assert failure["code"] == "cloud_session_required"
+    assert failure["code"] == "unauthorized"
     assert failure["recoverable"] is True
     assert failure["retryable"] is False
     assert failure["action_kind"] == "user_action"
-    assert "Sign in" in failure["suggested_action"]
+    assert "provider credential" in failure["suggested_action"]
 
 
 def test_run_diagnostics_classifies_transient_failures(client: TestClient) -> None:
@@ -2456,7 +2452,7 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
@@ -3109,7 +3105,7 @@ def test_history_is_not_pretruncated_before_token_aware_compaction(
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
@@ -3178,7 +3174,7 @@ def test_removed_history_limit_setting_does_not_change_model_input(monkeypatch) 
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
@@ -3249,7 +3245,7 @@ def test_transport_omission_marker_passes_through_without_daemon_rewrite(
             ]
         )
 
-    monkeypatch.setattr("local_host.llm.backend.httpx.AsyncClient", _patched_async_client(handler))
+    monkeypatch.setattr("tests.gateway_model.httpx.AsyncClient", _patched_async_client(handler))
 
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",

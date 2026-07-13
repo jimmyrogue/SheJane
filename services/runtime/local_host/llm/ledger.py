@@ -31,7 +31,7 @@ from pydantic import Field
 
 from ..middleware.tool_visibility import visible_tools_for_messages
 from ..store.sqlite import LocalStore
-from .backend import BackendLLMError
+from .errors import ModelProviderError
 
 
 class ModelContextBudgetExceeded(RuntimeError):
@@ -302,7 +302,7 @@ def _outcome_may_be_unknown(exc: BaseException) -> bool:
 
 
 def _error_code(exc: BaseException) -> str:
-    if isinstance(exc, BackendLLMError) and exc.code:
+    if isinstance(exc, ModelProviderError) and exc.code:
         return exc.code[:100]
     if isinstance(exc, httpx.HTTPStatusError):
         return f"http_{exc.response.status_code}"

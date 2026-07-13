@@ -109,10 +109,7 @@ async def test_boot_recovery_enqueues_a_fully_resolved_wait_cycle(tmp_path: Path
 
 async def test_worker_rechecks_frozen_model_credential_reference(tmp_path: Path) -> None:
     store = await LocalStore.open(tmp_path / "local.db")
-    settings = Settings(
-        SHEJANE_CLOUD_BASE_URL="http://gateway.test",
-        SHEJANE_CLOUD_TOKEN="accepted-token",
-    )
+    settings = Settings(SHEJANE_FAKE_LLM=True)
     coordinator = RunCoordinator(
         store=store,
         checkpointer=None,  # type: ignore[arg-type]
@@ -130,7 +127,7 @@ async def test_worker_rechecks_frozen_model_credential_reference(tmp_path: Path)
         job = await store.claim_run_job(worker_id=coordinator._worker_id)
         assert job is not None
 
-        settings.cloud_token = ""  # type: ignore[misc]
+        settings.fake_llm = False
         await coordinator._execute_claimed_job(job)
 
         failed = await store.get_run(run["id"])

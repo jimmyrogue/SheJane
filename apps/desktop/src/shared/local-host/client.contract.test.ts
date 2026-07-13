@@ -13,15 +13,13 @@
  * CRUD, permissions. SSE stream tests would require a real
  * upstream LLM (or a complex daemon mock mode) and are deferred.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   probeLocalHost,
-  setLocalCloudSession,
-  clearLocalCloudSession,
   createLocalRun,
   listLocalRuns,
   streamLocalRun,
@@ -38,13 +36,6 @@ const CONTRACT_SETTINGS = { memory: 'off', skills: 'off', mcp: 'off' } as const
 describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
   const config = { baseURL: BASE_URL!, token: TOKEN }
 
-  beforeEach(async () => {
-    // Tear down cloud session between tests so each test sees a
-    // clean unpaired state. Failure to clear is ignored — first
-    // test naturally has no session yet.
-    await clearLocalCloudSession(config).catch(() => undefined)
-  })
-
   // -----------------------------------------------------------------
   // GET /local/v1/health
   // -----------------------------------------------------------------
@@ -53,31 +44,6 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
       const probe = await probeLocalHost(BASE_URL!)
       expect(probe.online).toBe(true)
       expect(probe.status).toBe('ok')
-    })
-  })
-
-  // -----------------------------------------------------------------
-  // POST/GET/DELETE /local/v1/session — LocalCloudSession shape
-  // -----------------------------------------------------------------
-  describe('cloud session', () => {
-    it('POST returns {connected: true, cloud_base_url, auth, updated_at}', async () => {
-      const session = await setLocalCloudSession(
-        { cloudBaseURL: 'http://localhost:8080', accessToken: 'contract-test-jwt' },
-        config,
-      )
-      expect(session.connected).toBe(true)
-      expect(session.cloud_base_url).toBe('http://localhost:8080')
-      expect(session.auth).toBe('bearer')
-      expect(typeof session.updated_at).toBe('string')
-    })
-
-    it('DELETE returns {connected: false}', async () => {
-      await setLocalCloudSession(
-        { cloudBaseURL: 'http://localhost:8080', accessToken: 'contract-test-jwt' },
-        config,
-      )
-      const session = await clearLocalCloudSession(config)
-      expect(session.connected).toBe(false)
     })
   })
 
