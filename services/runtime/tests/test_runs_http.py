@@ -80,7 +80,6 @@ def client(monkeypatch) -> TestClient:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -665,7 +664,6 @@ def test_run_admission_rejects_protocol_and_capability_mismatch(
 def test_run_admission_requires_a_configured_model_provider(tmp_path: Path) -> None:
     settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="",
         SHEJANE_FAKE_LLM=False,
         data_dir=tmp_path,
     )
@@ -802,6 +800,7 @@ def test_command_replay_precedes_current_workspace_admission(
         "protocol_version": 1,
         "required_capabilities": ["agent.run", "agent.stream"],
         "goal": "inspect",
+        "model": "local:test:model",
         "workspace_path": str(tmp_path),
     }
     first = client.post("/local/v1/runs", headers=headers, json=command)
@@ -1006,6 +1005,7 @@ def test_create_run_command_is_idempotent_and_rejects_conflicting_content(
         "protocol_version": 1,
         "required_capabilities": ["agent.run", "agent.stream"],
         "goal": "say hi",
+        "model": "local:test:model",
     }
 
     first = client.post("/local/v1/runs", headers=headers, json=command)
@@ -1061,6 +1061,7 @@ def test_pairing_token_rotation_keeps_the_same_local_owner(
         "protocol_version": 1,
         "required_capabilities": ["agent.run", "agent.stream"],
         "goal": "same command",
+        "model": "local:test:model",
     }
     first_settings = reset_settings_for_tests(
         SHEJANE_LOCAL_HOST_TOKEN="token-one",
@@ -1364,7 +1365,6 @@ def test_repair_run_emits_workflow_events_and_context(monkeypatch) -> None:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX=3,
         data_dir=tmp,
     )
@@ -1452,7 +1452,6 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -1514,7 +1513,6 @@ def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> N
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX=1,
         data_dir=tmp,
     )
@@ -2457,7 +2455,6 @@ def test_model_gateway_error_becomes_structured_run_failure(monkeypatch) -> None
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -3111,7 +3108,6 @@ def test_history_is_not_pretruncated_before_token_aware_compaction(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -3180,7 +3176,6 @@ def test_removed_history_limit_setting_does_not_change_model_input(monkeypatch) 
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)
@@ -3251,7 +3246,6 @@ def test_transport_omission_marker_passes_through_without_daemon_rewrite(
         SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
         SHEJANE_LOCAL_HOST_PORT=17371,
         SHEJANE_LOCAL_HOST_TOKEN="tok",
-        SHEJANE_CLOUD_TOKEN="test-cloud-token",
         data_dir=tmp,
     )
     app = create_app(settings)

@@ -883,10 +883,7 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
-            /**
-             * Model
-             * @default auto
-             */
+            /** Model */
             model: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
@@ -929,10 +926,7 @@ export interface components {
             metadata?: {
                 [key: string]: unknown;
             } | null;
-            /**
-             * Model
-             * @default auto
-             */
+            /** Model */
             model: string;
             /** Run At */
             run_at: string;

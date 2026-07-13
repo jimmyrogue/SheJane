@@ -316,18 +316,11 @@ export function MessageBubble({
 }
 
 function ModelModeBadge({ runMode }: { runMode?: ChatMessage['runMode'] }) {
-  const { t } = useI18n()
   if (!runMode?.resolved?.trim()) {
     return null
   }
   const reason = runMode.reason?.trim()
-  const requested = runMode.requested?.trim()
-  const label = requested || reason
-    ? t('composer.mode.autoBadge', {
-        requested: requested || t('composer.mode.auto'),
-        resolved: runMode.resolved,
-      })
-    : runMode.resolved
+  const label = runMode.resolved
   const badge = (
     <span className="message-meta-mode">
       <IconSparkles className="message-meta-mode-icon" size={11} aria-hidden="true" />

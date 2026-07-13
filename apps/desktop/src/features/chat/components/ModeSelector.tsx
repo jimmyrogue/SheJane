@@ -2,8 +2,6 @@ import { useMemo, useState } from 'react'
 import {
   IconCheck,
   IconChevronDown,
-  IconChevronLeft,
-  IconChevronRight,
   IconInfoCircle,
   IconSparkles,
 } from '@tabler/icons-react'
@@ -11,15 +9,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import type { ChatMode } from '@/shared/local-data/types'
-import { autoModeForIntent, autoModeLabelKey, isAutoMode, type AutoIntent } from '@/shared/modelMode'
 
-/** One selectable catalog model (subset of the API's model info). */
+/** One selectable Runtime model. */
 export interface ModelOption {
   id: string
   label: string
@@ -34,81 +30,32 @@ export interface ModelOption {
 }
 
 /**
- * Composer-attached model picker. "Auto" is always offered and asks the
- * backend resolver to choose among enabled chat models; intent shortcuts keep
- * the same Auto pipeline but bias it toward speed or capability.
+ * Composer-attached picker for concrete Runtime BYOK models.
  */
 export function ModeSelector({
   mode,
   models,
-  autoAvailable = true,
   onChange,
   disabled = false,
 }: {
   mode: ChatMode
   models: ModelOption[]
-  autoAvailable?: boolean
   onChange: (next: ChatMode) => void
   disabled?: boolean
 }) {
   const { locale, t } = useI18n()
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<'intent' | 'models'>(autoAvailable ? 'intent' : 'models')
-
-  const autoLabel = t('composer.mode.auto')
   const selectedModel = models.find((model) => model.id === mode)
   const groupedModels = useMemo(() => groupModelsByVendor(models), [models])
-  const selectedLabel = isAutoMode(mode) ? t(autoModeLabelKey(mode)) : (selectedModel?.label ?? autoLabel)
+  const selectedLabel = selectedModel?.label ?? t('composer.mode.chooseModel')
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
-    if (!nextOpen) setView(autoAvailable ? 'intent' : 'models')
-  }
-
-  const selectAuto = () => {
-    onChange('auto')
-  }
-
-  const selectIntent = (intent: AutoIntent) => {
-    onChange(autoModeForIntent(intent))
   }
 
   const selectModel = (model: ModelOption) => {
     onChange(model.id)
   }
-
-  const renderChoice = ({
-    key,
-    label,
-    hint,
-    active,
-    hero = false,
-    onSelect,
-  }: {
-    key: string
-    label: string
-    hint?: string
-    active: boolean
-    hero?: boolean
-    onSelect: () => void
-  }) => (
-    <DropdownMenuItem
-      key={key}
-      className={`composer-mode-item${active ? ' is-active' : ''}${hero ? ' is-hero' : ''}`}
-      onSelect={onSelect}
-    >
-      {hero ? <IconSparkles size={14} aria-hidden="true" className="composer-mode-item-hero-icon" /> : null}
-      <span className="composer-mode-item-text">
-        <span className="composer-mode-item-label">{label}</span>
-        {hint ? <span className="composer-mode-item-hint">{hint}</span> : null}
-      </span>
-      {active ? (
-        <IconCheck size={14} aria-hidden="true" className="composer-mode-item-check" />
-      ) : (
-        <span aria-hidden="true" className="composer-mode-item-spacer" />
-      )}
-    </DropdownMenuItem>
-  )
 
   const renderModel = (model: ModelOption) => {
     const tier = tierIndicator(model.capability_tier)
@@ -153,91 +100,35 @@ export function ModeSelector({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" alignOffset={4} sideOffset={8} className="composer-mode-menu">
-        {autoAvailable && view === 'intent' ? (
-          <>
-            {renderChoice({
-              key: 'auto',
-              label: autoLabel,
-              hint: t('composer.mode.autoHint'),
-              active: mode === 'auto',
-              hero: true,
-              onSelect: selectAuto,
-            })}
-            <DropdownMenuSeparator className="composer-mode-separator" />
-            {renderChoice({
-              key: 'intent-fast',
-              label: t('composer.mode.intentFast'),
-              hint: t('composer.mode.intentFastHint'),
-              active: mode === 'auto.fast',
-              onSelect: () => selectIntent('fast'),
-            })}
-            {renderChoice({
-              key: 'intent-smart',
-              label: t('composer.mode.intentSmart'),
-              hint: t('composer.mode.intentSmartHint'),
-              active: mode === 'auto.smart',
-              onSelect: () => selectIntent('smart'),
-            })}
-            <DropdownMenuSeparator className="composer-mode-separator" />
-            <DropdownMenuItem
-              className="composer-mode-nav-item"
-              onSelect={(event) => {
-                event.preventDefault()
-                setView('models')
-              }}
-            >
-              <span>{t('composer.mode.chooseModel')}</span>
-              <IconChevronRight size={14} aria-hidden="true" />
-            </DropdownMenuItem>
-          </>
-        ) : (
-          <>
-            {autoAvailable ? (
-              <>
-                <DropdownMenuItem
-                  className="composer-mode-back-item"
-                  onSelect={(event) => {
-                    event.preventDefault()
-                    setView('intent')
-                  }}
-                >
-                  <IconChevronLeft size={14} aria-hidden="true" />
-                  <span>{t('composer.mode.specificModels')}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator className="composer-mode-separator" />
-              </>
-            ) : null}
-            <div className="composer-mode-model-list">
-              {groupedModels.map((group) => (
-                <div key={group.vendor}>
-                  <div className="composer-mode-group-heading">
-                    <span className="composer-mode-group-line" />
-                    <span className="composer-mode-group-label">
-                      {group.vendor}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="composer-mode-vendor-info-trigger"
-                            aria-label={group.vendorInfo}
-                            title={group.vendorInfo}
-                            tabIndex={0}
-                          >
-                            <IconInfoCircle size={12} strokeWidth={1.8} aria-hidden="true" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" sideOffset={6}>
-                          {group.vendorInfo}
-                        </TooltipContent>
-                      </Tooltip>
-                    </span>
-                    <span className="composer-mode-group-line" />
-                  </div>
-                  {group.models.map(renderModel)}
-                </div>
-              ))}
+        <div className="composer-mode-model-list">
+          {groupedModels.map((group) => (
+            <div key={group.vendor}>
+              <div className="composer-mode-group-heading">
+                <span className="composer-mode-group-line" />
+                <span className="composer-mode-group-label">
+                  {group.vendor}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className="composer-mode-vendor-info-trigger"
+                        aria-label={group.vendorInfo}
+                        title={group.vendorInfo}
+                        tabIndex={0}
+                      >
+                        <IconInfoCircle size={12} strokeWidth={1.8} aria-hidden="true" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6}>
+                      {group.vendorInfo}
+                    </TooltipContent>
+                  </Tooltip>
+                </span>
+                <span className="composer-mode-group-line" />
+              </div>
+              {group.models.map(renderModel)}
             </div>
-          </>
-        )}
+          ))}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   )

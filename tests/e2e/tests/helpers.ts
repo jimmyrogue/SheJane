@@ -45,11 +45,9 @@ export async function installClientMocks(page: Page, options: { localHost?: bool
   }
 
   await page.route('**/api/v1/**', async (route) => {
-    await handleAPI(route, state, 'user')
-  })
-  await page.route('https://s3.example.com/upload', async (route) => {
-    state.requests.push({ url: route.request().url(), method: route.request().method(), body: route.request().postData() ?? undefined })
-    await route.fulfill({ status: 200, headers: corsHeaders() })
+    const request = route.request()
+    state.requests.push({ url: request.url(), method: request.method(), body: request.postData() ?? undefined })
+    await rawJSON(route, { error: 'Desktop must not call optional Cloud' }, 503)
   })
   await page.route('**/local/v1/**', async (route) => {
     await handleLocalHost(route, state, options)
@@ -104,120 +102,6 @@ async function handleAPI(route: Route, state: MockState, role: 'admin' | 'user')
     await json(route, { code: 0, message: 'ok', data: balance })
     return
   }
-  if (url.endsWith('/api/v1/documents')) {
-    await json(route, {
-      code: 0,
-      message: 'ok',
-      data: [
-        {
-          id: 'doc-ready',
-          user_id: `${role}-1`,
-          original_name: 'roadmap.pdf',
-          content_type: 'application/pdf',
-          size_bytes: 1024,
-          status: 'ready',
-          source_object_key: 'documents/user/doc-ready/source.pdf',
-          text_object_key: 'documents/user/doc-ready/extracted.txt',
-          expires_at: '2099-05-17T00:00:00Z',
-          created_at: '2026-05-10T00:00:00Z',
-          updated_at: '2026-05-10T00:00:00Z',
-        },
-      ],
-    })
-    return
-  }
-  if (url.endsWith('/api/v1/documents/uploads')) {
-    await json(route, {
-      code: 0,
-      message: 'ok',
-      data: {
-        document: {
-          id: 'doc-upload',
-          user_id: `${role}-1`,
-          original_name: 'brief.docx',
-          content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          size_bytes: 5,
-          status: 'uploading',
-          source_object_key: 'documents/user/doc-upload/source.docx',
-          expires_at: '2099-05-17T00:00:00Z',
-          created_at: '2026-05-10T00:00:00Z',
-          updated_at: '2026-05-10T00:00:00Z',
-        },
-        upload: {
-          method: 'PUT',
-          url: 'https://s3.example.com/upload',
-          headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-          expires_at: '2099-05-10T01:00:00Z',
-        },
-      },
-    })
-    return
-  }
-  if (url.endsWith('/api/v1/documents/doc-upload/complete')) {
-    await json(route, {
-      code: 0,
-      message: 'ok',
-      data: {
-        id: 'doc-upload',
-        user_id: `${role}-1`,
-        original_name: 'brief.docx',
-        content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        size_bytes: 5,
-        status: 'ready',
-        source_object_key: 'documents/user/doc-upload/source.docx',
-        text_object_key: 'documents/user/doc-upload/extracted.txt',
-        expires_at: '2099-05-17T00:00:00Z',
-        created_at: '2026-05-10T00:00:00Z',
-        updated_at: '2026-05-10T00:00:00Z',
-      },
-    })
-    return
-  }
-  if (url.endsWith('/api/v1/chat/completions')) {
-    await sse(route, 'data: {"choices":[{"delta":{"content":"普通回答"}}]}\n\ndata: [DONE]\n\n')
-    return
-  }
-  if (url.endsWith('/api/v1/agent/runs')) {
-    const body = safeJSON(route.request().postData() ?? '{}') as {
-      attachments?: Array<unknown>
-      goal?: string
-    }
-    const hasAttachments = Boolean(body.attachments?.length)
-    const runID = hasAttachments ? 'run-doc' : 'run-chat'
-    await json(route, {
-      code: 0,
-      message: 'ok',
-      data: {
-        id: runID,
-        user_id: `${role}-1`,
-        origin: 'cloud',
-        status: 'queued',
-        mode: 'fast',
-        goal_summary: hasAttachments ? '用户任务（12 字，含附件 1 个）' : body.goal ?? '普通对话',
-        expires_at: '2099-05-17T00:00:00Z',
-        created_at: '2026-05-10T00:00:00Z',
-        updated_at: '2026-05-10T00:00:00Z',
-      },
-    }, 201)
-    return
-  }
-  if (url.endsWith('/api/v1/agent/runs/run-chat/stream')) {
-    await agentSSE(route, [
-      { event_type: 'llm.delta', payload: { content: '普通回答' } },
-      { event_type: 'run.completed', payload: { request_id: 'req-chat-1', credits_cost: 12 } },
-    ], 'run-chat')
-    return
-  }
-  if (url.endsWith('/api/v1/agent/runs/run-doc/stream')) {
-    await agentSSE(route, [
-      { event_type: 'skill.selected', payload: { skill: 'document-analysis' } },
-      { event_type: 'tool.completed', payload: { tool: 'document.read' } },
-      { event_type: 'llm.delta', payload: { content: '文档回答' } },
-      { event_type: 'run.completed', payload: { request_id: 'req-doc-1', credits_cost: 18 } },
-    ])
-    return
-  }
-
   await handleAdminAPI(route, role)
 }
 
@@ -304,7 +188,6 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
       runtime_version: 'e2e',
       capabilities: ['agent.run', 'agent.stream', 'hitl', 'workspace.files'],
       model_provider_configured: true,
-      gateway_provider_configured: false,
     })
     return
   }
@@ -322,19 +205,6 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
         available: true,
       }],
     })
-    return
-  }
-  if (url.endsWith('/local/v1/session') && request.method() === 'POST') {
-    await rawJSON(route, {
-      connected: true,
-      cloud_base_url: 'http://localhost:8080',
-      auth: 'bearer',
-      updated_at: '2026-05-11T00:00:00Z',
-    })
-    return
-  }
-  if (url.endsWith('/local/v1/session') && request.method() === 'DELETE') {
-    await rawJSON(route, { connected: false })
     return
   }
   if (url.endsWith('/local/v1/workspaces/diagnose')) {
@@ -471,18 +341,6 @@ async function rawJSON(route: Route, body: unknown, status = 200): Promise<void>
   })
 }
 
-async function sse(route: Route, body: string): Promise<void> {
-  await route.fulfill({
-    status: 200,
-    headers: { ...corsHeaders(route), 'Content-Type': 'text/event-stream', 'X-Request-ID': 'req-e2e' },
-    body,
-  })
-}
-
-async function agentSSE(route: Route, events: Array<{ event_type: string; payload: Record<string, unknown> }>, runID = 'run-doc'): Promise<void> {
-  await localAgentSSE(route, events.map((event, index) => ({ id: `event-${index}`, ...event })), runID, 'agent.event')
-}
-
 function safeJSON(value: string): unknown {
   try {
     return JSON.parse(value)
@@ -491,11 +349,15 @@ function safeJSON(value: string): unknown {
   }
 }
 
-async function localAgentSSE(route: Route, events: Array<{ id: string; event_type: string; payload: Record<string, unknown> }>, runID: string, eventName = 'local.event'): Promise<void> {
+async function localAgentSSE(route: Route, events: Array<{ id: string; event_type: string; payload: Record<string, unknown> }>, runID: string): Promise<void> {
   const body = `${events
-    .map((event, index) => `event: ${eventName}\ndata: ${JSON.stringify({ id: event.id, run_id: runID, seq: index + 1, created_at: '2026-05-10T00:00:00Z', ...event })}`)
+    .map((event, index) => `event: local.event\ndata: ${JSON.stringify({ id: event.id, run_id: runID, seq: index + 1, created_at: '2026-05-10T00:00:00Z', ...event })}`)
     .join('\n\n')}\n\ndata: [DONE]\n\n`
-  await sse(route, body)
+  await route.fulfill({
+    status: 200,
+    headers: { ...corsHeaders(route), 'Content-Type': 'text/event-stream', 'X-Request-ID': 'req-e2e' },
+    body,
+  })
 }
 
 function corsHeaders(route?: Route): Record<string, string> {

@@ -235,7 +235,7 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
             "goal": "稍后总结项目",
             "run_at": future,
             "workspace_path": str(workspace),
-            "model": "auto",
+            "model": "local:test:model",
             "history": [{"role": "user", "content": "项目背景"}],
             "settings": {"memory": "on", "api_key": "must-not-persist"},
             "metadata": {"token": "must-not-persist"},
@@ -286,7 +286,7 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     other = client.post(
         "/local/v1/schedules",
         headers=HEADERS,
-        json={"goal": "取消这个", "run_at": future},
+        json={"goal": "取消这个", "run_at": future, "model": "local:test:model"},
     ).json()
     canceled = client.delete(f"/local/v1/schedules/{other['id']}", headers=HEADERS)
     assert canceled.status_code == 200

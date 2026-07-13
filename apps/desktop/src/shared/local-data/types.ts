@@ -1,9 +1,6 @@
 export type MessageRole = 'system' | 'user' | 'assistant'
-/** The model the user picked in the composer: Auto sentinels (`auto`,
- *  `auto.fast`, `auto.smart`) or a concrete catalog model id from
- *  GET /api/v1/models. The `string & {}` keeps Auto autocompletion while
- *  allowing any model id. */
-export type ChatMode = 'auto' | 'auto.fast' | 'auto.smart' | (string & {})
+/** Concrete Runtime model selection (`local:<provider>:<model>`). */
+export type ChatMode = string
 export type MessageStatus = 'pending' | 'streaming' | 'waiting_permission' | 'waiting_input' | 'done' | 'error'
 
 export interface AgentQuestionChoice {
@@ -132,14 +129,9 @@ export interface ChatMessage {
    *  `status === 'streaming'` triggers the ephemeral "Thinking…"
    *  indicator above the bubble. */
   reasoning?: string
-  /** UI model badge for the completed turn. Auto runs update this from
-   *  `model.selected` ("自动/更快/更强 → Pro"); concrete model picks store
-   *  their selected model ID directly so every assistant turn can surface
-   *  the model used. */
+  /** UI model badge for the completed turn. */
   runMode?: {
-    /** User-facing label for the Auto sentinel, if provided by the cloud. */
-    requested?: string
-    /** The concrete model id the cloud resolved an "auto" run to. */
+    /** The concrete Runtime model id. */
     resolved: string
     reason: string
   }

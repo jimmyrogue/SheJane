@@ -74,7 +74,7 @@ def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
         principal_id: str,
         mode: str,
     ) -> tuple[dict[str, Any] | None, tuple[str, str] | None]:
-        if mode == "auto":
+        if mode in {"auto", "local:test:model"}:
             return (
                 {
                     "provider": "test_gateway",
@@ -94,6 +94,28 @@ def _install_test_gateway_model(monkeypatch: pytest.MonkeyPatch) -> None:
         return await original_model_binding(coordinator, principal_id, mode)
 
     monkeypatch.setattr(RunCoordinator, "_model_binding", _model_binding)
+
+    original_local_model_binding = RunCoordinator._local_model_binding_locked
+
+    async def _local_model_binding_locked(
+        coordinator: Any,
+        *,
+        principal_id: str,
+        provider_id: str,
+        model_id: str,
+        requested_model: str,
+    ) -> tuple[dict[str, Any], Any]:
+        if provider_id == "test" and model_id == "model":
+            return await _model_binding(coordinator, principal_id, requested_model)
+        return await original_local_model_binding(
+            coordinator,
+            principal_id=principal_id,
+            provider_id=provider_id,
+            model_id=model_id,
+            requested_model=requested_model,
+        )
+
+    monkeypatch.setattr(RunCoordinator, "_local_model_binding_locked", _local_model_binding_locked)
 
     async def _model_binding_error(
         coordinator: Any,

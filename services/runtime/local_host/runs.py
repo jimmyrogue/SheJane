@@ -444,6 +444,9 @@ class RunCoordinator:
         requested_model: str,
     ) -> AsyncIterator[tuple[dict[str, Any], RunAdmissionError | None]]:
         """Keep a local provider stable until its Run is durably admitted."""
+        if self.settings.fake_llm:
+            yield await self._model_binding(principal_id, requested_model)
+            return
         if not requested_model.startswith("local:"):
             yield await self._model_binding(principal_id, requested_model)
             return

@@ -62,7 +62,7 @@ function Harness({
         onSend={onSend}
         onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
-        mode="auto"
+        mode="local:test:model"
         onModeChange={vi.fn()}
         projectName={projectName}
         onSelectProject={onSelectProject}
@@ -144,7 +144,7 @@ describe('Composer (Lexical skill editor)', () => {
           onSend={vi.fn()}
           onStop={onStop}
           listSkills={vi.fn().mockResolvedValue([])}
-          mode="auto"
+          mode="local:test:model"
           onModeChange={vi.fn()}
         />
       </I18nProvider>,
@@ -171,7 +171,7 @@ describe('Composer (Lexical skill editor)', () => {
           onAppendInstruction={onAppendInstruction}
           onStop={onStop}
           listSkills={vi.fn().mockResolvedValue([])}
-          mode="auto"
+          mode="local:test:model"
           onModeChange={vi.fn()}
         />
       </I18nProvider>,
@@ -199,7 +199,7 @@ describe('Composer (Lexical skill editor)', () => {
           onAppendInstruction={vi.fn()}
           onStop={vi.fn()}
           listSkills={vi.fn().mockResolvedValue([])}
-          mode="auto"
+          mode="local:test:model"
           onModeChange={vi.fn()}
         />
       </I18nProvider>,
@@ -233,7 +233,7 @@ describe('Composer (Lexical skill editor)', () => {
           onDetachDocument={onDetachDocument}
           onSend={vi.fn()}
           listSkills={vi.fn().mockResolvedValue([])}
-          mode="auto"
+          mode="local:test:model"
           onModeChange={vi.fn()}
         />
       </I18nProvider>,
@@ -331,7 +331,7 @@ describe('Composer attachment chip expiry caption', () => {
           onDetachDocument={vi.fn()}
           onSend={vi.fn()}
           listSkills={vi.fn().mockResolvedValue([])}
-          mode="auto"
+          mode="local:test:model"
           onModeChange={vi.fn()}
         />
       </I18nProvider>,

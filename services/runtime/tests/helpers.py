@@ -14,5 +14,6 @@ def run_command(goal: str, **fields: Any) -> dict[str, Any]:
         "protocol_version": 1,
         "required_capabilities": ["agent.run", "agent.stream"],
         "goal": goal,
+        "model": "local:test:model",
         **fields,
     }

@@ -64,6 +64,7 @@ describe('LocalConversationStore', () => {
         clientMessageId: 'msg-restart',
         threadId: 'conv-restart',
         goal: 'continue after restart',
+        mode: 'local:test:model',
       },
     }
     const store = new LocalConversationStore('shejane-test-pending-command')
@@ -107,6 +108,7 @@ describe('LocalConversationStore', () => {
           clientMessageId: 'msg-delete',
           threadId: 'conv-delete',
           goal: 'must not reappear',
+          mode: 'local:test:model',
         },
       },
     )

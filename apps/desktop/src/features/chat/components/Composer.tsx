@@ -91,7 +91,6 @@ export function Composer({
   listMcpServers,
   mode,
   models = [],
-  autoModelAvailable = true,
   onModeChange,
   projectName,
   onSelectProject,
@@ -130,9 +129,8 @@ export function Composer({
    *  daemon is online. */
   listMcpServers?: () => Promise<McpServerInfo[]>
   mode: ChatMode
-  /** Catalog models for the picker (Auto is always offered on top). */
+  /** Concrete Runtime models for the picker. */
   models?: ModelOption[]
-  autoModelAvailable?: boolean
   onModeChange: (mode: ChatMode) => void
   /** Project (workspace) currently bound to this chat. When undefined,
    *  the toolbar shows an "add project" button that opens the directory
@@ -434,7 +432,6 @@ export function Composer({
         <ModeSelector
           mode={mode}
           models={models}
-          autoAvailable={autoModelAvailable}
           onChange={onModeChange}
           disabled={isSending || steeringMode}
         />

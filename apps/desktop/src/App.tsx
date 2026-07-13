@@ -57,7 +57,6 @@ import type { AgentRunEvent } from '@shejane/runtime-client'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
-import { isAutoMode } from './shared/modelMode'
 import {
   authorizeLocalWorkspace,
   answerLocalQuestionCommand,
@@ -149,8 +148,8 @@ interface LocalHarnessRunOptions {
 // `codeExec: 'off'` from v6 storage so legacy users don't end up
 // silently disabled.
 const agentSettingsStorageKey = 'shejane.agentSettings.v7'
-// v2: the stored value is now 'auto' OR a catalog model id (was the fast/pro
-// enum). The catalog fetch reconciles a stale id back to 'auto'.
+// Concrete Runtime model selection. Stale values are reconciled against the
+// Runtime catalog after connection.
 const chatModeStorageKey = 'shejane.chatMode.v2'
 const defaultAgentSettings: Required<AgentSettings> = {
   memory: 'on',
@@ -161,7 +160,7 @@ const defaultAgentSettings: Required<AgentSettings> = {
   // only ever populates the fields they explicitly change in the panel.
   advanced: {},
 }
-const defaultChatMode: ChatMode = 'auto'
+const defaultChatMode: ChatMode = ''
 const defaultSidebarWidth = 252
 const minSidebarWidth = 190
 const maxSidebarWidth = 340
@@ -296,9 +295,7 @@ function readChatMode(): ChatMode {
   }
   try {
     const raw = window.localStorage.getItem(chatModeStorageKey)?.trim()
-    // Any non-empty value (Auto sentinel or a model id) is accepted here; the
-    // catalog fetch reconciles an id that's no longer in the catalog back to
-    // 'auto'.
+    // The Runtime catalog reconciles selections that are no longer available.
     if (raw) {
       return raw
     }
@@ -350,8 +347,7 @@ function AppContent() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
-  // User-selected model mode (persisted in localStorage). Auto sentinels let
-  // the cloud resolver decide; concrete ids pin a specific catalog model.
+  // Concrete Runtime model selection persisted in localStorage.
   const [mode, setMode] = useState<ChatMode>(readChatMode)
   function changeMode(next: ChatMode): void {
     setMode(next)
@@ -370,7 +366,6 @@ function AppContent() {
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
   // Runtime model catalog feeding the composer picker.
   const [models, setModels] = useState<ModelOption[]>([])
-  const [autoModelAvailable, setAutoModelAvailable] = useState(true)
   const [modelCatalogVersion, setModelCatalogVersion] = useState(0)
   const [localHost, setLocalHost] = useState<LocalHostProbe | null>(null)
   const [localHostConfig, setLocalHostConfig] = useState<LocalHostConfig | null>(null)
@@ -456,10 +451,9 @@ function AppContent() {
             capability_tier: 'balanced',
           }))
         setModels(catalog)
-        setAutoModelAvailable(false)
         setMode((current) => {
           if (catalog.some((m) => m.id === current)) return current
-          const next: ChatMode = catalog[0]?.id ?? 'auto'
+          const next: ChatMode = catalog[0]?.id ?? ''
           writeChatMode(next)
           return next
         })
@@ -1006,9 +1000,7 @@ function AppContent() {
       if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
         throw new Error(t('app.notice.localHostDisconnected'))
       }
-      if (
-        !((autoModelAvailable && isAutoMode(mode)) || models.some((model) => model.id === mode))
-      ) {
+      if (!models.some((model) => model.id === mode)) {
         throw new Error(t('app.notice.localModelUnavailable'))
       }
       const conversation = await sendLocalHarnessMessage(content, renderContext)
@@ -2866,7 +2858,6 @@ function AppContent() {
               }
               mode={mode}
               models={models}
-              autoModelAvailable={autoModelAvailable}
               onModeChange={changeMode}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
@@ -3017,11 +3008,7 @@ function appendLocalRunEvent(
       message.creditsCost = credits
     }
   }
-  // model.selected: when an "auto" run is resolved to a concrete model the
-  // cloud emits this so the UI can badge "Auto → <label>". (Not emitted yet —
-  // auto currently resolves silently to the default model; the task-aware
-  // classifier + event land with Phase 4. Handler is wired so it lights up
-  // automatically when the event ships.)
+  // Optional concrete model label for the completed turn.
   if (event.event_type === 'model.selected') {
     const payload = event.payload ?? {}
     message.runMode = {

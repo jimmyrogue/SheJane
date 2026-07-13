@@ -31,6 +31,7 @@ import {
 const BASE_URL = process.env.VITE_TEST_LOCAL_HOST_URL
 const TOKEN = process.env.VITE_TEST_LOCAL_HOST_TOKEN ?? 'dev-local-token'
 const CONTRACT_SETTINGS = { memory: 'off', skills: 'off', mcp: 'off' } as const
+const CONTRACT_MODE = 'local:test:model'
 
 // Vitest 2.x — describe.skipIf(condition) drops the whole block.
 describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
@@ -57,6 +58,7 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
           commandId: 'cmd_contract_create',
           clientMessageId: 'msg_contract_create',
           goal: 'contract test run',
+          mode: CONTRACT_MODE,
           settings: CONTRACT_SETTINGS,
         },
         config,
@@ -82,6 +84,7 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
           commandId: 'cmd_contract_list',
           clientMessageId: 'msg_contract_list',
           goal: 'list-me',
+          mode: CONTRACT_MODE,
           settings: CONTRACT_SETTINGS,
         },
         config,
@@ -110,6 +113,7 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
           commandId: 'cmd_contract_stream',
           clientMessageId: 'msg_contract_stream',
           goal: 'contract stream',
+          mode: CONTRACT_MODE,
           settings: CONTRACT_SETTINGS,
         },
         config,
@@ -175,7 +179,7 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
     it('POST /runs with missing goal returns readable message', async () => {
       try {
         await createLocalRun(
-          { commandId: 'cmd_contract_empty', clientMessageId: 'msg_contract_empty', goal: '' },
+          { commandId: 'cmd_contract_empty', clientMessageId: 'msg_contract_empty', goal: '', mode: CONTRACT_MODE },
           config,
         )
         expect.fail('expected error from empty goal')

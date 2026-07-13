@@ -41,7 +41,7 @@ import {
   reconcileLocalToolCommand,
 } from './client'
 
-const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test' }
+const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test', mode: 'local:test:model' }
 
 describe('desktop local host client', () => {
   it('submits permission decisions through the immutable Runtime command endpoint', async () => {
@@ -333,6 +333,7 @@ describe('desktop local host client', () => {
           goal: 'Inspect workspace',
           workspace_path: '/tmp/project',
           history: [],
+          model: 'local:test:model',
         }),
       }),
     )
@@ -355,7 +356,7 @@ describe('desktop local host client', () => {
       )
 
     await createLocalRun(
-      { commandId: 'cmd_client_1', clientMessageId: 'msg_client_1', goal: 'Inspect workspace' },
+      { commandId: 'cmd_client_1', clientMessageId: 'msg_client_1', goal: 'Inspect workspace', mode: 'local:test:model' },
       { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
       fetcher,
     )
@@ -396,6 +397,7 @@ describe('desktop local host client', () => {
             clientMessageId: 'msg-restart',
             threadId: 'conv-restart',
             goal: 'continue after restart',
+            mode: 'local:test:model',
           },
         }],
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
@@ -758,6 +760,7 @@ describe('desktop local host client', () => {
               clientMessageId: 'msg-rejected',
               threadId: 'thread-rejected',
               goal: 'rejected',
+              mode: 'local:test:model',
             },
           },
           {
@@ -769,6 +772,7 @@ describe('desktop local host client', () => {
               clientMessageId: 'msg-other',
               threadId: 'thread-other',
               goal: 'other thread',
+              mode: 'local:test:model',
             },
           },
         ],
@@ -819,6 +823,7 @@ describe('desktop local host client', () => {
           goal: 'Remember things',
           history: [],
           settings: { memory: 'on' },
+          model: 'local:test:model',
         }),
       }),
     )
@@ -855,6 +860,7 @@ describe('desktop local host client', () => {
           goal: 'Use a skill',
           history: [],
           settings: { memory: 'off', skills: 'on' },
+          model: 'local:test:model',
         }),
       }),
     )
@@ -905,6 +911,7 @@ describe('desktop local host client', () => {
             source_message_id: 'msg-original',
             attempt: 1,
           },
+          model: 'local:test:model',
         }),
       }),
     )
@@ -1734,7 +1741,7 @@ describe('desktop local host client', () => {
         {
           goal: '稍后跑',
           runAt: '2026-06-13T10:00:00Z',
-          mode: 'auto',
+          mode: 'local:test:model',
           history: [{ role: 'user', content: '背景' }],
           settings: {
             memory: 'on',
@@ -1770,7 +1777,7 @@ describe('desktop local host client', () => {
         body: JSON.stringify({
           goal: '稍后跑',
           run_at: '2026-06-13T10:00:00Z',
-          model: 'auto',
+          model: 'local:test:model',
           history: [{ role: 'user', content: '背景' }],
           settings: {
             memory: 'on',

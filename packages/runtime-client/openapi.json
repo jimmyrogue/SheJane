@@ -260,10 +260,9 @@
             "title": "Metadata"
           },
           "model": {
-            "default": "auto",
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "^\\S+$",
+            "pattern": "^local:[^:]+:.+$",
             "title": "Model",
             "type": "string"
           },
@@ -399,7 +398,8 @@
           "client_message_id",
           "protocol_version",
           "required_capabilities",
-          "goal"
+          "goal",
+          "model"
         ],
         "title": "CreateRunRequest",
         "type": "object"
@@ -440,7 +440,9 @@
             "title": "Metadata"
           },
           "model": {
-            "default": "auto",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^local:[^:]+:.+$",
             "title": "Model",
             "type": "string"
           },
@@ -474,7 +476,8 @@
         },
         "required": [
           "goal",
-          "run_at"
+          "run_at",
+          "model"
         ],
         "title": "CreateScheduledRunRequest",
         "type": "object"

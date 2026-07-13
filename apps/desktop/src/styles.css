@@ -6482,7 +6482,7 @@ button.agent-progress-summary:focus-visible {
 }
 
 /* Mode selector trigger — same ghost feel as .composer-tool, but elastic:
- * catalog model labels are admin-defined and may be longer than "Auto".
+ * Runtime model labels are provider-defined and may be long.
  * Keep the pill one-line and truncate the label instead of letting hyphenated
  * model names wrap into two rows. */
 .composer-mode-trigger {
@@ -6766,10 +6766,7 @@ button.agent-progress-summary:focus-visible {
   white-space: nowrap;
 }
 
-/* Auto-resolved mode badge in the assistant message meta row.
- * Only rendered when the user picked Auto AND the daemon's classifier
- * resolved to a concrete model. The reason (when present) is shown
- * via a Radix Tooltip on hover — see MessageBubble.tsx. */
+/* Concrete model badge. Provider details can be shown in a tooltip. */
 .message-meta-mode {
   display: inline-flex;
   align-items: center;
