@@ -34,7 +34,7 @@ asar: true
 # native runner for each target before electron-builder runs).
 #
 extraResources:
-  - from: ../services/runtime/dist/shejane-runtime
+  - from: ../../services/runtime/dist/shejane-runtime
     to: runtime
 
 mac:

@@ -4,7 +4,7 @@
 #   make            → grouped help (this is the default goal)
 #   make ci         → run everything CI runs, locally
 #   make dev-electron / restart-daemon → run / hot-restart the dev stack
-#   make release VERSION=vX.Y.Z → cut a release (CI builds + pushes images)
+#   make release COMPONENT=runtime VERSION=X.Y.Z → push runtime-vX.Y.Z
 #   make deploy     → pull prebuilt images + (re)start the prod stack
 #
 # Targets are grouped with `##@ Section` headers and self-document via the
@@ -27,8 +27,8 @@
 	logs-api logs-local-host logs-client logs-llm-errors logs-dev
 
 # docker compose invocation for the production stack (pulls prebuilt
-# GHCR images — see infra/cloud/docker-compose.prod.yml). Override IMAGE_TAG to pin
-# a version: `make deploy IMAGE_TAG=v0.3.1`.
+# GHCR images — see infra/cloud/docker-compose.prod.yml). Pin Cloud and Admin
+# independently with CLOUD_IMAGE_VERSION and ADMIN_IMAGE_VERSION.
 COMPOSE_DEV ?= docker compose -f infra/cloud/docker-compose.yml
 COMPOSE_PROD ?= docker compose -f infra/cloud/docker-compose.prod.yml
 
@@ -130,6 +130,8 @@ lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-k
 	@cd services/cloud && test -z "$$(gofmt -l .)" && go vet ./...
 	@echo "→ no-platform-keys guard"
 	@./scripts/check-no-platform-keys-in-daemon.sh
+	@echo "→ independent release tags"
+	@node ./scripts/check-release-tags.mjs
 	@echo "✅ all lints pass"
 
 schemas: ## Regenerate openapi.json + generated.ts from the daemon's pydantic models
@@ -152,19 +154,19 @@ setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 	@echo "✅ Pre-commit hooks wired. Bypass once with: LEFTHOOK=0 git commit"
 
 ##@ Deploy & release (production)
-release: ## Cut a release: tag + push VERSION=vX.Y.Z (CI builds & pushes images to GHCR)
-	@if [ -z "$(VERSION)" ]; then echo "❌ Usage: make release VERSION=vX.Y.Z" >&2; exit 1; fi
-	@case "$(VERSION)" in v[0-9]*) ;; *) echo "❌ VERSION must look like vX.Y.Z (got '$(VERSION)')" >&2; exit 1 ;; esac
+release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
+	@case "$(COMPONENT)" in runtime|desktop|cloud|admin|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, cloud, admin, or runtime-client" >&2; exit 1 ;; esac
+	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "❌ VERSION must look like X.Y.Z" >&2; exit 1 ;; esac
 	@if [ -n "$$(git status --porcelain)" ]; then echo "❌ Working tree not clean — commit or stash first." >&2; exit 1; fi
 	@branch=$$(git rev-parse --abbrev-ref HEAD); if [ "$$branch" != "main" ]; then echo "❌ Releases must be cut from main (currently on '$$branch')." >&2; exit 1; fi
-	git tag -a "$(VERSION)" -m "Release $(VERSION)"
-	git push origin "$(VERSION)"
-	@echo "✅ Pushed tag $(VERSION). The Release workflow now builds + pushes images to GHCR."
+	git tag -a "$(COMPONENT)-v$(VERSION)" -m "$(COMPONENT) v$(VERSION)"
+	git push origin "$(COMPONENT)-v$(VERSION)"
+	@echo "✅ Pushed $(COMPONENT)-v$(VERSION). Only that module's release workflow will run."
 
-deploy: ## Pull prebuilt GHCR images + (re)start the prod stack (IMAGE_TAG=latest)
+deploy: ## Pull independently versioned Cloud/Admin images and restart
 	$(COMPOSE_PROD) pull
 	$(COMPOSE_PROD) up -d
-	@echo "✅ Deployed (IMAGE_TAG=$${IMAGE_TAG:-latest}). Logs: make deploy-logs"
+	@echo "✅ Deployed Cloud=$${CLOUD_IMAGE_VERSION:-latest} Admin=$${ADMIN_IMAGE_VERSION:-latest}."
 
 deploy-pull: ## Pull the latest prod images without restarting
 	$(COMPOSE_PROD) pull

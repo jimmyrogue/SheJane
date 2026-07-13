@@ -1,0 +1,84 @@
+name: Release Runtime
+
+on:
+  push:
+    tags: ["runtime-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+            archive: tar.gz
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+            archive: tar.gz
+          - runner: windows-latest
+            platform: windows
+            arch: x64
+            archive: zip
+          - runner: ubuntu-latest
+            platform: linux
+            arch: x64
+            archive: tar.gz
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Build Runtime
+        working-directory: services/runtime
+        run: |
+          uv sync
+          uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+      - name: Archive Runtime (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#runtime-v}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then version="dev-${GITHUB_SHA::7}"; fi
+          file="shejane-runtime-${version}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
+          tar -C services/runtime/dist -czf "$file" shejane-runtime
+          if command -v sha256sum >/dev/null; then sha256sum "$file" > "$file.sha256"; else shasum -a 256 "$file" > "$file.sha256"; fi
+      - name: Archive Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^runtime-v', '' } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          $file = "shejane-runtime-$version-${{ matrix.platform }}-${{ matrix.arch }}.zip"
+          Compress-Archive -Path services/runtime/dist/shejane-runtime/* -DestinationPath $file
+          $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
+          "$hash  $file" | Set-Content -NoNewline "$file.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            shejane-runtime-*.tar.gz
+            shejane-runtime-*.zip
+            shejane-runtime-*.sha256
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: runtime-*
+          path: release
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

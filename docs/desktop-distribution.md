@@ -5,7 +5,7 @@
 
 ## 为什么需要桌面版
 
-服务器上的 `client` 容器(`https://app.shejane.com`)是 **Web 版**,在浏览器里跑、**没有本地 daemon** → 只有云聊天,没有本地 Agent 工具(文件系统、本地执行、浏览器自动化)。本地 Agent 是产品核心,而它依赖 `services/runtime` 这个 FastAPI/uvicorn daemon 在用户机器上的环回端口运行。`release.yml` 只构建 3 个服务器镜像、**明确不含 daemon**。因此桌面分发是一条独立的工程线。
+Runtime 和 Desktop 是独立发布的产品模块。Desktop 通过 `runtime-version.json` 锁定并打包指定 Runtime，不依赖 Cloud 镜像发布。
 
 ## 目标架构(端到端)
 
@@ -81,7 +81,7 @@
 
 ### Phase 5 — 自动更新 + CI 发布
 - electron-updater;`app.isPackaged` 时 `checkForUpdatesAndNotify()` + `quitAndInstall()`。**全量替换**(daemon 随 app 版本原子更新,无独立后端更新通道);v1 不做差量。
-- 新建 `.github/workflows/release-desktop.yml`(**不**改 release.yml):矩阵 macos-14/macos-13/windows-latest;每个 runner:setup Python 3.12 + uv → `make build-daemon` → `build:desktop` → electron-builder(签名/公证 secrets)→ 发布到 GitHub Releases(`latest*.yml` + 安装包)。
+- `.github/workflows/release-desktop.yml` 只响应 `desktop-v*`，下载 `runtime-version.json` 锁定的 Runtime 产物后再调用 electron-builder。
 
 ## 安全模型
 

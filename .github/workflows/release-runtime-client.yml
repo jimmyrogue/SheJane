@@ -1,0 +1,41 @@
+name: Release Runtime Client
+
+on:
+  push:
+    tags: ["runtime-client-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @shejane/runtime-client test
+      - run: pnpm --filter @shejane/runtime-client build
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#runtime-client-v}"
+          actual="$(node -p "require('./packages/runtime-client/package.json').version")"
+          test "$actual" = "$expected"
+      - name: Publish npm package
+        if: github.ref_type == 'tag'
+        working-directory: packages/runtime-client
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --access public --provenance --no-git-checks

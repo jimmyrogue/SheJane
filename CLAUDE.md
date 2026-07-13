@@ -123,7 +123,7 @@ make smoke-real-llm          # real LLM provider
 make smoke-stripe-webhook    # Stripe webhook simulation
 
 # Deploy / release (production — GHCR images + infra/cloud/docker-compose.prod.yml)
-make release VERSION=v0.1.0  # tag + push → CI builds & pushes images to GHCR
+make release COMPONENT=runtime VERSION=0.1.0  # pushes runtime-v0.1.0
 make deploy                  # pull prebuilt images + (re)start prod stack
 make deploy-logs             # tail the prod stack
 
@@ -189,7 +189,7 @@ make logs-dev                # snapshot of all of the above
 |---|---|---|
 | Pre-commit | `lefthook.yml` | ruff/gofmt/go vet/no-platform-keys/no-env-files |
 | CI | `.github/workflows/ci.yml` | 4 parallel jobs: lint / test (unit + `-race` + build) / e2e (Playwright) / contract round-trip |
-| Release | `.github/workflows/release.yml` | on `v*` tag: buildx multi-arch (amd64+arm64) → push `api`/`client`/`admin` images to GHCR |
+| Release | `.github/workflows/release-*.yml` | independent `runtime-v*`, `desktop-v*`, `cloud-v*`, `admin-v*`, and `runtime-client-v*` releases |
 | Nightly | `.github/workflows/external-smoke.yml` | external service smoke (Stripe / Tavily / S3 / API at 18:00 UTC) |
 | Deps | `.github/dependabot.yml` | weekly grouped PRs for gomod/npm×3/pip/github-actions |
 | Skills (Claude Code) | `.claude/skills/` | `sync-schemas`, `daemon-restart` |
