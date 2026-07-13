@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${ROOT_DIR}/client/src/shared/local-host/openapi.json"
 
-cd "${ROOT_DIR}/local-host/python"
+cd "${ROOT_DIR}/services/runtime"
 
 # Inline Python — keeps the export logic versioned next to the call
 # site instead of in a separate module that adds an entry point to

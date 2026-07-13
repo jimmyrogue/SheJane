@@ -38,7 +38,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Freeze the local-agent daemon (Windows, PyInstaller onedir)
-        working-directory: local-host/python
+        working-directory: services/runtime
         run: |
           uv sync
           uv run pyinstaller shejane-local-host.spec --noconfirm --clean

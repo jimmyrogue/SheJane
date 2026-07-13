@@ -6,7 +6,7 @@ import type { components } from './generated'
 // -- Auto-generated types ----------------------------------------------------
 //
 // The daemon owns these shapes via pydantic models in
-// `local-host/python/local_host/api_schemas.py`. `make schemas`
+// `services/runtime/local_host/api_schemas.py`. `make schemas`
 // regenerates `openapi.json` + `generated.d.ts`. Don't hand-edit the
 // re-exports — change the pydantic model, regenerate, commit both.
 //

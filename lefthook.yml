@@ -25,13 +25,13 @@ pre-commit:
     # `root:` makes lefthook (a) cd to that subdir before running and
     # (b) strip the prefix from {staged_files} so ruff sees the local
     # path. Without this, `{staged_files}` returns repo-root paths
-    # which become broken after `cd local-host/python`.
+    # which become broken after `cd services/runtime`.
     ruff-check:
-      root: local-host/python
+      root: services/runtime
       glob: "*.py"
       run: uv run ruff check {staged_files}
     ruff-format:
-      root: local-host/python
+      root: services/runtime
       glob: "*.py"
       run: uv run ruff format --check {staged_files}
 
@@ -64,7 +64,7 @@ pre-commit:
       # Run unconditionally on every commit touching daemon code —
       # cheap (sub-50ms grep) and the failure mode is catastrophic
       # (the entire image.* / web.search architecture broken).
-      glob: "local-host/python/**/*.py"
+      glob: "services/runtime/**/*.py"
       run: ./scripts/check-no-platform-keys-in-daemon.sh
 
     # --- Forbidden files ---

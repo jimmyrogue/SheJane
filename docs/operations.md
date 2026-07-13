@@ -215,7 +215,7 @@ SheJane 的目标不是让云端代替本地执行所有工具。运维上按两
 
 - **Cloud Control Plane**：继续部署在现有 API/admin/postgres/S3/Stripe/LLM provider 链路里，保存账号、账务、provider 配置、文档临时对象、LLM metadata、run 摘要和审计。
 - **Phase 2.2 云端兼容 run**：已提供 `POST /api/v1/agent/runs`、`GET /api/v1/agent/runs/{id}`、`GET /api/v1/agent/runs/{id}/events`、`GET /api/v1/agent/runs/{id}/stream`、`POST /api/v1/agent/runs/{id}/cancel`。Web 先使用这套协议；Local Harness 后续复用事件模型。
-- **本地 Python daemon / harness**：`local-host/python` 提供 `GET /local/v1/health`、`GET /local/v1/runtime`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、工作区、Run、定时任务、审批、问题和产物接口。除 health 外都需要 pairing token；本机 Token 只映射为稳定的 `local:owner` 资源所有者，不作为模型密钥。`GET /local/v1/runtime` 返回当前协议版本、Runtime 版本、能力列表和模型供应商是否已配置。创建 Run 必须提供稳定的 `command_id`、`client_message_id`、`protocol_version` 和 `required_capabilities`；不兼容请求会在写入前被拒绝。引用的工作区与父任务必须属于当前身份。有效运行设置在接纳时冻结；数据库只保存模型凭据引用，不保存真实密钥。当前 agent loop 由 Python/FastAPI + LangGraph/deepagents 运行，事件、checkpoint 和本机 schedule 存在本地 SQLite。
+- **本地 Python daemon / harness**：`services/runtime` 提供 `GET /local/v1/health`、`GET /local/v1/runtime`、`GET /local/v1/tools`、`GET/POST/DELETE /local/v1/session`、工作区、Run、定时任务、审批、问题和产物接口。除 health 外都需要 pairing token；本机 Token 只映射为稳定的 `local:owner` 资源所有者，不作为模型密钥。`GET /local/v1/runtime` 返回当前协议版本、Runtime 版本、能力列表和模型供应商是否已配置。创建 Run 必须提供稳定的 `command_id`、`client_message_id`、`protocol_version` 和 `required_capabilities`；不兼容请求会在写入前被拒绝。引用的工作区与父任务必须属于当前身份。有效运行设置在接纳时冻结；数据库只保存模型凭据引用，不保存真实密钥。当前 agent loop 由 Python/FastAPI + LangGraph/deepagents 运行，事件、checkpoint 和本机 schedule 存在本地 SQLite。
 - **监听边界**：`SHEJANE_LOCAL_HOST_ADDR` 只接受 `localhost`、`127.0.0.0/8` 或 `::1`。`0.0.0.0`、`::`、局域网地址、域名和公网地址会在配置加载时被拒绝。需要远程访问时应由同机的受信私网代理或未来独立网关代理 loopback 服务，不能直接暴露当前 pairing Token 接口。
 - **Local Agent Harness**：运行在用户本机。用户可以直连自己配置的模型供应商，也可以主动选择 SheJane 中转；直连失败不会自动切换到中转。本地文件、shell、IDE、MCP 结果默认留在本机。只有本次任务实际选择的模型和工具会产生对应的外部请求。
 - **当前 Agent 中间件**：实际装配顺序和用户可见事件以 [`docs/run-loop.md`](run-loop.md) 为准；目标保留、替换和删除决定见 [`docs/harness-stage-improvement-notes.md`](harness-stage-improvement-notes.md) 的 P8-P11。
@@ -254,7 +254,7 @@ Runtime 还会根据所选模型的能力资料，在供应商边界执行硬限
 本地开发 Local Harness：
 
 ```bash
-cd local-host/python
+cd services/runtime
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 uv run shejane-local-host
 ```
@@ -287,7 +287,7 @@ You are a focused reviewer. Return concrete findings with file and line evidence
 连接云端模型网关：
 
 ```bash
-cd local-host/python
+cd services/runtime
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
 SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
 SHEJANE_CLOUD_TOKEN=用户 access token \

@@ -20,7 +20,7 @@ The diagram below describes the **current implementation**, including cloud depe
            ▼                                              ▼
 ┌─────────────────────────────────┐         ┌──────────────────────┐
 │ Local-host daemon               │ ──────▶ │ Go Cloud             │
-│ local-host/python/local_host/   │         │ Postgres +           │
+│ services/runtime/local_host/   │         │ Postgres +           │
 │ FastAPI + uvicorn               │         │ S3 (documents) +     │
 │ LangGraph 1.2 + deepagents      │         │ Stripe (billing)     │
 │ AsyncSqliteSaver (checkpoints)  │         │                      │
@@ -48,9 +48,9 @@ Never use `run-loop.md` to invent target phase numbers, and never describe unimp
 
 These are not arbitrary style rules — each one corresponds to a class of bug that has actually shipped and burned hours in this repo.
 
-1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS) MUST live in the Go API only.** The daemon proxies through `POST /api/v1/agent/tools/execute` for anything that bills credits. Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (lefthook + CI). See `local-host/python/local_host/tools/_gateway.py` for the proxy pattern; new platform-paid tools should call `call_tool_gateway()`, not `os.environ.get(...)`.
+1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS) MUST live in the Go API only.** The daemon proxies through `POST /api/v1/agent/tools/execute` for anything that bills credits. Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (lefthook + CI). See `services/runtime/local_host/tools/_gateway.py` for the proxy pattern; new platform-paid tools should call `call_tool_gateway()`, not `os.environ.get(...)`.
 
-2. **The daemon's pydantic models in `local-host/python/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `client/src/shared/local-host/generated.d.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.d.ts`. CI's lint job fails the PR if they drift.
+2. **The daemon's pydantic models in `services/runtime/local_host/api_schemas.py` are the single source of truth for the HTTP shape.** FastAPI emits `openapi.json` from them; `openapi-typescript` regenerates `client/src/shared/local-host/generated.d.ts`; `client.ts` re-exports the generated types as aliases. Anytime you edit a model OR a handler's `response_model=` annotation, run `make schemas` and commit both `openapi.json` and `generated.d.ts`. CI's lint job fails the PR if they drift.
 
 3. **The SSE wire envelope is non-negotiable.** Every event in `/local/v1/runs/:id/stream` ships as `data: {"event_type": ..., "payload": {...}, "id": ..., "run_id": ..., "created_at": ...}`; durable events also carry a monotonic `seq`, while temporary model output deliberately has no replay cursor. The separator is **LF** double-newline (not CRLF), and the terminator is `data: [DONE]` (not `event: stream.end`). Event names are `llm.delta` / `tool.completed` / `permission.required` etc. — NOT the old `llm.token` / `tool.end` names. Full spec in `docs/client-sse-protocol.md`.
 
@@ -105,7 +105,7 @@ make test-contract      # client ↔ daemon contract over real HTTP (:17399)
 make ci                 # run EVERYTHING CI runs, locally (pre-push gate)
 
 # A single Python test
-cd local-host/python && uv run python -m pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
+cd services/runtime && uv run python -m pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
 
 # A single client test
 pnpm --filter shejane-client test --run -t "permission.resolved clears card"
@@ -145,7 +145,7 @@ make logs-dev                # snapshot of all of the above
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
 | Model catalog / provider routing | `services/cloud/internal/modelreg/`, `services/cloud/internal/llm/router.go`, `services/cloud/internal/app/model_resolver.go`, `services/cloud/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
-| Daemon code | `local-host/python/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
+| Daemon code | `services/runtime/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
 | Cloud code | `services/cloud/internal/` — `app/` wiring, `httpapi/` routes, `store/`, `billing/`, `llm/`, `modelreg/`, `documents/`, `e2b/` and `secrets/` |
 | Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
@@ -154,13 +154,13 @@ make logs-dev                # snapshot of all of the above
 
 ## Conventions
 
-### Python (local-host/python/)
+### Python (services/runtime/)
 
 - `uv` manages deps. Never edit `uv.lock` by hand — run `uv add <pkg>` or `uv remove <pkg>`.
 - Lint: ruff (configured in `pyproject.toml`). Format: ruff format. `make lint` enforces.
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
-- New tool: add `@tool("name.action")` in `local-host/python/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
+- New tool: add `@tool("name.action")` in `services/runtime/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
 - Gateway-billed tools today (proxy through `_gateway.py`, keys in the optional Go Cloud only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), and `code.execute` (E2B, brokered by `services/cloud/internal/e2b`). Everything else runs locally in the daemon.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 

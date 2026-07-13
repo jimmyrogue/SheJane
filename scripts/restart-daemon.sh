@@ -65,7 +65,7 @@ fi
 # 3. Respawn under env -i + allowlist (parity with dev-electron.sh).
 echo "→ Starting Local Agent Harness at ${LOCAL_HOST_URL}"
 (
-  cd "${ROOT_DIR}/local-host/python"
+  cd "${ROOT_DIR}/services/runtime"
   env_cmd=(
     env -i
     "PATH=$PATH"

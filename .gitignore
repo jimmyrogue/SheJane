@@ -96,7 +96,7 @@ __pycache__/
 # (e.g. web.fetch returning a large HTML body), LangGraph writes it
 # to disk under this dir keyed by tool_call_id. Pure local cache,
 # safe to delete, regenerated on demand.
-local-host/python/large_tool_results/
+services/runtime/large_tool_results/
 
 # Local databases and generated data
 *.db
@@ -116,4 +116,4 @@ shejane-*.sql.gz
 shejane-backups/
 
 # PyInstaller intermediate build dir for the frozen daemon (dist/ already ignored)
-local-host/python/build/
+services/runtime/build/

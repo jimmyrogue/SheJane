@@ -87,7 +87,7 @@ build: ## Build all four stacks (go binary + client + admin + daemon deps)
 	cd services/cloud && go build ./cmd/api
 	pnpm --filter shejane-client build
 	pnpm --filter shejane-admin build
-	cd local-host/python && uv sync
+	cd services/runtime && uv sync
 
 api-test: ## Go unit tests
 	cd services/cloud && go test ./...
@@ -99,7 +99,7 @@ admin-test: ## Admin vitest (run once)
 	pnpm --filter shejane-admin test --run
 
 local-host-test: ## Daemon pytest
-	cd local-host/python && uv run python -m pytest
+	cd services/runtime && uv run python -m pytest
 
 client-build: ## Build only the client
 	pnpm --filter shejane-client build
@@ -108,16 +108,16 @@ admin-build: ## Build only the admin
 	pnpm --filter shejane-admin build
 
 local-host-build: ## Sync only the daemon deps
-	cd local-host/python && uv sync
+	cd services/runtime && uv sync
 
-build-daemon: ## Freeze the local-agent daemon into a standalone bundle for the desktop app (PyInstaller onedir → local-host/python/dist/local-host/)
-	cd local-host/python && uv run pyinstaller shejane-local-host.spec --noconfirm --clean
-	@echo "✅ Daemon frozen → local-host/python/dist/local-host/ (run it on THIS OS/arch only)"
+build-daemon: ## Freeze the local-agent daemon into a standalone bundle for the desktop app (PyInstaller onedir → services/runtime/dist/local-host/)
+	cd services/runtime && uv run pyinstaller shejane-local-host.spec --noconfirm --clean
+	@echo "✅ Daemon frozen → services/runtime/dist/local-host/ (run it on THIS OS/arch only)"
 
 ##@ Lint & schemas
 lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-keys)
 	@echo "→ ruff (Python)"
-	@cd local-host/python && uv run ruff check . && uv run ruff format --check .
+	@cd services/runtime && uv run ruff check . && uv run ruff format --check .
 	@echo "→ gofmt + go vet (Go)"
 	@cd services/cloud && test -z "$$(gofmt -l .)" && go vet ./...
 	@echo "→ no-platform-keys guard"
@@ -197,7 +197,7 @@ smoke-real-llm: ## Real LLM provider smoke (needs MOCK_LLM=false + a real key)
 	./scripts/smoke-real-llm.sh
 
 eval: ## Run the agent eval suite vs a RUNNING daemon (needs MOCK_LLM=false + SHEJANE_EVAL_TOKEN)
-	cd local-host/python && uv run python -m local_host.eval
+	cd services/runtime && uv run python -m local_host.eval
 
 smoke-stripe-webhook: ## Synthesize a Stripe webhook + verify one-time top-up credit grant
 	./scripts/smoke-stripe-webhook.sh

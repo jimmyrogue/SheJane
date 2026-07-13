@@ -47,7 +47,7 @@ fi
 
 echo "→ Starting contract daemon at ${URL}"
 (
-  cd "${ROOT_DIR}/local-host/python"
+  cd "${ROOT_DIR}/services/runtime"
   # env -i + minimal allowlist — the contract suite hits local HTTP
   # endpoints only; no cloud, no platform-paid keys (Invariant #1).
   # SHEJANE_FAKE_LLM lets the SSE contract test drive a real run/stream with

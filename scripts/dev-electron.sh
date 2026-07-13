@@ -181,7 +181,7 @@ start_local_host() {
   local log_file="${LOG_DIR}/local-host.log"
   echo "Starting Local Agent Harness (Python / LangGraph) at ${LOCAL_HOST_URL}"
   (
-    cd "${ROOT_DIR}/local-host/python"
+    cd "${ROOT_DIR}/services/runtime"
     # We keep the env -i sandbox + selective forwarding for parity with
     # the old Node daemon, but the entry point is now `uv run python -m
     # local_host` (Phase 5'+).

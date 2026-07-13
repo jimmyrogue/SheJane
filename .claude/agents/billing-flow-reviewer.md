@@ -83,7 +83,7 @@ Report findings as a triage table:
 | Severity | Path | Risk | Concrete check |
 |---|---|---|---|
 | ❌ money leak | api/internal/httpapi/image_gateway.go:233 | Image generation reserves N credits but on `defer cleanup` path settles instead of releases when result is nil | Re-read `runBilledImage` and walk all exit paths |
-| ⚠️ idempotency | local-host/python/local_host/tools/_gateway.py:74 | When `tool_call_id` is empty (subagent dispatch), idempotency_key=run_id which retries the WHOLE run, not just the tool | Recommend a `uuid.uuid4().hex` fallback |
+| ⚠️ idempotency | services/runtime/local_host/tools/_gateway.py:74 | When `tool_call_id` is empty (subagent dispatch), idempotency_key=run_id which retries the WHOLE run, not just the tool | Recommend a `uuid.uuid4().hex` fallback |
 
 Then narrate the top issues with file:line citations and an explicit assertion of "is this safe to ship?".
 

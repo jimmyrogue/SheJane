@@ -5,7 +5,7 @@
 
 ## 为什么需要桌面版
 
-服务器上的 `client` 容器(`https://app.shejane.com`)是 **Web 版**,在浏览器里跑、**没有本地 daemon** → 只有云聊天,没有本地 Agent 工具(文件系统、本地执行、浏览器自动化)。本地 Agent 是产品核心,而它依赖 `local-host/python` 这个 FastAPI/uvicorn daemon 在用户机器上的环回端口运行。`release.yml` 只构建 3 个服务器镜像、**明确不含 daemon**。因此桌面分发是一条独立的工程线。
+服务器上的 `client` 容器(`https://app.shejane.com`)是 **Web 版**,在浏览器里跑、**没有本地 daemon** → 只有云聊天,没有本地 Agent 工具(文件系统、本地执行、浏览器自动化)。本地 Agent 是产品核心,而它依赖 `services/runtime` 这个 FastAPI/uvicorn daemon 在用户机器上的环回端口运行。`release.yml` 只构建 3 个服务器镜像、**明确不含 daemon**。因此桌面分发是一条独立的工程线。
 
 ## 目标架构(端到端)
 
@@ -66,7 +66,7 @@
 - 先出 unsigned/ad-hoc 产物验证构建,再接 Developer ID 签名(壳很小,先在小包上验证签名身份)。
 
 ### Phase 2 — 冻结 daemon + 主进程拉起(核心里程碑)
-- `local-host/python/shejane-local-host.spec`:onedir(**不能 onefile** —— 破坏 uvicorn 信号处理 + 每次启动重解压),collect/hidden-import 见「关键现实 3、4」。
+- `services/runtime/shejane-local-host.spec`:onedir(**不能 onefile** —— 破坏 uvicorn 信号处理 + 每次启动重解压),collect/hidden-import 见「关键现实 3、4」。
 - 新 `make build-daemon`(`uv run pyinstaller`)。electron-builder `extraResources` 把 onedir 放到 `process.resourcesPath/local-host`。
 - main.cjs 实现完整生命周期(见「目标架构」)。
 - 冒烟:安装 → 登录 → 跑一次 SSE run(`POST /local/v1/runs` → stream)+ 一个网关计费工具(web.search),验证 daemon→cloud 代理 + JWT-via-`/local/v1/session`。

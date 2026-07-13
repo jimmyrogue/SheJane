@@ -1,6 +1,6 @@
 ---
 name: sync-schemas
-description: Regenerate the daemon→client OpenAPI schema pipeline after editing pydantic models. Runs make schemas, surfaces the resulting diff in openapi.json + generated.d.ts, flags broken downstream usages. Auto-invoke after edits to local-host/python/local_host/api_schemas.py or any handler signature that adds/changes response_model.
+description: Regenerate the daemon→client OpenAPI schema pipeline after editing pydantic models. Runs make schemas, surfaces the resulting diff in openapi.json + generated.d.ts, flags broken downstream usages. Auto-invoke after edits to services/runtime/local_host/api_schemas.py or any handler signature that adds/changes response_model.
 user-invocable: false
 ---
 
@@ -12,8 +12,8 @@ The daemon's pydantic models are the single source of truth. `make schemas` rege
 
 You just edited one of:
 
-- `local-host/python/local_host/api_schemas.py` (add field, rename, change type, new model)
-- `local-host/python/local_host/server.py` where you added `response_model=...` or changed a handler's typed request body
+- `services/runtime/local_host/api_schemas.py` (add field, rename, change type, new model)
+- `services/runtime/local_host/server.py` where you added `response_model=...` or changed a handler's typed request body
 - Anything that affects what FastAPI's `app.openapi()` produces
 
 If you only edited business logic without touching schemas or signatures, **don't** invoke this — `make schemas` is idempotent but takes a few seconds and the diff is noise.
@@ -47,6 +47,6 @@ Tell the user:
 
 ## Don't
 
-- Don't regenerate if `local-host/python/.venv` isn't synced — pydantic version mismatch produces bad `additionalProperties: True` outputs. Run `cd local-host/python && uv sync` first if `Settings()` import fails.
+- Don't regenerate if `services/runtime/.venv` isn't synced — pydantic version mismatch produces bad `additionalProperties: True` outputs. Run `cd services/runtime && uv sync` first if `Settings()` import fails.
 - Don't manually edit `generated.d.ts` or `openapi.json`. They're build artifacts.
 - Don't skip the tsc check — schema changes that look benign at the JSON level (e.g. tightening a union) frequently break TS consumers.

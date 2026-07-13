@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # PostToolUse hook — runs after Claude edits / writes a Python file
-# inside local-host/python. Formats + lints so Claude sees its own
+# inside services/runtime. Formats + lints so Claude sees its own
 # code's lint status BEFORE proposing the next change, instead of
 # finding out at commit time via lefthook.
 #
 # Hook contract: Claude Code pipes a JSON payload on stdin describing
 # the tool call. We pull the modified file path and gate on:
 #   • .py extension
-#   • inside local-host/python/
+#   • inside services/runtime/
 #   • not auto-generated (skip __pycache__, .venv, generated.d.ts-ish)
 #
 # Non-zero exit blocks Claude with the message. We use exit 2 to
@@ -39,7 +39,7 @@ print(val)
 # Resolve to repo root + filter by location.
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 case "$file" in
-  *"$ROOT_DIR/local-host/python/"*|"local-host/python/"*) ;;
+  *"$ROOT_DIR/services/runtime/"*|"services/runtime/"*) ;;
   *) exit 0 ;;  # not daemon code
 esac
 case "$file" in
@@ -48,9 +48,9 @@ esac
 
 # Run ruff format + check ON THIS FILE ONLY (not the whole repo —
 # that's what `make lint` is for at commit time).
-cd "$ROOT_DIR/local-host/python"
-relpath="${file#"$ROOT_DIR/local-host/python/"}"
-relpath="${relpath#local-host/python/}"
+cd "$ROOT_DIR/services/runtime"
+relpath="${file#"$ROOT_DIR/services/runtime/"}"
+relpath="${relpath#services/runtime/}"
 [[ -f "$relpath" ]] || exit 0  # file was deleted, nothing to check
 
 # Format silently (writes if dirty — that's intentional, Claude

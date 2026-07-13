@@ -37,19 +37,19 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: local-host/python/uv.lock
+          cache-dependency-glob: services/runtime/uv.lock
 
       - name: Install Python deps
         run: uv sync
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: ruff check
         run: uv run ruff check .
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: ruff format --check
         run: uv run ruff format --check .
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: gofmt
         run: |
@@ -135,14 +135,14 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: local-host/python/uv.lock
+          cache-dependency-glob: services/runtime/uv.lock
 
       - name: Install workspace dependencies
         run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Install local-host (Python) dependencies
         run: uv sync
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: Unit suites + race + build
         run: make client-test admin-test local-host-test test-race build
@@ -214,14 +214,14 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: local-host/python/uv.lock
+          cache-dependency-glob: services/runtime/uv.lock
 
       - name: Install workspace dependencies
         run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Install daemon deps
         run: uv sync
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: Start daemon
         run: |
@@ -235,7 +235,7 @@ jobs:
           nohup uv run python -m local_host \
             > /tmp/contract/daemon.log 2>&1 &
           echo $! > /tmp/contract/daemon.pid
-        working-directory: local-host/python
+        working-directory: services/runtime
 
       - name: Wait for daemon /health
         run: |

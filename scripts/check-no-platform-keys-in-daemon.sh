@@ -30,7 +30,7 @@
 set -uo pipefail
 
 FORBIDDEN=(OPENAI_API_KEY TAVILY_API_KEY ANTHROPIC_API_KEY STRIPE_SECRET_KEY AWS_SECRET_ACCESS_KEY)
-DAEMON_DIR="local-host/python/local_host"
+DAEMON_DIR="services/runtime/local_host"
 
 # Only flag lines that look like ACTUAL READS of the env var, not
 # docstrings/comments mentioning the name. Real-read patterns:

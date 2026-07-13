@@ -146,9 +146,9 @@ done
 
 # ---------------------------------------------------------------------------
 section "📁  Dependencies"
-for path in client apps/admin local-host/python; do
+for path in client apps/admin services/runtime; do
   case "$path" in
-    local-host/python)
+    services/runtime)
       [[ -d "$path/.venv" ]] && row "✅" "$path" "uv venv ready" \
         || row "❌" "$path" "→ cd $path && uv sync"
       ;;

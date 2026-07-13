@@ -34,7 +34,7 @@ asar: true
 # native runner for each target before electron-builder runs).
 #
 extraResources:
-  - from: ../local-host/python/dist/local-host
+  - from: ../services/runtime/dist/local-host
     to: local-host
 
 mac:

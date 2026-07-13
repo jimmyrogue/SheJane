@@ -21,7 +21,7 @@ Do not invent a second P1-P12 numbering scheme. `run-loop.md` describes current 
 SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
 
 - `services/cloud/` — optional Go Cloud: auth, wallet/credit ledger, model catalog + LLM routing, Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
-- `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
+- `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron/React user app; local-first chat history.
 - `apps/admin/` — standalone React/Vite admin app (shadcn/ui).
 - `services/cloud/migrations/` — sequential, idempotent PostgreSQL migrations.

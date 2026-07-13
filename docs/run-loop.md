@@ -2,7 +2,7 @@
 
 创建 Run 前，daemon 现在会先检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。`local:<供应商编号>:<模型编号>` 会直连 Runtime 本地供应商，当前支持 OpenAI 兼容接口；旧模型编号仍走 Go 中转。两条路径都是显式选择，不会在失败时互相回退。快照还会记录接纳时是否真实绑定云工具；没有云会话的任务不会看到 `web.search`、图片、云端 PDF 和云端代码执行。作业开始或恢复时会重新核对工作区、设置快照、供应商版本、凭据引用和当前云会话，然后才进入下面的模型循环。
 
-> **范围**：`local-host/python/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
+> **范围**：`services/runtime/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
 > **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) · [client-sse-protocol.md](client-sse-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。目标阶段以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准，待优化项以 [harness-stage-improvement-notes.md](harness-stage-improvement-notes.md) 为准。
 > **边界**：飞书连接器、消息同步、待办提取和“今日待办”不再属于当前实现，也不在本运行链路中。
@@ -403,16 +403,16 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 
 | 概念 | 文件 |
 |---|---|
-| 入口 + 路由 | [`local_host/server.py`](../local-host/python/local_host/server.py) |
-| RunCoordinator + driver loop | [`local_host/runs.py`](../local-host/python/local_host/runs.py) |
-| build_agent + middleware 装配 | [`local_host/agent/builder.py`](../local-host/python/local_host/agent/builder.py) |
-| Subagent 定义 | [`local_host/agent/subagents.py`](../local-host/python/local_host/agent/subagents.py) |
-| 6 个自写 middleware | [`local_host/middleware/`](../local-host/python/local_host/middleware/) |
-| BackendChatModel | [`local_host/llm/backend.py`](../local-host/python/local_host/llm/backend.py) |
-| LangGraph → 客户端事件翻译 | [`local_host/event_translator.py`](../local-host/python/local_host/event_translator.py) |
-| structlog + DaemonObserver | [`local_host/observability.py`](../local-host/python/local_host/observability.py) |
-| 工具注册 | [`local_host/tools/registry.py`](../local-host/python/local_host/tools/registry.py) |
-| 持久化 store | [`local_host/store/sqlite.py`](../local-host/python/local_host/store/sqlite.py) |
+| 入口 + 路由 | [`local_host/server.py`](../services/runtime/local_host/server.py) |
+| RunCoordinator + driver loop | [`local_host/runs.py`](../services/runtime/local_host/runs.py) |
+| build_agent + middleware 装配 | [`local_host/agent/builder.py`](../services/runtime/local_host/agent/builder.py) |
+| Subagent 定义 | [`local_host/agent/subagents.py`](../services/runtime/local_host/agent/subagents.py) |
+| 6 个自写 middleware | [`local_host/middleware/`](../services/runtime/local_host/middleware/) |
+| BackendChatModel | [`local_host/llm/backend.py`](../services/runtime/local_host/llm/backend.py) |
+| LangGraph → 客户端事件翻译 | [`local_host/event_translator.py`](../services/runtime/local_host/event_translator.py) |
+| structlog + DaemonObserver | [`local_host/observability.py`](../services/runtime/local_host/observability.py) |
+| 工具注册 | [`local_host/tools/registry.py`](../services/runtime/local_host/tools/registry.py) |
+| 持久化 store | [`local_host/store/sqlite.py`](../services/runtime/local_host/store/sqlite.py) |
 
 ---
 

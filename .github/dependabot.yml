@@ -54,7 +54,7 @@ updates:
 
   # --- Python (local-host daemon, managed by uv but pip-compatible) ---
   - package-ecosystem: pip
-    directory: /local-host/python
+    directory: /services/runtime
     schedule: { interval: weekly, day: monday }
     open-pull-requests-limit: 5
     groups:

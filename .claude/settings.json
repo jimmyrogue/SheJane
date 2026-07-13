@@ -4,7 +4,7 @@
   "hooks": {
     "PostToolUse": [
       {
-        "//": "Auto-run ruff format + ruff check on Python files Claude just edited inside local-host/python. Gives Claude immediate lint feedback so it doesn't propose a follow-up change against unformatted code, then watch lefthook reject the commit later. Skip path filtering itself lives in the script.",
+        "//": "Auto-run ruff format + ruff check on Python files Claude just edited inside services/runtime. Gives Claude immediate lint feedback so it doesn't propose a follow-up change against unformatted code, then watch lefthook reject the commit later. Skip path filtering itself lives in the script.",
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {

@@ -47,7 +47,7 @@ require_command uv
 
 echo "Starting Local Agent Harness (Python / LangGraph) smoke host on ${BASE_URL}"
 (
-  cd local-host/python
+  cd services/runtime
   env -i \
     "PATH=$PATH" \
     "HOME=$HOME" \

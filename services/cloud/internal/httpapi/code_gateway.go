@@ -55,7 +55,7 @@ func base64Decode(s string) ([]byte, error) {
 }
 
 // codeExecToolName is the LLM-facing tool name. The daemon's
-// @tool("code.execute") in local-host/python/local_host/tools/code.py
+// @tool("code.execute") in services/runtime/local_host/tools/code.py
 // uses the matching string so the agentToolExecute dispatcher routes
 // correctly.
 const codeExecToolName = "code.execute"

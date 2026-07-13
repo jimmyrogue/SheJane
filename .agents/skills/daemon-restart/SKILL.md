@@ -11,7 +11,7 @@ description: Hard-restart the local-host Python daemon. Kills whatever's on port
 
 - "I edited Python but the behavior didn't change after I restarted dev-electron"
 - `make dev-electron` reports "Local Host already running at http://127.0.0.1:17371" but you suspect that running process is stale
-- `make doctor` shows the daemon's `started` time is older than your last edit to `local-host/python/`
+- `make doctor` shows the daemon's `started` time is older than your last edit to `services/runtime/`
 - The Electron app keeps falling back to cloud chat (canUseLocalHarness=false) even though pairing was working earlier
 - LangSmith trace shows your latest code path was NOT executed (e.g. you added a new event_translator branch but it's not firing)
 
@@ -35,7 +35,7 @@ lsof -i :17371 2>/dev/null  # confirm port is free
 #    in a subshell so the loaded .env vars don't pollute the caller.
 (
   set -a; source .env; set +a
-  cd local-host/python
+  cd services/runtime
   SHEJANE_LOCAL_HOST_TOKEN="${SHEJANE_LOCAL_HOST_TOKEN:-dev-local-token}" \
   SHEJANE_LOCAL_HOST_PORT=17371 \
   SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
@@ -51,7 +51,7 @@ until curl -fsS http://127.0.0.1:17371/local/v1/health >/dev/null 2>&1; do sleep
 # 4. Confirm new code by checking process start time vs latest edit.
 NEW_PID=$(lsof -ti :17371 | head -1)
 echo "Daemon $NEW_PID started: $(ps -p $NEW_PID -o lstart=)"
-ls -la --time=mtime local-host/python/local_host/server.py | awk '{print "server.py last modified:", $6, $7, $8}'
+ls -la --time=mtime services/runtime/local_host/server.py | awk '{print "server.py last modified:", $6, $7, $8}'
 ```
 
 ## Report back
