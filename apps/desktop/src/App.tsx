@@ -49,7 +49,7 @@ import { PendingQuestionBar } from './features/chat/components/PendingQuestionBa
 import { ConnectionsView } from './features/connections/ConnectionsView'
 import { MCPView } from './features/mcp/MCPView'
 import { SettingsView } from './features/settings/SettingsView'
-import { advancedSettingsFromRuntime, advancedSettingsToRuntime } from './features/settings/runtimeSettings'
+import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './features/settings/runtimeSettings'
 import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
@@ -330,6 +330,7 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
+  const [runtimeSettingsConfig, setRuntimeSettingsConfig] = useState<LocalHostConfig | null>(null)
   const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'connections' | 'settings'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
@@ -403,16 +404,18 @@ function AppContent() {
   }
 
   function changeAgentSettings(next: Required<AgentSettings>) {
+    const runtimePatch = advancedSettingsPatchToRuntime(agentSettings.advanced, next.advanced)
+    const runtimeSettingsReady = runtimeSettingsConfig === localHostConfig && Boolean(localHost?.online)
     setAgentSettings(next)
     writeAgentSettings(next)
-    if (!localHostConfig) return
+    if (!localHostConfig || !runtimeSettingsReady || Object.keys(runtimePatch).length === 0) return
 
     const config = localHostConfig
     runtimeSettingsWriteRef.current = runtimeSettingsWriteRef.current
       .catch(() => undefined)
       .then(async () => {
         await updateRuntimeSettings(
-          advancedSettingsToRuntime(next.advanced),
+          runtimePatch,
           config,
         )
       })
@@ -458,7 +461,8 @@ function AppContent() {
   // Runtime owns advanced defaults. Desktop only projects them into the form;
   // localStorage is intentionally not a competing source of truth.
   useEffect(() => {
-    if (!localHostConfig || !hasLocalHostAuthorization(localHostConfig)) return
+    setRuntimeSettingsConfig(null)
+    if (!localHost?.online || !localHostConfig || !hasLocalHostAuthorization(localHostConfig)) return
     let cancelled = false
     void getRuntimeSettings(localHostConfig)
       .then((settings) => {
@@ -467,13 +471,16 @@ function AppContent() {
             ...current,
             advanced: advancedSettingsFromRuntime(settings),
           }))
+          setRuntimeSettingsConfig(localHostConfig)
         }
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : String(error))
+      })
     return () => {
       cancelled = true
     }
-  }, [localHostConfig])
+  }, [localHost?.online, localHostConfig])
 
   useEffect(() => {
     writeSidebarWidth(sidebarWidth)
@@ -1001,7 +1008,8 @@ function AppContent() {
       if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
         throw new Error(t('app.notice.localHostDisconnected'))
       }
-      if (!models.some((model) => model.id === mode)) {
+      const selectedMode = parseRuntimeModelSpec(mode)
+      if (!selectedMode || !models.some((model) => model.id === selectedMode)) {
         throw new Error(t('app.notice.localModelUnavailable'))
       }
       const conversation = await sendLocalHarnessMessage(content, renderContext)
@@ -1308,6 +1316,10 @@ function AppContent() {
     if (!localHostConfig) {
       setLocalHostConfig(runLocalHostConfig)
     }
+    const selectedMode = parseRuntimeModelSpec(mode)
+    if (!selectedMode || !models.some((model) => model.id === selectedMode)) {
+      throw new Error(t('app.notice.localModelUnavailable'))
+    }
     const {
       text: parsedText,
       skills: draftSkills,
@@ -1414,7 +1426,7 @@ function AppContent() {
       parentRunId,
       settings: effectiveSettings,
       metadata: runOptions?.metadata,
-      mode,
+      mode: selectedMode,
     }
     const pendingCommand: PendingRunStartCommand = {
       type: 'run.start',
@@ -2674,6 +2686,7 @@ function AppContent() {
             <SettingsView
               isDesktop={isDesktop}
               agentSettings={agentSettings}
+              advancedSettingsReady={runtimeSettingsConfig === localHostConfig && Boolean(localHost?.online)}
               localHostConfig={localHostConfig}
               onModelProvidersChange={() => setModelCatalogVersion((version) => version + 1)}
               onAgentSettingsChange={(next) => {

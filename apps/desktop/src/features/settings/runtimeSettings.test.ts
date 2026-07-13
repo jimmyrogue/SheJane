@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { advancedSettingsFromRuntime, advancedSettingsToRuntime } from './runtimeSettings'
+import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './runtimeSettings'
 
 describe('Runtime settings projection', () => {
   it('projects persisted Runtime values into the Desktop form', () => {
@@ -29,15 +29,13 @@ describe('Runtime settings projection', () => {
     })
   })
 
-  it('turns cleared form fields into explicit Runtime defaults', () => {
-    expect(advancedSettingsToRuntime({})).toEqual({
+  it('updates only changed fields and restores cleared fields to Runtime defaults', () => {
+    expect(advancedSettingsPatchToRuntime(
+      { maxModelCalls: 9, planFirst: 'always', subagents: true },
+      { planFirst: 'auto', subagents: true },
+    )).toEqual({
       max_model_calls: 20,
-      max_tool_retries: 2,
-      research_search_limit: 3,
-      subagents: true,
-      browser_headless: true,
-      input_guard: 'observe',
-      plan_first: 'off',
+      plan_first: 'auto',
     })
   })
 })

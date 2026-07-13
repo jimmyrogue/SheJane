@@ -21,7 +21,6 @@ export interface AgentStreamResult {
   requestId: string
   inputTokens: number
   outputTokens: number
-  creditsCost: number
   completed: boolean
 }
 
@@ -50,7 +49,6 @@ export async function streamAgentSSE(
   let requestId = response.headers.get('X-Request-ID') ?? ''
   let inputTokens = 0
   let outputTokens = 0
-  let creditsCost = 0
 
   while (!done) {
     if (signal?.aborted) throw new Error('Stream transport aborted')
@@ -79,12 +77,11 @@ export async function streamAgentSSE(
         requestId = stringPayload(parsedEvent.event, 'request_id') || requestId
         inputTokens = numberPayload(parsedEvent.event, 'input_tokens')
         outputTokens = numberPayload(parsedEvent.event, 'output_tokens')
-        creditsCost = numberPayload(parsedEvent.event, 'credits_cost')
       }
     }
   }
 
-  return { requestId, inputTokens, outputTokens, creditsCost, completed }
+  return { requestId, inputTokens, outputTokens, completed }
 }
 
 function parseAgentSSEChunk(chunk: string): AgentSSEEvent {

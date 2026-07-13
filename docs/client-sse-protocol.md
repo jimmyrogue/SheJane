@@ -53,7 +53,7 @@ interface AgentRunEvent {
 | `run.started` | run 进入 `running` 状态 | `goal` |
 | `run.resumed` | resume_run 后第一个 frame | `payload`（resume 时传入的 dict） |
 | `run.waiting` | 卡在 HITL interrupt（**通常伴随 `permission.required` 或 `question.asked`**，UI 优先听后者） | `next`, `interrupts`, `handoff` |
-| `run.completed` | 终态 completed | `final_text`, `input_tokens`, `output_tokens`, `credits_cost`, `model_calls`, `unmetered_calls`, `outcome_unknown_calls` |
+| `run.completed` | 终态 completed | `final_text`, `input_tokens`, `output_tokens`, `model_calls`, `unmetered_calls`, `outcome_unknown_calls` |
 | `run.failed` | 终态 failed | `error`, `type`, `category?`, `recoverable?`, `retryable?`, `action_kind?`, `suggested_action?` |
 | `run.cleanup_required` | 清理尚未确认，执行代次已隔离 | `error`, `type`, `category`, `retryable=false`, `cleanup` |
 | `run.canceled` | 终态 canceled | _(空)_ |
@@ -73,7 +73,7 @@ run 失败/取消等状态变化才会触发 `missing` 或 `stale`。
 | `llm.delta` | 每个 streamed token（assistant content） | `content: string` |
 | `llm.reasoning` | DeepSeek-style thinking-mode chunk | `content: string` |
 | `llm.tool_call_chunk` | 工具调用 args 的部分 JSON 流 | `id, name, args_delta, index` |
-| `llm.usage` | 供应商返回的临时用量，只用于实时显示 | `input_tokens`, `output_tokens`, `credits_cost` |
+| `llm.usage` | 供应商返回的临时用量，只用于实时显示 | `input_tokens`, `output_tokens` |
 | `llm.error` | 流中报错（非致命） | `message` |
 
 以上四类 `llm.*` 增量和 `subagent.spawned` 都是临时事件，断线或慢客户端背压时可以丢失。`llm.usage` 不是结算事实来源；`run.completed` 中的用量由
@@ -161,7 +161,6 @@ while (true) {
           text: payload.final_text,
           inputTokens: payload.input_tokens,
           outputTokens: payload.output_tokens,
-          creditsCost: payload.credits_cost,
         })
         break
     }

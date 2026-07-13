@@ -41,7 +41,7 @@ import {
   reconcileLocalToolCommand,
 } from './client'
 
-const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test', mode: 'local:test:model' }
+const TEST_COMMAND = { commandId: 'cmd_client_test', clientMessageId: 'msg_client_test', mode: 'local:test:model' } as const
 
 describe('desktop local host client', () => {
   it('submits permission decisions through the immutable Runtime command endpoint', async () => {

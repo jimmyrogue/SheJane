@@ -7,7 +7,7 @@ import type { ChatMode } from '@/shared/local-data/types'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
-  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI', capability_tier: 'max', input_price_per_million_cny: 12, output_price_per_million_cny: 48 },
+  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI', capability_tier: 'max' },
   { id: 'local:ollama:qwen3', label: 'Qwen 3', vendor: 'Ollama', capability_tier: 'reasoning' },
 ]
 
@@ -54,9 +54,4 @@ describe('ModeSelector (Runtime catalog)', () => {
     expect(onChange).toHaveBeenCalledWith('local:ollama:qwen3')
   })
 
-  it('shows catalog price information', async () => {
-    renderSelector('local:openai:gpt-4o')
-    openMenu()
-    expect(await screen.findByLabelText('GPT-4o 模型价格: 输入 ¥12，输出 ¥48，缓存命中 ¥12，缓存写入 ¥12')).toBeInTheDocument()
-  })
 })

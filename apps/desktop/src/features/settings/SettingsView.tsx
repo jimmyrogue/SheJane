@@ -218,6 +218,7 @@ function RuntimeConnectionSettings() {
 export function SettingsView({
   isDesktop = true,
   agentSettings,
+  advancedSettingsReady = true,
   onAgentSettingsChange,
   onClearMemory,
   onImportLocalData,
@@ -227,6 +228,7 @@ export function SettingsView({
 }: {
   isDesktop?: boolean
   agentSettings: Required<AgentSettings>
+  advancedSettingsReady?: boolean
   onAgentSettingsChange: (next: Required<AgentSettings>) => void
   onClearMemory?: () => Promise<number>
   onImportLocalData: (file?: File) => void
@@ -436,6 +438,7 @@ export function SettingsView({
                           min={min}
                           max={max}
                           className="settings-number-input"
+                          disabled={!advancedSettingsReady}
                           aria-label={t(`sidebar.agentSettings.advanced.${key}.label`)}
                           placeholder={ph}
                           value={(adv[key] as number | undefined) ?? ''}
@@ -451,6 +454,7 @@ export function SettingsView({
                   <SettingsSection id="quality" title={t('sidebar.agentSettings.advanced.group.quality')}>
                     <SettingRow label={t('sidebar.agentSettings.advanced.planFirst.label')} hint={t('sidebar.agentSettings.advanced.planFirst.hint')}>
                       <Select
+                        disabled={!advancedSettingsReady}
                         value={adv.planFirst ?? '__default__'}
                         onValueChange={(value) =>
                           setAdv({ planFirst: value === '__default__' ? undefined : (value as 'off' | 'auto' | 'always') })
@@ -472,6 +476,7 @@ export function SettingsView({
                   <SettingsSection id="capability" title={t('sidebar.agentSettings.advanced.group.capability')}>
                     <SettingRow label={t('sidebar.agentSettings.advanced.subagents.label')} hint={t('sidebar.agentSettings.advanced.subagents.hint')}>
                       <Switch
+                        disabled={!advancedSettingsReady}
                         checked={adv.subagents ?? true}
                         aria-label={t('sidebar.agentSettings.advanced.subagents.label')}
                         onCheckedChange={(checked) => setAdv({ subagents: checked })}
@@ -479,6 +484,7 @@ export function SettingsView({
                     </SettingRow>
                     <SettingRow label={t('sidebar.agentSettings.advanced.browserHeadless.label')} hint={t('sidebar.agentSettings.advanced.browserHeadless.hint')}>
                       <Switch
+                        disabled={!advancedSettingsReady}
                         checked={adv.browserHeadless ?? true}
                         aria-label={t('sidebar.agentSettings.advanced.browserHeadless.label')}
                         onCheckedChange={(checked) => setAdv({ browserHeadless: checked })}
@@ -486,6 +492,7 @@ export function SettingsView({
                     </SettingRow>
                     <SettingRow label={t('sidebar.agentSettings.advanced.inputGuard.label')} hint={t('sidebar.agentSettings.advanced.inputGuard.hint')}>
                       <Select
+                        disabled={!advancedSettingsReady}
                         value={adv.inputGuard ?? '__default__'}
                         onValueChange={(value) =>
                           setAdv({ inputGuard: value === '__default__' ? undefined : (value as 'off' | 'observe' | 'block') })

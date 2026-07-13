@@ -300,7 +300,7 @@ export interface CreateLocalRunInput {
   parentRunId?: string
   settings?: AgentSettings
   metadata?: LocalRunMetadata
-  mode: string
+  mode: RuntimeModelSpec
 }
 
 interface PendingRuntimeCommandBase {
@@ -926,7 +926,7 @@ export async function createLocalSchedule(
     goal: string
     runAt: string
     workspacePath?: string
-    mode: string
+    mode: RuntimeModelSpec
     history?: Array<{ role: string; content: string }>
     settings?: AgentSettings
     metadata?: LocalRunMetadata

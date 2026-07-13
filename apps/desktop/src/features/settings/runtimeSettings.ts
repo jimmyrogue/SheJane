@@ -27,17 +27,32 @@ export function advancedSettingsFromRuntime(settings: RuntimeSettings): Advanced
   }
 }
 
-/** Convert the form to an explicit Runtime update; clearing a field restores its Runtime default. */
-export function advancedSettingsToRuntime(
-  settings: AdvancedAgentSettings,
+/** Build a partial Runtime update; untouched fields remain owned by Runtime. */
+export function advancedSettingsPatchToRuntime(
+  previous: AdvancedAgentSettings,
+  next: AdvancedAgentSettings,
 ): UpdateRuntimeSettingsRequest {
-  return {
-    max_model_calls: settings.maxModelCalls ?? runtimeDefaults.maxModelCalls,
-    max_tool_retries: settings.maxToolRetries ?? runtimeDefaults.maxToolRetries,
-    research_search_limit: settings.researchSearchLimit ?? runtimeDefaults.researchSearchLimit,
-    subagents: settings.subagents ?? runtimeDefaults.subagents,
-    browser_headless: settings.browserHeadless ?? runtimeDefaults.browserHeadless,
-    input_guard: settings.inputGuard ?? runtimeDefaults.inputGuard,
-    plan_first: settings.planFirst ?? runtimeDefaults.planFirst,
+  const patch: UpdateRuntimeSettingsRequest = {}
+  if (previous.maxModelCalls !== next.maxModelCalls) {
+    patch.max_model_calls = next.maxModelCalls ?? runtimeDefaults.maxModelCalls
   }
+  if (previous.maxToolRetries !== next.maxToolRetries) {
+    patch.max_tool_retries = next.maxToolRetries ?? runtimeDefaults.maxToolRetries
+  }
+  if (previous.researchSearchLimit !== next.researchSearchLimit) {
+    patch.research_search_limit = next.researchSearchLimit ?? runtimeDefaults.researchSearchLimit
+  }
+  if (previous.subagents !== next.subagents) {
+    patch.subagents = next.subagents ?? runtimeDefaults.subagents
+  }
+  if (previous.browserHeadless !== next.browserHeadless) {
+    patch.browser_headless = next.browserHeadless ?? runtimeDefaults.browserHeadless
+  }
+  if (previous.inputGuard !== next.inputGuard) {
+    patch.input_guard = next.inputGuard ?? runtimeDefaults.inputGuard
+  }
+  if (previous.planFirst !== next.planFirst) {
+    patch.plan_first = next.planFirst ?? runtimeDefaults.planFirst
+  }
+  return patch
 }
