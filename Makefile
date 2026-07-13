@@ -41,7 +41,7 @@ help: ## Show this help
 ##@ Dev & restart
 dev: ## Print the manual 3-terminal dev recipe (prefer `make dev-electron`)
 	@echo "Run API, client, and admin in three terminals:"
-	@echo "  cd api && HTTP_ADDR=:8080 go run ./cmd/api"
+	@echo "  cd services/cloud && HTTP_ADDR=:8080 go run ./cmd/api"
 	@echo "  pnpm --filter shejane-client dev"
 	@echo "  pnpm --filter shejane-admin dev"
 
@@ -70,7 +70,7 @@ docker-down: ## Stop the dev Docker stack
 test: api-test client-test admin-test local-host-test ## Fast unit suites (Go + client + admin + daemon)
 
 test-race: ## Go tests with the race detector (guards the credit ledger's concurrency)
-	cd api && go test -race ./...
+	cd services/cloud && go test -race ./...
 
 test-e2e: ## Playwright simulated E2E (boots isolated client/admin vite + route mocks)
 	pnpm --filter shejane-e2e test
@@ -84,13 +84,13 @@ ci: lint test test-race build test-e2e test-contract ## Run EVERYTHING CI runs, 
 test-ci: ci ## Alias of `ci` (kept for back-compat)
 
 build: ## Build all four stacks (go binary + client + admin + daemon deps)
-	cd api && go build ./cmd/api
+	cd services/cloud && go build ./cmd/api
 	pnpm --filter shejane-client build
 	pnpm --filter shejane-admin build
 	cd local-host/python && uv sync
 
 api-test: ## Go unit tests
-	cd api && go test ./...
+	cd services/cloud && go test ./...
 
 client-test: ## Client vitest (run once)
 	pnpm --filter shejane-client test --run
@@ -119,7 +119,7 @@ lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-k
 	@echo "→ ruff (Python)"
 	@cd local-host/python && uv run ruff check . && uv run ruff format --check .
 	@echo "→ gofmt + go vet (Go)"
-	@cd api && test -z "$$(gofmt -l .)" && go vet ./...
+	@cd services/cloud && test -z "$$(gofmt -l .)" && go vet ./...
 	@echo "→ no-platform-keys guard"
 	@./scripts/check-no-platform-keys-in-daemon.sh
 	@echo "✅ all lints pass"
@@ -184,7 +184,7 @@ deploy-restore: ## DANGER: overwrite prod Postgres from BACKUP=<file.sql.gz>
 	@echo "✅ Restored from $$BACKUP"
 
 migrate: ## Apply pending SQL migrations against DATABASE_URL and record schema_migrations
-	cd api && go run ./cmd/migrate -dir ./migrations
+	cd services/cloud && go run ./cmd/migrate -dir ./migrations
 
 ##@ Smoke (opt-in; some hit real services)
 smoke-local-host: ## Standalone daemon HTTP smoke (health / auth / a deterministic run)

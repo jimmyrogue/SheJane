@@ -118,7 +118,7 @@ export interface WalletBalance {
   status: string
 }
 
-/** One credit-ledger row, mirroring api/internal/billing.Transaction JSON.
+/** One credit-ledger row, mirroring services/cloud/internal/billing.Transaction JSON.
  *  Hand-written (Go-API type, not generated from the daemon openapi). */
 export interface WalletTransaction {
   id: string

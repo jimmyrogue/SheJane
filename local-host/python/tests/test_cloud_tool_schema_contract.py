@@ -12,16 +12,16 @@ import json
 from pathlib import Path
 
 from local_host.tools.code import CODE_TOOLS_for_workspace
-from local_host.tools.registry import _serialize_args_schema, describe_tools_sync
+from local_host.tools.registry import _serialize_args_schema, core_tools, tool_definition
 
 SCHEMA_ARTIFACT = (
-    Path(__file__).resolve().parents[3] / "api/internal/httpapi/cloud_tool_schemas.json"
+    Path(__file__).resolve().parents[3] / "services/cloud/internal/httpapi/cloud_tool_schemas.json"
 )
 
 
 def test_cloud_gateway_tool_schemas_match_shared_artifact() -> None:
     artifact = json.loads(SCHEMA_ARTIFACT.read_text())
-    tools = {tool["name"]: tool for tool in describe_tools_sync()}
+    tools = {tool.name: tool_definition(tool) for tool in core_tools(include_cloud_tools=True)}
     code_tool = CODE_TOOLS_for_workspace("/tmp/shejane-contract")[0]
     tools[code_tool.name] = {
         "name": code_tool.name,

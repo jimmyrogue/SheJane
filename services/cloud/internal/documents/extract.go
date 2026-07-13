@@ -33,7 +33,7 @@ const (
 // pdftotextPath / pdfinfoPath are exposed as package vars so tests
 // can swap them to "" and exercise the Go-native fallback path
 // without depending on Poppler being installed in CI. Production
-// containers ship with poppler-utils (see api/Dockerfile).
+// containers ship with poppler-utils (see services/cloud/Dockerfile).
 var (
 	pdftotextPath = "pdftotext"
 	pdfinfoPath   = "pdfinfo"

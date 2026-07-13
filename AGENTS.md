@@ -20,11 +20,11 @@ Do not invent a second P1-P12 numbering scheme. `run-loop.md` describes current 
 
 SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
 
-- `api/` — Go API: auth, wallet/credit ledger, model catalog + LLM routing, the cloud Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
+- `services/cloud/` — optional Go Cloud: auth, wallet/credit ledger, model catalog + LLM routing, Tool Gateway, Stripe billing webhooks, documents (S3), admin APIs.
 - `local-host/python/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron/React user app; local-first chat history.
 - `apps/admin/` — standalone React/Vite admin app (shadcn/ui).
-- `api/migrations/` — sequential, idempotent PostgreSQL migrations.
+- `services/cloud/migrations/` — sequential, idempotent PostgreSQL migrations.
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
 
@@ -43,7 +43,7 @@ git diff --check
 Useful focused checks:
 
 ```bash
-cd api && go test ./internal/httpapi
+cd services/cloud && go test ./internal/httpapi
 pnpm --filter shejane-client test --run
 pnpm --filter shejane-admin test --run
 ```
@@ -78,8 +78,8 @@ make smoke-stripe-webhook
 
 ## Backend Rules
 
-- Keep store behavior behind `api/internal/store.Store`; update both `memory.go` and `postgres.go` when changing store capabilities.
-- Reuse the wallet ledger in `api/internal/billing/wallet.go`; do not mutate balances ad hoc.
+- Keep store behavior behind `services/cloud/internal/store.Store`; update both `memory.go` and `postgres.go` when changing store capabilities.
+- Reuse the wallet ledger in `services/cloud/internal/billing/wallet.go`; do not mutate balances ad hoc.
 - Wallet operations must write ledger/audit records where appropriate:
   - usage reservation/settlement/release writes `wallet_transactions`.
   - admin extra-credit adjustment writes `wallet_transactions(type=admin_adjust)` and `audit_logs(action=admin.extra_credit_adjust)`.
@@ -101,7 +101,7 @@ make smoke-stripe-webhook
 - Do not reintroduce fast/deep UX or daemon-side model classifiers. `chat.fast` and `chat.deep` are seed IDs, not fixed product tiers.
 - Image models are not exposed in the chat picker. Current image configuration is fixed to `image.default`.
 - Text model billing prefers CNY per-1M-token supplier prices for input/output/cache fields. Legacy input/output token multipliers and `credit_multiplier` remain fallback only. Global markup remains the product margin knob.
-- Keep model catalog behavior behind `api/internal/modelreg.Registry` and store changes behind `api/internal/store.Store`; memory and Postgres implementations must stay in lockstep.
+- Keep model catalog behavior behind `services/cloud/internal/modelreg.Registry` and store changes behind `services/cloud/internal/store.Store`; memory and Postgres implementations must stay in lockstep.
 
 ## Stripe Billing Notes
 

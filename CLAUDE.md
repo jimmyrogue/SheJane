@@ -19,7 +19,7 @@ The diagram below describes the **current implementation**, including cloud depe
            │ /local/v1/* (loopback only, bearer token)    │ HTTPS
            ▼                                              ▼
 ┌─────────────────────────────────┐         ┌──────────────────────┐
-│ Local-host daemon               │ ──────▶ │ Go API (api/)        │
+│ Local-host daemon               │ ──────▶ │ Go Cloud             │
 │ local-host/python/local_host/   │         │ Postgres +           │
 │ FastAPI + uvicorn               │         │ S3 (documents) +     │
 │ LangGraph 1.2 + deepagents      │         │ Stripe (billing)     │
@@ -144,9 +144,9 @@ make logs-dev                # snapshot of all of the above
 | Wire format for client ↔ daemon SSE — event names + envelope keys + endpoint table | `docs/client-sse-protocol.md` |
 | Production deployment / migrations | `docs/operations.md` |
 | Current priorities | `docs/roadmap.md` |
-| Model catalog / provider routing | `api/internal/modelreg/`, `api/internal/llm/router.go`, `api/internal/app/model_resolver.go`, `api/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
+| Model catalog / provider routing | `services/cloud/internal/modelreg/`, `services/cloud/internal/llm/router.go`, `services/cloud/internal/app/model_resolver.go`, `services/cloud/internal/httpapi/admin_modelconfig.go`, `apps/admin/src/App.tsx`, `client/src/features/chat/components/ModeSelector.tsx` |
 | Daemon code | `local-host/python/local_host/` — `server.py` 提供本地接口，`runs.py` 负责作业租约、执行、清理和结算，`agent/builder.py` 装配可复用 Agent 定义，`agent/subagents.py` 定义 Deep Agents 子 Agent，`middleware/` 负责输入观察、出站策略、工具可见性、人工确认、工具回执和唯一完成路由，`tools/` 保存工具实现，`store/sqlite.py` 保存 Runtime 状态与作业记录 |
-| API code | `api/internal/` — `app/` wiring, `httpapi/` routes (incl. `tool_gateway.go` / `image_gateway.go` / `pdf_gateway.go` / `code_gateway.go`), `store/` (the `Store` interface + `memory.go`/`postgres.go` impls), `billing/` ledger, `llm/` provider gateway, `modelreg/` model registry, `documents/` S3 service, `e2b/` code-exec sandbox client, `secrets/` encryption |
+| Cloud code | `services/cloud/internal/` — `app/` wiring, `httpapi/` routes, `store/`, `billing/`, `llm/`, `modelreg/`, `documents/`, `e2b/` and `secrets/` |
 | Client code | `client/src/` — `App.tsx` is the chat shell, `features/` holds `chat` (timeline + composer) plus `auth` / `mcp` / `skills`, `shared/local-host/client.ts` is the daemon RPC layer, `shared/api/sse.ts` parses SSE |
 | Client visual system | `docs/ui/shejane-design-system.md` — June 2026 SheJane redesign tokens, brand mark, app-shell rules, and attachment/artifact glyph language |
 | Admin panel | `apps/admin/` — separate Vite app; model configs, credit rate, audit logs |
@@ -161,14 +161,14 @@ make logs-dev                # snapshot of all of the above
 - `from __future__ import annotations` everywhere; PEP 604 syntax (`str | None`, not `Optional[str]`).
 - Tests use pytest + httpx.MockTransport for daemon HTTP and `local_host.config.reset_settings_for_tests(**overrides)` to swap settings.
 - New tool: add `@tool("name.action")` in `local-host/python/local_host/tools/`, append to the registry in `tools/registry.py`. If the tool bills credits, route through `tools/_gateway.py:call_tool_gateway` — don't import the provider SDK directly.
-- Gateway-billed tools today (proxy through `_gateway.py`, keys in the Go API only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), `code.execute` (E2B microVM, brokered by `api/internal/e2b`). Everything else runs locally in the daemon: `web.fetch` (SSRF-guarded), deepagents filesystem/shell tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `execute`), `workspace.open`, `memory.*`, `office.*` read/write, and MCP tools. `browser.task` is optional future browser automation: unless both `browser-use` and a browser-specific LLM binding are configured, it is not exposed to `/local/v1/tools` or the agent toolset. `code.execute` is gated by the client's "Code Execution" toggle (`include_code_exec` in `build_tools`); the diagram's tool lists are illustrative, this bullet is the source of truth.
+- Gateway-billed tools today (proxy through `_gateway.py`, keys in the optional Go Cloud only): `web.search` (Tavily), `image.*`, `pdf.inspect` (Poppler), and `code.execute` (E2B, brokered by `services/cloud/internal/e2b`). Everything else runs locally in the daemon.
 - New endpoint: add a pydantic model in `api_schemas.py`, declare `response_model=Model` on the handler, run `make schemas`, commit the regenerated files.
 
-### Go (api/)
+### Go (services/cloud/)
 
 - `go vet ./...` + `gofmt -l` enforced via lefthook + CI.
-- The credit ledger (`api/internal/billing/`) reserves credits BEFORE the external call and settles or releases AFTER. The pattern is `Reserve → external operation → Settle | Release`. Every code path that calls `Reserve` must have a guaranteed Settle/Release on every exit, including error paths. The `billing-flow-reviewer` subagent audits this on every billing-related change. Wallet balances move ONLY through this ledger (`billing/wallet.go`, writing `wallet_transactions`) — never mutate a balance ad hoc.
-- `api/internal/store` is an interface (`store.go`) with two implementations that MUST stay in lockstep: `memory.go` (tests/dev) and `postgres.go` (prod), plus their `*_modelconfig.go` siblings for the model registry. Add a method to the interface → implement it in both, or the Postgres path silently diverges from a green in-memory test suite. This is the contract-drift bug class from the intro, living inside one stack.
+- The credit ledger (`services/cloud/internal/billing/`) reserves credits before external calls and settles or releases on every exit. Wallet balances move only through this ledger.
+- `services/cloud/internal/store` has memory and Postgres implementations that must stay in lockstep.
 - Stripe webhook handling must stay idempotent: dedupe on `stripe_events`, set `processed_at` only after local processing succeeds, and key credit grants with `wallet_transactions.idempotency_key = stripe:<event_id>`. See AGENTS.md for the full lifecycle + admin-audit rules.
 
 ### TypeScript (client/, apps/admin/)

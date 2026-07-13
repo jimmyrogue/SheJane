@@ -12,7 +12,7 @@ version: 2
 updates:
   # --- Go (API backend) ---
   - package-ecosystem: gomod
-    directory: /api
+    directory: /services/cloud
     schedule:
       interval: weekly
       day: monday

@@ -34,8 +34,8 @@ jobs:
         include:
           # api: no Vite build arg.
           - service: api
-            context: ./api
-            dockerfile: api/Dockerfile
+            context: ./services/cloud
+            dockerfile: services/cloud/Dockerfile
             build-args: ""
           # client/admin are static SPAs: building with an EMPTY
           # VITE_API_BASE_URL makes them issue RELATIVE, same-origin

@@ -19,7 +19,7 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
         └────────────────────── HTTPS (auth / billing / documents) ────────────────────────┘
 ```
 
-- `api/` — Go API: auth, credit ledger, LLM routing, cloud Tool Gateway, Stripe billing, documents (S3), admin APIs.
+- `services/cloud/` — optional Go Cloud: auth, credit ledger, LLM routing, Tool Gateway, Stripe billing, documents (S3), admin APIs.
 - `local-host/python/` — Python daemon (LangGraph + deepagents): runs the agent loop, tools, and middleware over loopback HTTP.
 - `client/` — Electron + React + Vite + Tailwind user app (local-first chat history).
 - `apps/admin/` — standalone React/Vite admin panel (shadcn/ui).
@@ -54,7 +54,7 @@ If anything looks wrong, `make doctor` is the first stop.
 1. **Platform-paid provider keys (OpenAI, Tavily, Anthropic, Stripe, AWS, E2B) live in the Go API only** — never in the Python daemon. Billed tools proxy through the cloud Tool Gateway (`local-host/python/local_host/tools/_gateway.py`). Enforced by `scripts/check-no-platform-keys-in-daemon.sh` (pre-commit + CI).
 2. **The daemon's pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` + `client/src/shared/local-host/generated.d.ts`.
 3. **The SSE wire envelope is fixed.** See `docs/client-sse-protocol.md` before touching streaming.
-4. **The credit ledger reserves before the external call and settles/releases after**, on every exit path including errors (`api/internal/billing/`).
+4. **The credit ledger reserves before the external call and settles/releases after**, on every exit path including errors (`services/cloud/internal/billing/`).
 
 ## Workflow
 

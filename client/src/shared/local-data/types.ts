@@ -196,7 +196,7 @@ export interface ConversationWorkspace {
  * spurious reload (we just bump the refresh key).
  */
 /** Sparse, all-optional view of the server-side pdfinfo parse
- *  (api/internal/documents/extract.go::parsePDFInfo). Lives here
+ *  (services/cloud/internal/documents/extract.go::parsePDFInfo). Lives here
  *  (the dependency-free leaf module) rather than in api/client.ts
  *  so OpenDocument can reference it without a circular import;
  *  client.ts re-exports it for API-response typing. Encrypted /

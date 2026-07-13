@@ -12,7 +12,7 @@
 // directly.
 //
 // All endpoints are bearer-authenticated with the API key configured
-// via E2B_API_KEY (loaded into Config in api/internal/config). Per
+// via E2B_API_KEY (loaded into Config in services/cloud/internal/config). Per
 // CLAUDE.md Invariant #1, the key MUST live in this layer only — the
 // Python daemon never sees it. The daemon talks to E2B exclusively
 // through /api/v1/agent/tools/execute.

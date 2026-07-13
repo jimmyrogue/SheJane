@@ -1057,7 +1057,7 @@ class CodeExecuteResultModel(BaseModel):
     DataFrames as HTML, etc.) without re-parsing free text.
 
     Field naming mirrors what the Go API gateway returns
-    (api/internal/httpapi/code_gateway.go:codeExecData) so the daemon
+    (services/cloud/internal/httpapi/code_gateway.go:codeExecData) so the daemon
     can pass-through the gateway envelope's `data` dict unchanged.
     Keep them in sync — drift here means the client renders nothing.
     """

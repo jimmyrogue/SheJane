@@ -16,7 +16,7 @@ import (
 )
 
 // SessionConfig captures the timing knobs that govern when a sandbox
-// gets reaped. Fed from Config (api/internal/config) at startup.
+// gets reaped. Fed from Config (services/cloud/internal/config) at startup.
 type SessionConfig struct {
 	TemplateID          string
 	IdleTTL             time.Duration

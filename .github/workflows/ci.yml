@@ -27,8 +27,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: api/go.mod
-          cache-dependency-path: api/go.sum
+          go-version-file: services/cloud/go.mod
+          cache-dependency-path: services/cloud/go.sum
 
       - uses: actions/setup-python@v5
         with:
@@ -59,11 +59,11 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-        working-directory: api
+        working-directory: services/cloud
 
       - name: go vet
         run: go vet ./...
-        working-directory: api
+        working-directory: services/cloud
 
       - name: No platform-paid keys in daemon
         run: ./scripts/check-no-platform-keys-in-daemon.sh
@@ -116,8 +116,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: api/go.mod
-          cache-dependency-path: api/go.sum
+          go-version-file: services/cloud/go.mod
+          cache-dependency-path: services/cloud/go.sum
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -156,7 +156,7 @@ jobs:
           TEST_DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
           DATABASE_URL: postgres://shejane:shejane@localhost:5432/shejane?sslmode=disable
         run: |
-          cd api
+          cd services/cloud
           go run ./cmd/migrate -dir ./migrations
           go test ./internal/store/ -run TestStoreConformance -v
 

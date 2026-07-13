@@ -11,7 +11,7 @@ Tools that consume platform-paid services (image generation, web search,
   • the result + cost is auditable from the admin panel.
 
 The Go handler this targets is `httpapi.agentToolExecute`
-(`api/internal/httpapi/tool_gateway.go`). Request body matches
+(`services/cloud/internal/httpapi/tool_gateway.go`). Request body matches
 `agentToolExecuteRequest`; response is the `apiResponse<agentToolExecuteResult>`
 envelope (`{code, message, data: {ok, content, data?, errorCode?, recoverable?}}`).
 We unwrap `data` and return it to the LLM directly.

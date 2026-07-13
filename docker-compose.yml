@@ -17,7 +17,7 @@ services:
 
   migrate:
     build:
-      context: ./api
+      context: ./services/cloud
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
 
   api:
     build:
-      context: ./api
+      context: ./services/cloud
     depends_on:
       migrate:
         condition: service_completed_successfully
