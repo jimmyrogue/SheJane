@@ -52,10 +52,11 @@ Runtime 不再内置业务平台连接器。未来统一通过标准工具或 MC
 
 ## 快速开始
 
-需要 **Go 1.25+**、**Node.js 22+**、**Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)**，以及 **Docker**。
+需要 **Go 1.25+**、**支持 Corepack 的 Node.js 22+**、**Python 3.12+ 与 [uv](https://docs.astral.sh/uv/)**，以及 **Docker**。
 
 ```bash
 make setup-hooks
+corepack enable && pnpm install
 cp .env.example .env
 make dev-electron
 ```

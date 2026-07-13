@@ -42,8 +42,8 @@ help: ## Show this help
 dev: ## Print the manual 3-terminal dev recipe (prefer `make dev-electron`)
 	@echo "Run API, client, and admin in three terminals:"
 	@echo "  cd api && HTTP_ADDR=:8080 go run ./cmd/api"
-	@echo "  cd client && npm run dev"
-	@echo "  cd admin && npm run dev"
+	@echo "  pnpm --filter shejane-client dev"
+	@echo "  pnpm --filter shejane-admin dev"
 
 dev-electron: ## Full dev stack: Docker + daemon + Vite + Electron (hard-restarts)
 	./scripts/dev-electron.sh
@@ -73,7 +73,7 @@ test-race: ## Go tests with the race detector (guards the credit ledger's concur
 	cd api && go test -race ./...
 
 test-e2e: ## Playwright simulated E2E (boots isolated client/admin vite + route mocks)
-	cd e2e && npm test
+	pnpm --filter shejane-e2e test
 
 test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)
 	./scripts/test-contract.sh
@@ -85,27 +85,27 @@ test-ci: ci ## Alias of `ci` (kept for back-compat)
 
 build: ## Build all four stacks (go binary + client + admin + daemon deps)
 	cd api && go build ./cmd/api
-	cd client && npm run build
-	cd admin && npm run build
+	pnpm --filter shejane-client build
+	pnpm --filter shejane-admin build
 	cd local-host/python && uv sync
 
 api-test: ## Go unit tests
 	cd api && go test ./...
 
 client-test: ## Client vitest (run once)
-	cd client && npm test -- --run
+	pnpm --filter shejane-client test --run
 
 admin-test: ## Admin vitest (run once)
-	cd admin && npm test -- --run
+	pnpm --filter shejane-admin test --run
 
 local-host-test: ## Daemon pytest
 	cd local-host/python && uv run python -m pytest
 
 client-build: ## Build only the client
-	cd client && npm run build
+	pnpm --filter shejane-client build
 
 admin-build: ## Build only the admin
-	cd admin && npm run build
+	pnpm --filter shejane-admin build
 
 local-host-build: ## Sync only the daemon deps
 	cd local-host/python && uv sync
@@ -126,7 +126,7 @@ lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-k
 
 schemas: ## Regenerate openapi.json + generated.d.ts from the daemon's pydantic models
 	@./scripts/export-daemon-openapi.sh
-	@cd client && npx openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
+	@pnpm --filter shejane-client exec openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
 	@echo "✅ schemas regenerated. Commit openapi.json + generated.d.ts."
 
 setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)

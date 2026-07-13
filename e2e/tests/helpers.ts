@@ -35,7 +35,8 @@ export async function installClientMocks(page: Page, options: { localHost?: bool
           platform: 'darwin',
           localHost: {
             baseURL: 'http://127.0.0.1:17371',
-            token: 'local-token'
+            session: 'desktop',
+            ready: true
           },
           selectWorkspaceDirectory: async () => '/tmp/picked-workspace'
         };
@@ -297,6 +298,32 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
     await rawJSON(route, { status: 'ok', mode: 'daemon', worker: 'user' })
     return
   }
+  if (url.endsWith('/local/v1/runtime')) {
+    await rawJSON(route, {
+      protocol_version: 1,
+      runtime_version: 'e2e',
+      capabilities: ['agent.run', 'agent.stream', 'hitl', 'workspace.files'],
+      model_provider_configured: true,
+      gateway_provider_configured: false,
+    })
+    return
+  }
+  if (url.endsWith('/local/v1/models')) {
+    await rawJSON(route, {
+      models: [{
+        spec: 'local:ollama:qwen3:8b',
+        model_id: 'qwen3:8b',
+        display_name: 'Qwen 3 8B',
+        provider_id: 'ollama',
+        provider_name: 'Local Ollama',
+        tool_calling: true,
+        streaming: true,
+        max_input_tokens: 32768,
+        available: true,
+      }],
+    })
+    return
+  }
   if (url.endsWith('/local/v1/session') && request.method() === 'POST') {
     await rawJSON(route, {
       connected: true,
@@ -351,8 +378,32 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
     })
     return
   }
+  if (url.endsWith('/local/v1/commands') && request.method() === 'POST') {
+    const body = safeJSON(request.postData() ?? '{}') as {
+      type?: string
+      command_id?: string
+      permission_id?: string
+      decision?: string
+      scope?: string
+    }
+    if (body.type === 'permission.resolve') {
+      await rawJSON(route, {
+        type: body.type,
+        command_id: body.command_id,
+        permission_id: body.permission_id,
+        run_id: 'local-run',
+        resolved: true,
+        decision: body.decision,
+        scope: body.scope,
+        resumed: true,
+      })
+      return
+    }
+  }
   if (url.endsWith('/local/v1/runs/local-run/stream')) {
-    const permissionApproved = state.requests.some((entry) => entry.url.endsWith('/local/v1/permissions/perm-shell'))
+    const permissionApproved = state.requests.some((entry) =>
+      entry.url.endsWith('/local/v1/commands') &&
+      (safeJSON(entry.body ?? '{}') as { type?: string }).type === 'permission.resolve')
     await localAgentSSE(route, permissionApproved
       ? [
           { id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } },
@@ -367,10 +418,6 @@ async function handleLocalHost(route: Route, state: MockState, options: { recent
           { id: 'local-event-1', event_type: 'permission.required', payload: { request_id: 'perm-shell', tool: 'shell.run' } },
           { id: 'local-event-3', event_type: 'artifact.created', payload: { artifact_id: 'artifact-shell', title: 'shell output', tool: 'shell.run' } },
         ], 'local-run')
-    return
-  }
-  if (url.endsWith('/local/v1/permissions/perm-shell')) {
-    await rawJSON(route, { status: 'recorded' }, 202)
     return
   }
   if (url.endsWith('/local/v1/artifacts/artifact-shell')) {

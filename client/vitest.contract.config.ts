@@ -3,12 +3,12 @@
  *
  * Why a separate config: contract tests run against a REAL daemon
  * over HTTP (no MockTransport) — they shouldn't run as part of the
- * default `npm test` (which is meant to be hermetic and fast). CI
+ * default `pnpm test` (which is meant to be hermetic and fast). CI
  * boots a fresh daemon, sets VITE_TEST_LOCAL_HOST_URL, then runs
- * `npm run test:contract`.
+ * `pnpm test:contract`.
  *
  * Local dev: skip the whole file with `vi.skipIf(!BASE_URL)` so
- * `npm test` keeps running without a daemon.
+ * `pnpm test` keeps running without a daemon.
  *
  * What it catches: every shape drift this codebase has seen across
  * the Phase 5'+ migration — `data: [DONE]` sentinel, AgentRunEvent

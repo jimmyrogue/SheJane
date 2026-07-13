@@ -47,28 +47,33 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install workspace dependencies
+        shell: bash
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Build the renderer (→ prod API)
         working-directory: client
         shell: bash
         run: |
-          npm ci
           # On a tag build, pin the package version to the tag so the installer
           # filename, the published Release, and the electron-updater feed all
           # agree. electron-builder versions everything off package.json, NOT the
           # git tag — without this the version stays whatever package.json says
           # (it drifted to 0.1.0 once) and auto-update never fires.
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+            pnpm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
           fi
-          npm run build:desktop
+          pnpm build:desktop
 
       - name: Package the Windows installer
         working-directory: client
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # unsigned build
-        run: npx electron-builder --win --publish never
+        run: pnpm exec electron-builder --win --publish never
 
       # electron-builder's own GitHub publisher races into TWO draft releases per
       # tag (one ends up with the .exe + latest.yml, the other with just the

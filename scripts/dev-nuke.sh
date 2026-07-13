@@ -8,7 +8,7 @@
 #
 #   • A poisoned build-cache layer survives `--build` (the classic
 #     "client image is stale even though the Dockerfile builds from
-#     source" trap — a `COPY . .` layer cache-hit skips `npm run
+#     source" trap — a `COPY . .` layer cache-hit skips `pnpm
 #     build`). `--no-cache` defeats it.
 #   • A wedged container that `up -d` won't recreate. `down
 #     --remove-orphans` + `--force-recreate` guarantees fresh

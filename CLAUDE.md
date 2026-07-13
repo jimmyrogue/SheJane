@@ -75,7 +75,7 @@ make dev-fresh
 
 # Scorched-earth reset — when dev-fresh isn't enough: a poisoned
 # build-cache layer (stale image despite --build, e.g. a client
-# `COPY . .` cache-hit that skips `npm run build`) or a wedged
+# `COPY . .` cache-hit that skips `pnpm build`) or a wedged
 # container. Does `down --remove-orphans` + `build --no-cache` +
 # `up --force-recreate`, then relaunches native. Keeps DB volumes
 # (uploaded docs / conversations survive); for an empty DB run
@@ -108,7 +108,7 @@ make ci                 # run EVERYTHING CI runs, locally (pre-push gate)
 cd local-host/python && uv run python -m pytest tests/test_e2e_capabilities.py::test_capability_1d_scope_run_skips_subsequent_approvals -v
 
 # A single client test
-cd client && npm test -- --run -t "permission.resolved clears card"
+pnpm --filter shejane-client test --run -t "permission.resolved clears card"
 
 # Lint — same checks CI runs
 make lint

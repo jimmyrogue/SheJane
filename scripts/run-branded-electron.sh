@@ -41,7 +41,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 if [[ ! -d "$SOURCE_APP" ]]; then
-  echo "Electron app bundle not found. Run npm install in ${CLIENT_DIR} first." >&2
+  echo "Electron app bundle not found. Run pnpm install from ${ROOT_DIR} first." >&2
   exit 1
 fi
 

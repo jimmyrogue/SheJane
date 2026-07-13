@@ -26,14 +26,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: `npm run dev -- --host 127.0.0.1 --port ${clientPort}`,
+      command: `pnpm dev --host 127.0.0.1 --port ${clientPort}`,
       cwd: '../client',
       url: clientURL,
       reuseExistingServer: false,
       timeout: 120_000,
     },
     {
-      command: `npm run dev -- --host 127.0.0.1 --port ${adminPort}`,
+      command: `pnpm dev --host 127.0.0.1 --port ${adminPort}`,
       cwd: '../admin',
       url: adminURL,
       reuseExistingServer: false,

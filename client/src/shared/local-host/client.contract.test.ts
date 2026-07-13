@@ -7,7 +7,7 @@
  * suite is the floor that keeps them from coming back.
  *
  * Skipped entirely when `VITE_TEST_LOCAL_HOST_URL` isn't set so
- * `npm test` stays hermetic. CI sets it after starting the daemon.
+ * `pnpm test` stays hermetic. CI sets it after starting the daemon.
  *
  * Tests target the SYNCHRONOUS endpoints — health, session, runs
  * CRUD, permissions. SSE stream tests would require a real

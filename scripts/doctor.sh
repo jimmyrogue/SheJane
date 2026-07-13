@@ -153,8 +153,8 @@ for path in client admin local-host/python; do
         || row "❌" "$path" "→ cd $path && uv sync"
       ;;
     *)
-      [[ -d "$path/node_modules" ]] && row "✅" "$path" "node_modules ready" \
-        || row "❌" "$path" "→ cd $path && npm install"
+      [[ -d "$path/node_modules" ]] && row "✅" "$path" "pnpm links ready" \
+        || row "❌" "$path" "→ pnpm install"
       ;;
   esac
 done

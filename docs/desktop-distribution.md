@@ -57,7 +57,7 @@
 | **5 自动更新 + CI 发布** | `release-desktop.yml` 原生矩阵 + electron-updater 全量替换 | L/高 | tag 触发、自动签名公证发布 |
 
 ### Phase 0 — 生产配置
-- 新增 `build:desktop` 脚本:`tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build`(**不复用** web 的 `npm run build`,后者被 Docker 用空 `VITE_API_BASE_URL` 构建成同源)。
+- 新增 `build:desktop` 脚本:`tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build`(**不复用** web 的 `pnpm build`,后者被 Docker 用空 `VITE_API_BASE_URL` 构建成同源)。
 - `main.cjs` `apiBaseURL()` 在 `app.isPackaged` 时默认 `https://app.shejane.com`(原来默认 localhost:8080)。
 
 ### Phase 1 — electron-builder 骨架

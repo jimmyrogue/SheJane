@@ -5,7 +5,7 @@
 /*
  * ICON LIBRARY CONVENTION: this project uses @tabler/icons-react, NOT lucide.
  * components.json says "iconLibrary": "lucide" only because shadcn has no
- * "tabler" option. After `npx shadcn add <component>`, manually replace any
+ * "tabler" option. After `pnpm exec shadcn add <component>`, manually replace any
  * `lucide-react` imports with the @tabler/icons-react equivalents.
  */
 

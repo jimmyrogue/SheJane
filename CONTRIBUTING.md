@@ -30,6 +30,7 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 
 - **Go** 1.25+
 - **Node** 22+
+- **pnpm** 11.7.0 through Corepack
 - **Python** 3.12+ with [`uv`](https://docs.astral.sh/uv/)
 - **Docker** + Docker Compose (Postgres, API)
 - macOS or Linux (the dev launcher is macOS-tuned; Linux works with minor tweaks)
@@ -38,6 +39,7 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 
 ```bash
 make setup-hooks            # installs lefthook + wires git hooks
+corepack enable && pnpm install
 cp .env.example .env        # optional local overrides
 make dev-electron           # Docker + daemon + Vite + Electron, with log tail
 ```

@@ -34,6 +34,8 @@ jobs:
         include:
           # api: no Vite build arg.
           - service: api
+            context: ./api
+            dockerfile: api/Dockerfile
             build-args: ""
           # client/admin are static SPAs: building with an EMPTY
           # VITE_API_BASE_URL makes them issue RELATIVE, same-origin
@@ -41,9 +43,13 @@ jobs:
           # That's what makes one published image work for any deployer
           # (no per-site API URL baked in at build time).
           - service: client
+            context: .
+            dockerfile: client/Dockerfile
             build-args: |
               VITE_API_BASE_URL=
           - service: admin
+            context: .
+            dockerfile: admin/Dockerfile
             build-args: |
               VITE_API_BASE_URL=
     steps:
@@ -76,7 +82,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ matrix.service }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

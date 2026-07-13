@@ -265,7 +265,7 @@ Electron client 连接本地 Host：
 cd client
 SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
 SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
-npm run electron
+pnpm --filter shejane-client electron
 ```
 
 自定义 subagent 可放在 `~/.shejane/agents/*.md`，也可以用 `SHEJANE_LOCAL_AGENTS_PATH=/path/a,/path/b` 完整覆盖扫描目录。每个文件使用 YAML frontmatter：

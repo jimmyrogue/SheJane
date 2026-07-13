@@ -44,8 +44,8 @@ Useful focused checks:
 
 ```bash
 cd api && go test ./internal/httpapi
-cd client && npm test -- --run
-cd admin && npm test -- --run
+pnpm --filter shejane-client test --run
+pnpm --filter shejane-admin test --run
 ```
 
 Local Docker:

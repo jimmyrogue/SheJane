@@ -19,6 +19,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: api/go.mod
@@ -69,14 +75,12 @@ jobs:
       # Catches the failure mode where a Python-side change silently
       # diverges from what the TS client expects.
       - name: Install Node deps for codegen
-        run: npm ci
-        working-directory: client
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Schema drift (make schemas + git diff)
         run: |
           ./scripts/export-daemon-openapi.sh
-          cd client && npx openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
-          cd ..
+          pnpm --filter shejane-client exec openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
           if ! git diff --exit-code -- client/src/shared/local-host/openapi.json client/src/shared/local-host/generated.d.ts; then
             echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
             exit 1
@@ -119,10 +123,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            client/package-lock.json
-            admin/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup Python (local-host daemon)
         uses: actions/setup-python@v5
@@ -135,13 +137,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: local-host/python/uv.lock
 
-      - name: Install client dependencies
-        run: npm ci
-        working-directory: client
-
-      - name: Install admin dependencies
-        run: npm ci
-        working-directory: admin
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Install local-host (Python) dependencies
         run: uv sync
@@ -175,27 +172,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            client/package-lock.json
-            admin/package-lock.json
-            e2e/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install client dependencies
-        run: npm ci
-        working-directory: client
-
-      - name: Install admin dependencies
-        run: npm ci
-        working-directory: admin
-
-      - name: Install E2E dependencies
-        run: npm ci
-        working-directory: e2e
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-        working-directory: e2e
+        run: pnpm --filter shejane-e2e exec playwright install --with-deps chromium
 
       - name: Run Playwright E2E
         run: make test-e2e
@@ -220,8 +204,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: client/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - uses: actions/setup-python@v5
         with:
@@ -232,9 +216,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: local-host/python/uv.lock
 
-      - name: Install client deps
-        run: npm ci
-        working-directory: client
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
 
       - name: Install daemon deps
         run: uv sync
@@ -271,8 +254,7 @@ jobs:
         env:
           VITE_TEST_LOCAL_HOST_URL: http://127.0.0.1:17371
           VITE_TEST_LOCAL_HOST_TOKEN: dev-local-token
-        run: npm run test:contract
-        working-directory: client
+        run: pnpm --filter shejane-client test:contract
 
       - name: Daemon log on failure
         if: failure()

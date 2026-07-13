@@ -40,9 +40,9 @@ if lsof -ti :"$PORT" >/dev/null 2>&1; then
   sleep 1
 fi
 
-if [[ ! -d client/node_modules ]]; then
-  echo "→ client/node_modules missing — running npm ci"
-  (cd client && npm ci)
+if [[ ! -d node_modules/.pnpm ]]; then
+  echo "→ workspace dependencies missing — running pnpm install"
+  pnpm install --frozen-lockfile
 fi
 
 echo "→ Starting contract daemon at ${URL}"
@@ -85,6 +85,6 @@ echo "→ Running client contract suite"
   cd client
   VITE_TEST_LOCAL_HOST_URL="$URL" \
   VITE_TEST_LOCAL_HOST_TOKEN="$TOKEN" \
-  npm run test:contract
+  pnpm test:contract
 )
 echo "✅ Contract suite passed"

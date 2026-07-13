@@ -1,0 +1,9 @@
+packages:
+  - client
+  - admin
+  - e2e
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true

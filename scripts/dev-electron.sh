@@ -68,10 +68,9 @@ require_command() {
 }
 
 ensure_node_modules() {
-  local package_dir="$1"
-  if [[ ! -d "${package_dir}/node_modules" ]]; then
-    echo "Installing dependencies in ${package_dir}"
-    (cd "$package_dir" && npm install)
+  if [[ ! -d "${ROOT_DIR}/node_modules/.pnpm" ]]; then
+    echo "Installing pnpm workspace dependencies"
+    (cd "$ROOT_DIR" && pnpm install)
   fi
 }
 
@@ -256,7 +255,7 @@ start_client_dev_server() {
       "TMPDIR=${TMPDIR:-/tmp}" \
       "SHELL=${SHELL:-/bin/zsh}" \
       "VITE_API_BASE_URL=$API_BASE_URL" \
-      npm run dev -- --host 127.0.0.1 --port "$CLIENT_DEV_PORT" >"$log_file" 2>&1
+      pnpm dev --host 127.0.0.1 --port "$CLIENT_DEV_PORT" >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
   wait_for_url "$CLIENT_DEV_URL" "client dev server" "$log_file"
@@ -277,7 +276,7 @@ launch_electron() {
       "SHEJANE_LOCAL_HOST_URL=$LOCAL_HOST_URL" \
       "SHEJANE_LOCAL_HOST_TOKEN=$TOKEN" \
       "VITE_API_BASE_URL=$API_BASE_URL" \
-      npm run electron
+      pnpm electron
   ) &
   local electron_pid="$!"
   PIDS+=("$electron_pid")
@@ -286,10 +285,10 @@ launch_electron() {
 
 main() {
   require_command curl
-  require_command npm
+  require_command pnpm
   require_command uv
   mkdir -p "$LOG_DIR"
-  ensure_node_modules "${ROOT_DIR}/client"
+  ensure_node_modules
 
   # Hard restart: kill any leftover daemon/vite/electron + free ports
   # FIRST, so the rest of the script can assume a clean slate. Opt out

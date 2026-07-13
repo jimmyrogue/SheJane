@@ -52,10 +52,11 @@ Business-platform connectors are not built into the Runtime. Future integrations
 
 ## Quick start
 
-Requires **Go 1.25+**, **Node.js 22+**, **Python 3.12+ with [uv](https://docs.astral.sh/uv/)**, and **Docker**.
+Requires **Go 1.25+**, **Node.js 22+ with Corepack**, **Python 3.12+ with [uv](https://docs.astral.sh/uv/)**, and **Docker**.
 
 ```bash
 make setup-hooks
+corepack enable && pnpm install
 cp .env.example .env
 make dev-electron
 ```

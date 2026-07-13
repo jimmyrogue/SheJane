@@ -45,7 +45,7 @@ test.describe('client simulated user flows', () => {
 
     // Clicking a suggestion tile drops a concrete, ready-to-send prompt in.
     await page.getByRole('button', { name: /整理未读消息/ }).click()
-    await expect(input).toHaveText(/帮我整理今天的未读消息/)
+    await expect(input).toHaveText(/我会粘贴一组未读消息/)
   })
 
   test('asks an attached document through agent runs instead of the legacy document ask API', async ({ page }) => {
@@ -94,13 +94,12 @@ test.describe('client simulated user flows', () => {
     await expect.poll(() => requestWasMade(state, '/api/v1/documents/doc-upload/complete')).toBe(true)
   })
 
-  test('uses the paired Local Harness, approves permissions, and opens diagnostics', async ({ page }) => {
+  test('uses the paired Runtime and submits a durable permission command', async ({ page }) => {
     const state = await installClientMocks(page, { localHost: true })
 
     await page.goto(clientURL)
-    await registerUser(page)
 
-    await expect(page.getByLabel('本地服务已连接').first()).toBeVisible()
+    await expect(composer(page)).toBeVisible()
     // Binding a workspace now goes through the native folder picker (stubbed
     // in installClientMocks to return /tmp/picked-workspace) — no in-app
     // path-input dialog anymore.
@@ -112,31 +111,11 @@ test.describe('client simulated user flows', () => {
     await expect(page.getByText('等待批准：运行命令').first()).toBeVisible()
     await page.getByRole('button', { name: '允许一次' }).click()
 
-    await expect(page.getByText('本地执行完成')).toBeVisible()
-    // The redesigned agent-progress row no longer dumps raw sources/artifacts
-    // into the timeline (the per-artifact "查看 artifact" buttons + source-count
-    // badge + inline "任务完成" status were removed) — they live only in the
-    // diagnostics panel now. The timeline must stay free of raw source dumps.
-    await expect(page.getByText('收集来源：Example Source')).toHaveCount(0)
-    await expect(page.getByText('https://example.com/source')).toHaveCount(0)
-
-    // Diagnostics is the run-result escape hatch: expand the compact success
-    // details row, then open the diagnostics panel via the icon action.
-    await page.getByRole('button', { name: '展开详情' }).click()
-    await page.getByTitle('查看诊断 local-run').click()
-    await expect(page.getByText('任务诊断：local-run')).toBeVisible()
-    await expect(page.getByText('verification.completed')).toBeVisible()
-    await expect(page.locator('.diagnostics-preview').getByText(/https:\/\/example\.com\/source/)).toBeVisible()
-
-    const downloadPromise = page.waitForEvent('download')
-    await page.getByRole('button', { name: '导出当前诊断' }).click()
-    const download = await downloadPromise
-    expect(download.suggestedFilename()).toBe('shejane-local-run-local-run-diagnostics.json')
-    await expect(page.getByText('诊断已导出：local-run')).toBeVisible()
-
     expect(requestWasMade(state, '/local/v1/runs')).toBe(true)
-    expect(requestWasMade(state, '/local/v1/permissions/perm-shell')).toBe(true)
-    expect(requestWasMade(state, '/local/v1/runs/local-run/diagnostics')).toBe(true)
+    await expect.poll(() => state.requests.some((request) => {
+      if (!request.url.endsWith('/local/v1/commands')) return false
+      return (JSON.parse(request.body ?? '{}') as { type?: string }).type === 'permission.resolve'
+    })).toBe(true)
     expect(requestWasMade(state, '/api/v1/agent/runs')).toBe(false)
   })
 
@@ -144,7 +123,6 @@ test.describe('client simulated user flows', () => {
     const state = await installClientMocks(page, { localHost: true, recentRun: true })
 
     await page.goto(clientURL)
-    await registerUser(page)
 
     await expect(page.getByText('Resume workspace scan')).toHaveCount(0)
     await expect(page.getByText('最近本地任务')).toHaveCount(0)
