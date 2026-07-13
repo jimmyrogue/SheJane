@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
 from local_host.runs import RunCoordinator
 from local_host.server import create_app
+from local_host.store.sqlite import LocalStore
 from tests.helpers import run_command
 
 
@@ -55,3 +58,26 @@ def test_runtime_settings_persist_and_freeze_into_new_runs(
         assert response.json()["max_model_calls"] == 42
         assert response.json()["plan_first"] == "auto"
         assert response.json()["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_settings_store_atomically_merges_concurrent_patches(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "runtime.db"
+    first = await LocalStore.open(database)
+    second = await LocalStore.open(database)
+    defaults = {"max_model_calls": 20, "max_tool_retries": 2}
+    try:
+        await asyncio.gather(
+            first.patch_runtime_settings({"max_model_calls": 41}, initial_settings=defaults),
+            second.patch_runtime_settings({"max_tool_retries": 4}, initial_settings=defaults),
+        )
+        stored = await first.get_runtime_settings()
+        assert stored is not None
+        assert stored["settings"]["max_model_calls"] == 41
+        assert stored["settings"]["max_tool_retries"] == 4
+        assert stored["version"] == 2
+    finally:
+        await first.close()
+        await second.close()

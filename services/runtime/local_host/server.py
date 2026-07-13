@@ -594,6 +594,7 @@ async def lifespan(app: FastAPI):
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
     app.state.scheduler = scheduler
+    app.state.runtime_settings_lock = asyncio.Lock()
     app.state.runtime_settings_version = int(
         persisted_settings["version"] if persisted_settings is not None else 0
     )
@@ -736,20 +737,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/local/v1/settings", response_model=RuntimeSettingsResponse)
     async def update_runtime_settings(body: UpdateRuntimeSettingsRequest) -> dict[str, Any]:
-        current = _runtime_settings_payload(
-            app.state.settings,
-            version=app.state.runtime_settings_version,
-        )
-        current.update(body.model_dump(exclude_none=True))
-        validated = RuntimeSettingsResponse(**current)
-        values = validated.model_dump(exclude={"version"})
-        store: LocalStore = app.state.store
-        stored = await store.put_runtime_settings(values)
-        updated = _apply_runtime_settings(app.state.settings, values)
-        app.state.settings = updated
-        app.state.coordinator.settings = updated
-        app.state.runtime_settings_version = int(stored["version"])
-        return _runtime_settings_payload(updated, version=int(stored["version"]))
+        patch = body.model_dump(exclude_none=True)
+        async with app.state.runtime_settings_lock:
+            current = _runtime_settings_payload(
+                app.state.settings,
+                version=app.state.runtime_settings_version,
+            )
+            current.update(patch)
+            validated = RuntimeSettingsResponse(**current)
+            candidate_values = validated.model_dump(exclude={"version"})
+            store: LocalStore = app.state.store
+            stored = await store.patch_runtime_settings(
+                patch,
+                initial_settings=candidate_values,
+            )
+            persisted = RuntimeSettingsResponse(
+                **{**candidate_values, **stored["settings"]},
+                version=int(stored["version"]),
+            )
+            values = persisted.model_dump(exclude={"version"})
+            updated = _apply_runtime_settings(app.state.settings, values)
+            app.state.settings = updated
+            app.state.coordinator.settings = updated
+            app.state.runtime_settings_version = int(stored["version"])
+            return _runtime_settings_payload(updated, version=int(stored["version"]))
 
     @app.get(
         "/local/v1/model-providers",

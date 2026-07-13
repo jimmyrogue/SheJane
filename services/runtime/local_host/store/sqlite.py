@@ -1713,19 +1713,36 @@ class LocalStore:
             "updated_at": str(row["updated_at"]),
         }
 
-    async def put_runtime_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+    async def patch_runtime_settings(
+        self,
+        patch: dict[str, Any],
+        *,
+        initial_settings: dict[str, Any],
+    ) -> dict[str, Any]:
         now = _now()
-        await self._conn.execute(
+        initial_payload = {**initial_settings, **patch}
+        cursor = await self._conn.execute(
             "INSERT INTO local_runtime_settings (id, settings_json, version, updated_at) "
             "VALUES (1, ?, 1, ?) "
-            "ON CONFLICT(id) DO UPDATE SET settings_json = excluded.settings_json, "
-            "version = local_runtime_settings.version + 1, updated_at = excluded.updated_at",
-            (_encode_payload(settings), now),
+            "ON CONFLICT(id) DO UPDATE SET "
+            "settings_json = json_patch(local_runtime_settings.settings_json, ?), "
+            "version = local_runtime_settings.version + 1, "
+            "updated_at = excluded.updated_at "
+            "RETURNING settings_json, version, updated_at",
+            (
+                _encode_payload(initial_payload),
+                now,
+                _encode_payload(patch),
+            ),
         )
+        row = await cursor.fetchone()
         await self._conn.commit()
-        stored = await self.get_runtime_settings()
-        assert stored is not None
-        return stored
+        assert row is not None
+        return {
+            "settings": _json_payload(row["settings_json"]),
+            "version": int(row["version"]),
+            "updated_at": str(row["updated_at"]),
+        }
 
     async def list_model_providers(self, *, principal_id: str) -> list[dict[str, Any]]:
         rows = await (
