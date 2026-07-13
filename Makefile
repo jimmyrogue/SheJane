@@ -18,7 +18,7 @@
 	dev dev-electron dev-fresh dev-nuke restart-daemon doctor docker-up docker-down \
 	test test-race test-e2e test-contract ci test-ci build \
 	api-test client-test admin-test local-host-test \
-	client-build admin-build local-host-build \
+	client-build admin-build runtime-client-build local-host-build \
 	lint schemas setup-hooks \
 	release deploy deploy-pull deploy-down deploy-logs migrate \
 	backup deploy-backup deploy-restore backup-cron-install \
@@ -84,8 +84,9 @@ ci: lint test test-race build test-e2e test-contract ## Run EVERYTHING CI runs, 
 # Back-compat alias — older docs/muscle-memory call `make test-ci`.
 test-ci: ci ## Alias of `ci` (kept for back-compat)
 
-build: ## Build all four stacks (go binary + client + admin + daemon deps)
+build: ## Build Cloud, Runtime SDK, Desktop, Admin, and Runtime dependencies
 	cd services/cloud && go build ./cmd/api
+	pnpm --filter @shejane/runtime-client build
 	pnpm --filter shejane-client build
 	pnpm --filter shejane-admin build
 	cd services/runtime && uv sync
@@ -108,6 +109,9 @@ client-build: ## Build only the client
 admin-build: ## Build only the admin
 	pnpm --filter shejane-admin build
 
+runtime-client-build: ## Build the public Runtime TypeScript SDK
+	pnpm --filter @shejane/runtime-client build
+
 local-host-build: ## Sync only the daemon deps
 	cd services/runtime && uv sync
 
@@ -127,7 +131,7 @@ lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-k
 
 schemas: ## Regenerate openapi.json + generated.d.ts from the daemon's pydantic models
 	@./scripts/export-daemon-openapi.sh
-	@pnpm --filter shejane-client exec openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
+	@pnpm --filter @shejane/runtime-client generate
 	@echo "✅ schemas regenerated. Commit openapi.json + generated.d.ts."
 
 setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)

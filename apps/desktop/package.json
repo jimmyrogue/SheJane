@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",
-    "directory": "client"
+    "directory": "apps/desktop"
   },
   "type": "module",
   "main": "electron/main.cjs",
@@ -25,6 +25,7 @@
     "dist:dir": "pnpm build:desktop && electron-builder --dir"
   },
   "dependencies": {
+    "@shejane/runtime-client": "workspace:*",
     "@fontsource-variable/geist": "^5.2.8",
     "@lexical/react": "^0.44.0",
     "@tabler/icons-react": "^3.44.0",
@@ -61,7 +62,6 @@
     "electron-builder": "^26.15.0",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^25.0.1",
-    "openapi-typescript": "^7.13.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vitest": "^2.1.8"

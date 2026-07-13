@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Export the daemon's OpenAPI schema → apps/desktop/src/shared/local-host/openapi.json.
+# Export the Runtime OpenAPI schema → packages/runtime-client/openapi.json.
 #
 # Doesn't actually run the server — calls `app.openapi()` directly so
 # this is fast (~1s) and doesn't require a port to be free.
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="${ROOT_DIR}/apps/desktop/src/shared/local-host/openapi.json"
+TARGET="${ROOT_DIR}/packages/runtime-client/openapi.json"
 
 cd "${ROOT_DIR}/services/runtime"
 

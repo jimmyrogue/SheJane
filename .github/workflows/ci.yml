@@ -80,8 +80,8 @@ jobs:
       - name: Schema drift (make schemas + git diff)
         run: |
           ./scripts/export-daemon-openapi.sh
-          pnpm --filter shejane-client exec openapi-typescript src/shared/local-host/openapi.json -o src/shared/local-host/generated.d.ts
-          if ! git diff --exit-code -- apps/desktop/src/shared/local-host/openapi.json apps/desktop/src/shared/local-host/generated.d.ts; then
+          pnpm --filter @shejane/runtime-client generate
+          if ! git diff --exit-code -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.d.ts; then
             echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
             exit 1
           fi

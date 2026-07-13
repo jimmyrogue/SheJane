@@ -29,7 +29,7 @@ Three layers communicate over HTTP/SSE:
 Three source-of-truth files for shape:
 
 - **Daemon**: `services/runtime/local_host/api_schemas.py` (pydantic) + `services/runtime/local_host/server.py` (`response_model=...` per route)
-- **Client (generated)**: `apps/desktop/src/shared/local-host/generated.d.ts` — produced by `make schemas` from the daemon's openapi.json. Must NOT be hand-edited.
+- **Client (generated)**: `packages/runtime-client/src/generated.d.ts` — produced by `make schemas` from the daemon's openapi.json. Must NOT be hand-edited.
 - **Client (hand-written)**: `apps/desktop/src/shared/local-host/client.ts` re-exports from `generated.d.ts`. Hand-written types (DesktopBridge, LocalHostConfig, AgentRunEvent) are documented at the top of the file.
 - **Go API**: `api/internal/httpapi/*.go` — particularly `agent_stream.go`, `tool_gateway.go`, `image_gateway.go`. The daemon calls these for LLM streaming and tool execution; the client also calls some directly (`/api/v1/agent/runs/...`).
 
@@ -39,7 +39,7 @@ When invoked, examine the change set (`git diff main...HEAD` or the user's recen
 
 ### 1. Field rename / removal not propagated
 
-- A pydantic field was renamed or removed → was `generated.d.ts` regenerated? Run `git status -- apps/desktop/src/shared/local-host/generated.d.ts` to check.
+- A pydantic field was renamed or removed → was `generated.d.ts` regenerated? Run `git status -- packages/runtime-client/src/generated.d.ts` to check.
 - A TS callsite reads the old field name → grep `apps/desktop/src/` for the old name.
 - A SQL column the daemon serializes from was renamed → check the `store/sqlite.py` schema row vs the pydantic field name.
 

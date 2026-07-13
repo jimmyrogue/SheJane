@@ -1,7 +1,7 @@
 import type { AgentRunEvent } from '../api/sse'
 import type { ChatMode } from '../local-data/types'
 import { streamAgentSSE } from '../streaming/streamTransport'
-import type { components } from './generated'
+import type { components } from '@shejane/runtime-client/generated'
 
 // -- Auto-generated types ----------------------------------------------------
 //
