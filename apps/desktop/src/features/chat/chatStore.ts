@@ -1,5 +1,4 @@
 import { APIError, type ChatAPI, type StreamChatResult } from '../../shared/api/client'
-import type { CloudLLMMessage, CloudToolDefinition } from '../../shared/cloudAgentLoop'
 import type { AgentRunEvent } from '../../shared/api/sse'
 import { deriveAgentHistory } from './conversationHistory'
 import { createTranslator, type TranslationKey, type Translator } from '../../shared/i18n/i18n'
@@ -40,29 +39,12 @@ interface SendMessageInput {
      *  the chip falls back to filename-extension sniffing. */
     contentType?: string
   }
-  /** Web build only: when non-empty, run the client-orchestrated cloud tool
-   *  loop (image gen / web search) instead of the single-completion cloud run.
-   *  These are the tool definitions advertised to the model. */
-  cloudTools?: CloudToolDefinition[]
-  cloudToolMaxSteps?: number
   onConversationUpdate?: (conversation: Conversation) => void
 }
-
-interface ContinueCloudToolLoopInput {
-  conversationId: string
-  messageId: string
-  requestId: string
-  answers: Record<string, string[]>
-  maxSteps?: number
-  onConversationUpdate?: (conversation: Conversation) => void
-}
-
-const DEFAULT_WEB_TOOL_LOOP_MAX_STEPS = 5
 
 export function createChatStore(deps: ChatStoreDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const t = deps.t ?? createTranslator('zh')
-  const cloudToolLoopControllers = new Map<string, AbortController>()
 
   const streamHandlersFor = (
     conversation: Conversation,
@@ -145,180 +127,40 @@ export function createChatStore(deps: ChatStoreDeps) {
       await deps.localData.save(conversation)
       input.onConversationUpdate?.(cloneConversation(conversation))
 
-      let cloudToolLoopRunId: string | undefined
       try {
         const streamHandlers = streamHandlersFor(conversation, assistantMessage, input.onConversationUpdate)
-        let result: StreamChatResult
-        if (input.cloudTools && input.cloudTools.length > 0) {
-          // Web tool loop: the browser drives /agent/llm/stream + /tools/execute.
-          // No server-side AgentRun record (billing still flows through both
-          // endpoints' ledger writes); use a client-generated run id so the
-          // tool gateway's idempotency key is stable across retries.
-          const runId = createLocalID('run')
-          const controller = new AbortController()
-          cloudToolLoopRunId = runId
-          cloudToolLoopControllers.set(runId, controller)
-          assistantMessage.runId = runId
-          assistantMessage.runOrigin = 'cloud'
-          input.onConversationUpdate?.(cloneConversation(conversation))
-          const maxSteps = input.cloudToolMaxSteps ?? DEFAULT_WEB_TOOL_LOOP_MAX_STEPS
-          result = await deps.api.runCloudToolLoop(
-            {
-              runId,
-              goal: text,
-              mode: input.mode,
-              history: deriveAgentHistory(priorMessages),
-              tools: input.cloudTools,
-              maxSteps,
-            },
-            streamHandlers,
-            controller.signal,
-          )
-          settleCloudToolLoopResult(assistantMessage, result, {
-            goal: text,
-            mode: input.mode,
-            tools: input.cloudTools,
-            maxSteps,
-            t,
-          })
-        } else {
-          const run = await deps.api.createAgentRun({
-            goal: text,
-            mode: input.mode,
-            clientConversationId: conversation.id,
-            clientMessageId: userMessage.id,
-            attachments: documents.map((document) => ({
-              type: 'document',
-              document_id: document.id,
-              name: document.name,
-            })),
-            history: deriveAgentHistory(priorMessages),
-          })
-          assistantMessage.runId = run.id
-          assistantMessage.runOrigin = 'cloud'
-          input.onConversationUpdate?.(cloneConversation(conversation))
-          result = await deps.api.streamAgentRun(run.id, streamHandlers)
-          assistantMessage.status = 'done'
-          assistantMessage.requestId = result.requestId
-          assistantMessage.creditsCost = result.creditsCost
-        }
-        input.onConversationUpdate?.(cloneConversation(conversation))
-      } catch (error) {
-        if (cloudToolLoopRunId && isAbortError(error)) {
-          assistantMessage.status = 'done'
-          const canceledItem = timelineItem(
-            { event_type: 'run.canceled', run_id: cloudToolLoopRunId, payload: {} },
-            t,
-          )
-          if (canceledItem) {
-            assistantMessage.agentEvents = [...(assistantMessage.agentEvents ?? []), canceledItem]
-          }
-          input.onConversationUpdate?.(cloneConversation(conversation))
-          return conversation
-        }
-        assistantMessage.status = 'error'
-        assistantMessage.content = chatErrorMessage(error, t)
-        input.onConversationUpdate?.(cloneConversation(conversation))
-        throw error
-      } finally {
-        if (cloudToolLoopRunId) {
-          cloudToolLoopControllers.delete(cloudToolLoopRunId)
-        }
-        conversation.updatedAt = now()
-        await deps.localData.save(conversation)
-      }
-
-      return conversation
-    },
-    async continueCloudToolLoop(input: ContinueCloudToolLoopInput): Promise<Conversation> {
-      const conversation = await deps.localData.get(input.conversationId)
-      const assistantMessage = conversation?.messages.find((message) => message.id === input.messageId)
-      const continuation = assistantMessage?.cloudToolContinuation
-      if (!conversation || !assistantMessage?.runId || !continuation) {
-        throw new Error(t('app.notice.missingCloudToolContinuation'))
-      }
-
-      appendAgentEvent(
-        assistantMessage,
-        {
-          event_type: 'question.answered',
-          run_id: assistantMessage.runId,
-          payload: {
-            request_id: input.requestId,
-            answers: input.answers,
-          },
-        },
-        t,
-      )
-
-      if (!hasConcreteAnswer(input.answers)) {
-        assistantMessage.status = 'done'
-        assistantMessage.cloudToolContinuation = undefined
-        conversation.updatedAt = now()
-        await deps.localData.save(conversation)
-        input.onConversationUpdate?.(cloneConversation(conversation))
-        return conversation
-      }
-
-      const controller = new AbortController()
-      const runId = assistantMessage.runId
-      cloudToolLoopControllers.set(runId, controller)
-      assistantMessage.status = 'streaming'
-      input.onConversationUpdate?.(cloneConversation(conversation))
-      try {
-        const maxSteps = input.maxSteps ?? continuation.maxSteps
-        const result = await deps.api.runCloudToolLoop(
-          {
-            runId,
-            goal: continuation.goal,
-            mode: continuation.mode,
-            history: [],
-            tools: continuation.tools,
-            maxSteps,
-            continuationMessages: continuation.messages as CloudLLMMessage[],
-          },
-          streamHandlersFor(conversation, assistantMessage, input.onConversationUpdate),
-          controller.signal,
-        )
-        settleCloudToolLoopResult(assistantMessage, result, {
-          goal: continuation.goal,
-          mode: continuation.mode,
-          tools: continuation.tools,
-          maxSteps,
-          t,
+        const run = await deps.api.createAgentRun({
+          goal: text,
+          mode: input.mode,
+          clientConversationId: conversation.id,
+          clientMessageId: userMessage.id,
+          attachments: documents.map((document) => ({
+            type: 'document',
+            document_id: document.id,
+            name: document.name,
+          })),
+          history: deriveAgentHistory(priorMessages),
         })
+        assistantMessage.runId = run.id
+        assistantMessage.runOrigin = 'cloud'
+        input.onConversationUpdate?.(cloneConversation(conversation))
+        const result: StreamChatResult = await deps.api.streamAgentRun(run.id, streamHandlers)
+        assistantMessage.status = 'done'
+        assistantMessage.requestId = result.requestId
+        assistantMessage.creditsCost = result.creditsCost
         input.onConversationUpdate?.(cloneConversation(conversation))
       } catch (error) {
-        if (isAbortError(error)) {
-          assistantMessage.status = 'done'
-          appendAgentEvent(
-            assistantMessage,
-            { event_type: 'run.canceled', run_id: runId, payload: {} },
-            t,
-          )
-          input.onConversationUpdate?.(cloneConversation(conversation))
-          return conversation
-        }
         assistantMessage.status = 'error'
         assistantMessage.content = chatErrorMessage(error, t)
         input.onConversationUpdate?.(cloneConversation(conversation))
         throw error
       } finally {
-        cloudToolLoopControllers.delete(runId)
         conversation.updatedAt = now()
         await deps.localData.save(conversation)
       }
 
       return conversation
-    },
-    async cancelCloudToolLoop(runId: string): Promise<boolean> {
-      const controller = cloudToolLoopControllers.get(runId)
-      if (!controller || controller.signal.aborted) {
-        return false
-      }
-      controller.abort()
-      return true
-    },
+	},
   }
 }
 
@@ -346,64 +188,6 @@ function appendAgentEvent(message: ChatMessage, event: AgentRunEvent, t: Transla
   if (item) {
     message.agentEvents = [...(message.agentEvents ?? []), item]
   }
-}
-
-function settleCloudToolLoopResult(
-  message: ChatMessage,
-  result: StreamChatResult,
-  options: {
-    goal: string
-    mode: ChatMode
-    tools: CloudToolDefinition[]
-    maxSteps: number
-    t: Translator
-  },
-): void {
-  message.requestId = result.requestId
-  message.creditsCost = (message.creditsCost ?? 0) + result.creditsCost
-  if (result.hitStepCap && result.continuationMessages?.length) {
-    const maxSteps = result.maxSteps ?? options.maxSteps
-    message.status = 'waiting_input'
-    message.cloudToolContinuation = {
-      requestId: result.requestId,
-      goal: options.goal,
-      mode: options.mode,
-      messages: result.continuationMessages,
-      tools: options.tools,
-      maxSteps,
-    }
-    appendAgentEvent(
-      message,
-      {
-        event_type: 'question.asked',
-        run_id: message.runId,
-        payload: {
-          request_id: createLocalID('web-step-cap'),
-          questions: [
-            {
-              header: options.t('chat.webToolStepCap.header'),
-              question: options.t('chat.webToolStepCap.question', { count: maxSteps }),
-              options: [
-                {
-                  label: options.t('chat.webToolStepCap.continueLabel', { count: maxSteps }),
-                  description: options.t('chat.webToolStepCap.continueDescription'),
-                },
-              ],
-            },
-          ],
-        },
-      },
-      options.t,
-    )
-    return
-  }
-
-  message.status = 'done'
-  message.cloudToolContinuation = undefined
-}
-
-function hasConcreteAnswer(answers: Record<string, string[]>): boolean {
-  return Object.values(answers).some((values) => values.some((value) => value.trim().length > 0))
 }
 
 function recoverOrphanCloudStreamingMessages(conversation: Conversation, t: Translator): boolean {
@@ -442,13 +226,6 @@ function isOrphanWebCloudToolLoopMessage(message: ChatMessage): boolean {
     message.runOrigin === 'cloud' &&
     typeof message.runId === 'string' &&
     message.runId.startsWith('run_')
-  )
-}
-
-function isAbortError(error: unknown): boolean {
-  return (
-    (error instanceof DOMException && error.name === 'AbortError') ||
-    (error instanceof Error && /abort/i.test(error.name || error.message))
   )
 }
 

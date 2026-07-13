@@ -1,15 +1,6 @@
-import { parseSSEBuffer, parseLLMStreamBuffer, type AgentRunEvent } from './sse'
+import { parseSSEBuffer, type AgentRunEvent } from './sse'
 import { streamAgentSSE } from '../streaming/streamTransport'
-import {
-  runCloudAgentLoop,
-  type CloudAgentLoopDeps,
-  type CloudLLMMessage,
-  type CloudLLMTurn,
-  type CloudToolDefinition,
-  type CloudToolResult,
-} from '../cloudAgentLoop'
 import type { ChatMode, PdfDocumentMetadata } from '../local-data/types'
-import { autoIntentFromMode, isAutoMode } from '../modelMode'
 
 export interface StreamChatRequest {
   mode: ChatMode
@@ -29,43 +20,11 @@ export interface StreamChatResult {
   inputTokens: number
   outputTokens: number
   creditsCost: number
-  hitStepCap?: boolean
-  steps?: number
-  maxSteps?: number
-  continuationMessages?: CloudLLMMessage[]
 }
 
 export interface ChatAPI {
   createAgentRun(request: CreateAgentRunRequest): Promise<AgentRun>
   streamAgentRun(runID: string, handlers: StreamHandlers): Promise<StreamChatResult>
-  /** Web-only: drive the client-orchestrated cloud tool loop (image gen /
-   *  web search) over the existing Go LLM + tool-gateway endpoints. */
-  runCloudToolLoop(input: CloudToolLoopRequest, handlers: StreamHandlers, signal?: AbortSignal): Promise<StreamChatResult>
-}
-
-export interface CloudToolLoopRequest {
-  runId: string
-  goal: string
-  mode: ChatMode
-  history: AgentHistoryMessage[]
-  tools: CloudToolDefinition[]
-  maxSteps?: number
-  continuationMessages?: CloudLLMMessage[]
-}
-
-/** Per-tool configuration as reported by GET /agent/tool-capabilities. */
-export interface ToolCapability {
-  configured: boolean
-  provider: string
-  credits_cost: number
-  requires_auth?: boolean
-  description?: string
-  inputSchema?: Record<string, unknown>
-}
-
-export interface ToolCapabilitiesResult {
-  tools: Record<string, ToolCapability>
-  webToolLoopMaxSteps: number
 }
 
 export interface AgentAttachment {
@@ -586,241 +545,11 @@ export class SheJaneAPI implements ChatAPI {
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Cloud tool loop (web build) — low-level transports + the orchestrator.
-  // These drive the SAME Go endpoints the daemon uses; see cloudAgentLoop.ts.
-  // ---------------------------------------------------------------------
-
   /** GET /api/v1/models → the user-facing chat model catalog (enabled,
    *  priority desc). Feeds the composer model picker. */
   async listModels(): Promise<ChatModelInfo[]> {
     const data = await this.get<{ models: ChatModelInfo[] }>('/api/v1/models')
     return data.models ?? []
-  }
-
-  /** GET /agent/tool-capabilities → which cloud tools are configured. */
-  async agentToolCapabilities(): Promise<ToolCapabilitiesResult> {
-    const data = await this.get<{ tools: Record<string, ToolCapability>; web_tool_loop_max_steps?: number }>('/api/v1/agent/tool-capabilities')
-    return {
-      tools: data.tools ?? {},
-      webToolLoopMaxSteps: positiveInteger(data.web_tool_loop_max_steps, 5),
-    }
-  }
-
-  /** POST /agent/llm/stream — one model turn. Streams content via onDelta and
-   *  returns the turn (content + tool_calls + usage). Parses NAMED llm.* SSE. */
-  async streamAgentLLM(
-    body: { runId: string; mode: ChatMode; messages: CloudLLMMessage[]; tools: CloudToolDefinition[] },
-    handlers: { onDelta: (delta: string) => void; onEvent?: (event: AgentRunEvent) => void },
-    signal?: AbortSignal,
-  ): Promise<CloudLLMTurn> {
-    const response = await this.authedFetch(
-      '/api/v1/agent/llm/stream',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          run_id: body.runId,
-          model: body.mode || 'auto',
-          messages: body.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-            toolCallId: m.toolCallId,
-            name: m.name,
-            toolCalls: m.toolCalls,
-          })),
-          tools: body.tools.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema,
-          })),
-        }),
-        signal,
-      },
-      true,
-    )
-    if (!response.ok || !response.body) {
-      throw await apiError(response)
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let content = ''
-    let reasoning = ''
-    const toolCalls: CloudLLMTurn['toolCalls'] = []
-    let finishReason = ''
-    let requestId = response.headers.get('X-Request-ID') ?? ''
-    let inputTokens = 0
-    let outputTokens = 0
-    let creditsCost = 0
-    let done = false
-
-    while (!done) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      const result = await reader.read()
-      done = result.done
-      buffer += decoder.decode(result.value ?? new Uint8Array(), { stream: !done })
-      const parsed = parseLLMStreamBuffer(buffer)
-      buffer = parsed.rest
-      for (const event of parsed.events) {
-        if (event.type === 'delta') {
-          if (event.contentDelta) {
-            content += event.contentDelta
-            handlers.onDelta(event.contentDelta)
-          }
-          reasoning += event.reasoningDelta
-        } else if (event.type === 'tool_call') {
-          toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments })
-        } else if (event.type === 'usage') {
-          inputTokens = event.inputTokens
-          outputTokens = event.outputTokens
-          creditsCost = event.creditsCost
-        } else if (event.type === 'model_selected') {
-          handlers.onEvent?.({
-            event_type: 'model.selected',
-            run_id: body.runId,
-            payload: {
-              requested_model: event.requestedModel,
-              resolved_model_id: event.resolvedModelId,
-              label: event.label,
-              reason: event.reason,
-            },
-          })
-        } else if (event.type === 'done') {
-          requestId = event.requestId || requestId
-          finishReason = event.finishReason
-        } else if (event.type === 'error') {
-          throw new Error(event.message || '模型调用失败')
-        }
-      }
-    }
-
-    return { content, reasoning, toolCalls, finishReason, requestId, inputTokens, outputTokens, creditsCost }
-  }
-
-  /** POST /agent/tools/execute — run one billed, idempotent tool. Returns the
-   *  structured result even on a tool-level failure (ok:false) so the loop can
-   *  feed it back to the model; only hard credit failures (402) throw. */
-  async executeAgentTool(req: {
-    runId: string
-    toolCallId: string
-    tool: string
-    arguments: Record<string, unknown>
-    idempotencyKey: string
-  }, signal?: AbortSignal): Promise<CloudToolResult> {
-    const response = await this.authedFetch(
-      '/api/v1/agent/tools/execute',
-      {
-        method: 'POST',
-        signal,
-        body: JSON.stringify({
-          run_id: req.runId,
-          tool_call_id: req.toolCallId,
-          tool: req.tool,
-          arguments: req.arguments,
-          idempotency_key: req.idempotencyKey,
-        }),
-      },
-      true,
-    )
-    let body: APIResponse<CloudToolResult> | undefined
-    try {
-      body = (await response.json()) as APIResponse<CloudToolResult>
-    } catch {
-      body = undefined
-    }
-    if (response.status === 402) {
-      throw new Error(body?.message || '额度不足，请升级或充值')
-    }
-    if (body?.data) {
-      return body.data
-    }
-    return { ok: false, content: body?.message || `工具调用失败 (HTTP ${response.status})`, errorCode: 'tool_execute_failed' }
-  }
-
-  async runCloudToolLoop(
-    input: CloudToolLoopRequest,
-    handlers: StreamHandlers,
-    signal?: AbortSignal,
-  ): Promise<StreamChatResult> {
-    const messages: CloudLLMMessage[] = input.continuationMessages
-      ? [...input.continuationMessages]
-      : [
-          ...input.history.map((m) => ({ role: m.role, content: m.content }) as CloudLLMMessage),
-          { role: 'user', content: input.goal },
-        ]
-    // Auto modes resolve ONCE before the loop (the cloud's task-aware
-    // classifier), so every turn of this run uses the same concrete model.
-    // Intent sentinels bias that resolver without pinning a static model.
-    let model = input.mode
-    if (!model || isAutoMode(model)) {
-      const requestedModel = model || 'auto'
-      const intent = autoIntentFromMode(requestedModel)
-      try {
-        const resolved = await this.post<{ model_id: string; label: string; reason: string }>(
-          '/api/v1/models/resolve',
-          intent ? { goal: input.goal, intent } : { goal: input.goal },
-          true,
-        )
-        if (resolved.model_id) {
-          model = resolved.model_id
-          handlers.onEvent?.({
-            event_type: 'model.selected',
-            run_id: input.runId,
-            payload: {
-              requested_model: requestedModel,
-              requested_label: autoRequestedLabel(requestedModel),
-              resolved_model_id: resolved.model_id,
-              label: resolved.label,
-              reason: resolved.reason,
-            },
-          })
-        }
-      } catch {
-        // Keep the Auto sentinel; the cloud resolves it to a default model per turn.
-      }
-    }
-    const deps: CloudAgentLoopDeps = {
-      streamLLM: (body, loopHandlers, loopSignal) =>
-        this.streamAgentLLM(body, { ...loopHandlers, onEvent: handlers.onEvent }, loopSignal),
-      executeTool: (req, loopSignal) => this.executeAgentTool(req, loopSignal),
-    }
-    const result = await runCloudAgentLoop(deps, {
-      runId: input.runId,
-      mode: model,
-      messages,
-      tools: input.tools,
-      maxSteps: input.maxSteps,
-      onDelta: handlers.onDelta,
-      onEvent: handlers.onEvent,
-      signal,
-    })
-    if (result.hitStepCap) {
-      handlers.onEvent?.({
-        event_type: 'run.budget_warning',
-        run_id: input.runId,
-        payload: {
-          reason: 'max_steps_reached',
-          max_steps: result.steps,
-          continue_steps: input.maxSteps ?? result.steps,
-        },
-      })
-    }
-    const streamResult: StreamChatResult = {
-      requestId: result.requestId,
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      creditsCost: result.creditsCost,
-    }
-    if (result.hitStepCap) {
-      streamResult.hitStepCap = true
-      streamResult.steps = result.steps
-      streamResult.maxSteps = input.maxSteps ?? result.steps
-    }
-    if (result.continuationMessages) {
-      streamResult.continuationMessages = result.continuationMessages
-    }
-    return streamResult
   }
 
   private async get<T>(path: string): Promise<T> {
@@ -841,17 +570,6 @@ export class SheJaneAPI implements ChatAPI {
       headers.Authorization = `Bearer ${this.accessToken}`
     }
     return headers
-  }
-}
-
-function autoRequestedLabel(mode: string): string {
-  switch (mode) {
-    case 'auto.fast':
-      return '更快'
-    case 'auto.smart':
-      return '更强'
-    default:
-      return '自动'
   }
 }
 
@@ -896,8 +614,4 @@ function retryAfterSeconds(value: string | null): number | undefined {
     return undefined
   }
   return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000))
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback
 }

@@ -7,7 +7,7 @@
 #
 # Before the first deploy, on the server:
 #   1. cp .env.example .env and replace every production placeholder.
-#   2. Point your DNS A records for APP_DOMAIN + ADMIN_DOMAIN at the
+#   2. Point your DNS A record for ADMIN_DOMAIN at the
 #      host — Caddy auto-provisions Let's Encrypt TLS on first hit.
 #
 # This file runs Postgres in-compose (data in a named volume). To use an
@@ -76,13 +76,6 @@ services:
       retries: 3
       start_period: 20s
 
-  client:
-    image: ghcr.io/jimmyrogue/shejane-client:${CLIENT_IMAGE_VERSION:-latest}
-    restart: unless-stopped
-    depends_on:
-      - api
-    # No host port: served through Caddy.
-
   admin:
     image: ghcr.io/jimmyrogue/shejane-admin:${ADMIN_IMAGE_VERSION:-latest}
     restart: unless-stopped
@@ -90,8 +83,7 @@ services:
       - api
     # No host port: served through Caddy.
 
-  # TLS entry point. Routes APP_DOMAIN → client (and /api/* → api), and
-  # ADMIN_DOMAIN → admin (and /api/* → api). Domains come from .env.
+  # TLS entry point for Admin and its same-origin /api routes.
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -99,7 +91,6 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      APP_DOMAIN: ${APP_DOMAIN:-localhost}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -107,7 +98,6 @@ services:
       - caddy-config:/config
     depends_on:
       - api
-      - client
       - admin
 
 volumes:

@@ -43,7 +43,7 @@ help: ## Show this help
 dev: ## Print the manual 3-terminal dev recipe (prefer `make dev-electron`)
 	@echo "Run API, client, and admin in three terminals:"
 	@echo "  cd services/cloud && HTTP_ADDR=:8080 go run ./cmd/api"
-	@echo "  pnpm --filter shejane-client dev"
+	@echo "  pnpm --filter @shejane/desktop dev"
 	@echo "  pnpm --filter shejane-admin dev"
 
 dev-electron: ## Full dev stack: Docker + daemon + Vite + Electron (hard-restarts)
@@ -87,7 +87,7 @@ test-ci: ci ## Alias of `ci` (kept for back-compat)
 build: ## Build Cloud, Runtime SDK, Desktop, Admin, and Runtime dependencies
 	cd services/cloud && go build ./cmd/api
 	pnpm --filter @shejane/runtime-client build
-	pnpm --filter shejane-client build
+	pnpm --filter @shejane/desktop build
 	pnpm --filter shejane-admin build
 	cd services/runtime && uv sync
 
@@ -95,7 +95,7 @@ api-test: ## Go unit tests
 	cd services/cloud && go test ./...
 
 client-test: ## Client vitest (run once)
-	pnpm --filter shejane-client test --run
+	pnpm --filter @shejane/desktop test --run
 
 admin-test: ## Admin vitest (run once)
 	pnpm --filter shejane-admin test --run
@@ -107,7 +107,7 @@ local-host-test: ## Daemon pytest
 	cd services/runtime && uv run python -m pytest
 
 client-build: ## Build only the client
-	pnpm --filter shejane-client build
+	pnpm --filter @shejane/desktop build
 
 admin-build: ## Build only the admin
 	pnpm --filter shejane-admin build

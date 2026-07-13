@@ -53,17 +53,6 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
 
-  client:
-    build:
-      context: ../..
-      dockerfile: apps/desktop/Dockerfile
-      args:
-        VITE_API_BASE_URL: http://localhost:${API_PORT:-8080}
-    ports:
-      - "${CLIENT_PORT:-5173}:80"
-    depends_on:
-      - api
-
   admin:
     build:
       context: ../..
@@ -87,7 +76,6 @@ services:
       - caddy-config:/config
     depends_on:
       - api
-      - client
       - admin
 
 volumes:

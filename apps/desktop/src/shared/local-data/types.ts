@@ -34,29 +34,6 @@ export interface AgentToolDetail {
   showWebIcon?: boolean
 }
 
-export interface StoredCloudToolDefinition {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-}
-
-export interface StoredCloudLLMMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  toolCallId?: string
-  name?: string
-  toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[]
-}
-
-export interface CloudToolContinuation {
-  requestId: string
-  goal: string
-  mode: ChatMode
-  messages: StoredCloudLLMMessage[]
-  tools: StoredCloudToolDefinition[]
-  maxSteps: number
-}
-
 export interface AgentPlanTodo {
   content: string
   status: 'pending' | 'in_progress' | 'completed'
@@ -166,9 +143,6 @@ export interface ChatMessage {
     resolved: string
     reason: string
   }
-  /** Web build only: saved browser-orchestrated tool-loop state when the
-   *  run reaches its configured step cap and waits for the user to continue. */
-  cloudToolContinuation?: CloudToolContinuation
 }
 
 export interface ConversationWorkspace {

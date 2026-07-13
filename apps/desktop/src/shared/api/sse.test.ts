@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseAgentSSEBuffer, parseLLMStreamBuffer, parseOpenAIStreamEvent, parseSSEBuffer } from './sse'
+import { parseAgentSSEBuffer, parseOpenAIStreamEvent, parseSSEBuffer } from './sse'
 
 describe('SSE parser', () => {
   it('extracts OpenAI-compatible delta content', () => {
@@ -36,55 +36,5 @@ describe('SSE parser', () => {
       { type: 'done' },
     ])
     expect(result.rest).toBe('')
-  })
-
-  // The cloud LLM gateway (/agent/llm/stream) uses NAMED events, distinct from
-  // the daemon envelope above. The web tool loop reads these directly.
-  describe('parseLLMStreamBuffer (named llm.* events)', () => {
-    it('parses delta / tool_call / usage / done in order', () => {
-      const result = parseLLMStreamBuffer(
-        'event: llm.delta\ndata: {"content_delta":"你好","reasoning_delta":""}\n\n' +
-          'event: llm.tool_call\ndata: {"id":"c1","name":"image.generate","arguments":{"prompt":"cat"}}\n\n' +
-          'event: llm.usage\ndata: {"input_tokens":10,"output_tokens":4,"credits_cost":7}\n\n' +
-          'event: llm.done\ndata: {"request_id":"req-1","finish_reason":"tool_calls"}\n\n',
-      )
-      expect(result.events).toEqual([
-        { type: 'delta', contentDelta: '你好', reasoningDelta: '' },
-        { type: 'tool_call', id: 'c1', name: 'image.generate', arguments: { prompt: 'cat' } },
-        { type: 'usage', inputTokens: 10, outputTokens: 4, creditsCost: 7 },
-        { type: 'done', requestId: 'req-1', finishReason: 'tool_calls' },
-      ])
-      expect(result.rest).toBe('')
-    })
-
-    it('keeps a partial trailing frame in rest', () => {
-      const result = parseLLMStreamBuffer(
-        'event: llm.delta\ndata: {"content_delta":"A","reasoning_delta":""}\n\n' + 'event: llm.delta\ndata: {"conte',
-      )
-      expect(result.events).toEqual([{ type: 'delta', contentDelta: 'A', reasoningDelta: '' }])
-      expect(result.rest).toContain('llm.delta')
-    })
-
-    it('surfaces llm.error', () => {
-      const result = parseLLMStreamBuffer('event: llm.error\ndata: {"request_id":"r","message":"boom"}\n\n')
-      expect(result.events).toEqual([{ type: 'error', requestId: 'r', message: 'boom' }])
-    })
-
-    it('parses model fallback selections', () => {
-      const result = parseLLMStreamBuffer(
-        'event: llm.model_selected\n' +
-          'data: {"requested_model":"bad-model","resolved_model_id":"good-model","label":"Good","reason":"上游失败后降级"}\n\n',
-      )
-
-      expect(result.events).toEqual([
-        {
-          type: 'model_selected',
-          requestedModel: 'bad-model',
-          resolvedModelId: 'good-model',
-          label: 'Good',
-          reason: '上游失败后降级',
-        },
-      ])
-    })
   })
 })

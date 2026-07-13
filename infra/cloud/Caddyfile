@@ -2,14 +2,13 @@
 # and the optional dev `proxy` profile (docker-compose.yml).
 #
 # Domains come from the environment so one file works everywhere:
-#   • prod: APP_DOMAIN / ADMIN_DOMAIN are set from .env → real domains,
+#   • prod: ADMIN_DOMAIN is set from .env → a real domain,
 #     Caddy auto-provisions Let's Encrypt TLS on first request.
 #   • dev / unset: fall back to localhost / admin.localhost (Caddy uses
 #     its internal CA).
 #
-# Each site serves the SPA at the root and proxies /api/* + /health to
-# the api container — so the apps/desktop/admin images can be built with an
-# empty VITE_API_BASE_URL and issue relative, same-origin requests.
+# Admin is served at the root and /api/* is proxied to Cloud, allowing an
+# empty VITE_API_BASE_URL and same-origin requests.
 
 # Global options. The ACME contact email receives Let's Encrypt
 # expiry / renewal-failure notifications. Override per-deploy with the
@@ -26,34 +25,6 @@
     X-Content-Type-Options "nosniff"
     Referrer-Policy "no-referrer"
     Permissions-Policy "camera=(), geolocation=(), microphone=()"
-  }
-}
-
-{$APP_DOMAIN:localhost} {
-  import security_headers
-  encode zstd gzip
-
-  handle /api/* {
-    reverse_proxy api:8080
-  }
-
-  handle /health {
-    reverse_proxy api:8080
-  }
-
-  # Liveness + readiness probes also live on the API (the readiness probe
-  # pings the DB). Without these, external uptime monitors hitting /readyz
-  # would fall through to the SPA and always see 200.
-  handle /healthz {
-    reverse_proxy api:8080
-  }
-
-  handle /readyz {
-    reverse_proxy api:8080
-  }
-
-  handle {
-    reverse_proxy client:80
   }
 }
 

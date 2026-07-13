@@ -32,7 +32,6 @@ import {
 import { createAuthClient } from './shared/api/authClient'
 import { uploadWithProgress } from './shared/api/uploadWithProgress'
 import { createChatStore, recoverOrphanCloudStreamingConversations, timelineItem } from './features/chat/chatStore'
-import { webToolsFromCapabilities, type CloudToolDefinition } from './shared/cloudAgentLoop'
 import { AuthScreen } from './features/auth/AuthScreen'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
@@ -373,7 +372,6 @@ function AppContent() {
   const pendingConversationRendersRef = useRef<Map<string, PendingConversationRender>>(new Map())
   const liveRenderTimerRef = useRef<number>()
   const activeIDRef = useRef<string | undefined>()
-  const activeCloudToolLoopRunIdRef = useRef<string | undefined>()
   const navigationVersionRef = useRef(0)
   const conversationInitializationCompleteRef = useRef(false)
   const desktopMigrationChainRef = useRef<Promise<void>>(Promise.resolve())
@@ -433,11 +431,6 @@ function AppContent() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
-  // Web build only: cloud tools (image gen / web search) the model may call
-  // via the client-orchestrated loop. Empty on desktop (the daemon owns tools)
-  // and until capabilities are fetched / when none are configured.
-  const [webTools, setWebTools] = useState<CloudToolDefinition[]>([])
-  const [webToolLoopMaxSteps, setWebToolLoopMaxSteps] = useState(5)
   // The chat model catalog (GET /api/v1/models), feeding the composer picker.
   // 'auto' is always offered on top of these.
   const [models, setModels] = useState<ChatModelInfo[]>([])
@@ -568,35 +561,6 @@ function AppContent() {
       id: appNoticeToastID,
     })
   }
-
-  // Web build only: discover which cloud tools are configured so the client
-  // tool loop advertises only working ones. Desktop owns tools via the daemon,
-  // so it skips this entirely.
-  useEffect(() => {
-    if (window.shejaneDesktop || !auth?.access_token) {
-      setWebTools([])
-      setWebToolLoopMaxSteps(5)
-      return
-    }
-    let cancelled = false
-    void api
-      .agentToolCapabilities()
-      .then((caps) => {
-        if (!cancelled) {
-          setWebTools(webToolsFromCapabilities(caps.tools))
-          setWebToolLoopMaxSteps(caps.webToolLoopMaxSteps)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setWebTools([])
-          setWebToolLoopMaxSteps(5)
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [api, auth?.access_token])
 
   // Desktop merges Runtime-owned BYOK models with the optional cloud catalog.
   // The two reads are independent, so start them together.
@@ -1411,25 +1375,6 @@ function AppContent() {
     }, 33)
   }
 
-  function trackActiveCloudToolLoop(conversation: Conversation) {
-    const activeCloudMessage = [...conversation.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.role === 'assistant' &&
-          message.runOrigin === 'cloud' &&
-          message.status === 'streaming' &&
-          Boolean(message.runId),
-      )
-    if (activeCloudMessage?.runId) {
-      activeCloudToolLoopRunIdRef.current = activeCloudMessage.runId
-      return
-    }
-    if (activeCloudToolLoopRunIdRef.current) {
-      activeCloudToolLoopRunIdRef.current = undefined
-    }
-  }
-
   async function sendMessage() {
     if (!auth && !isDesktop) {
       setNotice(t('app.notice.loginBeforeSending'))
@@ -1484,12 +1429,7 @@ function AppContent() {
               name: document.original_name,
               contentType: document.content_type,
             })),
-            // Web build: drive the client tool loop (image gen / web search)
-            // for plain prompts. Document Q&A keeps the single-completion path.
-            cloudTools: attachedDocuments.length > 0 ? undefined : webTools,
-            cloudToolMaxSteps: webToolLoopMaxSteps,
             onConversationUpdate: (nextConversation) => {
-              trackActiveCloudToolLoop(nextConversation)
               scheduleConversationRender(nextConversation, renderContext)
             },
           })
@@ -1564,10 +1504,7 @@ function AppContent() {
             content: parseSkillDraft(text).text,
             mode,
             scene: 'chat',
-            cloudTools: webTools,
-            cloudToolMaxSteps: webToolLoopMaxSteps,
             onConversationUpdate: (nextConversation) => {
-              trackActiveCloudToolLoop(nextConversation)
               scheduleConversationRender(nextConversation, renderContext)
             },
           })
@@ -1884,6 +1821,7 @@ function AppContent() {
       return
     }
     const conversation = await localData.get(activeID)
+    const message = conversation?.messages.find((item) => item.id === messageID)
     if (!conversation) {
       return
     }
@@ -2114,8 +2052,7 @@ function AppContent() {
 
   /** Stop whatever cancelable run is currently active for the active
    *  conversation. Local daemon runs emit `run.canceled` on their SSE
-   *  channel; web cloud tool loops are aborted through their browser-held
-   *  AbortController and then settled locally as `run.canceled`. */
+   *  channel. */
   async function cancelActiveRun() {
     if (!activeConversation) {
       return
@@ -2128,22 +2065,13 @@ function AppContent() {
         (msg) =>
           msg.role === 'assistant' &&
           Boolean(msg.runId) &&
-          ((msg.runOrigin === 'local' &&
-            (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input')) ||
-            (msg.runOrigin === 'cloud' && msg.status === 'streaming')),
+          msg.runOrigin === 'local' &&
+          (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
       )
     if (!activeMessage?.runId) {
-      const activeCloudRunId = activeCloudToolLoopRunIdRef.current
-      if (activeCloudRunId) {
-        await chat.cancelCloudToolLoop(activeCloudRunId)
-      }
       return
     }
     try {
-      if (activeMessage.runOrigin === 'cloud') {
-        await chat.cancelCloudToolLoop(activeMessage.runId)
-        return
-      }
       if (!localHostConfig) {
         return
       }
@@ -2442,31 +2370,6 @@ function AppContent() {
     }
     const conversation = await localData.get(activeID)
     const message = conversation?.messages.find((item) => item.id === messageID)
-    if (conversation && message?.runOrigin === 'cloud' && message.cloudToolContinuation) {
-      setNotice('')
-      const renderContext = createConversationRenderContext()
-      try {
-        await chat.continueCloudToolLoop({
-          conversationId: conversation.id,
-          messageId: message.id,
-          requestId: requestID,
-          answers,
-          maxSteps: webToolLoopMaxSteps,
-          onConversationUpdate: (nextConversation) => {
-            trackActiveCloudToolLoop(nextConversation)
-            scheduleConversationRender(nextConversation, renderContext)
-          },
-        })
-        toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
-        await refreshConversationsAfterStream(conversation.id, renderContext)
-        setBalance(await api.balance())
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
-        await refreshConversations(conversation.id)
-      }
-      return
-    }
-
     if (!localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
       return
@@ -3799,7 +3702,7 @@ function AppContent() {
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
               isDesktop={isDesktop}
-              slashCommandsEnabled={isDesktop || webTools.some((tool) => tool.name === 'image.generate')}
+              slashCommandsEnabled={isDesktop}
               />
               <p className="composer-disclaimer">{t('composer.disclaimer')}</p>
             </div>
