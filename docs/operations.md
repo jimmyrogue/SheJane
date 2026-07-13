@@ -446,7 +446,7 @@ make ci            # 本地跑一遍 CI 的全部（推 PR 前的总门禁）
 
 - `make test`：运行 API Go test、client/admin Vitest、Local Host Vitest。适合日常开发中频繁跑。
 - `make test-race`：`go test -race ./...`，专门抓信用账本这类并发竞态。CI 的 `test` job 跑它（已涵盖普通 Go run，不再重复跑非 race 版）。
-- `make test-e2e`：运行 `e2e/` Playwright Chromium simulated E2E。测试会启动隔离的 client/admin dev server（默认 `55173/55174`），并用 route mocking 模拟 API、S3 PUT、Agent SSE 和 Local Host loopback API。
+- `make test-e2e`：运行 `tests/e2e/` Playwright Chromium simulated E2E。测试会启动隔离的 client/admin dev server（默认 `55173/55174`），并用 route mocking 模拟 API、S3 PUT、Agent SSE 和 Local Host loopback API。
 - `make test-contract`：在专用端口 `:17399` 启动一个真实 daemon，用 TypeScript client 跑契约套件（真 HTTP，无 MockTransport），抓 client↔daemon 的 shape drift。
 - `make ci`：把 CI 的全部检查在本地跑一遍 —— `lint` + 单元 + race + build + e2e + contract。`make test-ci` 是它的兼容别名。
 - `make smoke-local-host`：启动真实 Local Host daemon，检查 `/health`、未配对 `/tools` 返回 401、配对后工具列表包含 `mcp.call`，并创建/stream 一个 deterministic local run。

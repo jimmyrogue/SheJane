@@ -161,7 +161,7 @@ jobs:
           go test ./internal/store/ -run TestStoreConformance -v
 
   # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
-  # client/ and admin/, so both need their deps installed (not just e2e/).
+  # client/ and admin/, so both need their deps installed (not just tests/e2e/).
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest

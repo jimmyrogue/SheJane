@@ -1,7 +1,7 @@
 packages:
   - client
   - admin
-  - e2e
+  - tests/e2e
 
 allowBuilds:
   electron: true

@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/jimmyrogue/SheJane",
-    "directory": "e2e"
+    "directory": "tests/e2e"
   },
   "type": "module",
   "scripts": {

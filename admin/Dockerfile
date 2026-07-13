@@ -6,7 +6,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY client/package.json client/package.json
 COPY admin/package.json admin/package.json
-COPY e2e/package.json e2e/package.json
+COPY tests/e2e/package.json tests/e2e/package.json
 RUN corepack enable && pnpm install --filter shejane-admin... --frozen-lockfile
 COPY admin admin
 WORKDIR /src/admin

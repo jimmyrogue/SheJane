@@ -27,14 +27,14 @@ export default defineConfig({
   webServer: [
     {
       command: `pnpm dev --host 127.0.0.1 --port ${clientPort}`,
-      cwd: '../client',
+      cwd: '../../client',
       url: clientURL,
       reuseExistingServer: false,
       timeout: 120_000,
     },
     {
       command: `pnpm dev --host 127.0.0.1 --port ${adminPort}`,
-      cwd: '../admin',
+      cwd: '../../admin',
       url: adminURL,
       reuseExistingServer: false,
       timeout: 120_000,
