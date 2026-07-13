@@ -14,8 +14,16 @@ import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
 import { fileIconFor } from '@/shared/files/fileIcons'
-import type { UserDocument } from '@/shared/api/client'
 import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
+
+export interface AttachmentDocument {
+  id: string
+  original_name: string
+  content_type: string
+  status: string
+  expires_at?: string
+  [key: string]: unknown
+}
 import type { ChatMode } from '@/shared/local-data/types'
 
 /**
@@ -72,7 +80,7 @@ export function Composer({
   attachedDocuments,
   attachedPreview,
   attachedPreviews,
-  isUploading,
+  isUploading = false,
   uploadProgress,
   onUploadDocument,
   onDetachDocument,
@@ -95,28 +103,21 @@ export function Composer({
   isSending: boolean
   /** True when an agent run is still cancelable even if the current
    *  `sendMessage()` promise has already resolved. Local runs can pause
-   *  at HITL `permission.required` or `question.requested` boundaries;
-   *  web cloud tool loops are cancelable while streaming through the
-   *  browser-held AbortController. Driving the stop button off
-   *  `isSending || hasActiveRun` keeps the button visible in both
-   *  cases. */
+   *  at HITL `permission.required` or `question.requested` boundaries.
+   *  Driving the stop button off `isSending || hasActiveRun` keeps the
+   *  button visible across those pauses. */
   hasActiveRun?: boolean
-  attachedDocument?: UserDocument
-  attachedDocuments?: UserDocument[]
+  attachedDocument?: AttachmentDocument
+  attachedDocuments?: AttachmentDocument[]
   /** Inline data: URL for image previews. Non-image documents leave
    *  this undefined and we fall back to a file-icon tile. */
   attachedPreview?: string
   attachedPreviews?: Record<string, string | undefined>
-  isUploading: boolean
-  /** 0..100 percentage during an in-flight upload, undefined when
-   *  idle. Used to render a determinate progress overlay on the
-   *  attachment chip — slow cross-border S3 uploads (30+ seconds
-   *  from China even with Transfer Acceleration) otherwise look
-   *  like the app froze. When undefined but `isUploading` is true,
-   *  the indeterminate spinner is shown instead. */
+  isUploading?: boolean
+  /** 0..100 percentage during an in-flight local import. */
   uploadProgress?: number
-  onUploadDocument: (file?: File | File[] | FileList) => void
-  onDetachDocument: (documentId?: string) => void
+  onUploadDocument?: (file?: File | File[] | FileList) => void
+  onDetachDocument?: (documentId?: string) => void
   onSend: () => void
   /** Append a user instruction into the currently active local run. */
   onAppendInstruction?: () => void
@@ -175,7 +176,7 @@ export function Composer({
       : null
 
   function openFilePicker() {
-    if (isUploading) {
+    if (isUploading || !onUploadDocument) {
       return
     }
     fileInputRef.current?.click()
@@ -204,7 +205,7 @@ export function Composer({
           if (file) {
             event.preventDefault()
             event.stopPropagation()
-            onUploadDocument(file)
+            onUploadDocument?.(file)
             return
           }
         }
@@ -255,7 +256,7 @@ export function Composer({
     }
     const files = event.dataTransfer.files
     if (files && files.length > 0) {
-      onUploadDocument(files)
+      onUploadDocument?.(files)
     }
   }
 
@@ -347,7 +348,7 @@ export function Composer({
                 className="attachment-thumb-remove"
                 aria-label={t('composer.removeAttachment')}
                 title={t('composer.removeAttachment')}
-                onClick={() => onDetachDocument(document.id)}
+                onClick={() => onDetachDocument?.(document.id)}
               >
                 <IconX size={12} aria-hidden="true" />
               </Button>
@@ -381,7 +382,7 @@ export function Composer({
        *  send / stop button sits at the trailing edge of this row (next to
        *  the model selector), matching the v4 prototype's input bar. */}
       <div className="composer-toolbar">
-        <button
+        {onUploadDocument ? <button
           type="button"
           className="composer-tool"
           aria-label={t('composer.attachmentTitle')}
@@ -394,7 +395,7 @@ export function Composer({
           ) : (
             <IconPaperclip size={16} aria-hidden="true" />
           )}
-        </button>
+        </button> : null}
         {attachmentToolHint ? (
           <span
             className="composer-capability-chip"
@@ -465,7 +466,7 @@ export function Composer({
         {/* Hidden native file picker — clicking the attach tool above
             triggers it via openFilePicker(). aria-label kept so tests
             and screen readers can find it. */}
-        <input
+        {onUploadDocument ? <input
           ref={fileInputRef}
           type="file"
           multiple
@@ -477,7 +478,7 @@ export function Composer({
             onUploadDocument(event.currentTarget.files ?? undefined)
             event.currentTarget.value = ''
           }}
-        />
+        /> : null}
       </div>
     </footer>
   )

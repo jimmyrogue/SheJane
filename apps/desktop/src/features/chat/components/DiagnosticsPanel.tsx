@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { AgentRunEvent } from '@/shared/api/sse'
+import type { AgentRunEvent } from '@shejane/runtime-client'
 import type { LocalRunDiagnostics } from '@/shared/local-host/client'
 
 type Translate = ReturnType<typeof useI18n>['t']

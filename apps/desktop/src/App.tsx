@@ -53,7 +53,7 @@ import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
-import type { AgentRunEvent } from './shared/api/sse'
+import type { AgentRunEvent } from '@shejane/runtime-client'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
@@ -456,10 +456,10 @@ function AppContent() {
             capability_tier: 'balanced',
           }))
         setModels(catalog)
-        setAutoModelAvailable(true)
+        setAutoModelAvailable(false)
         setMode((current) => {
-          if (isAutoMode(current) || catalog.some((m) => m.id === current)) return current
-          const next: ChatMode = 'auto'
+          if (catalog.some((m) => m.id === current)) return current
+          const next: ChatMode = catalog[0]?.id ?? 'auto'
           writeChatMode(next)
           return next
         })
@@ -2848,9 +2848,6 @@ function AppContent() {
               onDraftChange={setDraft}
               isSending={isSending}
               hasActiveRun={hasActiveRun}
-              isUploading={false}
-              onUploadDocument={() => setNotice(t('app.notice.localDocumentUnsupported'))}
-              onDetachDocument={() => undefined}
               onSend={() => void sendMessage()}
               onAppendInstruction={hasActiveRun ? () => void appendInstructionToActiveRun() : undefined}
               onStop={() => void cancelActiveRun()}

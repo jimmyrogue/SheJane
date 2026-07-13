@@ -6,7 +6,7 @@ interface Props {
    *  useEffect refetch — same key + same refreshKey = no reload. */
   sourceKey: string
   /** Returns the .docx bytes. Closure over whichever authenticated
-   *  fetch backs this source (local workspace endpoint, cloud S3 GET). */
+   *  fetch backs this source through the local Runtime workspace endpoint. */
   loadBytes: () => Promise<ArrayBuffer>
   /** Bumped by the parent on edit / re-open to force a refetch. */
   refreshKey?: number

@@ -1,5 +1,9 @@
-import type { AgentHistoryMessage } from '@/shared/api/client'
 import type { ChatMessage } from '@/shared/local-data/types'
+
+export interface AgentHistoryMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 // Temporary P2 transport boundary while the client still uploads prior
 // messages. The Runtime request schema accepts at most 256 items and 1 MiB;

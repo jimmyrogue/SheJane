@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider, createTranslator } from '@/shared/i18n/i18n'
-import { Composer, formatDocumentExpiry } from './Composer'
+import { Composer, formatDocumentExpiry, type AttachmentDocument } from './Composer'
 import { skillToken } from '../skillDraft'
 import type { InstalledSkill } from '@/shared/local-host/client'
-import type { UserDocument } from '@/shared/api/client'
 
 afterEach(cleanup)
 
@@ -14,7 +13,7 @@ const sampleSkills: InstalledSkill[] = [
   { name: 'write', description: 'Strip AI writing patterns', path: '/s/write/SKILL.md' },
 ]
 
-function documentFixture(id: string, name: string, contentType: string): UserDocument {
+function documentFixture(id: string, name: string, contentType: string): AttachmentDocument {
   return {
     id,
     user_id: 'user-1',
@@ -303,7 +302,7 @@ describe('formatDocumentExpiry', () => {
 })
 
 describe('Composer attachment chip expiry caption', () => {
-  function makeReadyDoc(overrides: Partial<UserDocument> = {}): UserDocument {
+  function makeReadyDoc(overrides: Partial<AttachmentDocument> = {}): AttachmentDocument {
     return {
       id: 'doc-1',
       user_id: 'user-1',
@@ -319,7 +318,7 @@ describe('Composer attachment chip expiry caption', () => {
     }
   }
 
-  function renderWithDoc(doc: UserDocument) {
+  function renderWithDoc(doc: AttachmentDocument) {
     return render(
       <I18nProvider>
         <Composer
