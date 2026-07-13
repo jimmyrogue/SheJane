@@ -3,7 +3,6 @@ package modelreg
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 
 	"github.com/coldflame/shejane/api/internal/llm"
@@ -15,9 +14,9 @@ import (
 // (~¥20 / 1M credits) so existing wallets keep the same rough purchasing power.
 const defaultBaselineTokenCostCNY = 0.00002
 
-// EnsureSeed creates the initial chat.fast / chat.deep rows from env config the
-// first time the table is empty, then backfills disabled recommended templates.
-// Admin edits remain the source of truth; templates are starter rows only.
+// EnsureSeed creates code-defined billing defaults and disabled model templates.
+// It never enables a model or imports provider credentials: Admin-managed,
+// encrypted model rows are the only production configuration source.
 func (r *Registry) EnsureSeed(ctx context.Context) error {
 	count, err := r.store.CountModelConfigs(ctx)
 	if err != nil {
@@ -25,13 +24,6 @@ func (r *Registry) EnsureSeed(ctx context.Context) error {
 	}
 
 	if count == 0 {
-		fast, deep := r.seedRows()
-		if _, err := r.store.UpsertModelConfig(ctx, "", fast); err != nil {
-			return err
-		}
-		if _, err := r.store.UpsertModelConfig(ctx, "", deep); err != nil {
-			return err
-		}
 		if _, err := r.store.GetAppSetting(ctx, BillingSettingsKey); err != nil {
 			raw, _ := json.Marshal(map[string]any{
 				"markup_factor":       DefaultMarkupFactor,
@@ -57,92 +49,8 @@ func (r *Registry) EnsureSeed(ctx context.Context) error {
 	if err := r.ensureRecommendedTemplates(ctx); err != nil {
 		return err
 	}
-	if !r.cipher.Enabled() && (r.cfg.FastProviderAPIKey != "" || r.cfg.DeepProviderAPIKey != "" || r.cfg.AnthropicAPIKey != "") {
-		log.Printf("modelreg: CONFIG_ENCRYPTION_KEY is not set — model API keys are stored in plaintext")
-	}
 	r.Invalidate()
 	return nil
-}
-
-func (r *Registry) seedRows() (store.ModelConfig, store.ModelConfig) {
-	cfg := r.cfg
-
-	fast := store.ModelConfig{
-		Slot:                         SlotChatFast,
-		Capability:                   CapabilityChat,
-		DisplayName:                  "快速",
-		Vendor:                       "DeepSeek",
-		VendorInfo:                   defaultVendorInfo("DeepSeek"),
-		CapabilityTier:               CapabilityTierFast,
-		Description:                  "速度快、成本低,适合日常对话和简单任务",
-		Priority:                     100, // highest → the catalog default
-		CreditMultiplier:             0.1,
-		InputCreditMultiplier:        0.1,
-		OutputCreditMultiplier:       0.1,
-		InputPricePerMillionCNY:      2,
-		OutputPricePerMillionCNY:     2,
-		CacheWritePricePerMillionCNY: 2,
-		Enabled:                      true,
-		Params:                       map[string]any{},
-	}
-	switch {
-	case cfg.MockLLM:
-		fast.ProviderKind = string(llm.ProviderKindMock)
-		fast.ModelName = cfg.FastModel
-		fast.Params["mock_reply"] = "Mock SheJane response from fast mode"
-	case cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "":
-		fast.ProviderKind = string(llm.InferOpenAIProviderKind(cfg.FastProviderKind, cfg.FastProviderBaseURL))
-		fast.BaseURL = cfg.FastProviderBaseURL
-		fast.ModelName = cfg.FastModel
-		fast.APIKeyEncrypted = r.cipher.Encrypt(cfg.FastProviderAPIKey)
-	default:
-		fast.ProviderKind = string(llm.ProviderKindMock)
-		fast.ModelName = cfg.FastModel
-		fast.Params["mock_reply"] = "Mock SheJane response from fast fallback"
-	}
-
-	deep := store.ModelConfig{
-		Slot:                         SlotChatDeep,
-		Capability:                   CapabilityChat,
-		DisplayName:                  "深度",
-		Vendor:                       "Claude",
-		VendorInfo:                   defaultVendorInfo("Claude"),
-		CapabilityTier:               CapabilityTierReasoning,
-		Description:                  "推理更强,适合复杂分析、写作和多步任务",
-		Priority:                     90,
-		CreditMultiplier:             1,
-		InputCreditMultiplier:        1,
-		OutputCreditMultiplier:       1,
-		InputPricePerMillionCNY:      20,
-		OutputPricePerMillionCNY:     20,
-		CacheWritePricePerMillionCNY: 20,
-		Enabled:                      true,
-		Params:                       map[string]any{},
-	}
-	deepKind := llm.NormalizeProviderKind(cfg.DeepProviderKind)
-	switch {
-	case cfg.MockLLM:
-		deep.ProviderKind = string(llm.ProviderKindMock)
-		deep.ModelName = cfg.DeepModel
-		deep.Params["mock_reply"] = "Mock SheJane response from deep mode"
-	case cfg.AnthropicAPIKey != "" && (deepKind == "" || deepKind == llm.ProviderKindAnthropic):
-		deep.ProviderKind = string(llm.ProviderKindAnthropic)
-		deep.ModelName = cfg.DeepModel
-		deep.APIKeyEncrypted = r.cipher.Encrypt(cfg.AnthropicAPIKey)
-		deep.Params["anthropic_version"] = cfg.AnthropicVersion
-	case cfg.DeepProviderBaseURL != "" && cfg.DeepProviderAPIKey != "":
-		deep.DisplayName = "deep-compatible"
-		deep.ProviderKind = string(llm.InferOpenAIProviderKind(cfg.DeepProviderKind, cfg.DeepProviderBaseURL))
-		deep.BaseURL = cfg.DeepProviderBaseURL
-		deep.ModelName = cfg.DeepModel
-		deep.APIKeyEncrypted = r.cipher.Encrypt(cfg.DeepProviderAPIKey)
-	default:
-		deep.ProviderKind = string(llm.ProviderKindMock)
-		deep.ModelName = cfg.DeepModel
-		deep.Params["mock_reply"] = "Mock SheJane response from deep fallback"
-	}
-
-	return fast, deep
 }
 
 func (r *Registry) ensureRecommendedTemplates(ctx context.Context) error {

@@ -52,7 +52,7 @@ services:
       migrate:
         condition: service_completed_successfully
     # Real values come from .env (required). The block below pins the
-    # in-compose topology + flips two dev defaults to production-safe.
+    # in-compose topology and production cookie security.
     env_file:
       - path: ../../.env
         required: true
@@ -60,7 +60,6 @@ services:
       HTTP_ADDR: ":8080"
       SHEJANE_ENV: production
       DATABASE_URL: postgres://shejane:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/shejane?sslmode=disable
-      MOCK_LLM: ${MOCK_LLM:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
     # Exposed on loopback only — Caddy (same network) fronts it. Lets a
     # host-level proxy or smoke check reach the API without opening it

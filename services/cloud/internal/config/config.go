@@ -38,7 +38,9 @@ type Config struct {
 	// user's wallet on first registration, written to extra_credits_balance
 	// (semantically a one-shot bag, not a monthly quota). 0 disables it.
 	SignupCredits int64
-	MockLLM       bool
+	// MockLLM is an in-process test switch. Load never reads it from the
+	// environment; production model configuration is database-only.
+	MockLLM bool
 
 	// ConfigEncryptionKey encrypts model API keys at rest in the DB. When empty,
 	// keys are stored as plaintext and a warning is logged at startup.
@@ -49,17 +51,6 @@ type Config struct {
 	SentryDSN              string
 	SentryEnvironment      string
 	SentryTracesSampleRate float64
-
-	FastProviderKind    string
-	FastProviderBaseURL string
-	FastProviderAPIKey  string
-	FastModel           string
-	DeepProviderKind    string
-	DeepProviderBaseURL string
-	DeepProviderAPIKey  string
-	DeepModel           string
-	AnthropicAPIKey     string
-	AnthropicVersion    string
 
 	StripeSecretKey     string
 	StripeWebhookSecret string
@@ -176,20 +167,11 @@ func Default() Config {
 		AdminEmails:                   nil,
 		MonthlyCredits:                0,
 		SignupCredits:                 0,
-		MockLLM:                       true,
-		FastProviderKind:              "",
-		FastProviderBaseURL:           "https://api.deepseek.com",
-		FastModel:                     "deepseek-v4-flash",
-		DeepProviderKind:              "",
-		DeepModel:                     "claude-3-5-sonnet-latest",
-		AnthropicVersion:              "2023-06-01",
+		MockLLM:                       false,
 		StripeWebhookSecret:           "",
 		StripeSecretKey:               "",
 		StripePriceID:                 "",
 		BillingUSDToCNYRate:           6.7635,
-		DeepProviderBaseURL:           "",
-		DeepProviderAPIKey:            "",
-		FastProviderAPIKey:            "",
 		AWSRegion:                     "",
 		AWSAccessKeyID:                "",
 		AWSSecretAccessKey:            "",
@@ -236,53 +218,21 @@ func Load() Config {
 	cfg.CookieSecure = getEnvBool("COOKIE_SECURE", cfg.CookieSecure)
 	cfg.DatabaseURL = getEnv("DATABASE_URL", cfg.DatabaseURL)
 	cfg.AdminEmails = getEnvList("ADMIN_EMAILS", cfg.AdminEmails)
-	cfg.MonthlyCredits = getEnvInt64("MONTHLY_CREDITS", cfg.MonthlyCredits)
-	cfg.SignupCredits = getEnvInt64("SIGNUP_CREDITS", cfg.SignupCredits)
-	cfg.MockLLM = getEnvBool("MOCK_LLM", cfg.MockLLM)
 	cfg.ConfigEncryptionKey = getEnv("CONFIG_ENCRYPTION_KEY", cfg.ConfigEncryptionKey)
 	cfg.SentryDSN = getEnv("SENTRY_DSN", cfg.SentryDSN)
 	cfg.SentryEnvironment = getEnv("SENTRY_ENVIRONMENT", cfg.SentryEnvironment)
 	cfg.SentryTracesSampleRate = getEnvFloat("SENTRY_TRACES_SAMPLE_RATE", cfg.SentryTracesSampleRate)
-	cfg.FastProviderKind = getEnv("FAST_PROVIDER_KIND", cfg.FastProviderKind)
-	cfg.FastProviderBaseURL = getEnv("FAST_PROVIDER_BASE_URL", cfg.FastProviderBaseURL)
-	cfg.FastProviderAPIKey = getEnv("FAST_PROVIDER_API_KEY", cfg.FastProviderAPIKey)
-	cfg.FastModel = getEnv("FAST_MODEL", cfg.FastModel)
-	cfg.DeepProviderKind = getEnv("DEEP_PROVIDER_KIND", cfg.DeepProviderKind)
-	cfg.DeepProviderBaseURL = getEnv("DEEP_PROVIDER_BASE_URL", cfg.DeepProviderBaseURL)
-	cfg.DeepProviderAPIKey = getEnv("DEEP_PROVIDER_API_KEY", cfg.DeepProviderAPIKey)
-	cfg.DeepModel = getEnv("DEEP_MODEL", cfg.DeepModel)
-	cfg.AnthropicAPIKey = getEnv("ANTHROPIC_API_KEY", cfg.AnthropicAPIKey)
-	cfg.AnthropicVersion = getEnv("ANTHROPIC_VERSION", cfg.AnthropicVersion)
 	cfg.StripeSecretKey = getEnv("STRIPE_SECRET_KEY", cfg.StripeSecretKey)
 	cfg.StripeWebhookSecret = getEnv("STRIPE_WEBHOOK_SECRET", cfg.StripeWebhookSecret)
 	cfg.StripePriceID = getEnv("STRIPE_PRICE_ID", cfg.StripePriceID)
-	cfg.BillingUSDToCNYRate = getEnvFloat("BILLING_USD_CNY_RATE", cfg.BillingUSDToCNYRate)
 	cfg.AWSRegion = getEnv("AWS_REGION", cfg.AWSRegion)
 	cfg.AWSAccessKeyID = getEnv("AWS_ACCESS_KEY_ID", cfg.AWSAccessKeyID)
 	cfg.AWSSecretAccessKey = getEnv("AWS_SECRET_ACCESS_KEY", cfg.AWSSecretAccessKey)
 	cfg.S3Bucket = getEnv("S3_BUCKET", cfg.S3Bucket)
-	cfg.S3UseAccelerate = getEnvBool("S3_USE_ACCELERATE", cfg.S3UseAccelerate)
-	cfg.S3DocumentPrefix = getEnv("S3_DOCUMENT_PREFIX", cfg.S3DocumentPrefix)
-	cfg.DocumentMaxBytes = getEnvInt64("DOCUMENT_MAX_BYTES", cfg.DocumentMaxBytes)
-	cfg.DocumentTextLimit = getEnvInt("DOCUMENT_TEXT_LIMIT", cfg.DocumentTextLimit)
-	cfg.DocumentTTLHours = getEnvInt("DOCUMENT_TTL_HOURS", cfg.DocumentTTLHours)
-	cfg.DocumentReaperIntervalMinutes = getEnvInt("DOCUMENT_REAPER_INTERVAL_MINUTES", cfg.DocumentReaperIntervalMinutes)
-	cfg.DocumentReaperBatchSize = getEnvInt("DOCUMENT_REAPER_BATCH_SIZE", cfg.DocumentReaperBatchSize)
-	cfg.AgentRunTTLHours = getEnvInt("AGENT_RUN_TTL_HOURS", cfg.AgentRunTTLHours)
-	cfg.AgentSpendRateLimitPerMinute = getEnvInt("AGENT_SPEND_RATE_LIMIT_PER_MINUTE", cfg.AgentSpendRateLimitPerMinute)
 	cfg.TavilyAPIKey = getEnv("TAVILY_API_KEY", cfg.TavilyAPIKey)
 	cfg.TavilyBaseURL = getEnv("TAVILY_BASE_URL", cfg.TavilyBaseURL)
-	cfg.TavilySearchCredits = getEnvInt64("TAVILY_SEARCH_CREDITS", cfg.TavilySearchCredits)
-	cfg.ToolGatewayTimeout = time.Duration(getEnvInt("TOOL_GATEWAY_TIMEOUT_MS", int(cfg.ToolGatewayTimeout/time.Millisecond))) * time.Millisecond
-	cfg.WebToolLoopMaxSteps = clampInt(getEnvInt("WEB_TOOL_LOOP_MAX_STEPS", cfg.WebToolLoopMaxSteps), 1, 50)
 	cfg.E2BAPIKey = getEnv("E2B_API_KEY", cfg.E2BAPIKey)
 	cfg.E2BBaseURL = getEnv("E2B_BASE_URL", cfg.E2BBaseURL)
-	cfg.E2BTemplateID = getEnv("E2B_TEMPLATE_ID", cfg.E2BTemplateID)
-	cfg.E2BSandboxIdleTTLSeconds = getEnvInt("E2B_SANDBOX_IDLE_TTL_SECONDS", cfg.E2BSandboxIdleTTLSeconds)
-	cfg.E2BSandboxMaxLifetimeSeconds = getEnvInt("E2B_SANDBOX_MAX_LIFETIME_SECONDS", cfg.E2BSandboxMaxLifetimeSeconds)
-	cfg.E2BCodeExecBaseCredits = getEnvInt64("E2B_CODE_EXEC_BASE_CREDITS", cfg.E2BCodeExecBaseCredits)
-	cfg.E2BCodeExecPerSecondCredits = getEnvInt64("E2B_CODE_EXEC_PER_SECOND_CREDITS", cfg.E2BCodeExecPerSecondCredits)
-	cfg.E2BSandboxRequestTimeoutSeconds = getEnvInt("E2B_SANDBOX_REQUEST_TIMEOUT_SECONDS", cfg.E2BSandboxRequestTimeoutSeconds)
 	return cfg
 }
 
@@ -376,40 +326,6 @@ func getEnvBool(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
-}
-
-func getEnvInt64(key string, fallback int64) int64 {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func getEnvInt(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func clampInt(value int, min int, max int) int {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
 }
 
 func getEnvList(key string, fallback []string) []string {

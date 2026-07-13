@@ -43,9 +43,6 @@ services:
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:5174}
       JWT_SECRET: ${JWT_SECRET:-local-development-jwt-secret-change-me}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      MOCK_LLM: ${MOCK_LLM:-true}
-      FAST_PROVIDER_BASE_URL: ${FAST_PROVIDER_BASE_URL:-https://api.deepseek.com}
-      FAST_PROVIDER_API_KEY: ${FAST_PROVIDER_API_KEY:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-}
@@ -53,7 +50,6 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-}
-      S3_DOCUMENT_PREFIX: ${S3_DOCUMENT_PREFIX:-documents}
     ports:
       - "${API_PORT:-8080}:8080"
 

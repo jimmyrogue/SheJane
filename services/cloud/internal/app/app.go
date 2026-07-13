@@ -122,7 +122,7 @@ func New(cfg config.Config, st store.Store, opts ...Option) *App {
 	documentConfig.TextLimit = cfg.DocumentTextLimit
 	documentConfig.TTL = time.Duration(cfg.DocumentTTLHours) * time.Hour
 
-	router := llm.NewRouterWithModels(fast, cfg.FastModel, deep, cfg.DeepModel)
+	router := llm.NewRouter(fast, deep)
 	registry := modelreg.New(st, cfg)
 	if err := registry.EnsureSeed(context.Background()); err != nil {
 		log.Printf("app: model config seed failed (falling back to env config): %v", err)
@@ -515,24 +515,8 @@ func providersFromConfig(cfg config.Config) (llm.Provider, llm.Provider) {
 	if cfg.MockLLM {
 		return llm.NewMockProvider("deepseek-fast", "Mock SheJane response from fast mode"), llm.NewMockProvider("claude-deep", "Mock SheJane response from deep mode")
 	}
-
-	fast := llm.Provider(llm.NewMockProvider("deepseek-fast", "Mock SheJane response from fast fallback"))
-	if cfg.FastProviderBaseURL != "" && cfg.FastProviderAPIKey != "" {
-		fastKind := llm.InferOpenAIProviderKind(cfg.FastProviderKind, cfg.FastProviderBaseURL)
-		fast = llm.NewOpenAICompatibleProviderWithProfile("deepseek-fast", cfg.FastProviderBaseURL, cfg.FastProviderAPIKey, llm.ProfileForProviderKind(fastKind))
-	}
-
-	deep := llm.Provider(llm.NewMockProvider("claude-deep", "Mock SheJane response from deep fallback"))
-	deepKind := llm.NormalizeProviderKind(cfg.DeepProviderKind)
-	if cfg.AnthropicAPIKey != "" && (deepKind == "" || deepKind == llm.ProviderKindAnthropic) {
-		deep = llm.NewAnthropicProvider(cfg.AnthropicAPIKey, cfg.AnthropicVersion)
-	} else if cfg.DeepProviderBaseURL != "" && cfg.DeepProviderAPIKey != "" {
-		if deepKind == "" || deepKind == llm.ProviderKindAnthropic {
-			deepKind = llm.InferOpenAIProviderKind(cfg.DeepProviderKind, cfg.DeepProviderBaseURL)
-		}
-		deep = llm.NewOpenAICompatibleProviderWithProfile("deep-compatible", cfg.DeepProviderBaseURL, cfg.DeepProviderAPIKey, llm.ProfileForProviderKind(deepKind))
-	}
-	return fast, deep
+	return llm.NewUnconfiguredProvider("model-catalog", "configure and enable a model in Admin"),
+		llm.NewUnconfiguredProvider("model-catalog", "configure and enable a model in Admin")
 }
 
 func randomToken(prefix string) string {

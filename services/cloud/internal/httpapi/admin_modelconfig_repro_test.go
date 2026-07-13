@@ -17,6 +17,14 @@ func TestAdminUpdateModelConfigReproUserPayload(t *testing.T) {
 		cfg.AdminEmails = []string{"admin@example.com"}
 	})
 	token := registerAndTokenWithEmail(t, server, "admin@example.com")
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(`{"slot":"chat.deep","capability":"chat","provider_kind":"mock","display_name":"深度","model_name":"deep-test","credit_multiplier":1,"enabled":false}`))
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	server.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("create status = %d body = %s", createRec.Code, createRec.Body.String())
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-configs", nil)
 	listReq.Header.Set("Authorization", "Bearer "+token)
@@ -68,6 +76,13 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 		cfg.AdminEmails = []string{"admin@example.com"}
 	})
 	token := registerAndTokenWithEmail(t, server, "admin@example.com")
+	if _, err := st.UpsertModelConfig(context.Background(), "admin", store.ModelConfig{
+		Slot: "chat.fast", Capability: "chat", ProviderKind: "mock", DisplayName: "快速",
+		Vendor: "DeepSeek", VendorInfo: "DeepSeek 模型", CapabilityTier: "fast",
+		Description: "快速模型", Priority: 100, Enabled: true,
+	}); err != nil {
+		t.Fatalf("create chat.fast: %v", err)
+	}
 
 	post := func(payload string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-configs", strings.NewReader(payload))
@@ -88,7 +103,7 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 		t.Fatalf("anthropic chat status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
 
-	// PATCH must carry seeded description/priority through (regression guard:
+	// PATCH must carry stored description/priority through (regression guard:
 	// the input struct has no such fields yet, so they must come from the
 	// existing row, not zero out).
 	ctx := context.Background()
@@ -103,7 +118,7 @@ func TestAdminModelConfigCatalogValidation(t *testing.T) {
 		}
 	}
 	if fast.ID == "" || fast.Priority != 100 || fast.Description == "" || fast.VendorInfo == "" {
-		t.Fatalf("seeded chat.fast = %+v, want priority 100 + non-empty description/vendor_info", fast)
+		t.Fatalf("stored chat.fast = %+v, want priority 100 + non-empty description/vendor_info", fast)
 	}
 	payload := `{"slot":"chat.fast","capability":"chat","provider_kind":"mock","display_name":"快速","credit_multiplier":0.2,"enabled":true}`
 	patchReq := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/model-configs/"+fast.ID, strings.NewReader(payload))

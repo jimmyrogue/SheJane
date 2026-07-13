@@ -9,8 +9,8 @@ import (
 	"github.com/coldflame/shejane/api/internal/store"
 )
 
-func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
-	cfg := config.Default() // MockLLM = true
+func TestEnsureSeedCreatesOnlyDisabledTemplates(t *testing.T) {
+	cfg := config.Default()
 	st := store.NewMemoryStore()
 	reg := New(st, cfg)
 
@@ -18,25 +18,14 @@ func TestEnsureSeedAppliesDeepSeekCostRatios(t *testing.T) {
 		t.Fatalf("EnsureSeed: %v", err)
 	}
 	configs, _ := st.ListModelConfigs(context.Background(), CapabilityChat)
-	wantConfigs := 2 + len(recommendedChatModelTemplates())
+	wantConfigs := len(recommendedChatModelTemplates())
 	if len(configs) != wantConfigs {
 		t.Fatalf("seeded configs = %d, want %d", len(configs), wantConfigs)
 	}
 
-	fastP, fastModel, fastMult, ok := reg.ResolveModel(SlotChatFast)
-	if !ok || fastP.Name() != "快速" || fastModel != cfg.FastModel || fastMult != 0.1 {
-		t.Fatalf("fast resolve = (%v,%q,%v,%v) want fast cost ratio 0.1", fastP, fastModel, fastMult, ok)
-	}
-	deepP, deepModel, deepMult, ok := reg.ResolveModel(SlotChatDeep)
-	if !ok || deepP.Name() != "深度" || deepModel != cfg.DeepModel || deepMult != 1 {
-		t.Fatalf("deep resolve = (%v,%q,%v,%v) want deep cost ratio 1", deepP, deepModel, deepMult, ok)
-	}
 	catalog := reg.ListChatModels()
-	if len(catalog) != 2 {
-		t.Fatalf("user catalog len = %d, want 2 enabled legacy rows only", len(catalog))
-	}
-	if catalog[0].Vendor != "DeepSeek" || catalog[0].CapabilityTier != CapabilityTierFast {
-		t.Fatalf("fast catalog metadata = %+v, want DeepSeek/fast", catalog[0])
+	if len(catalog) != 0 {
+		t.Fatalf("user catalog len = %d, want no enabled model before Admin configuration", len(catalog))
 	}
 	var foundTemplate bool
 	for _, c := range configs {
@@ -140,7 +129,7 @@ func TestEnsureSeedIsIdempotent(t *testing.T) {
 	_ = reg.EnsureSeed(context.Background())
 	_ = reg.EnsureSeed(context.Background())
 	configs, _ := st.ListModelConfigs(context.Background(), "")
-	wantConfigs := 2 + len(recommendedChatModelTemplates())
+	wantConfigs := len(recommendedChatModelTemplates())
 	if len(configs) != wantConfigs {
 		t.Fatalf("configs after double seed = %d, want %d", len(configs), wantConfigs)
 	}
@@ -152,12 +141,12 @@ func TestResolveHotReloadsAfterInvalidate(t *testing.T) {
 	reg := New(st, cfg)
 	_ = reg.EnsureSeed(context.Background())
 
-	configs, _ := st.ListModelConfigs(context.Background(), CapabilityChat)
-	var fast store.ModelConfig
-	for _, c := range configs {
-		if c.Slot == SlotChatFast {
-			fast = c
-		}
+	fast := store.ModelConfig{
+		Slot: SlotChatFast, Capability: CapabilityChat, ProviderKind: "mock",
+		DisplayName: "Test", ModelName: "initial-model", CreditMultiplier: 1, Enabled: true,
+	}
+	if _, err := st.UpsertModelConfig(context.Background(), "admin", fast); err != nil {
+		t.Fatalf("create: %v", err)
 	}
 	fast.ModelName = "rotated-model"
 	fast.CreditMultiplier = 0.5
@@ -217,42 +206,5 @@ func TestChatCatalogOrdersByPriorityAndResolvesByID(t *testing.T) {
 	}
 	if _, _, _, ok := reg.ResolveModel("chat.unknown"); ok {
 		t.Fatal("ResolveModel(unknown) must NOT resolve")
-	}
-}
-
-func TestSeedFromRealEnvEncryptsKeysAndPicksProviders(t *testing.T) {
-	cfg := config.Default()
-	cfg.MockLLM = false
-	cfg.ConfigEncryptionKey = "unit-test-key"
-	cfg.FastProviderBaseURL = "https://api.deepseek.com"
-	cfg.FastProviderAPIKey = "sk-fast"
-	cfg.AnthropicAPIKey = "sk-anthropic"
-
-	st := store.NewMemoryStore()
-	reg := New(st, cfg)
-	if err := reg.EnsureSeed(context.Background()); err != nil {
-		t.Fatalf("EnsureSeed: %v", err)
-	}
-
-	configs, _ := st.ListModelConfigs(context.Background(), CapabilityChat)
-	for _, c := range configs {
-		if c.Slot != SlotChatFast && c.Slot != SlotChatDeep {
-			continue
-		}
-		if c.APIKeyEncrypted == "" {
-			t.Fatalf("slot %s: api key not seeded", c.Slot)
-		}
-		if c.APIKeyEncrypted == "sk-fast" || c.APIKeyEncrypted == "sk-anthropic" {
-			t.Fatalf("slot %s: api key stored in plaintext", c.Slot)
-		}
-	}
-
-	fastP, _, _, ok := reg.ResolveModel(SlotChatFast)
-	if !ok || llm.KindOfProvider(fastP) == llm.ProviderKindMock {
-		t.Fatalf("fast provider should be a real openai-compatible provider, got %v", llm.KindOfProvider(fastP))
-	}
-	deepP, _, _, ok := reg.ResolveModel(SlotChatDeep)
-	if !ok || llm.KindOfProvider(deepP) != llm.ProviderKindAnthropic {
-		t.Fatalf("deep provider kind = %v, want anthropic", llm.KindOfProvider(deepP))
 	}
 }

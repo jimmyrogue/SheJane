@@ -5,27 +5,30 @@ import (
 	"testing"
 )
 
-func TestLoadProviderKinds(t *testing.T) {
-	t.Setenv("FAST_PROVIDER_KIND", "openai-compatible")
-	t.Setenv("DEEP_PROVIDER_KIND", "deepseek-v4")
-
-	cfg := Load()
-
-	if cfg.FastProviderKind != "openai-compatible" {
-		t.Fatalf("FastProviderKind = %q, want openai-compatible", cfg.FastProviderKind)
-	}
-	if cfg.DeepProviderKind != "deepseek-v4" {
-		t.Fatalf("DeepProviderKind = %q, want deepseek-v4", cfg.DeepProviderKind)
-	}
-}
-
-func TestLoadWebToolLoopMaxSteps(t *testing.T) {
+func TestLoadIgnoresModelAndTuningEnvironment(t *testing.T) {
+	t.Setenv("FAST_PROVIDER_API_KEY", "must-not-load")
+	t.Setenv("MONTHLY_CREDITS", "999")
 	t.Setenv("WEB_TOOL_LOOP_MAX_STEPS", "9")
 
 	cfg := Load()
 
-	if cfg.WebToolLoopMaxSteps != 9 {
-		t.Fatalf("WebToolLoopMaxSteps = %d, want 9", cfg.WebToolLoopMaxSteps)
+	if cfg.MonthlyCredits != 0 {
+		t.Fatalf("MonthlyCredits = %d, want code default 0", cfg.MonthlyCredits)
+	}
+	if cfg.WebToolLoopMaxSteps != Default().WebToolLoopMaxSteps {
+		t.Fatalf("WebToolLoopMaxSteps = %d, want code default %d", cfg.WebToolLoopMaxSteps, Default().WebToolLoopMaxSteps)
+	}
+}
+
+func TestLoadReadsExternalServiceConfiguration(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://cloud")
+	t.Setenv("TAVILY_API_KEY", "tavily-key")
+	t.Setenv("E2B_BASE_URL", "https://e2b.example.com")
+
+	cfg := Load()
+
+	if cfg.DatabaseURL != "postgres://cloud" || cfg.TavilyAPIKey != "tavily-key" || cfg.E2BBaseURL != "https://e2b.example.com" {
+		t.Fatalf("external service configuration was not loaded: %+v", cfg)
 	}
 }
 

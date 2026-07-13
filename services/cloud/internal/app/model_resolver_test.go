@@ -98,6 +98,8 @@ func TestResolveAutoModelClassifiesAndFallsBack(t *testing.T) {
 	cfg.JWTSecret = "test-secret"
 	st := store.NewMemoryStore()
 	application := New(cfg, st)
+	seedAutoTestModels(t, st)
+	application.Registry.Invalidate()
 
 	// Simple tasks are routed to the fast tier before the classifier. The
 	// default mock reply is irrelevant because there is one easy-tier candidate.
@@ -135,6 +137,7 @@ func TestResolveAutoModelWithIntentFiltersCandidatePool(t *testing.T) {
 	cfg.JWTSecret = "test-secret"
 	st := store.NewMemoryStore()
 	application := New(cfg, st)
+	seedAutoTestModels(t, st)
 
 	configs, _ := st.ListModelConfigs(ctx, modelreg.CapabilityChat)
 	for _, c := range configs {
@@ -208,6 +211,7 @@ func TestResolveAutoModelSingleCandidateSkipsClassifier(t *testing.T) {
 	cfg.JWTSecret = "test-secret"
 	st := store.NewMemoryStore()
 	application := New(cfg, st)
+	seedAutoTestModels(t, st)
 
 	// Disable chat.deep → one candidate left; the classifier must be skipped
 	// (its mock reply would still be unusable anyway, but the point is the
@@ -224,6 +228,18 @@ func TestResolveAutoModelSingleCandidateSkipsClassifier(t *testing.T) {
 	resolved, reason := application.ResolveAutoModel(ctx, "复杂任务")
 	if resolved.ID != "chat.fast" || reason != "" {
 		t.Fatalf("single-candidate resolve = (%q,%q), want (chat.fast,\"\")", resolved.ID, reason)
+	}
+}
+
+func seedAutoTestModels(t *testing.T, st store.Store) {
+	t.Helper()
+	for _, c := range []store.ModelConfig{
+		{Slot: "chat.fast", Capability: modelreg.CapabilityChat, ProviderKind: "mock", DisplayName: "快速", ModelName: "fast-test", CapabilityTier: modelreg.CapabilityTierFast, Priority: 100, CreditMultiplier: 0.1, Enabled: true, Params: map[string]any{}},
+		{Slot: "chat.deep", Capability: modelreg.CapabilityChat, ProviderKind: "mock", DisplayName: "深度", ModelName: "deep-test", CapabilityTier: modelreg.CapabilityTierReasoning, Priority: 90, CreditMultiplier: 1, Enabled: true, Params: map[string]any{}},
+	} {
+		if _, err := st.UpsertModelConfig(context.Background(), "test", c); err != nil {
+			t.Fatalf("seed test model %s: %v", c.Slot, err)
+		}
 	}
 }
 

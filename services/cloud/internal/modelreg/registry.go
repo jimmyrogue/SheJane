@@ -43,8 +43,8 @@ const (
 	// per-call cost levers (JSON): tavily_search_credits,
 	// e2b_code_exec_base_credits, e2b_code_exec_per_second_credits. These are
 	// pure Reserve→Settle cost inputs (never wallet grants), so they ride the
-	// same 30s registry cache + Invalidate as the markup; the .env values are
-	// the first-boot seed and the per-field fallback default.
+	// same 30s registry cache + Invalidate as the markup; code defaults are the
+	// first-boot seed and per-field fallback.
 	BillingLeversKey = "billing.levers"
 
 	// DefaultMarkupFactor is the fixed gross markup applied to every metered
@@ -97,7 +97,7 @@ type Registry struct {
 	markup            float64
 	currencyPerCredit float64
 	// Admin-tunable per-call cost levers (billing.levers row), refreshed on
-	// the same tick as markup; default to the env/coded value (set in New +
+	// the same tick as markup; default to the code-defined value (set in New +
 	// per-field fallback in loadBillingLevers) so a missing/zero field never
 	// makes a paid tool free.
 	tavilySearchCredits         int64
@@ -147,7 +147,7 @@ func (r *Registry) CurrencyPerCredit() (float64, bool) {
 
 // TavilySearchCredits returns the per-call credit cost charged for a web.search
 // (a Reserve→Settle cost input). Admin-tunable via the billing.levers row;
-// falls back to the env/coded default.
+// falls back to the code-defined default.
 func (r *Registry) TavilySearchCredits() int64 {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()
@@ -156,7 +156,7 @@ func (r *Registry) TavilySearchCredits() int64 {
 }
 
 // E2BCodeExecBaseCredits returns the per-call flat charge for code.execute.
-// Admin-tunable via billing.levers; falls back to the env/coded default.
+// Admin-tunable via billing.levers; falls back to the code-defined default.
 func (r *Registry) E2BCodeExecBaseCredits() int64 {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()
@@ -167,7 +167,7 @@ func (r *Registry) E2BCodeExecBaseCredits() int64 {
 // E2BCodeExecPerSecondCredits returns the per-sandbox-second multiplier for
 // code.execute. A single request reads this ONCE and uses the same value for
 // both the reservation ceiling and the settle, so an admin edit mid-request
-// can never split reserve vs settle. Falls back to the env/coded default.
+// can never split reserve vs settle. Falls back to the code-defined default.
 func (r *Registry) E2BCodeExecPerSecondCredits() int64 {
 	r.refreshIfStale(context.Background())
 	r.mu.RLock()
@@ -377,7 +377,7 @@ func (r *Registry) buildProvider(cfg store.ModelConfig) llm.Provider {
 			// releases the reservation, rather than charging for a mock reply.
 			return llm.NewUnconfiguredProvider(name, "anthropic API key missing")
 		}
-		version := stringParam(cfg.Params, "anthropic_version", r.cfg.AnthropicVersion)
+		version := stringParam(cfg.Params, "anthropic_version", "")
 		// BaseURL supports proxy/gateway deployments; params.max_tokens caps the
 		// response (0 → provider default). Anthropic thinking params are optional
 		// per-row knobs for models that support extended/adaptive thinking.
@@ -490,7 +490,7 @@ func (r *Registry) loadBillingSettings(ctx context.Context) (currency float64, m
 
 // loadBillingLevers reads the admin-tunable per-call cost levers from the
 // billing.levers app_settings row. Each field falls back PER-FIELD to the
-// env/coded default (cfg.*) when the row is absent or the field is
+// code-defined default (cfg.*) when the row is absent or the field is
 // missing/non-positive — a stored 0 must never silently make a paid tool free.
 func (r *Registry) loadBillingLevers(ctx context.Context) (tavily, e2bBase, e2bPerSec int64) {
 	tavily = r.cfg.TavilySearchCredits
