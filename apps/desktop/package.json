@@ -14,13 +14,15 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
+    "prebuild": "pnpm --filter @shejane/runtime-client build",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "pretest": "pnpm --filter @shejane/runtime-client build",
     "test": "vitest",
     "test:contract": "vitest run --config vitest.contract.config.ts",
     "electron": "../scripts/run-branded-electron.sh electron/main.cjs",
-    "build:desktop": "tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build",
+    "build:desktop": "pnpm --filter @shejane/runtime-client build && tsc -b && cross-env VITE_API_BASE_URL=https://app.shejane.com vite build",
     "dist": "pnpm build:desktop && electron-builder",
     "dist:dir": "pnpm build:desktop && electron-builder --dir"
   },

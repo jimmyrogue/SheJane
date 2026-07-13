@@ -652,7 +652,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> HealthResponse:
         # Two consumers, two contracts — both must be satisfied:
         #   • scripts/smoke-local-host.sh checks `ok == true`
-        #   • apps/desktop/src/shared/local-host/client.ts:probeLocalHost
+        #   • packages/runtime-client/src/client.ts:probeLocalHost
         #     checks `status === "ok"` and reads mode/worker
         # The HealthResponse defaults already encode `ok=True status="ok"`
         # mode="ready" worker="python-langgraph" — only `version` and
@@ -1065,7 +1065,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def list_runs(request: Request) -> dict[str, Any]:
         """Recent runs newest-first.
 
-        Client `listLocalRuns()` (apps/desktop/src/shared/local-host/client.ts:283)
+        Client `listLocalRuns()` (packages/runtime-client/src/client.ts:283)
         reads `{runs: LocalRun[]}` on every boot. Previously this route
         didn't exist — every Electron launch silently 404'd here and
         the conversation history sidebar came up empty.
@@ -1978,7 +1978,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def run_diagnostics(request: Request, run_id: str) -> dict[str, Any]:
         """Return the full `LocalRunDiagnostics` payload.
 
-        Shape (per TS interface `apps/desktop/src/shared/local-host/client.ts`):
+        Shape (per TS interface `packages/runtime-client/src/client.ts`):
             { schema_version: 1, exported_at, local_host_version?,
               run, events, permissions, artifacts, latest_checkpoint, handoff }
 

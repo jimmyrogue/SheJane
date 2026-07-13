@@ -17,7 +17,7 @@
 .PHONY: help \
 	dev dev-electron dev-fresh dev-nuke restart-daemon doctor docker-up docker-down \
 	test test-race test-e2e test-contract ci test-ci build \
-	api-test client-test admin-test local-host-test \
+	api-test client-test admin-test runtime-client-test local-host-test \
 	client-build admin-build runtime-client-build local-host-build \
 	lint schemas setup-hooks \
 	release deploy deploy-pull deploy-down deploy-logs migrate \
@@ -68,7 +68,7 @@ docker-down: ## Stop the dev Docker stack
 	$(COMPOSE_DEV) down
 
 ##@ Test
-test: api-test client-test admin-test local-host-test ## Fast unit suites (Go + client + admin + daemon)
+test: api-test client-test admin-test runtime-client-test local-host-test ## Fast unit suites
 
 test-race: ## Go tests with the race detector (guards the credit ledger's concurrency)
 	cd services/cloud && go test -race ./...
@@ -100,6 +100,9 @@ client-test: ## Client vitest (run once)
 admin-test: ## Admin vitest (run once)
 	pnpm --filter shejane-admin test --run
 
+runtime-client-test: ## Runtime TypeScript SDK tests
+	pnpm --filter @shejane/runtime-client test
+
 local-host-test: ## Daemon pytest
 	cd services/runtime && uv run python -m pytest
 
@@ -129,10 +132,10 @@ lint: ## Run the same lint checks CI runs (ruff + gofmt + go vet + no-platform-k
 	@./scripts/check-no-platform-keys-in-daemon.sh
 	@echo "✅ all lints pass"
 
-schemas: ## Regenerate openapi.json + generated.d.ts from the daemon's pydantic models
+schemas: ## Regenerate openapi.json + generated.ts from the daemon's pydantic models
 	@./scripts/export-daemon-openapi.sh
 	@pnpm --filter @shejane/runtime-client generate
-	@echo "✅ schemas regenerated. Commit openapi.json + generated.d.ts."
+	@echo "✅ schemas regenerated. Commit openapi.json + generated.ts."
 
 setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 	@if ! command -v lefthook >/dev/null 2>&1; then \

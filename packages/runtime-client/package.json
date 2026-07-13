@@ -12,7 +12,6 @@
   "type": "module",
   "files": [
     "dist",
-    "src/generated.d.ts",
     "openapi.json"
   ],
   "exports": {
@@ -21,7 +20,8 @@
       "import": "./dist/index.js"
     },
     "./generated": {
-      "types": "./src/generated.d.ts"
+      "types": "./dist/generated.d.ts",
+      "import": "./dist/generated.js"
     },
     "./openapi.json": "./openapi.json"
   },
@@ -32,11 +32,14 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "generate": "openapi-typescript openapi.json -o src/generated.d.ts"
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "generate": "openapi-typescript openapi.json -o src/generated.ts",
+    "test": "vitest run"
   },
   "devDependencies": {
     "openapi-typescript": "^7.13.0",
-    "typescript": "^5.7.2"
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

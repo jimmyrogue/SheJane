@@ -69,7 +69,7 @@ jobs:
         run: ./scripts/check-no-platform-keys-in-daemon.sh
 
       # Schema-drift guard — `make schemas` regenerates openapi.json
-      # + generated.d.ts from the daemon's pydantic models. If the
+      # + generated.ts from the daemon's pydantic models. If the
       # committed files don't match the regenerated output, the PR
       # changed a response_model but didn't run `make schemas`.
       # Catches the failure mode where a Python-side change silently
@@ -81,7 +81,7 @@ jobs:
         run: |
           ./scripts/export-daemon-openapi.sh
           pnpm --filter @shejane/runtime-client generate
-          if ! git diff --exit-code -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.d.ts; then
+          if ! git diff --exit-code -- packages/runtime-client/openapi.json packages/runtime-client/src/generated.ts; then
             echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
             exit 1
           fi

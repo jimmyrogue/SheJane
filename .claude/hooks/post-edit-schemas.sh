@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook — when Claude edits api_schemas.py (the daemon's
 # pydantic source-of-truth), automatically regenerate openapi.json +
-# generated.d.ts so subsequent edits see the up-to-date TS types.
+# generated.ts so subsequent edits see the up-to-date TS types.
 #
 # This pre-empts the CI drift guard: the schema files are kept in
 # sync continuously rather than at commit time, so Claude never
@@ -45,8 +45,8 @@ fi
 # whether to update consumers.
 diff_summary=$(git diff --stat -- \
   packages/runtime-client/openapi.json \
-  packages/runtime-client/src/generated.d.ts 2>/dev/null | tail -5)
+  packages/runtime-client/src/generated.ts 2>/dev/null | tail -5)
 if [[ -n "$diff_summary" ]]; then
-  echo "→ make schemas regenerated openapi.json + generated.d.ts:" >&2
+  echo "→ make schemas regenerated openapi.json + generated.ts:" >&2
   echo "$diff_summary" >&2
 fi

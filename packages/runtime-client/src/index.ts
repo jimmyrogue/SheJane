@@ -1,1 +1,3 @@
-export type { components, operations, paths, webhooks } from './generated'
+export * from './client.js'
+export * from './sse.js'
+export type { components, operations, paths, webhooks } from './generated.js'

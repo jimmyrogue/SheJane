@@ -1,7 +1,7 @@
 """Contract tests for `/local/v1/session` (POST / GET / DELETE).
 
 These lock the response shape to the TypeScript `LocalCloudSession`
-interface in `apps/desktop/src/shared/local-host/client.ts`:
+interface in `packages/runtime-client/src/client.ts`:
 
     interface LocalCloudSession {
       connected: boolean
