@@ -14,7 +14,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.2.0",
     # Keep this compatible with the optional browser-use extra, which
     # currently pins OpenAI 2.16.0.
-    "langchain-openai==1.1.9",
+    "langchain-openai==1.3.5",
     "tiktoken>=0.12.0",
     # Subagents via deepagents (SubAgentMiddleware)
     "deepagents>=0.2.0",
