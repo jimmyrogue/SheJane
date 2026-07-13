@@ -83,6 +83,7 @@ from .api_schemas import (
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
     RuntimeInfo,
+    RuntimeSettingsResponse,
     SetCloudSessionRequest,
     SkillDeleteResponse,
     SkillFile,
@@ -92,6 +93,7 @@ from .api_schemas import (
     ToolReconcileCommandReceipt,
     ToolReconciliationResolution,
     UpdateLocalThreadRequest,
+    UpdateRuntimeSettingsRequest,
     UpsertLocalModelProviderRequest,
 )
 from .auth import PairingTokenAuthMiddleware
@@ -136,6 +138,42 @@ from .store.sqlite import (
 )
 
 log = logging.getLogger("local_host.server")
+
+_RUNTIME_SETTINGS_TO_FIELDS = {
+    "max_model_calls": "max_model_calls",
+    "max_tool_retries": "max_tool_retries",
+    "research_search_limit": "research_search_limit",
+    "unknown_model_max_input_tokens": "unknown_model_max_input_tokens",
+    "unknown_model_max_output_tokens": "unknown_model_max_output_tokens",
+    "model_request_timeout_seconds": "model_request_timeout_seconds",
+    "browser_headless": "browser_headless",
+    "subagents": "enable_subagents",
+    "input_guard": "input_guard_mode",
+    "plan_first": "plan_first_mode",
+    "verification_repair_max": "verification_repair_max",
+    "repair_workflow_max": "repair_workflow_max",
+    "pii_redact": "pii_redact_types",
+}
+
+
+def _runtime_settings_payload(settings: Settings, *, version: int) -> dict[str, Any]:
+    return {
+        "version": version,
+        **{
+            public_name: getattr(settings, field_name)
+            for public_name, field_name in _RUNTIME_SETTINGS_TO_FIELDS.items()
+        },
+    }
+
+
+def _apply_runtime_settings(settings: Settings, values: dict[str, Any]) -> Settings:
+    updates = {
+        field_name: values[public_name]
+        for public_name, field_name in _RUNTIME_SETTINGS_TO_FIELDS.items()
+        if public_name in values
+    }
+    return settings.model_copy(update=updates)
+
 
 _HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
 _TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled", "cleanup_required"}
@@ -541,6 +579,9 @@ async def lifespan(app: FastAPI):
     # it, and the "Personal" section silently disappears from the list.
     (Path.home() / ".shejane" / "skills").mkdir(parents=True, exist_ok=True)
     store = await LocalStore.open(settings.local_db_path)
+    persisted_settings = await store.get_runtime_settings()
+    if persisted_settings is not None:
+        settings = _apply_runtime_settings(settings, persisted_settings["settings"])
     checkpointer, ck_stack = await open_checkpointer(settings)
     agent_store, store_stack = await open_store(settings)
     coordinator = RunCoordinator(
@@ -556,6 +597,9 @@ async def lifespan(app: FastAPI):
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
     app.state.scheduler = scheduler
+    app.state.runtime_settings_version = int(
+        persisted_settings["version"] if persisted_settings is not None else 0
+    )
     # Reconcile runs the previous process left non-terminal (the daemon is
     # SIGKILLed on every `make dev-electron` restart): fail dead queued/running
     # runs, leave waiting_permission runs resumable. Without this they sit
@@ -693,6 +737,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             model_provider_configured=provider_configured,
             gateway_provider_configured=gateway_configured,
         )
+
+    @app.get("/local/v1/settings", response_model=RuntimeSettingsResponse)
+    async def get_runtime_settings() -> dict[str, Any]:
+        return _runtime_settings_payload(
+            app.state.settings,
+            version=app.state.runtime_settings_version,
+        )
+
+    @app.put("/local/v1/settings", response_model=RuntimeSettingsResponse)
+    async def update_runtime_settings(body: UpdateRuntimeSettingsRequest) -> dict[str, Any]:
+        current = _runtime_settings_payload(
+            app.state.settings,
+            version=app.state.runtime_settings_version,
+        )
+        current.update(body.model_dump(exclude_none=True))
+        validated = RuntimeSettingsResponse(**current)
+        values = validated.model_dump(exclude={"version"})
+        store: LocalStore = app.state.store
+        stored = await store.put_runtime_settings(values)
+        updated = _apply_runtime_settings(app.state.settings, values)
+        app.state.settings = updated
+        app.state.coordinator.settings = updated
+        app.state.runtime_settings_version = int(stored["version"])
+        return _runtime_settings_payload(updated, version=int(stored["version"]))
 
     @app.get(
         "/local/v1/model-providers",

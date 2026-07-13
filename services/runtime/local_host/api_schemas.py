@@ -73,6 +73,43 @@ class RuntimeInfo(BaseModel):
     gateway_provider_configured: bool
 
 
+class RuntimeSettingsResponse(BaseModel):
+    """Persisted defaults used when accepting future runs."""
+
+    version: int = 0
+    max_model_calls: int = Field(default=20, ge=1, le=100)
+    max_tool_retries: int = Field(default=2, ge=0, le=5)
+    research_search_limit: int = Field(default=3, ge=1, le=20)
+    unknown_model_max_input_tokens: int = Field(default=32_768, ge=8_192, le=10_000_000)
+    unknown_model_max_output_tokens: int = Field(default=8_192, ge=128, le=1_000_000)
+    model_request_timeout_seconds: float = Field(default=120.0, ge=5.0, le=900.0)
+    browser_headless: bool = True
+    subagents: bool = True
+    input_guard: Literal["off", "observe", "block"] = "observe"
+    plan_first: Literal["off", "auto", "always"] = "off"
+    verification_repair_max: int = Field(default=1, ge=0, le=3)
+    repair_workflow_max: int = Field(default=3, ge=0, le=5)
+    pii_redact: str = Field(default="", max_length=200)
+
+
+class UpdateRuntimeSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_model_calls: int | None = Field(default=None, ge=1, le=100)
+    max_tool_retries: int | None = Field(default=None, ge=0, le=5)
+    research_search_limit: int | None = Field(default=None, ge=1, le=20)
+    unknown_model_max_input_tokens: int | None = Field(default=None, ge=8_192, le=10_000_000)
+    unknown_model_max_output_tokens: int | None = Field(default=None, ge=128, le=1_000_000)
+    model_request_timeout_seconds: float | None = Field(default=None, ge=5.0, le=900.0)
+    browser_headless: bool | None = None
+    subagents: bool | None = None
+    input_guard: Literal["off", "observe", "block"] | None = None
+    plan_first: Literal["off", "auto", "always"] | None = None
+    verification_repair_max: int | None = Field(default=None, ge=0, le=3)
+    repair_workflow_max: int | None = Field(default=None, ge=0, le=5)
+    pii_redact: str | None = Field(default=None, max_length=200)
+
+
 class LocalModelProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

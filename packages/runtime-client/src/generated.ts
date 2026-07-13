@@ -541,6 +541,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtime Settings */
+        get: operations["get_runtime_settings_local_v1_settings_get"];
+        /** Update Runtime Settings */
+        put: operations["update_runtime_settings_local_v1_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/skills": {
         parameters: {
             query?: never;
@@ -2128,6 +2146,84 @@ export interface components {
             /** Runtime Version */
             runtime_version: string;
         };
+        /**
+         * RuntimeSettingsResponse
+         * @description Persisted defaults used when accepting future runs.
+         */
+        RuntimeSettingsResponse: {
+            /**
+             * Browser Headless
+             * @default true
+             */
+            browser_headless: boolean;
+            /**
+             * Input Guard
+             * @default observe
+             * @enum {string}
+             */
+            input_guard: "off" | "observe" | "block";
+            /**
+             * Max Model Calls
+             * @default 20
+             */
+            max_model_calls: number;
+            /**
+             * Max Tool Retries
+             * @default 2
+             */
+            max_tool_retries: number;
+            /**
+             * Model Request Timeout Seconds
+             * @default 120
+             */
+            model_request_timeout_seconds: number;
+            /**
+             * Pii Redact
+             * @default
+             */
+            pii_redact: string;
+            /**
+             * Plan First
+             * @default off
+             * @enum {string}
+             */
+            plan_first: "off" | "auto" | "always";
+            /**
+             * Repair Workflow Max
+             * @default 3
+             */
+            repair_workflow_max: number;
+            /**
+             * Research Search Limit
+             * @default 3
+             */
+            research_search_limit: number;
+            /**
+             * Subagents
+             * @default true
+             */
+            subagents: boolean;
+            /**
+             * Unknown Model Max Input Tokens
+             * @default 32768
+             */
+            unknown_model_max_input_tokens: number;
+            /**
+             * Unknown Model Max Output Tokens
+             * @default 8192
+             */
+            unknown_model_max_output_tokens: number;
+            /**
+             * Verification Repair Max
+             * @default 1
+             */
+            verification_repair_max: number;
+            /**
+             * Version
+             * @default 0
+             */
+            version: number;
+        };
         /** SetCloudSessionRequest */
         SetCloudSessionRequest: {
             /** Access Token */
@@ -2252,6 +2348,35 @@ export interface components {
             } | null;
             /** Title */
             title?: string | null;
+        };
+        /** UpdateRuntimeSettingsRequest */
+        UpdateRuntimeSettingsRequest: {
+            /** Browser Headless */
+            browser_headless?: boolean | null;
+            /** Input Guard */
+            input_guard?: ("off" | "observe" | "block") | null;
+            /** Max Model Calls */
+            max_model_calls?: number | null;
+            /** Max Tool Retries */
+            max_tool_retries?: number | null;
+            /** Model Request Timeout Seconds */
+            model_request_timeout_seconds?: number | null;
+            /** Pii Redact */
+            pii_redact?: string | null;
+            /** Plan First */
+            plan_first?: ("off" | "auto" | "always") | null;
+            /** Repair Workflow Max */
+            repair_workflow_max?: number | null;
+            /** Research Search Limit */
+            research_search_limit?: number | null;
+            /** Subagents */
+            subagents?: boolean | null;
+            /** Unknown Model Max Input Tokens */
+            unknown_model_max_input_tokens?: number | null;
+            /** Unknown Model Max Output Tokens */
+            unknown_model_max_output_tokens?: number | null;
+            /** Verification Repair Max */
+            verification_repair_max?: number | null;
         };
         /** UpsertLocalModelProviderRequest */
         UpsertLocalModelProviderRequest: {
@@ -3235,6 +3360,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LocalCloudSession"];
+                };
+            };
+        };
+    };
+    get_runtime_settings_local_v1_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettingsResponse"];
+                };
+            };
+        };
+    };
+    update_runtime_settings_local_v1_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRuntimeSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeSettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

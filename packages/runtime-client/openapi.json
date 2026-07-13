@@ -3499,6 +3499,110 @@
         "title": "RuntimeInfo",
         "type": "object"
       },
+      "RuntimeSettingsResponse": {
+        "description": "Persisted defaults used when accepting future runs.",
+        "properties": {
+          "browser_headless": {
+            "default": true,
+            "title": "Browser Headless",
+            "type": "boolean"
+          },
+          "input_guard": {
+            "default": "observe",
+            "enum": [
+              "off",
+              "observe",
+              "block"
+            ],
+            "title": "Input Guard",
+            "type": "string"
+          },
+          "max_model_calls": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Model Calls",
+            "type": "integer"
+          },
+          "max_tool_retries": {
+            "default": 2,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Max Tool Retries",
+            "type": "integer"
+          },
+          "model_request_timeout_seconds": {
+            "default": 120.0,
+            "maximum": 900.0,
+            "minimum": 5.0,
+            "title": "Model Request Timeout Seconds",
+            "type": "number"
+          },
+          "pii_redact": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Pii Redact",
+            "type": "string"
+          },
+          "plan_first": {
+            "default": "off",
+            "enum": [
+              "off",
+              "auto",
+              "always"
+            ],
+            "title": "Plan First",
+            "type": "string"
+          },
+          "repair_workflow_max": {
+            "default": 3,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Repair Workflow Max",
+            "type": "integer"
+          },
+          "research_search_limit": {
+            "default": 3,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Research Search Limit",
+            "type": "integer"
+          },
+          "subagents": {
+            "default": true,
+            "title": "Subagents",
+            "type": "boolean"
+          },
+          "unknown_model_max_input_tokens": {
+            "default": 32768,
+            "maximum": 10000000.0,
+            "minimum": 8192.0,
+            "title": "Unknown Model Max Input Tokens",
+            "type": "integer"
+          },
+          "unknown_model_max_output_tokens": {
+            "default": 8192,
+            "maximum": 1000000.0,
+            "minimum": 128.0,
+            "title": "Unknown Model Max Output Tokens",
+            "type": "integer"
+          },
+          "verification_repair_max": {
+            "default": 1,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Verification Repair Max",
+            "type": "integer"
+          },
+          "version": {
+            "default": 0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "title": "RuntimeSettingsResponse",
+        "type": "object"
+      },
       "SetCloudSessionRequest": {
         "properties": {
           "access_token": {
@@ -3779,6 +3883,183 @@
           }
         },
         "title": "UpdateLocalThreadRequest",
+        "type": "object"
+      },
+      "UpdateRuntimeSettingsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "browser_headless": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Browser Headless"
+          },
+          "input_guard": {
+            "anyOf": [
+              {
+                "enum": [
+                  "off",
+                  "observe",
+                  "block"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Guard"
+          },
+          "max_model_calls": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Model Calls"
+          },
+          "max_tool_retries": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tool Retries"
+          },
+          "model_request_timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 900.0,
+                "minimum": 5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Request Timeout Seconds"
+          },
+          "pii_redact": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pii Redact"
+          },
+          "plan_first": {
+            "anyOf": [
+              {
+                "enum": [
+                  "off",
+                  "auto",
+                  "always"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan First"
+          },
+          "repair_workflow_max": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repair Workflow Max"
+          },
+          "research_search_limit": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Search Limit"
+          },
+          "subagents": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagents"
+          },
+          "unknown_model_max_input_tokens": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 8192.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknown Model Max Input Tokens"
+          },
+          "unknown_model_max_output_tokens": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 128.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknown Model Max Output Tokens"
+          },
+          "verification_repair_max": {
+            "anyOf": [
+              {
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Repair Max"
+          }
+        },
+        "title": "UpdateRuntimeSettingsRequest",
         "type": "object"
       },
       "UpsertLocalModelProviderRequest": {
@@ -5075,6 +5356,60 @@
           }
         },
         "summary": "Set Cloud Session"
+      }
+    },
+    "/local/v1/settings": {
+      "get": {
+        "operationId": "get_runtime_settings_local_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Runtime Settings"
+      },
+      "put": {
+        "operationId": "update_runtime_settings_local_v1_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRuntimeSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Runtime Settings"
       }
     },
     "/local/v1/skills": {

@@ -19,6 +19,8 @@ export type LocalThreadItem = Schemas['LocalThreadItem']
 export type LocalThreadChange = Schemas['LocalThreadChange']
 export type LocalThreadSnapshot = Schemas['LocalThreadSnapshot']
 export type RuntimeInfo = Schemas['RuntimeInfo']
+export type RuntimeSettings = Schemas['RuntimeSettingsResponse']
+export type UpdateRuntimeSettingsRequest = Schemas['UpdateRuntimeSettingsRequest']
 export type LocalModelProvider = Schemas['LocalModelProvider']
 export type LocalModelProfile = Schemas['LocalModelProfile']
 export type LocalRuntimeModel = Schemas['LocalRuntimeModel']
@@ -153,6 +155,29 @@ export async function getLocalRuntimeInfo(
     headers: localHeaders(config, false),
   })
   return decodeLocalResponse<RuntimeInfo>(response)
+}
+
+export async function getRuntimeSettings(
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<RuntimeSettings> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/settings`, {
+    headers: localHeaders(config, false),
+  })
+  return decodeLocalResponse<RuntimeSettings>(response)
+}
+
+export async function updateRuntimeSettings(
+  input: UpdateRuntimeSettingsRequest,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<RuntimeSettings> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/settings`, {
+    method: 'PUT',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  return decodeLocalResponse<RuntimeSettings>(response)
 }
 
 export async function listLocalModelProviders(
@@ -1324,6 +1349,14 @@ export class SheJaneRuntimeClient {
 
   getRuntimeInfo(): Promise<RuntimeInfo> {
     return getLocalRuntimeInfo(this.config, this.fetcher)
+  }
+
+  getSettings(): Promise<RuntimeSettings> {
+    return getRuntimeSettings(this.config, this.fetcher)
+  }
+
+  updateSettings(input: UpdateRuntimeSettingsRequest): Promise<RuntimeSettings> {
+    return updateRuntimeSettings(input, this.config, this.fetcher)
   }
 
   createRun(input: CreateLocalRunInput): Promise<LocalRun> {

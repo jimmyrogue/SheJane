@@ -17,6 +17,7 @@ Tables in this file:
 - `local_plan_approvals` — pending / resolved plan-mode approvals
 - `local_scheduled_runs` — local-only delayed run requests
 - `local_model_providers` — non-secret BYOK provider configuration
+- `local_runtime_settings` — persisted defaults for future runs
 - `local_model_calls` — durable model-call reservations and usage receipts
 - `local_assistant_drafts` — latest complete top-level assistant model round
 """
@@ -98,6 +99,13 @@ CREATE TABLE IF NOT EXISTS local_model_providers (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     PRIMARY KEY (principal_id, id)
+);
+
+CREATE TABLE IF NOT EXISTS local_runtime_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    settings_json TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS local_runs (
@@ -1690,6 +1698,34 @@ class LocalStore:
             )
         ).fetchone()
         return dict(row) if row is not None else None
+
+    async def get_runtime_settings(self) -> dict[str, Any] | None:
+        row = await (
+            await self._conn.execute(
+                "SELECT settings_json, version, updated_at FROM local_runtime_settings WHERE id = 1"
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "settings": _json_payload(row["settings_json"]),
+            "version": int(row["version"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    async def put_runtime_settings(self, settings: dict[str, Any]) -> dict[str, Any]:
+        now = _now()
+        await self._conn.execute(
+            "INSERT INTO local_runtime_settings (id, settings_json, version, updated_at) "
+            "VALUES (1, ?, 1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET settings_json = excluded.settings_json, "
+            "version = local_runtime_settings.version + 1, updated_at = excluded.updated_at",
+            (_encode_payload(settings), now),
+        )
+        await self._conn.commit()
+        stored = await self.get_runtime_settings()
+        assert stored is not None
+        return stored
 
     async def list_model_providers(self, *, principal_id: str) -> list[dict[str, Any]]:
         rows = await (
