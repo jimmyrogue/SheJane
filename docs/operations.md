@@ -674,13 +674,11 @@ Release workflow 在每个镜像推送后会按 digest 做供应链守门：
 **服务器首次部署**
 
 ```bash
-# 1. 准备 .env（见 .env.example 的 “M. Deployment” 段）。至少改：
+# 1. 复制 .env.example，并替换其中的生产占位值。至少改：
 #    JWT_SECRET（强随机）、CONFIG_ENCRYPTION_KEY（强随机 passphrase，加密落库的
 #    provider key；不设则生产 API 直接启动失败）、POSTGRES_PASSWORD（别留默认 shejane）、
-#    MOCK_LLM=false、COOKIE_SECURE=true、
 #    CLIENT_BASE_URL / ADMIN_BASE_URL（真实 https 域名）、
-#    APP_DOMAIN / ADMIN_DOMAIN、IMAGE_TAG（钉到发布版本，别留 latest），
-#    以及 provider / Stripe / S3 凭据。
+#    APP_DOMAIN / ADMIN_DOMAIN、IMAGE_TAG（钉到发布版本，别留 latest）。
 cp .env.example .env
 
 # 2. 把 APP_DOMAIN / ADMIN_DOMAIN 的 DNS A 记录指向本机。

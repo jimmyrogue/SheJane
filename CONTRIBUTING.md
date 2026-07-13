@@ -38,12 +38,12 @@ Electron/React client ──/local/v1/* (loopback)──▶ Python LangGraph dae
 
 ```bash
 make setup-hooks            # installs lefthook + wires git hooks
-cp .env.example .env        # fill in dev credentials (a DeepSeek key covers most things)
+cp .env.example .env        # optional local overrides
 make dev-electron           # Docker + daemon + Vite + Electron, with log tail
 ```
 
-`MOCK_LLM=true` (the default in `.env.example`) returns canned LLM
-responses so you can run the whole stack without any provider key.
+The development Compose stack uses mock model responses by default, so it runs
+without provider keys.
 
 If anything looks wrong, `make doctor` is the first stop.
 

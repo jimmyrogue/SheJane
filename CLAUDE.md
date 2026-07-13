@@ -202,7 +202,7 @@ make logs-dev                # snapshot of all of the above
 ```bash
 # Once
 make setup-hooks          # installs lefthook (brew) and wires git hooks
-cp .env.example .env      # fill in dev credentials (DeepSeek key works for most things)
+cp .env.example .env      # optional local overrides
 
 # Start everything
 make dev-electron         # opens Electron + Vite + daemon + auto-tail log

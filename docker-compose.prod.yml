@@ -6,11 +6,7 @@
 #   make deploy-logs            # tail
 #
 # Before the first deploy, on the server:
-#   1. cp .env.example .env  and fill REAL values — see the
-#      "Deployment" section of .env.example. At minimum: JWT_SECRET
-#      (strong random), MOCK_LLM=false, COOKIE_SECURE=true, real
-#      CLIENT_BASE_URL / ADMIN_BASE_URL, APP_DOMAIN / ADMIN_DOMAIN,
-#      and provider / Stripe / S3 credentials.
+#   1. cp .env.example .env and replace every production placeholder.
 #   2. Point your DNS A records for APP_DOMAIN + ADMIN_DOMAIN at the
 #      host — Caddy auto-provisions Let's Encrypt TLS on first hit.
 #
