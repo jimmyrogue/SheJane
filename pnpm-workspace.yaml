@@ -1,6 +1,5 @@
 packages:
   - apps/desktop
-  - apps/admin
   - packages/*
   - tests/e2e
 

@@ -145,7 +145,7 @@ jobs:
         working-directory: services/runtime
 
       - name: Unit suites + race + build
-        run: make client-test admin-test local-host-test test-race build
+        run: make client-test local-host-test test-race build
 
       # Cross-check memory.go vs postgres.go via the store conformance suite.
       # Migrations apply with the same versioned runner as `make migrate`; the
@@ -160,8 +160,7 @@ jobs:
           go run ./cmd/migrate -dir ./migrations
           go test ./internal/store/ -run TestStoreConformance -v
 
-  # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
-  # apps/desktop/ and apps/admin/, so both need their deps installed (not just tests/e2e/).
+  # Playwright simulated E2E. Its webServer launches the Desktop Vite app.
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest

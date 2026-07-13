@@ -7,8 +7,7 @@
 #   • dev / unset: fall back to localhost / admin.localhost (Caddy uses
 #     its internal CA).
 #
-# Admin is served at the root and /api/* is proxied to Cloud, so the app uses
-# same-origin requests without build-time endpoint configuration.
+# The retired Admin UI is gone; this endpoint exposes only the Cloud API.
 
 # Global options. The ACME contact email receives Let's Encrypt
 # expiry / renewal-failure notifications. Override per-deploy with the
@@ -32,26 +31,7 @@
   import security_headers
   encode zstd gzip
 
-  handle /api/* {
-    reverse_proxy api:8080
-  }
-
-  handle /health {
-    reverse_proxy api:8080
-  }
-
-  # Liveness + readiness probes also live on the API (the readiness probe
-  # pings the DB). Without these, external uptime monitors hitting /readyz
-  # would fall through to the SPA and always see 200.
-  handle /healthz {
-    reverse_proxy api:8080
-  }
-
-  handle /readyz {
-    reverse_proxy api:8080
-  }
-
   handle {
-    reverse_proxy admin:80
+    reverse_proxy api:8080
   }
 }

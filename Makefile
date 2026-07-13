@@ -17,8 +17,8 @@
 .PHONY: help \
 	dev dev-electron dev-fresh dev-nuke restart-daemon doctor docker-up docker-down \
 	test test-race test-e2e test-contract ci test-ci build \
-	api-test client-test admin-test runtime-client-test local-host-test \
-	client-build admin-build runtime-client-build local-host-build \
+	api-test client-test runtime-client-test local-host-test \
+	client-build runtime-client-build local-host-build \
 	lint schemas setup-hooks \
 	release deploy deploy-pull deploy-down deploy-logs migrate \
 	backup deploy-backup deploy-restore backup-cron-install \
@@ -27,8 +27,8 @@
 	logs-api logs-local-host logs-client logs-llm-errors logs-dev
 
 # docker compose invocation for the production stack (pulls prebuilt
-# GHCR images — see infra/cloud/docker-compose.prod.yml). Pin Cloud and Admin
-# independently with CLOUD_IMAGE_VERSION and ADMIN_IMAGE_VERSION.
+# GHCR image — see infra/cloud/docker-compose.prod.yml). Pin Cloud with
+# CLOUD_IMAGE_VERSION.
 COMPOSE_DEV ?= docker compose -f infra/cloud/docker-compose.yml
 COMPOSE_PROD ?= docker compose --env-file infra/cloud/.env -f infra/cloud/docker-compose.prod.yml
 
@@ -44,15 +44,15 @@ dev: ## Print the manual Runtime + Desktop recipe
 	@echo "Run Runtime and Desktop in separate terminals:"
 	@echo "  cd services/runtime && uv run shejane-runtime"
 	@echo "  pnpm --filter @shejane/desktop dev"
-	@echo "Cloud/Admin are optional: make docker-up"
+	@echo "The retired Cloud is preserved only in Git history."
 
 dev-electron: ## Runtime + Vite + Electron (hard-restarts; no Cloud required)
 	./scripts/dev-electron.sh
 
-dev-fresh: ## Rebuild optional Cloud/Admin, then launch Runtime + Desktop
+dev-fresh: ## Rebuild optional Cloud, then launch Runtime + Desktop
 	./scripts/dev-fresh.sh
 
-dev-nuke: ## Clean-rebuild optional Cloud/Admin, then launch Runtime + Desktop (keeps DB volumes)
+dev-nuke: ## Clean-rebuild optional Cloud, then launch Runtime + Desktop (keeps DB volumes)
 	./scripts/dev-nuke.sh
 
 restart-daemon: ## Hot-restart ONLY the Python daemon (:17371) after a code edit — seconds, not a full relaunch
@@ -68,12 +68,12 @@ docker-down: ## Stop the dev Docker stack
 	$(COMPOSE_DEV) down
 
 ##@ Test
-test: api-test client-test admin-test runtime-client-test local-host-test ## Fast unit suites
+test: api-test client-test runtime-client-test local-host-test ## Fast unit suites
 
 test-race: ## Go tests with the race detector (guards the credit ledger's concurrency)
 	cd services/cloud && go test -race ./...
 
-test-e2e: ## Playwright simulated E2E (boots isolated apps/desktop/admin vite + route mocks)
+test-e2e: ## Playwright simulated E2E (boots isolated Desktop + Runtime route mocks)
 	pnpm --filter shejane-e2e test
 
 test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)
@@ -84,11 +84,10 @@ ci: lint test test-race build test-e2e test-contract ## Run EVERYTHING CI runs, 
 # Back-compat alias — older docs/muscle-memory call `make test-ci`.
 test-ci: ci ## Alias of `ci` (kept for back-compat)
 
-build: ## Build Cloud, Runtime SDK, Desktop, Admin, and Runtime dependencies
+build: ## Build Cloud, Runtime SDK, Desktop, and Runtime dependencies
 	cd services/cloud && go build ./cmd/api
 	pnpm --filter @shejane/runtime-client build
 	pnpm --filter @shejane/desktop build
-	pnpm --filter shejane-admin build
 	cd services/runtime && uv sync
 
 api-test: ## Go unit tests
@@ -96,9 +95,6 @@ api-test: ## Go unit tests
 
 client-test: ## Client vitest (run once)
 	pnpm --filter @shejane/desktop test --run
-
-admin-test: ## Admin vitest (run once)
-	pnpm --filter shejane-admin test --run
 
 runtime-client-test: ## Runtime TypeScript SDK tests
 	pnpm --filter @shejane/runtime-client test
@@ -108,9 +104,6 @@ local-host-test: ## Daemon pytest
 
 client-build: ## Build only the client
 	pnpm --filter @shejane/desktop build
-
-admin-build: ## Build only the admin
-	pnpm --filter shejane-admin build
 
 runtime-client-build: ## Build the public Runtime TypeScript SDK
 	pnpm --filter @shejane/runtime-client build
@@ -155,7 +148,7 @@ setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 
 ##@ Deploy & release (production)
 release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
-	@case "$(COMPONENT)" in runtime|desktop|cloud|admin|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, cloud, admin, or runtime-client" >&2; exit 1 ;; esac
+	@case "$(COMPONENT)" in runtime|desktop|cloud|runtime-client) ;; *) echo "❌ COMPONENT must be runtime, desktop, cloud, or runtime-client" >&2; exit 1 ;; esac
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "❌ VERSION must look like X.Y.Z" >&2; exit 1 ;; esac
 	@if [ -n "$$(git status --porcelain)" ]; then echo "❌ Working tree not clean — commit or stash first." >&2; exit 1; fi
 	@branch=$$(git rev-parse --abbrev-ref HEAD); if [ "$$branch" != "main" ]; then echo "❌ Releases must be cut from main (currently on '$$branch')." >&2; exit 1; fi
@@ -163,10 +156,10 @@ release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
 	git push origin "$(COMPONENT)-v$(VERSION)"
 	@echo "✅ Pushed $(COMPONENT)-v$(VERSION). Only that module's release workflow will run."
 
-deploy: ## Pull independently versioned Cloud/Admin images and restart
+deploy: ## Pull the Cloud image and restart
 	$(COMPOSE_PROD) pull
 	$(COMPOSE_PROD) up -d
-	@echo "✅ Deployed Cloud=$${CLOUD_IMAGE_VERSION:-latest} Admin=$${ADMIN_IMAGE_VERSION:-latest}."
+	@echo "✅ Deployed Cloud=$${CLOUD_IMAGE_VERSION:-latest}."
 
 deploy-pull: ## Pull the latest prod images without restarting
 	$(COMPOSE_PROD) pull

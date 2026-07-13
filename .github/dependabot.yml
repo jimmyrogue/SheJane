@@ -24,7 +24,7 @@ updates:
         update-types: [minor, patch]
     labels: [dependencies, go]
 
-  # --- npm (3 workspaces share no root package.json) ---
+  # --- npm workspaces ---
   - package-ecosystem: npm
     directory: /apps/desktop
     schedule: { interval: weekly, day: monday }
@@ -33,15 +33,6 @@ updates:
       client-minor-patch:
         update-types: [minor, patch]
     labels: [dependencies, client]
-
-  - package-ecosystem: npm
-    directory: /apps/admin
-    schedule: { interval: weekly, day: monday }
-    open-pull-requests-limit: 5
-    groups:
-      admin-minor-patch:
-        update-types: [minor, patch]
-    labels: [dependencies, admin]
 
   - package-ecosystem: npm
     directory: /tests/e2e

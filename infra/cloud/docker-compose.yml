@@ -53,15 +53,6 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
 
-  admin:
-    build:
-      context: ../..
-      dockerfile: apps/admin/Dockerfile
-    ports:
-      - "${ADMIN_PORT:-5174}:80"
-    depends_on:
-      - api
-
   caddy:
     image: caddy:2-alpine
     profiles: ["proxy"]
@@ -74,7 +65,6 @@ services:
       - caddy-config:/config
     depends_on:
       - api
-      - admin
 
 volumes:
   postgres-data:
