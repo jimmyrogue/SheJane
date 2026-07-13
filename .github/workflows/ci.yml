@@ -161,7 +161,7 @@ jobs:
           go test ./internal/store/ -run TestStoreConformance -v
 
   # Playwright simulated E2E. Its webServer launches `vite dev` in BOTH
-  # apps/desktop/ and admin/, so both need their deps installed (not just tests/e2e/).
+  # apps/desktop/ and apps/admin/, so both need their deps installed (not just tests/e2e/).
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
@@ -225,14 +225,13 @@ jobs:
 
       - name: Start daemon
         run: |
-          mkdir -p /tmp/contract
-          SHEJANE_LOCAL_HOST_TOKEN=dev-local-token \
-          SHEJANE_LOCAL_HOST_PORT=17371 \
-          SHEJANE_LOCAL_HOST_URL=http://127.0.0.1:17371 \
-          SHEJANE_CLOUD_BASE_URL=http://localhost:8080 \
-          SHEJANE_FAKE_LLM=1 \
-          PYTHONUNBUFFERED=1 \
-          nohup uv run python -m local_host \
+          mkdir -p /tmp/contract/data
+          SHEJANE_FAKE_LLM=1 PYTHONUNBUFFERED=1 \
+          nohup uv run shejane-runtime \
+            --host 127.0.0.1 \
+            --port 17371 \
+            --token dev-local-token \
+            --data-dir /tmp/contract/data \
             > /tmp/contract/daemon.log 2>&1 &
           echo $! > /tmp/contract/daemon.pid
         working-directory: services/runtime
@@ -254,7 +253,7 @@ jobs:
         env:
           VITE_TEST_LOCAL_HOST_URL: http://127.0.0.1:17371
           VITE_TEST_LOCAL_HOST_TOKEN: dev-local-token
-        run: pnpm --filter shejane-client test:contract
+        run: pnpm --filter @shejane/desktop test:contract
 
       - name: Daemon log on failure
         if: failure()
