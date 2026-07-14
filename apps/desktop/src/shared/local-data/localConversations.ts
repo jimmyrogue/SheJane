@@ -93,6 +93,20 @@ export class LocalConversationStore {
     await requestToPromise(store.delete(commandId))
   }
 
+  async settleRejectedRuntimeCommand(
+    commandId: string,
+    conversation?: Conversation,
+  ): Promise<void> {
+    const db = await this.open()
+    const transaction = db.transaction(
+      [STORE_NAME, PENDING_LOCAL_RUN_COMMANDS_STORE_NAME],
+      'readwrite',
+    )
+    if (conversation) transaction.objectStore(STORE_NAME).put(conversation)
+    transaction.objectStore(PENDING_LOCAL_RUN_COMMANDS_STORE_NAME).delete(commandId)
+    await transactionToPromise(transaction)
+  }
+
   async settleCanceledLocalRunCommand(threadId: string, commandId: string): Promise<void> {
     const db = await this.open()
     const transaction = db.transaction(

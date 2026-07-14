@@ -270,7 +270,7 @@
           "model": {
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "^local:[^:]+:.+$",
+            "pattern": "^local:[^:\\s]+:\\S+$",
             "title": "Model",
             "type": "string"
           },
@@ -450,7 +450,7 @@
           "model": {
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "^local:[^:]+:.+$",
+            "pattern": "^local:[^:\\s]+:\\S+$",
             "title": "Model",
             "type": "string"
           },

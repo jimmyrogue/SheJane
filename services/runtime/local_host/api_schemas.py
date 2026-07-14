@@ -42,6 +42,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MAX_LOCAL_REQUEST_BODY_BYTES = 1_048_576
+RUNTIME_MODEL_PATTERN = r"^local:[^:\s]+:\S+$"
 
 # ---------------------------------------------------------------------------
 # Health
@@ -371,7 +372,7 @@ class CreateRunRequest(BaseModel):
     workspace_path: str | None = Field(default=None, max_length=4096)
     attachment_paths: list[str] = Field(default_factory=list, max_length=10)
     # Runtime model selection, normally `local:<provider>:<model>`.
-    model: str = Field(min_length=1, max_length=128, pattern=r"^local:[^:]+:.+$")
+    model: str = Field(min_length=1, max_length=128, pattern=RUNTIME_MODEL_PATTERN)
     history: list[dict[str, str]] | None = Field(default=None, max_length=256)
     parent_run_id: str | None = Field(default=None, max_length=128)
     settings: dict[str, Any] | None = None
@@ -441,7 +442,7 @@ class CreateScheduledRunRequest(BaseModel):
     goal: str
     run_at: str
     workspace_path: str | None = None
-    model: str = Field(min_length=1, max_length=128, pattern=r"^local:[^:]+:.+$")
+    model: str = Field(min_length=1, max_length=128, pattern=RUNTIME_MODEL_PATTERN)
     history: list[dict[str, str]] | None = None
     settings: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None

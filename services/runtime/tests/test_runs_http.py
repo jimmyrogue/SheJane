@@ -1096,11 +1096,17 @@ def test_create_run_rejects_partial_command_ids_and_unknown_fields(client: TestC
         headers=headers,
         json={**run_command("say hi"), "principal_id": "attacker"},
     )
+    malformed_model = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={**run_command("say hi"), "model": "local:open ai:gpt 4.1"},
+    )
 
     assert partial.status_code == 422
     assert missing.status_code == 422
     assert unknown.status_code == 422
     assert forged_principal.status_code == 422
+    assert malformed_model.status_code == 422
 
 
 def test_pairing_token_rotation_keeps_the_same_local_owner(

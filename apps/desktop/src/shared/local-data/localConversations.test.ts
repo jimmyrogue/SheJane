@@ -11,6 +11,7 @@ describe('LocalConversationStore', () => {
       deleteDatabase('shejane-test-pinned'),
       deleteDatabase('shejane-test-pending-command'),
       deleteDatabase('shejane-test-delete-pending-command'),
+      deleteDatabase('shejane-test-rejected-command'),
     ])
   })
 
@@ -131,6 +132,37 @@ describe('LocalConversationStore', () => {
       ),
     ).toBe(false)
     expect(await store.get('conv-delete')).toBeUndefined()
+  })
+
+  it('atomically settles a rejected command with its failed local projection', async () => {
+    const store = new LocalConversationStore('shejane-test-rejected-command')
+    const item = conversation('conv-rejected', '拒绝任务', '2026-05-10T00:00:00.000Z')
+    item.messages = [{
+      id: 'msg-assistant',
+      role: 'assistant',
+      content: '',
+      createdAt: item.createdAt,
+      status: 'pending',
+    }]
+    await store.saveWithPendingRuntimeCommand(item, {
+      type: 'run.start',
+      commandId: 'cmd-rejected',
+      createdAt: item.createdAt,
+      input: {
+        commandId: 'cmd-rejected',
+        clientMessageId: 'msg-user',
+        assistantMessageId: 'msg-assistant',
+        threadId: item.id,
+        goal: 'rejected',
+        mode: 'local:test:model',
+      },
+    })
+
+    item.messages[0].status = 'error'
+    await store.settleRejectedRuntimeCommand('cmd-rejected', item)
+
+    expect(await store.listPendingRuntimeCommands()).toEqual([])
+    expect((await store.get(item.id))?.messages[0].status).toBe('error')
   })
 })
 

@@ -93,7 +93,16 @@ function parseAgentSSEChunk(chunk: string): AgentSSEEvent {
   if (dataLines.length === 0) return { type: 'ignore' }
   const data = dataLines.join('\n')
   if (data === '[DONE]') return { type: 'done' }
-  return { type: 'agent', event: JSON.parse(data) as AgentRunEvent }
+  const event = JSON.parse(data) as unknown
+  if (
+    !event
+    || typeof event !== 'object'
+    || typeof (event as { event_type?: unknown }).event_type !== 'string'
+    || !(event as { event_type: string }).event_type
+  ) {
+    throw new Error('Runtime event envelope requires event_type')
+  }
+  return { type: 'agent', event: event as AgentRunEvent }
 }
 
 function stringPayload(event: AgentRunEvent, key: string): string {

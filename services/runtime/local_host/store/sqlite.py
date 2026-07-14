@@ -619,6 +619,13 @@ def _decode_plan_approval_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _configure_connection(conn: aiosqlite.Connection) -> None:
+    """Apply invariants that SQLite scopes to each individual connection."""
+    conn.row_factory = aiosqlite.Row
+    await conn.execute("PRAGMA foreign_keys=ON")
+    await conn.execute("PRAGMA busy_timeout=5000")
+
+
 class LocalStore:
     """Thin async wrapper over aiosqlite. Connection-per-store."""
 
@@ -630,7 +637,7 @@ class LocalStore:
     async def open(cls, db_path: Path) -> LocalStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(str(db_path))
-        conn.row_factory = aiosqlite.Row
+        await _configure_connection(conn)
         await conn.executescript(SCHEMA)
         await cls._ensure_columns(conn)
         await conn.commit()
@@ -1228,8 +1235,7 @@ class LocalStore:
     ):
         active_lease = lease or _CURRENT_EXECUTION_LEASE.get()
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 if active_lease is not None:
@@ -2373,8 +2379,7 @@ class LocalStore:
             raise WorkspaceAdmissionError(path_error)
 
         async with aiosqlite.connect(str(self._db_path)) as transaction_conn:
-            transaction_conn.row_factory = aiosqlite.Row
-            await transaction_conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(transaction_conn)
             await transaction_conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_run_for_command(
@@ -2695,8 +2700,7 @@ class LocalStore:
         if path_error is not None:
             raise WorkspaceAdmissionError(path_error)
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 row = await (
@@ -2842,8 +2846,7 @@ class LocalStore:
         lease_seconds: float = 30.0,
     ) -> dict[str, Any] | None:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 now = _now()
@@ -2890,8 +2893,7 @@ class LocalStore:
         renewed_at = _now()
         expires_at = (datetime.now(UTC) + timedelta(seconds=lease_seconds)).isoformat()
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             cursor = await conn.execute(
                 "UPDATE local_run_jobs SET lease_expires_at = ?, updated_at = ? "
@@ -3000,8 +3002,7 @@ class LocalStore:
         """Let only the quarantined owner close its attempt after cleanup."""
         now = _now()
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 row = await (
@@ -3065,8 +3066,7 @@ class LocalStore:
         """
         now = _now()
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 row = await (
@@ -3158,7 +3158,7 @@ class LocalStore:
             raise ValueError(f"invalid finished job status: {status}")
         finished_at = _now()
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             cursor = await conn.execute(
                 "UPDATE local_run_jobs SET status = ?, updated_at = ?, finished_at = ?, "
@@ -3179,8 +3179,7 @@ class LocalStore:
 
     async def request_run_cancel(self, run_id: str) -> str | None:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 state = await self._request_run_cancel_uncommitted(conn, run_id)
@@ -3202,8 +3201,7 @@ class LocalStore:
     ) -> tuple[dict[str, Any], bool]:
         payload_json = _encode_payload({"type": "run.cancel", "run_id": run_id})
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_command_receipt_uncommitted(
@@ -3268,8 +3266,7 @@ class LocalStore:
             separators=(",", ":"),
         )
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_command_receipt_uncommitted(
@@ -3439,8 +3436,7 @@ class LocalStore:
         )
 
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_command_receipt_uncommitted(
@@ -3626,8 +3622,7 @@ class LocalStore:
         decision_json = _encode_payload(resume_decision)
 
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_command_receipt_uncommitted(
@@ -3787,8 +3782,7 @@ class LocalStore:
             }
         )
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 existing = await self._accepted_command_receipt_uncommitted(
@@ -4155,8 +4149,7 @@ class LocalStore:
         before_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int, bool]:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN")
             page_limit = max(1, min(int(limit), 500))
             page_filter = ""
@@ -4198,8 +4191,7 @@ class LocalStore:
         expected_version: int | None = None,
     ) -> dict[str, Any] | None:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN")
             thread = await (
                 await conn.execute(
@@ -4311,8 +4303,7 @@ class LocalStore:
         archived: bool | None,
     ) -> dict[str, Any] | None:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 row = await (
@@ -4361,8 +4352,7 @@ class LocalStore:
 
     async def delete_thread(self, *, principal_id: str, thread_id: str) -> int | None:
         async with aiosqlite.connect(str(self._db_path)) as conn:
-            conn.row_factory = aiosqlite.Row
-            await conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
             try:
                 row = await (
@@ -4726,8 +4716,7 @@ class LocalStore:
         if path_error is not None:
             raise WorkspaceAdmissionError(path_error)
         async with aiosqlite.connect(str(self._db_path)) as transaction_conn:
-            transaction_conn.row_factory = aiosqlite.Row
-            await transaction_conn.execute("PRAGMA busy_timeout=5000")
+            await _configure_connection(transaction_conn)
             await transaction_conn.execute("BEGIN IMMEDIATE")
             try:
                 workspace_error = await self._workspace_owner_error(
@@ -4808,32 +4797,34 @@ class LocalStore:
         now: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        cursor = await self._conn.execute(
-            """
-            SELECT * FROM local_scheduled_runs
-             WHERE status = 'scheduled'
-               AND run_at <= ?
-             ORDER BY run_at ASC, id ASC
-             LIMIT ?
-            """,
-            (now, limit),
-        )
-        rows = [dict(row) for row in await cursor.fetchall()]
-        if not rows:
-            return []
-        updated_at = _now()
-        await self._conn.executemany(
-            "UPDATE local_scheduled_runs SET status = 'running', updated_at = ? "
-            "WHERE id = ? AND status = 'scheduled'",
-            [(updated_at, row["id"]) for row in rows],
-        )
-        await self._conn.commit()
-        claimed: list[dict[str, Any]] = []
-        for row in rows:
-            fresh = await self.get_scheduled_run(row["id"])
-            if fresh and fresh["status"] == "running":
-                claimed.append(fresh)
-        return claimed
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = await (
+                    await conn.execute(
+                        "SELECT * FROM local_scheduled_runs "
+                        "WHERE status = 'scheduled' AND run_at <= ? "
+                        "ORDER BY run_at ASC, id ASC LIMIT ?",
+                        (now, limit),
+                    )
+                ).fetchall()
+                if not rows:
+                    await conn.commit()
+                    return []
+                updated_at = _now()
+                await conn.executemany(
+                    "UPDATE local_scheduled_runs SET status = 'running', updated_at = ? "
+                    "WHERE id = ? AND status = 'scheduled'",
+                    [(updated_at, row["id"]) for row in rows],
+                )
+                await conn.commit()
+                return [
+                    {**dict(row), "status": "running", "updated_at": updated_at} for row in rows
+                ]
+            except BaseException:
+                await conn.rollback()
+                raise
 
     async def mark_scheduled_run_started(
         self, schedule_id: str, run_id: str

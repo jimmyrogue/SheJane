@@ -112,6 +112,29 @@ async def test_store_claims_due_schedules_once(tmp_path: Path) -> None:
         await store.close()
 
 
+async def test_concurrent_stores_cannot_claim_the_same_schedule(tmp_path: Path) -> None:
+    db_path = tmp_path / "local-host.db"
+    first = await LocalStore.open(db_path)
+    second = await LocalStore.open(db_path)
+    try:
+        now = datetime.now(UTC)
+        schedule = await first.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="run once",
+            run_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+
+        claims = await asyncio.gather(
+            first.claim_due_scheduled_runs(now=now.isoformat()),
+            second.claim_due_scheduled_runs(now=now.isoformat()),
+        )
+
+        assert [row["id"] for batch in claims for row in batch] == [schedule["id"]]
+    finally:
+        await first.close()
+        await second.close()
+
+
 async def test_legacy_schedules_migrate_to_the_local_owner(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_path)

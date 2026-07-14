@@ -117,6 +117,7 @@ import {
   type PendingPlanResolveCommand,
   type PendingToolReconcileCommand,
   type PendingRuntimeCommand,
+  type PendingRuntimeCommandFailure,
   type RuntimeCommandResult,
   type LocalRun as LocalHarnessRun,
   type LocalRunDiagnostics,
@@ -710,12 +711,19 @@ function AppContent() {
       try {
         const commands = await localData.listPendingRuntimeCommands()
         if (disposed || commands.length === 0) return
-        const delivered = await deliverPendingRuntimeCommands(
+        const report = await deliverPendingRuntimeCommands(
           commands,
           config,
           (command, run) => settleDeliveredLocalRunCommand(command, run, config).then(() => undefined),
         )
-        if (!disposed && delivered < commands.length) {
+        for (const failure of report.failures.filter((item) => !item.retryable)) {
+          await settleRejectedPendingRuntimeCommand(failure, config)
+        }
+        const blocked = report.failures.find((item) => !item.retryable)
+        if (!disposed && blocked) {
+          setNotice(runtimeCommandErrorMessage(blocked.error))
+        }
+        if (!disposed && report.failures.some((item) => item.retryable)) {
           retryTimer = window.setTimeout(() => void deliver(), pendingCommandRetryMs)
         }
       } catch {
@@ -957,6 +965,46 @@ function AppContent() {
     }
     await localData.deletePendingRuntimeCommand(command.commandId)
     return true
+  }
+
+  function runtimeCommandErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : t('app.notice.sendFailed')
+  }
+
+  async function settleRejectedPendingRuntimeCommand(
+    failure: PendingRuntimeCommandFailure,
+    config: LocalHostConfig,
+  ): Promise<void> {
+    const { command } = failure
+    if (command.type !== 'run.start' && command.type !== 'run.fork') {
+      const existing = await localData.get(command.input.threadId)
+      let projected: Conversation | undefined
+      try {
+        const snapshot = await getLocalThreadSnapshot(command.input.threadId, config)
+        projected = projectRuntimeThread(snapshot, existing, t)
+      } catch {
+        // A rejected command may refer to a thread that no longer exists.
+      }
+      await localData.settleRejectedRuntimeCommand(command.commandId, projected)
+      if (projected) setConversations((items) => upsertConversation(items, projected))
+      return
+    }
+    const threadID = command.input.threadId
+    const conversation = threadID ? await localData.get(threadID) : undefined
+    const assistantID = command.input.assistantMessageId
+    const message = conversation?.messages.find((item) => item.id === assistantID)
+    if (conversation && message) {
+      message.status = 'error'
+      message.agentEvents = [
+        ...(message.agentEvents ?? []),
+        { type: 'ui.command_rejected', label: runtimeCommandErrorMessage(failure.error) },
+      ]
+      conversation.updatedAt = new Date().toISOString()
+    }
+    await localData.settleRejectedRuntimeCommand(command.commandId, conversation)
+    if (conversation) {
+      setConversations((items) => upsertConversation(items, conversation))
+    }
   }
 
   function startNewConversation() {

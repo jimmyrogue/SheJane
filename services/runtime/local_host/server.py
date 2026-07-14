@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -379,13 +380,28 @@ def _safe_catalog_name(raw: str | None) -> str:
 
 
 def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(
+    _write_text_atomic(
+        path,
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
-    tmp.replace(path)
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _normalize_schedule_time(raw: str) -> str:
@@ -565,7 +581,7 @@ def _write_local_skill(route_name: str | None, request: SkillWriteRequest) -> Sk
     if not content.endswith("\n"):
         content += "\n"
     try:
-        path.write_text(content, encoding="utf-8")
+        _write_text_atomic(path, content)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"failed to write skill: {exc}") from exc
     return SkillWriteResponse(skill=_skill_file_from_path(name, path))

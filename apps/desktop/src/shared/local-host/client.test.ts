@@ -411,7 +411,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({
       command_id: 'cmd-restart',
@@ -461,7 +461,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/runs/run-source/fork',
@@ -512,7 +512,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/commands',
@@ -564,7 +564,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
       type: 'question.answer',
@@ -615,7 +615,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
       type: 'permission.resolve',
@@ -670,7 +670,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
       type: 'plan.resolve',
@@ -719,7 +719,7 @@ describe('desktop local host client', () => {
         acknowledge,
         fetcher,
       ),
-    ).resolves.toBe(1)
+    ).resolves.toMatchObject({ delivered: 1, failures: [] })
 
     expect(JSON.parse(String((fetcher.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
       type: 'tool.reconcile',
@@ -733,7 +733,7 @@ describe('desktop local host client', () => {
     )
   })
 
-  it('keeps a rejected command while delivering a different thread', async () => {
+  it('reports a permanent rejection while continuing another thread', async () => {
     const fetcher = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { command_id?: string }
       if (body.command_id === 'cmd-rejected') {
@@ -755,8 +755,7 @@ describe('desktop local host client', () => {
     })
     const acknowledge = vi.fn().mockResolvedValue(undefined)
 
-    await expect(
-      deliverPendingRuntimeCommands(
+    const report = await deliverPendingRuntimeCommands(
         [
           {
             type: 'run.start',
@@ -786,8 +785,16 @@ describe('desktop local host client', () => {
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
         acknowledge,
         fetcher,
-      ),
-    ).resolves.toBe(1)
+      )
+
+    expect(report).toMatchObject({
+      delivered: 1,
+      failures: [{
+        command: expect.objectContaining({ commandId: 'cmd-rejected' }),
+        error: expect.objectContaining({ status: 409 }),
+        retryable: false,
+      }],
+    })
 
     expect(acknowledge).not.toHaveBeenCalledWith(
       expect.objectContaining({ commandId: 'cmd-rejected' }),

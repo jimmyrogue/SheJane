@@ -4,7 +4,10 @@ import {
   discoverLocalModels,
   parseAgentSSEBuffer,
   parseRuntimeModelSpec,
+  RuntimeHTTPError,
   SheJaneRuntimeClient,
+  streamLocalRun,
+  updateRuntimeSettings,
 } from './index'
 
 describe('parseRuntimeModelSpec', () => {
@@ -12,6 +15,8 @@ describe('parseRuntimeModelSpec', () => {
     expect(parseRuntimeModelSpec(' local:openai:gpt-4.1 ')).toBe('local:openai:gpt-4.1')
     expect(parseRuntimeModelSpec('auto')).toBeUndefined()
     expect(parseRuntimeModelSpec('local::gpt-4.1')).toBeUndefined()
+    expect(parseRuntimeModelSpec('local:open ai:gpt-4.1')).toBeUndefined()
+    expect(parseRuntimeModelSpec('local:openai:gpt 4.1')).toBeUndefined()
   })
 })
 
@@ -79,5 +84,54 @@ describe('SheJaneRuntimeClient', () => {
       },
       { type: 'done' },
     ])
+  })
+
+  it('rejects JSON events that do not satisfy the Runtime envelope', () => {
+    expect(() => parseAgentSSEBuffer('data: {"payload":{"content":"lost"}}\n\n'))
+      .toThrow(/event_type/)
+  })
+})
+
+describe('streamLocalRun', () => {
+  it('preserves Runtime status and error code when the SSE handshake fails', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      detail: { code: 'run_not_found', message: 'run does not exist' },
+    }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(streamLocalRun(
+      'run-missing',
+      { baseURL: 'http://127.0.0.1:17371', token: 'runtime-token' },
+      { onEvent: () => undefined, onDelta: () => undefined },
+      fetcher,
+    )).rejects.toMatchObject({
+      name: RuntimeHTTPError.name,
+      status: 404,
+      code: 'run_not_found',
+      message: 'run does not exist',
+    })
+  })
+})
+
+describe('Runtime validation errors', () => {
+  it('preserves sanitized FastAPI field errors without exposing rejected input', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      detail: [{ loc: ['body', 'memory'], msg: 'Input should be on or off', type: 'literal_error' }],
+    }), {
+      status: 422,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await expect(updateRuntimeSettings(
+      { memory: 'off' },
+      { baseURL: 'http://127.0.0.1:17371', token: 'runtime-token' },
+      fetcher,
+    )).rejects.toMatchObject({
+      name: RuntimeHTTPError.name,
+      status: 422,
+      message: 'body.memory: Input should be on or off',
+    })
   })
 })

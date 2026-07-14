@@ -7,6 +7,7 @@ Covers `_resolve_skills_dirs` + `_list_skill_files` + the
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,26 @@ from langgraph.store.memory import InMemoryStore
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+
+
+def test_atomic_text_write_preserves_original_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from local_host.server import _write_text_atomic
+
+    path = tmp_path / "SKILL.md"
+    path.write_text("original\n", encoding="utf-8")
+
+    def reject_replace(_source, _target) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", reject_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        _write_text_atomic(path, "partial\n")
+
+    assert path.read_text(encoding="utf-8") == "original\n"
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def _write_skill(root: Path, name: str, *, title: str = "", description: str = "") -> Path:

@@ -19,7 +19,7 @@ export type RuntimeModelSpec = `local:${string}:${string}`
 /** Validate untrusted storage or catalog data before it becomes a model selection. */
 export function parseRuntimeModelSpec(value: string): RuntimeModelSpec | undefined {
   const trimmed = value.trim()
-  return trimmed.length <= 128 && /^local:[^:]+:.+$/.test(trimmed)
+  return trimmed.length <= 128 && /^local:[^:\s]+:\S+$/.test(trimmed)
     ? trimmed as RuntimeModelSpec
     : undefined
 }
@@ -417,6 +417,17 @@ export type RuntimeCommandResult =
   | PlanResolveCommandReceipt
   | ToolReconcileCommandReceipt
 
+export interface PendingRuntimeCommandFailure {
+  command: PendingRuntimeCommand
+  error: unknown
+  retryable: boolean
+}
+
+export interface PendingRuntimeCommandDeliveryReport {
+  delivered: number
+  failures: PendingRuntimeCommandFailure[]
+}
+
 function serializeAgentSettings(settings?: AgentSettings): Record<string, unknown> | undefined {
   const src = settings
   if (!src || Object.keys(src).length === 0) return undefined
@@ -503,7 +514,7 @@ export async function deliverPendingRuntimeCommands(
   config: RuntimeClientConfig,
   settle: (command: PendingRuntimeCommand, result: RuntimeCommandResult) => Promise<void>,
   fetcher: Fetcher = fetch,
-): Promise<number> {
+): Promise<PendingRuntimeCommandDeliveryReport> {
   const byThread = new Map<string, PendingRuntimeCommand[]>()
   for (const command of [...commands].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     const key = command.input.threadId ?? command.commandId
@@ -513,20 +524,30 @@ export async function deliverPendingRuntimeCommands(
   }
   const delivered = await Promise.all(
     [...byThread.values()].map(async (threadCommands) => {
-      let count = 0
+      let delivered = 0
+      const failures: PendingRuntimeCommandFailure[] = []
       for (const command of threadCommands) {
         try {
           const result = await deliverRuntimeCommand(command, config, fetcher)
           await settle(command, result)
-          count += 1
-        } catch {
+          delivered += 1
+        } catch (error) {
+          failures.push({ command, error, retryable: isRetryableCommandDeliveryError(error) })
           break
         }
       }
-      return count
+      return { delivered, failures }
     }),
   )
-  return delivered.reduce((total, count) => total + count, 0)
+  return {
+    delivered: delivered.reduce((total, result) => total + result.delivered, 0),
+    failures: delivered.flatMap((result) => result.failures),
+  }
+}
+
+function isRetryableCommandDeliveryError(error: unknown): boolean {
+  if (!(error instanceof RuntimeHTTPError)) return true
+  return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500
 }
 
 async function deliverRuntimeCommand(
@@ -1206,7 +1227,7 @@ export async function streamLocalRun(
         error.resumeAfter ?? 0,
       )
     }
-    throw new Error(error.message)
+    throw new RuntimeHTTPError(error.message, response.status, error.code)
   }
   const result = await streamAgentSSE(response, {
     onEvent: (event) => handlers.onEvent(event),
@@ -1308,13 +1329,19 @@ async function localResponseError(response: Response): Promise<{
         code?: string
         message?: string
         first_available_seq?: number | null
-      }
+      } | Array<{ loc?: Array<string | number>; msg?: string; type?: string }>
       error?: string
       message?: string
     }
-    const detail = typeof body.detail === 'object' ? body.detail : undefined
+    const detail = body.detail && typeof body.detail === 'object' && !Array.isArray(body.detail)
+      ? body.detail
+      : undefined
+    const validation = Array.isArray(body.detail) ? body.detail[0] : undefined
+    const validationMessage = validation?.msg
+      ? `${validation.loc?.join('.') || 'request'}: ${validation.msg}`
+      : undefined
     return {
-      message: body.message || body.error || detail?.message || (typeof body.detail === 'string' ? body.detail : '') || `Local Host HTTP ${response.status}`,
+      message: body.message || body.error || detail?.message || validationMessage || (typeof body.detail === 'string' ? body.detail : '') || `Local Host HTTP ${response.status}`,
       ...(detail?.code ? { code: detail.code } : {}),
       ...(typeof detail?.first_available_seq === 'number'
         ? { resumeAfter: Math.max(0, detail.first_available_seq - 1) }
@@ -1363,7 +1390,7 @@ export class SheJaneRuntimeClient {
   deliverCommands(
     commands: PendingRuntimeCommand[],
     settle: (command: PendingRuntimeCommand, result: RuntimeCommandResult) => Promise<void>,
-  ): Promise<number> {
+  ): Promise<PendingRuntimeCommandDeliveryReport> {
     return deliverPendingRuntimeCommands(commands, this.config, settle, this.fetcher)
   }
 
