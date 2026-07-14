@@ -244,6 +244,52 @@ def test_provider_api_persists_config_but_not_api_key(
         assert list(credential_vault.values()) == ["provider-secret"]
 
 
+def test_identical_provider_put_preserves_version_and_credential_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    credential_vault: dict[str, str],
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        headers = {"Authorization": "Bearer tok"}
+        assert (
+            client.put(
+                "/local/v1/model-providers/ollama",
+                headers=headers,
+                json=_provider_payload(),
+            ).status_code
+            == 200
+        )
+        first = asyncio.run(
+            client.app.state.store.get_model_provider(
+                principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+                provider_id="ollama",
+            )
+        )
+
+        assert (
+            client.put(
+                "/local/v1/model-providers/ollama",
+                headers=headers,
+                json=_provider_payload(),
+            ).status_code
+            == 200
+        )
+        replay = asyncio.run(
+            client.app.state.store.get_model_provider(
+                principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+                provider_id="ollama",
+            )
+        )
+
+    assert replay == first
+    assert list(credential_vault.values()) == ["provider-secret"]
+
+
 def test_anthropic_provider_persists_kind_and_binding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

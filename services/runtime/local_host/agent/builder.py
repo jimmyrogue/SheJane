@@ -81,7 +81,7 @@ from ..tools.mcp import (
 )
 from ..tools.registry import build_tools, tool_definition
 from ..tools.runtime import RuntimeToolProxy
-from .backends import ReadOnlyBackend, ReadOnlyFileBackend
+from .backends import ReadOnlyBackend, ReadOnlyFileBackend, RuntimeBackend
 from .context_builder import AsyncToolExecutionGate, RuntimeContext, build_default_context
 from .subagents import build_subagents
 
@@ -285,15 +285,6 @@ def _execution_scratch(
         raise RuntimeError("no-workspace execution requires a resource stack")
     resource_stack.callback(shutil.rmtree, scratch)
     return str(scratch)
-
-
-def _runtime_backend(runtime: Any) -> Any:
-    """Return the workspace backend bound to this invocation."""
-    context = getattr(runtime, "context", None)
-    backend = getattr(context, "backend", None)
-    if backend is None:
-        raise RuntimeError("agent workspace backend is not bound")
-    return backend
 
 
 async def open_checkpointer(
@@ -846,7 +837,7 @@ async def build_agent(
             subagents=subagents_arg,
             skills=skills_arg,
             memory=memory_arg,
-            backend=_runtime_backend,
+            backend=RuntimeBackend(),
             checkpointer=checkpointer,
             store=agent_store,
             context_schema=RuntimeContext,

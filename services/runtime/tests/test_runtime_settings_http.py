@@ -39,6 +39,19 @@ def test_runtime_settings_persist_and_freeze_into_new_runs(
         assert response.json()["max_model_calls"] == 42
         assert response.json()["version"] == 1
 
+        replay = client.put(
+            "/local/v1/settings",
+            headers=headers,
+            json={
+                "max_model_calls": 42,
+                "max_tool_retries": 1,
+                "input_guard": "block",
+                "plan_first": "auto",
+            },
+        )
+        assert replay.status_code == 200
+        assert replay.json()["version"] == 1
+
         created = client.post(
             "/local/v1/runs",
             headers=headers,

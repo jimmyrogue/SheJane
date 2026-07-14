@@ -88,15 +88,19 @@ async def test_agent_definition_cache_reuses_only_matching_structure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    from deepagents.backends.protocol import BackendProtocol
+
     import local_host.agent.builder as builder_module
     from local_host.agent.builder import build_agent, open_checkpointer
     from local_host.agent.context_builder import RuntimeContext
 
     compiled: list[object] = []
+    backends: list[object] = []
 
-    def fake_create_deep_agent(**_kwargs):
+    def fake_create_deep_agent(**kwargs):
         definition = object()
         compiled.append(definition)
+        backends.append(kwargs["backend"])
         return definition
 
     monkeypatch.setattr(builder_module, "create_deep_agent", fake_create_deep_agent)
@@ -145,6 +149,7 @@ async def test_agent_definition_cache_reuses_only_matching_structure(
         assert first is second
         assert changed is not first
         assert len(compiled) == 2
+        assert all(isinstance(backend, BackendProtocol) for backend in backends)
     finally:
         await store.close()
         await stack.aclose()

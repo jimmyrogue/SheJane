@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 from deepagents.backends.protocol import (
+    BackendProtocol,
     EditResult,
     FileData,
     FileDownloadResponse,
@@ -21,7 +22,93 @@ from deepagents.backends.protocol import (
     ReadResult,
     WriteResult,
 )
+from langgraph.runtime import get_runtime
 from markitdown import MarkItDown
+
+
+class RuntimeBackend(BackendProtocol):
+    """Delegate filesystem calls to the backend bound to this graph invocation."""
+
+    @staticmethod
+    def _backend() -> BackendProtocol:
+        context = getattr(get_runtime(), "context", None)
+        backend = getattr(context, "backend", None)
+        if not isinstance(backend, BackendProtocol):
+            raise RuntimeError("agent workspace backend is not bound")
+        return backend
+
+    def ls(self, path: str) -> LsResult:
+        return self._backend().ls(path)
+
+    async def als(self, path: str) -> LsResult:
+        return await self._backend().als(path)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        return self._backend().read(file_path, offset, limit)
+
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        return await self._backend().aread(file_path, offset, limit)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        return self._backend().grep(pattern, path, glob)
+
+    async def agrep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        return await self._backend().agrep(pattern, path, glob)
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        return self._backend().glob(pattern, path)
+
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        return await self._backend().aglob(pattern, path)
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        return self._backend().write(file_path, content)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        return await self._backend().awrite(file_path, content)
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        return self._backend().edit(file_path, old_string, new_string, replace_all)
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        return await self._backend().aedit(file_path, old_string, new_string, replace_all)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return self._backend().upload_files(files)
+
+    async def aupload_files(
+        self,
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        return await self._backend().aupload_files(files)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return self._backend().download_files(paths)
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return await self._backend().adownload_files(paths)
 
 
 def _normalize_skill_frontmatter(content: bytes | None) -> bytes | None:

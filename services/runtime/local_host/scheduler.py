@@ -57,11 +57,7 @@ class ScheduledRunDispatcher:
         for schedule in rows:
             run_id = schedule.get("run_id")
             if not run_id:
-                await self.store.complete_scheduled_run(
-                    schedule["id"],
-                    status="failed",
-                    error_message="Scheduled run was interrupted before a run was created.",
-                )
+                await self._run_schedule(schedule)
                 continue
             run = await self.store.get_run(str(run_id))
             if run is None:
@@ -125,7 +121,13 @@ class ScheduledRunDispatcher:
                 metadata_is_trusted=True,
             )
             run_id = str(run["id"])
-            await self.store.mark_scheduled_run_started(schedule_id, run_id)
+            bound = await self.store.mark_scheduled_run_started(schedule_id, run_id)
+            if bound is None:
+                raise RuntimeError("scheduled run disappeared before it could be bound")
+            if bound.get("run_id") != run_id:
+                return
+            if bound.get("status") != "running":
+                return
             async for _event in self.coordinator.stream(run_id):
                 pass
             fresh_run = await self.store.get_run(run_id)

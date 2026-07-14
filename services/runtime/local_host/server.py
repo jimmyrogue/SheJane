@@ -969,7 +969,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     str(existing["credential_ref"]) if existing else credential_ref(provider_id)
                 )
                 next_credential_ref = old_credential_ref
-                if api_key:
+                if api_key and api_key != existing_key:
                     next_credential_ref = new_credential_ref(provider_id)
                     await set_model_api_key(
                         principal_id,

@@ -679,18 +679,6 @@ class RunCoordinator:
         mode). We persist them on the run row and feed `history` into
         the initial state.
         """
-        admission_error: RunAdmissionError | None = None
-        if protocol_version != RUNTIME_PROTOCOL_VERSION:
-            admission_error = RunAdmissionError(
-                "protocol_version_unsupported",
-                f"runtime protocol version {protocol_version} is not supported",
-            )
-        missing = sorted(set(required_capabilities) - runtime_capabilities(self.settings))
-        if admission_error is None and missing:
-            admission_error = RunAdmissionError(
-                "capability_unavailable",
-                f"runtime capabilities are unavailable: {', '.join(missing)}",
-            )
         if settings_are_frozen:
             if not isinstance(settings, dict) or settings.get("_snapshot_version") != 1:
                 raise RunAdmissionError(
@@ -706,6 +694,49 @@ class RunCoordinator:
         attachment_bindings = _attachment_bindings(attachment_paths or [])
         if attachment_bindings:
             public_metadata["_attachments"] = attachment_bindings
+        command_payload = {
+            "type": "run.start",
+            "thread_id": thread_id,
+            "user_input": user_input,
+            "assistant_message_id": assistant_message_id,
+            "thread_title": thread_title,
+            "thread_metadata": thread_metadata,
+            "user_item_metadata": user_item_metadata,
+            "replace_from_client_id": replace_from_client_id,
+            "protocol_version": protocol_version,
+            "required_capabilities": sorted(set(required_capabilities)),
+            "goal": goal,
+            "workspace_path": workspace_path,
+            "attachment_paths": [item["source_path"] for item in attachment_bindings],
+            "model": mode,
+            "history": history or [],
+            "parent_run_id": parent_run_id,
+            "settings": public_settings,
+            "metadata": public_metadata,
+        }
+        accepted = await self.store.accepted_run_for_command(
+            principal_id=principal_id,
+            command_id=command_id,
+            client_message_id=client_message_id,
+            command_payload=command_payload,
+        )
+        if accepted is not None:
+            self._job_wakeup.set()
+            return accepted
+
+        admission_error: RunAdmissionError | None = None
+        if protocol_version != RUNTIME_PROTOCOL_VERSION:
+            admission_error = RunAdmissionError(
+                "protocol_version_unsupported",
+                f"runtime protocol version {protocol_version} is not supported",
+            )
+        missing = sorted(set(required_capabilities) - runtime_capabilities(self.settings))
+        if admission_error is None and missing:
+            admission_error = RunAdmissionError(
+                "capability_unavailable",
+                f"runtime capabilities are unavailable: {', '.join(missing)}",
+            )
+        if attachment_bindings:
             if admission_error is None:
                 attachment_error = await _attachment_admission_error(attachment_bindings)
                 if attachment_error is not None:
@@ -727,26 +758,7 @@ class RunCoordinator:
                 principal_id=principal_id,
                 command_id=command_id,
                 client_message_id=client_message_id,
-                command_payload={
-                    "type": "run.start",
-                    "thread_id": thread_id,
-                    "user_input": user_input,
-                    "assistant_message_id": assistant_message_id,
-                    "thread_title": thread_title,
-                    "thread_metadata": thread_metadata,
-                    "user_item_metadata": user_item_metadata,
-                    "replace_from_client_id": replace_from_client_id,
-                    "protocol_version": protocol_version,
-                    "required_capabilities": sorted(set(required_capabilities)),
-                    "goal": goal,
-                    "workspace_path": workspace_path,
-                    "attachment_paths": [item["source_path"] for item in attachment_bindings],
-                    "model": mode,
-                    "history": history or [],
-                    "parent_run_id": parent_run_id,
-                    "settings": public_settings,
-                    "metadata": public_metadata,
-                },
+                command_payload=command_payload,
                 goal=goal,
                 thread_id=thread_id,
                 user_input=user_input,

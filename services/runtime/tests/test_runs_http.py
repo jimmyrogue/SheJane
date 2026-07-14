@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -723,12 +724,23 @@ def test_runtime_discovery_matches_missing_model_provider_admission(
 
 
 def test_idempotent_replay_returns_the_original_run(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     headers = {"Authorization": "Bearer tok"}
     command = run_command("hello", command_id="cmd_provider_replay")
     first = client.post("/local/v1/runs", headers=headers, json=command)
     assert first.status_code == 200
+
+    @asynccontextmanager
+    async def unexpected_model_admission(*_args, **_kwargs):
+        raise AssertionError("command replay must not re-run model admission")
+        yield
+
+    monkeypatch.setattr(
+        client.app.state.coordinator,
+        "_model_admission",
+        unexpected_model_admission,
+    )
 
     replay = client.post("/local/v1/runs", headers=headers, json=command)
 

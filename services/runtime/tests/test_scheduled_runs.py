@@ -135,6 +135,109 @@ async def test_concurrent_stores_cannot_claim_the_same_schedule(tmp_path: Path) 
         await second.close()
 
 
+async def test_recover_running_retries_a_claim_interrupted_before_run_creation(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local-host.db")
+    try:
+        now = datetime.now(UTC)
+        schedule = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="resume after restart",
+            run_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+        assert await store.claim_due_scheduled_runs(now=now.isoformat())
+
+        coordinator = FakeCoordinator(store)
+        dispatcher = ScheduledRunDispatcher(store=store, coordinator=coordinator)
+        await dispatcher.recover_running()
+
+        recovered = await store.get_scheduled_run(schedule["id"])
+        assert recovered is not None
+        assert recovered["status"] == "completed"
+        assert recovered["run_id"] is not None
+        assert len(coordinator.started) == 1
+    finally:
+        await store.close()
+
+
+async def test_scheduled_run_terminal_state_and_run_binding_are_immutable(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local-host.db")
+    try:
+        now = datetime.now(UTC)
+        schedule = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="run once",
+            run_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+        assert await store.claim_due_scheduled_runs(now=now.isoformat())
+        first_run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="first",
+            workspace_path=None,
+        )
+        second_run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="second",
+            workspace_path=None,
+        )
+
+        await store.mark_scheduled_run_started(schedule["id"], first_run["id"])
+        completed = await store.complete_scheduled_run(
+            schedule["id"],
+            status="completed",
+            result_text="first result",
+        )
+        rebound = await store.mark_scheduled_run_started(schedule["id"], second_run["id"])
+        overwritten = await store.complete_scheduled_run(
+            schedule["id"],
+            status="failed",
+            error_message="late failure",
+        )
+
+        assert completed is not None
+        assert rebound == completed
+        assert overwritten == completed
+    finally:
+        await store.close()
+
+
+async def test_schedule_notification_is_terminal_only_and_idempotent(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local-host.db")
+    try:
+        now = datetime.now(UTC)
+        schedule = await store.create_scheduled_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="notify once",
+            run_at=(now - timedelta(seconds=1)).isoformat(),
+        )
+        premature = await store.mark_scheduled_run_notified(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            schedule_id=schedule["id"],
+        )
+        assert premature is not None
+        assert premature["notified_at"] is None
+
+        assert await store.claim_due_scheduled_runs(now=now.isoformat())
+        await store.complete_scheduled_run(schedule["id"], status="completed")
+        first = await store.mark_scheduled_run_notified(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            schedule_id=schedule["id"],
+        )
+        second = await store.mark_scheduled_run_notified(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            schedule_id=schedule["id"],
+        )
+
+        assert first is not None
+        assert first["notified_at"] is not None
+        assert second == first
+    finally:
+        await store.close()
+
+
 async def test_legacy_schedules_migrate_to_the_local_owner(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_path)
@@ -282,6 +385,7 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     store = client.app.state.store
 
     async def finish_schedule() -> None:
+        assert await store.claim_due_scheduled_runs(now=future)
         run = await store.create_run(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,
             goal="done",

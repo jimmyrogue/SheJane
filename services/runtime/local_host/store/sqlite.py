@@ -545,6 +545,13 @@ class ArtifactQuotaError(RuntimeError):
     retryable = False
 
 
+class ArtifactConflictError(RuntimeError):
+    """An artifact id was replayed with different immutable content."""
+
+    code = "artifact_conflict"
+    retryable = False
+
+
 @dataclass(frozen=True, slots=True)
 class ExecutionLease:
     job_id: str
@@ -636,12 +643,19 @@ class LocalStore:
     @classmethod
     async def open(cls, db_path: Path) -> LocalStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = await aiosqlite.connect(str(db_path))
-        await _configure_connection(conn)
-        await conn.executescript(SCHEMA)
-        await cls._ensure_columns(conn)
-        await conn.commit()
-        return cls(conn, db_path)
+        conn = await aiosqlite.connect(str(db_path), isolation_level=None)
+        try:
+            await _configure_connection(conn)
+            await conn.executescript(SCHEMA)
+            await conn.execute("BEGIN IMMEDIATE")
+            await cls._ensure_columns(conn)
+            await conn.commit()
+            return cls(conn, db_path)
+        except BaseException:
+            if conn.in_transaction:
+                await conn.rollback()
+            await conn.close()
+            raise
 
     @staticmethod
     async def _ensure_columns(conn: aiosqlite.Connection) -> None:
@@ -1783,6 +1797,7 @@ class LocalStore:
     ) -> dict[str, Any]:
         now = _now()
         initial_payload = {**initial_settings, **patch}
+        patch_json = _encode_payload(patch)
         cursor = await self._conn.execute(
             "INSERT INTO local_runtime_settings (id, settings_json, version, updated_at) "
             "VALUES (1, ?, 1, ?) "
@@ -1790,15 +1805,21 @@ class LocalStore:
             "settings_json = json_patch(local_runtime_settings.settings_json, ?), "
             "version = local_runtime_settings.version + 1, "
             "updated_at = excluded.updated_at "
+            "WHERE json_patch(local_runtime_settings.settings_json, ?) "
+            "IS NOT local_runtime_settings.settings_json "
             "RETURNING settings_json, version, updated_at",
             (
                 _encode_payload(initial_payload),
                 now,
-                _encode_payload(patch),
+                patch_json,
+                patch_json,
             ),
         )
         row = await cursor.fetchone()
-        await self._conn.commit()
+        if row is None:
+            current = await self.get_runtime_settings()
+            assert current is not None
+            return current
         assert row is not None
         return {
             "settings": _json_payload(row["settings_json"]),
@@ -1855,7 +1876,6 @@ class LocalStore:
             ),
         )
         row = await cursor.fetchone()
-        await self._conn.commit()
         record = _decode_mcp_catalog_row(row)
         assert record is not None
         return record
@@ -1865,7 +1885,6 @@ class LocalStore:
             "DELETE FROM local_mcp_catalog WHERE server_name = ?",
             (server_name,),
         )
-        await self._conn.commit()
 
     async def list_model_providers(self, *, principal_id: str) -> list[dict[str, Any]]:
         rows = await (
@@ -1904,6 +1923,12 @@ class LocalStore:
         enabled: bool,
     ) -> dict[str, Any]:
         now = _now()
+        models_json = json.dumps(
+            models,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         await self._conn.execute(
             "INSERT INTO local_model_providers "
             "(principal_id, id, name, kind, base_url, requires_api_key, credential_ref, "
@@ -1914,7 +1939,14 @@ class LocalStore:
             "requires_api_key = excluded.requires_api_key, "
             "credential_ref = excluded.credential_ref, models_json = excluded.models_json, "
             "enabled = excluded.enabled, version = local_model_providers.version + 1, "
-            "updated_at = excluded.updated_at",
+            "updated_at = excluded.updated_at "
+            "WHERE local_model_providers.name IS NOT excluded.name "
+            "OR local_model_providers.kind IS NOT excluded.kind "
+            "OR local_model_providers.base_url IS NOT excluded.base_url "
+            "OR local_model_providers.requires_api_key IS NOT excluded.requires_api_key "
+            "OR local_model_providers.credential_ref IS NOT excluded.credential_ref "
+            "OR local_model_providers.models_json IS NOT excluded.models_json "
+            "OR local_model_providers.enabled IS NOT excluded.enabled",
             (
                 principal_id,
                 provider_id,
@@ -1923,13 +1955,12 @@ class LocalStore:
                 base_url,
                 int(requires_api_key),
                 credential_ref,
-                json.dumps(models, ensure_ascii=False, separators=(",", ":")),
+                models_json,
                 int(enabled),
                 now,
                 now,
             ),
         )
-        await self._conn.commit()
         provider = await self.get_model_provider(
             principal_id=principal_id,
             provider_id=provider_id,
@@ -1953,7 +1984,6 @@ class LocalStore:
             "DELETE FROM local_model_providers WHERE principal_id = ? AND id = ?",
             (principal_id, provider_id),
         )
-        await self._conn.commit()
         return provider
 
     # --- workspaces ---
@@ -1967,18 +1997,13 @@ class LocalStore:
             "created_at": _now(),
             "last_used_at": _now(),
         }
-        try:
-            await self._conn.execute(
-                "INSERT INTO local_workspaces "
-                "(id, principal_id, path, label, created_at, last_used_at) "
-                "VALUES (:id, :principal_id, :path, :label, :created_at, :last_used_at) "
-                "ON CONFLICT(principal_id, path) DO NOTHING",
-                ws,
-            )
-            await self._conn.commit()
-        except BaseException:
-            await self._conn.rollback()
-            raise
+        await self._conn.execute(
+            "INSERT INTO local_workspaces "
+            "(id, principal_id, path, label, created_at, last_used_at) "
+            "VALUES (:id, :principal_id, :path, :label, :created_at, :last_used_at) "
+            "ON CONFLICT(principal_id, path) DO NOTHING",
+            ws,
+        )
         row = await (
             await self._conn.execute(
                 "SELECT * FROM local_workspaces WHERE principal_id = ? AND path = ?",
@@ -2079,7 +2104,6 @@ class LocalStore:
             "DELETE FROM local_workspaces WHERE principal_id = ? AND id = ?",
             (principal_id, workspace_id),
         )
-        await self._conn.commit()
         return cursor.rowcount > 0
 
     async def touch_workspace(self, *, principal_id: str, workspace_id: str) -> None:
@@ -2087,7 +2111,6 @@ class LocalStore:
             "UPDATE local_workspaces SET last_used_at = ? WHERE principal_id = ? AND id = ?",
             (_now(), principal_id, workspace_id),
         )
-        await self._conn.commit()
 
     # --- runs ---
 
@@ -2120,7 +2143,6 @@ class LocalStore:
             graph_input_kind=graph_input_kind,
         )
         await self._insert_run(self._conn, run)
-        await self._conn.commit()
         return run
 
     @staticmethod
@@ -4829,12 +4851,15 @@ class LocalStore:
     async def mark_scheduled_run_started(
         self, schedule_id: str, run_id: str
     ) -> dict[str, Any] | None:
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             "UPDATE local_scheduled_runs SET status = 'running', run_id = ?, updated_at = ? "
-            "WHERE id = ?",
-            (run_id, _now(), schedule_id),
+            "WHERE id = ? AND status = 'running' AND (run_id IS NULL OR run_id = ?) "
+            "RETURNING *",
+            (run_id, _now(), schedule_id, run_id),
         )
-        await self._conn.commit()
+        row = await cursor.fetchone()
+        if row is not None:
+            return dict(row)
         return await self.get_scheduled_run(schedule_id)
 
     async def complete_scheduled_run(
@@ -4845,43 +4870,48 @@ class LocalStore:
         result_text: str | None = None,
         error_message: str | None = None,
     ) -> dict[str, Any] | None:
+        if status not in {"completed", "failed", "canceled"}:
+            raise ValueError(f"invalid scheduled run terminal status: {status}")
         completed_at = _now()
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             "UPDATE local_scheduled_runs "
             "SET status = ?, result_text = ?, error_message = ?, completed_at = ?, updated_at = ? "
-            "WHERE id = ?",
+            "WHERE id = ? AND status = 'running' RETURNING *",
             (status, result_text, error_message, completed_at, completed_at, schedule_id),
         )
-        await self._conn.commit()
+        row = await cursor.fetchone()
+        if row is not None:
+            return dict(row)
         return await self.get_scheduled_run(schedule_id)
 
     async def cancel_scheduled_run(
         self, *, principal_id: str, schedule_id: str
     ) -> dict[str, Any] | None:
-        existing = await self._scheduled_run_for_principal(principal_id, schedule_id)
-        if existing is None:
-            return None
-        if existing["status"] != "scheduled":
-            return existing
         canceled_at = _now()
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             "UPDATE local_scheduled_runs "
             "SET status = 'canceled', completed_at = ?, updated_at = ? "
-            "WHERE principal_id = ? AND id = ?",
+            "WHERE principal_id = ? AND id = ? AND status = 'scheduled' RETURNING *",
             (canceled_at, canceled_at, principal_id, schedule_id),
         )
-        await self._conn.commit()
+        row = await cursor.fetchone()
+        if row is not None:
+            return dict(row)
         return await self._scheduled_run_for_principal(principal_id, schedule_id)
 
     async def mark_scheduled_run_notified(
         self, *, principal_id: str, schedule_id: str
     ) -> dict[str, Any] | None:
-        await self._conn.execute(
+        notified_at = _now()
+        cursor = await self._conn.execute(
             "UPDATE local_scheduled_runs SET notified_at = ?, updated_at = ? "
-            "WHERE principal_id = ? AND id = ?",
-            (_now(), _now(), principal_id, schedule_id),
+            "WHERE principal_id = ? AND id = ? "
+            "AND status IN ('completed', 'failed') AND notified_at IS NULL RETURNING *",
+            (notified_at, notified_at, principal_id, schedule_id),
         )
-        await self._conn.commit()
+        row = await cursor.fetchone()
+        if row is not None:
+            return dict(row)
         return await self._scheduled_run_for_principal(principal_id, schedule_id)
 
     async def _scheduled_run_for_principal(
@@ -4979,7 +5009,6 @@ class LocalStore:
             "VALUES (:id, :run_id, :content, :status, :created_at, :injected_at)",
             record,
         )
-        await self._conn.commit()
         return record
 
     async def claim_pending_steering(self, run_id: str) -> list[dict[str, Any]]:
@@ -5841,21 +5870,41 @@ class LocalStore:
             "bytes": len(content.encode("utf-8")),
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
-            "metadata_json": json.dumps(metadata or {}, ensure_ascii=False, default=str),
+            "metadata_json": _encode_payload(metadata or {}),
             "created_at": _now(),
         }
         if record["bytes"] > MAX_ARTIFACT_BYTES:
             raise ArtifactQuotaError("artifact exceeds the per-item byte limit")
+        immutable_fields = (
+            "run_id",
+            "kind",
+            "title",
+            "content",
+            "content_type",
+            "bytes",
+            "tool_call_id",
+            "tool_name",
+            "metadata_json",
+        )
+
+        def reconcile_replay(row: aiosqlite.Row) -> dict[str, Any]:
+            persisted = dict(row)
+            if any(persisted[field] != record[field] for field in immutable_fields):
+                raise ArtifactConflictError(
+                    f"artifact {record['id']} was replayed with different content"
+                )
+            return persisted
+
         async with self.run_write_transaction(run_id) as conn:
             if artifact_id:
                 existing = await (
                     await conn.execute(
-                        "SELECT * FROM local_artifacts WHERE id = ? AND run_id = ?",
-                        (record["id"], run_id),
+                        "SELECT * FROM local_artifacts WHERE id = ?",
+                        (record["id"],),
                     )
                 ).fetchone()
                 if existing is not None:
-                    return dict(existing)
+                    return reconcile_replay(existing)
             owner = await (
                 await conn.execute("SELECT principal_id FROM local_runs WHERE id = ?", (run_id,))
             ).fetchone()
@@ -5908,13 +5957,13 @@ class LocalStore:
             if cursor.rowcount == 0:
                 existing = await (
                     await conn.execute(
-                        "SELECT * FROM local_artifacts WHERE id = ? AND run_id = ?",
-                        (record["id"], run_id),
+                        "SELECT * FROM local_artifacts WHERE id = ?",
+                        (record["id"],),
                     )
                 ).fetchone()
                 if existing is None:
-                    raise ValueError("artifact identity belongs to another run")
-                return dict(existing)
+                    raise ArtifactConflictError("artifact identity could not be reconciled")
+                return reconcile_replay(existing)
         return record
 
     async def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
