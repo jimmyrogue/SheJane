@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
+
+from ..tools.mcp import MCP_TOOL_SEARCH_NAME, MCP_TOOL_SEARCH_RESULT_KIND
 
 _OFFICE_SIGNALS = (
     "office.",
@@ -80,6 +83,32 @@ def visible_tools_for_messages(
     return [tool for tool in tools if not _tool_name(tool).startswith("office.")]
 
 
+def _mcp_search_result_names(messages: Sequence[Any]) -> set[str]:
+    for message in reversed(messages):
+        if getattr(message, "name", None) != MCP_TOOL_SEARCH_NAME:
+            continue
+        candidates = [getattr(message, "artifact", None), getattr(message, "content", None)]
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                try:
+                    candidate = json.loads(candidate)
+                except (TypeError, ValueError):
+                    continue
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("kind") != MCP_TOOL_SEARCH_RESULT_KIND:
+                continue
+            tools = candidate.get("tools")
+            if isinstance(tools, list):
+                return {
+                    str(item.get("name"))
+                    for item in tools
+                    if isinstance(item, dict) and item.get("name")
+                }
+        return set()
+    return set()
+
+
 class ToolVisibilityMiddleware(AgentMiddleware):
     """Hide large optional tool families from a model request when irrelevant.
 
@@ -88,8 +117,12 @@ class ToolVisibilityMiddleware(AgentMiddleware):
     goal plus the complete retained message/tool-call history, not only one turn.
     """
 
+    def __init__(self, *, deferred_tool_names: set[str] | None = None) -> None:
+        super().__init__()
+        self.deferred_tool_names = deferred_tool_names or set()
+
     @staticmethod
-    def _apply(request: Any) -> Any:
+    def _apply(request: Any, deferred_tool_names: set[str] | None = None) -> Any:
         context = getattr(getattr(request, "runtime", None), "context", None)
         task_goal = getattr(context, "task_goal", None)
         visible = visible_tools_for_messages(
@@ -97,16 +130,28 @@ class ToolVisibilityMiddleware(AgentMiddleware):
             request.messages,
             task_goal=task_goal,
         )
+        deferred = deferred_tool_names or set()
+        if deferred:
+            corpus = [task_goal] if isinstance(task_goal, str) else []
+            corpus.extend(_message_text(message) for message in request.messages)
+            text = "\n".join(corpus).lower()
+            revealed = _mcp_search_result_names(request.messages)
+            revealed.update(name for name in deferred if name.lower() in text)
+            visible = [
+                item
+                for item in visible
+                if _tool_name(item) not in deferred or _tool_name(item) in revealed
+            ]
         if len(visible) == len(request.tools):
             return request
         return request.override(tools=visible)
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        return handler(self._apply(request))
+        return handler(self._apply(request, self.deferred_tool_names))
 
     async def awrap_model_call(
         self,
         request: Any,
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
-        return await handler(self._apply(request))
+        return await handler(self._apply(request, self.deferred_tool_names))

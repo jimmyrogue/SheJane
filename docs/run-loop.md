@@ -2,6 +2,12 @@
 
 创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。模型失败不会触发静默回退。
 
+MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop、Cursor 或 Codex 的全局配置。Runtime 级监督器按单个 Server 的配置指纹维护工具目录和长会话；连续 Run 取得固定目录快照并复用连接，`build_agent()` 不再为每个 Run 顺序发现或启动全部 Server。新增、修改或删除 Server 时，旧目录会退休；已有 Run 释放最后一个租约后才关闭旧会话。连接失败会进入 30 秒退避，避免每个 Run 重复等待；MCP 列表接口返回当前连接状态、工具数和不含密钥的错误类型。
+
+每次目录刷新会把配置指纹、已校验工具元数据、版本、状态和最后成功时间写入 Runtime SQLite；密钥、连接对象和会话不进入该表。Runtime 启动时只恢复配置指纹仍匹配的目录，并构造惰性工具代理，不连接 Server、不执行 `tools/list`；惰性代理第一次真正执行工具时才建立连接。目录缺失、配置变化或失败退避到期时，普通 Run 立即使用当前有效快照，首次发现和刷新在 Runtime 后台执行，完成后只影响后续 Run。
+
+支持目录变化通知的 MCP Server 发出 `notifications/tools/list_changed` 后，监督器会后台刷新并替换目录；正在执行的 Run 继续使用原快照和会话。MCP 工具达到 12 个时，模型默认只看到 `mcp.search_tools`，搜索结果中的工具结构从下一模型回合起按需暴露；静态 Runtime 工具保持常驻。该本地目录工具不额外调用模型，也不要求供应商支持原生 Tool Search。
+
 > **范围**：`services/runtime/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
 > **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [runtime-protocol.md](runtime-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。阶段编号以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准。
@@ -96,7 +102,8 @@
   │     ├─ checkpointer = lease-fenced AsyncSqliteSaver ← 当前任务租约保护写入          │
   │     ├─ agent_store  = AsyncSqliteStore           ← 显式 memory 工具的持久存储      │
   │     ├─ RuntimeContext.model = 本次模型连接        ← 主模型、摘要和子 Agent 共用代理  │
-  │     └─ RuntimeContext.dynamic_tools = 本次 MCP 工具 ← 图内只保留无密钥结构代理      │
+  │     └─ RuntimeContext.dynamic_tools = Runtime MCP 目录快照 ← 图内只保留无密钥结构代理 │
+  │        └─ MCP 工具 ≥ 12：模型先调用 mcp.search_tools，再按搜索结果加载结构          │
   │                                                                                   │
   │   ┌─ agent.astream(version="v2", durability="sync",                            │    │
   │   │                 context=RuntimeContext,                                       │    │

@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 
 from local_host.middleware.tool_visibility import ToolVisibilityMiddleware
+from local_host.tools.mcp import MCP_TOOL_SEARCH_RESULT_KIND, make_mcp_tool_search
 
 
 @tool("office.read")
@@ -73,3 +74,69 @@ def test_fork_goal_can_enable_office_without_changing_registered_tools() -> None
 
     assert [item.name for item in filtered.tools] == ["office.read", "workspace.read"]
     assert filtered.tools is original.tools
+
+
+@tool("docs_lookup")
+def docs_lookup(query: str) -> str:
+    """Search the product documentation for setup and API details."""
+    return query
+
+
+@tool("issues_create")
+def issues_create(title: str) -> str:
+    """Create an issue in the project tracker."""
+    return title
+
+
+def test_mcp_tool_search_returns_ranked_machine_readable_results() -> None:
+    search = make_mcp_tool_search([docs_lookup, issues_create])
+
+    result = search.invoke({"query": "API documentation", "limit": 1})
+
+    assert result["kind"] == MCP_TOOL_SEARCH_RESULT_KIND
+    assert [item["name"] for item in result["tools"]] == ["docs_lookup"]
+
+
+def test_mcp_tools_are_hidden_until_search_reveals_them() -> None:
+    search = make_mcp_tool_search([docs_lookup, issues_create])
+    request = _request([HumanMessage("set up an integration")])
+    request.tools = [workspace_read, docs_lookup, issues_create, search]
+    middleware = ToolVisibilityMiddleware(deferred_tool_names={"docs_lookup", "issues_create"})
+
+    initial = middleware._apply(request, middleware.deferred_tool_names)
+    assert [item.name for item in initial.tools] == ["workspace.read", "mcp.search_tools"]
+
+    request.messages.extend(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "mcp.search_tools",
+                        "args": {"query": "API documentation"},
+                        "id": "search-1",
+                    }
+                ],
+            ),
+            ToolMessage(
+                content={
+                    "kind": MCP_TOOL_SEARCH_RESULT_KIND,
+                    "tools": [
+                        {
+                            "name": "docs_lookup",
+                            "description": docs_lookup.description,
+                        }
+                    ],
+                },
+                tool_call_id="search-1",
+                name="mcp.search_tools",
+            ),
+        ]
+    )
+
+    revealed = middleware._apply(request, middleware.deferred_tool_names)
+    assert [item.name for item in revealed.tools] == [
+        "workspace.read",
+        "docs_lookup",
+        "mcp.search_tools",
+    ]

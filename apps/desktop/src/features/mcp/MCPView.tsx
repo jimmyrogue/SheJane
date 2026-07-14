@@ -37,21 +37,21 @@ export interface MCPViewProps {
 // We keep our own source key on the daemon side (see tools/mcp.py
 // `SOURCE_*` constants) so the renderer can group consistently.
 const SECTION_ORDER: readonly string[] = [
-  'claude-desktop',
-  'cursor',
-  'codex',
   'shejane',
   'shejane-legacy',
   'env',
 ]
 const SECTION_LABEL: Record<string, { zh: string; en: string }> = {
-  'claude-desktop': { zh: 'Claude Desktop', en: 'Claude Desktop' },
-  cursor: { zh: 'Cursor', en: 'Cursor' },
-  codex: { zh: 'Codex', en: 'Codex' },
   shejane: { zh: '个人', en: 'Personal' },
   'shejane-legacy': { zh: '历史配置', en: 'Legacy config' },
   env: { zh: '环境变量', en: 'Environment override' },
 }
+
+const STATUS_KEY = {
+  idle: 'mcp.status.idle',
+  ready: 'mcp.status.ready',
+  error: 'mcp.status.error',
+} as const
 
 function sectionLabel(source: string, locale: string): string {
   const known = SECTION_LABEL[source]
@@ -392,6 +392,14 @@ export function MCPView({
                           <div className="mcp-row-title">
                             <span className="mcp-row-name">{server.name}</span>
                             <span className="mcp-row-transport">{server.transport}</span>
+                            <span
+                              className="mcp-row-status"
+                              data-status={server.status}
+                              title={server.error_type ?? undefined}
+                            >
+                              {t(STATUS_KEY[server.status ?? 'idle'])}
+                              {server.status === 'ready' ? ` · ${server.tool_count}` : ''}
+                            </span>
                           </div>
                           <div className="mcp-row-meta">
                             {server.command ? (

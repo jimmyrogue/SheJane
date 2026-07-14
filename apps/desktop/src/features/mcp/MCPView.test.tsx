@@ -9,29 +9,33 @@ afterEach(cleanup)
 const githubServer: McpServerInfo = {
   name: 'github',
   transport: 'stdio',
-  source: 'claude-desktop',
-  source_path: '/u/Library/Application Support/Claude/claude_desktop_config.json',
+  source: 'shejane',
+  source_path: '/u/.shejane/mcp-servers.json',
   command: 'npx',
   args: ['-y', '@modelcontextprotocol/server-github'],
   env_keys: ['GITHUB_TOKEN'],
   cwd: null,
   url: null,
+  status: 'idle',
+  tool_count: 0,
 }
 
 const playwrightServer: McpServerInfo = {
   name: 'playwright',
   transport: 'stdio',
-  source: 'cursor',
-  source_path: '/u/.cursor/mcp.json',
+  source: 'shejane-legacy',
+  source_path: '/u/.shejane/data/mcp-servers.json',
   command: 'npx',
   args: ['@playwright/mcp'],
   env_keys: [],
   cwd: null,
   url: null,
+  status: 'idle',
+  tool_count: 0,
 }
 
 function makeCatalog(servers: McpServerInfo[]): McpServerCatalog {
-  return { servers, sources_scanned: ['env', 'shejane', 'claude-desktop', 'cursor', 'codex'] }
+  return { servers, sources_scanned: ['env', 'shejane', 'shejane-legacy'] }
 }
 
 function renderView(overrides: Partial<Parameters<typeof MCPView>[0]> = {}) {
@@ -59,9 +63,8 @@ describe('MCPView', () => {
     await screen.findByText('github')
     await screen.findByText('playwright')
 
-    // Section headers — Claude Desktop and Cursor each show.
-    expect(screen.getByText('Claude Desktop')).toBeInTheDocument()
-    expect(screen.getByText('Cursor')).toBeInTheDocument()
+    expect(screen.getByText('个人')).toBeInTheDocument()
+    expect(screen.getByText('历史配置')).toBeInTheDocument()
   })
 
   it('shows env-keys metadata without leaking env values', async () => {
@@ -73,14 +76,24 @@ describe('MCPView', () => {
     expect(screen.getByText('env: GITHUB_TOKEN')).toBeInTheDocument()
   })
 
+  it('shows the Runtime-owned server status', async () => {
+    renderView({
+      listCatalog: vi.fn().mockResolvedValue(makeCatalog([{
+        ...githubServer,
+        status: 'error',
+        tool_count: 0,
+        error_type: 'TimeoutError',
+      }])),
+    })
+    expect(await screen.findByText('连接失败')).toHaveAttribute('title', 'TimeoutError')
+  })
+
   it('shows the global empty-state message when zero servers are discovered', async () => {
     renderView({
       listCatalog: vi.fn().mockResolvedValue(makeCatalog([])),
     })
-    // Empty-state mentions Claude Desktop / Cursor / Codex as
-    // install-anywhere hints. Wait for the loading state to flip.
     await waitFor(() => {
-      expect(screen.getByText(/Claude Desktop \/ Cursor \/ Codex/)).toBeInTheDocument()
+      expect(screen.getByText(/新增/)).toBeInTheDocument()
     })
   })
 
@@ -189,13 +202,13 @@ describe('MCPView', () => {
     const onUpdateServer = vi.fn().mockResolvedValue(undefined)
     const onDeleteServer = vi.fn().mockResolvedValue(undefined)
     renderView({
-      listCatalog: vi.fn().mockResolvedValue(makeCatalog([personal, githubServer])),
+      listCatalog: vi.fn().mockResolvedValue(makeCatalog([personal, playwrightServer])),
       onUpdateServer,
       onDeleteServer,
     })
 
     await screen.findByText('context7')
-    expect(screen.queryByRole('button', { name: '编辑 github' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '编辑 playwright' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '编辑 context7' }))
     fireEvent.change(screen.getByLabelText('参数'), { target: { value: '-y @upstash/context7-mcp --fresh' } })
     fireEvent.click(screen.getByRole('button', { name: '保存服务' }))

@@ -2796,7 +2796,7 @@
         "type": "object"
       },
       "McpServerCatalog": {
-        "description": "GET /local/v1/mcp-servers — the full list of discovered servers\nplus the set of sources we scanned. `sources` lets the UI render\nempty-state hints like \"no Claude Desktop config found\" even when\nno server came from there.",
+        "description": "GET /local/v1/mcp-servers — Runtime-owned MCP Servers and sources.",
         "properties": {
           "servers": {
             "items": {
@@ -2839,7 +2839,7 @@
         "type": "object"
       },
       "McpServerInfo": {
-        "description": "One MCP server we discovered on the user's machine.\n\n`name` is the unique key the user (or installer tool) gave it.\n`transport` is the normalized transport — `stdio` / `streamable_http`\n/ `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are\ndescriptive only — we never echo env *values* (could be secrets).\n`source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`\n/ `env` — used by the UI to group servers by provenance.\n`source_path` is the absolute path of the config file the entry was\nread from, displayed in the settings panel so the user knows where\nto go edit it.",
+        "description": "One MCP Server configured for this Runtime.\n\n`name` is the unique key the user (or installer tool) gave it.\n`transport` is the normalized transport — `stdio` / `streamable_http`\n/ `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are\ndescriptive only — we never echo env *values* (could be secrets).\n`source` is one of `shejane` / `shejane-legacy` / `env` — used by\nthe UI to group Runtime-owned configuration by provenance.\n`source_path` is the absolute path of the config file the entry was\nread from, displayed in the settings panel so the user knows where\nto go edit it.",
         "properties": {
           "args": {
             "default": [],
@@ -2879,6 +2879,17 @@
             "title": "Env Keys",
             "type": "array"
           },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -2890,6 +2901,21 @@
           "source_path": {
             "title": "Source Path",
             "type": "string"
+          },
+          "status": {
+            "default": "idle",
+            "enum": [
+              "idle",
+              "ready",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_count": {
+            "default": 0,
+            "title": "Tool Count",
+            "type": "integer"
           },
           "transport": {
             "title": "Transport",
@@ -2917,7 +2943,7 @@
         "type": "object"
       },
       "McpServerWriteRequest": {
-        "description": "Create/update one SheJane-managed MCP server.\n\nThis writes only `~/.shejane/mcp-servers.json`; discovered Claude\nDesktop / Cursor / Codex entries remain read-only.",
+        "description": "Create/update one SheJane-managed MCP server.\n\nThis writes only `~/.shejane/mcp-servers.json`.",
         "properties": {
           "args": {
             "default": [],
@@ -4236,7 +4262,7 @@
     },
     "/local/v1/mcp-servers": {
       "get": {
-        "description": "Catalog of every MCP server we discovered across the user's\nmachine. Pure read — we never start, install, or modify these\nservers. The user manages them through whatever tool they\nprefer (Claude Desktop, Cursor, Codex, or our own\n`~/.shejane/mcp-servers.json`), and the daemon picks them up\non the next agent boot.\n\n`sources_scanned` reports the source labels we attempted to\nread (regardless of whether the file existed or had servers),\nso the UI can render section headers like \"Cursor — no\nconfig found at ~/.cursor/mcp.json\" instead of silently\nhiding the section.",
+        "description": "List MCP Servers explicitly owned by this Runtime.",
         "operationId": "list_mcp_servers_local_v1_mcp_servers_get",
         "responses": {
           "200": {

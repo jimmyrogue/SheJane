@@ -6,7 +6,7 @@ the eager-setup fix from Phase 0.
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -164,17 +164,19 @@ async def test_cached_definition_keeps_mcp_implementations_attempt_local(
     loads = 0
     captured_tools: list[object] = []
 
-    async def fake_build_validated_mcp_tools(_data_dir, **_kwargs):
-        nonlocal loads
-        loads += 1
-        label = f"attempt-{loads}"
+    class FakeCatalog:
+        @asynccontextmanager
+        async def acquire_tools(self, **_kwargs):
+            nonlocal loads
+            loads += 1
+            label = f"attempt-{loads}"
 
-        @tool("mcp.demo.lookup")
-        async def lookup(value: str) -> str:
-            """Look up one value."""
-            return f"{label}:{value}"
+            @tool("mcp.demo.lookup")
+            async def lookup(value: str) -> str:
+                """Look up one value."""
+                return f"{label}:{value}"
 
-        return validate_mcp_tools([lookup])
+            yield validate_mcp_tools([lookup])
 
     def fake_create_deep_agent(**kwargs):
         nonlocal builds
@@ -182,11 +184,6 @@ async def test_cached_definition_keeps_mcp_implementations_attempt_local(
         captured_tools.extend(kwargs["tools"])
         return object()
 
-    monkeypatch.setattr(
-        builder_module,
-        "build_validated_mcp_tools",
-        fake_build_validated_mcp_tools,
-    )
     monkeypatch.setattr(builder_module, "create_deep_agent", fake_create_deep_agent)
     settings = reset_settings_for_tests(data_dir=tmp_path, SHEJANE_FAKE_LLM=True)
     store = await LocalStore.open(tmp_path / "store.db")
@@ -204,6 +201,7 @@ async def test_cached_definition_keeps_mcp_implementations_attempt_local(
                 settings=settings,
                 resource_stack=stack,
                 runtime_context=contexts[index],
+                mcp_catalog=FakeCatalog(),
                 definition_cache=cache,
                 definition_cache_lock=lock,
             )
@@ -221,6 +219,62 @@ async def test_cached_definition_keeps_mcp_implementations_attempt_local(
             contexts[0].dynamic_tools["mcp.demo.lookup"]
             is not contexts[1].dynamic_tools["mcp.demo.lookup"]
         )
+    finally:
+        await store.close()
+        await stack.aclose()
+
+
+async def test_large_mcp_catalog_is_deferred_behind_search_tool(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from langchain_core.tools import StructuredTool
+
+    import local_host.agent.builder as builder_module
+    from local_host.agent.builder import build_agent, open_checkpointer
+    from local_host.tools.mcp import MCP_TOOL_SEARCH_NAME, validate_mcp_tools
+
+    captured: dict[str, object] = {}
+
+    class FakeCatalog:
+        @asynccontextmanager
+        async def acquire_tools(self, **_kwargs):
+            tools = [
+                StructuredTool.from_function(
+                    func=lambda query: query,
+                    name=f"server_tool_{index}",
+                    description=f"Use integration capability {index}.",
+                )
+                for index in range(12)
+            ]
+            yield validate_mcp_tools(tools)
+
+    def fake_create_deep_agent(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(builder_module, "create_deep_agent", fake_create_deep_agent)
+    settings = reset_settings_for_tests(data_dir=tmp_path, SHEJANE_FAKE_LLM=True)
+    store = await LocalStore.open(tmp_path / "store.db")
+    saver, stack = await open_checkpointer(settings)
+    try:
+        await build_agent(
+            store=store,
+            checkpointer=saver,
+            workspace_root=None,
+            run_id="run-search",
+            settings=settings,
+            resource_stack=stack,
+            mcp_catalog=FakeCatalog(),
+        )
+
+        assert MCP_TOOL_SEARCH_NAME in {tool.name for tool in captured["tools"]}
+        visibility = next(
+            item
+            for item in captured["middleware"]
+            if type(item).__name__ == "ToolVisibilityMiddleware"
+        )
+        assert visibility.deferred_tool_names == {f"server_tool_{index}" for index in range(12)}
     finally:
         await store.close()
         await stack.aclose()

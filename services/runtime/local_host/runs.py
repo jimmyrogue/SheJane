@@ -59,6 +59,7 @@ from .store.sqlite import (
     RunAdmissionError,
     WorkspaceAdmissionError,
 )
+from .tools.mcp import MCPToolCatalog
 from .tools.memory import extract_memory_write_facts
 from .tools.runtime import bind_runtime_tools
 
@@ -315,11 +316,13 @@ class RunCoordinator:
         max_concurrent_runs: int = 2,
         lease_seconds: float = 30.0,
         settings: Settings | None = None,
+        mcp_catalog: MCPToolCatalog | None = None,
     ) -> None:
         self.store = store
         self.checkpointer = checkpointer
         self.agent_store = agent_store
         self.settings = settings or get_settings()
+        self.mcp_catalog = mcp_catalog or MCPToolCatalog(self.settings.data_dir, store=store)
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._wakeups: dict[str, asyncio.Event] = {}
         self._live_subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
@@ -1856,6 +1859,7 @@ class RunCoordinator:
                 skills_enabled=skills_enabled,
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
+                mcp_catalog=self.mcp_catalog,
                 settings=effective_settings,
                 model_binding=model_binding if isinstance(model_binding, dict) else None,
                 model_api_key=model_api_key,

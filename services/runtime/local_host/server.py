@@ -588,12 +588,15 @@ async def lifespan(app: FastAPI):
         agent_store=agent_store,
         settings=settings,
     )
+    await coordinator.mcp_catalog.hydrate()
+    coordinator.mcp_catalog.request_refresh()
     scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
     app.state.store = store
     app.state.settings = settings
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
     app.state.coordinator = coordinator
+    app.state.mcp_catalog = coordinator.mcp_catalog
     app.state.scheduler = scheduler
     app.state.runtime_settings_lock = asyncio.Lock()
     app.state.runtime_settings_version = int(
@@ -618,6 +621,7 @@ async def lifespan(app: FastAPI):
     finally:
         await scheduler.stop()
         await coordinator.stop()
+        await coordinator.mcp_catalog.close()
         await store_stack.aclose()
         await ck_stack.aclose()
         await store.close()
@@ -2227,60 +2231,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/local/v1/mcp-servers", response_model=McpServerCatalog)
     async def list_mcp_servers() -> McpServerCatalog:
-        """Catalog of every MCP server we discovered across the user's
-        machine. Pure read — we never start, install, or modify these
-        servers. The user manages them through whatever tool they
-        prefer (Claude Desktop, Cursor, Codex, or our own
-        `~/.shejane/mcp-servers.json`), and the daemon picks them up
-        on the next agent boot.
-
-        `sources_scanned` reports the source labels we attempted to
-        read (regardless of whether the file existed or had servers),
-        so the UI can render section headers like "Cursor — no
-        config found at ~/.cursor/mcp.json" instead of silently
-        hiding the section.
-        """
+        """List MCP Servers explicitly owned by this Runtime."""
         from .config import get_settings
         from .tools.mcp import _candidate_source_files, discover_servers
 
         settings = get_settings()
         discovered = discover_servers(settings.data_dir)
-        # `_candidate_source_files` returns the full ordered list of
-        # sources we'd look at — perfect for "what did we try?". We
-        # always include "env" so the UI can call it out when the user
-        # has SHEJANE_LOCAL_MCP_SERVERS set.
+        statuses = app.state.mcp_catalog.server_statuses()
         sources_scanned: list[str] = ["env"]
         for src in _candidate_source_files(settings.data_dir):
             if src.source not in sources_scanned:
                 sources_scanned.append(src.source)
-        servers = [
-            McpServerInfo(
-                name=srv.name,
-                transport=srv.config.get("transport", "stdio"),
-                source=srv.source,
-                source_path=srv.source_path,
-                command=srv.config.get("command"),
-                args=list(srv.config.get("args", []) or []),
-                url=srv.config.get("url"),
-                # Never leak env *values* — only the keys, so the UI
-                # can show "needs API_KEY, TAVILY_KEY" without exposing
-                # secrets that were copy-pasted in.
-                env_keys=sorted(list((srv.config.get("env") or {}).keys())),
-                cwd=srv.config.get("cwd"),
+        servers = []
+        for srv in discovered:
+            status = statuses.get(srv.name, {})
+            servers.append(
+                McpServerInfo(
+                    name=srv.name,
+                    transport=srv.config.get("transport", "stdio"),
+                    source=srv.source,
+                    source_path=srv.source_path,
+                    command=srv.config.get("command"),
+                    args=list(srv.config.get("args", []) or []),
+                    url=srv.config.get("url"),
+                    # Never leak env *values* — only the keys, so the UI
+                    # can show "needs API_KEY, TAVILY_KEY" without exposing
+                    # secrets that were copy-pasted in.
+                    env_keys=sorted(list((srv.config.get("env") or {}).keys())),
+                    cwd=srv.config.get("cwd"),
+                    status=status.get("status", "idle"),
+                    tool_count=int(status.get("tool_count", 0)),
+                    error_type=status.get("error_type"),
+                )
             )
-            for srv in discovered
-        ]
         return McpServerCatalog(servers=servers, sources_scanned=sources_scanned)
 
     @app.post("/local/v1/mcp-servers", response_model=McpServerWriteResponse)
     async def create_mcp_server(request: McpServerWriteRequest) -> McpServerWriteResponse:
-        return _write_mcp_server(request.name, request)
+        response = _write_mcp_server(request.name, request)
+        await app.state.mcp_catalog.invalidate(response.server.name)
+        app.state.mcp_catalog.request_refresh()
+        return response
 
     @app.put("/local/v1/mcp-servers/{server_name}", response_model=McpServerWriteResponse)
     async def update_mcp_server(
         server_name: str, request: McpServerWriteRequest
     ) -> McpServerWriteResponse:
-        return _write_mcp_server(server_name, request)
+        response = _write_mcp_server(server_name, request)
+        await app.state.mcp_catalog.invalidate(response.server.name)
+        app.state.mcp_catalog.request_refresh()
+        return response
 
     @app.delete("/local/v1/mcp-servers/{server_name}", response_model=McpServerDeleteResponse)
     async def delete_mcp_server(server_name: str) -> McpServerDeleteResponse:
@@ -2290,6 +2290,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if isinstance(servers, dict):
             servers.pop(name, None)
         _write_json_atomic(_shejane_mcp_config_path(), config)
+        await app.state.mcp_catalog.invalidate(name)
+        await app.state.store.delete_mcp_catalog(name)
         return McpServerDeleteResponse(name=name)
 
     @app.get("/local/v1/skills")

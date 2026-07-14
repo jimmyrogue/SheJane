@@ -15,10 +15,8 @@ from deepagents.backends import FilesystemBackend
 from deepagents.middleware import FilesystemMiddleware
 from langchain_core.tools import BaseTool
 
-from ..config import get_settings
 from ..store.sqlite import LocalStore
 from .browser import make_browser_tool_if_configured
-from .mcp import build_mcp_tools
 from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
 from .progress import PROGRESS_TOOLS, make_progress_tool
@@ -49,15 +47,14 @@ def core_tools() -> list[BaseTool]:
 
 async def build_tools(
     *,
-    include_mcp: bool = True,
-    mcp_disabled_servers: set[str] | None = None,
     browser_llm: Any = None,
     browser_headless: bool = True,
 ) -> list[BaseTool]:
-    """Assemble the full per-run toolset.
+    """Assemble the Runtime's static per-run toolset.
 
     All Runtime tool categories: local utilities + web
-    (fetch + optional Tavily) + task.verify + skill.use + image.* + MCP.
+    (fetch + optional Tavily) + task.verify + skill.use + image.*.
+    Runtime-owned MCP tools are supplied separately by MCPToolCatalog.
     `browser.task` is intentionally omitted until both browser-use and a
     browser-specific LLM binding are configured.
 
@@ -80,10 +77,6 @@ async def build_tools(
     browser_tool = make_browser_tool_if_configured(llm=browser_llm, headless=browser_headless)
     if browser_tool is not None:
         tools.append(browser_tool)
-
-    if include_mcp:
-        data_dir = get_settings().data_dir
-        tools.extend(await build_mcp_tools(data_dir, disabled_servers=mcp_disabled_servers))
 
     return tools
 

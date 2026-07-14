@@ -963,14 +963,14 @@ class ClearMemoryResponse(BaseModel):
 
 
 class McpServerInfo(BaseModel):
-    """One MCP server we discovered on the user's machine.
+    """One MCP Server configured for this Runtime.
 
     `name` is the unique key the user (or installer tool) gave it.
     `transport` is the normalized transport — `stdio` / `streamable_http`
     / `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are
     descriptive only — we never echo env *values* (could be secrets).
-    `source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`
-    / `env` — used by the UI to group servers by provenance.
+    `source` is one of `shejane` / `shejane-legacy` / `env` — used by
+    the UI to group Runtime-owned configuration by provenance.
     `source_path` is the absolute path of the config file the entry was
     read from, displayed in the settings panel so the user knows where
     to go edit it.
@@ -985,14 +985,13 @@ class McpServerInfo(BaseModel):
     url: str | None = None
     env_keys: list[str] = []
     cwd: str | None = None
+    status: Literal["idle", "ready", "error"] = "idle"
+    tool_count: int = 0
+    error_type: str | None = None
 
 
 class McpServerCatalog(BaseModel):
-    """GET /local/v1/mcp-servers — the full list of discovered servers
-    plus the set of sources we scanned. `sources` lets the UI render
-    empty-state hints like "no Claude Desktop config found" even when
-    no server came from there.
-    """
+    """GET /local/v1/mcp-servers — Runtime-owned MCP Servers and sources."""
 
     servers: list[McpServerInfo]
     sources_scanned: list[str]
@@ -1001,8 +1000,7 @@ class McpServerCatalog(BaseModel):
 class McpServerWriteRequest(BaseModel):
     """Create/update one SheJane-managed MCP server.
 
-    This writes only `~/.shejane/mcp-servers.json`; discovered Claude
-    Desktop / Cursor / Codex entries remain read-only.
+    This writes only `~/.shejane/mcp-servers.json`.
     """
 
     name: str | None = None

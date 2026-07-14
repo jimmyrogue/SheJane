@@ -1,15 +1,10 @@
-"""Tests for MCP server discovery + HTTP catalog + gating.
-
-These guard the post-skills MCP feature: we never install MCP servers
-ourselves, we *scan* the user's machine for configs that other tools
-(Claude Desktop, Cursor, Codex) already set up, normalize them to
-MultiServerMCPClient's schema, and surface them to the agent + UI.
+"""Tests for Runtime-owned MCP configuration, catalog, and gating.
 
 The autouse fixture in `conftest.py` disables disk scanning by
 default. Tests in this file re-enable it via
 `monkeypatch.setenv("SHEJANE_LOCAL_MCP_DISCOVERY", "on")` and point
 `HOME` at a tmp_path so the scan finds only fixture files instead of
-the developer's real Claude Desktop config.
+the developer's Runtime configuration.
 """
 
 from __future__ import annotations
@@ -28,14 +23,13 @@ from mcp.client.stdio import StdioServerParameters
 
 from local_host.config import reset_settings_for_tests
 from local_host.server import create_app
+from local_host.store.sqlite import LocalStore
 from local_host.tools.mcp import (
     MAX_MCP_DESCRIPTION_CHARS,
     MAX_MCP_SCHEMA_DEPTH,
-    SOURCE_CLAUDE_DESKTOP,
-    SOURCE_CODEX,
-    SOURCE_CURSOR,
     SOURCE_ENV,
     SOURCE_SHEJANE,
+    MCPToolCatalog,
     _normalize_entry,
     discover_servers,
     mcp_sensitive_values,
@@ -109,13 +103,12 @@ def test_normalize_http_transport_aliases(alias: str) -> None:
 
 
 def test_normalize_missing_command_and_url_returns_none() -> None:
-    # Claude Desktop sometimes has entries like {"disabled": true} with
-    # nothing else — we should drop instead of crashing later.
+    # Incomplete entries should be dropped instead of crashing later.
     assert _normalize_entry("x", {"args": ["foo"]}) is None
 
 
 def test_normalize_disabled_flag_returns_none() -> None:
-    # Claude Desktop opt-out convention: user marked it disabled.
+    # Manually managed config may explicitly mark an entry disabled.
     assert _normalize_entry("x", {"command": "npx", "disabled": True}) is None
 
 
@@ -222,6 +215,554 @@ def test_mcp_metadata_enforces_size_depth_and_name_boundaries() -> None:
     assert validate_mcp_tools([safe_tool]) == []
 
 
+@pytest.mark.asyncio
+async def test_runtime_catalog_reuses_tools_until_server_config_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import ListToolsResult, Tool
+
+    sessions_opened = 0
+
+    class FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name="lookup",
+                        description="Look up one value.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                ]
+            )
+
+    @asynccontextmanager
+    async def fake_create_session(_connection):
+        nonlocal sessions_opened
+        sessions_opened += 1
+        yield FakeSession()
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server-v1.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    first = await catalog.get_tools()
+    second = await catalog.get_tools()
+
+    assert [item.name for item in first] == ["docs_lookup"]
+    assert [item.name for item in second] == ["docs_lookup"]
+    assert sessions_opened == 1
+
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server-v2.js"]}}),
+    )
+    await catalog.get_tools()
+
+    assert sessions_opened == 2
+
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_SERVERS", "{}")
+    await catalog.get_tools()
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server-v2.js"]}}),
+    )
+    await catalog.get_tools()
+
+    assert sessions_opened == 3
+    await catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_refreshes_changed_servers_concurrently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import local_host.tools.mcp as mcp_mod
+
+    active = 0
+    peak_active = 0
+    discovered: list[str] = []
+
+    async def fake_open(server_name, _connection):
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        discovered.append(server_name)
+        await asyncio.sleep(0)
+        active -= 1
+        return None, (), None
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", fake_open)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps(
+            {
+                "docs": {"command": "node", "args": ["docs.js"]},
+                "github": {"command": "node", "args": ["github.js"]},
+            }
+        ),
+    )
+
+    catalog = MCPToolCatalog(tmp_path)
+    await catalog.get_tools()
+
+    assert set(discovered) == {"docs", "github"}
+    assert peak_active == 2
+    await catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_reuses_one_live_session_for_tool_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
+
+    sessions_opened = 0
+    sessions_closed = 0
+    calls = 0
+
+    class FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name="lookup",
+                        description="Look up one value.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                ]
+            )
+
+        async def call_tool(self, name, arguments, **kwargs):
+            nonlocal calls
+            calls += 1
+            return CallToolResult(content=[TextContent(type="text", text=f"{name}:ok")])
+
+    @asynccontextmanager
+    async def fake_create_session(_connection):
+        nonlocal sessions_opened, sessions_closed
+        sessions_opened += 1
+        try:
+            yield FakeSession()
+        finally:
+            sessions_closed += 1
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    await catalog.get_tools()
+    async with catalog.acquire_tools() as tools:
+        await tools[0].tool.ainvoke({})
+        await tools[0].tool.ainvoke({})
+
+    assert sessions_opened == 1
+    assert sessions_closed == 0
+    assert calls == 2
+
+    assert await catalog.get_tools(disabled_servers={"docs"}) == []
+    assert sessions_closed == 1
+    await catalog.close()
+    assert sessions_closed == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_keeps_retired_session_until_snapshot_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
+
+    sessions_closed = 0
+
+    class FakeSession:
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name="lookup",
+                        description="Look up one value.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                ]
+            )
+
+        async def call_tool(self, name, arguments, **kwargs):
+            return CallToolResult(content=[TextContent(type="text", text=f"{name}:ok")])
+
+    @asynccontextmanager
+    async def fake_create_session(_connection):
+        nonlocal sessions_closed
+        try:
+            yield FakeSession()
+        finally:
+            sessions_closed += 1
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    await catalog.get_tools()
+    async with catalog.acquire_tools() as tools:
+        await catalog.invalidate("docs")
+        assert sessions_closed == 0
+        await tools[0].tool.ainvoke({})
+
+    assert sessions_closed == 1
+    await catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_refreshes_after_tools_list_changed_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import (
+        CallToolResult,
+        ListToolsResult,
+        ServerNotification,
+        TextContent,
+        Tool,
+        ToolListChangedNotification,
+    )
+
+    sessions_opened = 0
+    sessions_closed = 0
+    message_handlers = []
+
+    class FakeSession:
+        def __init__(self, session_id: int) -> None:
+            self.session_id = session_id
+
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name="lookup",
+                        description=f"Look up with session {self.session_id}.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                ]
+            )
+
+        async def call_tool(self, name, arguments, **kwargs):
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"{name}:{self.session_id}")]
+            )
+
+    @asynccontextmanager
+    async def fake_create_session(connection):
+        nonlocal sessions_opened, sessions_closed
+        sessions_opened += 1
+        message_handlers.append(connection["session_kwargs"]["message_handler"])
+        try:
+            yield FakeSession(sessions_opened)
+        finally:
+            sessions_closed += 1
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    await catalog.get_tools()
+    async with catalog.acquire_tools() as first_run_tools:
+        await message_handlers[0](ServerNotification(root=ToolListChangedNotification()))
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if sessions_opened == 2:
+                break
+
+        assert sessions_opened == 2
+        assert sessions_closed == 0
+        result = await first_run_tools[0].tool.ainvoke({})
+        assert result[0]["text"] == "lookup:1"
+
+    assert sessions_closed == 1
+    async with catalog.acquire_tools() as second_run_tools:
+        assert "session 2" in second_run_tools[0].description
+
+    await catalog.close()
+    assert sessions_closed == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_retries_failed_server_after_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import local_host.tools.mcp as mcp_mod
+
+    now = 100.0
+    attempts = 0
+    stopped = 0
+
+    class FakeSupervisor:
+        async def stop(self):
+            nonlocal stopped
+            stopped += 1
+
+    async def fake_open(_server_name, _connection):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return None, (), "TimeoutError"
+        return FakeSupervisor(), (), None
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", fake_open)
+    monkeypatch.setattr(mcp_mod.time, "monotonic", lambda: now)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    await catalog.get_tools()
+    await catalog.get_tools()
+    assert attempts == 1
+    assert catalog.server_statuses()["docs"]["status"] == "error"
+
+    now += mcp_mod.MCP_RETRY_BACKOFF_SECONDS
+    await catalog.get_tools()
+    assert attempts == 2
+    assert catalog.server_statuses()["docs"]["status"] == "ready"
+
+    await catalog.close()
+    assert stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_catalog_metadata_persists_without_credentials(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "store.db")
+    try:
+        saved = await store.upsert_mcp_catalog(
+            server_name="docs",
+            config_fingerprint="fingerprint-v1",
+            tools=[
+                {
+                    "name": "docs_lookup",
+                    "raw_name": "lookup",
+                    "description": "Look up documentation.",
+                    "args_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            status="ready",
+            error_type=None,
+        )
+        loaded = await store.get_mcp_catalog("docs")
+
+        assert loaded == saved
+        assert loaded["version"] == 1
+        assert loaded["tools"][0]["raw_name"] == "lookup"
+        assert "credential" not in json.dumps(loaded).lower()
+
+        failed = await store.upsert_mcp_catalog(
+            server_name="docs",
+            config_fingerprint="fingerprint-v1",
+            tools=loaded["tools"],
+            status="error",
+            error_type="TimeoutError",
+        )
+        assert failed["version"] == 2
+        assert failed["last_success_at"] == loaded["last_success_at"]
+
+        await store.delete_mcp_catalog("docs")
+        assert await store.get_mcp_catalog("docs") is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_persists_successful_tool_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from langchain_core.tools import tool
+
+    import local_host.tools.mcp as mcp_mod
+
+    @tool("docs_lookup")
+    async def lookup(query: str) -> str:
+        """Look up documentation."""
+        return query
+
+    class FakeSupervisor:
+        async def stop(self):
+            return None
+
+    async def fake_open(_server_name, _connection):
+        return FakeSupervisor(), (lookup,), None
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", fake_open)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    store = await LocalStore.open(tmp_path / "store.db")
+    catalog = MCPToolCatalog(tmp_path, store=store)
+    try:
+        await catalog.get_tools()
+        persisted = await store.get_mcp_catalog("docs")
+        assert persisted is not None
+        assert persisted["status"] == "ready"
+        assert persisted["tools"] == [
+            {
+                "args_schema": lookup.tool_call_schema.model_json_schema(),
+                "description": "Look up documentation.",
+                "name": "docs_lookup",
+                "raw_name": "lookup",
+            }
+        ]
+    finally:
+        await catalog.close()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_hydrates_without_connecting_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import local_host.tools.mcp as mcp_mod
+
+    config = {"command": "node", "args": ["server.js"], "transport": "stdio"}
+    monkeypatch.setenv("SHEJANE_LOCAL_MCP_SERVERS", json.dumps({"docs": config}))
+    store = await LocalStore.open(tmp_path / "store.db")
+    await store.upsert_mcp_catalog(
+        server_name="docs",
+        config_fingerprint=mcp_mod._mcp_config_fingerprint(config),
+        tools=[
+            {
+                "name": "docs_lookup",
+                "raw_name": "lookup",
+                "description": "Look up documentation.",
+                "args_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        status="ready",
+        error_type=None,
+    )
+
+    connections = 0
+
+    class FakeSupervisor:
+        async def stop(self):
+            return None
+
+    async def fake_open(_server_name, _connection):
+        nonlocal connections
+        connections += 1
+        return FakeSupervisor(), (), None
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", fake_open)
+    catalog = MCPToolCatalog(tmp_path, store=store)
+    try:
+        await catalog.hydrate()
+        assert connections == 0
+        async with catalog.acquire_tools() as tools:
+            assert [item.name for item in tools] == ["docs_lookup"]
+        assert catalog.server_statuses()["docs"]["status"] == "idle"
+        assert catalog._refresh_task is not None
+        await asyncio.wait_for(asyncio.shield(catalog._refresh_task), timeout=0.1)
+        assert connections == 1
+        assert catalog.server_statuses()["docs"]["status"] == "ready"
+    finally:
+        await catalog.close()
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_run_snapshot_does_not_wait_for_first_mcp_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import local_host.tools.mcp as mcp_mod
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_open(_server_name, _connection):
+        started.set()
+        await release.wait()
+        return None, (), "TimeoutError"
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", slow_open)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+    try:
+        async with asyncio.timeout(0.1):
+            async with catalog.acquire_tools() as tools:
+                assert tools == []
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+    finally:
+        release.set()
+        await catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_background_discovery_is_visible_to_the_next_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from langchain_core.tools import tool
+
+    import local_host.tools.mcp as mcp_mod
+
+    discovered = asyncio.Event()
+
+    @tool("docs_lookup")
+    async def lookup(query: str) -> str:
+        """Look up documentation."""
+        return query
+
+    class FakeSupervisor:
+        async def stop(self):
+            return None
+
+    async def fake_open(_server_name, _connection):
+        discovered.set()
+        return FakeSupervisor(), (lookup,), None
+
+    monkeypatch.setattr(mcp_mod, "_open_mcp_server", fake_open)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+    try:
+        async with catalog.acquire_tools() as first:
+            assert first == []
+        await asyncio.wait_for(discovered.wait(), timeout=0.1)
+        assert catalog._refresh_task is not None
+        await asyncio.wait_for(asyncio.shield(catalog._refresh_task), timeout=0.1)
+        async with catalog.acquire_tools() as second:
+            assert [item.name for item in second] == ["docs_lookup"]
+    finally:
+        await catalog.close()
+
+
 # ---------------------------------------------------------------------------
 # discover_servers — disk scan gate
 # ---------------------------------------------------------------------------
@@ -294,103 +835,25 @@ def test_discover_reads_shejane_user_config(
     assert "mcp-servers.json" in fs.source_path
 
 
-def test_discover_reads_claude_desktop_macos(
+def test_discover_does_not_activate_other_clients_global_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import sys
-
-    if sys.platform != "darwin":
-        pytest.skip("Claude Desktop macOS path only")
-    home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
-    claude_dir = home / "Library" / "Application Support" / "Claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    (claude_dir / "claude_desktop_config.json").write_text(
-        json.dumps(
-            {
-                "mcpServers": {
-                    "claude-fs": {"command": "npx", "args": ["fs-server"]},
-                    "claude-disabled": {"command": "x", "disabled": True},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    out = discover_servers(tmp_path)
-    names = [s.name for s in out]
-    assert "claude-fs" in names
-    # Disabled servers must NOT show up — user opted out.
-    assert "claude-disabled" not in names
-    cf = next(s for s in out if s.name == "claude-fs")
-    assert cf.source == SOURCE_CLAUDE_DESKTOP
-
-
-def test_discover_reads_cursor_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
     monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     cursor_dir = home / ".cursor"
-    cursor_dir.mkdir(parents=True, exist_ok=True)
+    cursor_dir.mkdir(parents=True)
     (cursor_dir / "mcp.json").write_text(
-        json.dumps({"mcpServers": {"cur-fs": {"command": "npx", "args": ["fs"]}}}),
+        json.dumps({"mcpServers": {"cursor-server": {"command": "cursor-mcp"}}}),
         encoding="utf-8",
     )
-    out = discover_servers(tmp_path)
-    sources = {s.source for s in out}
-    assert SOURCE_CURSOR in sources
-
-
-def test_discover_reads_codex_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
     codex_dir = home / ".codex"
-    codex_dir.mkdir(parents=True, exist_ok=True)
+    codex_dir.mkdir(parents=True)
     (codex_dir / "config.toml").write_text(
-        """
-[mcp_servers.codex-fs]
-command = "node"
-args = ["server.js"]
-""".strip(),
+        '[mcp_servers.codex-server]\ncommand = "codex-mcp"\n',
         encoding="utf-8",
     )
-    out = discover_servers(tmp_path)
-    sources = {s.source for s in out}
-    assert SOURCE_CODEX in sources
-    cf = next(s for s in out if s.name == "codex-fs")
-    assert cf.config["command"] == "node"
 
-
-def test_discover_dedupes_by_name_first_source_wins(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the same server name appears in shejane (higher priority)
-    and Claude Desktop (lower), the shejane version wins. This lets
-    users locally override a Claude config without editing it."""
-    import sys
-
-    if sys.platform != "darwin":
-        pytest.skip("multi-source dedupe test pinned to macOS Claude path")
-    home = _isolate_home(monkeypatch, tmp_path)
-    monkeypatch.delenv("SHEJANE_LOCAL_MCP_SERVERS", raising=False)
-    # shejane has the canonical version
-    shejane_dir = home / ".shejane"
-    shejane_dir.mkdir(parents=True, exist_ok=True)
-    (shejane_dir / "mcp-servers.json").write_text(
-        json.dumps({"mcpServers": {"fs": {"command": "shejane-fs"}}}),
-        encoding="utf-8",
-    )
-    # Claude has a different one with the same name
-    claude_dir = home / "Library" / "Application Support" / "Claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    (claude_dir / "claude_desktop_config.json").write_text(
-        json.dumps({"mcpServers": {"fs": {"command": "claude-fs"}}}),
-        encoding="utf-8",
-    )
-    out = discover_servers(tmp_path)
-    # Exactly one entry named "fs", and it's the shejane one.
-    fs_entries = [s for s in out if s.name == "fs"]
-    assert len(fs_entries) == 1
-    assert fs_entries[0].source == SOURCE_SHEJANE
-    assert fs_entries[0].config["command"] == "shejane-fs"
+    assert discover_servers(tmp_path) == []
 
 
 def test_discover_malformed_disk_file_skipped(
@@ -447,6 +910,17 @@ def test_http_mcp_servers_empty_default(client: TestClient) -> None:
 def test_http_mcp_servers_lists_env_entries(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    class FakeCatalog:
+        def server_statuses(self):
+            return {
+                "github": {
+                    "status": "error",
+                    "tool_count": 0,
+                    "error_type": "TimeoutError",
+                }
+            }
+
+    client.app.state.mcp_catalog = FakeCatalog()
     # Setting the env var should produce one normalized server row.
     monkeypatch.setenv(
         "SHEJANE_LOCAL_MCP_SERVERS",
@@ -472,6 +946,9 @@ def test_http_mcp_servers_lists_env_entries(
     assert s["source"] == "env"
     assert s["command"] == "npx"
     assert s["args"] == ["-y", "@modelcontextprotocol/server-github"]
+    assert s["status"] == "error"
+    assert s["tool_count"] == 0
+    assert s["error_type"] == "TimeoutError"
     # SECURITY: env *keys* surface, env *values* MUST NOT.
     assert s["env_keys"] == ["GITHUB_TOKEN"]
     assert "ghp_secret_value" not in json.dumps(body)
@@ -481,6 +958,19 @@ def test_http_mcp_server_crud_writes_only_shejane_config(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = _isolate_home(monkeypatch, tmp_path)
+    invalidated: list[str | None] = []
+
+    class RecordingCatalog:
+        def server_statuses(self):
+            return {}
+
+        def request_refresh(self):
+            return None
+
+        async def invalidate(self, server_name=None):
+            invalidated.append(server_name)
+
+    client.app.state.mcp_catalog = RecordingCatalog()
     payload = {
         "name": "context7",
         "transport": "stdio",
@@ -517,6 +1007,7 @@ def test_http_mcp_server_crud_writes_only_shejane_config(
     assert deleted.status_code == 200
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     assert "context7" not in raw.get("mcpServers", {})
+    assert invalidated == ["context7", "context7"]
 
 
 # ---------------------------------------------------------------------------
@@ -527,22 +1018,23 @@ def test_http_mcp_server_crud_writes_only_shejane_config(
 def test_build_agent_skips_mcp_when_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When `mcp_enabled=False`, `build_tools` MUST be called with
-    `include_mcp=False`. We pin this via a registry spy rather than
-    introspecting compiled-agent state — same pattern as
-    test_build_agent_excludes_memory_search_when_disabled.
-    """
+    """When `mcp_enabled=False`, P6 must not read the MCP catalog."""
     from langgraph.store.memory import InMemoryStore
 
     import local_host.agent.builder as builder_mod
     from local_host.agent.builder import build_agent, open_checkpointer
     from local_host.store.sqlite import LocalStore
 
-    captured: dict[str, object] = {}
+    catalog_reads = 0
 
     async def fake_build_tools(**kwargs):
-        captured.update(kwargs)
         return []
+
+    class FakeCatalog:
+        async def get_tools(self, **kwargs):
+            nonlocal catalog_reads
+            catalog_reads += 1
+            return []
 
     def fake_create_deep_agent(**kwargs):
         return object()
@@ -563,8 +1055,9 @@ def test_build_agent_skips_mcp_when_disabled(
                 workspace_root=str(tmp_path),
                 run_id="r-mcp-off",
                 mcp_enabled=False,
+                mcp_catalog=FakeCatalog(),
             )
-            return captured.get("include_mcp") is False
+            return catalog_reads == 0
         finally:
             await store.close()
             await stack.aclose()
@@ -573,7 +1066,7 @@ def test_build_agent_skips_mcp_when_disabled(
 
 
 # ---------------------------------------------------------------------------
-# Per-server disable — `mcp_disabled_servers` propagates to build_mcp_tools
+# Direct MCP loader behavior
 # ---------------------------------------------------------------------------
 
 
@@ -733,10 +1226,10 @@ def test_mcp_http_aliases_receive_bounded_client(
     assert captured["httpx_client_factory"] is mcp_mod._bounded_http_client
 
 
-def test_build_agent_threads_disabled_set_to_mcp_loader(
+def test_build_agent_uses_runtime_catalog_with_disabled_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Disabled MCP names must reach the attempt-local MCP loader."""
+    """P6 reads MCP tools through the Runtime-owned catalog."""
     from langgraph.store.memory import InMemoryStore
 
     import local_host.agent.builder as builder_mod
@@ -748,19 +1241,15 @@ def test_build_agent_threads_disabled_set_to_mcp_loader(
     async def fake_build_tools(**kwargs):
         return []
 
-    async def fake_build_validated_mcp_tools(_data_dir, **kwargs):
-        captured.update(kwargs)
-        return []
+    class FakeCatalog:
+        async def get_tools(self, **kwargs):
+            captured.update(kwargs)
+            return []
 
     def fake_create_deep_agent(**kwargs):
         return object()
 
     monkeypatch.setattr(builder_mod, "build_tools", fake_build_tools)
-    monkeypatch.setattr(
-        builder_mod,
-        "build_validated_mcp_tools",
-        fake_build_validated_mcp_tools,
-    )
     monkeypatch.setattr(builder_mod, "create_deep_agent", fake_create_deep_agent)
 
     async def run() -> set[str] | None:
@@ -777,6 +1266,7 @@ def test_build_agent_threads_disabled_set_to_mcp_loader(
                 run_id="r-disabled",
                 mcp_enabled=True,
                 mcp_disabled_servers={"github", "playwright"},
+                mcp_catalog=FakeCatalog(),
             )
             return captured.get("disabled_servers")  # type: ignore[return-value]
         finally:

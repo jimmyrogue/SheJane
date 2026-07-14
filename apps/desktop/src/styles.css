@@ -7619,6 +7619,19 @@ select {
   color: var(--sj-ink-faint, #A8A39A);
 }
 
+.mcp-row-status {
+  font-size: 11px;
+  color: var(--sj-ink-faint, #A8A39A);
+}
+
+.mcp-row-status[data-status="ready"] {
+  color: var(--sj-moss, #5F7654);
+}
+
+.mcp-row-status[data-status="error"] {
+  color: var(--sj-seal, #A43B32);
+}
+
 .mcp-row-meta {
   display: flex;
   flex-wrap: wrap;

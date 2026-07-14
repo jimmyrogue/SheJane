@@ -1,86 +1,35 @@
-"""MCP integration via langchain-mcp-adapters.
-
-We do NOT install or manage MCP servers ourselves. Instead, on every
-agent boot we scan the user's machine for MCP server configs that
-*other* tools have already set up (Claude Desktop, Cursor, Codex) plus
-our own canonical location. Whatever we find gets normalized to
-`MultiServerMCPClient`'s schema, deduped by name, and handed to the
-agent as native LangChain tools.
-
-This means: the user installs an MCP server once via their preferred
-tool (e.g. `claude mcp add ...` for Claude Desktop) and SheJane picks
-it up automatically — no separate "add MCP server" UI required.
-
-Sources, in priority order (first one that defines a given name wins):
-
-  1. `SHEJANE_LOCAL_MCP_SERVERS` env var — full override. When set,
-     the on-disk sources below are skipped entirely. JSON value matches
-     MultiServerMCPClient's schema. Test escape hatch and one-off
-     debugging.
-  2. `~/.shejane/mcp-servers.json` — our own canonical user-managed
-     location. Same JSON format as Claude Desktop / Cursor (a top-level
-     `mcpServers` map OR the bare server map). Created on demand.
-  3. `<data_dir>/mcp-servers.json` — legacy path kept for back-compat
-     with Phase-3 daemons that wrote there.
-  4. `~/Library/Application Support/Claude/claude_desktop_config.json`
-     (macOS Claude Desktop)
-  5. `~/.config/Claude/claude_desktop_config.json` (Linux Claude Desktop)
-  6. `~/.cursor/mcp.json` (Cursor, user-global)
-  7. `~/.codex/config.toml` (Codex CLI — TOML, table `mcp_servers`)
-
-Per-entry normalization to MultiServerMCPClient format:
-
-    {
-        "<name>": {
-            "transport": "stdio" | "sse" | "http" | "websocket",
-            "command": "...",            # for stdio
-            "args": [...],
-            "cwd": "...",
-            "env": {...},
-            "url": "...",                # for http/sse/websocket
-            "headers": {...}
-        }
-    }
-
-If `transport` is missing, we infer it: `command` → stdio, `url` → http.
-This matches how Claude Desktop / Cursor lay out their configs (they
-default to stdio implicitly).
-
-If a single server's config is malformed (missing both command and url,
-or wrong types), it's dropped with a log line — boot must not fail on
-one bad entry, because typically the user has many servers and only
-cares that the rest still work.
-"""
+"""Runtime-owned MCP configuration, catalog validation, and tool adapters."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
-import tomllib
+import time
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 import httpx
 from langchain_core.tools import BaseTool
+from langchain_core.tools import tool as langchain_tool
 
+from ..store.sqlite import LocalStore
 from .mcp_stdio import bounded_stdio_client
 
 log = logging.getLogger("local_host.tools.mcp")
 
 
-# Identifier the UI groups by. Matches the skills `source` convention —
-# the renderer maps these to human labels (Claude / Cursor / Codex /
-# SheJane). Keep stable; client code switches on these strings.
+# Stable identifiers used by the Runtime API and Desktop source grouping.
 SOURCE_SHEJANE = "shejane"
 SOURCE_DATA_DIR = "shejane-legacy"
-SOURCE_CLAUDE_DESKTOP = "claude-desktop"
-SOURCE_CURSOR = "cursor"
-SOURCE_CODEX = "codex"
 SOURCE_ENV = "env"
 
 MAX_MCP_TOOLS = 64
@@ -93,6 +42,12 @@ MAX_MCP_SCHEMA_NODES = 4_096
 MAX_MCP_HTTP_BYTES = 4 * 1_024 * 1_024
 MAX_MCP_STDIO_FRAME_BYTES = 4 * 1_024 * 1_024
 MCP_DISCOVERY_TIMEOUT_SECONDS = 15
+MCP_RETRY_BACKOFF_SECONDS = 30
+MCP_TOOL_SEARCH_NAME = "mcp.search_tools"
+MCP_TOOL_SEARCH_RESULT_KIND = "mcp_tool_search_results"
+MCP_TOOL_SEARCH_THRESHOLD = 12
+MCP_TOOL_SEARCH_DESCRIPTION_CHARS = 512
+MCP_TOOL_SEARCH_QUERY_CHARS = 512
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _CREDENTIAL_PATTERN_RE = re.compile(
@@ -109,6 +64,537 @@ class ValidatedMCPTool:
     name: str
     description: str
     args_schema: dict[str, Any]
+
+
+def make_mcp_tool_search(tools: Sequence[BaseTool]) -> BaseTool:
+    """Expose a compact, provider-independent MCP tool directory."""
+    directory = tuple(
+        {
+            "name": item.name,
+            "description": (item.description or "").strip()[:MCP_TOOL_SEARCH_DESCRIPTION_CHARS],
+        }
+        for item in tools
+    )
+
+    @langchain_tool(MCP_TOOL_SEARCH_NAME)
+    def search_tools(query: str, limit: int = 5) -> dict[str, Any]:
+        """Search available MCP integrations by capability before using one."""
+        bounded_query = query.strip()[:MCP_TOOL_SEARCH_QUERY_CHARS]
+        normalized_query = bounded_query.lower()
+        bounded_limit = max(1, min(int(limit), 8))
+        ranked = sorted(
+            directory,
+            key=lambda item: (
+                _mcp_tool_search_score(normalized_query, item),
+                item["name"],
+            ),
+            reverse=True,
+        )
+        return {
+            "kind": MCP_TOOL_SEARCH_RESULT_KIND,
+            "query": bounded_query,
+            "tools": list(ranked[:bounded_limit]),
+        }
+
+    return search_tools
+
+
+def _mcp_tool_search_score(query: str, item: dict[str, str]) -> float:
+    if not query:
+        return 0
+    name = item["name"].lower()
+    description = item["description"].lower()
+    corpus = f"{name} {description}"
+    query_tokens = set(re.findall(r"[\w.-]+", query))
+    corpus_tokens = set(re.findall(r"[\w.-]+", corpus))
+    score = 8.0 if query in name else 3.0 if query in description else 0.0
+    score += 2.0 * len(query_tokens & corpus_tokens)
+    score += SequenceMatcher(None, query, name).ratio()
+    return score
+
+
+@dataclass
+class _CatalogEntry:
+    config_fingerprint: str
+    tools: tuple[BaseTool, ...]
+    supervisor: _MCPServerSupervisor | None = None
+    leases: int = 0
+    retired: bool = False
+    error_type: str | None = None
+    retry_at: float = 0
+    refresh_required: bool = False
+
+
+class _LiveSessionProxy:
+    def __init__(self, supervisor: _MCPServerSupervisor) -> None:
+        self._supervisor = supervisor
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
+        return await self._supervisor.call_tool(name, arguments, **kwargs)
+
+
+class _MCPServerSupervisor:
+    """Own one MCP session in the same task for its full lifetime."""
+
+    def __init__(self, server_name: str, connection: dict[str, Any]) -> None:
+        self.server_name = server_name
+        self.connection = dict(connection)
+        self._ready: asyncio.Future[tuple[BaseTool, ...]] | None = None
+        self._stop = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        self._session: Any | None = None
+        self._on_tools_changed: Callable[[_MCPServerSupervisor], None] | None = None
+
+    def set_tools_changed_callback(
+        self,
+        callback: Callable[[_MCPServerSupervisor], None],
+    ) -> None:
+        self._on_tools_changed = callback
+
+    async def start(self) -> tuple[BaseTool, ...]:
+        if self._task is None:
+            self._ready = asyncio.get_running_loop().create_future()
+            self._task = asyncio.create_task(
+                self._serve(),
+                name=f"mcp-server:{self.server_name}",
+            )
+        assert self._ready is not None
+        return await self._ready
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], **kwargs: Any) -> Any:
+        session = self._session
+        if session is None:
+            raise RuntimeError(f"MCP server {self.server_name!r} is not connected")
+        return await session.call_tool(name, arguments, **kwargs)
+
+    async def stop(self) -> None:
+        self._stop.set()
+        if self._task is not None:
+            await self._task
+
+    async def _serve(self) -> None:
+        context: Any | None = None
+        entered = False
+        try:
+            import langchain_mcp_adapters.sessions as mcp_sessions
+
+            _install_bounded_stdio_transport(mcp_sessions)
+            connection = _bounded_mcp_connection(self.connection)
+            session_kwargs = dict(connection.get("session_kwargs") or {})
+            previous_handler = session_kwargs.get("message_handler")
+
+            async def message_handler(message: Any) -> None:
+                from mcp.types import ServerNotification, ToolListChangedNotification
+
+                if (
+                    isinstance(message, ServerNotification)
+                    and isinstance(message.root, ToolListChangedNotification)
+                    and self._on_tools_changed is not None
+                ):
+                    self._on_tools_changed(self)
+                if previous_handler is not None:
+                    await previous_handler(message)
+
+            session_kwargs["message_handler"] = message_handler
+            connection["session_kwargs"] = session_kwargs
+            context = mcp_sessions.create_session(connection)
+            async with asyncio.timeout(MCP_DISCOVERY_TIMEOUT_SECONDS):
+                session = await context.__aenter__()
+                entered = True
+                self._session = session
+                await session.initialize()
+                tools = await _discover_live_mcp_tools(
+                    session,
+                    server_name=self.server_name,
+                    execution_session=_LiveSessionProxy(self),
+                )
+            assert self._ready is not None
+            self._ready.set_result(tuple(tools))
+            await self._stop.wait()
+        except Exception as exc:
+            if self._ready is not None and not self._ready.done():
+                self._ready.set_exception(exc)
+            else:
+                log.warning(
+                    "MCP server %r session failed: %s",
+                    self.server_name,
+                    type(exc).__name__,
+                )
+        finally:
+            self._session = None
+            if context is not None and entered:
+                try:
+                    async with asyncio.timeout(MCP_DISCOVERY_TIMEOUT_SECONDS):
+                        await context.__aexit__(None, None, None)
+                except Exception as exc:
+                    log.warning(
+                        "MCP server %r cleanup failed: %s",
+                        self.server_name,
+                        type(exc).__name__,
+                    )
+
+
+async def _open_mcp_server(
+    server_name: str,
+    connection: dict[str, Any],
+) -> tuple[_MCPServerSupervisor | None, tuple[BaseTool, ...], str | None]:
+    supervisor = _MCPServerSupervisor(server_name, connection)
+    try:
+        return supervisor, await supervisor.start(), None
+    except Exception as exc:
+        log.warning(
+            "MCP server %r discovery failed: %s",
+            server_name,
+            type(exc).__name__,
+        )
+        await supervisor.stop()
+        return None, (), type(exc).__name__
+
+
+class MCPToolCatalog:
+    """Runtime-owned MCP tool definitions, refreshed per changed server."""
+
+    def __init__(self, data_dir: Path | None, *, store: LocalStore | None = None) -> None:
+        self._data_dir = data_dir
+        self._store = store
+        self._entries: dict[str, _CatalogEntry] = {}
+        self._retired: list[_CatalogEntry] = []
+        self._lock = asyncio.Lock()
+        self._closed = False
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_pending = False
+
+    async def get_tools(
+        self,
+        *,
+        disabled_servers: set[str] | None = None,
+        reserved_names: set[str] | None = None,
+    ) -> list[ValidatedMCPTool]:
+        tools, _entries = await self._snapshot(
+            disabled_servers=disabled_servers,
+            reserved_names=reserved_names,
+            lease=False,
+        )
+        return tools
+
+    @asynccontextmanager
+    async def acquire_tools(
+        self,
+        *,
+        disabled_servers: set[str] | None = None,
+        reserved_names: set[str] | None = None,
+    ) -> AsyncIterator[list[ValidatedMCPTool]]:
+        tools, entries = self._cached_snapshot(
+            disabled_servers=disabled_servers,
+            reserved_names=reserved_names,
+        )
+        try:
+            yield tools
+        finally:
+            await self._release(entries)
+
+    def request_refresh(self, *, disabled_servers: set[str] | None = None) -> None:
+        if self._closed:
+            return
+        if self._refresh_task is not None and not self._refresh_task.done():
+            self._refresh_pending = True
+            return
+
+        async def refresh() -> None:
+            try:
+                await self.get_tools(disabled_servers=disabled_servers)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("MCP background refresh failed: %s", type(exc).__name__)
+
+        task = asyncio.create_task(refresh(), name="mcp-catalog-refresh")
+        self._refresh_task = task
+
+        def refresh_done(done: asyncio.Task[None]) -> None:
+            if self._refresh_task is done:
+                self._refresh_task = None
+            if self._refresh_pending and not self._closed:
+                self._refresh_pending = False
+                self.request_refresh(disabled_servers=disabled_servers)
+
+        task.add_done_callback(refresh_done)
+
+    def _server_tools_changed(self, supervisor: _MCPServerSupervisor) -> None:
+        entry = self._entries.get(supervisor.server_name)
+        if entry is None or entry.supervisor is not supervisor:
+            return
+        entry.refresh_required = True
+        self.request_refresh()
+
+    def _cached_snapshot(
+        self,
+        *,
+        disabled_servers: set[str] | None,
+        reserved_names: set[str] | None,
+    ) -> tuple[list[ValidatedMCPTool], tuple[_CatalogEntry, ...]]:
+        if self._closed:
+            raise RuntimeError("MCP tool catalog is closed")
+        config = _load_mcp_config(self._data_dir)
+        if disabled_servers:
+            config = {name: value for name, value in config.items() if name not in disabled_servers}
+        config = dict(list(config.items())[:MAX_MCP_SERVERS])
+        entries: list[_CatalogEntry] = []
+        needs_refresh = False
+        for name, connection in config.items():
+            entry = self._entries.get(name)
+            fingerprint = _mcp_config_fingerprint(connection)
+            if entry is None or entry.config_fingerprint != fingerprint:
+                needs_refresh = True
+                continue
+            if entry.error_type is not None:
+                needs_refresh = needs_refresh or time.monotonic() >= entry.retry_at
+                continue
+            if entry.supervisor is None:
+                needs_refresh = needs_refresh or time.monotonic() >= entry.retry_at
+            entry.leases += 1
+            entries.append(entry)
+        if needs_refresh:
+            self.request_refresh(disabled_servers=disabled_servers)
+        tools = [tool for entry in entries for tool in entry.tools]
+        return (
+            validate_mcp_tools(
+                tools,
+                sensitive_values=_sensitive_values_from_config(config),
+                reserved_names=reserved_names,
+            ),
+            tuple(entries),
+        )
+
+    async def hydrate(self) -> None:
+        if self._store is None:
+            return
+        records = {item["server_name"]: item for item in await self._store.list_mcp_catalogs()}
+        config = dict(list(_load_mcp_config(self._data_dir).items())[:MAX_MCP_SERVERS])
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("MCP tool catalog is closed")
+            for name, connection in config.items():
+                record = records.get(name)
+                fingerprint = _mcp_config_fingerprint(connection)
+                if (
+                    record is None
+                    or record["status"] != "ready"
+                    or record["config_fingerprint"] != fingerprint
+                ):
+                    continue
+                tools = _tools_from_persisted_descriptors(
+                    name,
+                    connection,
+                    record["tools"],
+                )
+                accepted = validate_mcp_tools(
+                    tools,
+                    sensitive_values=_sensitive_values_from_config({name: connection}),
+                )
+                self._entries[name] = _CatalogEntry(
+                    config_fingerprint=fingerprint,
+                    tools=tuple(item.tool for item in accepted),
+                    retry_at=0,
+                )
+
+    def server_statuses(self) -> dict[str, dict[str, Any]]:
+        return {
+            name: {
+                "status": (
+                    "ready"
+                    if entry.supervisor is not None
+                    else "error"
+                    if entry.error_type is not None
+                    else "idle"
+                ),
+                "tool_count": len(entry.tools),
+                "error_type": entry.error_type,
+            }
+            for name, entry in self._entries.items()
+        }
+
+    async def _snapshot(
+        self,
+        *,
+        disabled_servers: set[str] | None,
+        reserved_names: set[str] | None,
+        lease: bool,
+    ) -> tuple[list[ValidatedMCPTool], tuple[_CatalogEntry, ...]]:
+        to_close: list[_MCPServerSupervisor] = []
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("MCP tool catalog is closed")
+            full_config = _load_mcp_config(self._data_dir)
+            config = full_config
+            if disabled_servers:
+                config = {
+                    name: value for name, value in config.items() if name not in disabled_servers
+                }
+            config = dict(list(config.items())[:MAX_MCP_SERVERS])
+            for inactive_name in self._entries.keys() - config.keys():
+                self._retire(self._entries.pop(inactive_name), to_close)
+            fingerprints = {
+                name: _mcp_config_fingerprint(connection) for name, connection in config.items()
+            }
+            stale = [
+                (name, connection)
+                for name, connection in config.items()
+                if (entry := self._entries.get(name)) is None
+                or entry.config_fingerprint != fingerprints[name]
+                or entry.refresh_required
+                or (entry.supervisor is None and time.monotonic() >= entry.retry_at)
+            ]
+            if stale:
+                loaded = await asyncio.gather(
+                    *(_open_mcp_server(name, connection) for name, connection in stale)
+                )
+                for (name, _connection), (supervisor, tools, error_type) in zip(
+                    stale, loaded, strict=True
+                ):
+                    previous = self._entries.get(name)
+                    if previous is not None:
+                        self._retire(previous, to_close)
+                    if supervisor is not None:
+                        set_callback = getattr(supervisor, "set_tools_changed_callback", None)
+                        if set_callback is not None:
+                            set_callback(self._server_tools_changed)
+                    self._entries[name] = _CatalogEntry(
+                        config_fingerprint=fingerprints[name],
+                        tools=tuple(tools),
+                        supervisor=supervisor,
+                        error_type=error_type,
+                        retry_at=(
+                            time.monotonic() + MCP_RETRY_BACKOFF_SECONDS
+                            if supervisor is None
+                            else 0
+                        ),
+                    )
+                    await self._persist_entry(
+                        name=name,
+                        connection=config[name],
+                        entry=self._entries[name],
+                    )
+            entries = tuple(self._entries[name] for name in config)
+            if lease:
+                for entry in entries:
+                    entry.leases += 1
+            tools = [tool for entry in entries for tool in entry.tools]
+
+        await _stop_mcp_servers(to_close)
+
+        return (
+            validate_mcp_tools(
+                tools,
+                sensitive_values=_sensitive_values_from_config(config),
+                reserved_names=reserved_names,
+            ),
+            entries,
+        )
+
+    async def _persist_entry(
+        self,
+        *,
+        name: str,
+        connection: dict[str, Any],
+        entry: _CatalogEntry,
+    ) -> None:
+        if self._store is None:
+            return
+        try:
+            accepted = validate_mcp_tools(
+                list(entry.tools),
+                sensitive_values=_sensitive_values_from_config({name: connection}),
+            )
+            prefix = f"{name}_"
+            tools = [
+                {
+                    "name": item.name,
+                    "raw_name": (
+                        item.name[len(prefix) :] if item.name.startswith(prefix) else item.name
+                    ),
+                    "description": item.description,
+                    "args_schema": item.args_schema,
+                }
+                for item in accepted
+            ]
+            if entry.supervisor is None:
+                previous = await self._store.get_mcp_catalog(name)
+                if previous is not None:
+                    tools = previous["tools"]
+            await self._store.upsert_mcp_catalog(
+                server_name=name,
+                config_fingerprint=entry.config_fingerprint,
+                tools=tools,
+                status="ready" if entry.supervisor is not None else "error",
+                error_type=entry.error_type,
+            )
+        except Exception as exc:
+            log.warning("MCP catalog persistence failed for %r: %s", name, type(exc).__name__)
+
+    async def invalidate(self, server_name: str | None = None) -> None:
+        to_close: list[_MCPServerSupervisor] = []
+        async with self._lock:
+            if server_name is None:
+                entries = tuple(self._entries.values())
+                self._entries.clear()
+                for entry in entries:
+                    self._retire(entry, to_close)
+            else:
+                entry = self._entries.pop(server_name, None)
+                if entry is not None:
+                    self._retire(entry, to_close)
+        await _stop_mcp_servers(to_close)
+
+    async def close(self) -> None:
+        refresh_task = self._refresh_task
+        if refresh_task is not None and not refresh_task.done():
+            await asyncio.gather(refresh_task, return_exceptions=True)
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            entries = [*self._entries.values(), *self._retired]
+            self._entries.clear()
+            self._retired.clear()
+        await _stop_mcp_servers(
+            [entry.supervisor for entry in entries if entry.supervisor is not None]
+        )
+
+    def _retire(
+        self,
+        entry: _CatalogEntry,
+        to_close: list[_MCPServerSupervisor],
+    ) -> None:
+        entry.retired = True
+        if entry.leases:
+            self._retired.append(entry)
+        elif entry.supervisor is not None:
+            to_close.append(entry.supervisor)
+
+    async def _release(self, entries: tuple[_CatalogEntry, ...]) -> None:
+        to_close: list[_MCPServerSupervisor] = []
+        async with self._lock:
+            for entry in entries:
+                entry.leases -= 1
+                if entry.leases < 0:
+                    raise RuntimeError("MCP catalog lease underflow")
+                if entry.retired and entry.leases == 0:
+                    if entry in self._retired:
+                        self._retired.remove(entry)
+                    if entry.supervisor is not None:
+                        to_close.append(entry.supervisor)
+        await _stop_mcp_servers(to_close)
+
+
+async def _stop_mcp_servers(supervisors: list[_MCPServerSupervisor]) -> None:
+    if supervisors:
+        await asyncio.gather(*(supervisor.stop() for supervisor in supervisors))
+
+
+def _mcp_config_fingerprint(config: dict[str, Any]) -> str:
+    canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class _LimitedResponseStream(httpx.AsyncByteStream):
@@ -163,13 +649,122 @@ def _bounded_http_client(
     )
 
 
+def _install_bounded_stdio_transport(mcp_sessions: Any) -> None:
+    def bounded_adapter_stdio_client(server: Any, errlog: Any = sys.stderr):
+        return bounded_stdio_client(
+            server,
+            errlog,
+            max_frame_bytes=MAX_MCP_STDIO_FRAME_BYTES,
+        )
+
+    mcp_sessions.stdio_client = bounded_adapter_stdio_client
+
+
+def _bounded_mcp_connection(raw_connection: dict[str, Any]) -> dict[str, Any]:
+    connection = dict(raw_connection)
+    transport = connection.get("transport")
+    if transport == "websocket":
+        raise ValueError("websocket MCP transport is not bounded")
+    if transport in {"sse", "http", "streamable-http", "streamable_http"}:
+        connection["httpx_client_factory"] = _bounded_http_client
+    return connection
+
+
+async def _discover_live_mcp_tools(
+    session: Any,
+    *,
+    server_name: str,
+    execution_session: Any,
+) -> list[BaseTool]:
+    from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
+
+    tools: list[BaseTool] = []
+    candidates_seen = 0
+    raw_schema_bytes = 0
+    cursor: str | None = None
+    while candidates_seen < MAX_MCP_TOOLS:
+        page = await session.list_tools(cursor=cursor)
+        for raw_tool in page.tools:
+            candidates_seen += 1
+            if candidates_seen > MAX_MCP_TOOLS:
+                break
+            try:
+                schema = raw_tool.inputSchema
+                _validate_schema_tree(schema)
+                schema_size = len(
+                    json.dumps(
+                        schema,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    ).encode()
+                )
+            except Exception:
+                continue
+            if schema_size > MAX_MCP_SCHEMA_BYTES:
+                continue
+            if raw_schema_bytes + schema_size > MAX_MCP_TOTAL_SCHEMA_BYTES:
+                return tools
+            tools.append(
+                convert_mcp_tool_to_langchain_tool(
+                    execution_session,
+                    raw_tool,
+                    server_name=server_name,
+                    tool_name_prefix=True,
+                )
+            )
+            raw_schema_bytes += schema_size
+        cursor = page.nextCursor
+        if not cursor:
+            break
+    return tools
+
+
+def _tools_from_persisted_descriptors(
+    server_name: str,
+    raw_connection: dict[str, Any],
+    descriptors: list[Any],
+) -> list[BaseTool]:
+    from langchain_mcp_adapters.tools import convert_mcp_tool_to_langchain_tool
+    from mcp.types import Tool
+
+    connection = _bounded_mcp_connection(raw_connection)
+    tools: list[BaseTool] = []
+    for descriptor in descriptors[:MAX_MCP_TOOLS]:
+        if not isinstance(descriptor, dict):
+            continue
+        raw_name = descriptor.get("raw_name")
+        schema = descriptor.get("args_schema")
+        if not isinstance(raw_name, str) or not isinstance(schema, dict):
+            continue
+        try:
+            _validate_schema_tree(schema)
+            raw_tool = Tool(
+                name=raw_name,
+                description=str(descriptor.get("description") or ""),
+                inputSchema=schema,
+            )
+            tool = convert_mcp_tool_to_langchain_tool(
+                None,
+                raw_tool,
+                connection=connection,
+                server_name=server_name,
+                tool_name_prefix=True,
+            )
+        except Exception:
+            continue
+        if tool.name == descriptor.get("name"):
+            tools.append(tool)
+    return tools
+
+
 @dataclass(frozen=True)
 class _SourceFile:
     """A potential on-disk MCP config file we'll try to read."""
 
     source: str
     path: Path
-    fmt: str  # "json" | "toml"
 
 
 @dataclass(frozen=True)
@@ -196,42 +791,9 @@ def _candidate_source_files(data_dir: Path | None) -> list[_SourceFile]:
     declarative and the source priority easy to read.
     """
     home = Path.home()
-    out: list[_SourceFile] = [
-        _SourceFile(SOURCE_SHEJANE, home / ".shejane" / "mcp-servers.json", "json"),
-    ]
+    out = [_SourceFile(SOURCE_SHEJANE, home / ".shejane" / "mcp-servers.json")]
     if data_dir is not None:
-        out.append(_SourceFile(SOURCE_DATA_DIR, data_dir / "mcp-servers.json", "json"))
-
-    # Claude Desktop — platform-specific install path.
-    if sys.platform == "darwin":
-        out.append(
-            _SourceFile(
-                SOURCE_CLAUDE_DESKTOP,
-                home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
-                "json",
-            )
-        )
-    elif sys.platform.startswith("linux"):
-        out.append(
-            _SourceFile(
-                SOURCE_CLAUDE_DESKTOP,
-                home / ".config" / "Claude" / "claude_desktop_config.json",
-                "json",
-            )
-        )
-    elif sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            out.append(
-                _SourceFile(
-                    SOURCE_CLAUDE_DESKTOP,
-                    Path(appdata) / "Claude" / "claude_desktop_config.json",
-                    "json",
-                )
-            )
-
-    out.append(_SourceFile(SOURCE_CURSOR, home / ".cursor" / "mcp.json", "json"))
-    out.append(_SourceFile(SOURCE_CODEX, home / ".codex" / "config.toml", "toml"))
+        out.append(_SourceFile(SOURCE_DATA_DIR, data_dir / "mcp-servers.json"))
     return out
 
 
@@ -245,47 +807,30 @@ def _read_config_file(src: _SourceFile) -> dict[str, Any]:
     try:
         if not src.path.is_file():
             return {}
-        if src.fmt == "json":
-            text = src.path.read_text(encoding="utf-8")
-            return json.loads(text)
-        if src.fmt == "toml":
-            return tomllib.loads(src.path.read_text(encoding="utf-8"))
+        return json.loads(src.path.read_text(encoding="utf-8"))
     except (OSError, PermissionError) as exc:
         log.debug("MCP source unreadable %s: %s", src.path, exc)
         return {}
-    except (json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         log.warning("MCP source malformed %s: %s", src.path, exc)
         return {}
     return {}
 
 
-def _extract_servers_map(raw: dict[str, Any], src: _SourceFile) -> dict[str, dict[str, Any]]:
+def _extract_servers_map(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Pull the server map out of one config file's parsed contents.
 
-    Different tools wrap their server lists differently:
-      - Claude Desktop / Cursor / our shejane file: top-level
-        `mcpServers` key, OR the bare map at the top level.
-      - Codex: top-level `mcp_servers` table (TOML naming convention).
-
-    We try the wrapped key first, then fall back to treating the whole
-    object as the map (so a user can drop a bare `{"foo": {...}}` into
-    `~/.shejane/mcp-servers.json` without ceremony).
+    Runtime accepts either the canonical top-level `mcpServers` key or a
+    bare map, so manually managed files stay simple.
     """
     if not isinstance(raw, dict):
         return {}
-    if src.source == SOURCE_CODEX:
-        servers = raw.get("mcp_servers")
-        if isinstance(servers, dict):
-            return servers
-        return {}
-    # JSON-format sources: prefer the conventional wrapper.
     servers = raw.get("mcpServers")
     if isinstance(servers, dict):
         return servers
     # Fallback: treat the whole object as the server map, but only if
     # every value looks like a server config (has `command` or `url`).
-    # Otherwise we'd misinterpret a plain `claude_desktop_config.json`
-    # with no `mcpServers` block as a giant server map.
+    # Otherwise unrelated top-level metadata could be misread as servers.
     if all(
         isinstance(v, dict) and ("command" in v or "url" in v)
         for v in raw.values()
@@ -300,13 +845,11 @@ def _normalize_entry(name: str, raw: Any) -> dict[str, Any] | None:
 
     Returns None if the entry is unusable (no transport-determining
     field). Always strips unknown keys so MultiServerMCPClient doesn't
-    choke on Claude-Desktop-specific extras like `disabled` or
-    `autoApprove`.
+    receive unsupported configuration metadata.
     """
     if not isinstance(raw, dict):
         return None
-    # Skip explicitly-disabled servers (Claude Desktop's `disabled: true`
-    # convention). User opted out, so don't load.
+    # Honor a disabled marker in manually managed Runtime configuration.
     if raw.get("disabled") is True:
         return None
 
@@ -336,8 +879,7 @@ def _normalize_entry(name: str, raw: Any) -> dict[str, Any] | None:
     if has_command:
         out["command"] = raw["command"]
         if isinstance(raw.get("args"), list):
-            # Coerce all args to strings — Claude Desktop sometimes has
-            # ints in there and the subprocess call would crash.
+            # Subprocess arguments must be strings.
             out["args"] = [str(a) for a in raw["args"]]
         if isinstance(raw.get("env"), dict):
             # All values must be strings for env. Drop None / non-strings.
@@ -367,13 +909,11 @@ def _disk_scan_enabled() -> bool:
 
 
 def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
-    """Walk every source in priority order and return normalized servers.
+    """Read Runtime-owned sources in priority order and normalize servers.
 
     Dedupes by `name` — the FIRST source that defines a given server
-    wins. This means a user who has the same server name in both their
-    `~/.shejane/mcp-servers.json` and Claude Desktop config will get
-    the shejane version, which is what we want (their explicit
-    override).
+    wins. The explicit environment override takes precedence over the
+    Runtime-owned files.
 
     Env override (`SHEJANE_LOCAL_MCP_SERVERS`) is treated as its own
     "source" at the head of the priority list. When the env var is
@@ -384,6 +924,8 @@ def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
     Disk scanning is suppressed when `SHEJANE_LOCAL_MCP_DISCOVERY` is
     `off` — used by the test suite via conftest.py to avoid loading the
     dev machine's real MCP configs.
+    Other clients' global configuration is intentionally ignored. Importing
+    an external configuration must be an explicit user action.
     """
     out: list[DiscoveredServer] = []
     seen: set[str] = set()
@@ -421,7 +963,7 @@ def discover_servers(data_dir: Path | None) -> list[DiscoveredServer]:
         raw_obj = _read_config_file(src)
         if not raw_obj:
             continue
-        servers_map = _extract_servers_map(raw_obj, src)
+        servers_map = _extract_servers_map(raw_obj)
         for name, raw_entry in servers_map.items():
             if name in seen:
                 continue
@@ -477,24 +1019,6 @@ def _sensitive_values_from_config(config: dict[str, dict[str, Any]]) -> tuple[st
         if len(variant) >= 4
     }
     return tuple(sorted(values, key=len, reverse=True))
-
-
-async def build_validated_mcp_tools(
-    data_dir: Path | None,
-    *,
-    disabled_servers: set[str] | None = None,
-    reserved_names: set[str] | None = None,
-) -> list[ValidatedMCPTool]:
-    """Load and validate MCP tools against the exact config used to connect."""
-    config = _load_mcp_config(data_dir)
-    if disabled_servers:
-        config = {name: cfg for name, cfg in config.items() if name not in disabled_servers}
-    tools = await _build_mcp_tools_from_config(config)
-    return validate_mcp_tools(
-        tools,
-        sensitive_values=_sensitive_values_from_config(config),
-        reserved_names=reserved_names,
-    )
 
 
 def validate_mcp_tools(

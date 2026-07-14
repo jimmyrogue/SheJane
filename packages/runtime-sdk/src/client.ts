@@ -629,19 +629,8 @@ export async function listInstalledSkills(
   }
 }
 
-/** Discover MCP servers configured on the user's machine.
- *
- *  We never install or manage MCP servers — this just walks the same
- *  config files that Claude Desktop, Cursor, and Codex already write,
- *  plus our own canonical `~/.shejane/mcp-servers.json`. Whatever's
- *  there gets surfaced so the user can see what their agent has
- *  access to. The full env values are deliberately NOT returned
- *  (would leak secrets); only `env_keys` is exposed.
- *
- *  `sources_scanned` lists every source label we attempted to read,
- *  letting the UI render empty-state hints like "No Cursor config
- *  found at ~/.cursor/mcp.json" instead of silently hiding the
- *  section. */
+/** List MCP Servers explicitly configured for this Runtime.
+ *  Secret values are never returned; only `env_keys` is exposed. */
 export async function listMcpServers(
   config: RuntimeClientConfig,
   fetcher: Fetcher = fetch,

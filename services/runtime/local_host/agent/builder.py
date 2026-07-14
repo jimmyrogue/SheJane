@@ -74,7 +74,11 @@ from ..middleware.tool_result_retry import ToolResultRetryMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware
 from ..store.sqlite import LocalStore
-from ..tools.mcp import build_validated_mcp_tools
+from ..tools.mcp import (
+    MCP_TOOL_SEARCH_THRESHOLD,
+    MCPToolCatalog,
+    make_mcp_tool_search,
+)
 from ..tools.registry import build_tools, tool_definition
 from ..tools.runtime import RuntimeToolProxy
 from .backends import ReadOnlyBackend, ReadOnlyFileBackend
@@ -319,6 +323,8 @@ async def open_store(settings: Settings | None = None) -> tuple[BaseStore, Async
 
 def _custom_middleware(
     settings: Settings,
+    *,
+    deferred_tool_names: set[str] | None = None,
 ) -> list[AgentMiddleware]:
     """Our middleware that deepagents doesn't auto-add.
 
@@ -335,7 +341,7 @@ def _custom_middleware(
     middleware: list[AgentMiddleware] = [
         RuntimePromptMiddleware(),
         RuntimeModelMiddleware(),
-        ToolVisibilityMiddleware(),
+        ToolVisibilityMiddleware(deferred_tool_names=deferred_tool_names),
         OutboundPolicyMiddleware(),
         InputGuardMiddleware(mode=settings.input_guard_mode),  # P1
         # Plan & Execute mode (off | always | auto; auto-skips trivial
@@ -552,6 +558,7 @@ async def build_agent(
     skills_enabled: bool = True,
     mcp_enabled: bool = True,
     mcp_disabled_servers: set[str] | None = None,
+    mcp_catalog: MCPToolCatalog | None = None,
     settings: Settings | None = None,
     model_binding: dict[str, Any] | None = None,
     model_api_key: str | None = None,
@@ -594,7 +601,7 @@ async def build_agent(
                          no skill instructions get injected into the prompt
                          and the agent doesn't see them. Mirrors the
                          memory toggle pattern.
-        mcp_enabled:     When False, skips MCP discovery + tool loading
+        mcp_enabled:     When False, omits MCP tools from this execution
                          entirely so no MCP tools land in the agent's tool
                          list. The discovered servers are still reported
                          via GET /local/v1/mcp-servers — only their
@@ -602,11 +609,13 @@ async def build_agent(
                          memory + skills.
         mcp_disabled_servers:
                          Per-server opt-out. Names in this set are
-                         filtered before MultiServerMCPClient even sees
-                         the config, so we never spawn the subprocess.
+                         filtered before the Runtime MCP catalog is read.
                          Driven by the per-row switches in the client's
                          MCP tab; layered ON TOP of mcp_enabled — if the
                          master flag is off, this set is moot.
+        mcp_catalog:     Runtime-owned MCP directory and Server Supervisor.
+                         Runs acquire a fixed snapshot lease through the
+                         execution resource stack.
         settings:        Override settings (tests).
         steering_emit:   Optional async event sink used by SteeringMiddleware
                          to mirror injected instructions onto the run SSE
@@ -618,19 +627,27 @@ async def build_agent(
         raise RuntimeError("no-workspace execution requires a resource stack")
 
     tools = await build_tools(
-        include_mcp=False,
         browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
         browser_headless=settings.browser_headless,
     )
-    dynamic_tools = (
-        await build_validated_mcp_tools(
-            settings.data_dir,
+    catalog = mcp_catalog or MCPToolCatalog(settings.data_dir)
+    if mcp_catalog is None and resource_stack is not None:
+        resource_stack.push_async_callback(catalog.close)
+    if mcp_enabled and resource_stack is not None:
+        dynamic_tools = await resource_stack.enter_async_context(
+            catalog.acquire_tools(
+                disabled_servers=mcp_disabled_servers,
+                reserved_names={tool.name for tool in tools} | _DEEPAGENTS_TOOL_NAMES,
+            )
+        )
+    elif mcp_enabled:
+        dynamic_tools = await catalog.get_tools(
             disabled_servers=mcp_disabled_servers,
             reserved_names={tool.name for tool in tools} | _DEEPAGENTS_TOOL_NAMES,
         )
-        if mcp_enabled
-        else []
-    )
+    else:
+        dynamic_tools = []
+    mcp_tool_names = {item.name for item in dynamic_tools}
     tools.extend(
         RuntimeToolProxy.from_tool(
             item.tool,
@@ -639,6 +656,11 @@ async def build_agent(
         )
         for item in dynamic_tools
     )
+    deferred_tool_names = (
+        mcp_tool_names if len(mcp_tool_names) >= MCP_TOOL_SEARCH_THRESHOLD else set()
+    )
+    if deferred_tool_names:
+        tools.append(make_mcp_tool_search([item.tool for item in dynamic_tools]))
     if not memory_enabled:
         tools = [t for t in tools if not t.name.startswith("memory.")]
 
@@ -693,14 +715,21 @@ async def build_agent(
         memory_sources=memory_arg,
     )
 
-    middleware = _custom_middleware(settings)
+    middleware = _custom_middleware(
+        settings,
+        deferred_tool_names=deferred_tool_names,
+    )
     middleware.insert(3, SteeringMiddleware())
 
     if extra_middleware:
         middleware.extend(extra_middleware)
 
     subagents_arg = (
-        build_subagents(main_tools=tools, main_model=definition_model)
+        build_subagents(
+            main_tools=tools,
+            main_model=definition_model,
+            deferred_tool_names=deferred_tool_names,
+        )
         if settings.enable_subagents
         else None
     )

@@ -70,18 +70,7 @@ export interface paths {
         };
         /**
          * List Mcp Servers
-         * @description Catalog of every MCP server we discovered across the user's
-         *     machine. Pure read — we never start, install, or modify these
-         *     servers. The user manages them through whatever tool they
-         *     prefer (Claude Desktop, Cursor, Codex, or our own
-         *     `~/.shejane/mcp-servers.json`), and the daemon picks them up
-         *     on the next agent boot.
-         *
-         *     `sources_scanned` reports the source labels we attempted to
-         *     read (regardless of whether the file existed or had servers),
-         *     so the UI can render section headers like "Cursor — no
-         *     config found at ~/.cursor/mcp.json" instead of silently
-         *     hiding the section.
+         * @description List MCP Servers explicitly owned by this Runtime.
          */
         get: operations["list_mcp_servers_local_v1_mcp_servers_get"];
         put?: never;
@@ -1789,10 +1778,7 @@ export interface components {
         };
         /**
          * McpServerCatalog
-         * @description GET /local/v1/mcp-servers — the full list of discovered servers
-         *     plus the set of sources we scanned. `sources` lets the UI render
-         *     empty-state hints like "no Claude Desktop config found" even when
-         *     no server came from there.
+         * @description GET /local/v1/mcp-servers — Runtime-owned MCP Servers and sources.
          */
         McpServerCatalog: {
             /** Servers */
@@ -1812,14 +1798,14 @@ export interface components {
         };
         /**
          * McpServerInfo
-         * @description One MCP server we discovered on the user's machine.
+         * @description One MCP Server configured for this Runtime.
          *
          *     `name` is the unique key the user (or installer tool) gave it.
          *     `transport` is the normalized transport — `stdio` / `streamable_http`
          *     / `sse` / `websocket`. `command` / `args` / `url` / `env_keys` are
          *     descriptive only — we never echo env *values* (could be secrets).
-         *     `source` is one of `shejane` / `claude-desktop` / `cursor` / `codex`
-         *     / `env` — used by the UI to group servers by provenance.
+         *     `source` is one of `shejane` / `shejane-legacy` / `env` — used by
+         *     the UI to group Runtime-owned configuration by provenance.
          *     `source_path` is the absolute path of the config file the entry was
          *     read from, displayed in the settings panel so the user knows where
          *     to go edit it.
@@ -1839,12 +1825,25 @@ export interface components {
              * @default []
              */
             env_keys: string[];
+            /** Error Type */
+            error_type?: string | null;
             /** Name */
             name: string;
             /** Source */
             source: string;
             /** Source Path */
             source_path: string;
+            /**
+             * Status
+             * @default idle
+             * @enum {string}
+             */
+            status: "idle" | "ready" | "error";
+            /**
+             * Tool Count
+             * @default 0
+             */
+            tool_count: number;
             /** Transport */
             transport: string;
             /** Url */
@@ -1854,8 +1853,7 @@ export interface components {
          * McpServerWriteRequest
          * @description Create/update one SheJane-managed MCP server.
          *
-         *     This writes only `~/.shejane/mcp-servers.json`; discovered Claude
-         *     Desktop / Cursor / Codex entries remain read-only.
+         *     This writes only `~/.shejane/mcp-servers.json`.
          */
         McpServerWriteRequest: {
             /**

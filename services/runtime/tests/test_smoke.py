@@ -511,7 +511,7 @@ def test_async_build_tools_returns_full_set(tmp_path: Path) -> None:
 
     async def run() -> list[str]:
         reset_settings_for_tests(data_dir=tmp_path)
-        tools = await build_tools(include_mcp=False)
+        tools = await build_tools()
         return [t.name for t in tools]
 
     names = asyncio.run(run())

@@ -39,6 +39,8 @@ from langchain_core.tools import BaseTool
 
 from ..middleware.tool_execution import ToolExecutionMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
+from ..middleware.tool_visibility import ToolVisibilityMiddleware
+from ..tools.mcp import MCP_TOOL_SEARCH_NAME
 from .context_builder import identity_safety_prompt
 
 log = logging.getLogger("local_host.agent.subagents")
@@ -87,6 +89,7 @@ def build_subagents(
     main_tools: list[BaseTool],
     main_model: str | BaseChatModel,
     agent_roots: Sequence[Path] | None = None,
+    deferred_tool_names: set[str] | None = None,
 ) -> list[SubAgent]:
     """Assemble the built-in + configured subagent roster.
 
@@ -118,6 +121,16 @@ def build_subagents(
     by_name: dict[str, SubAgent] = {}
     for subagent in [*subagents, *configured]:
         by_name[subagent["name"]] = subagent
+    if deferred_tool_names:
+        for subagent in by_name.values():
+            tool_names = {tool.name for tool in subagent.get("tools", [])}
+            if MCP_TOOL_SEARCH_NAME in tool_names:
+                subagent["middleware"] = [
+                    ToolVisibilityMiddleware(
+                        deferred_tool_names=deferred_tool_names & tool_names,
+                    ),
+                    *subagent.get("middleware", []),
+                ]
     return list(by_name.values())
 
 

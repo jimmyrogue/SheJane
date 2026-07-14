@@ -18,6 +18,7 @@ Tables in this file:
 - `local_scheduled_runs` — local-only delayed run requests
 - `local_model_providers` — non-secret BYOK provider configuration
 - `local_runtime_settings` — persisted defaults for future runs
+- `local_mcp_catalog` — credential-free MCP tool metadata and refresh state
 - `local_model_calls` — durable model-call reservations and usage receipts
 - `local_assistant_drafts` — latest complete top-level assistant model round
 """
@@ -106,6 +107,17 @@ CREATE TABLE IF NOT EXISTS local_runtime_settings (
     settings_json TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS local_mcp_catalog (
+    server_name TEXT PRIMARY KEY,
+    config_fingerprint TEXT NOT NULL,
+    tools_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL CHECK (status IN ('ready', 'error', 'stale')),
+    error_type TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    last_success_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS local_runs (
@@ -581,6 +593,19 @@ def _json_payload(raw: Any) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _decode_mcp_catalog_row(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    record = dict(row)
+    try:
+        tools = json.loads(str(record.pop("tools_json", "[]")))
+    except (json.JSONDecodeError, TypeError):
+        tools = []
+    record["tools"] = tools if isinstance(tools, list) else []
+    record["version"] = int(record["version"])
+    return record
 
 
 def _decode_plan_approval_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -1738,6 +1763,67 @@ class LocalStore:
             "version": int(row["version"]),
             "updated_at": str(row["updated_at"]),
         }
+
+    async def get_mcp_catalog(self, server_name: str) -> dict[str, Any] | None:
+        row = await (
+            await self._conn.execute(
+                "SELECT * FROM local_mcp_catalog WHERE server_name = ?",
+                (server_name,),
+            )
+        ).fetchone()
+        return _decode_mcp_catalog_row(row)
+
+    async def list_mcp_catalogs(self) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute("SELECT * FROM local_mcp_catalog ORDER BY server_name")
+        ).fetchall()
+        return [record for row in rows if (record := _decode_mcp_catalog_row(row))]
+
+    async def upsert_mcp_catalog(
+        self,
+        *,
+        server_name: str,
+        config_fingerprint: str,
+        tools: list[dict[str, Any]],
+        status: str,
+        error_type: str | None,
+    ) -> dict[str, Any]:
+        if status not in {"ready", "error", "stale"}:
+            raise ValueError("invalid MCP catalog status")
+        now = _now()
+        cursor = await self._conn.execute(
+            "INSERT INTO local_mcp_catalog "
+            "(server_name, config_fingerprint, tools_json, status, error_type, "
+            "version, updated_at, last_success_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?) "
+            "ON CONFLICT(server_name) DO UPDATE SET "
+            "config_fingerprint = excluded.config_fingerprint, "
+            "tools_json = excluded.tools_json, status = excluded.status, "
+            "error_type = excluded.error_type, version = local_mcp_catalog.version + 1, "
+            "updated_at = excluded.updated_at, "
+            "last_success_at = COALESCE(excluded.last_success_at, local_mcp_catalog.last_success_at) "
+            "RETURNING *",
+            (
+                server_name,
+                config_fingerprint,
+                json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                status,
+                error_type,
+                now,
+                now if status == "ready" else None,
+            ),
+        )
+        row = await cursor.fetchone()
+        await self._conn.commit()
+        record = _decode_mcp_catalog_row(row)
+        assert record is not None
+        return record
+
+    async def delete_mcp_catalog(self, server_name: str) -> None:
+        await self._conn.execute(
+            "DELETE FROM local_mcp_catalog WHERE server_name = ?",
+            (server_name,),
+        )
+        await self._conn.commit()
 
     async def list_model_providers(self, *, principal_id: str) -> list[dict[str, Any]]:
         rows = await (
