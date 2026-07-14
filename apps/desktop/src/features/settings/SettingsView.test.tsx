@@ -15,7 +15,7 @@ const settings: Required<AgentSettings> = {
 describe('SettingsView', () => {
   afterEach(cleanup)
 
-  it('shows Runtime and BYOK model settings without an account section', () => {
+  it('keeps settings focused on models, agent, general, and local data', () => {
     render(
       <I18nProvider>
         <SettingsView
@@ -27,8 +27,16 @@ describe('SettingsView', () => {
       </I18nProvider>,
     )
 
-    expect(screen.getAllByText('Runtime')).not.toHaveLength(0)
     expect(screen.getAllByText('模型供应商')).not.toHaveLength(0)
+    expect(screen.getByRole('switch', { name: '记忆' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '子代理' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: '浏览器无头' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '输入防护' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Runtime' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '运行' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '推理质量' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Skill' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'MCP 服务' })).not.toBeInTheDocument()
     expect(screen.queryByText('账户')).not.toBeInTheDocument()
     expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
   })

@@ -66,7 +66,9 @@ def test_memory_instruction_sources_are_read_only_backend_routes(tmp_path: Path)
         memory_sources=[str(agents_md), str(external_agents_md)],
     )
 
-    assert "trusted instructions" in backend.read(str(agents_md.resolve()))
+    trusted = backend.read(str(agents_md.resolve()))
+    assert trusted.error is None
+    assert trusted.file_data == {"content": "trusted instructions", "encoding": "utf-8"}
     assert (
         backend.edit(
             str(agents_md.resolve()),
@@ -79,10 +81,12 @@ def test_memory_instruction_sources_are_read_only_backend_routes(tmp_path: Path)
         backend.edit("/AGENTS.md", "trusted", "tampered").error
         == "read-only source: edits are not allowed"
     )
-    matches = backend.grep_raw("SECRET_NEIGHBOR", path="/")
-    assert isinstance(matches, list)
-    assert not any(item.get("text") == "SECRET_NEIGHBOR" for item in matches)
-    assert "SECRET_NEIGHBOR" not in backend.read(str(external_sibling.resolve()))
+    grep_result = backend.grep("SECRET_NEIGHBOR", path="/")
+    assert grep_result.error is None
+    assert not any(item.get("text") == "SECRET_NEIGHBOR" for item in grep_result.matches or [])
+    denied = backend.read(str(external_sibling.resolve()))
+    assert denied.file_data is None
+    assert denied.error is not None
     assert backend.write(str((workspace / "workspace-note.md").resolve()), "allowed").error is None
 
 

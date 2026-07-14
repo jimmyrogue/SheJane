@@ -9,8 +9,10 @@ from a client SSE connection.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
+import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import Any
 
@@ -27,6 +29,8 @@ from langchain_core.messages import (
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from langgraph.constants import TAG_NOSTREAM
 from pydantic import Field
 
 from ..middleware.tool_visibility import visible_tools_for_messages
@@ -81,17 +85,19 @@ class LedgerChatModel(BaseChatModel):
     def _provider_model(
         self,
         messages: list[BaseMessage],
-    ) -> tuple[BaseChatModel, int]:
+    ) -> tuple[BaseChatModel, int, dict[str, str]]:
         if not self.bound_tools:
-            return self.delegate, self.tool_schema_tokens
+            return self.delegate, self.tool_schema_tokens, {}
         visible_tools = visible_tools_for_messages(self.bound_tools, messages)
+        provider_tools, aliases, choices = _provider_tools(visible_tools)
         return (
             self.delegate.bind_tools(
-                visible_tools,
-                tool_choice=self.bound_tool_choice,
+                provider_tools,
+                tool_choice=choices.get(self.bound_tool_choice, self.bound_tool_choice),
                 **self.bound_tool_kwargs,
             ),
             _estimate_tool_tokens(visible_tools),
+            aliases,
         )
 
     async def _reserve(self) -> dict[str, Any]:
@@ -112,16 +118,19 @@ class LedgerChatModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        provider_model, tool_schema_tokens = self._provider_model(messages)
+        provider_model, tool_schema_tokens, aliases = self._provider_model(messages)
         messages = self._bounded_messages(messages, tool_schema_tokens=tool_schema_tokens)
         receipt = await self._reserve()
         output_started = False
         try:
-            message = await provider_model.ainvoke(
-                messages,
-                stop=stop,
-                config={"callbacks": []},
-                **kwargs,
+            message = _restore_tool_names(
+                await provider_model.ainvoke(
+                    messages,
+                    stop=stop,
+                    config={"callbacks": [], "tags": [TAG_NOSTREAM]},
+                    **kwargs,
+                ),
+                aliases,
             )
             if _has_visible_output(message):
                 await self.store.mark_model_call_output(
@@ -156,19 +165,20 @@ class LedgerChatModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        provider_model, tool_schema_tokens = self._provider_model(messages)
+        provider_model, tool_schema_tokens, aliases = self._provider_model(messages)
         messages = self._bounded_messages(messages, tool_schema_tokens=tool_schema_tokens)
         receipt = await self._reserve()
         output_started = False
         usage: dict[str, int | None] = {}
         provider_request_id: str | None = None
         try:
-            async for message in provider_model.astream(
+            async for provider_message in provider_model.astream(
                 messages,
                 stop=stop,
-                config={"callbacks": []},
+                config={"callbacks": [], "tags": [TAG_NOSTREAM]},
                 **kwargs,
             ):
+                message = _restore_tool_names(provider_message, aliases)
                 if not output_started and _has_visible_output(message):
                     await self.store.mark_model_call_output(
                         run_id=self.run_id,
@@ -243,6 +253,63 @@ class LedgerChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
         raise RuntimeError("LedgerChatModel is async-only")
+
+
+_SAFE_TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _provider_tools(
+    tools: Sequence[Any],
+) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
+    schemas: list[dict[str, Any]] = []
+    aliases: dict[str, str] = {}
+    choices: dict[str, str] = {}
+    for tool in tools:
+        schema = convert_to_openai_tool(tool)
+        function = schema.get("function")
+        if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+            schemas.append(schema)
+            continue
+        original = function["name"]
+        if _SAFE_TOOL_NAME.fullmatch(original):
+            wire_name = original
+        else:
+            stem = re.sub(r"[^a-zA-Z0-9_-]+", "_", original).strip("_") or "tool"
+            wire_name = f"{stem[:55]}_{hashlib.sha256(original.encode()).hexdigest()[:8]}"
+        schemas.append({**schema, "function": {**function, "name": wire_name}})
+        aliases[wire_name] = original
+        choices[original] = wire_name
+    return schemas, aliases, choices
+
+
+def _restore_tool_names(message: BaseMessage, aliases: dict[str, str]) -> BaseMessage:
+    if not aliases or not isinstance(message, (AIMessage, AIMessageChunk)):
+        return message
+    updates: dict[str, Any] = {}
+    for field in ("tool_calls", "invalid_tool_calls", "tool_call_chunks"):
+        calls = getattr(message, field, None)
+        if calls:
+            updates[field] = [
+                {**call, "name": aliases.get(call.get("name"), call.get("name"))} for call in calls
+            ]
+    raw_calls = message.additional_kwargs.get("tool_calls")
+    if isinstance(raw_calls, list):
+        normalized = []
+        for call in raw_calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            normalized.append(
+                {
+                    **call,
+                    "function": {
+                        **function,
+                        "name": aliases.get(function.get("name"), function.get("name")),
+                    },
+                }
+                if isinstance(call, dict) and isinstance(function, dict)
+                else call
+            )
+        updates["additional_kwargs"] = {**message.additional_kwargs, "tool_calls": normalized}
+    return message.model_copy(update=updates)
 
 
 def _has_visible_output(message: BaseMessage) -> bool:

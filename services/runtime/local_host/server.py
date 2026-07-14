@@ -27,6 +27,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from langchain_core.messages import ToolMessage
+from langgraph.graph import add_messages
 from sse_starlette.sse import EventSourceResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -2643,7 +2644,7 @@ async def _latest_checkpoint_summary(
             "run_id": run_id,
             "step": step if step is not None else 0,
             "reason": reason or "checkpoint",
-            "messages_count": _checkpoint_messages_count(checkpoint),
+            "messages_count": await _checkpoint_messages_count(checkpointer, item),
             "created_at": _first_string(checkpoint.get("ts"), metadata.get("created_at")),
         }
     except Exception as exc:
@@ -2681,14 +2682,30 @@ async def _run_checkpoint_tuple(checkpointer: Any, run: dict[str, Any]) -> Any |
     return None
 
 
-def _checkpoint_messages_count(checkpoint: dict[str, Any]) -> int:
+async def _checkpoint_messages_count(checkpointer: Any, item: Any) -> int:
+    checkpoint = item.checkpoint if isinstance(item.checkpoint, dict) else {}
     channel_values = checkpoint.get("channel_values")
     if not isinstance(channel_values, dict):
         return 0
     messages = channel_values.get("messages")
     if isinstance(messages, list):
         return len(messages)
-    return 0
+
+    get_history = getattr(checkpointer, "aget_delta_channel_history", None)
+    if not callable(get_history) or "messages" not in checkpoint.get("channel_versions", {}):
+        return 0
+    history = await get_history(config=item.config, channels=["messages"])
+    entry = history.get("messages") if isinstance(history, dict) else None
+    if not isinstance(entry, dict):
+        return 0
+    seed = entry.get("seed", [])
+    current = getattr(seed, "value", seed)
+    if not isinstance(current, list):
+        return 0
+    for write in entry.get("writes", []):
+        if isinstance(write, (list, tuple)) and len(write) == 3:
+            current = add_messages(current, write[2])
+    return len(current)
 
 
 def _diagnostics_reflection(value: Any) -> dict[str, Any] | None:

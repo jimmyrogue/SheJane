@@ -11,7 +11,6 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -24,15 +23,9 @@ import { useI18n, type Locale } from '@/shared/i18n/i18n'
 import type { AdvancedAgentSettings, AgentSettings, LocalHostConfig } from '@/shared/local-host/client'
 import { ModelProvidersSettings } from './ModelProvidersSettings'
 
-type SettingsSectionID = 'runtime' | 'models' | 'agent' | 'run' | 'quality' | 'capability' | 'general' | 'data'
+type SettingsSectionID = 'models' | 'agent' | 'general' | 'data'
 
 const SETTINGS_SECTION_TOP_OFFSET = 72
-
-const runFields = [
-  ['maxModelCalls', 1, 100, '20'],
-  ['maxToolRetries', 0, 5, '2'],
-  ['researchSearchLimit', 1, 20, '3'],
-] as const
 
 function SettingRow({
   label,
@@ -98,123 +91,6 @@ function SettingsSection({
   )
 }
 
-type RuntimeConnectionSummary = Awaited<ReturnType<NonNullable<NonNullable<Window['shejaneDesktop']>['runtimeConnection']>['get']>>
-
-function RuntimeConnectionSettings() {
-  const { t } = useI18n()
-  const bridge = window.shejaneDesktop?.runtimeConnection
-  const [current, setCurrent] = useState<RuntimeConnectionSummary>()
-  const [mode, setMode] = useState<'bundled' | 'external-local'>('bundled')
-  const [baseURL, setBaseURL] = useState('http://127.0.0.1:17371')
-  const [token, setToken] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!bridge) return
-    let cancelled = false
-    void bridge.get().then((connection) => {
-      if (cancelled) return
-      setCurrent(connection)
-      setMode(connection.mode)
-      if (connection.baseURL) setBaseURL(connection.baseURL)
-    }).catch((caught) => {
-      if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [bridge])
-
-  const managedByEnvironment = current?.source === 'environment'
-
-  async function saveConnection() {
-    if (!bridge || managedByEnvironment) return
-    setSaving(true)
-    setError('')
-    try {
-      await bridge.set(mode === 'bundled'
-        ? { mode: 'bundled' }
-        : {
-            mode: 'external-local',
-            baseURL,
-            ...(token.trim() ? { token: token.trim() } : {}),
-          })
-      setToken('')
-      await bridge.restartApp()
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-      setSaving(false)
-    }
-  }
-
-  if (!bridge) {
-    return <SettingRow label={t('settings.runtime.unavailable')} />
-  }
-
-  return (
-    <>
-      <SettingRow
-        label={current?.state === 'ready' ? t('settings.runtime.ready') : t('settings.runtime.offline')}
-        hint={managedByEnvironment ? t('settings.runtime.environment') : current?.error || error || undefined}
-      >
-        <span className="settings-row-value">{current?.mode === 'external-local' ? t('settings.runtime.externalLocal') : t('settings.runtime.bundled')}</span>
-      </SettingRow>
-      <SettingRow label={t('settings.runtime.mode')}>
-        <Select
-          value={mode}
-          disabled={managedByEnvironment || saving}
-          onValueChange={(value) => setMode(value as 'bundled' | 'external-local')}
-        >
-          <SelectTrigger className="settings-select-trigger" aria-label={t('settings.runtime.mode')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="bundled">{t('settings.runtime.bundled')}</SelectItem>
-            <SelectItem value="external-local">{t('settings.runtime.externalLocal')}</SelectItem>
-          </SelectContent>
-        </Select>
-      </SettingRow>
-      {mode === 'external-local' ? (
-        <>
-          <SettingRow label={t('settings.runtime.url')} hint={t('settings.runtime.urlHint')}>
-            <Input
-              type="url"
-              className="settings-text-input"
-              aria-label={t('settings.runtime.url')}
-              disabled={managedByEnvironment || saving}
-              value={baseURL}
-              onChange={(event) => setBaseURL(event.target.value)}
-            />
-          </SettingRow>
-          <SettingRow label={t('settings.runtime.token')}>
-            <Input
-              type="password"
-              className="settings-text-input"
-              aria-label={t('settings.runtime.token')}
-              autoComplete="off"
-              disabled={managedByEnvironment || saving}
-              placeholder={current?.tokenConfigured ? t('settings.runtime.tokenSaved') : t('settings.runtime.tokenRequired')}
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </SettingRow>
-        </>
-      ) : null}
-      <SettingRow label={error || current?.error || t('settings.runtime.applyHint')}>
-        <button
-          type="button"
-          className="settings-primary-button"
-          disabled={managedByEnvironment || saving}
-          onClick={() => void saveConnection()}
-        >
-          {saving ? t('settings.runtime.saving') : t('settings.runtime.save')}
-        </button>
-      </SettingRow>
-    </>
-  )
-}
-
 export function SettingsView({
   isDesktop = true,
   agentSettings,
@@ -246,8 +122,6 @@ export function SettingsView({
   const [clearingMemory, setClearingMemory] = useState(false)
 
   const memoryEnabled = (agentSettings.memory ?? 'on') === 'on'
-  const skillsEnabled = (agentSettings.skills ?? 'on') === 'on'
-  const mcpEnabled = (agentSettings.mcp ?? 'on') === 'on'
   const adv: AdvancedAgentSettings = agentSettings.advanced ?? {}
   const setAdv = (patch: Partial<AdvancedAgentSettings>) =>
     onAgentSettingsChange({ ...agentSettings, advanced: { ...adv, ...patch } })
@@ -256,18 +130,10 @@ export function SettingsView({
     () => [
       ...(isDesktop
         ? [
-            { id: 'runtime' as const, label: t('settings.group.runtime') },
             { id: 'models' as const, label: t('settings.group.models') },
           ]
         : []),
       { id: 'agent', label: t('settings.group.agent') },
-      ...(isDesktop
-        ? [
-            { id: 'run' as const, label: t('sidebar.agentSettings.advanced.group.run') },
-            { id: 'quality' as const, label: t('sidebar.agentSettings.advanced.group.quality') },
-            { id: 'capability' as const, label: t('sidebar.agentSettings.advanced.group.capability') },
-          ]
-        : []),
       { id: 'general', label: t('settings.group.general') },
       { id: 'data', label: t('settings.group.dataSecurity') },
     ],
@@ -364,16 +230,6 @@ export function SettingsView({
             <div className="settings-main">
               {isDesktop ? (
                 <SettingsSection
-                  id="runtime"
-                  title={t('settings.group.runtime')}
-                  note={t('settings.runtime.note')}
-                >
-                  <RuntimeConnectionSettings />
-                </SettingsSection>
-              ) : null}
-
-              {isDesktop ? (
-                <SettingsSection
                   id="models"
                   title={t('settings.group.models')}
                   note={t('settings.models.note')}
@@ -397,83 +253,6 @@ export function SettingsView({
                 </SettingRow>
                 {isDesktop ? (
                   <>
-                    <SettingRow label={t('sidebar.agentSettings.skills.label')} hint={t('sidebar.agentSettings.skills.hint')}>
-                      <Switch
-                        checked={skillsEnabled}
-                        aria-label={t('sidebar.agentSettings.skills.label')}
-                        onCheckedChange={(checked) =>
-                          onAgentSettingsChange({ ...agentSettings, skills: checked ? 'on' : 'off' })
-                        }
-                      />
-                    </SettingRow>
-                    <SettingRow label={t('sidebar.agentSettings.mcp.label')} hint={t('sidebar.agentSettings.mcp.hint')}>
-                      <Switch
-                        checked={mcpEnabled}
-                        aria-label={t('sidebar.agentSettings.mcp.label')}
-                        onCheckedChange={(checked) =>
-                          onAgentSettingsChange({ ...agentSettings, mcp: checked ? 'on' : 'off' })
-                        }
-                      />
-                    </SettingRow>
-                  </>
-                ) : null}
-              </SettingsSection>
-
-              {isDesktop ? (
-                <>
-                  <SettingsSection
-                    id="run"
-                    title={t('sidebar.agentSettings.advanced.group.run')}
-                    note={t('sidebar.agentSettings.advanced.description')}
-                  >
-                    {runFields.map(([key, min, max, ph]) => (
-                      <SettingRow
-                        key={key}
-                        label={t(`sidebar.agentSettings.advanced.${key}.label`)}
-                        hint={t(`sidebar.agentSettings.advanced.${key}.hint`)}
-                      >
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          min={min}
-                          max={max}
-                          className="settings-number-input"
-                          disabled={!advancedSettingsReady}
-                          aria-label={t(`sidebar.agentSettings.advanced.${key}.label`)}
-                          placeholder={ph}
-                          value={(adv[key] as number | undefined) ?? ''}
-                          onChange={(e) => {
-                            const n = Number(e.target.value)
-                            setAdv({ [key]: e.target.value === '' || !Number.isFinite(n) ? undefined : n })
-                          }}
-                        />
-                      </SettingRow>
-                    ))}
-                  </SettingsSection>
-
-                  <SettingsSection id="quality" title={t('sidebar.agentSettings.advanced.group.quality')}>
-                    <SettingRow label={t('sidebar.agentSettings.advanced.planFirst.label')} hint={t('sidebar.agentSettings.advanced.planFirst.hint')}>
-                      <Select
-                        disabled={!advancedSettingsReady}
-                        value={adv.planFirst ?? '__default__'}
-                        onValueChange={(value) =>
-                          setAdv({ planFirst: value === '__default__' ? undefined : (value as 'off' | 'auto' | 'always') })
-                        }
-                      >
-                        <SelectTrigger className="settings-select-trigger" aria-label={t('sidebar.agentSettings.advanced.planFirst.label')}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__default__">{t('sidebar.agentSettings.advanced.default')}</SelectItem>
-                          <SelectItem value="off">Off</SelectItem>
-                          <SelectItem value="auto">Auto</SelectItem>
-                          <SelectItem value="always">Always</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </SettingRow>
-                  </SettingsSection>
-
-                  <SettingsSection id="capability" title={t('sidebar.agentSettings.advanced.group.capability')}>
                     <SettingRow label={t('sidebar.agentSettings.advanced.subagents.label')} hint={t('sidebar.agentSettings.advanced.subagents.hint')}>
                       <Switch
                         disabled={!advancedSettingsReady}
@@ -509,9 +288,9 @@ export function SettingsView({
                         </SelectContent>
                       </Select>
                     </SettingRow>
-                  </SettingsSection>
-                </>
-              ) : null}
+                  </>
+                ) : null}
+              </SettingsSection>
 
               <SettingsSection id="general" title={t('settings.group.general')}>
                 <SettingRow label={t('settings.language')}>

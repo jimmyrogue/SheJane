@@ -140,9 +140,9 @@ interface LocalHarnessRunOptions {
   replaceFromClientId?: string
 }
 
-// v8 stores only Desktop-owned per-run capability choices. Advanced defaults
-// are authoritative in Runtime SQLite and are loaded through its settings API.
-const agentSettingsStorageKey = 'shejane.agentSettings.v8'
+// Skill and MCP discovery are always available. Desktop stores only the user
+// choices that still exist: memory and individually disabled MCP servers.
+const agentSettingsStorageKey = 'shejane.agentSettings.v9'
 // Concrete Runtime model selection. Stale values are reconciled against the
 // Runtime catalog after connection.
 const chatModeStorageKey = 'shejane.chatMode.v2'
@@ -230,11 +230,9 @@ function readAgentSettings(): Required<AgentSettings> {
     }
     const parsed = JSON.parse(raw) as Partial<AgentSettings>
     return {
-      // memory/skills/mcp default 'on'. Only an explicit 'off' disables;
-      // a missing field reads as the new default rather than the old one.
       memory: parsed.memory === 'off' ? 'off' : 'on',
-      skills: parsed.skills === 'off' ? 'off' : 'on',
-      mcp: parsed.mcp === 'off' ? 'off' : 'on',
+      skills: 'on',
+      mcp: 'on',
       // Defensive: anything non-string in the persisted list gets
       // dropped. Empty array if missing.
       mcpDisabled: Array.isArray(parsed.mcpDisabled)
@@ -251,8 +249,6 @@ function writeAgentSettings(settings: Required<AgentSettings>) {
   try {
     window.localStorage.setItem(agentSettingsStorageKey, JSON.stringify({
       memory: settings.memory,
-      skills: settings.skills,
-      mcp: settings.mcp,
       mcpDisabled: settings.mcpDisabled,
     }))
   } catch {
@@ -404,10 +400,11 @@ function AppContent() {
   }
 
   function changeAgentSettings(next: Required<AgentSettings>) {
-    const runtimePatch = advancedSettingsPatchToRuntime(agentSettings.advanced, next.advanced)
+    const normalized = { ...next, skills: 'on' as const, mcp: 'on' as const }
+    const runtimePatch = advancedSettingsPatchToRuntime(agentSettings.advanced, normalized.advanced)
     const runtimeSettingsReady = runtimeSettingsConfig === localHostConfig && Boolean(localHost?.online)
-    setAgentSettings(next)
-    writeAgentSettings(next)
+    setAgentSettings(normalized)
+    writeAgentSettings(normalized)
     if (!localHostConfig || !runtimeSettingsReady || Object.keys(runtimePatch).length === 0) return
 
     const config = localHostConfig

@@ -21,7 +21,7 @@ describe('ModelProvidersSettings', () => {
     vi.clearAllMocks()
   })
 
-  it('saves an OpenAI-compatible provider without retaining the key in React state', async () => {
+  it('uses a provider preset and keeps advanced fields out of the default flow', async () => {
     listLocalModelProviders.mockResolvedValue([])
     upsertLocalModelProvider.mockResolvedValue({})
     const onChanged = vi.fn()
@@ -34,29 +34,26 @@ describe('ModelProvidersSettings', () => {
       </I18nProvider>,
     )
 
-    fireEvent.change(screen.getByPlaceholderText('供应商 ID，例如 ollama'), { target: { value: 'ollama' } })
-    fireEvent.change(screen.getByPlaceholderText('显示名称'), { target: { value: 'Local Ollama' } })
-    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:11434/v1'), { target: { value: 'http://127.0.0.1:11434/v1' } })
-    fireEvent.change(screen.getByPlaceholderText('模型 ID'), { target: { value: 'qwen3:8b' } })
-    fireEvent.change(screen.getByPlaceholderText('最大输入 Token（可选）'), { target: { value: '32768' } })
-    fireEvent.change(screen.getByPlaceholderText('最大输出 Token（可选）'), { target: { value: '4096' } })
-    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'secret-key' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存供应商' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加供应商' }))
+
+    expect(screen.queryByLabelText('最大输入 Token（可选）')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'gpt-4.1' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'secret-key' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() => expect(upsertLocalModelProvider).toHaveBeenCalledWith(
-      'ollama',
+      'openai',
       expect.objectContaining({
-        base_url: 'http://127.0.0.1:11434/v1',
+        name: 'OpenAI',
+        base_url: 'https://api.openai.com/v1',
         api_key: 'secret-key',
         models: [expect.objectContaining({
-          model_id: 'qwen3:8b',
-          max_input_tokens: 32768,
-          max_output_tokens: 4096,
+          model_id: 'gpt-4.1',
         })],
       }),
       expect.objectContaining({ token: 'tok' }),
     ))
     expect(onChanged).toHaveBeenCalled()
-    expect(screen.getByPlaceholderText('API Key')).toHaveValue('')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

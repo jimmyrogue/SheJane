@@ -1836,7 +1836,7 @@ def test_run_diagnostics_include_handoff_summary(client: TestClient) -> None:
     assert checkpoint["run_id"] == run_id
     assert checkpoint["step"] >= 0
     assert checkpoint["reason"]
-    assert checkpoint["messages_count"] >= 1
+    assert checkpoint["messages_count"] == 2
 
 
 def test_run_diagnostics_include_reflection_summary(client: TestClient) -> None:

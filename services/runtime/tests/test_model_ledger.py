@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
@@ -8,7 +9,8 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import tool
+from langgraph.graph import START, MessagesState, StateGraph
 
 from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.llm.ledger import (
@@ -57,13 +59,65 @@ class _BindableStreamingModel(_StreamingModel):
 
     def bind_tools(
         self,
-        tools: Sequence[BaseTool],
+        tools: Sequence[object],
         *,
         tool_choice: str | None = None,
         **kwargs: object,
     ) -> BaseChatModel:
         del tool_choice, kwargs
-        return self.model_copy(update={"bound_tool_names": tuple(item.name for item in tools)})
+        return self.model_copy(
+            update={
+                "bound_tool_names": tuple(
+                    str(item["function"]["name"])  # type: ignore[index]
+                    for item in tools
+                )
+            }
+        )
+
+
+class _RunnableBindingStreamingModel(_StreamingModel):
+    def bind_tools(
+        self,
+        tools: Sequence[object],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: object,
+    ) -> BaseChatModel:
+        return self.bind(tools=tools, tool_choice=tool_choice, **kwargs)  # type: ignore[return-value]
+
+
+class _StrictToolStreamingModel(_StreamingModel):
+    bound_tool_name: str = ""
+
+    def bind_tools(
+        self,
+        tools: Sequence[object],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: object,
+    ) -> BaseChatModel:
+        del tool_choice, kwargs
+        function = tools[0]["function"]  # type: ignore[index]
+        name = str(function["name"])
+        assert re.fullmatch(r"[a-zA-Z0-9_-]+", name)
+        return self.model_copy(update={"bound_tool_name": name})
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: object,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        del messages, stop, run_manager, kwargs
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {"name": self.bound_tool_name, "args": "{}", "id": "call-1", "index": 0}
+                ],
+            )
+        )
 
 
 @tool("office.read")
@@ -112,6 +166,43 @@ async def test_stream_settles_usage_without_reading_sse(tmp_path: Path) -> None:
             "outcome_unknown_calls": 0,
             "model_calls": 1,
         }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_graph_message_stream_exposes_only_ledger_model_chunks(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    try:
+        model = LedgerChatModel(
+            delegate=_RunnableBindingStreamingModel(),
+            store=store,
+            run_id=str(run["id"]),
+            execution_attempt_id="job-1:1",
+            model_name="local:test:model",
+            max_calls=2,
+            profile={"max_input_tokens": 8_192},
+        ).bind_tools([_workspace_read])
+
+        async def call_model(state: MessagesState) -> dict[str, list[BaseMessage]]:
+            return {"messages": [await model.ainvoke(state["messages"])]}
+
+        graph_builder = StateGraph(MessagesState)
+        graph_builder.add_node("model", call_model)
+        graph_builder.add_edge(START, "model")
+        graph = graph_builder.compile()
+
+        chunks = []
+        async for part in graph.astream(
+            {"messages": [HumanMessage(content="hi")]},
+            stream_mode=["updates", "messages"],
+            version="v2",
+        ):
+            if part["type"] == "messages":
+                chunks.append(part["data"][0])
+
+        assert [chunk.content for chunk in chunks if chunk.content] == ["hello"]
+        assert sum(bool(chunk.usage_metadata) for chunk in chunks) == 1
     finally:
         await store.close()
 
@@ -208,17 +299,39 @@ async def test_provider_boundary_filters_office_schema_for_plain_subagent_task(
         model = unbound.bind_tools([_office_read, _workspace_read])
         assert isinstance(model, LedgerChatModel)
 
-        provider_model, schema_tokens = model._provider_model(
+        provider_model, schema_tokens, aliases = model._provider_model(
             [HumanMessage(content="Review this Python function and report the bug.")]
         )
 
         assert isinstance(provider_model, _BindableStreamingModel)
-        assert provider_model.bound_tool_names == ("workspace.read",)
+        assert len(provider_model.bound_tool_names) == 1
+        assert aliases[provider_model.bound_tool_names[0]] == "workspace.read"
         assert schema_tokens < model.tool_schema_tokens
         model._bounded_messages(
             [HumanMessage(content="Review this Python function and report the bug.")],
             tool_schema_tokens=schema_tokens,
         )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_boundary_aliases_and_restores_dotted_tool_names(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    try:
+        model = LedgerChatModel(
+            delegate=_StrictToolStreamingModel(),
+            store=store,
+            run_id=str(run["id"]),
+            execution_attempt_id="job-1:1",
+            model_name="local:test:strict-tools",
+            max_calls=2,
+            profile={"max_input_tokens": 8_192},
+        ).bind_tools([_workspace_read])
+
+        chunks = [chunk async for chunk in model.astream([HumanMessage(content="read it")])]
+
+        assert chunks[0].tool_call_chunks[0]["name"] == "workspace.read"
     finally:
         await store.close()
 

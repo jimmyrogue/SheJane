@@ -37,7 +37,6 @@ describe('i18n', () => {
       expect(t('sidebar.agentSettings.skills.label')).toBe('Skill')
       expect(t('sidebar.mcp')).toBe('MCP')
       expect(t('mcp.title')).toBe('MCP')
-      expect(t('settings.group.runtime')).toBe('Runtime')
     }
   })
 })

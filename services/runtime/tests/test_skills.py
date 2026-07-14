@@ -109,6 +109,34 @@ def test_resolve_skills_dirs_env_override_supports_comma(tmp_path: Path, monkeyp
     assert dirs == [a, b]
 
 
+def test_skill_loader_accepts_allowed_tools_yaml_list(tmp_path: Path) -> None:
+    from deepagents.backends import FilesystemBackend
+    from deepagents.middleware.skills import _alist_skills
+
+    from local_host.agent.backends import ReadOnlyBackend
+
+    skill_dir = tmp_path / "code-review"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: code-review\n"
+        "description: Review code.\n"
+        "allowed-tools:\n"
+        "  - read_file\n"
+        "  - grep\n"
+        "---\n\n"
+        "# Code review\n",
+        encoding="utf-8",
+    )
+    backend = ReadOnlyBackend(
+        FilesystemBackend(root_dir=tmp_path, virtual_mode=True, max_file_size_mb=10)
+    )
+
+    skills = asyncio.run(_alist_skills(backend, "/"))
+
+    assert skills[0]["allowed_tools"] == ["read_file", "grep"]
+
+
 # --- _list_skill_files -------------------------------------------------------
 
 
@@ -326,7 +354,9 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     skill_route = str(shejane.resolve()).rstrip("/") + "/"
     assert workspace_route in backend.routes
     assert skill_route in backend.routes
-    assert "test-skill" in backend.read(str((shejane / "test-skill" / "SKILL.md").resolve()))
+    read_result = backend.read(str((shejane / "test-skill" / "SKILL.md").resolve()))
+    assert read_result.file_data is not None
+    assert "test-skill" in read_result.file_data["content"]
     assert backend.write(f"{skill_route}injected/SKILL.md", "unsafe").error == (
         "read-only source: writes are not allowed"
     )

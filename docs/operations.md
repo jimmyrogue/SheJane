@@ -34,7 +34,7 @@ make logs-local-host
 Runtime 默认不要求用户环境变量。
 
 - Desktop Main 启动托管 Runtime 时，通过命令行传入本机地址、随机端口和配对 Token。
-- 外部 Runtime 的地址与 Token 保存在 Electron Main 的配置和凭据存储中，不回传明文 Token 给 Renderer。
+- Desktop 不提供 Runtime 连接设置。开发者接入外部 loopback Runtime 时，地址与 Token 由 Electron Main 配置和保存，不回传明文 Token 给 Renderer。
 - 模型供应商、模型资料和高级默认设置通过 Runtime API 保存。
 - BYOK 密钥写入操作系统凭据库，不写入 SQLite、Run 快照或环境变量。
 - `--data-dir` 可以修改 Runtime 数据目录。
@@ -45,12 +45,7 @@ Runtime 默认不要求用户环境变量。
 
 Desktop 的模型供应商设置会调用 Runtime 的 `/local/v1/model-providers` 接口。当前生产适配器支持 OpenAI 兼容接口。
 
-每个模型必须声明：
-
-- 模型编号；
-- 是否支持流式输出；
-- 是否支持工具调用；
-- 输入和输出上下文上限。
+添加供应商时只需选择常用服务并填写 API Key 与模型编号；本地服务不要求 API Key。API 地址已经提供常用默认值，显示名称和上下文上限收在高级设置中。当前适配器默认启用流式输出和工具调用。
 
 任务使用明确的 `local:<供应商编号>:<模型编号>`。Runtime 不自动选择模型或静默切换供应商。
 

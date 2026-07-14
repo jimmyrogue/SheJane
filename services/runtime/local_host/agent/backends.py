@@ -2,16 +2,47 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+import yaml
 from deepagents.backends.protocol import (
     EditResult,
     FileDownloadResponse,
     FileInfo,
     FileUploadResponse,
+    GlobResult,
     GrepMatch,
+    GrepResult,
+    LsResult,
+    ReadResult,
     WriteResult,
 )
+
+
+def _normalize_skill_frontmatter(content: bytes | None) -> bytes | None:
+    if not content:
+        return content
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    if not match:
+        return content
+    try:
+        frontmatter = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return content
+    if not isinstance(frontmatter, dict) or not isinstance(frontmatter.get("allowed-tools"), list):
+        return content
+    frontmatter["allowed-tools"] = " ".join(
+        tool.strip()
+        for tool in frontmatter["allowed-tools"]
+        if isinstance(tool, str) and tool.strip()
+    )
+    header = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).rstrip()
+    return f"---\n{header}\n---\n{text[match.end() :]}".encode()
 
 
 class ReadOnlyBackend:
@@ -57,6 +88,27 @@ class ReadOnlyBackend:
     ) -> list[FileUploadResponse]:
         return self.upload_files(files)
 
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return [
+            FileDownloadResponse(
+                path=response.path,
+                content=_normalize_skill_frontmatter(response.content),
+                error=response.error,
+            )
+            for response in self._delegate.download_files(paths)
+        ]
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        responses = await self._delegate.adownload_files(paths)
+        return [
+            FileDownloadResponse(
+                path=response.path,
+                content=_normalize_skill_frontmatter(response.content),
+                error=response.error,
+            )
+            for response in responses
+        ]
+
 
 class ReadOnlyFileBackend(ReadOnlyBackend):
     """Expose one source file at a CompositeBackend route."""
@@ -68,10 +120,10 @@ class ReadOnlyFileBackend(ReadOnlyBackend):
     def _source_key(self, requested: str) -> str:
         return f"/{self._file_name}" if requested == "/" else "/__not_available__"
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         return self._delegate.read(self._source_key(file_path), offset=offset, limit=limit)
 
-    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> str:
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         return await self._delegate.aread(
             self._source_key(file_path),
             offset=offset,
@@ -83,6 +135,28 @@ class ReadOnlyFileBackend(ReadOnlyBackend):
 
     async def als_info(self, path: str) -> list[FileInfo]:
         return self.ls_info(path)
+
+    def ls(self, _path: str) -> LsResult:
+        return LsResult(entries=[])
+
+    async def als(self, path: str) -> LsResult:
+        return self.ls(path)
+
+    def grep(
+        self,
+        _pattern: str,
+        _path: str | None = None,
+        _glob: str | None = None,
+    ) -> GrepResult:
+        return GrepResult(matches=[])
+
+    async def agrep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        return self.grep(pattern, path, glob)
 
     def grep_raw(
         self,
@@ -105,6 +179,12 @@ class ReadOnlyFileBackend(ReadOnlyBackend):
 
     async def aglob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
         return self.glob_info(pattern, path)
+
+    def glob(self, _pattern: str, _path: str | None = None) -> GlobResult:
+        return GlobResult(matches=[])
+
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        return self.glob(pattern, path)
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         responses: list[FileDownloadResponse] = []

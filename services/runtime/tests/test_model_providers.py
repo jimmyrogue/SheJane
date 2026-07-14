@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from contextlib import AsyncExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import keyring
 import pytest
 from fastapi.testclient import TestClient
 
-from local_host.agent.builder import _build_chat_model
+from local_host.agent.builder import _build_chat_model, _register_model_cleanup
 from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
 from local_host.config import Settings, reset_settings_for_tests
 from local_host.model_credentials import credential_ref
@@ -384,6 +385,43 @@ def test_openai_compatible_binding_builds_direct_chat_model() -> None:
     assert model.model_name == "qwen3:8b"
     assert str(model.openai_api_base).rstrip("/") == "http://127.0.0.1:11434/v1"
     assert model.openai_api_key.get_secret_value() == "direct-secret"
+
+
+async def test_openai_compatible_clients_are_owned_by_one_execution() -> None:
+    binding = {
+        "provider": "openai_compatible",
+        "model_id": "qwen3:8b",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "profile": {"tool_calling": True, "max_input_tokens": 32768},
+    }
+    first = _build_chat_model(
+        Settings(),
+        "run_first",
+        "local:ollama:qwen3:8b",
+        model_binding=binding,
+        model_api_key="direct-secret",
+    )
+    second = _build_chat_model(
+        Settings(),
+        "run_second",
+        "local:ollama:qwen3:8b",
+        model_binding=binding,
+        model_api_key="direct-secret",
+    )
+
+    assert first.root_async_client._client is not second.root_async_client._client
+    assert first.root_client._client is not second.root_client._client
+
+    async with AsyncExitStack() as stack:
+        _register_model_cleanup(first, stack)
+
+    assert first.root_async_client._client.is_closed
+    assert first.root_client._client.is_closed
+    assert not second.root_async_client._client.is_closed
+    assert not second.root_client._client.is_closed
+
+    await second.root_async_client.close()
+    second.root_client.close()
 
 
 async def test_provider_update_revokes_an_already_queued_binding(

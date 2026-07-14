@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import (
@@ -480,6 +481,8 @@ def _build_chat_model(
             model=str(model_binding["model_id"]),
             base_url=str(model_binding["base_url"]),
             api_key=model_api_key or "local",
+            http_client=httpx.Client(),
+            http_async_client=httpx.AsyncClient(),
             streaming=True,
             stream_usage=True,
             max_retries=0,
