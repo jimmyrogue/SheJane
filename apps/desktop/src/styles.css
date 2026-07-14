@@ -8073,6 +8073,10 @@ select {
   margin: 18px 0 0;
 }
 
+.pinned-conversation-list {
+  margin-top: 18px;
+}
+
 .conversation-row {
   min-height: 33px;
 }
