@@ -1411,47 +1411,82 @@ class RunCoordinator:
                         )
             except LeaseFenceError:
                 self._lost_leases.add(owner_task)
-        except Exception:
+        except Exception as exc:
             log.exception("run %s execution attempt crashed before result commit", run_id)
+            if owner_task not in self._unconfirmed_cleanup:
+                try:
+                    with self.store.bind_execution_lease(
+                        job_id=str(job["id"]),
+                        run_id=run_id,
+                        lease_owner=self._worker_id,
+                        lease_generation=generation,
+                    ):
+                        run = await self.store.get_run(run_id)
+                        if run is not None and run.get("status") in {"queued", "running"}:
+                            crashed = await self._settle_execution_outcome(
+                                run_id=run_id,
+                                execution_attempt_id=execution_attempt_id,
+                                outcome=RunOutcome(
+                                    "failed",
+                                    "run.failed",
+                                    _run_failed_payload(exc),
+                                ),
+                                cleanup_report={"status": "completed"},
+                            )
+                            await self._commit_run_result(
+                                wakeup,
+                                run_id,
+                                crashed.event_type,
+                                crashed.payload,
+                                status=crashed.status,
+                            )
+                except LeaseFenceError:
+                    self._lost_leases.add(owner_task)
+                except Exception:
+                    log.exception("run %s crash result could not be persisted", run_id)
         finally:
             heartbeat.cancel()
             await asyncio.gather(heartbeat, return_exceptions=True)
-            if not self._shutting_down and owner_task not in self._lost_leases:
-                run = await self.store.get_run(run_id)
-                run_status = str((run or {}).get("status") or "")
-                job_status = {
-                    "completed": "completed",
-                    "failed": "dead",
-                    "canceled": "canceled",
-                    "waiting_permission": "completed",
-                    "waiting_input": "completed",
-                }.get(run_status)
-                if job_status is not None:
-                    await self.store.finish_run_job(
-                        str(job["id"]),
-                        lease_owner=self._worker_id,
-                        lease_generation=generation,
-                        status=job_status,
-                    )
-            self._lost_leases.discard(owner_task)
-            self._unconfirmed_cleanup.discard(owner_task)
-            self._started_jobs.discard(owner_task)
-            wakeup.set()
-            if self._tasks.get(run_id) is owner_task:
-                self._tasks.pop(run_id, None)
-            self._discard_stream_state_if_idle(run_id)
-            if self._wakeups.get(run_id) is wakeup:
-                self._wakeups.pop(run_id, None)
-            self._goals.pop(run_id, None)
-            self._user_inputs.pop(run_id, None)
-            self._workspaces.pop(run_id, None)
-            self._histories.pop(run_id, None)
-            self._attachments.pop(run_id, None)
-            self._settings_overrides.pop(run_id, None)
-            self._run_metadata.pop(run_id, None)
-            self._modes.pop(run_id, None)
-            self._slots.release()
-            self._job_wakeup.set()
+            try:
+                if not self._shutting_down and owner_task not in self._lost_leases:
+                    run = await self.store.get_run(run_id)
+                    run_status = str((run or {}).get("status") or "")
+                    job_status = {
+                        "completed": "completed",
+                        "failed": "dead",
+                        "canceled": "canceled",
+                        "waiting_permission": "completed",
+                        "waiting_input": "completed",
+                    }.get(run_status)
+                    if job_status is not None:
+                        await self.store.finish_run_job(
+                            str(job["id"]),
+                            lease_owner=self._worker_id,
+                            lease_generation=generation,
+                            status=job_status,
+                        )
+            except Exception:
+                log.exception("run %s job finalization could not be persisted", run_id)
+            finally:
+                self._lost_leases.discard(owner_task)
+                self._unconfirmed_cleanup.discard(owner_task)
+                self._started_jobs.discard(owner_task)
+                wakeup.set()
+                if self._tasks.get(run_id) is owner_task:
+                    self._tasks.pop(run_id, None)
+                self._discard_stream_state_if_idle(run_id)
+                if self._wakeups.get(run_id) is wakeup:
+                    self._wakeups.pop(run_id, None)
+                self._goals.pop(run_id, None)
+                self._user_inputs.pop(run_id, None)
+                self._workspaces.pop(run_id, None)
+                self._histories.pop(run_id, None)
+                self._attachments.pop(run_id, None)
+                self._settings_overrides.pop(run_id, None)
+                self._run_metadata.pop(run_id, None)
+                self._modes.pop(run_id, None)
+                self._slots.release()
+                self._job_wakeup.set()
 
     async def _confirm_lost_attempt_cleanup(
         self,
@@ -1861,14 +1896,7 @@ class RunCoordinator:
             run_settings = self._settings_overrides.get(run_id) or {}
             model_binding = run_settings.get("_model_binding")
 
-            # Persist the resolved value so a resume (incl. after a daemon
-            # restart) continues with the same model instead of a default.
             self._modes[run_id] = resolved_model
-            if resume_payload is None:
-                try:
-                    await self.store.update_run_mode(run_id, resolved_model)
-                except Exception:
-                    log.warning("failed to persist model for run %s", run_id)
 
             # Per-run effective settings = base daemon settings with any
             # "Advanced" knobs the client sent folded on top.

@@ -1325,12 +1325,14 @@ class LocalStore:
 
     async def mark_model_call_output(self, *, run_id: str, call_id: str) -> None:
         async with self.run_write_transaction(run_id) as conn:
-            await conn.execute(
+            cursor = await conn.execute(
                 "UPDATE local_model_calls SET status = 'streaming', output_started = 1, "
                 "first_output_at = COALESCE(first_output_at, ?) "
                 "WHERE id = ? AND run_id = ? AND status IN ('reserved', 'streaming')",
                 (_now(), call_id, run_id),
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"model call {call_id} cannot record output")
 
     async def settle_model_call(
         self,
@@ -1371,11 +1373,13 @@ class LocalStore:
     ) -> None:
         status = "outcome_unknown" if outcome_unknown else "failed"
         async with self.run_write_transaction(run_id) as conn:
-            await conn.execute(
+            cursor = await conn.execute(
                 "UPDATE local_model_calls SET status = ?, error_code = ?, completed_at = ? "
                 "WHERE id = ? AND run_id = ? AND status IN ('reserved', 'streaming')",
                 (status, error_code, _now(), call_id, run_id),
             )
+            if cursor.rowcount != 1:
+                raise RuntimeError(f"model call {call_id} cannot be failed")
 
     async def model_usage_summary(self, run_id: str) -> dict[str, int]:
         row = await (
@@ -4034,15 +4038,6 @@ class LocalStore:
             event_high_watermark=int(event["seq"]),
             changed_at=requested_at,
         )
-
-    async def update_run_mode(self, run_id: str, mode: str) -> None:
-        """Persist the RESOLVED tier (fast|deep) once classification settles,
-        so a resume after restart continues at the right tier."""
-        async with self.run_write_transaction(run_id) as conn:
-            await conn.execute(
-                "UPDATE local_runs SET mode = ?, updated_at = ? WHERE id = ?",
-                (mode, _now(), run_id),
-            )
 
     async def bind_graph_definition(self, run_id: str, definition_id: str) -> None:
         """Bind once, then reject checkpoint execution with a different graph."""

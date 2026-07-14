@@ -388,6 +388,41 @@ async def test_expired_lease_marks_open_receipt_outcome_unknown(tmp_path: Path) 
         await store.close()
 
 
+@pytest.mark.asyncio
+async def test_model_call_updates_reject_missing_or_terminal_receipts(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    run_id = str(run["id"])
+    try:
+        with pytest.raises(RuntimeError, match="missing-model-call"):
+            await store.mark_model_call_output(
+                run_id=run_id,
+                call_id="missing-model-call",
+            )
+
+        receipt = await store.reserve_model_call(
+            run_id=run_id,
+            execution_attempt_id="job-1:1",
+            model="local:test:model",
+            max_calls=2,
+        )
+        await store.settle_model_call(
+            run_id=run_id,
+            call_id=str(receipt["id"]),
+            provider_request_id=None,
+            input_tokens=1,
+            output_tokens=1,
+        )
+
+        with pytest.raises(RuntimeError, match=str(receipt["id"])):
+            await store.fail_model_call(
+                run_id=run_id,
+                call_id=str(receipt["id"]),
+                outcome_unknown=False,
+            )
+    finally:
+        await store.close()
+
+
 def test_context_envelope_bounds_single_oversized_message_with_explicit_marker() -> None:
     messages = [HumanMessage(content="A" * 900_000)]
 

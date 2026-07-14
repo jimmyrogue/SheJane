@@ -139,6 +139,100 @@ async def test_worker_rechecks_frozen_model_credential_reference(tmp_path: Path)
         await store.close()
 
 
+async def test_preflight_crash_is_persisted_as_a_failed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(
+        store=store,
+        checkpointer=None,  # type: ignore[arg-type]
+        settings=Settings(SHEJANE_FAKE_LLM=True),
+    )
+    original_admission = store.workspace_admission_error
+    calls = 0
+
+    async def fail_once(**kwargs: Any) -> str | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("injected preflight crash")
+        return await original_admission(**kwargs)
+
+    monkeypatch.setattr(store, "workspace_admission_error", fail_once)
+    try:
+        run = await coordinator.start_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_preflight_crash",
+            client_message_id="msg_preflight_crash",
+            protocol_version=1,
+            required_capabilities=["agent.run", "agent.stream"],
+            goal="inspect",
+        )
+        job = await store.claim_run_job(worker_id=coordinator._worker_id)
+        assert job is not None
+        await coordinator._slots.acquire()
+
+        await coordinator._execute_claimed_job(job)
+
+        failed = await store.get_run(run["id"])
+        assert failed is not None
+        assert failed["status"] == "failed"
+        settled_job = await store.get_run_job(job["id"])
+        assert settled_job is not None
+        assert settled_job["status"] == "dead"
+        events = await store.events_since(run["id"])
+        failure = json.loads(events[-1]["payload_json"])
+        assert events[-1]["event_type"] == "run.failed"
+        assert failure["type"] == "RuntimeError"
+    finally:
+        await store.close()
+
+
+async def test_job_finalization_failure_still_releases_worker_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    coordinator = RunCoordinator(
+        store=store,
+        checkpointer=None,  # type: ignore[arg-type]
+        settings=Settings(SHEJANE_FAKE_LLM=True),
+        max_concurrent_runs=1,
+    )
+
+    async def drive(**_kwargs: Any) -> RunOutcome:
+        return RunOutcome("failed", "run.failed", {"error": "expected"})
+
+    async def fail_finish(*_args: Any, **_kwargs: Any) -> bool:
+        raise RuntimeError("injected job finalization failure")
+
+    coordinator._drive_run = drive  # type: ignore[method-assign]
+    monkeypatch.setattr(store, "finish_run_job", fail_finish)
+    try:
+        run = await coordinator.start_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            command_id="cmd_finish_failure",
+            client_message_id="msg_finish_failure",
+            protocol_version=1,
+            required_capabilities=["agent.run", "agent.stream"],
+            goal="inspect",
+        )
+        job = await store.claim_run_job(worker_id=coordinator._worker_id)
+        assert job is not None
+        await coordinator._slots.acquire()
+
+        await coordinator._execute_claimed_job(job)
+
+        await asyncio.wait_for(coordinator._slots.acquire(), timeout=0.1)
+        coordinator._slots.release()
+        assert run["id"] not in coordinator._wakeups
+        assert run["id"] not in coordinator._goals
+        assert run["id"] not in coordinator._tasks
+    finally:
+        await store.close()
+
+
 async def test_execution_resources_close_when_claimed_attempt_finishes(tmp_path: Path) -> None:
     store = await LocalStore.open(tmp_path / "local.db")
     coordinator = RunCoordinator(

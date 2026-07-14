@@ -81,7 +81,7 @@ async def test_recover_orphans_fails_dead_runs_and_keeps_waiting(tmp_path: Path)
         await store.close()
 
 
-async def test_create_run_persists_mode_and_update_run_mode(tmp_path: Path) -> None:
+async def test_create_run_persists_mode(tmp_path: Path) -> None:
     store = await _open_store(tmp_path)
     try:
         run = await store.create_run(
@@ -91,9 +91,6 @@ async def test_create_run_persists_mode_and_update_run_mode(tmp_path: Path) -> N
             mode="deep",
         )
         assert (await store.get_run(run["id"]))["mode"] == "deep"
-        # Resolved-tier write-back (e.g. auto → deep).
-        await store.update_run_mode(run["id"], "fast")
-        assert (await store.get_run(run["id"]))["mode"] == "fast"
     finally:
         await store.close()
 

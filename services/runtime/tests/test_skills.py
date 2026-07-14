@@ -10,7 +10,6 @@ import asyncio
 import os
 from contextlib import AsyncExitStack
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -320,6 +319,7 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     absolute skill roots are exposed through explicit virtual routes.
     """
     from deepagents.backends import CompositeBackend, FilesystemBackend
+    from deepagents.backends.protocol import BackendProtocol
 
     import local_host.agent.builder as builder_mod
     from local_host.agent.builder import build_agent, open_checkpointer
@@ -365,9 +365,8 @@ def test_build_agent_passes_skills_dirs_to_deepagents_when_enabled(
     skills = captured["skills"]
     assert isinstance(skills, list) and len(skills) >= 1
     assert any(str(shejane) in s for s in skills)
-    backend_factory = captured["backend"]
-    assert callable(backend_factory)
-    backend = backend_factory(SimpleNamespace(context=runtime_context))
+    assert isinstance(captured["backend"], BackendProtocol)
+    backend = runtime_context.backend
     assert isinstance(backend, CompositeBackend)
     assert isinstance(backend.default, FilesystemBackend)
     assert backend.default.virtual_mode is True
@@ -448,6 +447,7 @@ def test_build_agent_gives_no_workspace_attempts_isolated_temporary_scratch(
 ) -> None:
     """No-workspace attempts must not share durable files with other runs."""
     from deepagents.backends import CompositeBackend, FilesystemBackend
+    from deepagents.backends.protocol import BackendProtocol
 
     import local_host.agent.builder as builder_mod
     from local_host.agent.builder import build_agent, open_checkpointer
@@ -484,9 +484,8 @@ def test_build_agent_gives_no_workspace_attempts_isolated_temporary_scratch(
                     resource_stack=execution_stack,
                     runtime_context=runtime_context,
                 )
-                backend_factory = captured[index]
-                assert callable(backend_factory)
-                backend = backend_factory(SimpleNamespace(context=runtime_context))
+                assert isinstance(captured[index], BackendProtocol)
+                backend = runtime_context.backend
                 assert isinstance(backend, CompositeBackend)
                 assert isinstance(backend.default, FilesystemBackend)
                 assert backend.default.virtual_mode is True
