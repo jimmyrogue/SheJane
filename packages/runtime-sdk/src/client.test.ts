@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { parseRuntimeModelSpec, SheJaneRuntimeClient, parseAgentSSEBuffer } from './index'
+import {
+  discoverLocalModels,
+  parseAgentSSEBuffer,
+  parseRuntimeModelSpec,
+  SheJaneRuntimeClient,
+} from './index'
 
 describe('parseRuntimeModelSpec', () => {
   it('accepts only concrete Runtime model identifiers', () => {
@@ -29,6 +34,35 @@ describe('SheJaneRuntimeClient', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'http://127.0.0.1:17371/local/v1/runtime',
       expect.objectContaining({ headers: { Authorization: 'Bearer runtime-token' } }),
+    )
+  })
+
+  it('discovers provider models without exposing Runtime credentials', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        models: [{ model_id: 'openai/gpt-4.1', display_name: 'GPT-4.1' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+
+    const models = await discoverLocalModels(
+      { provider_id: 'openrouter', base_url: 'https://openrouter.ai/api/v1' },
+      { baseURL: 'http://127.0.0.1:17371', token: 'runtime-token' },
+      fetcher,
+    )
+
+    expect(models).toEqual([{ model_id: 'openai/gpt-4.1', display_name: 'GPT-4.1' }])
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/local/v1/model-providers/discover-models',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          provider_id: 'openrouter',
+          base_url: 'https://openrouter.ai/api/v1',
+        }),
+      }),
     )
   })
 

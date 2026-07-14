@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +48,8 @@ from .api_schemas import (
     CreateWorkspaceRequest,
     DeleteLocalThreadResponse,
     DiagnoseWorkspaceRequest,
+    DiscoverLocalModelsRequest,
+    DiscoverLocalModelsResponse,
     ForkRunRequest,
     HealthResponse,
     InjectRunInstructionRequest,
@@ -219,7 +222,7 @@ async def _model_provider_response(
     return LocalModelProvider(
         id=str(row["id"]),
         name=str(row["name"]),
-        kind="openai_compatible",
+        kind=str(row["kind"]),
         base_url=str(row["base_url"]),
         requires_api_key=requires_api_key,
         credential_configured=configured,
@@ -781,6 +784,114 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except CredentialStoreError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"providers": providers}
+
+    @app.post(
+        "/local/v1/model-providers/discover-models",
+        response_model=DiscoverLocalModelsResponse,
+    )
+    async def discover_model_provider_models(
+        request: Request,
+        body: DiscoverLocalModelsRequest,
+    ) -> dict[str, Any]:
+        base_url = _model_provider_base_url(body.base_url)
+        api_key = body.api_key.strip() if body.api_key is not None else None
+        provider_id = body.provider_id.strip().lower() if body.provider_id else None
+        if provider_id and not _MODEL_PROVIDER_ID_RE.fullmatch(provider_id):
+            raise HTTPException(status_code=400, detail="model provider id is invalid")
+
+        if provider_id and not api_key:
+            store: LocalStore = app.state.store
+            provider = await store.get_model_provider(
+                principal_id=request.state.principal_id,
+                provider_id=provider_id,
+            )
+            if provider is not None:
+                if str(provider["kind"]) != body.kind:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="saved credentials can only be used with the saved provider kind",
+                    )
+                if _model_provider_base_url(str(provider["base_url"])) != base_url:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="saved credentials can only be used with the saved provider URL",
+                    )
+                try:
+                    api_key = await get_model_api_key(
+                        request.state.principal_id,
+                        provider_id,
+                        str(provider["credential_ref"]),
+                    )
+                except CredentialStoreError as exc:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        headers = {"Accept": "application/json"}
+        discovery_url = f"{base_url}/models"
+        if body.kind == "anthropic":
+            discovery_url = (
+                f"{base_url}/models" if base_url.endswith("/v1") else f"{base_url}/v1/models"
+            )
+            headers["anthropic-version"] = "2023-06-01"
+            if api_key:
+                headers["x-api-key"] = api_key
+        elif api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=15.0,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                upstream = await client.get(discovery_url, headers=headers)
+            upstream.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"model provider returned HTTP {exc.response.status_code} while listing models",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="model provider could not be reached while listing models",
+            ) from exc
+
+        try:
+            payload = upstream.json()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="model provider returned an invalid model list",
+            ) from exc
+        candidates = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(candidates, list):
+            raise HTTPException(
+                status_code=502,
+                detail="model provider returned an invalid model list",
+            )
+
+        models: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            model_id = candidate.get("id")
+            if (
+                not isinstance(model_id, str)
+                or not model_id
+                or len(model_id) > 200
+                or any(character.isspace() for character in model_id)
+                or model_id in seen
+            ):
+                continue
+            raw_name = candidate.get("name") or candidate.get("display_name")
+            display_name = raw_name.strip() if isinstance(raw_name, str) else model_id
+            if not display_name or len(display_name) > 100:
+                display_name = model_id[:100]
+            seen.add(model_id)
+            models.append({"model_id": model_id, "display_name": display_name})
+            if len(models) >= 1000:
+                break
+        return {"models": models}
 
     @app.put(
         "/local/v1/model-providers/{provider_id}",
@@ -1402,6 +1513,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workspace_path = (
             await _normalized_path(body.workspace_path) if body.workspace_path is not None else None
         )
+        attachment_paths = [await _normalized_path(path) for path in body.attachment_paths]
         coordinator: RunCoordinator = app.state.coordinator
         try:
             return await coordinator.start_run(
@@ -1419,6 +1531,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 user_item_metadata=body.user_item_metadata,
                 replace_from_client_id=body.replace_from_client_id,
                 workspace_path=workspace_path,
+                attachment_paths=attachment_paths,
                 # The daemon's legacy `mode` column carries the Runtime model selection.
                 mode=body.model,
                 history=body.history or [],

@@ -155,6 +155,7 @@ def _agent_backend_routes(
     skills_dirs: list[Path],
     memory_sources: list[str] | None,
     workspace_root: Path,
+    attachment_bindings: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Return explicit filesystem routes that may live outside workspace.
 
@@ -164,6 +165,17 @@ def _agent_backend_routes(
     only those exact roots through their own virtual backends.
     """
     routes: dict[str, Any] = {}
+    for item in attachment_bindings or []:
+        source = Path(item["source_path"])
+        backend = ReadOnlyFileBackend(
+            FilesystemBackend(
+                root_dir=source.parent,
+                virtual_mode=True,
+                max_file_size_mb=10,
+            ),
+            source.name,
+        )
+        routes[item["virtual_path"]] = backend
     for root in (path.expanduser() for path in skills_dirs):
         backend_root = root.resolve(strict=False)
         if workspace_root == backend_root or workspace_root.is_relative_to(backend_root):
@@ -231,6 +243,7 @@ def _build_agent_backend(
     effective_workspace: str,
     skills_dirs: list[Path],
     memory_sources: list[str] | None,
+    attachment_bindings: list[dict[str, str]] | None = None,
 ):
     workspace_root = Path(effective_workspace).expanduser().resolve()
     default = FilesystemBackend(
@@ -246,6 +259,7 @@ def _build_agent_backend(
             skills_dirs=skills_dirs,
             memory_sources=memory_sources,
             workspace_root=workspace_root,
+            attachment_bindings=attachment_bindings,
         )
     )
     return CompositeBackend(default=default, routes=routes)
@@ -468,9 +482,7 @@ def _build_chat_model(
                 "max_output_tokens": settings.unknown_model_max_output_tokens,
             }
         )
-    if model_binding and model_binding.get("provider") == "openai_compatible":
-        from langchain_openai import ChatOpenAI
-
+    if model_binding and model_binding.get("provider") in {"openai_compatible", "anthropic"}:
         raw_profile = model_binding.get("profile")
         profile = (
             {
@@ -483,6 +495,23 @@ def _build_chat_model(
         )
         profile.setdefault("max_input_tokens", settings.unknown_model_max_input_tokens)
         profile.setdefault("max_output_tokens", settings.unknown_model_max_output_tokens)
+        if model_binding["provider"] == "anthropic":
+            from langchain_anthropic import ChatAnthropic
+
+            return ChatAnthropic(
+                model=str(model_binding["model_id"]),
+                base_url=str(model_binding["base_url"]),
+                api_key=model_api_key or "local",
+                streaming=True,
+                stream_usage=True,
+                max_retries=0,
+                max_tokens=int(profile["max_output_tokens"]),
+                timeout=settings.model_request_timeout_seconds,
+                profile=profile,
+            )
+
+        from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=str(model_binding["model_id"]),
             base_url=str(model_binding["base_url"]),
@@ -548,6 +577,7 @@ async def build_agent(
     checkpointer: AsyncSqliteSaver,
     agent_store: BaseStore | None = None,
     workspace_root: str | None,
+    attachment_bindings: list[dict[str, str]] | None = None,
     run_id: str,
     mode: str = "fast",
     task_goal: str | None = None,
@@ -713,6 +743,7 @@ async def build_agent(
         effective_workspace=effective_workspace,
         skills_dirs=skills_dirs,
         memory_sources=memory_arg,
+        attachment_bindings=attachment_bindings,
     )
 
     middleware = _custom_middleware(
@@ -752,6 +783,11 @@ async def build_agent(
             outbound_secrets=(model_api_key,) if model_api_key else (),
             memory_enabled=memory_enabled,
             workspace_root=workspace_root,
+            attachments=tuple(
+                str(item.get("virtual_path"))
+                for item in attachment_bindings or []
+                if item.get("virtual_path")
+            ),
             enabled_skills=_active_skill_names(skills_arg),
             task_goal=task_goal,
             mode=mode,
@@ -786,6 +822,11 @@ async def build_agent(
         runtime_context.outbound_secrets = (model_api_key,) if model_api_key else ()
         runtime_context.dynamic_tools = {item.name: item.tool for item in dynamic_tools}
         runtime_context.memory_enabled = memory_enabled
+        runtime_context.attachments = tuple(
+            str(item.get("virtual_path"))
+            for item in attachment_bindings or []
+            if item.get("virtual_path")
+        )
 
     fingerprint = _agent_definition_fingerprint(
         settings=settings,
@@ -887,14 +928,19 @@ def _register_model_cleanup(model: Any, stack: AsyncExitStack | None) -> None:
     """Close provider clients when the owning execution attempt ends."""
     if stack is None:
         return
-    async_client = getattr(model, "root_async_client", None)
-    async_close = getattr(async_client, "close", None)
-    if callable(async_close):
-        stack.push_async_callback(async_close)
-    sync_client = getattr(model, "root_client", None)
-    sync_close = getattr(sync_client, "close", None)
-    if callable(sync_close):
-        stack.callback(sync_close)
+    seen: set[int] = set()
+    for name in ("root_async_client", "_async_client"):
+        client = getattr(model, name, None)
+        close = getattr(client, "close", None)
+        if callable(close) and id(client) not in seen:
+            seen.add(id(client))
+            stack.push_async_callback(close)
+    for name in ("root_client", "_client"):
+        client = getattr(model, name, None)
+        close = getattr(client, "close", None)
+        if callable(close) and id(client) not in seen:
+            seen.add(id(client))
+            stack.callback(close)
 
 
 def _active_skill_names(skills_arg: list[str] | None) -> list[str]:

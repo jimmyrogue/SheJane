@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import threading
 from contextlib import AsyncExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,24 @@ from tests.helpers import run_command
 
 class _OpenAICompatibleHandler(BaseHTTPRequestHandler):
     request_count = 0
+    authorization = ""
+
+    def do_GET(self) -> None:
+        type(self).authorization = self.headers.get("authorization", "")
+        body = json.dumps(
+            {
+                "object": "list",
+                "data": [
+                    {"id": "provider/model-a", "name": "Model A", "object": "model"},
+                    {"id": "provider/model-b", "object": "model"},
+                ],
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:
         type(self).request_count += 1
@@ -87,6 +106,35 @@ class _OpenAICompatibleHandler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(body.encode())))
         self.end_headers()
         self.wfile.write(body.encode())
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+class _AnthropicModelsHandler(BaseHTTPRequestHandler):
+    api_key = ""
+    path = ""
+
+    def do_GET(self) -> None:
+        type(self).api_key = self.headers.get("x-api-key", "")
+        type(self).path = self.path
+        body = json.dumps(
+            {
+                "data": [
+                    {
+                        "id": "claude-sonnet-4-6",
+                        "display_name": "Claude Sonnet 4.6",
+                        "type": "model",
+                    }
+                ],
+                "has_more": False,
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -194,6 +242,239 @@ def test_provider_api_persists_config_but_not_api_key(
         assert row is not None
         assert "provider-secret" not in json.dumps(row)
         assert list(credential_vault.values()) == ["provider-secret"]
+
+
+def test_anthropic_provider_persists_kind_and_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    credential_vault: dict[str, str],
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        headers = {"Authorization": "Bearer tok"}
+        created = client.put(
+            "/local/v1/model-providers/anthropic",
+            headers=headers,
+            json=_provider_payload(
+                name="Anthropic",
+                kind="anthropic",
+                base_url="https://api.anthropic.com",
+                models=[
+                    {
+                        "model_id": "claude-sonnet-4-6",
+                        "display_name": "Claude Sonnet 4.6",
+                    }
+                ],
+            ),
+        )
+        run = client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command(
+                "inspect",
+                model="local:anthropic:claude-sonnet-4-6",
+            ),
+        )
+
+    assert created.status_code == 200
+    assert created.json()["kind"] == "anthropic"
+    assert run.status_code == 200
+    binding = json.loads(run.json()["settings_json"])["_model_binding"]
+    assert binding["provider"] == "anthropic"
+    assert binding["model_id"] == "claude-sonnet-4-6"
+    assert list(credential_vault.values()) == ["provider-secret"]
+
+
+async def test_model_provider_kind_migration_preserves_existing_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "local.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE local_model_providers ("
+            "principal_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, "
+            "kind TEXT NOT NULL CHECK (kind IN ('openai_compatible')), "
+            "base_url TEXT NOT NULL, requires_api_key INTEGER NOT NULL DEFAULT 1, "
+            "credential_ref TEXT NOT NULL, models_json TEXT NOT NULL, "
+            "enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, "
+            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+            "PRIMARY KEY (principal_id, id))"
+        )
+        conn.execute(
+            "INSERT INTO local_model_providers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                LOCAL_OWNER_PRINCIPAL_ID,
+                "openai",
+                "OpenAI",
+                "openai_compatible",
+                "https://api.openai.com/v1",
+                1,
+                credential_ref("openai"),
+                "[]",
+                1,
+                1,
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+
+    store = await LocalStore.open(db_path)
+    try:
+        existing = await store.get_model_provider(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            provider_id="openai",
+        )
+        created = await store.upsert_model_provider(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            provider_id="anthropic",
+            name="Anthropic",
+            kind="anthropic",
+            base_url="https://api.anthropic.com",
+            requires_api_key=True,
+            credential_ref=credential_ref("anthropic"),
+            models=[],
+            enabled=True,
+        )
+    finally:
+        await store.close()
+
+    assert existing is not None and existing["kind"] == "openai_compatible"
+    assert created["kind"] == "anthropic"
+
+
+def test_provider_api_discovers_model_ids_and_display_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    _OpenAICompatibleHandler.authorization = ""
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _OpenAICompatibleHandler)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with TestClient(create_app(settings)) as client:
+            response = client.post(
+                "/local/v1/model-providers/discover-models",
+                headers={"Authorization": "Bearer tok"},
+                json={
+                    "base_url": f"http://127.0.0.1:{upstream.server_port}/v1",
+                    "api_key": "provider-secret",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "models": [
+                {"model_id": "provider/model-a", "display_name": "Model A"},
+                {"model_id": "provider/model-b", "display_name": "provider/model-b"},
+            ]
+        }
+        assert _OpenAICompatibleHandler.authorization == "Bearer provider-secret"
+        assert "provider-secret" not in response.text
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join(timeout=2)
+
+
+def test_provider_api_discovers_anthropic_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    _AnthropicModelsHandler.api_key = ""
+    _AnthropicModelsHandler.path = ""
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _AnthropicModelsHandler)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with TestClient(create_app(settings)) as client:
+            response = client.post(
+                "/local/v1/model-providers/discover-models",
+                headers={"Authorization": "Bearer tok"},
+                json={
+                    "kind": "anthropic",
+                    "base_url": f"http://127.0.0.1:{upstream.server_port}",
+                    "api_key": "anthropic-secret",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "models": [
+                {
+                    "model_id": "claude-sonnet-4-6",
+                    "display_name": "Claude Sonnet 4.6",
+                }
+            ]
+        }
+        assert _AnthropicModelsHandler.api_key == "anthropic-secret"
+        assert _AnthropicModelsHandler.path == "/v1/models"
+        assert "anthropic-secret" not in response.text
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join(timeout=2)
+
+
+def test_model_discovery_reuses_a_saved_key_only_for_its_saved_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    credential_vault: dict[str, str],
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    _OpenAICompatibleHandler.authorization = ""
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), _OpenAICompatibleHandler)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{upstream.server_port}/v1"
+        with TestClient(create_app(settings)) as client:
+            headers = {"Authorization": "Bearer tok"}
+            created = client.put(
+                "/local/v1/model-providers/ollama",
+                headers=headers,
+                json=_provider_payload(base_url=base_url),
+            )
+            assert created.status_code == 200
+            assert list(credential_vault.values()) == ["provider-secret"]
+
+            discovered = client.post(
+                "/local/v1/model-providers/discover-models",
+                headers=headers,
+                json={"provider_id": "ollama", "base_url": base_url},
+            )
+            mismatched = client.post(
+                "/local/v1/model-providers/discover-models",
+                headers=headers,
+                json={
+                    "provider_id": "ollama",
+                    "base_url": "http://127.0.0.1:1/v1",
+                },
+            )
+
+        assert discovered.status_code == 200
+        assert _OpenAICompatibleHandler.authorization == "Bearer provider-secret"
+        assert mismatched.status_code == 400
+        assert "saved provider URL" in mismatched.json()["detail"]
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join(timeout=2)
 
 
 def test_provider_api_rejects_invalid_models_and_deletes_credential(
@@ -385,6 +666,31 @@ def test_openai_compatible_binding_builds_direct_chat_model() -> None:
     assert model.model_name == "qwen3:8b"
     assert str(model.openai_api_base).rstrip("/") == "http://127.0.0.1:11434/v1"
     assert model.openai_api_key.get_secret_value() == "direct-secret"
+
+
+async def test_anthropic_binding_builds_direct_chat_model() -> None:
+    model = _build_chat_model(
+        Settings(),
+        "run_test",
+        "local:anthropic:claude-sonnet-4-6",
+        model_binding={
+            "provider": "anthropic",
+            "model_id": "claude-sonnet-4-6",
+            "base_url": "https://api.anthropic.com",
+            "profile": {"tool_calling": True, "max_input_tokens": 200000},
+        },
+        model_api_key="anthropic-secret",
+    )
+
+    assert model.model == "claude-sonnet-4-6"
+    assert model.anthropic_api_url == "https://api.anthropic.com"
+    assert model.anthropic_api_key.get_secret_value() == "anthropic-secret"
+
+    async with AsyncExitStack() as stack:
+        _register_model_cleanup(model, stack)
+
+    assert model._client.is_closed()
+    assert model._async_client.is_closed()
 
 
 async def test_openai_compatible_clients_are_owned_by_one_execution() -> None:

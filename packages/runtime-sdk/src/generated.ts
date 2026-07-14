@@ -146,6 +146,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/model-providers/discover-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover Model Provider Models */
+        post: operations["discover_model_provider_models_local_v1_model_providers_discover_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/model-providers/{provider_id}": {
         parameters: {
             query?: never;
@@ -858,6 +875,8 @@ export interface components {
         CreateRunRequest: {
             /** Assistant Message Id */
             assistant_message_id?: string | null;
+            /** Attachment Paths */
+            attachment_paths?: string[];
             /** Client Message Id */
             client_message_id: string;
             /** Command Id */
@@ -1201,6 +1220,33 @@ export interface components {
              */
             status: "pending" | "resolved";
         };
+        /** DiscoverLocalModelsRequest */
+        DiscoverLocalModelsRequest: {
+            /** Api Key */
+            api_key?: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Kind
+             * @default openai_compatible
+             * @enum {string}
+             */
+            kind: "openai_compatible" | "anthropic";
+            /** Provider Id */
+            provider_id?: string | null;
+        };
+        /** DiscoverLocalModelsResponse */
+        DiscoverLocalModelsResponse: {
+            /** Models */
+            models: components["schemas"]["DiscoveredLocalModel"][];
+        };
+        /** DiscoveredLocalModel */
+        DiscoveredLocalModel: {
+            /** Display Name */
+            display_name: string;
+            /** Model Id */
+            model_id: string;
+        };
         /** EditedToolAction */
         EditedToolAction: {
             /** Args */
@@ -1447,9 +1493,9 @@ export interface components {
             id: string;
             /**
              * Kind
-             * @constant
+             * @enum {string}
              */
-            kind: "openai_compatible";
+            kind: "openai_compatible" | "anthropic";
             /** Models */
             models: components["schemas"]["LocalModelProfile"][];
             /** Name */
@@ -2330,9 +2376,9 @@ export interface components {
             /**
              * Kind
              * @default openai_compatible
-             * @constant
+             * @enum {string}
              */
-            kind: "openai_compatible";
+            kind: "openai_compatible" | "anthropic";
             /** Models */
             models: components["schemas"]["LocalModelProfile"][];
             /** Name */
@@ -2604,6 +2650,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListLocalModelProvidersResponse"];
+                };
+            };
+        };
+    };
+    discover_model_provider_models_local_v1_model_providers_discover_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverLocalModelsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverLocalModelsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

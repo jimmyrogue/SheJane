@@ -210,6 +210,14 @@
             ],
             "title": "Assistant Message Id"
           },
+          "attachment_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Attachment Paths",
+            "type": "array"
+          },
           "client_message_id": {
             "maxLength": 128,
             "minLength": 1,
@@ -1222,6 +1230,91 @@
         "title": "DiagnosticsWaitCandidate",
         "type": "object"
       },
+      "DiscoverLocalModelsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "maxLength": 8192,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "kind": {
+            "default": "openai_compatible",
+            "enum": [
+              "openai_compatible",
+              "anthropic"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "provider_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Id"
+          }
+        },
+        "required": [
+          "base_url"
+        ],
+        "title": "DiscoverLocalModelsRequest",
+        "type": "object"
+      },
+      "DiscoverLocalModelsResponse": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredLocalModel"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "models"
+        ],
+        "title": "DiscoverLocalModelsResponse",
+        "type": "object"
+      },
+      "DiscoveredLocalModel": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_id",
+          "display_name"
+        ],
+        "title": "DiscoveredLocalModel",
+        "type": "object"
+      },
       "EditedToolAction": {
         "properties": {
           "args": {
@@ -1852,7 +1945,10 @@
             "type": "string"
           },
           "kind": {
-            "const": "openai_compatible",
+            "enum": [
+              "openai_compatible",
+              "anthropic"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -4048,8 +4144,11 @@
             "type": "boolean"
           },
           "kind": {
-            "const": "openai_compatible",
             "default": "openai_compatible",
+            "enum": [
+              "openai_compatible",
+              "anthropic"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -4436,6 +4535,44 @@
           }
         },
         "summary": "List Model Providers"
+      }
+    },
+    "/local/v1/model-providers/discover-models": {
+      "post": {
+        "operationId": "discover_model_provider_models_local_v1_model_providers_discover_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverLocalModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverLocalModelsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Model Provider Models"
       }
     },
     "/local/v1/model-providers/{provider_id}": {

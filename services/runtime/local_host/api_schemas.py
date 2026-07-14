@@ -120,10 +120,13 @@ class LocalModelProfile(BaseModel):
     max_output_tokens: int | None = Field(default=None, ge=128, le=1_000_000)
 
 
+ModelProviderKind = Literal["openai_compatible", "anthropic"]
+
+
 class LocalModelProvider(BaseModel):
     id: str
     name: str
-    kind: Literal["openai_compatible"]
+    kind: ModelProviderKind
     base_url: str
     requires_api_key: bool
     credential_configured: bool
@@ -138,11 +141,29 @@ class ListLocalModelProvidersResponse(BaseModel):
     providers: list[LocalModelProvider]
 
 
+class DiscoverLocalModelsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: ModelProviderKind = "openai_compatible"
+    provider_id: str | None = Field(default=None, min_length=1, max_length=32)
+    base_url: str = Field(min_length=1, max_length=2048)
+    api_key: str | None = Field(default=None, min_length=1, max_length=8192)
+
+
+class DiscoveredLocalModel(BaseModel):
+    model_id: str
+    display_name: str
+
+
+class DiscoverLocalModelsResponse(BaseModel):
+    models: list[DiscoveredLocalModel]
+
+
 class UpsertLocalModelProviderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=100)
-    kind: Literal["openai_compatible"] = "openai_compatible"
+    kind: ModelProviderKind = "openai_compatible"
     base_url: str = Field(min_length=1, max_length=2048)
     requires_api_key: bool = True
     api_key: str | None = Field(default=None, min_length=1, max_length=8192)
@@ -348,6 +369,7 @@ class CreateRunRequest(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
     workspace_path: str | None = Field(default=None, max_length=4096)
+    attachment_paths: list[str] = Field(default_factory=list, max_length=10)
     # Runtime model selection, normally `local:<provider>:<model>`.
     model: str = Field(min_length=1, max_length=128, pattern=r"^local:[^:]+:.+$")
     history: list[dict[str, str]] | None = Field(default=None, max_length=256)
@@ -361,6 +383,8 @@ class CreateRunRequest(BaseModel):
             raise ValueError("assistant_message_id must differ from client_message_id")
         if _has_invalid_capability_name(self.required_capabilities):
             raise ValueError("required_capabilities contains an invalid capability name")
+        if any(not path.strip() or len(path) > 4096 for path in self.attachment_paths):
+            raise ValueError("attachment_paths contains an invalid path")
         for field_name, value in (("settings", self.settings), ("metadata", self.metadata)):
             nodes = 0
             stack: list[tuple[Any, int]] = [(value, 1)] if value is not None else []

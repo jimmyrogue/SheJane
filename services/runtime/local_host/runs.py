@@ -29,6 +29,7 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from langchain_core.load.dump import dumps as lc_dumps
@@ -72,6 +73,7 @@ RUNTIME_CAPABILITIES = frozenset(
     {
         "agent.run",
         "agent.stream",
+        "attachments",
         "workspace.files",
         "memory",
         "skills",
@@ -81,6 +83,42 @@ RUNTIME_CAPABILITIES = frozenset(
         "hitl",
     }
 )
+
+_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _attachment_bindings(paths: list[str]) -> list[dict[str, str]]:
+    names = [Path(path).name for path in paths]
+    duplicates = {name for name in names if names.count(name) > 1}
+    return [
+        {
+            "source_path": path,
+            "virtual_path": f"/attachments/{index + 1}-{name}"
+            if name in duplicates
+            else f"/attachments/{name}",
+        }
+        for index, (path, name) in enumerate(zip(paths, names, strict=True))
+    ]
+
+
+async def _attachment_admission_error(bindings: list[dict[str, str]]) -> str | None:
+    for item in bindings:
+        if not isinstance(item, dict):
+            return "attachment metadata is invalid"
+        source_path = item.get("source_path")
+        virtual_path = item.get("virtual_path")
+        if not isinstance(source_path, str) or not isinstance(virtual_path, str):
+            return "attachment metadata is invalid"
+        virtual_name = virtual_path.removeprefix("/attachments/")
+        if virtual_name == virtual_path or not virtual_name or "/" in virtual_name:
+            return "attachment metadata is invalid"
+        path = Path(source_path)
+        if not await asyncio.to_thread(path.is_file):
+            return f"attachment is no longer available: {path.name}"
+        size = (await asyncio.to_thread(path.stat)).st_size
+        if size > _MAX_ATTACHMENT_BYTES:
+            return f"attachment exceeds the 10 MiB limit: {path.name}"
+    return None
 
 
 def runtime_capabilities(settings: Settings) -> frozenset[str]:
@@ -332,6 +370,7 @@ class RunCoordinator:
         self._user_inputs: dict[str, str] = {}
         self._workspaces: dict[str, str | None] = {}
         self._histories: dict[str, list[dict[str, str]]] = {}
+        self._attachments: dict[str, list[dict[str, str]]] = {}
         self._settings_overrides: dict[str, dict[str, Any]] = {}
         self._run_metadata: dict[str, dict[str, Any]] = {}
         # Resolved tier per run (fast|deep|…). Mirrors local_runs.mode; lets a
@@ -528,7 +567,7 @@ class RunCoordinator:
                     str(exc),
                 )
         return {
-            "provider": "openai_compatible",
+            "provider": str(provider["kind"]),
             "provider_id": provider_id,
             "provider_version": int(provider.get("version") or 1),
             "base_url": str(provider["base_url"]),
@@ -560,7 +599,7 @@ class RunCoordinator:
                 if self.settings.fake_llm
                 else ("fake model provider is disabled", None)
             )
-        if binding.get("provider") == "openai_compatible":
+        if binding.get("provider") in {"openai_compatible", "anthropic"}:
             provider_id = binding.get("provider_id")
             if not isinstance(provider_id, str):
                 return "run model credential reference is invalid", None
@@ -621,6 +660,7 @@ class RunCoordinator:
         user_item_metadata: dict[str, Any] | None = None,
         replace_from_client_id: str | None = None,
         workspace_path: str | None = None,
+        attachment_paths: list[str] | None = None,
         mode: str = "fast",
         history: list[dict[str, str]] | None = None,
         parent_run_id: str | None = None,
@@ -663,6 +703,13 @@ class RunCoordinator:
         public_metadata = (
             dict(metadata or {}) if metadata_is_trusted else sanitize_run_metadata(metadata)
         )
+        attachment_bindings = _attachment_bindings(attachment_paths or [])
+        if attachment_bindings:
+            public_metadata["_attachments"] = attachment_bindings
+            if admission_error is None:
+                attachment_error = await _attachment_admission_error(attachment_bindings)
+                if attachment_error is not None:
+                    admission_error = RunAdmissionError("attachment_unavailable", attachment_error)
         async with self._model_admission(principal_id, mode) as (
             model_binding,
             model_error,
@@ -693,6 +740,7 @@ class RunCoordinator:
                     "required_capabilities": sorted(set(required_capabilities)),
                     "goal": goal,
                     "workspace_path": workspace_path,
+                    "attachment_paths": [item["source_path"] for item in attachment_bindings],
                     "model": mode,
                     "history": history or [],
                     "parent_run_id": parent_run_id,
@@ -1021,6 +1069,9 @@ class RunCoordinator:
         )
         self._workspaces[run_id] = input_payload.get("workspace_path")
         self._histories[run_id] = list(input_payload.get("history") or [])
+        self._attachments[run_id] = list(
+            dict(input_payload.get("metadata") or {}).get("_attachments") or []
+        )
         self._settings_overrides[run_id] = dict(input_payload.get("settings") or {})
         self._run_metadata[run_id] = dict(input_payload.get("metadata") or {})
         self._modes[run_id] = str(input_payload.get("mode") or "auto")
@@ -1123,6 +1174,29 @@ class RunCoordinator:
                         status=outcome.status,
                     )
                     return
+                run_metadata = _json_object(run.get("metadata_json"))
+                attachment_bindings = list(run_metadata.get("_attachments") or [])
+                attachment_error = await _attachment_admission_error(attachment_bindings)
+                if attachment_error is not None:
+                    outcome = await self._settle_execution_outcome(
+                        run_id=run_id,
+                        execution_attempt_id=execution_attempt_id,
+                        outcome=RunOutcome(
+                            "failed",
+                            "run.failed",
+                            _run_failed_payload(ExecutionWorkspaceError(attachment_error)),
+                        ),
+                        cleanup_report={"status": "completed"},
+                    )
+                    await self._commit_run_result(
+                        wakeup,
+                        run_id,
+                        outcome.event_type,
+                        outcome.payload,
+                        status=outcome.status,
+                    )
+                    return
+                self._attachments[run_id] = attachment_bindings
                 binding_error, model_api_key = await self._model_binding_error(
                     principal_id,
                     frozen_settings,
@@ -1360,6 +1434,7 @@ class RunCoordinator:
             self._user_inputs.pop(run_id, None)
             self._workspaces.pop(run_id, None)
             self._histories.pop(run_id, None)
+            self._attachments.pop(run_id, None)
             self._settings_overrides.pop(run_id, None)
             self._run_metadata.pop(run_id, None)
             self._modes.pop(run_id, None)
@@ -1726,6 +1801,7 @@ class RunCoordinator:
     ) -> RunOutcome:
         wakeup = self._wakeups[run_id]
         workspace_path = self._workspaces.get(run_id)
+        attachment_bindings = self._attachments.get(run_id, [])
         goal = self._goals.get(run_id, "")
         repair_context: dict[str, Any] | None = None
         retry_context: dict[str, Any] | None = None
@@ -1829,6 +1905,11 @@ class RunCoordinator:
                 memory_write_facts=extract_memory_write_facts(self._user_inputs.get(run_id, goal)),
                 execution_attempt_id=execution_attempt_id,
                 workspace_root=workspace_path,
+                attachments=tuple(
+                    str(item.get("virtual_path"))
+                    for item in attachment_bindings
+                    if item.get("virtual_path")
+                ),
                 task_goal=goal,
                 mode=resolved_model,
                 turn_count=turn_count,
@@ -1851,6 +1932,7 @@ class RunCoordinator:
                 checkpointer=checkpointer or self.checkpointer,
                 agent_store=self.agent_store,
                 workspace_root=workspace_path,
+                attachment_bindings=attachment_bindings,
                 run_id=run_id,
                 mode=resolved_model,
                 task_goal=goal,

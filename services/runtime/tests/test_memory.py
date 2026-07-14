@@ -90,6 +90,37 @@ def test_memory_instruction_sources_are_read_only_backend_routes(tmp_path: Path)
     assert backend.write(str((workspace / "workspace-note.md").resolve()), "allowed").error is None
 
 
+def test_attachment_backend_route_exposes_only_the_selected_file(tmp_path: Path) -> None:
+    from local_host.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = tmp_path / "uploads"
+    source.mkdir()
+    attachment = source / "brief.txt"
+    attachment.write_text("selected attachment", encoding="utf-8")
+    (source / "secret.txt").write_text("not selected", encoding="utf-8")
+
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+        attachment_bindings=[
+            {
+                "source_path": str(attachment),
+                "virtual_path": "/attachments/brief.txt",
+            }
+        ],
+    )
+
+    selected = backend.read("/attachments/brief.txt")
+    assert selected.file_data == {"content": "selected attachment", "encoding": "utf-8"}
+    assert backend.read("/attachments/secret.txt").file_data is None
+    assert backend.write("/attachments/brief.txt", "changed").error == (
+        "read-only source: writes are not allowed"
+    )
+
+
 async def test_memory_write_is_explicit_and_idempotent() -> None:
     store = InMemoryStore()
     runtime = SimpleNamespace(

@@ -30,6 +30,7 @@ def test_runtime_prompt_is_built_from_invocation_context() -> None:
                 store=object(),
                 task_goal="检查运行时上下文",
                 workspace_root="/tmp/workspace",
+                attachments=("/attachments/brief.txt",),
             )
         )
         system_message = SystemMessage(content="deep agent base prompt")
@@ -56,6 +57,7 @@ def test_runtime_prompt_is_built_from_invocation_context() -> None:
     assert "deep agent base prompt" in rendered
     assert "检查运行时上下文" in rendered
     assert "/tmp/workspace" in rendered
+    assert "/attachments/brief.txt" in rendered
     assert "<runtime-repair>" in rendered
     assert "Repair the persisted verification failure." in rendered
     assert "run_private" not in rendered

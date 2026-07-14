@@ -185,6 +185,7 @@ class RuntimeContext:
 
     # Layer 55 — model-visible runtime context
     workspace_root: str | None = None
+    attachments: tuple[str, ...] = ()
     locale: str | None = None
     enabled_skills: list[str] = field(default_factory=list)
     now: _dt.datetime | None = None  # injected for tests; defaults to UTC now
@@ -428,6 +429,10 @@ class ContextBuilder:
             lines.append(f"- 工作区根目录: `{runtime.workspace_root}`")
         else:
             lines.append("- 工作区: 未授权（仅虚拟文件系统，不能读写真实磁盘文件）")
+        if runtime.attachments:
+            lines.append(
+                "- 本次附件（只读）: " + "、".join(f"`{path}`" for path in runtime.attachments)
+            )
 
         loc = runtime.locale or _detect_locale()
         if loc:

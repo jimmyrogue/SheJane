@@ -34,6 +34,8 @@ export type RuntimeSettings = Schemas['RuntimeSettingsResponse']
 export type UpdateRuntimeSettingsRequest = Schemas['UpdateRuntimeSettingsRequest']
 export type LocalModelProvider = Schemas['LocalModelProvider']
 export type LocalModelProfile = Schemas['LocalModelProfile']
+export type DiscoverLocalModelsRequest = Schemas['DiscoverLocalModelsRequest']
+export type DiscoveredLocalModel = Schemas['DiscoveredLocalModel']
 export type LocalRuntimeModel = Schemas['LocalRuntimeModel']
 export type UpsertLocalModelProviderRequest = Schemas['UpsertLocalModelProviderRequest']
 export type LocalScheduledRun = Schemas['LocalScheduledRun']
@@ -201,6 +203,20 @@ export async function listLocalModelProviders(
   return body.providers ?? []
 }
 
+export async function discoverLocalModels(
+  input: DiscoverLocalModelsRequest,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<DiscoveredLocalModel[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/model-providers/discover-models`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(input),
+  })
+  const body = await decodeLocalResponse<{ models?: DiscoveredLocalModel[] }>(response)
+  return body.models ?? []
+}
+
 export async function upsertLocalModelProvider(
   providerID: string,
   input: UpsertLocalModelProviderRequest,
@@ -296,6 +312,7 @@ export interface CreateLocalRunInput {
   replaceFromClientId?: string
   goal: string
   workspacePath?: string
+  attachmentPaths?: string[]
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
   parentRunId?: string
   settings?: AgentSettings
@@ -437,6 +454,7 @@ export async function createLocalRun(
   const settings = serializeAgentSettings(input.settings)
   const requiredCapabilities = new Set(['agent.run', 'agent.stream', 'hitl'])
   if (input.workspacePath) requiredCapabilities.add('workspace.files')
+  if (input.attachmentPaths?.length) requiredCapabilities.add('attachments')
   if (input.settings?.memory !== 'off') requiredCapabilities.add('memory')
   if (input.settings?.skills !== 'off') requiredCapabilities.add('skills')
   if (input.settings?.mcp !== 'off') requiredCapabilities.add('mcp')
@@ -455,6 +473,7 @@ export async function createLocalRun(
     user_item_metadata: input.userItemMetadata,
     replace_from_client_id: input.replaceFromClientId,
     workspace_path: input.workspacePath || undefined,
+    attachment_paths: input.attachmentPaths?.length ? input.attachmentPaths : undefined,
     history: input.history ?? [],
     parent_run_id: input.parentRunId || undefined,
     settings,

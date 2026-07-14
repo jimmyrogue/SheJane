@@ -799,6 +799,43 @@ def test_create_run_requires_owned_available_workspace(client: TestClient, tmp_p
     assert accepted.json()["workspace_path"] == str(tmp_path.resolve())
 
 
+def test_create_run_accepts_existing_file_attachments_only(
+    client: TestClient, tmp_path: Path
+) -> None:
+    headers = {"Authorization": "Bearer tok"}
+    missing = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect attachment", command_id="cmd_attachment_missing"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(tmp_path / "missing.txt")],
+        },
+    )
+    assert missing.status_code == 409
+
+    attachment = tmp_path / "brief.txt"
+    attachment.write_text("runtime-owned attachment", encoding="utf-8")
+    accepted = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect attachment", command_id="cmd_attachment_ok"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(attachment)],
+        },
+    )
+    assert accepted.status_code == 200
+    stored = asyncio.run(client.app.state.store.get_run(accepted.json()["id"]))
+    metadata = json.loads(stored["metadata_json"])
+    assert metadata["_attachments"] == [
+        {
+            "source_path": str(attachment.resolve()),
+            "virtual_path": "/attachments/brief.txt",
+        }
+    ]
+
+
 def test_command_replay_precedes_current_workspace_admission(
     client: TestClient, tmp_path: Path
 ) -> None:

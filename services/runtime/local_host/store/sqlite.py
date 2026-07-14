@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS local_model_providers (
     principal_id TEXT NOT NULL,
     id TEXT NOT NULL,
     name TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('openai_compatible')),
+    kind TEXT NOT NULL CHECK (kind IN ('openai_compatible', 'anthropic')),
     base_url TEXT NOT NULL,
     requires_api_key INTEGER NOT NULL DEFAULT 1,
     credential_ref TEXT NOT NULL,
@@ -642,6 +642,7 @@ class LocalStore:
         `CREATE TABLE IF NOT EXISTS` never alters an existing table, so a new
         column has to be added explicitly. SQLite ADD COLUMN is cheap + safe."""
         await LocalStore._ensure_principal_scoped_workspaces(conn)
+        await LocalStore._ensure_model_provider_kinds(conn)
         cursor = await conn.execute("PRAGMA table_info(local_runs)")
         columns = {row[1] for row in await cursor.fetchall()}
         if "mode" not in columns:
@@ -749,6 +750,41 @@ class LocalStore:
         ):
             await conn.execute(f"DROP TABLE IF EXISTS {table}")
         await LocalStore._ensure_event_sequence_index(conn)
+
+    @staticmethod
+    async def _ensure_model_provider_kinds(conn: aiosqlite.Connection) -> None:
+        schema = await (
+            await conn.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'local_model_providers'"
+            )
+        ).fetchone()
+        if schema is not None and "anthropic" in str(schema[0]).lower():
+            return
+        await conn.execute("SAVEPOINT model_provider_kinds")
+        try:
+            await conn.execute(
+                "CREATE TABLE local_model_providers_v2 ("
+                "principal_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, "
+                "kind TEXT NOT NULL CHECK (kind IN ('openai_compatible', 'anthropic')), "
+                "base_url TEXT NOT NULL, requires_api_key INTEGER NOT NULL DEFAULT 1, "
+                "credential_ref TEXT NOT NULL, models_json TEXT NOT NULL, "
+                "enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1, "
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+                "PRIMARY KEY (principal_id, id))"
+            )
+            await conn.execute(
+                "INSERT INTO local_model_providers_v2 SELECT * FROM local_model_providers"
+            )
+            await conn.execute("DROP TABLE local_model_providers")
+            await conn.execute(
+                "ALTER TABLE local_model_providers_v2 RENAME TO local_model_providers"
+            )
+            await conn.execute("RELEASE model_provider_kinds")
+        except BaseException:
+            await conn.execute("ROLLBACK TO model_provider_kinds")
+            await conn.execute("RELEASE model_provider_kinds")
+            raise
 
     @staticmethod
     async def _ensure_permission_identity_columns(conn: aiosqlite.Connection) -> None:

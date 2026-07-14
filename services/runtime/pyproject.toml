@@ -39,6 +39,7 @@ dependencies = [
     "python-docx>=1.1.0",
     "openpyxl>=3.1.0",
     "python-pptx>=1.0.2",
+    "langchain-anthropic==1.4.8",
 ]
 
 [project.scripts]
