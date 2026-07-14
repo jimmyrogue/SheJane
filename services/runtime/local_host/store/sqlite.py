@@ -1929,21 +1929,22 @@ class LocalStore:
             await self._conn.execute(
                 "INSERT INTO local_workspaces "
                 "(id, principal_id, path, label, created_at, last_used_at) "
-                "VALUES (:id, :principal_id, :path, :label, :created_at, :last_used_at)",
+                "VALUES (:id, :principal_id, :path, :label, :created_at, :last_used_at) "
+                "ON CONFLICT(principal_id, path) DO NOTHING",
                 ws,
             )
             await self._conn.commit()
-        except aiosqlite.IntegrityError:
-            # path already registered — return the existing record
-            row = await (
-                await self._conn.execute(
-                    "SELECT * FROM local_workspaces WHERE principal_id = ? AND path = ?",
-                    (principal_id, path),
-                )
-            ).fetchone()
-            assert row is not None
-            return dict(row)
-        return ws
+        except BaseException:
+            await self._conn.rollback()
+            raise
+        row = await (
+            await self._conn.execute(
+                "SELECT * FROM local_workspaces WHERE principal_id = ? AND path = ?",
+                (principal_id, path),
+            )
+        ).fetchone()
+        assert row is not None
+        return dict(row)
 
     async def list_workspaces(self, *, principal_id: str) -> list[dict[str, Any]]:
         cursor = await self._conn.execute(

@@ -249,6 +249,37 @@ async def test_workspaces_are_scoped_by_owner(tmp_path: Path) -> None:
         await store.close()
 
 
+async def test_reauthorizing_workspace_does_not_block_thread_updates(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "local.db")
+    try:
+        run, _created = await _accept(store, "cmd_workspace_reauthorization")
+        workspace_path = str(tmp_path / "workspace")
+        first = await store.create_workspace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            path=workspace_path,
+            label="workspace",
+        )
+        repeated = await store.create_workspace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            path=workspace_path,
+            label="workspace",
+        )
+
+        updated = await store.update_thread(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            thread_id=str(run["thread_id"]),
+            title="Workspace bound",
+            metadata={"workspace_path": workspace_path},
+            archived=None,
+        )
+
+        assert repeated["id"] == first["id"]
+        assert updated is not None
+        assert updated["title"] == "Workspace bound"
+    finally:
+        await store.close()
+
+
 async def test_legacy_workspaces_migrate_to_the_local_owner(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy-workspace.db"
     conn = sqlite3.connect(db_path)
