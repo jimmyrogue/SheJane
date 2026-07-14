@@ -176,7 +176,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 
 | 方法 + 路径 | body | 触发的 SSE |
 |---|---|---|
-| `POST /local/v1/runs` | `{command_id, client_message_id, goal, history?, settings?, ...}` | 创建后开 stream → `run.started` |
+| `POST /local/v1/runs` | `{command_id, client_message_id, goal, attachment_paths?, history?, settings?, ...}` | 附件必须是本机现有文件，最多 10 个、单个不超过 10 MiB；创建后开 stream → `run.started` |
 | `POST /local/v1/runs/:id/fork` | `{command_id, client_message_id, assistant_message_id, thread_id, protocol_version, required_capabilities, checkpoint_id, ...}` | 创建分支后开 stream → `run.started` |
 | `GET /local/v1/runs/:id/stream` | — | （本协议） |
 | `POST /local/v1/commands` | `run.cancel`、`permission.resolve`、`question.answer`、`plan.resolve` 或 `tool.reconcile` 的严格联合类型 | 对应状态事件；同一等待周期全部解决后才有 `run.resumed` |

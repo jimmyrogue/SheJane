@@ -28,7 +28,7 @@ flowchart LR
     D["Desktop client<br/>Electron + React"] -->|"Loopback HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
     R --> W["Local workspace<br/>Files · Tools · Checkpoints"]
     R --> E["Extensions<br/>Skills · MCP · Subagents"]
-    R --> B["BYOK providers<br/>OpenAI-compatible APIs · local endpoints"]
+    R --> B["BYOK providers<br/>OpenAI-compatible APIs · Anthropic"]
 ```
 
 The desktop client and Runtime communicate over loopback HTTP with a pairing token. A failed Runtime surfaces as a local error and never switches execution paths silently.
@@ -55,7 +55,7 @@ corepack enable && pnpm install
 make dev-electron
 ```
 
-No root `.env` is required. Start Desktop, add an OpenAI-compatible provider in Runtime settings, then select one of its models. Use `make doctor` when the local stack does not start cleanly.
+No root `.env` is required. Start Desktop, add an OpenAI-compatible or Anthropic provider in Runtime settings, then select one of its models. Use `make doctor` when the local stack does not start cleanly.
 
 ## Development
 

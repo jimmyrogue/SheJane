@@ -43,9 +43,9 @@ Runtime 默认不要求用户环境变量。
 
 ## 添加 BYOK 供应商
 
-Desktop 的模型供应商设置会调用 Runtime 的 `/local/v1/model-providers` 接口。当前生产适配器支持 OpenAI 兼容接口。
+Desktop 的模型供应商设置会调用 Runtime 的 `/local/v1/model-providers` 接口。当前生产适配器支持 OpenAI 兼容接口和 Anthropic 原生接口。
 
-添加供应商时只需选择常用服务并填写 API Key 与模型编号；本地服务不要求 API Key。API 地址已经提供常用默认值，显示名称和上下文上限收在高级设置中。当前适配器默认启用流式输出和工具调用。
+Desktop 提供 OpenAI、OpenRouter、DeepSeek、Anthropic、自定义 OpenAI 和自定义 Anthropic 入口。填写 API Key 后，Runtime 会从供应商的模型目录读取模型；Desktop 会显示可搜索的列表，并允许为同一个供应商勾选多个模型。手动填写时使用“+”增加模型输入框。上下文上限收在高级设置中，模型默认启用流式输出和工具调用。
 
 任务使用明确的 `local:<供应商编号>:<模型编号>`。Runtime 不自动选择模型或静默切换供应商。
 

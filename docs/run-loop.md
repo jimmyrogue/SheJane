@@ -168,7 +168,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │       ↓                                                                  │     │
   │     │ LedgerChatModel 记录首次输出 → 已绑定的唯一供应商模型               │     │
   │     │       ↓                                                                  │     │
-  │     │   OpenAI 兼容供应商流式接口                                               │     │
+  │     │   OpenAI 兼容或 Anthropic 原生流式接口                                    │     │
   │     │       ▼                                                                  │     │
   │     │   返回 llm.delta × N  +  llm.tool_call  +  llm.done                      │     │
   │     │       ↓ 完整结束时结算 token 用量；中断或重启标记结果不明     │     │
@@ -357,7 +357,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
 | 显式长期记忆 | 主任务入口从真实用户输入提取精确记忆事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；读写按所有者与工作区双重隔离 | `test_memory` / `test_memory_http` / `test_subagents` |
 | Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` |
-| Filesystem sandbox | `FilesystemMiddleware` + backend | `test_agent_builder` |
+| 文件系统沙箱 | `FilesystemMiddleware` + backend；项目目录是可写根目录，本次附件仅通过 `/attachments/` 暴露被选中的单个文件并保持只读 | `test_agent_builder` / `test_memory` / `test_runs_http` |
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |
 | 错误分类诊断 | `handoff.failure` 将最近 `run.failed` / `tool.failed` 归类并标记 recoverable / retryable / action_kind / recovery_action / suggested action；同一模块也输出 runtime retry decision（`should_retry` / `delay_s` / fail-fast reason） | `test_runs_http` / `test_failure_policy` |
