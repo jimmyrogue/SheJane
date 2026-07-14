@@ -9,9 +9,9 @@
  * Skipped entirely when `VITE_TEST_LOCAL_HOST_URL` isn't set so
  * `pnpm test` stays hermetic. CI sets it after starting the daemon.
  *
- * Tests target the SYNCHRONOUS endpoints — health, session, runs
- * CRUD, permissions. SSE stream tests would require a real
- * upstream LLM (or a complex daemon mock mode) and are deferred.
+ * The suite boots a real Runtime and uses its explicit fake-model seam, so
+ * HTTP, commands, SSE and the compiled agent loop are all exercised without
+ * depending on an external model provider.
  */
 import { describe, it, expect } from 'vitest'
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
@@ -94,6 +94,21 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
       expect(found).toBeDefined()
       expect(found?.goal).toBe('list-me')
     })
+
+    it('replays the same create command and rejects changed content', async () => {
+      const suffix = Date.now().toString(36)
+      const input = {
+        commandId: `cmd_contract_idempotent_${suffix}`,
+        clientMessageId: `msg_contract_idempotent_${suffix}`,
+        goal: 'idempotent create',
+        mode: CONTRACT_MODE,
+        settings: CONTRACT_SETTINGS,
+      } as const
+      const first = await createLocalRun(input, config)
+      const replay = await createLocalRun(input, config)
+      expect(replay.id).toBe(first.id)
+      await expect(createLocalRun({ ...input, goal: 'conflicting create' }, config)).rejects.toThrow(/different content/i)
+    })
   })
 
   // -----------------------------------------------------------------
@@ -131,6 +146,34 @@ describe.skipIf(!BASE_URL)('contract: local-host HTTP (live daemon)', () => {
       expect(events).toContain('run.started')
       expect(events).toContain('run.completed')
       expect(result.completed).toBe(true)
+    })
+
+    it('replays only durable events after the requested cursor', async () => {
+      const suffix = Date.now().toString(36)
+      const created = await createLocalRun({
+        commandId: `cmd_contract_cursor_${suffix}`,
+        clientMessageId: `msg_contract_cursor_${suffix}`,
+        goal: 'cursor replay',
+        mode: CONTRACT_MODE,
+        settings: CONTRACT_SETTINGS,
+      }, config)
+      const first: Array<{ seq?: number; event_type: string }> = []
+      await streamLocalRun(created.id, config, {
+        onEvent: (event) => first.push(event),
+        onDelta: () => undefined,
+      })
+      const durable = first.filter((event): event is { seq: number; event_type: string } => typeof event.seq === 'number')
+      expect(durable.length).toBeGreaterThan(1)
+      const after = durable.at(-2)!.seq
+      const replay: Array<{ seq?: number; event_type: string }> = []
+      await streamLocalRun(created.id, config, {
+        afterSeq: after,
+        onEvent: (event) => replay.push(event),
+        onDelta: () => undefined,
+      })
+      expect(replay.filter((event) => typeof event.seq === 'number').map((event) => event.seq)).toEqual(
+        durable.filter((event) => event.seq > after).map((event) => event.seq),
+      )
     })
   })
 

@@ -12,7 +12,8 @@ TMP_DIR="$(mktemp -d)"
 LOG_FILE="${TMP_DIR}/contract-daemon.log"
 PID_FILE="${TMP_DIR}/contract-daemon.pid"
 DATA_DIR="${TMP_DIR}/data"
-mkdir -p "$DATA_DIR"
+HOME_DIR="${TMP_DIR}/home"
+mkdir -p "$DATA_DIR" "$HOME_DIR"
 
 DAEMON_PID=""
 cleanup() {
@@ -46,8 +47,10 @@ echo "→ Starting contract daemon at ${URL}"
 (
   cd "${ROOT_DIR}/services/runtime"
   nohup env -i \
-    "PATH=$PATH" "HOME=$HOME" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
+    "PATH=$PATH" "HOME=$HOME_DIR" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
     "SHEJANE_FAKE_LLM=1" \
+    "LANGSMITH_TRACING=false" \
+    "LANGCHAIN_TRACING_V2=false" \
     "PYTHONUNBUFFERED=1" \
     uv run shejane-runtime --host 127.0.0.1 --port "$PORT" \
       --token "$TOKEN" --data-dir "$DATA_DIR" >"$LOG_FILE" 2>&1 &

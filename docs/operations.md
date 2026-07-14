@@ -76,9 +76,11 @@ Runtime Release 提供 macOS arm64/x64、Windows x64、Linux x64 压缩包和 SH
 make lint
 make test
 make build
-make test-contract
+make test-e2e
 git diff --check
 ```
+
+`make test-e2e` 会在隔离目录中启动真实 Runtime，并验证公开 HTTP、命令、SSE、Agent、工具和持久状态。详细范围见 [Runtime 端到端测试](./runtime-e2e-testing.md)。`make test-contract` 仅作为旧命令别名保留。
 
 发布前还应确认：
 

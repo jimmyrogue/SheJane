@@ -71,6 +71,7 @@ If anything looks wrong, `make doctor` is the first stop.
 ```bash
 make lint                   # ruff + project guards
 make test                   # Runtime + Desktop + Runtime SDK
+make test-e2e               # 真实 Runtime 进程 + HTTP/SSE/Agent 黑盒测试
 
 # focused:
 make local-host-test        # uv run python -m pytest
@@ -78,7 +79,7 @@ make client-test            # client Vitest
 make runtime-sdk-test       # public SDK Vitest
 ```
 
-CI runs the same lint + deterministic-test + contract jobs on every PR.
+CI runs the same lint, deterministic test, build, and Runtime E2E jobs on every PR. See [Runtime E2E testing](./docs/runtime-e2e-testing.md) for the test boundary and coverage map.
 
 ## Commit messages
 

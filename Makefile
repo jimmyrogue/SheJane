@@ -15,7 +15,7 @@
 
 .PHONY: help \
 	dev-electron restart-daemon doctor \
-	test test-contract ci build \
+	test test-e2e test-contract ci build \
 	client-test runtime-sdk-test local-host-test \
 	client-build runtime-sdk-build local-host-build \
 	lint schemas setup-hooks \
@@ -42,10 +42,12 @@ doctor: ## One-shot diagnostic: "why isn't dev working?"
 ##@ Test
 test: client-test runtime-sdk-test local-host-test ## Fast unit suites
 
-test-contract: ## Client ↔ daemon contract round-trip over real HTTP (boots a daemon on :17399)
+test-e2e: ## Full black-box Runtime E2E over real HTTP (boots an isolated daemon on :17399)
 	./scripts/test-contract.sh
 
-ci: lint test build test-contract ## Run EVERYTHING CI runs, locally (before pushing a PR)
+test-contract: test-e2e ## Backward-compatible alias for the Runtime E2E suite
+
+ci: lint test build test-e2e ## Run EVERYTHING CI runs, locally (before pushing a PR)
 
 build: ## Build Runtime SDK, Desktop, and Runtime dependencies
 	pnpm --filter @shejane/runtime-sdk build

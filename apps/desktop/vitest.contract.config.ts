@@ -29,6 +29,9 @@ export default defineConfig({
     // with streaming + abort signals).
     environment: 'node',
     include: ['src/**/*.contract.test.ts'],
+    // Every contract file talks to the same isolated Runtime process.
+    // Keep mutations (settings, providers, Skills, MCP) deterministic.
+    fileParallelism: false,
     // No setupFiles — those exist for jsdom + IndexedDB shims that
     // contract tests don't need.
     testTimeout: 30_000, // SSE streams can take a few seconds.
