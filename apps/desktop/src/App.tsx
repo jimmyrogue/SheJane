@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { timelineItem } from './features/chat/chatStore'
+import { projectTransientAssistantText, timelineItem } from './features/chat/chatStore'
 import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
 import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
@@ -3024,6 +3024,7 @@ function appendLocalRunEvent(
   if (event.event_type === 'llm.delta') {
     return
   }
+  message.content = projectTransientAssistantText(message.content, event)
   // Accumulate DeepSeek-style thinking-mode `reasoning_content` into a
   // dedicated `message.reasoning` field. This is kept ONLY for backend
   // round-trip (DeepSeek API requires reasoning_content to be passed
@@ -3123,15 +3124,6 @@ function appendLocalRunEvent(
     if (!alreadySeen) {
       message.agentEvents = [...(message.agentEvents ?? []), item]
     }
-    // When the run pauses for a user.ask, any prose the model streamed before
-    // calling the tool is just stalling chatter (incl. guardrail-rejected
-    // clarification text). Drop it so the message bubble only shows the real
-    // answer that streams in after the user responds. This must run on the
-    // initial delivery too, so the persisted snapshot and later cursor resume
-    // both start from the real post-question answer.
-    if (item.type === 'question.asked') {
-      message.content = ''
-    }
   }
 }
 
@@ -3203,7 +3195,10 @@ function appendLocalDelta(message: ChatMessage, delta: string, event: AgentRunEv
   if (event.id) {
     seenEventIDs.add(event.id)
   }
-  message.content += delta
+  message.content = projectTransientAssistantText(message.content, {
+    ...event,
+    payload: { ...(event.payload ?? {}), content: delta },
+  })
 }
 
 function recordLocalEventCursor(message: ChatMessage, event: AgentRunEvent) {

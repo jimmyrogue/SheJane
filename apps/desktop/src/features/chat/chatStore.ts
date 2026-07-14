@@ -1,6 +1,22 @@
 import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { createTranslator, type TranslationKey, type Translator } from '../../shared/i18n/i18n'
 import type { AgentQuestionItem, AgentPlanTodo, AgentTimelineItem, AgentToolDetail } from '../../shared/local-data/types'
+
+export function projectTransientAssistantText(current: string, event: AgentRunEvent): string {
+  if (event.event_type === 'llm.delta') {
+    return current + stringValue(event.payload?.content)
+  }
+  if (
+    event.event_type === 'tool.requested'
+    || event.event_type === 'question.asked'
+    || event.event_type === 'run.failed'
+    || event.event_type === 'run.cleanup_required'
+  ) {
+    return ''
+  }
+  return current
+}
+
 export function timelineItem(event: AgentRunEvent, t: Translator = createTranslator('zh')): AgentTimelineItem | null {
   if (event.event_type === 'llm.delta') {
     return null

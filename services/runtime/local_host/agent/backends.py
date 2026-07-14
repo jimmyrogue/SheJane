@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import re
 from typing import Any
 
 import yaml
 from deepagents.backends.protocol import (
     EditResult,
+    FileData,
     FileDownloadResponse,
     FileInfo,
     FileUploadResponse,
@@ -18,6 +21,7 @@ from deepagents.backends.protocol import (
     ReadResult,
     WriteResult,
 )
+from markitdown import MarkItDown
 
 
 def _normalize_skill_frontmatter(content: bytes | None) -> bytes | None:
@@ -116,19 +120,50 @@ class ReadOnlyFileBackend(ReadOnlyBackend):
     def __init__(self, delegate: Any, file_name: str) -> None:
         super().__init__(delegate)
         self._file_name = file_name
+        self._pdf_text: str | None = None
 
     def _source_key(self, requested: str) -> str:
         return f"/{self._file_name}" if requested == "/" else "/__not_available__"
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if file_path == "/" and self._file_name.lower().endswith(".pdf"):
+            return self._read_pdf(offset=offset, limit=limit)
         return self._delegate.read(self._source_key(file_path), offset=offset, limit=limit)
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if file_path == "/" and self._file_name.lower().endswith(".pdf"):
+            return await asyncio.to_thread(self._read_pdf, offset=offset, limit=limit)
         return await self._delegate.aread(
             self._source_key(file_path),
             offset=offset,
             limit=limit,
         )
+
+    def _read_pdf(self, *, offset: int, limit: int) -> ReadResult:
+        if self._pdf_text is None:
+            response = self._delegate.download_files([f"/{self._file_name}"])[0]
+            if response.error:
+                return ReadResult(error=response.error)
+            if response.content is None:
+                return ReadResult(error="PDF attachment has no readable content")
+            try:
+                converted = MarkItDown().convert_stream(
+                    io.BytesIO(response.content),
+                    file_extension=".pdf",
+                )
+            except Exception as exc:  # MarkItDown wraps parser failures by format.
+                return ReadResult(error=f"Error reading PDF attachment: {type(exc).__name__}")
+            self._pdf_text = converted.text_content
+
+        if not self._pdf_text.strip():
+            return ReadResult(error="PDF attachment contains no extractable text")
+        lines = self._pdf_text.splitlines(keepends=True)
+        if offset >= len(lines):
+            return ReadResult(
+                error=f"Line offset {offset} exceeds file length ({len(lines)} lines)"
+            )
+        end = min(offset + limit, len(lines))
+        return ReadResult(file_data=FileData(content="".join(lines[offset:end]), encoding="utf-8"))
 
     def ls_info(self, _path: str) -> list[FileInfo]:
         return []

@@ -61,6 +61,13 @@ export function MessageBubble({
       previousContentRef.current = ''
       stream.cancel()
     }
+    if (isAssistant && message.status === 'error') {
+      previousContentRef.current = message.content
+      if (stream.isStreaming || stream.text) {
+        stream.cancel()
+      }
+      return
+    }
     if (!isAssistant || message.status !== 'streaming') {
       if (stream.isStreaming) {
         // Run finished, but the typewriter may still have buffered text.
@@ -143,7 +150,7 @@ export function MessageBubble({
       ? t('message.waitingInput')
       : ''
   const content = message.content || waitingText
-  const hideDuplicateFailureContent = isAssistant && isDuplicateFailureContent(message)
+  const hideFailedAssistantContent = isAssistant && hasDurableFailure(message)
   // Action affordances appear on settled turns only (not mid-stream).
   const settled = message.status === 'done' || message.status === 'error'
   const latestCleanupState = [...(message.agentEvents ?? [])].reverse().find(
@@ -158,7 +165,7 @@ export function MessageBubble({
   const toolCalls = (message.agentEvents ?? []).filter((event) => event.type === 'tool.completed' || event.type === 'tool.failed').length
   const usageParts = buildUsageParts(message, toolCalls, locale, t)
   const showUsage = isAssistant && settled && usageParts.length > 0
-  const showStream = isAssistant && (message.status === 'streaming' || stream.isStreaming)
+  const showStream = isAssistant && !hideFailedAssistantContent && (message.status === 'streaming' || stream.isStreaming)
   const messageTime = formatMessageTime(message.createdAt, locale, t)
 
   return (
@@ -213,7 +220,7 @@ export function MessageBubble({
             ) : waitingText ? (
               <p className="whitespace-pre-wrap break-words">{waitingText}</p>
             ) : null
-          ) : hideDuplicateFailureContent ? null : (
+          ) : hideFailedAssistantContent ? null : (
             <MarkdownContent
               content={content}
               normalizeHeadings
@@ -230,7 +237,7 @@ export function MessageBubble({
         {isAssistant ? <CodeExecutionImages events={message.agentEvents} /> : null}
         {children}
         <div className="message-meta">
-          {message.content.trim() ? (
+          {message.content.trim() && !hideFailedAssistantContent ? (
             <button
               type="button"
               className="message-meta-action"
@@ -316,31 +323,13 @@ function ModelModeBadge({ runMode }: { runMode?: ChatMessage['runMode'] }) {
   )
 }
 
-function isDuplicateFailureContent(message: ChatMessage): boolean {
+function hasDurableFailure(message: ChatMessage): boolean {
   if (message.role !== 'assistant' || message.status !== 'error') {
     return false
   }
-  const content = normalizeFailureText(message.content)
-  if (!content) {
-    return false
-  }
-  return (message.agentEvents ?? []).some((event) => {
-    if (event.type !== 'run.failed' && event.type !== 'run.cleanup_required' && event.type !== 'tool.failed' && event.verificationStatus !== 'failed') {
-      return false
-    }
-    return sameFailureText(content, normalizeFailureText(event.label))
-  })
-}
-
-function sameFailureText(content: string, label: string): boolean {
-  if (!content || !label) {
-    return false
-  }
-  return content === label || label.startsWith(`${content} · `) || content.startsWith(`${label} · `)
-}
-
-function normalizeFailureText(value: string | undefined): string {
-  return (value ?? '').replace(/\s+/g, ' ').trim()
+  return (message.agentEvents ?? []).some(
+    (event) => event.type === 'run.failed' || event.type === 'run.cleanup_required',
+  )
 }
 
 function buildUsageParts(

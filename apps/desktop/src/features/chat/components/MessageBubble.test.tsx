@@ -298,6 +298,36 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByText('missing API key')).not.toBeInTheDocument()
   })
 
+  it('discards transient model-round text after a durable run failure', () => {
+    vi.useFakeTimers()
+    const { rerender } = render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ status: 'streaming', content: '临时模型输出' })}
+        />
+      </I18nProvider>,
+    )
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    expect(screen.getByText(/临时模型/)).toBeInTheDocument()
+
+    rerender(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            status: 'error',
+            content: '临时模型输出',
+            agentEvents: [{ type: 'run.failed', label: '模型调用次数已耗尽' }],
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.queryByText(/临时模型/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '复制' })).not.toBeInTheDocument()
+  })
+
   it('omits the usage chip when there is no usage data', () => {
     render(
       <I18nProvider>

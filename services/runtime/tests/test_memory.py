@@ -121,6 +121,70 @@ def test_attachment_backend_route_exposes_only_the_selected_file(tmp_path: Path)
     )
 
 
+def test_pdf_attachment_is_exposed_as_model_readable_text(tmp_path: Path) -> None:
+    from local_host.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    attachment = tmp_path / "rental-receipt.pdf"
+    attachment.write_bytes(_minimal_pdf("Rental receipt"))
+
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+        attachment_bindings=[
+            {
+                "source_path": str(attachment),
+                "virtual_path": "/attachments/rental-receipt.pdf",
+            }
+        ],
+    )
+
+    selected = backend.read("/attachments/rental-receipt.pdf")
+    assert selected.error is None
+    assert selected.file_data is not None
+    assert selected.file_data["encoding"] == "utf-8"
+    assert "Rental receipt" in selected.file_data["content"]
+
+
+def _minimal_pdf(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length "
+        + str(len(stream)).encode("ascii")
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream",
+    ]
+    document = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(document))
+        document.extend(f"{number} 0 obj\n".encode("ascii"))
+        document.extend(body)
+        document.extend(b"\nendobj\n")
+    xref_offset = len(document)
+    document.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    document.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        document.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    document.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return bytes(document)
+
+
 async def test_memory_write_is_explicit_and_idempotent() -> None:
     store = InMemoryStore()
     runtime = SimpleNamespace(

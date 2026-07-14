@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { timelineItem, toolDetail } from './chatStore'
+import { projectTransientAssistantText, timelineItem, toolDetail } from './chatStore'
 
 describe('runtime timeline', () => {
+
+  it('keeps only the current model round text across a tool call', () => {
+    let content = projectTransientAssistantText('', {
+      event_type: 'llm.delta',
+      payload: { content: '准备读取附件' },
+    })
+    content = projectTransientAssistantText(content, {
+      event_type: 'tool.requested',
+      payload: { tool: 'read_file' },
+    })
+    content = projectTransientAssistantText(content, {
+      event_type: 'llm.delta',
+      payload: { content: '这是附件摘要。' },
+    })
+
+    expect(content).toBe('这是附件摘要。')
+    expect(projectTransientAssistantText(content, { event_type: 'run.failed' })).toBe('')
+  })
 
   it('renders universal primitive tool events with user-facing action names', () => {
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-url', tool: 'open.url' } })).toMatchObject({
