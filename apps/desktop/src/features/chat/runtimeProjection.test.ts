@@ -25,7 +25,9 @@ describe('Runtime thread projection', () => {
           item_type: 'user_message',
           status: 'completed',
           content: 'Visible question',
-          metadata: {},
+          metadata: {
+            attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+          },
           position: 1,
           version: 1,
           created_at: '2026-07-12T00:00:00Z',
@@ -84,7 +86,12 @@ describe('Runtime thread projection', () => {
       workspace: { path: '/tmp/project' },
     })
     expect(conversation.messages).toMatchObject([
-      { id: 'user-1', role: 'user', content: 'Visible question' },
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Visible question',
+        attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+      },
       {
         id: 'assistant-client-1',
         role: 'assistant',

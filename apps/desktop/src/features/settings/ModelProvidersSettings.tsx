@@ -19,25 +19,29 @@ import {
 import { useI18n } from '@/shared/i18n/i18n'
 import {
   deleteLocalModelProvider,
+  discoverLocalModels,
   listLocalModelProviders,
   upsertLocalModelProvider,
+  type DiscoveredLocalModel,
   type LocalHostConfig,
+  type LocalModelProfile,
   type LocalModelProvider,
 } from '@/shared/local-host/client'
 
 const PROVIDER_TEMPLATES = [
-  { id: 'openai', name: 'OpenAI', baseURL: 'https://api.openai.com/v1', requiresAPIKey: true },
-  { id: 'openrouter', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', requiresAPIKey: true },
-  { id: 'deepseek', name: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', requiresAPIKey: true },
-  { id: 'ollama', name: 'Ollama', baseURL: 'http://127.0.0.1:11434/v1', requiresAPIKey: false },
-  { id: 'lmstudio', name: 'LM Studio', baseURL: 'http://127.0.0.1:1234/v1', requiresAPIKey: false },
-  { id: 'custom', name: '', baseURL: '', requiresAPIKey: true },
+  { id: 'openai', name: 'OpenAI', kind: 'openai_compatible', baseURL: 'https://api.openai.com/v1' },
+  { id: 'openrouter', name: 'OpenRouter', kind: 'openai_compatible', baseURL: 'https://openrouter.ai/api/v1' },
+  { id: 'deepseek', name: 'DeepSeek', kind: 'openai_compatible', baseURL: 'https://api.deepseek.com/v1' },
+  { id: 'anthropic', name: 'Anthropic', kind: 'anthropic', baseURL: 'https://api.anthropic.com' },
+  { id: 'custom-openai', name: '', kind: 'openai_compatible', baseURL: '' },
+  { id: 'custom-anthropic', name: '', kind: 'anthropic', baseURL: '' },
 ] as const
 
 type ProviderTemplateID = typeof PROVIDER_TEMPLATES[number]['id']
+type ProviderKind = LocalModelProvider['kind']
 
-function customProviderID() {
-  return `custom-${Date.now().toString(36)}`.slice(0, 32)
+function customProviderID(kind: ProviderKind) {
+  return `custom-${kind === 'anthropic' ? 'anthropic' : 'openai'}-${Date.now().toString(36)}`.slice(0, 32)
 }
 
 export function ModelProvidersSettings({
@@ -53,13 +57,19 @@ export function ModelProvidersSettings({
   const [templateID, setTemplateID] = useState<ProviderTemplateID>('openai')
   const [providerID, setProviderID] = useState('openai')
   const [name, setName] = useState('OpenAI')
+  const [providerKind, setProviderKind] = useState<ProviderKind>('openai_compatible')
   const [baseURL, setBaseURL] = useState('https://api.openai.com/v1')
   const [apiKey, setAPIKey] = useState('')
-  const [modelID, setModelID] = useState('')
-  const [modelName, setModelName] = useState('')
+  const [selectedModels, setSelectedModels] = useState<LocalModelProfile[]>([])
+  const [manualModelIDs, setManualModelIDs] = useState<string[]>([''])
+  const [modelQuery, setModelQuery] = useState('')
   const [maxInputTokens, setMaxInputTokens] = useState('')
   const [maxOutputTokens, setMaxOutputTokens] = useState('')
   const [requiresAPIKey, setRequiresAPIKey] = useState(true)
+  const [discoveredModels, setDiscoveredModels] = useState<DiscoveredLocalModel[]>([])
+  const [manualModelID, setManualModelID] = useState(true)
+  const [discovering, setDiscovering] = useState(false)
+  const [savedCredentialConfigured, setSavedCredentialConfigured] = useState(false)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -79,19 +89,30 @@ export function ModelProvidersSettings({
   const selectTemplate = (nextID: ProviderTemplateID) => {
     const template = PROVIDER_TEMPLATES.find((candidate) => candidate.id === nextID)!
     setTemplateID(nextID)
-    setProviderID(nextID === 'custom' ? customProviderID() : template.id)
+    setProviderID(nextID.startsWith('custom-') ? customProviderID(template.kind) : template.id)
     setName(template.name)
+    setProviderKind(template.kind)
     setBaseURL(template.baseURL)
-    setRequiresAPIKey(template.requiresAPIKey)
+    setRequiresAPIKey(true)
     setAPIKey('')
+    setSelectedModels([])
+    setManualModelIDs([''])
+    setModelQuery('')
+    setDiscoveredModels([])
+    setManualModelID(true)
+    setSavedCredentialConfigured(false)
   }
 
   const startAdding = () => {
     selectTemplate('openai')
-    setModelID('')
-    setModelName('')
+    setSelectedModels([])
+    setManualModelIDs([''])
+    setModelQuery('')
     setMaxInputTokens('')
     setMaxOutputTokens('')
+    setDiscoveredModels([])
+    setManualModelID(true)
+    setSavedCredentialConfigured(false)
     setEditing(false)
     setError('')
     setDialogOpen(true)
@@ -99,21 +120,114 @@ export function ModelProvidersSettings({
 
   const editProvider = (provider: LocalModelProvider) => {
     const model = provider.models[0]
-    const knownTemplate = PROVIDER_TEMPLATES.find((template) => template.id === provider.id)
-    setTemplateID(knownTemplate?.id ?? 'custom')
+    const sharedMaxInputTokens = model?.max_input_tokens !== undefined
+      && provider.models.every((candidate) => candidate.max_input_tokens === model.max_input_tokens)
+      ? model.max_input_tokens
+      : undefined
+    const sharedMaxOutputTokens = model?.max_output_tokens !== undefined
+      && provider.models.every((candidate) => candidate.max_output_tokens === model.max_output_tokens)
+      ? model.max_output_tokens
+      : undefined
+    const knownTemplate = PROVIDER_TEMPLATES.find((template) => (
+      template.id === provider.id && template.kind === provider.kind
+    ))
+    setTemplateID(knownTemplate?.id ?? (
+      provider.kind === 'anthropic' ? 'custom-anthropic' : 'custom-openai'
+    ))
     setProviderID(provider.id)
     setName(provider.name)
+    setProviderKind(provider.kind)
     setBaseURL(provider.base_url)
     setAPIKey('')
-    setModelID(model?.model_id ?? '')
-    setModelName(model?.display_name ?? '')
-    setMaxInputTokens(model?.max_input_tokens?.toString() ?? '')
-    setMaxOutputTokens(model?.max_output_tokens?.toString() ?? '')
+    setSelectedModels(provider.models)
+    setManualModelIDs(provider.models.length > 0
+      ? provider.models.map((candidate) => candidate.model_id)
+      : [''])
+    setModelQuery('')
+    setMaxInputTokens(sharedMaxInputTokens?.toString() ?? '')
+    setMaxOutputTokens(sharedMaxOutputTokens?.toString() ?? '')
     setRequiresAPIKey(provider.requires_api_key)
+    setDiscoveredModels(provider.models.map((candidate) => ({
+      model_id: candidate.model_id,
+      display_name: candidate.display_name,
+    })))
+    setManualModelID(false)
+    setSavedCredentialConfigured(provider.credential_configured)
     setEditing(true)
     setError('')
     setDialogOpen(true)
   }
+
+  const discoverModels = async () => {
+    if (!config) return
+    setDiscovering(true)
+    setError('')
+    try {
+      const models = await discoverLocalModels(
+        {
+          provider_id: providerID,
+          kind: providerKind,
+          base_url: baseURL,
+          api_key: apiKey || undefined,
+        },
+        config,
+      )
+      const discovered = [...models]
+      for (const selected of selectedModels) {
+        if (!discovered.some((candidate) => candidate.model_id === selected.model_id)) {
+          discovered.push({
+            model_id: selected.model_id,
+            display_name: selected.display_name,
+          })
+        }
+      }
+      setDiscoveredModels(discovered)
+      setModelQuery('')
+      if (models.length === 0) {
+        setManualModelID(true)
+        setError(t('settings.models.noModelsFound'))
+        return
+      }
+      setManualModelID(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  const toggleModel = (model: DiscoveredLocalModel) => {
+    setSelectedModels((current) => current.some((candidate) => candidate.model_id === model.model_id)
+      ? current.filter((candidate) => candidate.model_id !== model.model_id)
+      : [...current, {
+          model_id: model.model_id,
+          display_name: model.display_name,
+          tool_calling: true,
+          streaming: true,
+        }])
+  }
+
+  const updateManualModel = (index: number, value: string) => {
+    const values = manualModelIDs.map((candidate, candidateIndex) => (
+      candidateIndex === index ? value : candidate
+    ))
+    setManualModelIDs(values)
+    const ids = [...new Set(values.map((candidate) => candidate.trim()).filter(Boolean))]
+    setSelectedModels((current) => ids.map((modelID) => current.find(
+      (candidate) => candidate.model_id === modelID,
+    ) ?? {
+      model_id: modelID,
+      display_name: modelID,
+      tool_calling: true,
+      streaming: true,
+    }))
+  }
+
+  const showModelConfiguration = !requiresAPIKey || Boolean(apiKey.trim()) || savedCredentialConfigured
+  const normalizedModelQuery = modelQuery.trim().toLocaleLowerCase()
+  const visibleModels = normalizedModelQuery
+    ? discoveredModels.filter((model) => `${model.display_name} ${model.model_id}`.toLocaleLowerCase().includes(normalizedModelQuery))
+    : discoveredModels
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -125,18 +239,19 @@ export function ModelProvidersSettings({
         providerID,
         {
           name,
-          kind: 'openai_compatible',
+          kind: providerKind,
           base_url: baseURL,
           requires_api_key: requiresAPIKey,
           api_key: apiKey || undefined,
-          models: [{
-            model_id: modelID,
-            display_name: modelName || modelID,
-            tool_calling: true,
-            streaming: true,
-            max_input_tokens: maxInputTokens ? Number(maxInputTokens) : undefined,
-            max_output_tokens: maxOutputTokens ? Number(maxOutputTokens) : undefined,
-          }],
+          models: selectedModels.map((model) => ({
+            ...model,
+            max_input_tokens: maxInputTokens
+              ? Number(maxInputTokens)
+              : model.max_input_tokens,
+            max_output_tokens: maxOutputTokens
+              ? Number(maxOutputTokens)
+              : model.max_output_tokens,
+          })),
           enabled: true,
         },
         config,
@@ -225,14 +340,18 @@ export function ModelProvidersSettings({
                 <SelectContent>
                   {PROVIDER_TEMPLATES.map((template) => (
                     <SelectItem key={template.id} value={template.id}>
-                      {template.id === 'custom' ? t('settings.models.customProvider') : template.name}
+                      {template.id === 'custom-openai'
+                        ? t('settings.models.customOpenAI')
+                        : template.id === 'custom-anthropic'
+                          ? t('settings.models.customAnthropic')
+                          : template.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </label>
 
-            {templateID === 'custom' ? (
+            {templateID.startsWith('custom-') ? (
               <label className="settings-provider-field">
                 <span>{t('settings.models.providerName')}</span>
                 <Input required value={name} onChange={(event) => setName(event.target.value)} />
@@ -258,37 +377,117 @@ export function ModelProvidersSettings({
               </label>
             ) : null}
 
-            <label className="settings-provider-field">
-              <span>{t('settings.models.modelId')}</span>
-              <Input required value={modelID} placeholder={t('settings.models.modelIdHint')} onChange={(event) => setModelID(event.target.value)} />
-            </label>
-
-            <details className="settings-provider-advanced">
-              <summary>{t('settings.models.advanced')}</summary>
-              <div className="settings-provider-advanced-fields">
-                <label className="settings-provider-field">
-                  <span>{t('settings.models.modelName')}</span>
-                  <Input value={modelName} onChange={(event) => setModelName(event.target.value)} />
-                </label>
-                <div className="settings-provider-limits-row">
-                  <label className="settings-provider-field">
-                    <span>{t('settings.models.maxInputTokens')}</span>
-                    <Input type="number" min={1} value={maxInputTokens} onChange={(event) => setMaxInputTokens(event.target.value)} />
-                  </label>
-                  <label className="settings-provider-field">
-                    <span>{t('settings.models.maxOutputTokens')}</span>
-                    <Input type="number" min={128} value={maxOutputTokens} onChange={(event) => setMaxOutputTokens(event.target.value)} />
-                  </label>
+            {showModelConfiguration ? (
+              <>
+                <div className="settings-provider-field settings-provider-model-picker">
+                  <div className="settings-provider-model-heading">
+                    <span>{t('settings.models.model')}</span>
+                    <button
+                      type="button"
+                      className="settings-row-button settings-provider-discover"
+                      disabled={discovering || !baseURL || (requiresAPIKey && !editing && !apiKey)}
+                      onClick={() => void discoverModels()}
+                    >
+                      {discovering ? t('settings.models.fetchingModels') : t('settings.models.fetchModels')}
+                    </button>
+                  </div>
+                  {manualModelID ? (
+                    <div className="settings-provider-manual-models">
+                      {manualModelIDs.map((modelID, index) => (
+                        <div className="settings-provider-manual-row" key={index}>
+                          <Input
+                            aria-label={`${t('settings.models.modelId')} ${index + 1}`}
+                            value={modelID}
+                            placeholder={t('settings.models.modelIdHint')}
+                            onChange={(event) => updateManualModel(index, event.target.value)}
+                          />
+                          {index === manualModelIDs.length - 1 ? (
+                            <button
+                              type="button"
+                              className="settings-provider-add-model"
+                              aria-label={t('settings.models.addModel')}
+                              disabled={!modelID.trim()}
+                              onClick={() => setManualModelIDs((current) => [...current, ''])}
+                            >
+                              <IconPlus size={15} aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="settings-provider-model-controls">
+                      <Input
+                        aria-label={t('settings.models.searchModels')}
+                        value={modelQuery}
+                        placeholder={t('settings.models.searchModels')}
+                        onChange={(event) => setModelQuery(event.target.value)}
+                      />
+                      <div
+                        className="settings-provider-model-list"
+                        role="group"
+                        aria-label={t('settings.models.model')}
+                      >
+                        {visibleModels.map((model) => (
+                          <label className="settings-provider-model-choice" key={model.model_id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedModels.some((candidate) => candidate.model_id === model.model_id)}
+                              aria-label={`${model.display_name} (${model.model_id})`}
+                              onChange={() => toggleModel(model)}
+                            />
+                            <span className="settings-provider-model-option">
+                              <span>{model.display_name}</span>
+                              {model.display_name !== model.model_id ? (
+                                <span className="settings-provider-model-id">{model.model_id}</span>
+                              ) : null}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="settings-provider-model-footer">
+                        <span>{t('settings.models.selectedCount', { count: selectedModels.length })}</span>
+                        <button
+                          type="button"
+                          className="settings-provider-manual-model"
+                          onClick={() => {
+                            setManualModelIDs(selectedModels.length > 0
+                              ? selectedModels.map((model) => model.model_id)
+                              : [''])
+                            setManualModelID(true)
+                          }}
+                        >
+                          {t('settings.models.enterModelId')}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </details>
+
+                <details className="settings-provider-advanced">
+                  <summary>{t('settings.models.advanced')}</summary>
+                  <div className="settings-provider-advanced-fields">
+                    <div className="settings-provider-limits-row">
+                      <label className="settings-provider-field">
+                        <span>{t('settings.models.maxInputTokens')}</span>
+                        <Input type="number" min={1} value={maxInputTokens} onChange={(event) => setMaxInputTokens(event.target.value)} />
+                      </label>
+                      <label className="settings-provider-field">
+                        <span>{t('settings.models.maxOutputTokens')}</span>
+                        <Input type="number" min={128} value={maxOutputTokens} onChange={(event) => setMaxOutputTokens(event.target.value)} />
+                      </label>
+                    </div>
+                  </div>
+                </details>
+              </>
+            ) : null}
 
             {error ? <p className="settings-provider-error">{error}</p> : null}
             <DialogFooter className="settings-provider-actions">
               <button type="button" className="settings-row-button" disabled={saving} onClick={() => setDialogOpen(false)}>
                 {t('common.cancel')}
               </button>
-              <button type="submit" className="settings-primary-button" disabled={saving}>
+              <button type="submit" className="settings-primary-button" disabled={saving || selectedModels.length === 0}>
                 {saving ? t('settings.models.saving') : t('settings.models.save')}
               </button>
             </DialogFooter>

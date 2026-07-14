@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
+import { IconCheck, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -165,6 +165,16 @@ export function MessageBubble({
     <article className={cn('message', message.role)}>
       <div className="message-bubble-inner">
         <div className="message-content">
+          {message.attachments?.length ? (
+            <div className="message-attachments">
+              {message.attachments.map((attachment) => (
+                <span key={attachment.path} title={attachment.path}>
+                  <IconFile size={14} aria-hidden="true" />
+                  {attachment.name}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {editing ? (
             <div className="message-edit">
               <textarea

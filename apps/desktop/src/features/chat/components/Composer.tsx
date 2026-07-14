@@ -2,13 +2,16 @@ import {
   IconArrowUp,
   IconFolder,
   IconFolderPlus,
+  IconFile,
+  IconPaperclip,
   IconPlayerStopFilled,
+  IconX,
 } from '@tabler/icons-react'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
 import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
-import type { ChatMode } from '@/shared/local-data/types'
+import type { ChatMode, LocalAttachmentRef } from '@/shared/local-data/types'
 
 export function Composer({
   draft,
@@ -23,8 +26,13 @@ export function Composer({
   mode,
   models = [],
   onModeChange,
+  onConfigureModels,
   projectName,
   onSelectProject,
+  onRemoveProject,
+  attachments = [],
+  onSelectAttachments,
+  onRemoveAttachment,
   isDesktop = true,
   slashCommandsEnabled = true,
 }: {
@@ -42,8 +50,13 @@ export function Composer({
   mode: ChatMode
   models?: ModelOption[]
   onModeChange: (mode: ChatMode) => void
+  onConfigureModels?: () => void
   projectName?: string
   onSelectProject?: () => void
+  onRemoveProject?: () => void
+  attachments?: LocalAttachmentRef[]
+  onSelectAttachments?: () => void
+  onRemoveAttachment?: (path: string) => void
   isDesktop?: boolean
   slashCommandsEnabled?: boolean
 }) {
@@ -57,6 +70,24 @@ export function Composer({
   return (
     <footer className="composer">
       <div className="composer-input">
+        {attachments.length ? (
+          <div className="composer-chips">
+            {attachments.map((attachment) => (
+              <span className="composer-attachment-chip" key={attachment.path} title={attachment.path}>
+                <IconFile size={14} aria-hidden="true" />
+                <span>{attachment.name}</span>
+                <button
+                  type="button"
+                  aria-label={t('composer.attachment.remove', { name: attachment.name })}
+                  disabled={!onRemoveAttachment || isSending || hasActiveRun}
+                  onClick={() => onRemoveAttachment?.(attachment.path)}
+                >
+                  <IconX size={12} aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         <SkillEditor
           draft={draft}
           onDraftChange={onDraftChange}
@@ -69,14 +100,44 @@ export function Composer({
       </div>
 
       <div className="composer-toolbar">
+        {isDesktop ? (
+          <button
+            type="button"
+            className="composer-tool"
+            aria-label={t('composer.attachment.add')}
+            title={t('composer.attachment.tooltip')}
+            disabled={!onSelectAttachments || isSending || hasActiveRun}
+            onClick={() => onSelectAttachments?.()}
+          >
+            <IconPaperclip size={16} aria-hidden="true" />
+          </button>
+        ) : null}
         {!isDesktop ? null : projectName ? (
           <span
-            className="composer-tool composer-project-chip"
-            title={t('composer.projectPicker.locked', { name: projectName })}
-            aria-label={t('composer.projectPicker.locked', { name: projectName })}
+            className="composer-project-chip"
+            title={t('composer.projectPicker.selected', { name: projectName })}
           >
-            <IconFolder size={14} aria-hidden="true" />
-            <span className="composer-project-chip-name">{projectName}</span>
+            <button
+              type="button"
+              className="composer-project-select"
+              aria-label={t('composer.projectPicker.replace', { name: projectName })}
+              title={t('composer.projectPicker.replace', { name: projectName })}
+              disabled={!onSelectProject || isSending || hasActiveRun}
+              onClick={() => onSelectProject?.()}
+            >
+              <IconFolder size={14} aria-hidden="true" />
+              <span className="composer-project-chip-name">{projectName}</span>
+            </button>
+            <button
+              type="button"
+              className="composer-project-remove"
+              aria-label={t('composer.projectPicker.remove', { name: projectName })}
+              title={t('composer.projectPicker.remove', { name: projectName })}
+              disabled={!onRemoveProject || isSending || hasActiveRun}
+              onClick={() => onRemoveProject?.()}
+            >
+              <IconX size={12} aria-hidden="true" />
+            </button>
           </span>
         ) : (
           <button
@@ -95,6 +156,7 @@ export function Composer({
           mode={mode}
           models={models}
           onChange={onModeChange}
+          onConfigureModels={onConfigureModels}
           disabled={isSending || steeringMode}
         />
 

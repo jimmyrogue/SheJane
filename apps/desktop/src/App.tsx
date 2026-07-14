@@ -56,7 +56,7 @@ import { findConversationPendingQuestion } from './features/chat/pendingQuestion
 import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalAttachmentRef, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
   answerLocalQuestionCommand,
@@ -343,6 +343,7 @@ function AppContent() {
    *  resolves, since "project" in this product means "this chat is
    *  bound to that workspace directory". */
   const [pendingProject, setPendingProject] = useState<ConversationProject | undefined>()
+  const [pendingAttachments, setPendingAttachments] = useState<LocalAttachmentRef[]>([])
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [pendingCommandDeliveryVersion, setPendingCommandDeliveryVersion] = useState(0)
@@ -963,6 +964,7 @@ function AppContent() {
     setActiveConversationID(undefined)
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
+    setPendingAttachments([])
     setDraft('')
     setMainView('chat')
   }
@@ -971,6 +973,7 @@ function AppContent() {
     navigationVersionRef.current += 1
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
+    setPendingAttachments([])
     setActiveConversationID(id)
     setMainView('chat')
   }
@@ -1020,9 +1023,11 @@ function AppContent() {
 
   async function sendMessage() {
     const content = draft
+    const attachments = pendingAttachments
     setIsSending(true)
     setNotice('')
     setDraft('')
+    setPendingAttachments([])
     const renderContext = createConversationRenderContext()
     try {
       if (!localHost?.online || !hasLocalHostAuthorization(localHostConfig)) {
@@ -1032,10 +1037,20 @@ function AppContent() {
       if (!selectedMode || !models.some((model) => model.id === selectedMode)) {
         throw new Error(t('app.notice.localModelUnavailable'))
       }
-      const conversation = await sendLocalHarnessMessage(content, renderContext)
+      const conversation = await sendLocalHarnessMessage(
+        content,
+        renderContext,
+        undefined,
+        undefined,
+        activeIDRef.current,
+        attachments,
+      )
       await refreshConversationsAfterStream(conversation.id, renderContext)
     } catch (error) {
       setDraft((current) => current || content)
+      if (navigationVersionRef.current === renderContext.navigationVersionAtStart) {
+        setPendingAttachments((current) => mergeAttachments(current, attachments))
+      }
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       const userNavigatedWhileStreaming = navigationVersionRef.current !== renderContext.navigationVersionAtStart
       await refreshConversations(userNavigatedWhileStreaming ? activeIDRef.current : activeID, {
@@ -1067,6 +1082,7 @@ function AppContent() {
     if (index < 0) {
       return
     }
+    const attachments = conversation.messages[index].attachments ?? []
     conversation.messages = conversation.messages.slice(0, index)
     conversation.updatedAt = new Date().toISOString()
     await localData.save(conversation)
@@ -1089,6 +1105,7 @@ function AppContent() {
         agentSettings,
         { ...localRunOptions, replaceFromClientId: userMessageID },
         targetConversationID,
+        attachments,
       )
       await refreshConversationsAfterStream(next.id, renderContext)
     } catch (error) {
@@ -1328,6 +1345,7 @@ function AppContent() {
     settingsOverride?: Required<AgentSettings>,
     runOptions?: LocalHarnessRunOptions,
     targetConversationID = activeIDRef.current,
+    attachments: LocalAttachmentRef[] = [],
   ): Promise<Conversation> {
     const runLocalHostConfig = localHostConfig ?? getDesktopLocalHostConfig()
     if (!runLocalHostConfig) {
@@ -1370,6 +1388,7 @@ function AppContent() {
       content: text,
       createdAt: timestamp,
       status: 'done',
+      attachments: attachments.length ? attachments : undefined,
     }
     const assistantMessage: ChatMessage = {
       id: createLocalID('msg'),
@@ -1437,9 +1456,11 @@ function AppContent() {
         project: conversation.project,
         workspace: conversation.workspace,
       },
+      userItemMetadata: attachments.length ? { attachments } : undefined,
       replaceFromClientId: runOptions?.replaceFromClientId,
       goal,
       workspacePath: conversation.workspace?.path.trim() || undefined,
+      attachmentPaths: attachments.map((attachment) => attachment.path),
       history: runtimeThreadIDsRef.current.has(conversation.id)
         ? undefined
         : deriveAgentHistory(priorMessages),
@@ -2278,9 +2299,8 @@ function AppContent() {
    *    IndexedDB.
    *
    *  - **Active conversation exists**: bind workspace + project to it
-   *    in-place. Idempotent enough — but the composer-side guard
-   *    (locked chip when `projectName` is set) means this should not
-   *    fire twice for one conversation.
+   *    in-place. The user can explicitly remove that binding before
+   *    choosing another directory for a later Run.
    *
    *  Returns silently if the user cancels the OS picker. Surfaces a
    *  toast on daemon-side errors (e.g. not yet paired). */
@@ -2327,6 +2347,35 @@ function AppContent() {
     } catch (err) {
       setNotice(err instanceof Error ? err.message : t('app.notice.workspaceAuthorizeFailed'))
     }
+  }
+
+  async function removeProjectFromActiveConversation() {
+    if (isSending || hasActiveRun) return
+    const conversationID = activeIDRef.current
+    if (!conversationID) {
+      setPendingWorkspace(undefined)
+      setPendingProject(undefined)
+      return
+    }
+    await updateConversationMetadata(conversationID, (conversation) => {
+      delete conversation.workspace
+      delete conversation.project
+    })
+  }
+
+  async function selectAttachments() {
+    if (isSending || hasActiveRun) return
+    const paths = await window.shejaneDesktop?.selectAttachmentFiles?.()
+    if (!paths?.length) return
+    setPendingAttachments((current) => mergeAttachments(
+      current,
+      paths.map((path) => ({ path, name: pathBasename(path) || path })),
+    ))
+  }
+
+  function removeAttachment(path: string) {
+    if (isSending || hasActiveRun) return
+    setPendingAttachments((items) => items.filter((item) => item.path !== path))
   }
 
   async function authorizeWorkspace(path: string): Promise<LocalWorkspaceAuthorization> {
@@ -2880,8 +2929,13 @@ function AppContent() {
               mode={mode}
               models={models}
               onModeChange={changeMode}
+              onConfigureModels={() => setMainView('settings')}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}
+              onRemoveProject={() => void removeProjectFromActiveConversation()}
+              attachments={pendingAttachments}
+              onSelectAttachments={() => void selectAttachments()}
+              onRemoveAttachment={removeAttachment}
               isDesktop={isDesktop}
               slashCommandsEnabled={isDesktop}
               />
@@ -3351,6 +3405,15 @@ function appendUnique(items: string[], item: string): string[] {
   return items.includes(item) ? items : [...items, item]
 }
 
+function mergeAttachments(
+  current: LocalAttachmentRef[],
+  additions: LocalAttachmentRef[],
+): LocalAttachmentRef[] {
+  const byPath = new Map(current.map((item) => [item.path, item]))
+  for (const item of additions) byPath.set(item.path, item)
+  return [...byPath.values()].slice(0, 10)
+}
+
 function upsertWorkspace(items: LocalWorkspaceAuthorization[], workspace: LocalWorkspaceAuthorization): LocalWorkspaceAuthorization[] {
   return [workspace, ...items.filter((item) => item.id !== workspace.id && item.path !== workspace.path)]
 }
@@ -3370,6 +3433,7 @@ function cloneConversation(conversation: Conversation): Conversation {
     workspace: conversation.workspace ? { ...conversation.workspace } : undefined,
     messages: conversation.messages.map((message) => ({
       ...message,
+      attachments: message.attachments?.map((attachment) => ({ ...attachment })),
       agentEvents: message.agentEvents ? [...message.agentEvents] : undefined,
     })),
   }

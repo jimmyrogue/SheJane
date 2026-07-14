@@ -24,6 +24,7 @@ interface Window {
       restartApp(): Promise<void>
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
+    selectAttachmentFiles?: () => Promise<string[]>
     openExternal?: (url: string) => Promise<string>
     setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
     setWindowButtonPosition?: (position: 'app') => Promise<boolean>

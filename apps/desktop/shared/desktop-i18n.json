@@ -33,7 +33,8 @@
       "startTimeout": "本地引擎启动超时，请重启应用。"
     },
     "dialogs": {
-      "selectWorkspaceTitle": "选择本地工作区"
+      "selectWorkspaceTitle": "选择本地工作区",
+      "selectAttachmentsTitle": "选择附件"
     },
     "errors": {
       "requestFailed": "请求失败"
@@ -73,7 +74,8 @@
       "startTimeout": "The local engine timed out while starting. Restart the app."
     },
     "dialogs": {
-      "selectWorkspaceTitle": "Choose local workspace"
+      "selectWorkspaceTitle": "Choose local workspace",
+      "selectAttachmentsTitle": "Choose attachments"
     },
     "errors": {
       "requestFailed": "Request failed"

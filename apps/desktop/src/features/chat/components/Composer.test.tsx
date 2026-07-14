@@ -21,6 +21,11 @@ function Harness({
   onDraft = vi.fn(),
   projectName,
   onSelectProject,
+  onRemoveProject,
+  attachments = [],
+  onSelectAttachments,
+  onRemoveAttachment,
+  hasActiveRun = false,
 }: {
   initialDraft?: string
   onSend?: () => void
@@ -29,6 +34,11 @@ function Harness({
   onDraft?: (value: string) => void
   projectName?: string
   onSelectProject?: () => void
+  onRemoveProject?: () => void
+  attachments?: Array<{ path: string; name: string }>
+  onSelectAttachments?: () => void
+  onRemoveAttachment?: (path: string) => void
+  hasActiveRun?: boolean
 }) {
   const [draft, setDraft] = useState(initialDraft)
   return (
@@ -40,6 +50,7 @@ function Harness({
           setDraft(value)
         }}
         isSending={false}
+        hasActiveRun={hasActiveRun}
         onSend={onSend}
         onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
@@ -47,6 +58,10 @@ function Harness({
         onModeChange={vi.fn()}
         projectName={projectName}
         onSelectProject={onSelectProject}
+        onRemoveProject={onRemoveProject}
+        attachments={attachments}
+        onSelectAttachments={onSelectAttachments}
+        onRemoveAttachment={onRemoveAttachment}
       />
     </I18nProvider>
   )
@@ -56,7 +71,7 @@ describe('Composer (Lexical skill editor)', () => {
   it('renders the editor with a placeholder when empty', () => {
     render(<Harness />)
     expect(screen.getByRole('textbox')).toBeInTheDocument()
-    expect(screen.getByText('交给石间——描述任务，或拖入文件')).toBeInTheDocument()
+    expect(screen.getByText('交给石间——描述任务，可添加附件')).toBeInTheDocument()
   })
 
   it('renders an inline skill pill for a draft that contains a skill token', async () => {
@@ -96,13 +111,61 @@ describe('Composer (Lexical skill editor)', () => {
     expect(onSelectProject).toHaveBeenCalledTimes(1)
   })
 
-  it('locks into a project chip (non-button) when a project is bound', () => {
+  it('shows a project chip when a project is bound', () => {
     const onSelectProject = vi.fn()
     render(<Harness projectName="客户A" onSelectProject={onSelectProject} />)
     // Project name is visible on the chip…
-    expect(screen.getByText('客户A')).toBeInTheDocument()
+    expect(screen.getByText('客户A').closest('.composer-project-chip')).not.toHaveClass('composer-tool')
     // …and the "添加项目" affordance is gone.
     expect(screen.queryByRole('button', { name: '添加项目' })).not.toBeInTheDocument()
+  })
+
+  it('lets the user remove a bound project', () => {
+    const onRemoveProject = vi.fn()
+    render(<Harness projectName="客户A" onRemoveProject={onRemoveProject} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '移除路径：客户A' }))
+    expect(onRemoveProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets the user replace a bound project', () => {
+    const onSelectProject = vi.fn()
+    render(<Harness projectName="客户A" onSelectProject={onSelectProject} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '更换路径：客户A' }))
+    expect(onSelectProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps project removal disabled while a run is active', () => {
+    render(<Harness projectName="客户A" onRemoveProject={vi.fn()} hasActiveRun />)
+    expect(screen.getByRole('button', { name: '移除路径：客户A' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '更换路径：客户A' })).toBeDisabled()
+  })
+
+  it('selects and removes local attachments', () => {
+    const onSelectAttachments = vi.fn()
+    const onRemoveAttachment = vi.fn()
+    render(
+      <Harness
+        attachments={[{ path: '/tmp/brief.pdf', name: 'brief.pdf' }]}
+        onSelectAttachments={onSelectAttachments}
+        onRemoveAttachment={onRemoveAttachment}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }))
+    fireEvent.click(screen.getByRole('button', { name: '移除附件：brief.pdf' }))
+
+    expect(onSelectAttachments).toHaveBeenCalledTimes(1)
+    expect(onRemoveAttachment).toHaveBeenCalledWith('/tmp/brief.pdf')
+  })
+
+  it('keeps the placeholder positioned inside the editor when attachments are present', () => {
+    render(<Harness attachments={[{ path: '/tmp/brief.pdf', name: 'brief.pdf' }]} />)
+
+    expect(screen.getByText('交给石间——描述任务，可添加附件').parentElement).toHaveClass(
+      'composer-editor-shell',
+    )
   })
 
   // Regression: the stop button used to disappear the moment the

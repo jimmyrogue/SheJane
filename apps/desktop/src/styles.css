@@ -830,6 +830,27 @@ select {
   line-height: 1.78;
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.message-attachments > span {
+  display: inline-flex;
+  max-width: 240px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--sj-paper-wash);
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message .message-content p,
 .message .message-content ul,
 .message .message-content ol,
@@ -2805,6 +2826,10 @@ select {
   color: var(--text-primary);
 }
 
+.composer-editor-shell {
+  position: relative;
+}
+
 .composer-editor-ph {
   position: absolute;
   top: 14px;
@@ -2814,9 +2839,6 @@ select {
   line-height: 1.55;
   pointer-events: none;
   user-select: none;
-}
-.composer-input:has(.composer-chips) .composer-editor-ph {
-  top: 75px;
 }
 
 /* When the chip ALSO has an expiry caption stacked under it (status
@@ -5563,7 +5585,46 @@ button.agent-progress-summary:focus-visible {
  * below contributes its own padding-top so there's a natural gap
  * between the thumbnail and the typed text. */
 .composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   padding: 10px 12px 0;
+}
+
+.composer-attachment-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 8px;
+  border-radius: 8px;
+  background: var(--sj-paper-wash);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.composer-attachment-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-attachment-chip > button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.composer-attachment-chip > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
 }
 
 /* Expiry caption — small, muted, single-line. Allowed to grow past
@@ -5680,6 +5741,7 @@ button.agent-progress-summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  height: 34px;
   gap: 4px;
   border: 0;
   background: transparent;
@@ -5744,19 +5806,17 @@ button.agent-progress-summary:focus-visible {
   text-overflow: ellipsis;
 }
 
-/* Locked project chip — sits in the composer toolbar where the
+/* Selected project chip — sits in the composer toolbar where the
  * IconFolderPlus button lives before a project is picked. Wider than
  * the standard square .composer-tool because it carries the project
- * name; styled as a soft pill so it reads "set" rather than "click
- * me". The cursor stays default — once bound, switching projects
- * requires a new chat. */
+ * name; styled as a soft pill with compact replace and remove actions. */
 .composer-project-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   height: 28px;
   width: auto;
-  padding: 0 10px;
+  padding: 0 4px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
@@ -5768,15 +5828,61 @@ button.agent-progress-summary:focus-visible {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
 }
-.composer-project-chip svg {
+.composer-project-select {
+  display: inline-flex;
+  min-width: 0;
+  height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.composer-project-select > svg {
   flex: 0 0 auto;
   color: var(--text-secondary);
+}
+.composer-project-select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+.composer-project-select:disabled {
+  cursor: default;
 }
 .composer-project-chip-name {
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-project-remove {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.composer-project-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+.composer-project-remove:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 14%, transparent);
+}
+.composer-project-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* Mode selector trigger — same ghost feel as .composer-tool, but elastic:
@@ -8627,6 +8733,135 @@ button.settings-row-button:focus-visible,
 .settings-provider-field [data-slot="select-trigger"],
 .settings-provider-field [data-slot="input"] {
   height: 36px;
+}
+
+.settings-provider-model-heading,
+.settings-provider-model-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-provider-model-picker {
+  gap: 12px;
+}
+
+.settings-provider-model-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-provider-model-heading > span,
+.settings-provider-model-footer {
+  color: var(--sj-ink-soft, #6F6B63);
+  font-size: 12px;
+}
+
+.settings-provider-model-footer {
+  padding-top: 4px;
+}
+
+.settings-provider-discover {
+  flex: none;
+  white-space: nowrap;
+}
+
+.settings-provider-manual-models {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-provider-manual-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 7px;
+}
+
+.settings-provider-add-model {
+  display: grid;
+  width: 36px;
+  min-height: 36px;
+  place-items: center;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sj-ink-soft, #6F6B63);
+  cursor: pointer;
+}
+
+.settings-provider-add-model:hover:not(:disabled) {
+  background: var(--sj-paper-wash, #EFEDE7);
+  color: var(--sj-ink, #292724);
+}
+
+.settings-provider-add-model:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.settings-provider-model-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 0.5px solid var(--sj-line, #E8E5DE);
+  border-radius: 8px;
+}
+
+.settings-provider-model-choice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 0.5px solid var(--sj-line, #E8E5DE);
+  cursor: pointer;
+  padding: 11px 12px;
+}
+
+.settings-provider-model-choice:last-child {
+  border-bottom: 0;
+}
+
+.settings-provider-model-choice:hover {
+  background: var(--sj-paper-deep, #F6F3EC);
+}
+
+.settings-provider-model-choice input {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--sj-ink, #292724);
+}
+
+.settings-provider-model-option {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-provider-model-id {
+  overflow: hidden;
+  color: var(--sj-ink-faint, #9A958B);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.settings-provider-manual-model {
+  width: fit-content;
+  border: 0;
+  background: none;
+  color: var(--sj-ink-soft, #6F6B63);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 0;
+}
+
+.settings-provider-model-footer .settings-provider-manual-model {
+  margin-left: auto;
+}
+
+.settings-provider-manual-model:hover {
+  color: var(--sj-ink, #292724);
 }
 
 .settings-provider-advanced {

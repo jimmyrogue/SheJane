@@ -107,6 +107,7 @@ export interface ChatMessage {
   content: string
   createdAt: string
   status: MessageStatus
+  attachments?: LocalAttachmentRef[]
   requestId?: string
   runId?: string
   /** Highest Runtime event sequence already reflected in this cache entry. */
@@ -126,6 +127,11 @@ export interface ChatMessage {
     resolved: string
     reason: string
   }
+}
+
+export interface LocalAttachmentRef {
+  path: string
+  name: string
 }
 
 export interface ConversationWorkspace {

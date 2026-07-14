@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('shejaneDesktop', {
     restartApp: () => ipcRenderer.invoke('shejane:restart-app'),
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('shejane:select-workspace-directory'),
+  selectAttachmentFiles: () => ipcRenderer.invoke('shejane:select-attachment-files'),
   openExternal: (url) => ipcRenderer.invoke('shejane:open-external', url),
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
   setWindowButtonPosition: (position) => ipcRenderer.invoke('shejane:set-window-button-position', position),

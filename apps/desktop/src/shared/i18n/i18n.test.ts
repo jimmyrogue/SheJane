@@ -9,8 +9,8 @@ describe('i18n', () => {
   })
 
   it('translates keys with interpolation for Chinese and English', () => {
-    expect(createTranslator('zh')('composer.projectPicker.locked', { name: '示例项目' })).toBe('项目已锁定：示例项目（新建对话可换）')
-    expect(createTranslator('en')('composer.projectPicker.locked', { name: 'Demo' })).toBe('Project locked: Demo (start a new chat to switch)')
+    expect(createTranslator('zh')('composer.projectPicker.remove', { name: '示例项目' })).toBe('移除路径：示例项目')
+    expect(createTranslator('en')('composer.projectPicker.remove', { name: 'Demo' })).toBe('Remove path: Demo')
   })
 
   it('keeps default Chinese desktop-facing copy natural', () => {

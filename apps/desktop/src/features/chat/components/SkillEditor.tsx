@@ -495,25 +495,27 @@ export function SkillEditor({
   )
 
   return (
-    <LexicalComposer initialConfig={initialConfig}>
-      <PlainTextPlugin
-        contentEditable={<ContentEditable className="composer-editor" aria-label={placeholder} />}
-        placeholder={<div className="composer-editor-ph">{placeholder}</div>}
-        ErrorBoundary={LexicalErrorBoundary}
-      />
-      <HistoryPlugin />
-      <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
-      {/* Slash menu (functions/skills/MCP) is daemon-only — omit on web. */}
-      {commandsEnabled ? (
-        <SkillTypeaheadPlugin
-          listSkills={listSkills}
-          listMcpServers={listMcpServers}
-          menuOpenRef={menuOpenRef}
+    <div className="composer-editor-shell">
+      <LexicalComposer initialConfig={initialConfig}>
+        <PlainTextPlugin
+          contentEditable={<ContentEditable className="composer-editor" aria-label={placeholder} />}
+          placeholder={<div className="composer-editor-ph">{placeholder}</div>}
+          ErrorBoundary={LexicalErrorBoundary}
         />
-      ) : null}
-      <SubmitPlugin onSend={onSend} menuOpenRef={menuOpenRef} />
-      <SkillDeletePlugin />
-      <ExternalDraftPlugin draft={draft} lastSerializedRef={lastSerializedRef} />
-    </LexicalComposer>
+        <HistoryPlugin />
+        <OnChangePlugin onChange={handleChange} ignoreSelectionChange />
+        {/* Slash menu (functions/skills/MCP) is daemon-only — omit on web. */}
+        {commandsEnabled ? (
+          <SkillTypeaheadPlugin
+            listSkills={listSkills}
+            listMcpServers={listMcpServers}
+            menuOpenRef={menuOpenRef}
+          />
+        ) : null}
+        <SubmitPlugin onSend={onSend} menuOpenRef={menuOpenRef} />
+        <SkillDeletePlugin />
+        <ExternalDraftPlugin draft={draft} lastSerializedRef={lastSerializedRef} />
+      </LexicalComposer>
+    </div>
   )
 }

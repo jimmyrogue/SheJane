@@ -726,6 +726,16 @@ ipcMain.handle('shejane:select-workspace-directory', async () => {
   return result.filePaths[0]
 })
 
+ipcMain.handle('shejane:select-attachment-files', async () => {
+  const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  const options = {
+    title: desktopText(currentLocale, 'dialogs.selectAttachmentsTitle'),
+    properties: ['openFile', 'multiSelections'],
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? [] : result.filePaths.slice(0, 10)
+})
+
 ipcMain.handle('shejane:open-external', async (_event, rawURL) => {
   if (!isAllowedExternalURL(rawURL)) {
     return 'unsupported url protocol'

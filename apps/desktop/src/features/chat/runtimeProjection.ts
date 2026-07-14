@@ -62,6 +62,7 @@ function projectRuntimeItem(
   const id = item.client_id || item.id
   const existing = existingByID.get(id)
   if (item.item_type === 'user_message') {
+    const attachments = attachmentValues(item.metadata)
     return {
       ...(existing ?? {}),
       id,
@@ -69,6 +70,7 @@ function projectRuntimeItem(
       content: item.content,
       createdAt: item.created_at,
       status: 'done',
+      ...(attachments.length ? { attachments } : {}),
     }
   }
 
@@ -94,6 +96,17 @@ function projectRuntimeItem(
     ...(run?.command_id ? { commandId: run.command_id } : {}),
     ...(agentEvents.length ? { agentEvents } : {}),
   }
+}
+
+function attachmentValues(value: unknown): NonNullable<ChatMessage['attachments']> {
+  const attachments = objectValue(value).attachments
+  if (!Array.isArray(attachments)) return []
+  return attachments.flatMap((value) => {
+    const item = objectValue(value)
+    return typeof item.path === 'string' && item.path && typeof item.name === 'string' && item.name
+      ? [{ path: item.path, name: item.name }]
+      : []
+  }).slice(0, 10)
 }
 
 function assistantStatus(itemStatus: string, runStatus?: LocalRun['status']): MessageStatus {

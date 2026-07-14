@@ -314,7 +314,13 @@ describe('desktop local host client', () => {
 
     await expect(
       createLocalRun(
-        { ...TEST_COMMAND, threadId: 'conversation-1', goal: 'Inspect workspace', workspacePath: '/tmp/project' },
+        {
+          ...TEST_COMMAND,
+          threadId: 'conversation-1',
+          goal: 'Inspect workspace',
+          workspacePath: '/tmp/project',
+          attachmentPaths: ['/tmp/brief.pdf'],
+        },
         { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
         fetcher,
       ),
@@ -329,9 +335,10 @@ describe('desktop local host client', () => {
           client_message_id: TEST_COMMAND.clientMessageId,
           thread_id: 'conversation-1',
           protocol_version: 1,
-          required_capabilities: ['agent.run', 'agent.stream', 'hitl', 'mcp', 'memory', 'skills', 'subagents', 'workspace.files'],
+          required_capabilities: ['agent.run', 'agent.stream', 'attachments', 'hitl', 'mcp', 'memory', 'skills', 'subagents', 'workspace.files'],
           goal: 'Inspect workspace',
           workspace_path: '/tmp/project',
+          attachment_paths: ['/tmp/brief.pdf'],
           history: [],
           model: 'local:test:model',
         }),

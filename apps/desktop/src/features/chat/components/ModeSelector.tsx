@@ -32,11 +32,13 @@ export function ModeSelector({
   mode,
   models,
   onChange,
+  onConfigureModels,
   disabled = false,
 }: {
   mode: ChatMode
   models: ModelOption[]
   onChange: (next: ChatMode) => void
+  onConfigureModels?: () => void
   disabled?: boolean
 }) {
   const { t } = useI18n()
@@ -51,6 +53,23 @@ export function ModeSelector({
 
   const selectModel = (model: ModelOption) => {
     onChange(model.id)
+  }
+
+  if (models.length === 0) {
+    const configureLabel = t('composer.mode.configureModels')
+    return (
+      <button
+        type="button"
+        className="composer-mode-trigger"
+        aria-label={configureLabel}
+        title={configureLabel}
+        disabled={disabled || !onConfigureModels}
+        onClick={onConfigureModels}
+      >
+        <IconSparkles size={14} aria-hidden="true" />
+        <span className="composer-mode-trigger-label">{configureLabel}</span>
+      </button>
+    )
   }
 
   const renderModel = (model: ModelOption) => {
