@@ -306,6 +306,37 @@ def test_http_skill_crud_writes_personal_skill(tmp_path: Path, monkeypatch) -> N
         assert not skill_path.exists()
 
 
+def test_http_skill_create_adds_required_frontmatter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.delenv("SHEJANE_LOCAL_SKILLS_PATH", raising=False)
+    settings = reset_settings_for_tests(
+        SHEJANE_LOCAL_HOST_ADDR="127.0.0.1",
+        SHEJANE_LOCAL_HOST_PORT=17371,
+        SHEJANE_LOCAL_HOST_TOKEN="tok",
+        data_dir=tmp_path / "data",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/local/v1/skills",
+            headers={"Authorization": "Bearer tok"},
+            json={
+                "name": "plain-skill",
+                "description": "A plain Skill",
+                "content": "# Plain Skill\n\nFollow these instructions.\n",
+            },
+        )
+
+    assert created.status_code == 200, created.text
+    content = (tmp_path / ".shejane" / "skills" / "plain-skill" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert content.startswith(
+        "---\nname: plain-skill\ndescription: A plain Skill\n---\n# Plain Skill\n"
+    )
+
+
 # --- build_agent skills_enabled gate ----------------------------------------
 
 

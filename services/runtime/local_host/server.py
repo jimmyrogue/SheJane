@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -346,24 +347,19 @@ def _list_skill_files() -> list[dict[str, str]]:
 
 
 def _parse_frontmatter_minimal(text: str) -> tuple[str, str]:
-    """Extract title + description from a `--- key: value ---` YAML-lite
-    prefix without pulling in a full yaml parser."""
-    lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
+    """Extract display metadata from Skill YAML frontmatter."""
+    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", text, re.DOTALL)
+    if match is None:
         return "", ""
-    title = description = ""
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        if ":" in line:
-            key, _, value = line.partition(":")
-            k = key.strip().lower()
-            v = value.strip()
-            if k == "title":
-                title = v
-            elif k == "description":
-                description = v
-    return title, description
+    try:
+        metadata = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return "", ""
+    if not isinstance(metadata, dict):
+        return "", ""
+    title = metadata.get("title") or metadata.get("name") or ""
+    description = metadata.get("description") or ""
+    return str(title), str(description)
 
 
 _SAFE_CATALOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
@@ -578,13 +574,36 @@ def _write_local_skill(route_name: str | None, request: SkillWriteRequest) -> Sk
     content = request.content
     if content is None:
         content = _default_skill_content(name, request.description)
-    if not content.endswith("\n"):
-        content += "\n"
+    content = _normalize_local_skill_content(name, request.description, content)
     try:
         _write_text_atomic(path, content)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"failed to write skill: {exc}") from exc
     return SkillWriteResponse(skill=_skill_file_from_path(name, path))
+
+
+def _normalize_local_skill_content(name: str, description: str, content: str) -> str:
+    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
+    body = content
+    metadata: dict[str, Any] = {}
+    if match is not None:
+        try:
+            parsed = yaml.safe_load(match.group(1))
+        except yaml.YAMLError as exc:
+            raise HTTPException(status_code=422, detail="invalid Skill YAML frontmatter") from exc
+        if parsed is not None and not isinstance(parsed, dict):
+            raise HTTPException(status_code=422, detail="Skill frontmatter must be an object")
+        metadata = dict(parsed or {})
+        body = content[match.end() :]
+    metadata["name"] = name
+    requested_description = description.strip()
+    if requested_description:
+        metadata["description"] = requested_description
+    elif not str(metadata.get("description") or "").strip():
+        metadata["description"] = name
+    header = yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False).rstrip()
+    body = body.lstrip("\n")
+    return f"---\n{header}\n---\n{body}".rstrip() + "\n"
 
 
 @asynccontextmanager
