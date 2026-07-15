@@ -1,6 +1,6 @@
 # Run Loop —— 当前能力实现态
 
-创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。模型失败不会触发静默回退。
+创建 Run 前，Runtime 会检查协议版本、客户端所需能力、资源归属和当前模型绑定。接纳成功后保存版本化的有效设置快照与模型凭据引用；真实密钥不进入 Run 或作业记录。模型必须使用 `local:<供应商编号>:<模型编号>`。任务开始或恢复时会重新核对工作区、设置快照、供应商版本和凭据引用，然后才进入模型循环。模型失败不会触发静默回退。模型资料明确保存是否支持图片输入，旧配置默认视为仅文本；文本模型的文件工具结果不会包含图片块，而会得到清晰的能力限制说明。
 
 MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop、Cursor 或 Codex 的全局配置。Runtime 级监督器按单个 Server 的配置指纹维护工具目录和长会话；连续 Run 取得固定目录快照并复用连接，`build_agent()` 不再为每个 Run 顺序发现或启动全部 Server。新增、修改或删除 Server 时，旧目录会退休；已有 Run 释放最后一个租约后才关闭旧会话。连接失败会进入 30 秒退避，避免每个 Run 重复等待；MCP 列表接口返回当前连接状态、工具数和不含密钥的错误类型。
 
@@ -113,7 +113,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │   │      │                                                                   │    │
   │   │      ▼                                                                   │    │
   │   │   event_translator.translate(kind, payload)                              │    │
-  │   │      │     → llm.delta / llm.reasoning / llm.tool_call_chunk /          │    │
+  │   │      │     → llm.round.started / llm.delta / llm.reasoning /            │    │
+  │   │      │       llm.tool_call_chunk /                                       │    │
   │   │      │       tool.completed / tool.failed /                              │    │
   │   │      │       subagent.spawned / subagent.completed /                     │    │
   │   │      │       agent.custom                                                │    │
@@ -174,7 +175,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │       ↓ 完整结束时结算 token 用量；中断或重启标记结果不明     │     │
   │     │       ↓ 顶层完整 AIMessage 按版本写入 local_assistant_drafts               │     │
   │     │       ↓                                                                  │     │
-  │     │ after_model：仅 CompletionRouter 可决定最终候选、修复或明确失败          │     │
+│     │ after_model：仅 CompletionRouter 可决定最终候选、修复或明确失败          │     │
+│     │  • 需要用户补充信息的正文提问会有界修复为 user.ask，不提交伪终态       │     │
   │     │                                                                          │     │
   │     │ 有 tool_calls?                                                            │     │
   │     │   no → 出循环 → after_agent                                                │     │
@@ -312,12 +314,12 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 1e | **拒绝回执** | 拒绝不进入工具，保存 `rejected` 回执 | `capability_1e_denied_tool_is_not_executed_and_has_rejected_receipt` ✅ |
 | 1f | **整批先暂停** | 混合只读和写入调用时，确认前一个也不执行 | `capability_1f_review_pauses_the_entire_mixed_tool_batch` ✅ |
 | 1g | **参数前置校验** | 无效参数不询问用户、不进入工具 | `capability_1g_invalid_tool_arguments_fail_before_review` ✅ |
-| 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` ✅ |
+| 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` + `runtime-agent.contract.test.ts` 真实 Runtime 纵向链路 ✅ |
 | 2c | **子 Agent 同一执行边界** | 子 Agent 内工具也经过确认和回执 | `capability_2c_subagent_tools_share_review_and_receipt_boundary` ✅ |
 | 3 | 供应商缓存边界 | Runtime 不注入供应商私有缓存标记，由标准供应商适配器决定 | `capability_3_prompt_caching_is_gateway_owned` ✅ |
 | 4 | 自动模型回退禁用 | Runtime 不会在失败后自行更换模型或供应商 | `capability_4_local_direct_modelfallback_ignored` ✅ |
 | 6 | **AGENTS.md 注入** | `MemoryMiddleware` → system prompt | `cap_6_memory_md` ✅（出站 system 含 marker） |
-| 7 | TodoList | `before_agent` 注入 write_todos 工具 | `cap_7_write_todos` ✅ |
+| 7 | TodoList | `before_agent` 注入 write_todos 工具 | `cap_7_write_todos` + `runtime-agent.contract.test.ts` 状态写入和结果回传 ✅ |
 | 8 | 快路径 happy run | 全链 | `cap_8_happy_path` ✅ |
 
 ### SSE wire 契约（`tests/test_sse_envelope.py`）
@@ -356,7 +358,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 结束前进展账本 guard | `@after_model + jump_to="model"`，有非 `task.progress` 工具工作且最后一次工具后没有刷新账本时，最多要求模型调用一次 `task.progress` | `test_middleware` / `test_agent_builder` |
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
 | 显式长期记忆 | 主任务入口从真实用户输入提取精确记忆事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；读写按所有者与工作区双重隔离 | `test_memory` / `test_memory_http` / `test_subagents` |
-| Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` |
+| Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` / `runtime-agent.contract.test.ts` |
+| MCP 目录与调用 | `MCPToolCatalog` 固定目录快照；达到阈值后先用 `mcp.search_tools` | `test_mcp` / `runtime-tools.contract.test.ts` |
 | 文件系统沙箱 | `FilesystemMiddleware` + backend；项目目录是可写根目录，本次附件仅通过 `/attachments/` 暴露被选中的单个文件并保持只读；PDF 在读取边界转换为 UTF-8 文本，不把 Base64 二进制交给模型 | `test_agent_builder` / `test_memory` / `test_runs_http` |
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |
@@ -364,7 +367,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 模型错误 durable failure | 供应商错误进入统一失败策略；不可恢复或重试耗尽后写入结构化 `run.failed` | `test_model_ledger` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |
-| **流式 token** | `messages` 模式 → `llm.delta` | `test_streaming_latency` |
+| **流式 token** | `messages` 模式先用 `llm.round.started` 标记新的模型回合，再用 `llm.delta` 发送增量；Desktop 在新回合开始时替换旧的临时草稿 | `test_streaming_latency` / `chatStore.test` |
 | 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
 | 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 计划审批 | 客户端持久保存 `plan.resolve` → Runtime 原子保存决定、事件与回执；与同一等待周期的其他候选共同结算 | `test_runs_http` / `test_plan_approval` / `client.test` / `App.test` |
@@ -373,7 +376,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 检查点持久化 | `durability="sync"` 保证每个 superstep 在下一步前提交；`checkpoints` 流用租约保护的比较交换更新当前 Run 分支头；diagnostics 只读取该明确分支头 | `test_agent_builder` / `test_runs_http` / `test_run_jobs` |
 | 快照与事件恢复 | 助手消息投影原子记录正文覆盖的事件高水位；客户端保存 `lastEventSeq`，SSE 用 `?after=<seq>` 仅回放后续事件 | `test_run_result_commit` / `test_sse_envelope` / `client.test` / `runtimeProjection.test` |
 | 游标重同步 | Runtime 拒绝超出事件窗口的游标；客户端读取完整线程快照后继续订阅 | `test_sse_envelope` / `client.test` / `App.test` |
-| 临时增量 | 逐字文本、推理、临时用量和未完成调用片段只走每订阅者有界队列，不写事件日志或重连重放；模型进入工具调用时清空上一回合的临时正文，失败时不把未完成正文显示为最终回答 | `test_sse_envelope` / `test_run_jobs` / `chatStore.test` / `MessageBubble.test` |
+| 临时增量 | 模型回合边界、逐字文本、推理、临时用量和未完成调用片段只走每订阅者有界队列，不写事件日志或重连重放；模型开始新回合或进入工具调用时清空上一回合的临时正文，失败时不把未完成正文显示为最终回答 | `test_sse_envelope` / `test_run_jobs` / `chatStore.test` / `MessageBubble.test` |
 | 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
 
 ### Failure recovery contract

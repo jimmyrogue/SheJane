@@ -91,6 +91,7 @@ describe.skipIf(!BASE_URL)('contract: Runtime catalogs (live daemon)', () => {
           display_name: 'E2E Model',
           tool_calling: true,
           streaming: true,
+          image_inputs: true,
         }],
         enabled: true,
       }, config)
@@ -105,6 +106,7 @@ describe.skipIf(!BASE_URL)('contract: Runtime catalogs (live daemon)', () => {
         expect.objectContaining({
           spec: `local:${providerID}:e2e-model`,
           available: true,
+          image_inputs: true,
         }),
       ]))
     } finally {

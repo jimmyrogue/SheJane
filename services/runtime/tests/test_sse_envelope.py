@@ -210,6 +210,7 @@ def test_replay_after_run_completion_has_same_envelope(client: TestClient) -> No
         assert required <= set(event.keys()), event
     assert not {
         "llm.delta",
+        "llm.round.started",
         "llm.reasoning",
         "llm.usage",
         "llm.tool_call_chunk",

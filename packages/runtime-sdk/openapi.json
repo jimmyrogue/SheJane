@@ -1871,6 +1871,11 @@
             "title": "Display Name",
             "type": "string"
           },
+          "image_inputs": {
+            "default": false,
+            "title": "Image Inputs",
+            "type": "boolean"
+          },
           "max_input_tokens": {
             "anyOf": [
               {
@@ -2299,6 +2304,10 @@
             "title": "Display Name",
             "type": "string"
           },
+          "image_inputs": {
+            "title": "Image Inputs",
+            "type": "boolean"
+          },
           "max_input_tokens": {
             "anyOf": [
               {
@@ -2354,6 +2363,7 @@
           "provider_name",
           "tool_calling",
           "streaming",
+          "image_inputs",
           "available"
         ],
         "title": "LocalRuntimeModel",

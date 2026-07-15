@@ -482,7 +482,12 @@ def _build_chat_model(
         profile = (
             {
                 key: raw_profile[key]
-                for key in ("tool_calling", "max_input_tokens", "max_output_tokens")
+                for key in (
+                    "tool_calling",
+                    "image_inputs",
+                    "max_input_tokens",
+                    "max_output_tokens",
+                )
                 if key in raw_profile and raw_profile[key] is not None
             }
             if isinstance(raw_profile, dict)
@@ -490,6 +495,8 @@ def _build_chat_model(
         )
         profile.setdefault("max_input_tokens", settings.unknown_model_max_input_tokens)
         profile.setdefault("max_output_tokens", settings.unknown_model_max_output_tokens)
+        profile.setdefault("image_inputs", False)
+        profile["image_tool_message"] = profile["image_inputs"]
         if model_binding["provider"] == "anthropic":
             from langchain_anthropic import ChatAnthropic
 

@@ -4710,6 +4710,38 @@ button:active {
   padding: 0;
 }
 
+.message-reasoning {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.message-reasoning summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 500;
+  user-select: none;
+}
+
+.message-reasoning summary:hover {
+  color: var(--text-primary);
+}
+
+.message-reasoning-body {
+  max-height: 320px;
+  margin-top: 8px;
+  overflow: auto;
+  padding: 0 4px 0 16px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Per-message footer: copy + relative time. Floated below the bubble
  * via `top: 100%`; the meta itself stays `pointer-events: auto` even
  * when invisible (see .message-meta), so hovering it directly keeps
@@ -8858,6 +8890,32 @@ button.settings-row-button:focus-visible,
 
 .settings-provider-model-footer .settings-provider-manual-model {
   margin-left: auto;
+}
+
+.settings-provider-model-capabilities {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-provider-model-capability {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  font-size: 12px;
+}
+
+.settings-provider-model-capability input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--sj-ink, #292724);
+}
+
+.settings-provider-model-capability small {
+  color: var(--sj-ink-faint, #9A958B);
+  font-size: 11px;
 }
 
 .settings-provider-manual-model:hover {

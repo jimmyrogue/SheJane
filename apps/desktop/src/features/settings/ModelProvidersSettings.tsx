@@ -204,6 +204,7 @@ export function ModelProvidersSettings({
           display_name: model.display_name,
           tool_calling: true,
           streaming: true,
+          image_inputs: false,
         }])
   }
 
@@ -220,7 +221,14 @@ export function ModelProvidersSettings({
       display_name: modelID,
       tool_calling: true,
       streaming: true,
+      image_inputs: false,
     }))
+  }
+
+  const setModelImageInputs = (modelID: string, imageInputs: boolean) => {
+    setSelectedModels((current) => current.map((model) => (
+      model.model_id === modelID ? { ...model, image_inputs: imageInputs } : model
+    )))
   }
 
   const showModelConfiguration = !requiresAPIKey || Boolean(apiKey.trim()) || savedCredentialConfigured
@@ -462,6 +470,22 @@ export function ModelProvidersSettings({
                       </div>
                     </div>
                   )}
+                  {selectedModels.length > 0 ? (
+                    <div className="settings-provider-model-capabilities">
+                      {selectedModels.map((model) => (
+                        <label key={model.model_id} className="settings-provider-model-capability">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(model.image_inputs)}
+                            aria-label={`${model.display_name} ${t('settings.models.imageInputs')}`}
+                            onChange={(event) => setModelImageInputs(model.model_id, event.target.checked)}
+                          />
+                          <span>{model.display_name}</span>
+                          <small>{t('settings.models.imageInputs')}</small>
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
                 <details className="settings-provider-advanced">

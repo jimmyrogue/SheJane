@@ -23,6 +23,7 @@ export interface ModelOption {
   description?: string
   vendor?: string
   vendor_info?: string
+  imageInputs: boolean
 }
 
 /**
@@ -83,6 +84,9 @@ export function ModeSelector({
         <span className="composer-mode-item-text">
           <span className="composer-mode-model-label-row">
             <span className="composer-mode-item-label">{model.label}</span>
+          </span>
+          <span className="composer-mode-item-hint">
+            {model.imageInputs ? t('composer.mode.supportsImages') : t('composer.mode.textOnly')}
           </span>
         </span>
         <span className="composer-mode-item-side">

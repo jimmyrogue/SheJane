@@ -87,6 +87,7 @@ describe('ModelProvidersSettings', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '模型 ID 1' }), { target: { value: 'gpt-4.1' } })
     fireEvent.click(screen.getByRole('button', { name: '添加模型' }))
     fireEvent.change(screen.getByRole('textbox', { name: '模型 ID 2' }), { target: { value: 'gpt-4o' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'gpt-4o 支持图片' }))
     expect(screen.getByRole('button', { name: '获取模型' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -98,7 +99,7 @@ describe('ModelProvidersSettings', () => {
         api_key: 'secret-key',
         models: [
           expect.objectContaining({ model_id: 'gpt-4.1' }),
-          expect.objectContaining({ model_id: 'gpt-4o' }),
+          expect.objectContaining({ model_id: 'gpt-4o', image_inputs: true }),
         ],
       }),
       expect.objectContaining({ token: 'tok' }),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
@@ -76,6 +77,35 @@ class CompletionRouterMiddleware(AgentMiddleware):
                 recoverable=True,
                 run_id=run_id,
             )
+
+        if _is_prose_clarification(text):
+            attempts = _route_attempts_for_run(state, run_id, "prose_clarification")
+            if attempts >= 1:
+                return _terminal_route(
+                    "blocked",
+                    "clarification_tool_required",
+                    "The model asked for required user input without calling user.ask.",
+                    recoverable=True,
+                    run_id=run_id,
+                )
+            return {
+                "completion_route": {
+                    "decision": "repair_requested",
+                    "reason": "prose_clarification",
+                    "message": "Required user input must use the user.ask tool.",
+                    "recoverable": True,
+                    "attempts": 1,
+                    "max_attempts": 1,
+                    "run_id": run_id,
+                    "instruction": (
+                        "Your previous response asked the user for required information in "
+                        "prose. Call user.ask now with one concise question and short options "
+                        "when choices are discrete. If the latest user.ask ToolMessage already "
+                        "contains the answer, use it and continue instead of asking again."
+                    ),
+                },
+                "jump_to": "model",
+            }
 
         verification = _latest_task_verification(messages)
         if verification is not None and not verification["ok"]:
@@ -180,6 +210,20 @@ def _assistant_text(content: Any) -> str:
             if isinstance(value, str):
                 parts.append(value)
     return "".join(parts)
+
+
+_PROSE_CLARIFICATION = re.compile(
+    r"(?:你|您)(?:指的是|希望(?:按|用|选择|采用)|想(?:要|选择|使用)|需要(?:提供|选择|确认)|偏好)"
+    r"|请(?:提供|告诉|选择|确认|说明|指定|补充)"
+    r"|\b(?:which|what|how|where|when|would)\b.{0,80}\b(?:you|your)\b"
+    r"|\bplease\s+(?:provide|choose|confirm|specify|tell)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_prose_clarification(text: str) -> bool:
+    value = " ".join(text.split())
+    return ("?" in value or "？" in value) and _PROSE_CLARIFICATION.search(value) is not None
 
 
 def _finish_reason(message: Any) -> str:
@@ -297,6 +341,15 @@ def _repair_attempts_for_run(state: Any, run_id: str) -> int:
     if not isinstance(repair_state, dict) or repair_state.get("run_id") != run_id:
         return 0
     return _int_state(repair_state.get("attempts"))
+
+
+def _route_attempts_for_run(state: Any, run_id: str, reason: str) -> int:
+    route = state.get("completion_route") if isinstance(state, dict) else None
+    if not isinstance(route, dict):
+        return 0
+    if route.get("run_id") != run_id or route.get("reason") != reason:
+        return 0
+    return _int_state(route.get("attempts"))
 
 
 def _parse_tool_content(content: Any) -> Any:

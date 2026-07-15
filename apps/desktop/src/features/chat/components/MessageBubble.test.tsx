@@ -37,6 +37,51 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByText('**你好**')).not.toBeInTheDocument()
   })
 
+  it('does not replay streamed text while the same message grows', () => {
+    vi.useFakeTimers()
+    const renderBubble = (content: string, status: ChatMessage['status'] = 'streaming') => (
+      <I18nProvider>
+        <MessageBubble message={message({ status, content })} />
+      </I18nProvider>
+    )
+    const { container, rerender } = render(renderBubble('S'))
+
+    for (const content of ['S SESSION', 'S SESSION INTENT', 'S SESSION INTENT\n用户要求整理文件。']) {
+      act(() => {
+        vi.advanceTimersByTime(22)
+      })
+      rerender(renderBubble(content))
+    }
+    rerender(renderBubble('S SESSION INTENT\n用户要求整理文件。', 'done'))
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+
+    expect(container.querySelector('.message-content')?.textContent).toBe('S SESSION INTENT\n用户要求整理文件。')
+  })
+
+  it('keeps reasoning collapsed and renders it as plain text', () => {
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            reasoning: '# SESSION INTENT\n用户要求整理文件。',
+            content: '处理完成。',
+          })}
+        />
+      </I18nProvider>,
+    )
+
+    const disclosure = container.querySelector('.message-reasoning')
+    expect(disclosure).not.toHaveAttribute('open')
+    expect(screen.getByText('思考过程')).toBeInTheDocument()
+    expect(disclosure?.querySelector('h1')).not.toBeInTheDocument()
+    expect(disclosure?.querySelector('.message-reasoning-body')?.textContent).toBe('# SESSION INTENT\n用户要求整理文件。')
+
+    fireEvent.click(screen.getByText('思考过程'))
+    expect(disclosure).toHaveAttribute('open')
+  })
+
   it('treats a single newline as a line break (remark-breaks)', () => {
     const { container } = render(
       <I18nProvider>

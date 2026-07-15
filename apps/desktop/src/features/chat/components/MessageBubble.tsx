@@ -171,6 +171,9 @@ export function MessageBubble({
   return (
     <article className={cn('message', message.role)}>
       <div className="message-bubble-inner">
+        {isAssistant && message.reasoning?.trim() ? (
+          <ReasoningDisclosure reasoning={message.reasoning} active={message.status === 'streaming'} />
+        ) : null}
         <div className="message-content">
           {message.attachments?.length ? (
             <div className="message-attachments">
@@ -295,6 +298,18 @@ export function MessageBubble({
         </div>
       </div>
     </article>
+  )
+}
+
+function ReasoningDisclosure({ reasoning, active }: { reasoning: string; active: boolean }) {
+  const { t } = useI18n()
+  return (
+    <details className="message-reasoning">
+      <summary aria-live={active ? 'polite' : undefined}>
+        {active ? t('agent.thinkingStreaming') : t('message.reasoningTitle')}
+      </summary>
+      <div className="message-reasoning-body">{reasoning}</div>
+    </details>
   )
 }
 

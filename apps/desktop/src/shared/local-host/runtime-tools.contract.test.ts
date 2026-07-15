@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
   authorizeLocalWorkspace,
+  createMcpServer,
   createLocalRun,
+  deleteMcpServer,
+  listMcpServers,
   resolveLocalPermissionCommand,
   revokeLocalWorkspace,
   streamLocalRun,
@@ -269,14 +272,94 @@ describe.skipIf(!BASE_URL)('contract: every Runtime Tool (live daemon)', () => {
       }),
       expect.objectContaining({ type: 'run.completed' }),
     ]))
-    const completed = events.findLast(event => event.type === 'run.completed')
+    const completed = [...events].reverse().find(event => event.type === 'run.completed')
     expect(String(completed?.payload.final_text ?? '')).toContain(toolCase.expected)
     toolCase.verify?.(workspace)
+  })
+
+  it('searches and executes a configured stdio MCP Tool', async () => {
+    const serverName = 'e2e-runtime-mcp'
+    const toolName = `${serverName}_echo`
+    const runtimeRoot = resolve(process.cwd(), '../../services/runtime')
+    const suffix = Date.now().toString(36)
+    await deleteMcpServer(serverName, config).catch(() => undefined)
+    try {
+      await createMcpServer({
+        name: serverName,
+        transport: 'stdio',
+        command: 'uv',
+        args: ['run', 'python', 'tests/fixtures/e2e_mcp_server.py'],
+        env: {},
+        cwd: runtimeRoot,
+      }, config)
+      await waitForMcpServer(serverName, config)
+
+      const searchRun = await createLocalRun({
+        commandId: `cmd_e2e_mcp_search_${suffix}`,
+        clientMessageId: `msg_e2e_mcp_search_${suffix}`,
+        goal: encodedToolGoal('mcp.search_tools', { query: 'echo', limit: 3 }),
+        workspacePath: workspace,
+        mode: 'local:test:model',
+        settings: { ...DEFAULT_SETTINGS, mcp: 'on' },
+      }, config)
+      const searchEvents = await streamThroughPermission(searchRun.id, `search_${suffix}`, config)
+      expect(searchEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool.requested',
+          payload: expect.objectContaining({ name: 'mcp.search_tools' }),
+        }),
+        expect.objectContaining({
+          type: 'tool.completed',
+          payload: expect.objectContaining({ name: 'mcp.search_tools' }),
+        }),
+        expect.objectContaining({ type: 'run.completed' }),
+      ]))
+      const searchCompleted = [...searchEvents]
+        .reverse()
+        .find(event => event.type === 'run.completed')
+      expect(String(searchCompleted?.payload.final_text ?? '')).toContain(toolName)
+
+      const run = await createLocalRun({
+        commandId: `cmd_e2e_mcp_${suffix}`,
+        clientMessageId: `msg_e2e_mcp_${suffix}`,
+        goal: encodedToolGoal(toolName, { value: 'ping' }),
+        workspacePath: workspace,
+        mode: 'local:test:model',
+        settings: { ...DEFAULT_SETTINGS, mcp: 'on' },
+      }, config)
+      const events = await streamThroughPermission(run.id, suffix, config)
+
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool.requested',
+          payload: expect.objectContaining({ name: toolName }),
+        }),
+        expect.objectContaining({
+          type: 'tool.completed',
+          payload: expect.objectContaining({ name: toolName }),
+        }),
+        expect.objectContaining({ type: 'run.completed' }),
+      ]))
+      const completed = [...events].reverse().find(event => event.type === 'run.completed')
+      expect(String(completed?.payload.final_text ?? '')).toContain('E2E_MCP_OK:ping')
+    } finally {
+      await deleteMcpServer(serverName, config).catch(() => undefined)
+    }
   })
 })
 
 type RuntimeEvent = { type: string; payload: Record<string, unknown> }
 type RuntimeConfig = { baseURL: string; token: string }
+
+async function waitForMcpServer(name: string, config: RuntimeConfig): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const server = (await listMcpServers(config)).servers.find(item => item.name === name)
+    if (server?.status === 'ready' && server.tool_count > 0) return
+    if (server?.status === 'error') throw new Error(`MCP discovery failed: ${server.error_type}`)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`MCP server ${name} did not become ready`)
+}
 
 async function streamThroughPermission(
   runID: string,

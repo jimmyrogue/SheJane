@@ -461,7 +461,14 @@ def test_context_envelope_uses_conservative_count_for_chinese() -> None:
 
 def test_context_envelope_preserves_latest_tool_result_with_block_system_prompt() -> None:
     messages = [
-        SystemMessage(content=[{"type": "text", "text": "S" * 17_000}]),
+        SystemMessage(
+            content=[
+                {"type": "text", "text": "IDENTITY_RULE\n" + "I" * 7_000},
+                {"type": "text", "text": "DEEP_AGENT_RULE\n" + "D" * 7_000},
+                {"type": "text", "text": "TODO_RULE\n" + "T" * 7_000},
+                {"type": "text", "text": "MEMORY_RULE\n" + "M" * 3_000},
+            ]
+        ),
         HumanMessage(content="Use the Skill."),
         AIMessage(
             content="",
@@ -487,3 +494,46 @@ def test_context_envelope_preserves_latest_tool_result_with_block_system_prompt(
         isinstance(message, ToolMessage) and message.content == "E2E_SKILL_ACTIVE"
         for message in bounded
     )
+    system_text = "".join(
+        str(block.get("text") or "")
+        for message in bounded
+        if isinstance(message, SystemMessage) and isinstance(message.content, list)
+        for block in message.content
+        if isinstance(block, dict)
+    )
+    assert all(
+        marker in system_text
+        for marker in ("IDENTITY_RULE", "DEEP_AGENT_RULE", "TODO_RULE", "MEMORY_RULE")
+    )
+
+
+def test_context_envelope_keeps_parallel_tool_results_with_their_parent_call() -> None:
+    tool_calls = [
+        {"id": f"read-{index}", "name": "read_file", "args": {"file_path": f"/{index}.jpg"}}
+        for index in range(7)
+    ]
+    messages = [
+        SystemMessage(content="SYSTEM_RULE\n" + "S" * 7_000),
+        HumanMessage(content="Rename these files from their contents."),
+        AIMessage(content="", tool_calls=tool_calls),
+        *[
+            ToolMessage(
+                content=f"result-{index}:" + "x" * 32_000,
+                name="read_file",
+                tool_call_id=f"read-{index}",
+            )
+            for index in range(7)
+        ],
+    ]
+
+    bounded = _enforce_context_envelope(messages, max_tokens=16_810)
+
+    active_tool_calls: set[str] = set()
+    for message in bounded:
+        if isinstance(message, AIMessage):
+            active_tool_calls = {str(call["id"]) for call in message.tool_calls}
+        elif isinstance(message, ToolMessage):
+            assert message.tool_call_id in active_tool_calls
+        elif not isinstance(message, SystemMessage):
+            active_tool_calls = set()
+    assert any(isinstance(message, ToolMessage) for message in bounded)

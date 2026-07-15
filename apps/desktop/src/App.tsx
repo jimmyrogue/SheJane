@@ -463,6 +463,7 @@ function AppContent() {
           return [{
             id: spec,
             label: model.display_name,
+            imageInputs: Boolean(model.image_inputs),
             description: t('settings.models.localDescription'),
             vendor: model.provider_name,
             vendor_info: t('settings.models.localVendorInfo'),
@@ -3088,12 +3089,13 @@ function appendLocalRunEvent(
     return
   }
   message.content = projectTransientAssistantText(message.content, event)
-  // Accumulate DeepSeek-style thinking-mode `reasoning_content` into a
-  // dedicated `message.reasoning` field. This is kept ONLY for backend
-  // round-trip (DeepSeek API requires reasoning_content to be passed
-  // back on subsequent calls). The UI never renders the reasoning text
-  // itself — MessageBubble only uses (reasoning != null && streaming)
-  // to show an ephemeral "Thinking…" indicator above the bubble.
+  if (event.event_type === 'llm.round.started') {
+    message.reasoning = ''
+    return
+  }
+  // Accumulate provider-supplied `reasoning_content` into a dedicated field.
+  // MessageBubble keeps it collapsed by default and renders it as plain text,
+  // while the Runtime retains the full model message for later model rounds.
   // Dedupe on event.id so a re-streamed replay doesn't double-append.
   if (event.event_type === 'llm.reasoning') {
     if (event.id && seenEventIDs.has(event.id)) {

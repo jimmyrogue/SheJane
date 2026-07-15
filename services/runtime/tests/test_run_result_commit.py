@@ -1043,6 +1043,7 @@ async def test_open_removes_legacy_transient_events_from_durable_replay(tmp_path
     await store.append_event(run["id"], "run.started", {"goal": "legacy"})
     for event_type in (
         "llm.delta",
+        "llm.round.started",
         "llm.reasoning",
         "llm.usage",
         "llm.tool_call_chunk",

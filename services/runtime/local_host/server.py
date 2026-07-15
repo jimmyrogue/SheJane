@@ -1098,6 +1098,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "provider_name": row["name"],
                             "tool_calling": bool(model.get("tool_calling")),
                             "streaming": bool(model.get("streaming")),
+                            "image_inputs": bool(model.get("image_inputs")),
                             "max_input_tokens": model.get("max_input_tokens"),
                             "max_output_tokens": model.get("max_output_tokens"),
                             "available": configured

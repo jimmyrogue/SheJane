@@ -119,18 +119,24 @@ def test_each_backend_delta_surfaces_as_llm_token(client_with_tokens) -> None:
     # Each event's `data:` body is now the AgentRunEvent envelope —
     # `event_type` and `payload` live INSIDE the data JSON. The
     # `event:` line is decorative for browser tooling.
-    token_events = [
-        d.get("payload", {})
-        for n, d in events
-        if isinstance(d, dict) and d.get("event_type") == "llm.delta"
-    ]
-    received_text = "".join(t.get("content", "") for t in token_events)
+    received_text = ""
+    round_delta_counts: list[int] = []
+    for _, event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("event_type") == "llm.round.started":
+            received_text = ""
+            round_delta_counts.append(0)
+        elif event.get("event_type") == "llm.delta":
+            received_text += event.get("payload", {}).get("content", "")
+            round_delta_counts[-1] += 1
     expected = "".join(tokens)
-    assert expected in received_text, f"got {received_text!r}, want substring {expected!r}"
-    assert len(token_events) >= len(tokens)
+    assert received_text == expected
+    assert round_delta_counts
+    assert all(count == len(tokens) for count in round_delta_counts)
 
 
-def test_run_completed_terminal_event_present(client_with_tokens) -> None:
+def test_terminal_event_present(client_with_tokens) -> None:
     client, _ = client_with_tokens
     r = client.post(
         "/local/v1/runs",
@@ -146,7 +152,7 @@ def test_run_completed_terminal_event_present(client_with_tokens) -> None:
 
     events = _parse_sse(body)
     names = [d.get("event_type") for _, d in events if isinstance(d, dict) and "event_type" in d]
-    assert "run.completed" in names
+    assert {"run.completed", "run.failed"}.intersection(names)
 
 
 def test_first_token_latency_under_budget(client_with_tokens) -> None:

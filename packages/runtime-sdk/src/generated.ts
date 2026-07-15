@@ -1462,6 +1462,11 @@ export interface components {
         LocalModelProfile: {
             /** Display Name */
             display_name: string;
+            /**
+             * Image Inputs
+             * @default false
+             */
+            image_inputs: boolean;
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */
@@ -1603,6 +1608,8 @@ export interface components {
             available: boolean;
             /** Display Name */
             display_name: string;
+            /** Image Inputs */
+            image_inputs: boolean;
             /** Max Input Tokens */
             max_input_tokens?: number | null;
             /** Max Output Tokens */

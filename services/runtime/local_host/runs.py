@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.load.dump import dumps as lc_dumps
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
@@ -2053,6 +2053,7 @@ class RunCoordinator:
                     bind_runtime_model(runtime_context.model),  # type: ignore[arg-type]
                     bind_runtime_tools(runtime_context.dynamic_tools),  # type: ignore[arg-type]
                 ):
+                    active_model_round: tuple[object, object] | None = None
                     async for part in agent.astream(
                         input_payload,
                         config=config,
@@ -2067,6 +2068,16 @@ class RunCoordinator:
                         payload = part.get("data")
                         if not isinstance(kind, str):
                             continue
+                        if kind == "messages" and isinstance(payload, tuple) and len(payload) == 2:
+                            chunk, metadata = payload
+                            if isinstance(chunk, AIMessageChunk) and isinstance(metadata, dict):
+                                model_round = (
+                                    metadata.get("langgraph_checkpoint_ns"),
+                                    metadata.get("langgraph_step"),
+                                )
+                                if model_round != active_model_round:
+                                    await self._enqueue(wakeup, run_id, "llm.round.started", {})
+                                    active_model_round = model_round
                         if kind == "checkpoints":
                             checkpoint_id = _checkpoint_id_from_stream(payload)
                             if checkpoint_id is not None:

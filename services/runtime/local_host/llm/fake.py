@@ -59,6 +59,56 @@ class FakeBackendChatModel(BaseChatModel):
                     }
                 ],
             )
+        if "[[e2e:subagent-child]]" in prompt:
+            return AIMessage(content="E2E_SUBAGENT_RESULT")
+        if "[[e2e:subagent]]" in prompt:
+            result = _last_tool_result(
+                messages,
+                "task",
+                tool_call_id="call_e2e_subagent",
+            )
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_subagent",
+                            "name": "task",
+                            "args": {
+                                "description": (
+                                    "[[e2e:subagent-child]] Return the exact E2E result token."
+                                ),
+                                "subagent_type": "writer",
+                            },
+                        }
+                    ],
+                )
+            return AIMessage(content=f"E2E parent received: {result.content}")
+        if "[[e2e:write-todos]]" in prompt:
+            result = _last_tool_result(
+                messages,
+                "write_todos",
+                tool_call_id="call_e2e_write_todos",
+            )
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_write_todos",
+                            "name": "write_todos",
+                            "args": {
+                                "todos": [
+                                    {
+                                        "content": "E2E_TODO_ACTIVE",
+                                        "status": "in_progress",
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                )
+            return AIMessage(content=f"E2E Todo result: {result.content}")
         if "Please remember that E2E memory fact." in prompt:
             result = _last_tool_result(messages, "memory.write")
             if result is None:

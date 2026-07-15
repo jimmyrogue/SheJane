@@ -238,6 +238,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
                 )
         replay = _receipt_result(receipt)
         if replay is not None:
+            replay = _provider_safe_tool_result(request, replay)
             if batch_order is not None:
                 async with gate.ordered(*batch_order):
                     return replay
@@ -326,7 +327,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
         )
         replay = _receipt_result(receipt)
         if replay is not None:
-            return replay
+            return _provider_safe_tool_result(request, replay)
 
         try:
             result = await handler(request)
@@ -359,6 +360,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
             raise
 
         try:
+            result = _provider_safe_tool_result(request, result)
             result = await _bound_tool_result(
                 result=result,
                 store=store,
@@ -401,6 +403,68 @@ class ToolExecutionMiddleware(AgentMiddleware):
             result_hash=result_hash,
         )
         return result
+
+
+def _provider_safe_tool_result(
+    request: ToolCallRequest,
+    result: ToolMessage | Command[Any],
+) -> ToolMessage | Command[Any]:
+    """Keep file results compatible with the selected model and provider.
+
+    Text-only models receive an explicit limitation instead of image bytes.
+    Runtime-extracted PDF text is also unwrapped from Deep Agents' synthetic
+    file block before it reaches OpenAI-compatible providers.
+    """
+    if not isinstance(result, ToolMessage):
+        return result
+    call = request.tool_call
+    if str(call.get("name") or "") != "read_file":
+        return result
+    blocks = result.content
+    context = getattr(request.runtime, "context", None)
+    model_profile = getattr(getattr(context, "model", None), "profile", None)
+    if (
+        isinstance(blocks, list)
+        and any(isinstance(block, dict) and block.get("type") == "image" for block in blocks)
+        and isinstance(model_profile, dict)
+        and model_profile.get("image_inputs") is False
+    ):
+        return result.model_copy(
+            update={
+                "content": (
+                    "Image content was not provided because the selected model is text-only. "
+                    "Choose a model marked as supporting images before describing this file."
+                ),
+                "additional_kwargs": {
+                    **result.additional_kwargs,
+                    "runtime_image_omitted": True,
+                },
+            }
+        )
+    arguments = call.get("args")
+    requested_path = arguments.get("file_path") if isinstance(arguments, dict) else None
+    if not isinstance(requested_path, str) or not requested_path.lower().endswith(".pdf"):
+        return result
+    attachments = getattr(context, "attachments", ())
+    if requested_path not in attachments:
+        return result
+    blocks = result.content
+    if not isinstance(blocks, list) or len(blocks) != 1:
+        return result
+    block = blocks[0]
+    if not isinstance(block, dict) or block.get("type") != "file":
+        return result
+    if block.get("mime_type") != "application/pdf" or not isinstance(block.get("base64"), str):
+        return result
+    return result.model_copy(
+        update={
+            "content": block["base64"],
+            "additional_kwargs": {
+                **result.additional_kwargs,
+                "runtime_extracted_text_from": "application/pdf",
+            },
+        }
+    )
 
 
 def _receipt_result(receipt: dict[str, Any]) -> ToolMessage | Command[Any] | None:

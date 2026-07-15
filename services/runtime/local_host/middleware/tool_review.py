@@ -6,6 +6,7 @@ import hashlib
 import json
 from typing import Any
 
+from jsonschema.validators import validator_for
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
@@ -375,7 +376,12 @@ def _tool_input_error(tool: Any, arguments: Any) -> str | None:
         # get_input_schema includes them and would falsely reject every
         # Deep Agents filesystem tool for a missing `runtime` argument.
         schema = tool.tool_call_schema
-        schema.model_validate(arguments)
+        if isinstance(schema, dict):
+            validator = validator_for(schema)
+            validator.check_schema(schema)
+            validator(schema).validate(arguments)
+        else:
+            schema.model_validate(arguments)
     except Exception as exc:
         return f"Tool call rejected before execution: {type(exc).__name__}: {exc}"
     return None

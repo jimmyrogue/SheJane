@@ -170,6 +170,41 @@ def test_completion_router_allows_verified_final_and_leaves_tools_to_builtin_rou
     assert result["completion_route"]["verification_ok"] is True
 
 
+def test_completion_router_repairs_prose_clarification_into_user_ask() -> None:
+    from local_host.middleware.completion_router import (
+        CompletionRouterMiddleware,
+        completion_repair_instruction,
+    )
+
+    state = {
+        "messages": [
+            HumanMessage(content="根据内容，给这些文件重命名"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "list-files", "name": "ls", "args": {"path": "/work"}}],
+            ),
+            ToolMessage(
+                content="['/work/a.jpeg', '/work/b.pdf']",
+                tool_call_id="list-files",
+                name="ls",
+            ),
+            AIMessage(
+                content=(
+                    "你指的是给哪些文件重命名？以及你希望按什么规则来命名？"
+                    "（比如按文件实际内容描述来命名，还是按某种统一格式？）"
+                )
+            ),
+        ]
+    }
+
+    result = CompletionRouterMiddleware().after_model(state, runtime=None)
+
+    assert result["jump_to"] == "model"
+    assert result["completion_route"]["decision"] == "repair_requested"
+    assert result["completion_route"]["reason"] == "prose_clarification"
+    assert "user.ask" in completion_repair_instruction(result)
+
+
 def test_completion_router_ignores_failed_verification_from_an_ancestor_turn() -> None:
     from local_host.middleware.completion_router import CompletionRouterMiddleware
 

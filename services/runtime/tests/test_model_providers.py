@@ -172,6 +172,7 @@ def _provider_payload(**updates: object) -> dict[str, object]:
                 "display_name": "Qwen 3 8B",
                 "tool_calling": True,
                 "streaming": True,
+                "image_inputs": True,
                 "max_input_tokens": 32768,
                 "max_output_tokens": 4096,
             }
@@ -216,6 +217,7 @@ def test_provider_api_persists_config_but_not_api_key(
                 "provider_name": "Local Ollama",
                 "tool_calling": True,
                 "streaming": True,
+                "image_inputs": True,
                 "max_input_tokens": 32768,
                 "max_output_tokens": 4096,
                 "available": True,
@@ -231,6 +233,7 @@ def test_provider_api_persists_config_but_not_api_key(
         snapshot = json.loads(run.json()["settings_json"])
         assert snapshot["_model_binding"]["provider"] == "openai_compatible"
         assert snapshot["_model_binding"]["model_id"] == "qwen3:8b"
+        assert snapshot["_model_binding"]["profile"]["image_inputs"] is True
         assert "provider-secret" not in run.json()["settings_json"]
 
         row = asyncio.run(

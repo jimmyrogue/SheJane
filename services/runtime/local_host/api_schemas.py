@@ -117,6 +117,7 @@ class LocalModelProfile(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     tool_calling: bool = True
     streaming: bool = True
+    image_inputs: bool = False
     max_input_tokens: int | None = Field(default=None, ge=1, le=10_000_000)
     max_output_tokens: int | None = Field(default=None, ge=128, le=1_000_000)
 
@@ -180,6 +181,7 @@ class LocalRuntimeModel(BaseModel):
     provider_name: str
     tool_calling: bool
     streaming: bool
+    image_inputs: bool
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     available: bool

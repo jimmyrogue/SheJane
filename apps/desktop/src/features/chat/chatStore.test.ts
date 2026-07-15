@@ -21,6 +21,20 @@ describe('runtime timeline', () => {
     expect(projectTransientAssistantText(content, { event_type: 'run.failed' })).toBe('')
   })
 
+  it('replaces the transient draft when LangGraph starts another model round', () => {
+    let content = projectTransientAssistantText('', {
+      event_type: 'llm.delta',
+      payload: { content: 'SESSION INTENT\n旧一轮草稿' },
+    })
+    content = projectTransientAssistantText(content, { event_type: 'llm.round.started' })
+    content = projectTransientAssistantText(content, {
+      event_type: 'llm.delta',
+      payload: { content: '这是最终回答。' },
+    })
+
+    expect(content).toBe('这是最终回答。')
+  })
+
   it('renders universal primitive tool events with user-facing action names', () => {
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-url', tool: 'open.url' } })).toMatchObject({
       label: '需要权限：用系统浏览器打开网页',

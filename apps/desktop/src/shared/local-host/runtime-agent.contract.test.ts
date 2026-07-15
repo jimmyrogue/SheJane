@@ -42,11 +42,18 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
         onDelta: () => undefined,
       })
 
-      expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([
+      const eventTypes = events.map(event => event.type)
+      expect(eventTypes).toEqual(expect.arrayContaining([
         'tool.requested',
         'tool.completed',
         'run.completed',
       ]))
+      expect(eventTypes).not.toContain('question.asked')
+      const requested = events.find(event =>
+        event.type === 'tool.requested' && event.payload.name === 'read_file')
+      const arguments_ = requested?.payload.arguments as Record<string, unknown> | undefined
+      expect(String(arguments_?.file_path ?? '')).toMatch(/^\/attachments\//)
+      expect(arguments_?.file_path).not.toBe(attachment)
       const completed = events.find((event) => event.type === 'run.completed')
       expect(String(completed?.payload.final_text ?? '')).toContain('E2E rental receipt')
     } finally {
@@ -88,11 +95,65 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
         }),
         expect.objectContaining({ type: 'run.completed' }),
       ]))
-      const completed = events.findLast(event => event.type === 'run.completed')
+      const completed = [...events].reverse().find(event => event.type === 'run.completed')
       expect(String(completed?.payload.final_text ?? '')).toContain('E2E_SKILL_ACTIVE')
     } finally {
       await deleteLocalSkill(name, config).catch(() => undefined)
     }
+  })
+
+  it('runs a Subagent and returns its result to the parent Agent', async () => {
+    const suffix = Date.now().toString(36)
+    const run = await createLocalRun({
+      commandId: `cmd_e2e_subagent_${suffix}`,
+      clientMessageId: `msg_e2e_subagent_${suffix}`,
+      goal: '[[e2e:subagent]] delegate this deterministic task',
+      mode: 'local:test:model',
+      settings: SETTINGS,
+    }, config)
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = []
+    await streamLocalRun(run.id, config, {
+      onEvent: event => events.push({ type: event.event_type, payload: event.payload ?? {} }),
+      onDelta: () => undefined,
+    })
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'subagent.spawned' }),
+      expect.objectContaining({ type: 'subagent.completed' }),
+      expect.objectContaining({ type: 'run.completed' }),
+    ]))
+    const completed = [...events].reverse().find(event => event.type === 'run.completed')
+    expect(String(completed?.payload.final_text ?? '')).toContain('E2E_SUBAGENT_RESULT')
+  })
+
+  it('updates the injected Todo state before completing', async () => {
+    const suffix = Date.now().toString(36)
+    const run = await createLocalRun({
+      commandId: `cmd_e2e_todos_${suffix}`,
+      clientMessageId: `msg_e2e_todos_${suffix}`,
+      goal: '[[e2e:write-todos]] create the deterministic Todo list',
+      mode: 'local:test:model',
+      settings: SETTINGS,
+    }, config)
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = []
+    await streamLocalRun(run.id, config, {
+      onEvent: event => events.push({ type: event.event_type, payload: event.payload ?? {} }),
+      onDelta: () => undefined,
+    })
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool.requested',
+        payload: expect.objectContaining({ name: 'write_todos' }),
+      }),
+      expect.objectContaining({
+        type: 'tool.completed',
+        payload: expect.objectContaining({ name: 'write_todos' }),
+      }),
+      expect.objectContaining({ type: 'run.completed' }),
+    ]))
+    const completed = [...events].reverse().find(event => event.type === 'run.completed')
+    expect(String(completed?.payload.final_text ?? '')).toContain('E2E_TODO_ACTIVE')
   })
 
   it('pauses a write for permission and resumes after approval', async () => {
@@ -166,6 +227,13 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
     const question = first.find((event) => event.type === 'question.asked')
     const questionID = String(question?.payload.request_id ?? '')
     expect(questionID).toBeTruthy()
+    expect(question?.payload.questions).toEqual([
+      {
+        id: questionID,
+        question: 'Choose an E2E option',
+        options: [{ label: 'Option A' }, { label: 'Option B' }],
+      },
+    ])
     expect(first.map((event) => event.type)).toContain('run.waiting')
 
     await expect(answerLocalQuestionCommand(

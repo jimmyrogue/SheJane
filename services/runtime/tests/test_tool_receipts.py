@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from langchain.agents.middleware import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 
 from local_host.agent.context_builder import AsyncToolExecutionGate, RuntimeContext
@@ -21,7 +22,11 @@ from local_host.middleware.tool_execution import (
     serialize_tool_result,
     tool_operation_identity,
 )
-from local_host.middleware.tool_review import ToolReviewMiddleware, ToolReviewStateError
+from local_host.middleware.tool_review import (
+    ToolReviewMiddleware,
+    ToolReviewStateError,
+    _tool_input_error,
+)
 from local_host.store.sqlite import (
     ArtifactQuotaError,
     LocalStore,
@@ -59,6 +64,20 @@ async def test_tool_review_rejects_duplicate_call_ids_before_execution() -> None
             state,
             SimpleNamespace(context=None),  # type: ignore[arg-type]
         )
+
+
+def test_tool_review_validates_json_schema_tools() -> None:
+    tool = SimpleNamespace(
+        tool_call_schema={
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+    )
+
+    assert _tool_input_error(tool, {"value": "ping"}) is None
+    assert "ValidationError" in str(_tool_input_error(tool, {}))
 
 
 @pytest.mark.asyncio
@@ -316,6 +335,117 @@ async def test_completed_tool_result_replays_without_second_execution(tmp_path: 
         assert len(receipts) == 1
         assert receipts[0]["status"] == "completed"
         assert receipts[0]["attempt_count"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pdf_attachment_read_is_persisted_as_provider_safe_text(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    attachment_path = "/attachments/booking.pdf"
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-1:1",
+        attachments=(attachment_path,),
+    )
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        return ToolMessage(
+            content_blocks=[
+                {
+                    "type": "file",
+                    "base64": "extracted booking text",
+                    "mime_type": "application/pdf",
+                }
+            ],
+            name=request.tool_call["name"],
+            tool_call_id=request.tool_call["id"],
+            additional_kwargs={
+                "read_file_path": attachment_path,
+                "read_file_media_type": "application/pdf",
+            },
+        )
+
+    try:
+        result = await ToolExecutionMiddleware().awrap_tool_call(
+            _request(
+                store,
+                str(run["id"]),
+                tool_name="read_file",
+                arguments={"file_path": attachment_path},
+                context=context,
+            ),
+            handler,
+        )
+
+        assert isinstance(result, ToolMessage)
+        assert result.content == "extracted booking text"
+        assert result.content_blocks == [{"type": "text", "text": "extracted booking text"}]
+
+        provider_payload = ChatOpenAI(
+            model="deepseek-test",
+            api_key="test-key",
+        )._get_request_payload(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "name": "read_file",
+                            "args": {"file_path": attachment_path},
+                        }
+                    ],
+                ),
+                result,
+            ]
+        )
+        assert provider_payload["messages"][1]["content"] == "extracted booking text"
+
+        receipts = await store.list_tool_receipts_for_run(str(run["id"]))
+        replayed = json.loads(str(receipts[0]["result_json"]))
+        assert replayed["value"]["data"]["content"] == "extracted booking text"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_text_only_model_does_not_receive_image_tool_blocks(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-1:1",
+        model=SimpleNamespace(profile={"image_inputs": False}),
+    )
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        return ToolMessage(
+            content_blocks=[
+                {"type": "image", "base64": "encoded-image", "mime_type": "image/jpeg"}
+            ],
+            name=request.tool_call["name"],
+            tool_call_id=request.tool_call["id"],
+        )
+
+    try:
+        result = await ToolExecutionMiddleware().awrap_tool_call(
+            _request(
+                store,
+                str(run["id"]),
+                tool_name="read_file",
+                arguments={"file_path": "/workspace/photo.jpg"},
+                context=context,
+            ),
+            handler,
+        )
+
+        assert isinstance(result, ToolMessage)
+        assert result.content == (
+            "Image content was not provided because the selected model is text-only. "
+            "Choose a model marked as supporting images before describing this file."
+        )
     finally:
         await store.close()
 

@@ -24,7 +24,7 @@ from langchain_core.messages import (
     AIMessageChunk,
     BaseMessage,
     SystemMessage,
-    trim_messages,
+    ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
@@ -393,27 +393,56 @@ def _enforce_context_envelope(
             "selected model's declared context window. Do not assume omitted details.]"
         )
     )
-    marker_tokens = _conservative_token_count([marker])
-    trimmed = trim_messages(
-        bounded,
-        max_tokens=max(128, max_tokens - marker_tokens),
-        token_counter=_conservative_token_count,
-        strategy="last",
-        allow_partial=True,
-        include_system=True,
+    system_prefix: list[BaseMessage] = []
+    for message in bounded:
+        if not isinstance(message, SystemMessage):
+            break
+        system_prefix.append(message)
+    turn_start = max(
+        (index for index, message in enumerate(bounded) if message.type == "human"),
+        default=len(system_prefix),
     )
-    insert_at = 1 if trimmed and isinstance(trimmed[0], SystemMessage) else 0
-    result = [*trimmed[:insert_at], marker, *trimmed[insert_at:]]
-    if _conservative_token_count(result) <= max_tokens:
+    latest_turn = bounded[turn_start:]
+    turn_budget = max_tokens - _conservative_token_count([*system_prefix, marker])
+    fitted_turn = _fit_message_contents(latest_turn, max_tokens=max(128, turn_budget))
+    result = [*system_prefix, marker, *fitted_turn]
+    if (fitted_turn or not latest_turn) and _conservative_token_count(result) <= max_tokens:
         return result
-    return trim_messages(
-        result,
-        max_tokens=max_tokens,
-        token_counter=_conservative_token_count,
-        strategy="last",
-        allow_partial=True,
-        include_system=True,
+
+    # ponytail: if fixed tool-call metadata alone exceeds the window, retain
+    # the latest user input and let the model redo the batch instead of sending
+    # an invalid orphan ToolMessage sequence.
+    latest_human = next((message for message in latest_turn if message.type == "human"), None)
+    fallback = (
+        [_truncate_large_message(latest_human, max_chars=max(128, turn_budget))]
+        if latest_human is not None
+        else []
     )
+    return [*system_prefix, marker, *fallback]
+
+
+def _fit_message_contents(
+    messages: list[BaseMessage],
+    *,
+    max_tokens: int,
+) -> list[BaseMessage]:
+    if _conservative_token_count(messages) <= max_tokens:
+        return messages
+    low = 128
+    high = max(
+        (len(message.content) for message in messages if isinstance(message.content, str)),
+        default=low,
+    )
+    best: list[BaseMessage] = []
+    while low <= high:
+        limit = (low + high) // 2
+        candidate = [_truncate_large_message(message, max_chars=limit) for message in messages]
+        if _conservative_token_count(candidate) <= max_tokens:
+            best = candidate
+            low = limit + 1
+        else:
+            high = limit - 1
+    return best
 
 
 def _truncate_large_message(message: BaseMessage, *, max_chars: int) -> BaseMessage:
@@ -429,26 +458,41 @@ def _truncate_large_message(message: BaseMessage, *, max_chars: int) -> BaseMess
 
     text_parts: list[tuple[int, str, bool]] = []
     for index, block in enumerate(content):
-        if isinstance(block, str):
+        if isinstance(block, str) and block:
             text_parts.append((index, block, False))
         elif (
             isinstance(block, dict)
             and block.get("type") == "text"
             and isinstance(block.get("text"), str)
+            and block["text"]
         ):
             text_parts.append((index, block["text"], True))
-    excess = sum(len(text) for _, text, _ in text_parts) - max_chars
-    if excess <= 0:
+    total_chars = sum(len(text) for _, text, _ in text_parts)
+    if not text_parts and isinstance(message, ToolMessage):
+        serialized_size = len(json.dumps(content, ensure_ascii=False, default=str))
+        if serialized_size > max_chars:
+            artifact_id = message.additional_kwargs.get("artifact_id")
+            suffix = f" Artifact: {artifact_id}." if artifact_id else ""
+            return message.model_copy(
+                update={
+                    "content": (
+                        "[Runtime omitted oversized binary tool content; call the tool again "
+                        f"if it is still needed.]{suffix}"
+                    )
+                }
+            )
+    if total_chars <= max_chars:
         return message
 
     bounded = list(content)
-    for index, text, is_block in sorted(text_parts, key=lambda item: len(item[1]), reverse=True):
-        target = max(0, len(text) - excess)
-        replacement = _truncate_text(text, target)
-        excess -= len(text) - len(replacement)
+    remaining_chars = total_chars
+    remaining_budget = max_chars
+    for index, text, is_block in text_parts:
+        target = min(len(text), remaining_budget * len(text) // remaining_chars)
+        replacement = text if len(text) <= target else _truncate_text(text, target)
         bounded[index] = {**bounded[index], "text": replacement} if is_block else replacement
-        if excess <= 0:
-            break
+        remaining_chars -= len(text)
+        remaining_budget -= len(replacement)
     return message.model_copy(update={"content": bounded})
 
 

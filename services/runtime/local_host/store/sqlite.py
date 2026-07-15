@@ -576,6 +576,7 @@ _TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled"}
 TRANSIENT_RUN_EVENT_TYPES = frozenset(
     {
         "llm.delta",
+        "llm.round.started",
         "llm.reasoning",
         "llm.usage",
         "llm.tool_call_chunk",

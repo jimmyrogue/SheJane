@@ -32,11 +32,12 @@ describe('ChatThread streaming display cache', () => {
     expect(document.body).toHaveTextContent('第二段。')
   })
 
-  it('shows only the bottom thinking indicator while reasoning is streaming', () => {
+  it('uses the collapsed reasoning disclosure as the only thinking indicator', () => {
     renderThread(conversationWithReasoningAnswer())
 
     expect(screen.getAllByText('正在思考…')).toHaveLength(1)
-    expect(document.querySelector('.thinking-indicator')).toBeInTheDocument()
+    expect(document.querySelector('.message-reasoning')).not.toHaveAttribute('open')
+    expect(document.querySelector('.thinking-indicator')).not.toBeInTheDocument()
   })
 })
 

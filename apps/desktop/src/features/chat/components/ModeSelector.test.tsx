@@ -7,8 +7,8 @@ import type { ChatMode } from '@/shared/local-data/types'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 
 const MODELS: ModelOption[] = [
-  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI' },
-  { id: 'local:ollama:qwen3', label: 'Qwen 3', vendor: 'Ollama' },
+  { id: 'local:openai:gpt-4o', label: 'GPT-4o', vendor: 'OpenAI', imageInputs: true },
+  { id: 'local:ollama:qwen3', label: 'Qwen 3', vendor: 'Ollama', imageInputs: false },
 ]
 
 function withProviders(children: ReactNode) {
@@ -44,6 +44,8 @@ describe('ModeSelector (Runtime catalog)', () => {
     openMenu()
     expect((await screen.findAllByText('GPT-4o')).length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('Qwen 3')).toBeInTheDocument()
+    expect(screen.getByText('支持图片')).toBeInTheDocument()
+    expect(screen.getByText('仅文本')).toBeInTheDocument()
     expect(screen.queryByText('自动')).not.toBeInTheDocument()
   })
 

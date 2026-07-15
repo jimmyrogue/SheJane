@@ -18,6 +18,7 @@ from tests.helpers import run_command
 
 _TRANSIENT_EVENT_TYPES = {
     "llm.delta",
+    "llm.round.started",
     "llm.reasoning",
     "llm.usage",
     "llm.tool_call_chunk",

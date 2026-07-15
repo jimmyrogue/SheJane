@@ -16,10 +16,14 @@ make test-e2e
 |---|---|
 | P1-P3 连接与接纳 | 启动、健康检查、Bearer 认证、请求校验、命令幂等与冲突 |
 | P4 快照与订阅 | SSE 解析、游标续传、线程快照、变更游标、诊断包 |
-| P5-P9 Agent 执行 | 设置、模型目录、工具目录、真实 LangGraph 编译、流式模型回合、最终回答 |
-| P10 工具与等待 | PDF 读取、工作区读写、权限批准、用户提问、取消运行 |
+| P5-P9 Agent 执行 | 设置、模型目录、工具目录、真实 LangGraph 编译、Skill 加载、Subagent、Todo 状态、流式模型回合和最终回答 |
+| P10 工具与等待 | 每个公开 Runtime Tool、附件 PDF 的只读虚拟路径、工作区读写、权限批准、结构化用户提问和取消运行 |
 | P11-P12 结算 | 完成和取消终态、事件持久化、线程投影、定时任务、记忆清理 |
-| 可配置资源 | 模型供应商、Skill 和 MCP 的创建、读取、修改、删除；秘密不回传 |
+| 可配置资源 | 模型供应商、Skill 和 MCP 的创建、读取、修改、删除；真实本地 stdio MCP 的目录搜索和工具调用；秘密不回传 |
+
+Tool 覆盖由 Runtime 的 `/local/v1/tools` 目录反向检查。新增公开 Tool 却没有对应执行用例时，测试会直接失败。Deep Agents 额外注入的 `write_todos` 和 `task` 也有独立纵向测试；MCP 工具达到目录阈值时使用的 `mcp.search_tools` 同样会实际执行。
+
+附件测试会确认模型收到 Runtime 授权的 `/attachments/...` 虚拟路径，并直接调用 `read_file`。如果流程错误地再次询问用户本机文件路径，测试会失败。`user.ask` 测试验证问题编号、单问题结构、选项对象、回答命令和恢复后的最终结果。
 
 端到端测试验证模块之间的真实契约。Runtime 内部的异常分支、事件保留窗口、崩溃恢复、工具对账、计划审批和数据库迁移继续由 `services/runtime/tests` 的集成测试覆盖。两层都由 `make test` 与 `make test-e2e` 执行，不能用端到端测试替代内部集成测试。
 
@@ -32,4 +36,3 @@ make test-e2e
 3. 纯内部分支放在 Runtime 集成测试中。
 4. 测试数据必须唯一并在结束后清理；禁止依赖执行顺序和用户主目录。
 5. 最终运行 `make lint`、`make test`、`make build`、`make test-e2e` 和 `git diff --check`。
-
