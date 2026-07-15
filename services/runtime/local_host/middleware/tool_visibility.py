@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -75,12 +76,25 @@ def visible_tools_for_messages(
     task_goal: str | None = None,
 ) -> list[Any]:
     """Return the request-visible subset without changing registered tools."""
-    corpus = [task_goal] if isinstance(task_goal, str) else []
-    corpus.extend(_message_text(message) for message in messages)
+    corpus = (
+        [task_goal]
+        if isinstance(task_goal, str) and task_goal.strip()
+        else [_message_text(message) for message in messages]
+    )
     text = "\n".join(corpus).lower()
-    if any(signal in text for signal in _OFFICE_SIGNALS):
-        return list(tools)
-    return [tool for tool in tools if not _tool_name(tool).startswith("office.")]
+    office_tools = [tool for tool in tools if _tool_name(tool).startswith("office.")]
+    non_office_tools = [tool for tool in tools if not _tool_name(tool).startswith("office.")]
+    if not any(signal in text for signal in _OFFICE_SIGNALS):
+        return non_office_tools
+    named = {
+        name
+        for tool in office_tools
+        if (name := _tool_name(tool))
+        and re.search(rf"(?<![\w.]){re.escape(name.lower())}(?![\w.])", text)
+    }
+    if named:
+        return [tool for tool in tools if _tool_name(tool) in named or tool in non_office_tools]
+    return list(tools)
 
 
 def _mcp_search_result_names(messages: Sequence[Any]) -> set[str]:

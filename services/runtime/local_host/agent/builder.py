@@ -47,7 +47,7 @@ from urllib.parse import urlparse
 
 import httpx
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, FilesystemBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
     ToolCallLimitMiddleware,
@@ -246,10 +246,14 @@ def _build_agent_backend(
     attachment_bindings: list[dict[str, str]] | None = None,
 ):
     workspace_root = Path(effective_workspace).expanduser().resolve()
-    default = FilesystemBackend(
+    default = LocalShellBackend(
         root_dir=workspace_root,
         virtual_mode=True,
-        max_file_size_mb=10,
+        env={
+            key: os.environ[key]
+            for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "USER")
+            if key in os.environ
+        },
     )
     routes: dict[str, FilesystemBackend] = {}
     for route in _absolute_route_keys(Path(effective_workspace)):

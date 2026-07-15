@@ -19,7 +19,7 @@ from langchain_core.callbacks import (
     CallbackManagerForLLMRun,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 
 FAKE_REPLY = "Fake daemon reply for the SSE contract test."
@@ -43,10 +43,28 @@ class FakeBackendChatModel(BaseChatModel):
 
     def _response(self, messages: list[BaseMessage]) -> AIMessage:
         prompt = "\n".join(str(message.content) for message in messages)
+        if "Please remember that E2E memory fact." in prompt:
+            result = _last_tool_result(messages, "memory.write")
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_memory_write",
+                            "name": "memory.write",
+                            "args": {"fact": "E2E memory fact."},
+                        }
+                    ],
+                )
+            return AIMessage(content=f"E2E memory result: {result.content}")
         tool_request = _e2e_tool_request(prompt)
         if tool_request is not None:
             name, args = tool_request
-            result = _last_tool_result(messages, name)
+            result = _last_tool_result(
+                messages,
+                name,
+                tool_call_id="call_e2e_generic_tool",
+            )
             if result is None:
                 return AIMessage(
                     content="",
@@ -180,12 +198,24 @@ class FakeBackendChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=self._response(messages))])
 
 
-def _last_tool_result(messages: list[BaseMessage], name: str) -> ToolMessage | None:
+def _last_tool_result(
+    messages: list[BaseMessage],
+    name: str,
+    *,
+    tool_call_id: str | None = None,
+) -> BaseMessage | None:
     return next(
         (
             message
             for message in reversed(messages)
-            if isinstance(message, ToolMessage) and message.name == name
+            if getattr(message, "type", None) == "tool"
+            and (
+                getattr(message, "name", None) == name
+                or (
+                    tool_call_id is not None
+                    and getattr(message, "tool_call_id", None) == tool_call_id
+                )
+            )
         ),
         None,
     )

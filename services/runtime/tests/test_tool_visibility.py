@@ -22,10 +22,16 @@ def workspace_read(path: str) -> str:
     return path
 
 
+@tool("office.update_paragraph")
+def office_update_paragraph(path: str) -> str:
+    """Update an Office document paragraph."""
+    return path
+
+
 def _request(messages: list[Any], goal: str = "") -> Any:
     request = SimpleNamespace(
         messages=messages,
-        tools=[office_read, workspace_read],
+        tools=[office_read, office_update_paragraph, workspace_read],
         runtime=SimpleNamespace(context=SimpleNamespace(task_goal=goal)),
     )
     request.override = lambda **changes: SimpleNamespace(
@@ -40,7 +46,11 @@ def test_irrelevant_office_tools_are_hidden_only_for_the_model_request() -> None
     filtered = ToolVisibilityMiddleware._apply(original)
 
     assert [item.name for item in filtered.tools] == ["workspace.read"]
-    assert [item.name for item in original.tools] == ["office.read", "workspace.read"]
+    assert [item.name for item in original.tools] == [
+        "office.read",
+        "office.update_paragraph",
+        "workspace.read",
+    ]
 
 
 def test_current_office_goal_keeps_office_tools() -> None:
@@ -48,7 +58,30 @@ def test_current_office_goal_keeps_office_tools() -> None:
 
     filtered = ToolVisibilityMiddleware._apply(request)
 
+    assert [item.name for item in filtered.tools] == [
+        "office.read",
+        "office.update_paragraph",
+        "workspace.read",
+    ]
+
+
+def test_explicit_office_tool_name_reveals_only_that_tool() -> None:
+    request = _request([HumanMessage("continue")], goal="Use office.read for this file")
+
+    filtered = ToolVisibilityMiddleware._apply(request)
+
     assert [item.name for item in filtered.tools] == ["office.read", "workspace.read"]
+
+
+def test_tool_output_cannot_enable_office_tools_for_an_unrelated_goal() -> None:
+    messages = [
+        HumanMessage("list files"),
+        ToolMessage("['report.docx']", tool_call_id="1", name="ls"),
+    ]
+
+    filtered = ToolVisibilityMiddleware._apply(_request(messages, goal="list files"))
+
+    assert [item.name for item in filtered.tools] == ["workspace.read"]
 
 
 def test_office_follow_up_is_detected_from_retained_tool_history() -> None:
@@ -72,7 +105,11 @@ def test_fork_goal_can_enable_office_without_changing_registered_tools() -> None
 
     filtered = ToolVisibilityMiddleware._apply(original)
 
-    assert [item.name for item in filtered.tools] == ["office.read", "workspace.read"]
+    assert [item.name for item in filtered.tools] == [
+        "office.read",
+        "office.update_paragraph",
+        "workspace.read",
+    ]
     assert filtered.tools is original.tools
 
 

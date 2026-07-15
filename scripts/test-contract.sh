@@ -13,7 +13,10 @@ LOG_FILE="${TMP_DIR}/contract-daemon.log"
 PID_FILE="${TMP_DIR}/contract-daemon.pid"
 DATA_DIR="${TMP_DIR}/data"
 HOME_DIR="${TMP_DIR}/home"
-mkdir -p "$DATA_DIR" "$HOME_DIR"
+BIN_DIR="${TMP_DIR}/bin"
+mkdir -p "$DATA_DIR" "$HOME_DIR" "$BIN_DIR"
+ln -s "$(command -v true)" "$BIN_DIR/pbcopy"
+ln -s "$(command -v true)" "$BIN_DIR/pbpaste"
 
 DAEMON_PID=""
 cleanup() {
@@ -47,7 +50,7 @@ echo "→ Starting contract daemon at ${URL}"
 (
   cd "${ROOT_DIR}/services/runtime"
   nohup env -i \
-    "PATH=$PATH" "HOME=$HOME_DIR" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
+    "PATH=$BIN_DIR:$PATH" "HOME=$HOME_DIR" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
     "SHEJANE_FAKE_LLM=1" \
     "LANGSMITH_TRACING=false" \
     "LANGCHAIN_TRACING_V2=false" \

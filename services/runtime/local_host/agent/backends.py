@@ -11,6 +11,7 @@ import yaml
 from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
+    ExecuteResponse,
     FileData,
     FileDownloadResponse,
     FileInfo,
@@ -20,13 +21,14 @@ from deepagents.backends.protocol import (
     GrepResult,
     LsResult,
     ReadResult,
+    SandboxBackendProtocol,
     WriteResult,
 )
 from langgraph.runtime import get_runtime
 from markitdown import MarkItDown
 
 
-class RuntimeBackend(BackendProtocol):
+class RuntimeBackend(SandboxBackendProtocol):
     """Delegate filesystem calls to the backend bound to this graph invocation."""
 
     @staticmethod
@@ -109,6 +111,17 @@ class RuntimeBackend(BackendProtocol):
 
     async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         return await self._backend().adownload_files(paths)
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        return self._backend().execute(command, timeout=timeout)  # type: ignore[attr-defined]
+
+    async def aexecute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,  # noqa: ASYNC109 - required by Deep Agents protocol
+    ) -> ExecuteResponse:
+        return await self._backend().aexecute(command, timeout=timeout)  # type: ignore[attr-defined]
 
 
 def _normalize_skill_frontmatter(content: bytes | None) -> bytes | None:
