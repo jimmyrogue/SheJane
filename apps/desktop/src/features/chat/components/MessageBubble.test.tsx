@@ -90,7 +90,7 @@ describe('MessageBubble meta', () => {
     expect(writeText).toHaveBeenCalledWith('杭州天气怎么样')
   })
 
-  it('syntax-highlights a fenced code block', () => {
+  it('syntax-highlights a fenced code block', async () => {
     const { container } = render(
       <I18nProvider>
         <MessageBubble message={message({ role: 'assistant', content: '```python\nprint("hi")\n```' })} />
@@ -100,7 +100,7 @@ describe('MessageBubble meta', () => {
     expect(block).toBeInTheDocument()
     // highlight.js tokenized the body into colored spans.
     expect(container.querySelector('pre.code-block-pre code.hljs')).toBeInTheDocument()
-    expect(container.querySelector('.code-block .hljs-string')).toBeInTheDocument()
+    await waitFor(() => expect(container.querySelector('.code-block .hljs-string')).toBeInTheDocument())
   })
 
   it("copies only the raw code from a block's own copy button", async () => {

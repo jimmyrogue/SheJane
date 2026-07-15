@@ -1,44 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { IconCheck, IconCopy } from '@tabler/icons-react'
-import hljs from 'highlight.js/lib/core'
-import bash from 'highlight.js/lib/languages/bash'
-import css from 'highlight.js/lib/languages/css'
-import go from 'highlight.js/lib/languages/go'
-import java from 'highlight.js/lib/languages/java'
-import javascript from 'highlight.js/lib/languages/javascript'
-import json from 'highlight.js/lib/languages/json'
-import markdown from 'highlight.js/lib/languages/markdown'
-import python from 'highlight.js/lib/languages/python'
-import rust from 'highlight.js/lib/languages/rust'
-import sql from 'highlight.js/lib/languages/sql'
-import typescript from 'highlight.js/lib/languages/typescript'
-import xml from 'highlight.js/lib/languages/xml'
-import yaml from 'highlight.js/lib/languages/yaml'
 import { useI18n } from '@/shared/i18n/i18n'
-
-// Curated language set — registering only these keeps the bundle small and
-// highlightAuto fast. Each grammar self-registers its aliases (js→javascript,
-// ts→typescript, py→python, sh→bash, html→xml, etc.).
-let registered = false
-function ensureLanguages() {
-  if (registered) {
-    return
-  }
-  registered = true
-  hljs.registerLanguage('bash', bash)
-  hljs.registerLanguage('css', css)
-  hljs.registerLanguage('go', go)
-  hljs.registerLanguage('java', java)
-  hljs.registerLanguage('javascript', javascript)
-  hljs.registerLanguage('json', json)
-  hljs.registerLanguage('markdown', markdown)
-  hljs.registerLanguage('python', python)
-  hljs.registerLanguage('rust', rust)
-  hljs.registerLanguage('sql', sql)
-  hljs.registerLanguage('typescript', typescript)
-  hljs.registerLanguage('xml', xml)
-  hljs.registerLanguage('yaml', yaml)
-}
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -51,22 +13,30 @@ function escapeHtml(value: string): string {
 export function CodeBlock({ language, code }: { language?: string; code: string }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  const [highlighted, setHighlighted] = useState<{
+    code: string
+    language?: string
+    html: string
+    resolvedLang: string
+  }>()
   const resetRef = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(resetRef.current), [])
 
-  const { html, resolvedLang } = useMemo(() => {
-    ensureLanguages()
-    const requested = language && hljs.getLanguage(language) ? language : ''
-    try {
-      if (requested) {
-        return { html: hljs.highlight(code, { language: requested }).value, resolvedLang: requested }
+  useEffect(() => {
+    let cancelled = false
+    void import('./syntaxHighlighter').then(({ highlightCode }) => {
+      if (!cancelled) {
+        setHighlighted({ code, language, ...highlightCode(code, language) })
       }
-      const auto = hljs.highlightAuto(code)
-      return { html: auto.value, resolvedLang: auto.language ?? '' }
-    } catch {
-      return { html: escapeHtml(code), resolvedLang: '' }
+    }).catch(() => undefined)
+    return () => {
+      cancelled = true
     }
   }, [code, language])
+
+  const current = highlighted?.code === code && highlighted.language === language
+    ? highlighted
+    : { html: escapeHtml(code), resolvedLang: '' }
 
   const handleCopy = () => {
     void navigator.clipboard?.writeText(code).then(() => {
@@ -79,7 +49,7 @@ export function CodeBlock({ language, code }: { language?: string; code: string 
   return (
     <div className="code-block">
       <div className="code-block-header">
-        <span className="code-block-lang">{language || resolvedLang || 'text'}</span>
+        <span className="code-block-lang">{language || current.resolvedLang || 'text'}</span>
         <button
           type="button"
           className="code-block-copy"
@@ -91,7 +61,7 @@ export function CodeBlock({ language, code }: { language?: string; code: string 
         </button>
       </div>
       <pre className="code-block-pre">
-        <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+        <code className="hljs" dangerouslySetInnerHTML={{ __html: current.html }} />
       </pre>
     </div>
   )

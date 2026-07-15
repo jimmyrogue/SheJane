@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { renderAsync } from 'docx-preview'
 
 interface Props {
   /** Stable identifier that changes when the source changes. Drives the
@@ -32,8 +31,8 @@ export function DocxPreview({ sourceKey, loadBytes, refreshKey = 0, onStatus }: 
     setError(null)
     onStatus?.('loading')
     node.innerHTML = ''
-    loadBytes()
-      .then(async (buf) => {
+    Promise.all([loadBytes(), import('docx-preview')])
+      .then(async ([buf, { renderAsync }]) => {
         if (cancelled) return
         await renderAsync(buf, node, undefined, {
           className: 'docx-render',

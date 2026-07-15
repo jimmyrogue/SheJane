@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import ExcelJS from 'exceljs'
+import type { CellValue } from 'read-excel-file/browser'
 
 interface Props {
   sourceKey: string
@@ -15,7 +15,7 @@ interface SheetView {
 }
 
 /**
- * Renders a .xlsx inline as a list of tabbed sheets via exceljs.
+ * Renders a .xlsx inline as a list of tabbed sheets.
  *
  * Source-agnostic (like DocxPreview): just consumes `loadBytes()`.
  * Sheet formatting (bold, colors) is not surfaced for v1; cell values
@@ -34,27 +34,14 @@ export function XlsxPreview({ sourceKey, loadBytes, refreshKey = 0, onStatus }: 
     setError(null)
     setSheets(null)
     onStatus?.('loading')
-    loadBytes()
-      .then(async (buf) => {
+    Promise.all([loadBytes(), import('read-excel-file/browser')])
+      .then(async ([buf, { default: readExcelFile }]) => {
         if (cancelled) return
-        const wb = new ExcelJS.Workbook()
-        await wb.xlsx.load(buf)
-        const out: SheetView[] = []
-        wb.eachSheet((sheet) => {
-          const rows: string[][] = []
-          const maxRow = Math.min(sheet.actualRowCount || sheet.rowCount, 1000)
-          const maxCol = Math.min(sheet.actualColumnCount || sheet.columnCount, 50)
-          for (let r = 1; r <= maxRow; r++) {
-            const row: string[] = []
-            const xlRow = sheet.getRow(r)
-            for (let c = 1; c <= maxCol; c++) {
-              const cell = xlRow.getCell(c)
-              row.push(cellToString(cell.value))
-            }
-            rows.push(row)
-          }
-          out.push({ name: sheet.name, rows })
-        })
+        const workbook = await readExcelFile(buf)
+        const out = workbook.map(({ sheet, data }) => ({
+          name: sheet,
+          rows: data.slice(0, 1000).map((row) => row.slice(0, 50).map(cellToString)),
+        }))
         if (cancelled) return
         setSheets(out)
         setActiveIndex(0)
@@ -130,20 +117,11 @@ function SheetTable({ rows }: { rows: string[][] }) {
   )
 }
 
-function cellToString(value: ExcelJS.CellValue): string {
+function cellToString(value: CellValue | null): string {
   if (value == null) return ''
   if (typeof value === 'string') return value
   if (typeof value === 'number') return String(value)
   if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
   if (value instanceof Date) return value.toISOString().slice(0, 10)
-  if (typeof value === 'object' && 'result' in value && value.result != null) {
-    return cellToString(value.result as ExcelJS.CellValue)
-  }
-  if (typeof value === 'object' && 'richText' in value && Array.isArray(value.richText)) {
-    return value.richText.map((rt) => rt.text ?? '').join('')
-  }
-  if (typeof value === 'object' && 'text' in value && typeof value.text === 'string') {
-    return value.text
-  }
   return String(value)
 }

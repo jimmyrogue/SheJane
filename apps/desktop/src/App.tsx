@@ -1,5 +1,5 @@
 import { IconLayoutSidebarLeftExpand, IconTrash, IconX } from '@tabler/icons-react'
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -22,8 +22,6 @@ import {
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { projectTransientAssistantText, timelineItem } from './features/chat/chatStore'
-import { ArtifactPanel } from './features/chat/components/ArtifactPanel'
-import { DocPreviewPanel } from './features/chat/components/DocPreviewPanel'
 import { ChatThread } from './features/chat/components/ChatThread'
 import { Composer } from './features/chat/components/Composer'
 import type { ModelOption } from './features/chat/components/ModeSelector'
@@ -42,14 +40,10 @@ import {
 } from './features/chat/recovery'
 import { parseSkillDraft } from './features/chat/skillDraft'
 import { ConversationSidebar } from './features/chat/components/ConversationSidebar'
-import { DiagnosticsPanel } from './features/chat/components/DiagnosticsPanel'
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
-import { MCPView } from './features/mcp/MCPView'
-import { SettingsView } from './features/settings/SettingsView'
 import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './features/settings/runtimeSettings'
-import { SkillsView } from './features/skills/SkillsView'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
 import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
@@ -127,6 +121,13 @@ import {
   type LocalWorkspaceAuthorization,
 } from './shared/local-host/client'
 import { projectRuntimeThread } from './features/chat/runtimeProjection'
+
+const ArtifactPanel = lazy(() => import('./features/chat/components/ArtifactPanel').then((module) => ({ default: module.ArtifactPanel })))
+const DiagnosticsPanel = lazy(() => import('./features/chat/components/DiagnosticsPanel').then((module) => ({ default: module.DiagnosticsPanel })))
+const DocPreviewPanel = lazy(() => import('./features/chat/components/DocPreviewPanel').then((module) => ({ default: module.DocPreviewPanel })))
+const MCPView = lazy(() => import('./features/mcp/MCPView').then((module) => ({ default: module.MCPView })))
+const SettingsView = lazy(() => import('./features/settings/SettingsView').then((module) => ({ default: module.SettingsView })))
+const SkillsView = lazy(() => import('./features/skills/SkillsView').then((module) => ({ default: module.SkillsView })))
 
 const appNoticeToastID = 'shejane-app-notice'
 const sidebarWidthStorageKey = 'shejane.sidebar.width.v2'
@@ -2748,6 +2749,7 @@ function AppContent() {
           {/* `key={mainView}` remounts this wrapper on view change so the
               `.view-transition` enter animation fires on every switch. */}
           <div className="view-transition" key={mainView}>
+          <Suspense fallback={null}>
           {mainView === 'skills' ? (
             <SkillsView
               listInstalled={() =>
@@ -2876,19 +2878,31 @@ function AppContent() {
               onFailureAction={handleAgentFailureAction}
             />
 
-            <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
-            <DocPreviewPanel
-              doc={activeDocument}
-              refreshKey={docPreviewRefreshKey}
-              onClose={() => setActiveDocument(null)}
-            />
-            <DiagnosticsPanel
-              diagnostics={runDiagnostics}
-              onClose={() => setRunDiagnostics(null)}
-              onExport={exportCurrentRunDiagnostics}
-              onForkCheckpoint={(runID, checkpointID) => void forkLocalRunFromCheckpoint(runID, checkpointID)}
-              checkpointForking={checkpointForking}
-            />
+            {artifactPreview ? (
+              <Suspense fallback={null}>
+                <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
+              </Suspense>
+            ) : null}
+            {activeDocument ? (
+              <Suspense fallback={null}>
+                <DocPreviewPanel
+                  doc={activeDocument}
+                  refreshKey={docPreviewRefreshKey}
+                  onClose={() => setActiveDocument(null)}
+                />
+              </Suspense>
+            ) : null}
+            {runDiagnostics ? (
+              <Suspense fallback={null}>
+                <DiagnosticsPanel
+                  diagnostics={runDiagnostics}
+                  onClose={() => setRunDiagnostics(null)}
+                  onExport={exportCurrentRunDiagnostics}
+                  onForkCheckpoint={(runID, checkpointID) => void forkLocalRunFromCheckpoint(runID, checkpointID)}
+                  checkpointForking={checkpointForking}
+                />
+              </Suspense>
+            ) : null}
 
             <AlertDialog
               open={Boolean(pendingDeleteMessageID)}
@@ -2991,6 +3005,7 @@ function AppContent() {
             </div>
           </section>
           )}
+          </Suspense>
           </div>
           <Dialog open={keyboardHelpOpen} onOpenChange={setKeyboardHelpOpen}>
             <DialogContent className="keyboard-shortcuts-dialog sm:max-w-[420px]">
