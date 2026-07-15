@@ -145,13 +145,14 @@ describe.skipIf(!BASE_URL)('contract: Runtime catalogs (live daemon)', () => {
 
   it('manages Runtime-owned MCP configuration without exposing secret values', async () => {
     const name = 'e2e-mcp'
+    const args = ['run', 'python', 'tests/fixtures/e2e_mcp_server.py']
     await deleteMcpServer(name, config).catch(() => undefined)
     try {
       const created = await createMcpServer({
         name,
         transport: 'stdio',
-        command: '/usr/bin/false',
-        args: [],
+        command: 'uv',
+        args,
         env: { E2E_SECRET: 'not-a-real-secret' },
       }, config)
       expect(created.server).toMatchObject({ name, env_keys: ['E2E_SECRET'] })
@@ -160,13 +161,13 @@ describe.skipIf(!BASE_URL)('contract: Runtime catalogs (live daemon)', () => {
       const updated = await updateMcpServer(name, {
         name,
         transport: 'stdio',
-        command: '/usr/bin/false',
-        args: ['--updated'],
+        command: 'uv',
+        args,
         env: {},
       }, config)
-      expect(updated.server.args).toEqual(['--updated'])
+      expect(updated.server).toMatchObject({ args, env_keys: [] })
       expect((await listMcpServers(config)).servers).toEqual(expect.arrayContaining([
-        expect.objectContaining({ name, args: ['--updated'] }),
+        expect.objectContaining({ name, args }),
       ]))
     } finally {
       await deleteMcpServer(name, config).catch(() => undefined)
