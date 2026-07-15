@@ -16,14 +16,16 @@ jobs:
         include:
           - runner: macos-15
             platform: macos
-            runtime_platform: macos
             arch: arm64
-            runtime_ext: tar.gz
+            target: mac
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+            target: mac
           - runner: windows-latest
             platform: windows
-            runtime_platform: windows
             arch: x64
-            runtime_ext: zip
+            target: win
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -35,38 +37,16 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
       - run: pnpm install --frozen-lockfile
-      - name: Read locked Runtime version
-        id: runtime
-        shell: bash
+      - name: Build Runtime
+        working-directory: services/runtime
         run: |
-          tag="$(node -p "require('./apps/desktop/runtime-version.json').tag")"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#runtime-v}" >> "$GITHUB_OUTPUT"
-      - name: Download locked Runtime (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          file="shejane-runtime-${{ steps.runtime.outputs.version }}-${{ matrix.runtime_platform }}-${{ matrix.arch }}.${{ matrix.runtime_ext }}"
-          gh release download "${{ steps.runtime.outputs.tag }}" -p "$file" -p "$file.sha256"
-          if command -v sha256sum >/dev/null; then sha256sum -c "$file.sha256"; else shasum -a 256 -c "$file.sha256"; fi
-          mkdir -p services/runtime/dist
-          tar -C services/runtime/dist -xzf "$file"
-      - name: Download locked Runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $file = "shejane-runtime-${{ steps.runtime.outputs.version }}-${{ matrix.runtime_platform }}-${{ matrix.arch }}.${{ matrix.runtime_ext }}"
-          gh release download "${{ steps.runtime.outputs.tag }}" -p $file -p "$file.sha256"
-          $expected = ((Get-Content "$file.sha256") -split '\s+')[0]
-          $actual = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
-          if ($actual -ne $expected) { throw "Runtime checksum mismatch" }
-          New-Item -ItemType Directory -Force services/runtime/dist/shejane-runtime | Out-Null
-          Expand-Archive $file services/runtime/dist/shejane-runtime
+          uv sync --frozen
+          uv run pyinstaller shejane-runtime.spec --noconfirm --clean
       - name: Set Desktop version
         if: github.ref_type == 'tag'
         working-directory: apps/desktop
@@ -79,7 +59,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           pnpm build:desktop
-          pnpm exec electron-builder --${{ matrix.platform == 'macos' && 'mac' || 'win' }} --${{ matrix.arch }} --publish never
+          pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -102,4 +82,5 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

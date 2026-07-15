@@ -4,7 +4,7 @@
 #   make            → grouped help (this is the default goal)
 #   make ci         → run everything CI runs, locally
 #   make dev-electron / restart-daemon → run / hot-restart the dev stack
-#   make release COMPONENT=runtime VERSION=X.Y.Z → push runtime-vX.Y.Z
+#   make release COMPONENT=desktop VERSION=X.Y.Z → push desktop-vX.Y.Z
 #
 # Targets are grouped with `##@ Section` headers and self-document via the
 # `## description` after each name — `make help` parses those. Keep new
@@ -104,8 +104,8 @@ setup-hooks: ## Install lefthook + wire pre-commit hooks (run once per clone)
 	@echo "✅ Pre-commit hooks wired. Bypass once with: LEFTHOOK=0 git commit"
 
 ##@ Release
-release: ## Cut one module release: COMPONENT=runtime VERSION=X.Y.Z
-	@case "$(COMPONENT)" in runtime|desktop|runtime-sdk) ;; *) echo "❌ COMPONENT must be runtime, desktop, or runtime-sdk" >&2; exit 1 ;; esac
+release: ## Cut a published release: COMPONENT=desktop|runtime-sdk VERSION=X.Y.Z
+	@case "$(COMPONENT)" in desktop|runtime-sdk) ;; *) echo "❌ COMPONENT must be desktop or runtime-sdk" >&2; exit 1 ;; esac
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "❌ VERSION must look like X.Y.Z" >&2; exit 1 ;; esac
 	@if [ -n "$$(git status --porcelain)" ]; then echo "❌ Working tree not clean — commit or stash first." >&2; exit 1; fi
 	@branch=$$(git rev-parse --abbrev-ref HEAD); if [ "$$branch" != "main" ]; then echo "❌ Releases must be cut from main (currently on '$$branch')." >&2; exit 1; fi

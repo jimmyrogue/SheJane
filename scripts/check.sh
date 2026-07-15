@@ -19,8 +19,14 @@ check_platform_keys() {
 }
 
 check_release_tags() {
-  local components=(runtime desktop runtime-sdk)
+  local components=(desktop runtime-sdk)
   local component other file expected
+
+  if [[ -e ".github/workflows/release-runtime.yml" ]] || grep -rFq 'tags: ["runtime-v*"]' .github/workflows; then
+    echo "❌ Runtime must be built from source, not published by a release workflow" >&2
+    return 1
+  fi
+
   for component in "${components[@]}"; do
     file=".github/workflows/release-${component}.yml"
     expected="tags: [\"${component}-v*\"]"

@@ -21,10 +21,9 @@ files:
 
 asar: true
 
-# The frozen Python Runtime, shipped outside the asar so main.cjs can spawn it
-# from process.resourcesPath/runtime. Build it FIRST with `make build-daemon`
-# (per-OS/arch — the bundle is native-wheel specific, so CI must build it on a
-# native runner for each target before electron-builder runs).
+# The frozen Python Runtime ships outside the asar so main.cjs can spawn it
+# from process.resourcesPath/runtime. Build it first with `make build-daemon`.
+# Desktop CI does the same on a native runner for each target OS and architecture.
 #
 extraResources:
   - from: ../../services/runtime/dist/shejane-runtime
@@ -34,10 +33,8 @@ mac:
   category: public.app-category.productivity
   icon: electron/assets/app-icon.icns
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip # required by electron-updater (Phase 5)
-      arch: [arm64, x64]
+    - dmg
+    - zip # required by electron-updater (Phase 5)
   # Enable only after the bundled Runtime is signed too.
   hardenedRuntime: false
   # entitlements: build/entitlements.mac.plist
@@ -59,11 +56,9 @@ nsis:
   # shortcut-creation error and a silently non-launching app. See build/installer.nsh.
   include: build/installer.nsh
 
-# Auto-update feed (electron-updater): published installers + latest*.yml land
-# on GitHub Releases; the installed app checks here on launch. electron-builder
-# only publishes when invoked with `--publish always` (the release workflow) or
-# a tagged CI build — local `dist`/`dist:dir` and the manual build-windows
-# workflow do NOT publish.
+# Auto-update feed (electron-updater): Desktop CI uploads installers and
+# latest*.yml. The tag-only release job publishes those files to GitHub;
+# electron-builder itself always runs with `--publish never`.
 publish:
   provider: github
   owner: jimmyrogue

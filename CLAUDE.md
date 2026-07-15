@@ -67,7 +67,7 @@ make ci
 
 make schemas            # regenerate OpenAPI + TypeScript types
 
-make release COMPONENT=runtime VERSION=0.1.0
+make release COMPONENT=desktop VERSION=0.1.4
 make logs-local-host
 make logs-client
 ```
@@ -116,7 +116,7 @@ make logs-client
 |---|---|---|
 | Pre-commit | `lefthook.yml` | Ruff/no-platform-keys/no-env-files |
 | CI | `.github/workflows/ci.yml` | lint / unit + build / E2E / contract round-trip |
-| Release | `.github/workflows/release-*.yml` | independent `runtime-v*`, `desktop-v*`, and `runtime-sdk-v*` releases |
+| Release | `.github/workflows/release-*.yml` | `desktop-v*` installers and `runtime-sdk-v*` npm packages; Desktop CI builds Runtime from the same commit |
 | Deps | `.github/dependabot.yml` | weekly grouped PRs for npm, pip, and GitHub Actions |
 | Skills (Claude Code) | `.claude/skills/` | `sync-schemas`, `daemon-restart` |
 | Subagents (Claude Code) | `.claude/agents/` | `contract-shape-reviewer` |
