@@ -7,7 +7,6 @@
 在自己的电脑上运行带工作区、权限、检查点、Skill 和 MCP 的工具型 Agent。
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/jimmyrogue/SheJane?style=flat-square&logo=github&label=release)](https://github.com/jimmyrogue/SheJane/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-B3532F?style=flat-square&logo=gnu)](./LICENSE)
 ![Desktop](https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-2B2A28?style=flat-square&logo=electron)
 
@@ -65,9 +64,33 @@ make test        # Python Runtime、Desktop 和 Runtime SDK 测试
 make build       # 生产构建
 ```
 
+## 从源码构建 Runtime
+
+Runtime 暂不作为独立程序发布到 GitHub Release。请在实际运行它的操作系统和 CPU 架构上构建：
+
+```bash
+cd services/runtime
+uv sync --frozen
+uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+```
+
+构建结果位于 `services/runtime/dist/shejane-runtime/`。Windows 可执行文件名为 `shejane-runtime.exe`。PyInstaller 会打包平台相关的原生依赖，因此不能跨操作系统或 CPU 架构构建。
+
+## Desktop 安装包
+
+Desktop 发布工作流会从同一次提交构建 Runtime，并将它放进安装包。GitHub Actions 生成三个产物：
+
+```text
+desktop-macos-arm64
+desktop-macos-x64
+desktop-windows-x64
+```
+
+手动运行工作流可以测试安装包。推送 `desktop-vX.Y.Z` 标签才会创建 GitHub Release。Runtime SDK 继续使用 `runtime-sdk-vX.Y.Z` 标签发布。
+
 ## 文档
 
-- [Runtime 阶段总览](./docs/harness-runtime-stages.md) 定义目标 P1–P12 架构。
+- [Runtime 阶段总览](./docs/harness-runtime-stages.md) 定义目标 P1-P12 架构。
 - [当前运行链路](./docs/run-loop.md) 说明代码现在如何运行。
 - [Runtime 协议](./docs/runtime-protocol.md) 定义 HTTP、SSE、事件与恢复游标。
 - [贡献指南](./CONTRIBUTING.md) 说明开发、测试和 CLA 流程。

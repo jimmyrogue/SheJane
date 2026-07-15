@@ -7,7 +7,6 @@
 Run tool-using agents with workspaces, permissions, checkpoints, Skills, and MCP on your own machine.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/jimmyrogue/SheJane?style=flat-square&logo=github&label=release)](https://github.com/jimmyrogue/SheJane/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-B3532F?style=flat-square&logo=gnu)](./LICENSE)
 ![Desktop](https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-2B2A28?style=flat-square&logo=electron)
 
@@ -64,6 +63,30 @@ make lint        # format, static checks, and secret-boundary checks
 make test        # Python Runtime, Desktop, and Runtime SDK tests
 make build       # production builds
 ```
+
+## Build Runtime from source
+
+Runtime is not published as a standalone GitHub release. Build it on the operating system and CPU architecture where it will run:
+
+```bash
+cd services/runtime
+uv sync --frozen
+uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+```
+
+The bundle is written to `services/runtime/dist/shejane-runtime/`. On Windows, the executable is `shejane-runtime.exe`. PyInstaller includes platform-specific native dependencies, so Runtime cannot be cross-compiled for another operating system or architecture.
+
+## Desktop packages
+
+The Desktop release workflow builds Runtime from the same commit and includes it in each installer. GitHub Actions produces three artifacts:
+
+```text
+desktop-macos-arm64
+desktop-macos-x64
+desktop-windows-x64
+```
+
+Run the workflow manually to test packages. Push a `desktop-vX.Y.Z` tag to create a GitHub Release. Runtime SDK packages continue to use `runtime-sdk-vX.Y.Z` tags.
 
 ## Documentation
 

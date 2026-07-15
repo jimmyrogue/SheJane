@@ -51,25 +51,40 @@ Desktop 提供 OpenAI、OpenRouter、DeepSeek、Anthropic、自定义 OpenAI 和
 
 任务使用明确的 `local:<供应商编号>:<模型编号>`。Runtime 不自动选择模型或静默切换供应商。
 
+## 构建 Runtime
+
+Runtime 暂不单独发布二进制文件。请在目标操作系统和 CPU 架构上从源码构建：
+
+```bash
+cd services/runtime
+uv sync --frozen
+uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+```
+
+构建结果位于 `services/runtime/dist/shejane-runtime/`。其中包含平台相关的原生依赖，不能用于其他操作系统或 CPU 架构。
+
 ## 发布
 
-模块使用独立标签：
+公开发布使用两个标签：
 
 ```text
-runtime-vX.Y.Z
 desktop-vX.Y.Z
 runtime-sdk-vX.Y.Z
 ```
 
-Desktop 的 `apps/desktop/runtime-version.json` 锁定 Runtime Release。正式打包会下载并校验该版本；源码开发直接运行当前 Runtime。
+Desktop CI 在三个原生 runner 上分别构建 Runtime 和安装包：
 
-Runtime Release 提供 macOS arm64/x64、Windows x64、Linux x64 压缩包和 SHA-256 文件。
+```text
+desktop-macos-arm64
+desktop-macos-x64
+desktop-windows-x64
+```
+
+手动运行 Desktop 发布工作流只生成 GitHub Actions 产物。推送 `desktop-vX.Y.Z` 标签才会创建 GitHub Release。
 
 正式 Desktop 安装包必须：
 
-- 只包含 `runtime-version.json` 锁定的 Runtime；
-- 下载对应平台的 Release 产物并验证 SHA-256；
-- 不从当前 Desktop 分支临时构建 Runtime；
+- 从同一次提交构建并内置对应平台和架构的 Runtime；
 - 只停止 Electron Main 自己启动的 Runtime，不停止外部 Runtime。
 
 ## 验证
@@ -90,7 +105,7 @@ git diff --check
 - BYOK 模型能够完成“模型 → 工具 → 模型”；
 - 仓库没有根 `.env.example`、模块 `package-lock.json` 或旧目录引用；
 - Desktop 源码只连接 Runtime；
-- Desktop 安装包只包含锁定版本的 Runtime。
+- Desktop 安装包包含由同一次提交构建的 Runtime。
 
 ## 安全边界
 
