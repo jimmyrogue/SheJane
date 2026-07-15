@@ -240,11 +240,6 @@ def test_web_fetch_rejects_redirect_to_loopback(monkeypatch: Any) -> None:
     from local_host.tools import web as web_module
     from local_host.tools.web import web_fetch
 
-    def resolve_safe(hostname: str) -> tuple[bool, str]:
-        if hostname == "public.example":
-            return True, ""
-        return False, f"refusing private/loopback address 127.0.0.1 for {hostname}"
-
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "public.example":
             return httpx.Response(
@@ -254,13 +249,13 @@ def test_web_fetch_rejects_redirect_to_loopback(monkeypatch: Any) -> None:
             )
         return httpx.Response(200, text="internal admin", request=request)
 
-    class PatchedAsyncClient(httpx.AsyncClient):
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            kwargs["transport"] = httpx.MockTransport(handler)
-            super().__init__(*args, **kwargs)
+    def pinned_transport(url: str) -> tuple[httpx.AsyncBaseTransport | None, str]:
+        hostname = httpx.URL(url).host
+        if hostname == "public.example":
+            return httpx.MockTransport(handler), ""
+        return None, f"refusing private/loopback address 127.0.0.1 for {hostname}"
 
-    monkeypatch.setattr(web_module, "_resolve_safe", resolve_safe)
-    monkeypatch.setattr(web_module.httpx, "AsyncClient", PatchedAsyncClient)
+    monkeypatch.setattr(web_module, "_pinned_transport", pinned_transport)
 
     out = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/start"}))
     assert out["ok"] == "false"

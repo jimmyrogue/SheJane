@@ -15,9 +15,10 @@ DATA_DIR="${TMP_DIR}/data"
 HOME_DIR="${TMP_DIR}/home"
 BIN_DIR="${TMP_DIR}/bin"
 mkdir -p "$DATA_DIR" "$HOME_DIR" "$BIN_DIR"
-ln -s "$(command -v true)" "$BIN_DIR/pbcopy"
-ln -s "$(command -v true)" "$BIN_DIR/pbpaste"
-ln -s "$(command -v true)" "$BIN_DIR/xclip"
+TRUE_BIN="$(type -P true)"
+ln -s "$TRUE_BIN" "$BIN_DIR/pbcopy"
+ln -s "$TRUE_BIN" "$BIN_DIR/pbpaste"
+ln -s "$TRUE_BIN" "$BIN_DIR/xclip"
 
 DAEMON_PID=""
 cleanup() {
