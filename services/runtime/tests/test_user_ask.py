@@ -173,6 +173,23 @@ def test_developer_prompt_enforces_user_ask_for_clarifications() -> None:
         )
 
 
+def test_attached_document_is_not_treated_as_a_missing_file_path() -> None:
+    """An attachment is already a complete file input, not a reason to ask
+    the user for the same path again."""
+    from pathlib import Path
+
+    from local_host.tools.user import user_ask
+
+    prompt_path = (
+        Path(__file__).resolve().parents[1] / "local_host" / "agent" / "prompts" / "developer.md"
+    )
+    prompt = prompt_path.read_text(encoding="utf-8")
+    tool_description = user_ask.description or ""
+
+    assert "Runtime 上下文已经列出附件时，不要再询问文件路径" in prompt
+    assert "Runtime 上下文已经列出附件时，文件已经提供" in tool_description
+
+
 def test_user_ask_in_tool_registry() -> None:
     from local_host.tools.registry import core_tools
 

@@ -8,7 +8,9 @@ without a live provider. NEVER enabled in production.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -41,6 +43,16 @@ class FakeBackendChatModel(BaseChatModel):
 
     def _response(self, messages: list[BaseMessage]) -> AIMessage:
         prompt = "\n".join(str(message.content) for message in messages)
+        tool_request = _e2e_tool_request(prompt)
+        if tool_request is not None:
+            name, args = tool_request
+            result = _last_tool_result(messages, name)
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[{"id": "call_e2e_generic_tool", "name": name, "args": args}],
+                )
+            return AIMessage(content=f"E2E tool result ({name}): {result.content}")
         if "[[e2e:write-file]]" in prompt:
             result = _last_tool_result(messages, "write_file")
             if result is None:
@@ -78,13 +90,16 @@ class FakeBackendChatModel(BaseChatModel):
         if "[[e2e:read-attachment]]" in prompt:
             result = _last_tool_result(messages, "read_file")
             if result is None:
+                attachment_path = _attachment_path(prompt)
+                if attachment_path is None:
+                    return AIMessage(content="E2E attachment path missing from Runtime context.")
                 return AIMessage(
                     content="",
                     tool_calls=[
                         {
                             "id": "call_e2e_read_attachment",
                             "name": "read_file",
-                            "args": {"file_path": "/attachments/e2e-receipt.pdf"},
+                            "args": {"file_path": attachment_path},
                         }
                     ],
                 )
@@ -174,3 +189,25 @@ def _last_tool_result(messages: list[BaseMessage], name: str) -> ToolMessage | N
         ),
         None,
     )
+
+
+def _attachment_path(prompt: str) -> str | None:
+    match = re.search(
+        r"本次附件（只读）:[^\n]*`(/attachments/[^`\n]+)`",
+        prompt,
+    )
+    return match.group(1) if match else None
+
+
+def _e2e_tool_request(prompt: str) -> tuple[str, dict[str, Any]] | None:
+    match = re.search(r"\[\[e2e:tool:([A-Za-z0-9_-]+)\]\]", prompt)
+    if match is None:
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(match.group(1) + "=="))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("name"), str):
+        return None
+    args = payload.get("args")
+    return payload["name"], args if isinstance(args, dict) else {}

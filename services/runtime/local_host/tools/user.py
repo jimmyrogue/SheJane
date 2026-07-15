@@ -34,7 +34,7 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
 
         Common cases where this tool runs first:
     * "今天天气怎么样"   → ask city before using a configured research tool
-          * "总结这个文档"     → ask file path BEFORE read_file
+          * "总结这个文档"且没有附件或内容 → ask file path BEFORE read_file
           * "帮我写个 PPT"     → ask topic / audience BEFORE drafting
     * "搜一下最新进展"   → ask the actual subject before research
           * "帮我订机票"       → ask origin / destination / date
@@ -43,6 +43,10 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
         with incomplete inputs wastes provider quota, clutters the context
         with irrelevant results, and forces you to ask anyway one turn
         later — a real failure mode this codebase has shipped.
+
+        Runtime 上下文已经列出附件时，文件已经提供。直接使用其中原样的
+        ``/attachments/...`` 虚拟路径，不要再次询问用户文件路径。只有没有
+        附件，或多个附件的指代无法判断时，才询问缺失信息。
 
         The client renders the question as a clickable card above the
         composer with the supplied options as buttons — much better UX

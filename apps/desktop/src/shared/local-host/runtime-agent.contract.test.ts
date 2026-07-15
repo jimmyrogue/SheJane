@@ -22,10 +22,10 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
 
   it('reads a PDF attachment through a tool before completing', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'shejane-e2e-pdf-'))
-    const attachment = join(directory, 'e2e-receipt.pdf')
+    const suffix = Date.now().toString(36)
+    const attachment = join(directory, `e2e-receipt-${suffix}.pdf`)
     writeFileSync(attachment, minimalPdf('E2E rental receipt'))
     try {
-      const suffix = Date.now().toString(36)
       const run = await createLocalRun({
         commandId: `cmd_e2e_pdf_${suffix}`,
         clientMessageId: `msg_e2e_pdf_${suffix}`,
@@ -50,6 +50,33 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+
+  it.each([
+    { name: 'time.now', args: { timezone: 'UTC' }, expected: 'UTC' },
+    { name: 'environment.observe', args: {}, expected: 'python' },
+  ])('executes $name through the complete agent loop', async ({ name, args, expected }) => {
+    const suffix = Date.now().toString(36)
+    const run = await createLocalRun({
+      commandId: `cmd_e2e_tool_${suffix}_${name}`,
+      clientMessageId: `msg_e2e_tool_${suffix}_${name}`,
+      goal: encodedToolGoal(name, args),
+      mode: 'local:test:model',
+      settings: SETTINGS,
+    }, config)
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = []
+    await streamLocalRun(run.id, config, {
+      onEvent: (event) => events.push({ type: event.event_type, payload: event.payload ?? {} }),
+      onDelta: () => undefined,
+    })
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.requested', payload: expect.objectContaining({ name }) }),
+      expect.objectContaining({ type: 'tool.completed', payload: expect.objectContaining({ name }) }),
+      expect.objectContaining({ type: 'run.completed' }),
+    ]))
+    const completed = events.find((event) => event.type === 'run.completed')
+    expect(String(completed?.payload.final_text ?? '')).toContain(expected)
   })
 
   it('pauses a write for permission and resumes after approval', async () => {
@@ -211,4 +238,9 @@ function minimalPdf(text: string): Buffer {
   ].join('')
   chunks.push(Buffer.from(xref, 'ascii'))
   return Buffer.concat(chunks)
+}
+
+function encodedToolGoal(name: string, args: Record<string, unknown>): string {
+  const payload = Buffer.from(JSON.stringify({ name, args }), 'utf8').toString('base64url')
+  return `[[e2e:tool:${payload}]]`
 }
