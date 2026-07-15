@@ -25,6 +25,7 @@ export function parseRuntimeModelSpec(value: string): RuntimeModelSpec | undefin
 }
 
 export type LocalRun = Schemas['LocalRun']
+export type PermissionMode = Schemas['CreateRunRequest']['permission_mode']
 export type LocalThread = Schemas['LocalThread']
 export type LocalThreadItem = Schemas['LocalThreadItem']
 export type LocalThreadChange = Schemas['LocalThreadChange']
@@ -318,6 +319,7 @@ export interface CreateLocalRunInput {
   settings?: AgentSettings
   metadata?: LocalRunMetadata
   mode: RuntimeModelSpec
+  permissionMode?: PermissionMode
 }
 
 interface PendingRuntimeCommandBase {
@@ -490,6 +492,7 @@ export async function createLocalRun(
     settings,
     metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
     model: input.mode,
+    permission_mode: input.permissionMode,
   })
   const request = () =>
     fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/runs`, {
@@ -956,6 +959,7 @@ export async function createLocalSchedule(
     runAt: string
     workspacePath?: string
     mode: RuntimeModelSpec
+    permissionMode?: PermissionMode
     history?: Array<{ role: string; content: string }>
     settings?: AgentSettings
     metadata?: LocalRunMetadata
@@ -971,6 +975,7 @@ export async function createLocalSchedule(
       run_at: input.runAt,
       workspace_path: input.workspacePath || undefined,
       model: input.mode,
+      permission_mode: input.permissionMode,
       history: input.history ?? [],
       settings: serializeAgentSettings(input.settings),
       metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,

@@ -206,6 +206,7 @@ RunStatus = Literal[
     "canceled",
     "failed",
 ]
+PermissionMode = Literal["ask", "auto", "full_access"]
 
 
 class LocalRun(BaseModel):
@@ -375,6 +376,7 @@ class CreateRunRequest(BaseModel):
     attachment_paths: list[str] = Field(default_factory=list, max_length=10)
     # Runtime model selection, normally `local:<provider>:<model>`.
     model: str = Field(min_length=1, max_length=128, pattern=RUNTIME_MODEL_PATTERN)
+    permission_mode: PermissionMode = "ask"
     history: list[dict[str, str]] | None = Field(default=None, max_length=256)
     parent_run_id: str | None = Field(default=None, max_length=128)
     settings: dict[str, Any] | None = None
@@ -445,6 +447,7 @@ class CreateScheduledRunRequest(BaseModel):
     run_at: str
     workspace_path: str | None = None
     model: str = Field(min_length=1, max_length=128, pattern=RUNTIME_MODEL_PATTERN)
+    permission_mode: PermissionMode = "ask"
     history: list[dict[str, str]] | None = None
     settings: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None

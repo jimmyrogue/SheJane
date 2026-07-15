@@ -5,12 +5,19 @@ import {
   IconFile,
   IconPaperclip,
   IconPlayerStopFilled,
+  IconShield,
   IconX,
 } from '@tabler/icons-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
+import type { InstalledSkill, McpServerInfo, PermissionMode } from '@/shared/local-host/client'
 import type { ChatMode, LocalAttachmentRef } from '@/shared/local-data/types'
 
 export function Composer({
@@ -26,6 +33,8 @@ export function Composer({
   mode,
   models = [],
   onModeChange,
+  permissionMode = 'ask',
+  onPermissionModeChange,
   onConfigureModels,
   projectName,
   onSelectProject,
@@ -50,6 +59,8 @@ export function Composer({
   mode: ChatMode
   models?: ModelOption[]
   onModeChange: (mode: ChatMode) => void
+  permissionMode?: PermissionMode
+  onPermissionModeChange?: (mode: PermissionMode) => void
   onConfigureModels?: () => void
   projectName?: string
   onSelectProject?: () => void
@@ -152,6 +163,12 @@ export function Composer({
           </button>
         )}
 
+        <PermissionModeSelector
+          mode={permissionMode}
+          onChange={onPermissionModeChange}
+          disabled={isSending || hasActiveRun}
+        />
+
         <ModeSelector
           mode={mode}
           models={models}
@@ -188,5 +205,58 @@ export function Composer({
         ) : null}
       </div>
     </footer>
+  )
+}
+
+function PermissionModeSelector({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: PermissionMode
+  onChange?: (mode: PermissionMode) => void
+  disabled: boolean
+}) {
+  const { t } = useI18n()
+  const modes: PermissionMode[] = ['ask', 'auto', 'full_access']
+  const label = t(`composer.permission.${mode}.label`)
+
+  const select = (next: PermissionMode) => {
+    if (next === 'full_access' && !window.confirm(t('composer.permission.fullAccessConfirm'))) {
+      return
+    }
+    onChange?.(next)
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild disabled={disabled || !onChange}>
+        <button
+          type="button"
+          className={`composer-permission-trigger${mode === 'full_access' ? ' is-full-access' : ''}`}
+          aria-label={t('composer.permission.menuLabel', { mode: label })}
+          title={label}
+          disabled={disabled || !onChange}
+        >
+          <IconShield size={15} aria-hidden="true" />
+          <span>{label}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={8} className="composer-permission-menu">
+        {modes.map((item) => (
+          <DropdownMenuItem
+            key={item}
+            className="composer-permission-item"
+            onSelect={() => select(item)}
+          >
+            <span>
+              <strong>{t(`composer.permission.${item}.label`)}</strong>
+              <small>{t(`composer.permission.${item}.description`)}</small>
+            </span>
+            {item === mode ? <span aria-hidden="true">✓</span> : null}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

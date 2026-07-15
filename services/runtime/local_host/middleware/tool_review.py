@@ -30,10 +30,14 @@ class ToolReviewStateError(RuntimeError):
     retryable = False
 
 
-def tool_requires_review(tool_name: str, risk: str) -> bool:
+def tool_requires_review(tool_name: str, risk: str, permission_mode: str = "ask") -> bool:
     """Return whether policy requires a person before this call executes."""
+    if permission_mode == "full_access":
+        return False
     if tool_name == "clipboard.read":
         return True
+    if permission_mode == "auto":
+        return risk == "external_or_unknown"
     return risk in {"workspace_write", "external_or_unknown"}
 
 
@@ -68,6 +72,7 @@ class ToolReviewMiddleware(AgentMiddleware):
         execution_attempt_id = str(getattr(context, "execution_attempt_id", None) or "")
         tool_version = str(getattr(context, "graph_definition_id", None) or "")
         execution_namespace = execution_scope_from_messages(current_execution_namespace(), messages)
+        permission_mode = str(getattr(context, "permission_mode", "ask") or "ask")
         if not isinstance(store, LocalStore) or not run_id or not execution_attempt_id:
             raise ToolReviewStateError("tool review is missing durable Runtime context")
 
@@ -114,7 +119,7 @@ class ToolReviewMiddleware(AgentMiddleware):
                     message=message,
                 )
                 continue
-            if not tool_requires_review(tool_name, risk):
+            if not tool_requires_review(tool_name, risk, permission_mode):
                 continue
             current_permission = await store.get_permission_for_operation(
                 run_id=run_id, operation_id=operation_id

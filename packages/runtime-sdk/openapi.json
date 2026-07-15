@@ -286,6 +286,16 @@
             ],
             "title": "Parent Run Id"
           },
+          "permission_mode": {
+            "default": "ask",
+            "enum": [
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "title": "Permission Mode",
+            "type": "string"
+          },
           "protocol_version": {
             "maximum": 65535.0,
             "minimum": 1.0,
@@ -452,6 +462,16 @@
             "minLength": 1,
             "pattern": "^local:[^:\\s]+:\\S+$",
             "title": "Model",
+            "type": "string"
+          },
+          "permission_mode": {
+            "default": "ask",
+            "enum": [
+              "ask",
+              "auto",
+              "full_access"
+            ],
+            "title": "Permission Mode",
             "type": "string"
           },
           "run_at": {

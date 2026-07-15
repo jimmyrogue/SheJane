@@ -176,7 +176,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 
 | 方法 + 路径 | body | 触发的 SSE |
 |---|---|---|
-| `POST /local/v1/runs` | `{command_id, client_message_id, goal, attachment_paths?, history?, settings?, ...}` | 附件必须是本机现有文件，最多 10 个、单个不超过 10 MiB；创建后开 stream → `run.started` |
+| `POST /local/v1/runs` | `{command_id, client_message_id, goal, permission_mode?, attachment_paths?, history?, settings?, ...}` | `permission_mode` 为 `ask`、`auto` 或 `full_access`，省略时使用 `ask`；附件必须是本机现有文件，最多 10 个、单个不超过 10 MiB；创建后开 stream → `run.started` |
 | `POST /local/v1/runs/:id/fork` | `{command_id, client_message_id, assistant_message_id, thread_id, protocol_version, required_capabilities, checkpoint_id, ...}` | 创建分支后开 stream → `run.started` |
 | `GET /local/v1/runs/:id/stream` | — | （本协议） |
 | `POST /local/v1/commands` | `run.cancel`、`permission.resolve`、`question.answer`、`plan.resolve` 或 `tool.reconcile` 的严格联合类型 | 对应状态事件；同一等待周期全部解决后才有 `run.resumed` |
@@ -208,6 +208,14 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 只 resolve 对应的一张卡；只要当前批次还有 `pending` permission，响应为
 `resumed:false`，不会发 `run.resumed`。最后一个同批权限 resolved 后，
 Runtime 按 LangGraph `interrupt_id` 和动作顺序构造恢复映射并继续执行。
+
+权限模式在 Run 接纳时冻结进 `settings_json`，由 Runtime 的工具审查层执行：
+
+- `ask`：工作区写入、剪贴板读取和外部或未知工具需要确认。
+- `auto`：工作区写入自动执行；剪贴板读取及外部或未知工具仍需确认。
+- `full_access`：不产生普通工具确认，但仍受工作区授权、路径校验、操作系统权限、工具参数校验和回执审计约束。
+
+权限模式决定“何时询问”；`permission.resolve.scope` 决定一次明确批准可以复用多久，两者互不替代。分支任务继承源 Run 冻结的权限模式；定时任务在创建时同样冻结该字段。
 
 后续 turn 再触发同一个工具且参数指纹、风险和图定义完全相同时，可消耗有界运行级授权直接执行，不再产生额外事件。若副作用工具结果不确定，则进入显式核对：
 

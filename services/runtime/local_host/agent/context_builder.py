@@ -175,6 +175,7 @@ class RuntimeContext:
     memory_write_facts: tuple[str, ...] = ()
     graph_definition_id: str | None = None
     execution_attempt_id: str | None = None
+    permission_mode: str = "ask"
     # Shared by parent + subagents. Consequential tool calls acquire this
     # lock so LangChain's parallel ToolNode cannot race workspace/external
     # mutations. Read-only calls and subagent orchestration remain parallel.

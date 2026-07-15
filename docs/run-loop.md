@@ -185,6 +185,9 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │ after_model 的 ToolReviewMiddleware 先解析完整工具批次                   │     │
   │     │  • 校验工具是否存在、参数结构、图定义版本和撤销状态                      │     │
   │     │  • 计算 operation_id、arguments_hash 和风险等级                         │     │
+  │     │  • 按 Run 冻结的 ask / auto / full_access 权限模式决定是否询问           │     │
+  │     │  • auto 只自动执行工作区内低风险写入；外部、未知和剪贴板读取仍询问       │     │
+  │     │  • full_access 只取消普通询问，不扩大工作区、系统权限或参数校验边界      │     │
   │     │  • 任一调用需确认时，整批执行前 interrupt 并保存等待候选                 │     │
   │     │  • approve / edit / reject 必须与 SQLite 中的同一决定相符               │     │
   │     │                                                                          │     │
@@ -314,6 +317,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 1e | **拒绝回执** | 拒绝不进入工具，保存 `rejected` 回执 | `capability_1e_denied_tool_is_not_executed_and_has_rejected_receipt` ✅ |
 | 1f | **整批先暂停** | 混合只读和写入调用时，确认前一个也不执行 | `capability_1f_review_pauses_the_entire_mixed_tool_batch` ✅ |
 | 1g | **参数前置校验** | 无效参数不询问用户、不进入工具 | `capability_1g_invalid_tool_arguments_fail_before_review` ✅ |
+| 1i | **任务级权限模式** | `ask`、`auto`、`full_access` 在 Runtime 工具审查层裁决，Desktop 只提交选择 | `test_permission_mode_*` ✅ |
 | 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` + `runtime-agent.contract.test.ts` 真实 Runtime 纵向链路 ✅ |
 | 2c | **子 Agent 同一执行边界** | 子 Agent 内工具也经过确认和回执 | `capability_2c_subagent_tools_share_review_and_receipt_boundary` ✅ |
 | 3 | 供应商缓存边界 | Runtime 不注入供应商私有缓存标记，由标准供应商适配器决定 | `capability_3_prompt_caching_is_gateway_owned` ✅ |

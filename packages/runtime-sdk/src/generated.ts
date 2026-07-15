@@ -895,6 +895,12 @@ export interface components {
             model: string;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            /**
+             * Permission Mode
+             * @default ask
+             * @enum {string}
+             */
+            permission_mode: "ask" | "auto" | "full_access";
             /** Protocol Version */
             protocol_version: number;
             /** Replace From Client Id */
@@ -936,6 +942,12 @@ export interface components {
             } | null;
             /** Model */
             model: string;
+            /**
+             * Permission Mode
+             * @default ask
+             * @enum {string}
+             */
+            permission_mode: "ask" | "auto" | "full_access";
             /** Run At */
             run_at: string;
             /** Settings */

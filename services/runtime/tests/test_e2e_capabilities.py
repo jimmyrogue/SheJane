@@ -134,8 +134,9 @@ def _post_run_and_stream(
     goal: str,
     *,
     workspace_path: str | None = None,
+    **fields: Any,
 ) -> list[tuple[str, dict[str, Any]]]:
-    body = run_command(goal)
+    body = run_command(goal, **fields)
     if workspace_path is not None:
         authorized = client.post(
             "/local/v1/workspaces",
@@ -203,6 +204,115 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
     # `args` must round-trip — without them the approval card has no
     # context to show the user.
     assert perm_payload["arguments"]["file_path"] == "spike.txt"
+
+
+def test_permission_mode_auto_executes_workspace_writes_without_prompt(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_auto_write",
+                        "name": "write_file",
+                        "arguments": {"file_path": "auto.txt", "content": "approved"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "auto"},
+        )
+        assert authorized.status_code == 200, authorized.text
+        command = run_command(
+            "write without prompting",
+            workspace_path=str(tmp_path),
+            permission_mode="auto",
+        )
+        run = client.post("/local/v1/runs", headers=headers, json=command)
+        assert run.status_code == 200, run.text
+        with client.stream(
+            "GET",
+            f"/local/v1/runs/{run.json()['id']}/stream",
+            headers=headers,
+        ) as response:
+            events = _parse_sse(response.read().decode("utf-8"))
+
+    assert "run.completed" in {event[0] for event in events}
+    assert "permission.required" not in {event[0] for event in events}
+    assert (tmp_path / "auto.txt").read_text(encoding="utf-8") == "approved"
+
+
+def test_permission_mode_auto_still_prompts_for_sensitive_and_external_tools(monkeypatch) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {"id": "call_auto_clipboard", "name": "clipboard.read", "arguments": {}},
+                ),
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_auto_external",
+                        "name": "clipboard.write",
+                        "arguments": {"text": "do not write without approval"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ]
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "read clipboard",
+            permission_mode="auto",
+        )
+
+    required = [event for event in events if event[0] == "permission.required"]
+    assert {event[1]["tool"] for event in required} == {"clipboard.read", "clipboard.write"}
+
+
+def test_permission_mode_full_access_executes_clipboard_read_without_prompt(monkeypatch) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {"id": "call_full_clipboard", "name": "clipboard.read", "arguments": {}},
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "read clipboard",
+            permission_mode="full_access",
+        )
+
+    names = {event[0] for event in events}
+    assert "run.completed" in names
+    assert "permission.required" not in names
 
 
 def test_capability_1c_permission_resolved_event_clears_card(monkeypatch) -> None:

@@ -134,6 +134,7 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert stored["principal_id"] == LOCAL_OWNER_PRINCIPAL_ID
     snapshot = json.loads(stored["settings_json"])
     assert snapshot["_snapshot_version"] == 1
+    assert snapshot["permission_mode"] == "ask"
     assert snapshot["_model_binding"]["credential_ref"] == "tests:streaming_model"
     assert snapshot["_model_binding"]["required_capabilities"] == [
         "streaming",
@@ -141,6 +142,16 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     ]
     assert "capabilities" not in snapshot["_model_binding"]
     assert "test-cloud-token" not in stored["settings_json"]
+
+
+def test_create_run_rejects_unknown_permission_mode(client: TestClient) -> None:
+    response = client.post(
+        "/local/v1/runs",
+        headers={"Authorization": "Bearer tok"},
+        json=run_command("say hi", permission_mode="unrestricted"),
+    )
+
+    assert response.status_code == 422
 
 
 def test_cancel_command_is_idempotent_and_rejects_retargeting(
@@ -1247,7 +1258,7 @@ def test_fork_run_from_checkpoint_creates_child_branch_head(client: TestClient) 
     source = client.post(
         "/local/v1/runs",
         headers={"Authorization": "Bearer tok"},
-        json=run_command("draft a plan"),
+        json=run_command("draft a plan", permission_mode="auto"),
     )
     assert source.status_code == 200
     source_run_id = source.json()["id"]
@@ -1287,6 +1298,7 @@ def test_fork_run_from_checkpoint_creates_child_branch_head(client: TestClient) 
     assert child["graph_thread_id"] == source.json()["graph_thread_id"]
     assert child["graph_checkpoint_id"] == checkpoint_id
     assert child["thread_id"] == "thread_fork_child"
+    assert json.loads(child["settings_json"])["permission_mode"] == "auto"
     snapshot = client.get(
         "/local/v1/threads/thread_fork_child",
         headers={"Authorization": "Bearer tok"},

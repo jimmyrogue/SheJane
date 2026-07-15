@@ -1570,6 +1570,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 attachment_paths=attachment_paths,
                 # The daemon's legacy `mode` column carries the Runtime model selection.
                 mode=body.model,
+                permission_mode=body.permission_mode,
                 history=body.history or [],
                 parent_run_id=body.parent_run_id,
                 settings=body.settings,
@@ -1624,7 +1625,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 workspace_path=workspace_path,
                 model=body.model.strip(),
                 history=body.history or [],
-                settings=freeze_run_settings(app.state.settings, body.settings),
+                settings=freeze_run_settings(
+                    app.state.settings,
+                    {**(body.settings or {}), "permission_mode": body.permission_mode},
+                ),
                 metadata=sanitize_run_metadata(body.metadata),
             )
         except WorkspaceAdmissionError as exc:

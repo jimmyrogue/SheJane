@@ -982,6 +982,30 @@ describe('desktop local host client', () => {
     })
   })
 
+  it('sends the selected Runtime permission mode with a new run', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'run-permission-mode',
+          goal: 'g',
+          status: 'queued',
+          created_at: '2026-07-15T00:00:00Z',
+          updated_at: '2026-07-15T00:00:00Z',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    await createLocalRun(
+      { ...TEST_COMMAND, goal: 'g', permissionMode: 'auto' },
+      { baseURL: 'http://127.0.0.1:17371', token: 'local-token' },
+      fetcher,
+    )
+
+    const sent = JSON.parse(String((fetcher.mock.calls[0]?.[1] as { body?: string })?.body ?? '{}'))
+    expect(sent.permission_mode).toBe('auto')
+  })
+
   it('omits settings entirely when only an empty advanced object is given', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(

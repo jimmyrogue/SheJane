@@ -6,7 +6,10 @@ import { Composer } from './Composer'
 import { skillToken } from '../skillDraft'
 import type { InstalledSkill } from '@/shared/local-host/client'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 const sampleSkills: InstalledSkill[] = [
   { name: 'hunt', description: 'Diagnose before you fix', path: '/s/hunt/SKILL.md' },
@@ -26,6 +29,8 @@ function Harness({
   onSelectAttachments,
   onRemoveAttachment,
   hasActiveRun = false,
+  permissionMode = 'ask',
+  onPermissionModeChange = vi.fn(),
 }: {
   initialDraft?: string
   onSend?: () => void
@@ -39,6 +44,8 @@ function Harness({
   onSelectAttachments?: () => void
   onRemoveAttachment?: (path: string) => void
   hasActiveRun?: boolean
+  permissionMode?: 'ask' | 'auto' | 'full_access'
+  onPermissionModeChange?: (mode: 'ask' | 'auto' | 'full_access') => void
 }) {
   const [draft, setDraft] = useState(initialDraft)
   return (
@@ -56,6 +63,8 @@ function Harness({
         listSkills={listSkills}
         mode="local:test:model"
         onModeChange={vi.fn()}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         projectName={projectName}
         onSelectProject={onSelectProject}
         onRemoveProject={onRemoveProject}
@@ -247,6 +256,31 @@ describe('Composer (Lexical skill editor)', () => {
     render(<Harness />)
     // Stop button uses aria-label "停止生成" (i18n key composer.stop).
     expect(screen.queryByRole('button', { name: '停止生成' })).not.toBeInTheDocument()
+  })
+
+  it('lets the user choose automatic approval before starting a run', async () => {
+    const onPermissionModeChange = vi.fn()
+    render(<Harness onPermissionModeChange={onPermissionModeChange} />)
+
+    const trigger = screen.getByRole('button', { name: '权限模式：请求批准' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /自动审批/ }))
+
+    expect(onPermissionModeChange).toHaveBeenCalledWith('auto')
+  })
+
+  it('requires confirmation before enabling full access', async () => {
+    const onPermissionModeChange = vi.fn()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<Harness onPermissionModeChange={onPermissionModeChange} />)
+
+    const trigger = screen.getByRole('button', { name: '权限模式：请求批准' })
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'Enter', code: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /完全访问/ }))
+
+    expect(onPermissionModeChange).not.toHaveBeenCalled()
   })
 
 

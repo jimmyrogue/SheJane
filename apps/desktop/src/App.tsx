@@ -110,6 +110,7 @@ import {
   type PendingPermissionResolveCommand,
   type PendingPlanResolveCommand,
   type PendingToolReconcileCommand,
+  type PermissionMode,
   type PendingRuntimeCommand,
   type PendingRuntimeCommandFailure,
   type RuntimeCommandResult,
@@ -316,6 +317,7 @@ function AppContent() {
   const [draft, setDraft] = useState('')
   // Concrete Runtime model selection persisted in localStorage.
   const [mode, setMode] = useState<ChatMode>(readChatMode)
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
   function changeMode(next: ChatMode): void {
     setMode(next)
     writeChatMode(next)
@@ -1518,6 +1520,7 @@ function AppContent() {
       settings: effectiveSettings,
       metadata: runOptions?.metadata,
       mode: selectedMode,
+      permissionMode,
     }
     const pendingCommand: PendingRunStartCommand = {
       type: 'run.start',
@@ -2992,6 +2995,8 @@ function AppContent() {
               mode={mode}
               models={models}
               onModeChange={changeMode}
+              permissionMode={permissionMode}
+              onPermissionModeChange={setPermissionMode}
               onConfigureModels={() => setMainView('settings')}
               projectName={activeConversation?.project?.name ?? pendingProject?.name}
               onSelectProject={() => void selectProjectForActiveConversation()}

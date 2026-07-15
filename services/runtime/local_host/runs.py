@@ -273,6 +273,7 @@ _PUBLIC_RUN_SETTING_KEYS = frozenset(
         "browser_headless",
         "input_guard",
         "plan_first",
+        "permission_mode",
     }
 )
 
@@ -325,12 +326,17 @@ def freeze_run_settings(base: Settings, raw: dict[str, Any] | None) -> dict[str,
     def toggle(name: str, default: str = "on") -> str:
         return "off" if str(public.get(name, default)).strip().lower() == "off" else "on"
 
+    permission_mode = str(public.get("permission_mode") or "ask").strip().lower()
+    if permission_mode not in {"ask", "auto", "full_access"}:
+        permission_mode = "ask"
+
     return {
         "_snapshot_version": 1,
         "memory": toggle("memory"),
         "skills": toggle("skills"),
         "mcp": toggle("mcp"),
         "mcp_disabled": disabled,
+        "permission_mode": permission_mode,
         "max_model_calls": effective.max_model_calls,
         "max_tool_retries": effective.max_tool_retries,
         "research_search_limit": effective.research_search_limit,
@@ -662,6 +668,7 @@ class RunCoordinator:
         workspace_path: str | None = None,
         attachment_paths: list[str] | None = None,
         mode: str = "fast",
+        permission_mode: str = "ask",
         history: list[dict[str, str]] | None = None,
         parent_run_id: str | None = None,
         settings: dict[str, Any] | None = None,
@@ -688,6 +695,7 @@ class RunCoordinator:
             public_settings = dict(settings)
         else:
             public_settings = public_run_settings(settings)
+            public_settings["permission_mode"] = permission_mode
         public_metadata = (
             dict(metadata or {}) if metadata_is_trusted else sanitize_run_metadata(metadata)
         )
@@ -709,6 +717,7 @@ class RunCoordinator:
             "workspace_path": workspace_path,
             "attachment_paths": [item["source_path"] for item in attachment_bindings],
             "model": mode,
+            "permission_mode": public_settings.get("permission_mode", "ask"),
             "history": history or [],
             "parent_run_id": parent_run_id,
             "settings": public_settings,
@@ -1952,6 +1961,7 @@ class RunCoordinator:
                 ),
                 task_goal=goal,
                 mode=resolved_model,
+                permission_mode=str(run_settings.get("permission_mode") or "ask"),
                 turn_count=turn_count,
                 repair_intent=bool(repair_context),
                 repair_attempt=(repair_context or {}).get("attempt"),

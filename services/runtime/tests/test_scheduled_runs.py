@@ -362,6 +362,7 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
             "run_at": future,
             "workspace_path": str(workspace),
             "model": "local:test:model",
+            "permission_mode": "auto",
             "history": [{"role": "user", "content": "项目背景"}],
             "settings": {"memory": "on", "api_key": "must-not-persist"},
             "metadata": {"token": "must-not-persist"},
@@ -375,6 +376,7 @@ def test_schedule_http_create_list_cancel_and_mark_notified(client: TestClient) 
     schedule_settings = json.loads(schedule["settings_json"])
     assert schedule_settings["_snapshot_version"] == 1
     assert schedule_settings["memory"] == "on"
+    assert schedule_settings["permission_mode"] == "auto"
     assert "must-not-persist" not in schedule["settings_json"]
     assert json.loads(schedule["metadata_json"]) == {}
 
