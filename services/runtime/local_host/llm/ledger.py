@@ -418,13 +418,48 @@ def _enforce_context_envelope(
 
 def _truncate_large_message(message: BaseMessage, *, max_chars: int) -> BaseMessage:
     content = message.content
-    if not isinstance(content, str) or len(content) <= max_chars:
+    if isinstance(content, str):
+        return (
+            message
+            if len(content) <= max_chars
+            else message.model_copy(update={"content": _truncate_text(content, max_chars)})
+        )
+    if not isinstance(content, list):
         return message
-    marker = f"\n\n[Runtime truncated {len(content) - max_chars} characters from this message.]\n\n"
-    available = max(2, max_chars - len(marker))
+
+    text_parts: list[tuple[int, str, bool]] = []
+    for index, block in enumerate(content):
+        if isinstance(block, str):
+            text_parts.append((index, block, False))
+        elif (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        ):
+            text_parts.append((index, block["text"], True))
+    excess = sum(len(text) for _, text, _ in text_parts) - max_chars
+    if excess <= 0:
+        return message
+
+    bounded = list(content)
+    for index, text, is_block in sorted(text_parts, key=lambda item: len(item[1]), reverse=True):
+        target = max(0, len(text) - excess)
+        replacement = _truncate_text(text, target)
+        excess -= len(text) - len(replacement)
+        bounded[index] = {**bounded[index], "text": replacement} if is_block else replacement
+        if excess <= 0:
+            break
+    return message.model_copy(update={"content": bounded})
+
+
+def _truncate_text(content: str, max_chars: int) -> str:
+    marker = f"\n\n[Runtime truncated {max(0, len(content) - max_chars)} characters from this message.]\n\n"
+    if max_chars <= len(marker):
+        return marker[:max_chars]
+    available = max_chars - len(marker)
     head = available // 2
     tail = available - head
-    return message.model_copy(update={"content": content[:head] + marker + content[-tail:]})
+    return content[:head] + marker + content[-tail:]
 
 
 def _estimate_tool_tokens(

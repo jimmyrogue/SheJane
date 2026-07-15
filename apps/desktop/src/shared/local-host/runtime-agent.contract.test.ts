@@ -7,7 +7,9 @@ import {
   answerLocalQuestionCommand,
   authorizeLocalWorkspace,
   cancelLocalRunCommand,
+  createLocalSkill,
   createLocalRun,
+  deleteLocalSkill,
   resolveLocalPermissionCommand,
   revokeLocalWorkspace,
   streamLocalRun,
@@ -49,6 +51,47 @@ describe.skipIf(!BASE_URL)('contract: Runtime agent loop (live daemon)', () => {
       expect(String(completed?.payload.final_text ?? '')).toContain('E2E rental receipt')
     } finally {
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('loads an enabled Skill through read_file before answering', async () => {
+    const name = 'e2e-active-skill'
+    const suffix = Date.now().toString(36)
+    await deleteLocalSkill(name, config).catch(() => undefined)
+    try {
+      await createLocalSkill({
+        name,
+        description: 'Proves that Runtime Skill instructions reach the Agent.',
+        content: '# E2E Active Skill\n\nReply with the exact token E2E_SKILL_ACTIVE.',
+      }, config)
+      const run = await createLocalRun({
+        commandId: `cmd_e2e_skill_${suffix}`,
+        clientMessageId: `msg_e2e_skill_${suffix}`,
+        goal: 'Use e2e-active-skill for this answer. [[e2e:skill]]',
+        mode: 'local:test:model',
+        settings: { ...SETTINGS, skills: 'on' },
+      }, config)
+      const events: Array<{ type: string; payload: Record<string, unknown> }> = []
+      await streamLocalRun(run.id, config, {
+        onEvent: event => events.push({ type: event.event_type, payload: event.payload ?? {} }),
+        onDelta: () => undefined,
+      })
+
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool.requested',
+          payload: expect.objectContaining({ name: 'read_file' }),
+        }),
+        expect.objectContaining({
+          type: 'tool.completed',
+          payload: expect.objectContaining({ name: 'read_file' }),
+        }),
+        expect.objectContaining({ type: 'run.completed' }),
+      ]))
+      const completed = events.findLast(event => event.type === 'run.completed')
+      expect(String(completed?.payload.final_text ?? '')).toContain('E2E_SKILL_ACTIVE')
+    } finally {
+      await deleteLocalSkill(name, config).catch(() => undefined)
     }
   })
 

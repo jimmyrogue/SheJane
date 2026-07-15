@@ -43,6 +43,22 @@ class FakeBackendChatModel(BaseChatModel):
 
     def _response(self, messages: list[BaseMessage]) -> AIMessage:
         prompt = "\n".join(str(message.content) for message in messages)
+        if "[[e2e:skill]]" in prompt:
+            if "E2E_SKILL_ACTIVE" in prompt:
+                return AIMessage(content="E2E Skill result: E2E_SKILL_ACTIVE")
+            skill_path = _e2e_skill_path(prompt)
+            if skill_path is None:
+                return AIMessage(content="E2E Skill was not exposed to the model.")
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_e2e_skill_read",
+                        "name": "read_file",
+                        "args": {"file_path": skill_path},
+                    }
+                ],
+            )
         if "Please remember that E2E memory fact." in prompt:
             result = _last_tool_result(messages, "memory.write")
             if result is None:
@@ -226,6 +242,11 @@ def _attachment_path(prompt: str) -> str | None:
         r"本次附件（只读）:[^\n]*`(/attachments/[^`\n]+)`",
         prompt,
     )
+    return match.group(1) if match else None
+
+
+def _e2e_skill_path(prompt: str) -> str | None:
+    match = re.search(r"Read `([^`\n]*/e2e-active-skill/SKILL\.md)`", prompt)
     return match.group(1) if match else None
 
 

@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessageChunk, BaseMessage, HumanMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 from langgraph.graph import START, MessagesState, StateGraph
@@ -450,3 +457,33 @@ def test_context_envelope_uses_conservative_count_for_chinese() -> None:
 
     assert _conservative_token_count(bounded) <= 8_000
     assert "Runtime truncated" in str(bounded[0].content)
+
+
+def test_context_envelope_preserves_latest_tool_result_with_block_system_prompt() -> None:
+    messages = [
+        SystemMessage(content=[{"type": "text", "text": "S" * 17_000}]),
+        HumanMessage(content="Use the Skill."),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "call-skill",
+                    "name": "read_file",
+                    "args": {"file_path": "/skills/example/SKILL.md"},
+                }
+            ],
+        ),
+        ToolMessage(
+            content="E2E_SKILL_ACTIVE",
+            name="read_file",
+            tool_call_id="call-skill",
+        ),
+    ]
+
+    bounded = _enforce_context_envelope(messages, max_tokens=16_810)
+
+    assert _conservative_token_count(bounded) <= 16_810
+    assert any(
+        isinstance(message, ToolMessage) and message.content == "E2E_SKILL_ACTIVE"
+        for message in bounded
+    )
