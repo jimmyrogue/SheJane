@@ -17,6 +17,7 @@ BIN_DIR="${TMP_DIR}/bin"
 mkdir -p "$DATA_DIR" "$HOME_DIR" "$BIN_DIR"
 ln -s "$(command -v true)" "$BIN_DIR/pbcopy"
 ln -s "$(command -v true)" "$BIN_DIR/pbpaste"
+ln -s "$(command -v true)" "$BIN_DIR/xclip"
 
 DAEMON_PID=""
 cleanup() {
@@ -51,6 +52,7 @@ echo "→ Starting contract daemon at ${URL}"
   cd "${ROOT_DIR}/services/runtime"
   nohup env -i \
     "PATH=$BIN_DIR:$PATH" "HOME=$HOME_DIR" "USER=${USER:-}" "TMPDIR=${TMPDIR:-/tmp}" \
+    "DISPLAY=${DISPLAY:-:99}" \
     "SHEJANE_FAKE_LLM=1" \
     "LANGSMITH_TRACING=false" \
     "LANGCHAIN_TRACING_V2=false" \
