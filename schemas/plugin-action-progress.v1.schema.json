@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:shejane:schema:plugin-action-progress:v1",
+  "title": "SheJane Plugin Action Progress Notification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jsonrpc", "method", "params"],
+  "properties": {
+    "jsonrpc": { "const": "2.0" },
+    "method": { "const": "notifications/progress" },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "invocation_id",
+        "operation_id",
+        "sequence",
+        "phase"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "invocation_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z][a-z0-9._-]*$"
+        },
+        "message": { "type": "string", "maxLength": 500 },
+        "completed": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "exclusiveMinimum": 0 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "dependentRequired": {
+        "total": ["completed"]
+      }
+    }
+  }
+}

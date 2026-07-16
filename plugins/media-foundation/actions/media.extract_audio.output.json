@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "sample_rate", "channels", "stream_index"],
+  "properties": {
+    "format": {"enum": ["wav", "flac"]},
+    "sample_rate": {"enum": [16000, 22050, 24000, 44100, 48000]},
+    "channels": {"enum": [1, 2]},
+    "stream_index": {"type": "integer", "minimum": 0, "maximum": 31}
+  }
+}

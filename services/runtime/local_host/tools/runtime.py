@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -13,6 +14,17 @@ _CURRENT_TOOLS: ContextVar[dict[str, BaseTool] | None] = ContextVar(
     "shejane_runtime_tools",
     default=None,
 )
+_CURRENT_TOOL_EXECUTION: ContextVar[RuntimeToolExecution | None] = ContextVar(
+    "shejane_runtime_tool_execution",
+    default=None,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeToolExecution:
+    context: object
+    operation_id: str
+    tool_call_id: str
 
 
 @contextmanager
@@ -22,6 +34,22 @@ def bind_runtime_tools(tools: dict[str, BaseTool]):
         yield
     finally:
         _CURRENT_TOOLS.reset(token)
+
+
+@contextmanager
+def bind_runtime_tool_execution(execution: RuntimeToolExecution):
+    token = _CURRENT_TOOL_EXECUTION.set(execution)
+    try:
+        yield
+    finally:
+        _CURRENT_TOOL_EXECUTION.reset(token)
+
+
+def current_runtime_tool_execution() -> RuntimeToolExecution:
+    execution = _CURRENT_TOOL_EXECUTION.get()
+    if execution is None:
+        raise RuntimeError("runtime tool execution context is not bound")
+    return execution
 
 
 class RuntimeToolProxy(BaseTool):

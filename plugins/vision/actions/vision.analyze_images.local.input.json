@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "input_ids",
+    "backend",
+    "task",
+    "prompt",
+    "max_output_tokens",
+    "temperature",
+    "detail",
+    "include_text_artifact",
+    "include_json_artifact"
+  ],
+  "properties": {
+    "input_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 100}
+    },
+    "backend": {"const": "local"},
+    "task": {"enum": ["describe", "question"]},
+    "prompt": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+    "detail": {"enum": ["auto", "low", "high", "original"]},
+    "include_text_artifact": {"type": "boolean"},
+    "include_json_artifact": {"type": "boolean"}
+  }
+}

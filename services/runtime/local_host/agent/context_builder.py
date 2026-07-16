@@ -167,6 +167,7 @@ class RuntimeContext:
     steering_emit: object | None = None
     backend: object | None = None
     model: object | None = None
+    approval_model: object | None = None
     dynamic_tools: dict[str, object] = field(default_factory=dict)
     tool_registry: dict[str, object] = field(default_factory=dict)
     memory_enabled: bool = True
@@ -174,6 +175,10 @@ class RuntimeContext:
     # Tools may inspect it, but it is never rendered into the model prompt.
     memory_write_facts: tuple[str, ...] = ()
     graph_definition_id: str | None = None
+    plugin_catalog_hash: str | None = None
+    plugin_lease: object | None = None
+    plugin_inputs: tuple[dict[str, object], ...] = ()
+    plugin_tool_versions: dict[str, str] = field(default_factory=dict)
     execution_attempt_id: str | None = None
     permission_mode: str = "ask"
     # Shared by parent + subagents. Consequential tool calls acquire this

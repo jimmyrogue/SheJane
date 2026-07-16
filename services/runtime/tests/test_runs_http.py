@@ -8,6 +8,7 @@ parts 1+2+3+4 together.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import tempfile
@@ -656,7 +657,7 @@ def test_runtime_discovery_is_authenticated(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.json()["protocol_version"] == 1
-    assert {"agent.run", "agent.stream", "workspace.files"}.issubset(
+    assert {"agent.run", "agent.stream", "workspace.files", "plugins"}.issubset(
         response.json()["capabilities"]
     )
 
@@ -852,11 +853,28 @@ def test_create_run_accepts_existing_file_attachments_only(
     stored = asyncio.run(client.app.state.store.get_run(accepted.json()["id"]))
     metadata = json.loads(stored["metadata_json"])
     assert metadata["_attachments"] == [
-        {
-            "source_path": str(attachment.resolve()),
-            "virtual_path": "/attachments/brief.txt",
-        }
+        {"input_id": "source", "virtual_path": "/attachments/brief.txt"}
     ]
+    run_inputs = asyncio.run(client.app.state.store.list_run_inputs(accepted.json()["id"]))
+    assert len(run_inputs) == 1
+    assert run_inputs[0]["original_name"] == "brief.txt"
+    assert run_inputs[0]["sha256"] == hashlib.sha256(b"runtime-owned attachment").hexdigest()
+    immutable_body = client.app.state.store.run_input_body_path(run_inputs[0])
+    attachment.write_text("changed after admission", encoding="utf-8")
+    assert immutable_body.read_bytes() == b"runtime-owned attachment"
+
+    large_attachment = tmp_path / "clip.mp4"
+    large_attachment.write_bytes(b"\0" * (10 * 1024 * 1024 + 1))
+    large = client.post(
+        "/local/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect media", command_id="cmd_attachment_large"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(large_attachment)],
+        },
+    )
+    assert large.status_code == 200
 
 
 def test_command_replay_precedes_current_workspace_admission(
@@ -945,6 +963,9 @@ def test_foreign_run_and_children_are_hidden(client: TestClient) -> None:
     )
     assert client.get(f"/local/v1/artifacts/{artifact_id}", headers=headers).status_code == 404
     assert (
+        client.get(f"/local/v1/artifacts/{artifact_id}/content", headers=headers).status_code == 404
+    )
+    assert (
         client.post(
             f"/local/v1/permissions/{permission_id}",
             headers=headers,
@@ -952,6 +973,54 @@ def test_foreign_run_and_children_are_hidden(client: TestClient) -> None:
         ).status_code
         == 404
     )
+
+
+def test_blob_artifact_metadata_and_range_download_are_owned(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "media.bin"
+    source.write_bytes(b"0123456789")
+
+    async def create_blob() -> dict[str, Any]:
+        store = client.app.state.store
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="create media",
+            workspace_path=None,
+        )
+        return await store.create_file_artifact(
+            artifact_id="artifact_blob",
+            run_id=run["id"],
+            kind="plugin_output",
+            title="media.bin",
+            source_path=source,
+            content_type="application/octet-stream",
+        )
+
+    artifact = asyncio.run(create_blob())
+    headers = {"Authorization": "Bearer tok"}
+    metadata = client.get(f"/local/v1/artifacts/{artifact['id']}", headers=headers)
+    assert metadata.status_code == 200
+    assert metadata.json() == {
+        "id": "artifact_blob",
+        "title": "media.bin",
+        "content": "",
+        "content_type": "application/octet-stream",
+        "bytes": 10,
+        "sha256": hashlib.sha256(b"0123456789").hexdigest(),
+        "storage_kind": "blob",
+        "tool_name": None,
+        "created_at": artifact["created_at"],
+    }
+
+    body = client.get(
+        f"/local/v1/artifacts/{artifact['id']}/content",
+        headers={**headers, "Range": "bytes=2-5"},
+    )
+    assert body.status_code == 206
+    assert body.content == b"2345"
+    assert body.headers["content-range"] == "bytes 2-5/10"
 
 
 def test_create_run_rejects_foreign_parent_before_writing(client: TestClient) -> None:

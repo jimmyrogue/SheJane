@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["timestamp_seconds", "width_limit", "height_limit"],
+  "properties": {
+    "timestamp_seconds": {"type": "number", "minimum": 0, "maximum": 864000},
+    "width_limit": {"type": "integer", "minimum": 16, "maximum": 4096},
+    "height_limit": {"type": "integer", "minimum": 16, "maximum": 4096}
+  }
+}

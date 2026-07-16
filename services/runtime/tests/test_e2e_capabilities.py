@@ -256,6 +256,90 @@ def test_permission_mode_auto_executes_workspace_writes_without_prompt(
     assert (tmp_path / "auto.txt").read_text(encoding="utf-8") == "approved"
 
 
+def test_permission_mode_auto_uses_current_model_for_gray_actions(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    class ApprovalAwareHandler(RecordingHandler):
+        def __call__(self, request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.read())
+            self.requests.append(body)
+            if len(self.requests) == 1:
+                return _sse(
+                    [
+                        (
+                            "llm.tool_call",
+                            {
+                                "id": "call_auto_execute",
+                                "name": "execute",
+                                "arguments": {"command": "printf reviewed > reviewed.txt"},
+                            },
+                        ),
+                        ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+                    ]
+                )
+            if len(self.requests) == 2:
+                review_payload = json.loads(body["messages"][-1]["content"])
+                operation_id = review_payload["actions"][0]["operation_id"]
+                decision = json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "operation_id": operation_id,
+                                "decision": "allow",
+                                "reason": "The command directly fulfills the requested local task.",
+                            }
+                        ]
+                    }
+                )
+                return _sse(
+                    [
+                        ("llm.delta", {"content_delta": decision}),
+                        ("llm.done", {"request_id": "review-1", "finish_reason": "stop"}),
+                    ]
+                )
+            return _sse(
+                [
+                    ("llm.delta", {"content_delta": "done"}),
+                    ("llm.done", {"request_id": "r2", "finish_reason": "stop"}),
+                ]
+            )
+
+    handler = ApprovalAwareHandler(scripts=[])
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "auto-review"},
+        )
+        assert authorized.status_code == 200, authorized.text
+        run = client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command(
+                "create reviewed.txt in the workspace",
+                workspace_path=str(tmp_path),
+                permission_mode="auto",
+            ),
+        )
+        assert run.status_code == 200, run.text
+        run_id = run.json()["id"]
+        with client.stream(
+            "GET",
+            f"/local/v1/runs/{run_id}/stream",
+            headers=headers,
+        ) as response:
+            events = _parse_sse(response.read().decode("utf-8"))
+        receipts = client.portal.call(client.app.state.store.list_tool_receipts_for_run, run_id)
+
+    approval = next(payload for name, payload in events if name == "permission.auto_approved")
+    assert approval["source"] == "llm"
+    assert "permission.required" not in {name for name, _payload in events}
+    assert (tmp_path / "reviewed.txt").read_text(encoding="utf-8") == "reviewed"
+    assert receipts[0]["review_source"] == "llm"
+
+
 def test_permission_mode_auto_still_prompts_for_sensitive_and_external_tools(monkeypatch) -> None:
     handler = RecordingHandler(
         scripts=[
@@ -285,6 +369,9 @@ def test_permission_mode_auto_still_prompts_for_sensitive_and_external_tools(mon
 
     required = [event for event in events if event[0] == "permission.required"]
     assert {event[1]["tool"] for event in required} == {"clipboard.read", "clipboard.write"}
+    external = next(event[1] for event in required if event[1]["tool"] == "clipboard.write")
+    assert external["review_source"] == "fallback"
+    assert "fallback policy" in external["review_reason"]
 
 
 def test_permission_mode_full_access_executes_clipboard_read_without_prompt(monkeypatch) -> None:
@@ -622,9 +709,11 @@ def test_capability_1f_review_pauses_the_entire_mixed_tool_batch(
             response.read()
 
         paused = client.get(f"/local/v1/runs/{run['id']}/diagnostics", headers=headers).json()
-        # Even the read-only sibling must not execute before review of the
-        # consequential call has resolved.
-        assert paused["tool_receipts"] == []
+        # Review now prepares the full batch durably, but no sibling may start
+        # before the consequential call has resolved.
+        assert len(paused["tool_receipts"]) == 2
+        assert {receipt["status"] for receipt in paused["tool_receipts"]} == {"prepared"}
+        assert {receipt["attempt_count"] for receipt in paused["tool_receipts"]} == {0}
         permission = next(
             event for event in paused["events"] if event["event_type"] == "permission.required"
         )["payload"]

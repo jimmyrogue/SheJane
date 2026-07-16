@@ -8,6 +8,8 @@ export interface PendingApproval {
   tool: string
   toolName: string
   arguments: Record<string, unknown>
+  source?: 'rule' | 'llm' | 'fallback' | 'run_grant'
+  reason?: string
 }
 
 /**
@@ -53,6 +55,8 @@ export function findConversationPendingApproval(
           requestID: event.permissionRequestId,
           toolName: event.permissionToolName || '',
           arguments: event.permissionArguments || {},
+          source: event.permissionSource,
+          reason: event.permissionReason,
           tool:
             event.permissionTool ||
             stripKnownPrefix(event.label, ['需要权限：', 'Permission required: ']) ||

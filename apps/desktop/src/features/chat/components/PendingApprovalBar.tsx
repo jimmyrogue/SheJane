@@ -67,12 +67,17 @@ export function PendingApprovalBar({
   }
   const decide = (decision: LocalPermissionDecision, scope?: LocalPermissionScope, editedAction?: LocalEditedToolAction) =>
     onDecision(approval.messageID, approval.requestID, decision, scope, editedAction)
+  const permissionDetail = approval.source === 'fallback'
+    ? t('agent.permissionFallbackDetail')
+    : approval.source === 'llm'
+      ? t('agent.permissionLlmDetail')
+      : t('agent.permissionDetail')
 
   return (
     <div className="approval-bar" role="region" aria-label={t('agent.waitingApproval', { tool: approval.tool })}>
       <div className="approval-bar-copy">
         <span className="approval-bar-title">{t('agent.waitingApproval', { tool: approval.tool })}</span>
-        <span className="approval-bar-detail">{t('agent.permissionDetail')}</span>
+        <span className="approval-bar-detail">{permissionDetail}</span>
       </div>
       <div className="approval-bar-actions">
         <Button size="sm" onClick={() => decide('approve', 'once')}>

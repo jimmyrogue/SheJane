@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "include_markdown": {"type": "boolean", "default": true}
+  }
+}

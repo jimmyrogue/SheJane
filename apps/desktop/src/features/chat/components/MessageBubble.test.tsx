@@ -21,6 +21,32 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
 }
 
 describe('MessageBubble meta', () => {
+  it('renders Runtime-normalized plugin references and command', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble message={message({
+          role: 'user',
+          content: '处理附件',
+          pluginReferences: [{
+            pluginId: 'dev.shejane.fixture.archive',
+            name: 'Archive fixture',
+            digest: `sha256:${'a'.repeat(64)}`,
+          }],
+          pluginCommand: {
+            pluginId: 'dev.shejane.fixture.archive',
+            pluginName: 'Archive fixture',
+            commandId: 'extract',
+            title: 'Extract archive',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+        })} />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('@Archive fixture')).toBeInTheDocument()
+    expect(screen.getByText('/Archive fixture: Extract archive')).toBeInTheDocument()
+  })
+
   it('renders Markdown live while streaming (no raw ** flash)', () => {
     vi.useFakeTimers()
     const { container } = render(

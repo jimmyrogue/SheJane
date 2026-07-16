@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["filename", "slide_count", "operation_count", "changes", "warnings"],
+  "properties": {
+    "filename": {"type": "string", "minLength": 6, "maxLength": 255},
+    "slide_count": {"type": "integer", "minimum": 1, "maximum": 200},
+    "operation_count": {"type": "integer", "minimum": 1, "maximum": 128},
+    "changes": {"type": "array", "maxItems": 128, "items": {"type": "string", "maxLength": 100}},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

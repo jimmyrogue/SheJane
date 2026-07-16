@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id", "operations"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "output_filename": {"type": "string", "minLength": 6, "maxLength": 255, "pattern": "^[^/\\\\]+\\.docx$"},
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "find", "replace"],
+            "properties": {"type": {"const": "find_replace"}, "find": {"type": "string", "minLength": 1, "maxLength": 10000}, "replace": {"type": "string", "maxLength": 10000}, "max_replacements": {"type": "integer", "minimum": 1, "maximum": 10000}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "text"],
+            "properties": {"type": {"const": "insert_paragraph"}, "text": {"type": "string", "maxLength": 100000}, "after": {"type": "string", "minLength": 1, "maxLength": 10000}, "style": {"type": "string", "minLength": 1, "maxLength": 100}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "target", "text"],
+            "properties": {"type": {"const": "update_paragraph"}, "target": {"type": "string", "minLength": 1, "maxLength": 10000}, "text": {"type": "string", "maxLength": 100000}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "target"],
+            "properties": {"type": {"const": "delete_paragraph"}, "target": {"type": "string", "minLength": 1, "maxLength": 10000}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "target", "style"],
+            "properties": {"type": {"const": "apply_style"}, "target": {"type": "string", "minLength": 1, "maxLength": 10000}, "style": {"type": "string", "minLength": 1, "maxLength": 100}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "text"],
+            "properties": {"type": {"enum": ["set_header", "set_footer"]}, "text": {"type": "string", "maxLength": 10000}, "section": {"type": "integer", "minimum": 0, "maximum": 1000}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type", "property", "value"],
+            "properties": {"type": {"const": "set_metadata"}, "property": {"enum": ["title", "author", "subject", "keywords"]}, "value": {"type": "string", "maxLength": 1000}}
+          },
+          {
+            "type": "object", "additionalProperties": false, "required": ["type"],
+            "properties": {"type": {"const": "add_page_break"}, "after": {"type": "string", "minLength": 1, "maxLength": 10000}}
+          }
+        ]
+      }
+    }
+  }
+}

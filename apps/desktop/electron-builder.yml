@@ -20,23 +20,38 @@ files:
   - package.json
 
 asar: true
+asarUnpack:
+  - node_modules/@anthropic-ai/sandbox-runtime/vendor/**/*
 
 # The frozen Python Runtime ships outside the asar so main.cjs can spawn it
 # from process.resourcesPath/runtime. Build it first with `make build-daemon`.
 # Desktop CI does the same on a native runner for each target OS and architecture.
 #
-extraResources:
-  - from: ../../services/runtime/dist/shejane-runtime
-    to: runtime
-
 mac:
   category: public.app-category.productivity
   icon: electron/assets/app-icon.icns
   target:
     - dmg
     - zip # required by electron-updater (Phase 5)
-  # Enable only after the bundled Runtime is signed too.
-  hardenedRuntime: false
+  extraResources:
+    - from: ../../services/runtime/dist/shejane-runtime
+      to: runtime
+    - from: electron/srt-launcher.mjs
+      to: sandbox/srt-launcher.mjs
+    # electron-builder expands ${arch} for each native package. arm64 receives
+    # the complete, manifest-bound VM asset set; unsupported architectures
+    # intentionally have no asset directory and remain fail-closed in Runtime.
+    - from: build/vm-assets-${arch}
+      to: sandbox/vm-assets
+  hardenedRuntime: true
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # The builder signs every path under Contents by default. VM assets are
+  # already signed where executable and then bound byte-for-byte by manifest;
+  # skip the whole frozen set here so signing the outer app cannot mutate it.
+  signIgnore:
+    - /Contents/Resources/sandbox/vm-assets/
   # entitlements: build/entitlements.mac.plist
   # entitlementsInherit: build/entitlements.mac.inherit.plist
 
@@ -46,6 +61,11 @@ win:
   target:
     - target: nsis
       arch: [x64]
+  extraResources:
+    - from: ../../services/runtime/dist/shejane-runtime
+      to: runtime
+    - from: electron/srt-launcher.mjs
+      to: sandbox/srt-launcher.mjs
 
 nsis:
   oneClick: false

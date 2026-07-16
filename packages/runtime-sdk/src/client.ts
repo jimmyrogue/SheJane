@@ -49,6 +49,30 @@ export type AnswerQuestionCommandReceipt = Schemas['AnswerQuestionCommandReceipt
 export type ResolvePermissionCommandReceipt = Schemas['ResolvePermissionCommandReceipt']
 export type PlanResolveCommandReceipt = Schemas['PlanResolveCommandReceipt']
 export type ToolReconcileCommandReceipt = Schemas['ToolReconcileCommandReceipt']
+export type PluginInstallCommand = Schemas['PluginInstallCommand']
+export type PluginInstallCommandReceipt = Schemas['PluginInstallCommandReceipt']
+export type PluginSourceAddCommand = Schemas['PluginSourceAddCommand']
+export type PluginSourceRefreshCommand = Schemas['PluginSourceRefreshCommand']
+export type PluginSourceRemoveCommand = Schemas['PluginSourceRemoveCommand']
+export type PluginSourceInstallCommand = Schemas['PluginSourceInstallCommand']
+export type PluginSourceCommandReceipt = Schemas['PluginSourceCommandReceipt']
+export type PluginSourceRemoveCommandReceipt = Schemas['PluginSourceRemoveCommandReceipt']
+export type PluginSourceInstallCommandReceipt = Schemas['PluginSourceInstallCommandReceipt']
+export type PluginSourceSummary = Schemas['PluginSourceSummary']
+export type PluginSourcePackageSummary = Schemas['PluginSourcePackageSummary']
+export type PluginSourceDetail = Schemas['PluginSourceDetail']
+export type PluginModelBindCommand = Schemas['PluginModelBindCommand']
+export type PluginModelBindCommandReceipt = Schemas['PluginModelBindCommandReceipt']
+export type PluginModelBindingSummary = Schemas['PluginModelBindingSummary']
+export type RuntimeAssetInstallCommand = Schemas['RuntimeAssetInstallCommand']
+export type RuntimeAssetInstallCommandReceipt = Schemas['RuntimeAssetInstallCommandReceipt']
+export type PluginStateCommandReceipt = Schemas['PluginStateCommandReceipt']
+export type PluginVersionSwitchCommandReceipt = Schemas['PluginVersionSwitchCommandReceipt']
+export type PluginRemoveCommandReceipt = Schemas['PluginRemoveCommandReceipt']
+export type PluginSummary = Schemas['PluginSummary']
+export type PluginDetail = Schemas['PluginDetail']
+export type PluginReference = Schemas['PluginReference']
+export type PluginCommandReference = Schemas['PluginCommandReference']
 export type ForkRunRequest = Schemas['ForkRunRequest']
 export type InjectRunInstructionResponse = Schemas['InjectRunInstructionResponse']
 export type ClearMemoryResponse = Schemas['ClearMemoryResponse']
@@ -316,6 +340,16 @@ export interface CreateLocalRunInput {
   attachmentPaths?: string[]
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
   parentRunId?: string
+  pluginRefs?: Array<{
+    pluginId: string
+    required?: boolean
+    expectedDigest?: string
+  }>
+  pluginCommand?: {
+    pluginId: string
+    commandId: string
+    expectedDigest?: string
+  }
   settings?: AgentSettings
   metadata?: LocalRunMetadata
   mode: RuntimeModelSpec
@@ -403,6 +437,75 @@ export interface PendingToolReconcileCommand extends PendingRuntimeCommandBase {
   }
 }
 
+export interface PendingPluginInstallCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.install'
+  input: { sourcePath: string; expectedDigest?: string; allowUnsigned: boolean }
+}
+
+export interface PendingPluginSourceAddCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.source.add'
+  input: { indexURL: string; signatureURL: string; publicKey: string }
+}
+
+export interface PendingPluginSourceStateCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.source.refresh' | 'plugin.source.remove'
+  input: { sourceId: string; expectedRevision: number }
+}
+
+export interface PendingPluginSourceInstallCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.source.install'
+  input: {
+    sourceId: string
+    expectedRevision: number
+    pluginId: string
+    version: string
+    executionKind: 'wasi' | 'managed_worker'
+    platform: PluginSourcePackageSummary['platform']
+    packageDigest: string
+    expectedActiveDigest?: string
+  }
+}
+
+export interface PendingRuntimeAssetInstallCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.runtime_asset.install'
+  input: { sourcePath: string; expectedDigest?: string }
+}
+
+export interface PendingPluginModelBindCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.model.bind'
+  input: {
+    pluginId: string
+    bindingId: string
+    model: RuntimeModelSpec
+    expectedDigest?: string
+  }
+}
+
+export interface PendingPluginStateCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.enable' | 'plugin.disable'
+  input: { pluginId: string; expectedDigest?: string }
+}
+
+export interface PendingPluginUpdateCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.update'
+  input: {
+    pluginId: string
+    sourcePath: string
+    expectedDigest?: string
+    allowUnsigned: boolean
+  }
+}
+
+export interface PendingPluginRollbackCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.rollback'
+  input: { pluginId: string; targetDigest: string; expectedDigest?: string }
+}
+
+export interface PendingPluginRemoveCommand extends PendingRuntimeCommandBase {
+  type: 'plugin.remove'
+  input: { pluginId: string; expectedDigest?: string }
+}
+
 export type PendingRuntimeCommand =
   | PendingRunStartCommand
   | PendingRunForkCommand
@@ -411,6 +514,16 @@ export type PendingRuntimeCommand =
   | PendingPermissionResolveCommand
   | PendingPlanResolveCommand
   | PendingToolReconcileCommand
+  | PendingPluginInstallCommand
+  | PendingPluginSourceAddCommand
+  | PendingPluginSourceStateCommand
+  | PendingPluginSourceInstallCommand
+  | PendingRuntimeAssetInstallCommand
+  | PendingPluginModelBindCommand
+  | PendingPluginStateCommand
+  | PendingPluginUpdateCommand
+  | PendingPluginRollbackCommand
+  | PendingPluginRemoveCommand
 export type RuntimeCommandResult =
   | LocalRun
   | CancelRunCommandReceipt
@@ -418,6 +531,15 @@ export type RuntimeCommandResult =
   | ResolvePermissionCommandReceipt
   | PlanResolveCommandReceipt
   | ToolReconcileCommandReceipt
+  | PluginInstallCommandReceipt
+  | PluginSourceCommandReceipt
+  | PluginSourceRemoveCommandReceipt
+  | PluginSourceInstallCommandReceipt
+  | PluginModelBindCommandReceipt
+  | RuntimeAssetInstallCommandReceipt
+  | PluginStateCommandReceipt
+  | PluginVersionSwitchCommandReceipt
+  | PluginRemoveCommandReceipt
 
 export interface PendingRuntimeCommandFailure {
   command: PendingRuntimeCommand
@@ -471,6 +593,7 @@ export async function createLocalRun(
   if (input.settings?.memory !== 'off') requiredCapabilities.add('memory')
   if (input.settings?.skills !== 'off') requiredCapabilities.add('skills')
   if (input.settings?.mcp !== 'off') requiredCapabilities.add('mcp')
+  if (input.pluginRefs?.length || input.pluginCommand) requiredCapabilities.add('plugins')
   if (input.settings?.advanced?.subagents !== false) requiredCapabilities.add('subagents')
   const body = JSON.stringify({
     command_id: input.commandId,
@@ -489,6 +612,18 @@ export async function createLocalRun(
     attachment_paths: input.attachmentPaths?.length ? input.attachmentPaths : undefined,
     history: input.history ?? [],
     parent_run_id: input.parentRunId || undefined,
+    plugin_refs: input.pluginRefs?.map((reference) => ({
+      plugin_id: reference.pluginId,
+      required: reference.required ?? true,
+      expected_digest: reference.expectedDigest,
+    })),
+    plugin_command: input.pluginCommand
+      ? {
+          plugin_id: input.pluginCommand.pluginId,
+          command_id: input.pluginCommand.commandId,
+          expected_digest: input.pluginCommand.expectedDigest,
+        }
+      : undefined,
     settings,
     metadata: input.metadata && Object.keys(input.metadata).length > 0 ? input.metadata : undefined,
     model: input.mode,
@@ -520,7 +655,11 @@ export async function deliverPendingRuntimeCommands(
 ): Promise<PendingRuntimeCommandDeliveryReport> {
   const byThread = new Map<string, PendingRuntimeCommand[]>()
   for (const command of [...commands].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-    const key = command.input.threadId ?? command.commandId
+    const key = 'threadId' in command.input
+      ? command.input.threadId ?? command.commandId
+      : 'pluginId' in command.input
+        ? `plugin:${command.input.pluginId}`
+        : command.commandId
     const threadCommands = byThread.get(key)
     if (threadCommands) threadCommands.push(command)
     else byThread.set(key, [command])
@@ -596,6 +735,106 @@ async function deliverRuntimeCommand(
         command.commandId,
         command.input.operationId,
         command.input.decision,
+        config,
+        fetcher,
+      )
+    case 'plugin.install':
+      return installLocalPluginCommand(
+        command.commandId,
+        command.input.sourcePath,
+        {
+          expectedDigest: command.input.expectedDigest,
+          allowUnsigned: command.input.allowUnsigned,
+        },
+        config,
+        fetcher,
+      )
+    case 'plugin.source.add':
+      return addLocalPluginSourceCommand(
+        command.commandId,
+        command.input.indexURL,
+        command.input.signatureURL,
+        command.input.publicKey,
+        config,
+        fetcher,
+      )
+    case 'plugin.source.refresh':
+      return refreshLocalPluginSourceCommand(
+        command.commandId,
+        command.input.sourceId,
+        command.input.expectedRevision,
+        config,
+        fetcher,
+      )
+    case 'plugin.source.remove':
+      return removeLocalPluginSourceCommand(
+        command.commandId,
+        command.input.sourceId,
+        command.input.expectedRevision,
+        config,
+        fetcher,
+      )
+    case 'plugin.source.install':
+      return installLocalPluginFromSourceCommand(
+        command.commandId,
+        command.input,
+        config,
+        fetcher,
+      )
+    case 'plugin.runtime_asset.install':
+      return installLocalRuntimeAssetCommand(
+        command.commandId,
+        command.input.sourcePath,
+        command.input.expectedDigest,
+        config,
+        fetcher,
+      )
+    case 'plugin.model.bind':
+      return bindLocalPluginModelCommand(
+        command.commandId,
+        command.input.pluginId,
+        command.input.bindingId,
+        command.input.model,
+        command.input.expectedDigest,
+        config,
+        fetcher,
+      )
+    case 'plugin.enable':
+    case 'plugin.disable':
+      return setLocalPluginEnabledCommand(
+        command.commandId,
+        command.input.pluginId,
+        command.type === 'plugin.enable',
+        command.input.expectedDigest,
+        config,
+        fetcher,
+      )
+    case 'plugin.update':
+      return updateLocalPluginCommand(
+        command.commandId,
+        command.input.pluginId,
+        command.input.sourcePath,
+        {
+          expectedDigest: command.input.expectedDigest,
+          allowUnsigned: command.input.allowUnsigned,
+        },
+        config,
+        fetcher,
+      )
+    case 'plugin.rollback':
+      return rollbackLocalPluginCommand(
+        command.commandId,
+        command.input.pluginId,
+        command.input.targetDigest,
+        command.input.expectedDigest,
+        config,
+        fetcher,
+      )
+    case 'plugin.remove':
+      return removeLocalPluginCommand(
+        command.commandId,
+        command.input.pluginId,
+        command.input.expectedDigest,
         config,
         fetcher,
       )
@@ -786,6 +1025,54 @@ export async function listLocalRuns(config: RuntimeClientConfig, fetcher: Fetche
   })
   const body = await decodeLocalResponse<{ runs?: LocalRun[] }>(response)
   return body.runs ?? []
+}
+
+export async function listLocalPlugins(
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSummary[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/plugins`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ plugins?: PluginSummary[] }>(response)
+  return body.plugins ?? []
+}
+
+export async function getLocalPlugin(
+  pluginID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginDetail> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/plugins/${encodeURIComponent(pluginID)}`,
+    { method: 'GET', headers: localHeaders(config, false) },
+  )
+  return decodeLocalResponse<PluginDetail>(response)
+}
+
+export async function listLocalPluginSources(
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceSummary[]> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/plugin-sources`, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  const body = await decodeLocalResponse<{ sources?: PluginSourceSummary[] }>(response)
+  return body.sources ?? []
+}
+
+export async function getLocalPluginSource(
+  sourceID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceDetail> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/plugin-sources/${encodeURIComponent(sourceID)}`,
+    { method: 'GET', headers: localHeaders(config, false) },
+  )
+  return decodeLocalResponse<PluginSourceDetail>(response)
 }
 
 export async function listLocalThreads(
@@ -1051,6 +1338,253 @@ export async function cancelLocalRunCommand(
   return decodeLocalResponse<CancelRunCommandReceipt>(response)
 }
 
+export async function installLocalPluginCommand(
+  commandID: string,
+  sourcePath: string,
+  options: { expectedDigest?: string; allowUnsigned?: boolean },
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginInstallCommandReceipt> {
+  const body: PluginInstallCommand = {
+    type: 'plugin.install',
+    command_id: commandID,
+    source_path: sourcePath,
+    allow_unsigned: options.allowUnsigned ?? false,
+    ...(options.expectedDigest ? { expected_digest: options.expectedDigest } : {}),
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginInstallCommandReceipt>(response)
+}
+
+export async function addLocalPluginSourceCommand(
+  commandID: string,
+  indexURL: string,
+  signatureURL: string,
+  publicKey: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceCommandReceipt> {
+  const body: PluginSourceAddCommand = {
+    type: 'plugin.source.add',
+    command_id: commandID,
+    index_url: indexURL,
+    signature_url: signatureURL,
+    public_key: publicKey,
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginSourceCommandReceipt>(response)
+}
+
+export async function refreshLocalPluginSourceCommand(
+  commandID: string,
+  sourceID: string,
+  expectedRevision: number,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceCommandReceipt> {
+  const body: PluginSourceRefreshCommand = {
+    type: 'plugin.source.refresh',
+    command_id: commandID,
+    source_id: sourceID,
+    expected_revision: expectedRevision,
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginSourceCommandReceipt>(response)
+}
+
+export async function removeLocalPluginSourceCommand(
+  commandID: string,
+  sourceID: string,
+  expectedRevision: number,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceRemoveCommandReceipt> {
+  const body: PluginSourceRemoveCommand = {
+    type: 'plugin.source.remove',
+    command_id: commandID,
+    source_id: sourceID,
+    expected_revision: expectedRevision,
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginSourceRemoveCommandReceipt>(response)
+}
+
+export async function installLocalPluginFromSourceCommand(
+  commandID: string,
+  input: PendingPluginSourceInstallCommand['input'],
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSourceInstallCommandReceipt> {
+  const body: PluginSourceInstallCommand = {
+    type: 'plugin.source.install',
+    command_id: commandID,
+    source_id: input.sourceId,
+    expected_revision: input.expectedRevision,
+    plugin_id: input.pluginId,
+    version: input.version,
+    execution_kind: input.executionKind,
+    platform: input.platform,
+    package_digest: input.packageDigest,
+    ...(input.expectedActiveDigest
+      ? { expected_active_digest: input.expectedActiveDigest }
+      : {}),
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginSourceInstallCommandReceipt>(response)
+}
+
+export async function installLocalRuntimeAssetCommand(
+  commandID: string,
+  sourcePath: string,
+  expectedDigest: string | undefined,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<RuntimeAssetInstallCommandReceipt> {
+  const body: RuntimeAssetInstallCommand = {
+    type: 'plugin.runtime_asset.install',
+    command_id: commandID,
+    source_path: sourcePath,
+    ...(expectedDigest ? { expected_digest: expectedDigest } : {}),
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<RuntimeAssetInstallCommandReceipt>(response)
+}
+
+export async function bindLocalPluginModelCommand(
+  commandID: string,
+  pluginID: string,
+  bindingID: string,
+  model: RuntimeModelSpec,
+  expectedDigest: string | undefined,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginModelBindCommandReceipt> {
+  const body: PluginModelBindCommand = {
+    type: 'plugin.model.bind',
+    command_id: commandID,
+    plugin_id: pluginID,
+    binding_id: bindingID,
+    model,
+    ...(expectedDigest ? { expected_digest: expectedDigest } : {}),
+  }
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify(body),
+  })
+  return decodeLocalResponse<PluginModelBindCommandReceipt>(response)
+}
+
+export async function setLocalPluginEnabledCommand(
+  commandID: string,
+  pluginID: string,
+  enabled: boolean,
+  expectedDigest: string | undefined,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginStateCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: enabled ? 'plugin.enable' : 'plugin.disable',
+      command_id: commandID,
+      plugin_id: pluginID,
+      ...(expectedDigest ? { expected_digest: expectedDigest } : {}),
+    }),
+  })
+  return decodeLocalResponse<PluginStateCommandReceipt>(response)
+}
+
+export async function updateLocalPluginCommand(
+  commandID: string,
+  pluginID: string,
+  sourcePath: string,
+  options: { expectedDigest?: string; allowUnsigned?: boolean },
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginVersionSwitchCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: 'plugin.update',
+      command_id: commandID,
+      plugin_id: pluginID,
+      source_path: sourcePath,
+      allow_unsigned: options.allowUnsigned ?? false,
+      ...(options.expectedDigest ? { expected_digest: options.expectedDigest } : {}),
+    }),
+  })
+  return decodeLocalResponse<PluginVersionSwitchCommandReceipt>(response)
+}
+
+export async function rollbackLocalPluginCommand(
+  commandID: string,
+  pluginID: string,
+  targetDigest: string,
+  expectedDigest: string | undefined,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginVersionSwitchCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: 'plugin.rollback',
+      command_id: commandID,
+      plugin_id: pluginID,
+      target_digest: targetDigest,
+      ...(expectedDigest ? { expected_digest: expectedDigest } : {}),
+    }),
+  })
+  return decodeLocalResponse<PluginVersionSwitchCommandReceipt>(response)
+}
+
+export async function removeLocalPluginCommand(
+  commandID: string,
+  pluginID: string,
+  expectedDigest: string | undefined,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginRemoveCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: 'plugin.remove',
+      command_id: commandID,
+      plugin_id: pluginID,
+      ...(expectedDigest ? { expected_digest: expectedDigest } : {}),
+    }),
+  })
+  return decodeLocalResponse<PluginRemoveCommandReceipt>(response)
+}
+
 export async function answerLocalQuestionCommand(
   commandID: string,
   questionID: string,
@@ -1298,6 +1832,25 @@ export async function getLocalArtifact(artifactID: string, config: RuntimeClient
   return decodeLocalResponse<LocalArtifact>(response)
 }
 
+export async function getLocalArtifactContent(
+  artifactID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<Blob> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/local/v1/artifacts/${encodeURIComponent(artifactID)}/content`,
+    {
+      method: 'GET',
+      headers: localHeaders(config, false),
+    },
+  )
+  if (!response.ok) {
+    const error = await localResponseError(response)
+    throw new RuntimeHTTPError(error.message, response.status, error.code)
+  }
+  return response.blob()
+}
+
 function localHeaders(config: RuntimeClientConfig, withContentType: boolean): HeadersInit {
   const headers: HeadersInit = withContentType ? { 'Content-Type': 'application/json' } : {}
   if (config.token) {
@@ -1407,6 +1960,22 @@ export class SheJaneRuntimeClient {
     return listLocalRuns(this.config, this.fetcher)
   }
 
+  listPlugins(): Promise<PluginSummary[]> {
+    return listLocalPlugins(this.config, this.fetcher)
+  }
+
+  getPlugin(pluginID: string): Promise<PluginDetail> {
+    return getLocalPlugin(pluginID, this.config, this.fetcher)
+  }
+
+  listPluginSources(): Promise<PluginSourceSummary[]> {
+    return listLocalPluginSources(this.config, this.fetcher)
+  }
+
+  getPluginSource(sourceID: string): Promise<PluginSourceDetail> {
+    return getLocalPluginSource(sourceID, this.config, this.fetcher)
+  }
+
   listThreads(): Promise<{ threads: LocalThread[]; cursor: number }> {
     return listLocalThreads(this.config, this.fetcher)
   }
@@ -1425,6 +1994,170 @@ export class SheJaneRuntimeClient {
 
   cancelRun(commandID: string, runID: string): Promise<CancelRunCommandReceipt> {
     return cancelLocalRunCommand(commandID, runID, this.config, this.fetcher)
+  }
+
+  installPlugin(
+    commandID: string,
+    sourcePath: string,
+    options: { expectedDigest?: string; allowUnsigned?: boolean } = {},
+  ): Promise<PluginInstallCommandReceipt> {
+    return installLocalPluginCommand(
+      commandID,
+      sourcePath,
+      options,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  addPluginSource(
+    commandID: string,
+    indexURL: string,
+    signatureURL: string,
+    publicKey: string,
+  ): Promise<PluginSourceCommandReceipt> {
+    return addLocalPluginSourceCommand(
+      commandID,
+      indexURL,
+      signatureURL,
+      publicKey,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  refreshPluginSource(
+    commandID: string,
+    sourceID: string,
+    expectedRevision: number,
+  ): Promise<PluginSourceCommandReceipt> {
+    return refreshLocalPluginSourceCommand(
+      commandID,
+      sourceID,
+      expectedRevision,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  removePluginSource(
+    commandID: string,
+    sourceID: string,
+    expectedRevision: number,
+  ): Promise<PluginSourceRemoveCommandReceipt> {
+    return removeLocalPluginSourceCommand(
+      commandID,
+      sourceID,
+      expectedRevision,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  installPluginFromSource(
+    commandID: string,
+    input: PendingPluginSourceInstallCommand['input'],
+  ): Promise<PluginSourceInstallCommandReceipt> {
+    return installLocalPluginFromSourceCommand(
+      commandID,
+      input,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  installRuntimeAsset(
+    commandID: string,
+    sourcePath: string,
+    expectedDigest?: string,
+  ): Promise<RuntimeAssetInstallCommandReceipt> {
+    return installLocalRuntimeAssetCommand(
+      commandID,
+      sourcePath,
+      expectedDigest,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  bindPluginModel(
+    commandID: string,
+    pluginID: string,
+    bindingID: string,
+    model: RuntimeModelSpec,
+    expectedDigest?: string,
+  ): Promise<PluginModelBindCommandReceipt> {
+    return bindLocalPluginModelCommand(
+      commandID,
+      pluginID,
+      bindingID,
+      model,
+      expectedDigest,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  setPluginEnabled(
+    commandID: string,
+    pluginID: string,
+    enabled: boolean,
+    expectedDigest?: string,
+  ): Promise<PluginStateCommandReceipt> {
+    return setLocalPluginEnabledCommand(
+      commandID,
+      pluginID,
+      enabled,
+      expectedDigest,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  updatePlugin(
+    commandID: string,
+    pluginID: string,
+    sourcePath: string,
+    options: { expectedDigest?: string; allowUnsigned?: boolean } = {},
+  ): Promise<PluginVersionSwitchCommandReceipt> {
+    return updateLocalPluginCommand(
+      commandID,
+      pluginID,
+      sourcePath,
+      options,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  rollbackPlugin(
+    commandID: string,
+    pluginID: string,
+    targetDigest: string,
+    expectedDigest?: string,
+  ): Promise<PluginVersionSwitchCommandReceipt> {
+    return rollbackLocalPluginCommand(
+      commandID,
+      pluginID,
+      targetDigest,
+      expectedDigest,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  removePlugin(
+    commandID: string,
+    pluginID: string,
+    expectedDigest?: string,
+  ): Promise<PluginRemoveCommandReceipt> {
+    return removeLocalPluginCommand(
+      commandID,
+      pluginID,
+      expectedDigest,
+      this.config,
+      this.fetcher,
+    )
   }
 
   answerQuestion(

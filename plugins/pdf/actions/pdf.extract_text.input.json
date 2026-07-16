@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id", "start_page", "page_count", "max_characters", "include_artifact"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "start_page": {"type": "integer", "minimum": 1, "maximum": 100000},
+    "page_count": {"type": "integer", "minimum": 1, "maximum": 20},
+    "max_characters": {"type": "integer", "minimum": 1, "maximum": 200000},
+    "include_artifact": {"type": "boolean"}
+  }
+}

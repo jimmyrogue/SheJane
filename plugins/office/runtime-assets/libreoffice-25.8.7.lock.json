@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.libreoffice.runtime",
+  "asset_version": "25.8.7",
+  "libreoffice": {
+    "version": "25.8.7",
+    "build": "25.8.7.3",
+    "license": "MPL-2.0",
+    "license_url": "https://www.libreoffice.org/about-us/licenses/",
+    "source": {
+      "url": "https://download.documentfoundation.org/libreoffice/src/25.8.7/libreoffice-25.8.7.3.tar.xz",
+      "size_bytes": 287579304,
+      "sha256": "aff5817dabecab65c16eb641ef2799339df29d75d15544ebd8f8c57605fca02d"
+    },
+    "platforms": {
+      "darwin/arm64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/mac/aarch64/LibreOffice_25.8.7_MacOS_aarch64.dmg",
+        "size_bytes": 299584229,
+        "sha256": "e7556aa61e282f89578ebaf35afdb09c94dcf9d6ee7c137004377bee81a6e900",
+        "format": "dmg"
+      },
+      "darwin/amd64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/mac/x86_64/LibreOffice_25.8.7_MacOS_x86-64.dmg",
+        "size_bytes": 311430855,
+        "sha256": "110439f207b5e420d7c8e441180c8374431761d549a1c14b584045ac56cd71c5",
+        "format": "dmg"
+      },
+      "linux/arm64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/deb/aarch64/LibreOffice_25.8.7_Linux_aarch64_deb.tar.gz",
+        "size_bytes": 201339344,
+        "sha256": "67e9b7dcdeae72c7aa1357345307e67376fc2b729a7f9ebfafb372b010e22ffa",
+        "format": "deb-tar",
+        "signature": {
+          "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/deb/aarch64/LibreOffice_25.8.7_Linux_aarch64_deb.tar.gz.asc",
+          "size_bytes": 833,
+          "sha256": "32334559394a431471c45314a318d92c3f5d4f850c5704947985b6e15171a67c",
+          "signing_fingerprint": "C2839ECAD9408FBE9531C3E9F434A1EFAFEEAEA3"
+        },
+        "signing_key": {
+          "path": "libreoffice-build-team.asc",
+          "size_bytes": 3122,
+          "sha256": "adc9529e1e838c93feb7523cdd2a772a56a0534020e38258b535236c2003c4d2"
+        }
+      },
+      "linux/amd64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/deb/x86_64/LibreOffice_25.8.7_Linux_x86-64_deb.tar.gz",
+        "size_bytes": 212886122,
+        "sha256": "7f4d7b2e36921eec5122c655249a24cc88935ee357e8261fd3bccd15aa1f7b9f",
+        "format": "deb-tar"
+      },
+      "windows/arm64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/win/aarch64/LibreOffice_25.8.7_Win_aarch64.msi",
+        "size_bytes": 355717120,
+        "sha256": "62ef17831d8cac46076f8cb2cbf3bccc3758d241bbfaa7721ecb2a87e415fabc",
+        "format": "msi"
+      },
+      "windows/amd64": {
+        "url": "https://download.documentfoundation.org/libreoffice/stable/25.8.7/win/x86_64/LibreOffice_25.8.7_Win_x86-64.msi",
+        "size_bytes": 366170112,
+        "sha256": "ecdb65e76f5e91dc198b8c8dce5b5d6e1eb12fea6023553e52b591afd10b619d",
+        "format": "msi"
+      }
+    }
+  },
+  "pdf_renderer": {
+    "name": "MuPDF mutool",
+    "version": "1.27.2",
+    "license": "AGPL-3.0-only",
+    "source_url": "https://casper.mupdf.com/downloads/archive/mupdf-1.27.2-source.tar.gz",
+    "source_size_bytes": 66968384,
+    "source_sha256": "553867b135303dc4c25ab67c5f234d8e900a0e36e66e8484d99adc05fe1e8737"
+  },
+  "linux_builder": {
+    "oci_image": "debian@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0",
+    "snapshot": "20260713T000000Z",
+    "build_essential_version": "12.9",
+    "package_manifest_sha256": "91549eddea4cd4c23194934b3d82ee4dc09b61297a70fe6a475d79c927f08ce0",
+    "source_date_epoch": 1778491363,
+    "gcc_version": "12.2.0-14+deb12u1",
+    "make_version": "4.3-4.1",
+    "binutils_version": "2.40-2",
+    "pkg_config_version": "1.8.1-1"
+  },
+  "font_baseline": {
+    "name": "Noto Sans CJK TTC",
+    "version": "2.004",
+    "license": "OFL-1.1",
+    "url": "https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/00_NotoSansCJK.ttc.zip",
+    "size_bytes": 95183504,
+    "sha256": "a56077736038875f3a5b1e6715b2713a2bd049cc0bf0dfdf645927b070d38bfc"
+  }
+}

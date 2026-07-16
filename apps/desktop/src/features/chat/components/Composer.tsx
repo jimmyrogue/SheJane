@@ -17,7 +17,12 @@ import {
 import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill, McpServerInfo, PermissionMode } from '@/shared/local-host/client'
+import type {
+  InstalledSkill,
+  McpServerInfo,
+  PermissionMode,
+  PluginDetail,
+} from '@/shared/local-host/client'
 import type { ChatMode, LocalAttachmentRef } from '@/shared/local-data/types'
 
 export function Composer({
@@ -30,10 +35,11 @@ export function Composer({
   onStop,
   listSkills,
   listMcpServers,
+  listPlugins,
   mode,
   models = [],
   onModeChange,
-  permissionMode = 'ask',
+  permissionMode = 'auto',
   onPermissionModeChange,
   onConfigureModels,
   projectName,
@@ -56,6 +62,7 @@ export function Composer({
   onStop?: () => void
   listSkills: () => Promise<InstalledSkill[]>
   listMcpServers?: () => Promise<McpServerInfo[]>
+  listPlugins?: () => Promise<PluginDetail[]>
   mode: ChatMode
   models?: ModelOption[]
   onModeChange: (mode: ChatMode) => void
@@ -105,9 +112,14 @@ export function Composer({
           onSend={() => handleSend?.()}
           listSkills={listSkills}
           listMcpServers={listMcpServers}
+          listPlugins={listPlugins}
           commandsEnabled={slashCommandsEnabled}
+          pluginReferencesEnabled={!steeringMode}
           placeholder={steeringMode ? t('composer.steeringPlaceholder') : t('composer.placeholder')}
         />
+        {steeringMode ? (
+          <p className="composer-plugin-run-note">{t('composer.pluginMenu.newRunRequired')}</p>
+        ) : null}
       </div>
 
       <div className="composer-toolbar">

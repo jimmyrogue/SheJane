@@ -34,7 +34,8 @@
     },
     "dialogs": {
       "selectWorkspaceTitle": "选择本地工作区",
-      "selectAttachmentsTitle": "选择附件"
+      "selectAttachmentsTitle": "选择附件",
+      "selectPluginPackageTitle": "选择插件包"
     },
     "errors": {
       "requestFailed": "请求失败"
@@ -75,7 +76,8 @@
     },
     "dialogs": {
       "selectWorkspaceTitle": "Choose local workspace",
-      "selectAttachmentsTitle": "Choose attachments"
+      "selectAttachmentsTitle": "Choose attachments",
+      "selectPluginPackageTitle": "Choose plugin package"
     },
     "errors": {
       "requestFailed": "Request failed"

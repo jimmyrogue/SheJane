@@ -1,6 +1,31 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+function installDesktopSmokeQuitWatcher({
+  filePath = process.env.SHEJANE_DESKTOP_SMOKE_QUIT_FILE || '',
+  quit,
+  intervalMs = 100,
+} = {}) {
+  if (!filePath || typeof quit !== 'function') {
+    return false
+  }
+  let timer = setInterval(() => {
+    if (!fs.existsSync(filePath)) {
+      return
+    }
+    clearInterval(timer)
+    timer = null
+    quit()
+  }, intervalMs)
+  timer.unref?.()
+  return () => {
+    if (timer !== null) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+}
+
 function writeDesktopSmokeConfig({
   filePath = process.env.SHEJANE_DESKTOP_SMOKE_FILE || '',
   baseURL,
@@ -25,5 +50,6 @@ function writeDesktopSmokeConfig({
 }
 
 module.exports = {
+  installDesktopSmokeQuitWatcher,
   writeDesktopSmokeConfig,
 }

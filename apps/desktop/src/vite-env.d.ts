@@ -25,6 +25,7 @@ interface Window {
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
     selectAttachmentFiles?: () => Promise<string[]>
+    selectPluginPackage?: () => Promise<string | undefined>
     openExternal?: (url: string) => Promise<string>
     setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
     setWindowButtonPosition?: (position: 'app') => Promise<boolean>

@@ -12,6 +12,7 @@ describe('LocalConversationStore', () => {
       deleteDatabase('shejane-test-pending-command'),
       deleteDatabase('shejane-test-delete-pending-command'),
       deleteDatabase('shejane-test-rejected-command'),
+      deleteDatabase('shejane-test-pending-plugin-command'),
     ])
   })
 
@@ -92,6 +93,27 @@ describe('LocalConversationStore', () => {
     await store.savePendingRuntimeCommand(command)
 
     const reopened = new LocalConversationStore('shejane-test-pending-cancel-command')
+    expect(await reopened.list()).toEqual([])
+    expect(await reopened.listPendingRuntimeCommands()).toEqual([command])
+  })
+
+  it('keeps a plugin command across restart without attaching it to a conversation', async () => {
+    const store = new LocalConversationStore('shejane-test-pending-plugin-command')
+    const command = {
+      type: 'plugin.update' as const,
+      commandId: 'cmd-plugin-update-restart',
+      createdAt: '2026-07-16T00:00:00.000Z',
+      input: {
+        pluginId: 'dev.shejane.fixture.archive',
+        sourcePath: '/tmp/archive.shejane-plugin',
+        expectedDigest: `sha256:${'a'.repeat(64)}`,
+        allowUnsigned: true,
+      },
+    }
+
+    await store.savePendingRuntimeCommand(command)
+
+    const reopened = new LocalConversationStore('shejane-test-pending-plugin-command')
     expect(await reopened.list()).toEqual([])
     expect(await reopened.listPendingRuntimeCommands()).toEqual([command])
   })

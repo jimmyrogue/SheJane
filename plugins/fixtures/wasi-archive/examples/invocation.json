@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "invocation_id": "123e4567-e89b-42d3-a456-426614174000",
+  "operation_id": "run_01:archive.extract:001",
+  "action": {
+    "plugin_id": "dev.shejane.fixture.archive",
+    "plugin_version": "0.1.0",
+    "plugin_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "action_id": "archive.extract"
+  },
+  "arguments": {
+    "input_id": "source"
+  },
+  "inputs": [
+    {
+      "id": "source",
+      "path": "/input/source/archive.zip",
+      "media_type": "application/zip",
+      "size_bytes": 128,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "grants": {
+    "capabilities": [
+      "input.read",
+      "artifact.write"
+    ]
+  },
+  "limits": {
+    "timeout_ms": 10000,
+    "memory_mb": 128,
+    "output_mb": 8
+  },
+  "environment": {
+    "locale": "en-US",
+    "timezone": "UTC"
+  }
+}

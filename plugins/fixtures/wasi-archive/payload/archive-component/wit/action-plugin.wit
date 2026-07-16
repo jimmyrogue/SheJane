@@ -1,0 +1,5 @@
+package shejane:archive@0.1.0;
+
+world action-plugin {
+  export invoke: func(invocation-json: string, input: list<u8>) -> string;
+}

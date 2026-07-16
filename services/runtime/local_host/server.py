@@ -28,7 +28,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from langchain_core.messages import ToolMessage
 from langgraph.graph import add_messages
 from sse_starlette.sse import EventSourceResponse
@@ -57,6 +57,8 @@ from .api_schemas import (
     InjectRunInstructionRequest,
     InjectRunInstructionResponse,
     ListLocalModelProvidersResponse,
+    ListPluginSourcesResponse,
+    ListPluginsResponse,
     ListRunsResponse,
     ListScheduledRunsResponse,
     ListThreadChangesResponse,
@@ -81,12 +83,35 @@ from .api_schemas import (
     PlanApprovalResolution,
     PlanResolveCommand,
     PlanResolveCommandReceipt,
+    PluginDetail,
+    PluginDisableCommand,
+    PluginEnableCommand,
+    PluginInstallCommand,
+    PluginInstallCommandReceipt,
+    PluginModelBindCommand,
+    PluginModelBindCommandReceipt,
+    PluginRemoveCommand,
+    PluginRemoveCommandReceipt,
+    PluginRollbackCommand,
+    PluginSourceAddCommand,
+    PluginSourceCommandReceipt,
+    PluginSourceDetail,
+    PluginSourceInstallCommand,
+    PluginSourceInstallCommandReceipt,
+    PluginSourceRefreshCommand,
+    PluginSourceRemoveCommand,
+    PluginSourceRemoveCommandReceipt,
+    PluginStateCommandReceipt,
+    PluginUpdateCommand,
+    PluginVersionSwitchCommandReceipt,
     QuestionAnswer,
     ReconcileToolRequest,
     ResolvePermissionCommand,
     ResolvePermissionCommandReceipt,
     ResolvePermissionRequest,
     ResolvePlanApprovalRequest,
+    RuntimeAssetInstallCommand,
+    RuntimeAssetInstallCommandReceipt,
     RuntimeInfo,
     RuntimeSettingsResponse,
     SkillDeleteResponse,
@@ -112,6 +137,7 @@ from .model_credentials import (
     new_credential_ref,
     set_model_api_key,
 )
+from .plugins.registry import PluginRegistry, PluginRegistryError
 from .progress_ledger import (
     latest_feature_ledger as _latest_feature_ledger,
 )
@@ -129,6 +155,7 @@ from .runs import (
 )
 from .scheduler import ScheduledRunDispatcher
 from .store.sqlite import (
+    ArtifactConflictError,
     CommandConflictError,
     LocalStore,
     ParentRunAdmissionError,
@@ -630,6 +657,11 @@ async def lifespan(app: FastAPI):
     coordinator.mcp_catalog.request_refresh()
     scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
     app.state.store = store
+    app.state.plugin_registry = PluginRegistry(
+        store=store,
+        data_dir=settings.data_dir,
+        runtime_version=__version__,
+    )
     app.state.settings = settings
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store
@@ -1294,6 +1326,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runs = await store.list_runs(principal_id=request.state.principal_id)
         return {"runs": runs}
 
+    @app.get("/local/v1/plugins", response_model=ListPluginsResponse)
+    async def list_plugins(request: Request) -> dict[str, Any]:
+        registry: PluginRegistry = app.state.plugin_registry
+        return {"plugins": await registry.list(principal_id=request.state.principal_id)}
+
+    @app.get("/local/v1/plugin-sources", response_model=ListPluginSourcesResponse)
+    async def list_plugin_sources(request: Request) -> dict[str, Any]:
+        registry: PluginRegistry = app.state.plugin_registry
+        return {"sources": await registry.list_sources(principal_id=request.state.principal_id)}
+
+    @app.get("/local/v1/plugin-sources/{source_id}", response_model=PluginSourceDetail)
+    async def inspect_plugin_source(request: Request, source_id: str) -> dict[str, Any]:
+        registry: PluginRegistry = app.state.plugin_registry
+        try:
+            return await registry.inspect_source(
+                principal_id=request.state.principal_id,
+                source_id=source_id,
+            )
+        except PluginRegistryError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
+    @app.get("/local/v1/plugins/{plugin_id}", response_model=PluginDetail)
+    async def inspect_plugin(request: Request, plugin_id: str) -> dict[str, Any]:
+        registry: PluginRegistry = app.state.plugin_registry
+        try:
+            return await registry.inspect(
+                principal_id=request.state.principal_id,
+                plugin_id=plugin_id,
+            )
+        except PluginRegistryError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
     @app.post(
         "/local/v1/commands",
         response_model=(
@@ -1302,6 +1372,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             | ResolvePermissionCommandReceipt
             | PlanResolveCommandReceipt
             | ToolReconcileCommandReceipt
+            | PluginInstallCommandReceipt
+            | PluginModelBindCommandReceipt
+            | PluginSourceCommandReceipt
+            | PluginSourceInstallCommandReceipt
+            | PluginSourceRemoveCommandReceipt
+            | RuntimeAssetInstallCommandReceipt
+            | PluginStateCommandReceipt
+            | PluginVersionSwitchCommandReceipt
+            | PluginRemoveCommandReceipt
         ),
     )
     async def accept_command(
@@ -1312,10 +1391,223 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             | ResolvePermissionCommand
             | PlanResolveCommand
             | ToolReconcileCommand
+            | PluginInstallCommand
+            | PluginModelBindCommand
+            | PluginSourceAddCommand
+            | PluginSourceInstallCommand
+            | PluginSourceRefreshCommand
+            | PluginSourceRemoveCommand
+            | RuntimeAssetInstallCommand
+            | PluginEnableCommand
+            | PluginDisableCommand
+            | PluginUpdateCommand
+            | PluginRollbackCommand
+            | PluginRemoveCommand
         ),
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
         coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, PluginSourceAddCommand):
+            registry: PluginRegistry = app.state.plugin_registry
+            try:
+                return await registry.add_source(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    index_url=body.index_url,
+                    signature_url=body.signature_url,
+                    public_key=body.public_key,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginSourceRefreshCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.refresh_source(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    source_id=body.source_id,
+                    expected_revision=body.expected_revision,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginSourceRemoveCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.remove_source(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    source_id=body.source_id,
+                    expected_revision=body.expected_revision,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginSourceInstallCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.install_from_source(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    source_id=body.source_id,
+                    expected_revision=body.expected_revision,
+                    plugin_id=body.plugin_id,
+                    version=body.version,
+                    execution_kind=body.execution_kind,
+                    platform=body.platform,
+                    package_digest=body.package_digest,
+                    expected_active_digest=body.expected_active_digest,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginModelBindCommand):
+            registry: PluginRegistry = app.state.plugin_registry
+            async with coordinator._model_admission(
+                request.state.principal_id,
+                body.model,
+                ("image_inputs",),
+            ) as (binding, error):
+                if error is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"code": error.code, "message": str(error)},
+                    )
+                try:
+                    return await registry.bind_model(
+                        principal_id=request.state.principal_id,
+                        command_id=body.command_id,
+                        plugin_id=body.plugin_id,
+                        binding_id=body.binding_id,
+                        requested_model=body.model,
+                        model_binding=binding,
+                        expected_digest=body.expected_digest,
+                    )
+                except CommandConflictError as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from exc
+                except PluginRegistryError as exc:
+                    raise HTTPException(
+                        status_code=exc.status_code,
+                        detail={"code": exc.code, "message": str(exc)},
+                    ) from exc
+        if isinstance(body, RuntimeAssetInstallCommand):
+            registry: PluginRegistry = app.state.plugin_registry
+            try:
+                return await registry.install_runtime_asset(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    source_path=body.source_path,
+                    expected_digest=body.expected_digest,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginInstallCommand):
+            registry: PluginRegistry = app.state.plugin_registry
+            try:
+                return await registry.install(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    source_path=body.source_path,
+                    expected_digest=body.expected_digest,
+                    allow_unsigned=body.allow_unsigned,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginUpdateCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.update(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    plugin_id=body.plugin_id,
+                    source_path=body.source_path,
+                    expected_digest=body.expected_digest,
+                    allow_unsigned=body.allow_unsigned,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginRollbackCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.rollback(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    plugin_id=body.plugin_id,
+                    target_digest=body.target_digest,
+                    expected_digest=body.expected_digest,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, PluginRemoveCommand):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.remove(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    plugin_id=body.plugin_id,
+                    expected_digest=body.expected_digest,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+        if isinstance(body, (PluginEnableCommand, PluginDisableCommand)):
+            registry = app.state.plugin_registry
+            try:
+                return await registry.set_enabled(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    plugin_id=body.plugin_id,
+                    expected_digest=body.expected_digest,
+                    enabled=isinstance(body, PluginEnableCommand),
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
         if isinstance(body, ToolReconcileCommand):
             command_payload = {
                 "type": body.type,
@@ -1573,6 +1865,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 permission_mode=body.permission_mode,
                 history=body.history or [],
                 parent_run_id=body.parent_run_id,
+                plugin_refs=[reference.model_dump(mode="json") for reference in body.plugin_refs],
+                plugin_command=(
+                    body.plugin_command.model_dump(mode="json")
+                    if body.plugin_command is not None
+                    else None
+                ),
                 settings=body.settings,
                 metadata=body.metadata,
             )
@@ -2097,9 +2395,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "id": record["id"],
             "title": record["title"],
             "content": record["content"],
+            "content_type": record["content_type"],
+            "bytes": record["bytes"],
+            "sha256": record.get("sha256"),
+            "storage_kind": record.get("storage_kind") or "inline_text",
             "tool_name": record.get("tool_name"),
             "created_at": record["created_at"],
         }
+
+    @app.get("/local/v1/artifacts/{artifact_id}/content")
+    async def get_artifact_content(request: Request, artifact_id: str) -> Response:
+        store: LocalStore = app.state.store
+        record = await store.get_artifact(artifact_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=record["run_id"],
+            not_found_detail="artifact not found",
+        )
+        if record.get("storage_kind") != "blob":
+            return Response(
+                content=record["content"],
+                media_type=record["content_type"],
+                headers={"Content-Disposition": f'attachment; filename="{record["id"]}"'},
+            )
+        try:
+            body = await asyncio.to_thread(store.artifact_body_path, record)
+        except ArtifactConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return FileResponse(
+            body,
+            filename=record["title"],
+            media_type=record["content_type"],
+        )
 
     @app.get("/local/v1/workspace-files")
     async def get_workspace_file(

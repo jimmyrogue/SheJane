@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /package/.shejane-host/runtime-assets/org.nodejs.runtime/bin/node /package/worker.js

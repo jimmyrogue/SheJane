@@ -63,6 +63,7 @@ function projectRuntimeItem(
   const existing = existingByID.get(id)
   if (item.item_type === 'user_message') {
     const attachments = attachmentValues(item.metadata)
+    const pluginSelection = pluginSelectionValue(item.metadata)
     return {
       ...(existing ?? {}),
       id,
@@ -71,6 +72,8 @@ function projectRuntimeItem(
       createdAt: item.created_at,
       status: 'done',
       ...(attachments.length ? { attachments } : {}),
+      pluginReferences: pluginSelection.references.length ? pluginSelection.references : undefined,
+      pluginCommand: pluginSelection.command,
     }
   }
 
@@ -96,6 +99,38 @@ function projectRuntimeItem(
     ...(run?.command_id ? { commandId: run.command_id } : {}),
     ...(agentEvents.length ? { agentEvents } : {}),
   }
+}
+
+function pluginSelectionValue(value: unknown): {
+  references: NonNullable<ChatMessage['pluginReferences']>
+  command?: NonNullable<ChatMessage['pluginCommand']>
+} {
+  const selection = objectValue(objectValue(value).plugin_selection)
+  const references = Array.isArray(selection.references)
+    ? selection.references.flatMap((value) => {
+      const item = objectValue(value)
+      return typeof item.plugin_id === 'string' && item.plugin_id
+        && typeof item.name === 'string' && item.name
+        && typeof item.digest === 'string' && item.digest
+        ? [{ pluginId: item.plugin_id, name: item.name, digest: item.digest }]
+        : []
+    }).slice(0, 32)
+    : []
+  const item = objectValue(selection.command)
+  const command = typeof item.plugin_id === 'string' && item.plugin_id
+    && typeof item.plugin_name === 'string' && item.plugin_name
+    && typeof item.command_id === 'string' && item.command_id
+    && typeof item.title === 'string' && item.title
+    && typeof item.digest === 'string' && item.digest
+    ? {
+      pluginId: item.plugin_id,
+      pluginName: item.plugin_name,
+      commandId: item.command_id,
+      title: item.title,
+      digest: item.digest,
+    }
+    : undefined
+  return { references, ...(command ? { command } : {}) }
 }
 
 function attachmentValues(value: unknown): NonNullable<ChatMessage['attachments']> {

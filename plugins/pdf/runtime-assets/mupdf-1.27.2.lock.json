@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.mupdf.runtime",
+  "asset_version": "1.27.2+shejane.1",
+  "upstream": {
+    "name": "MuPDF",
+    "version": "1.27.2",
+    "license": "AGPL-3.0-only",
+    "source_url": "https://casper.mupdf.com/downloads/archive/mupdf-1.27.2-source.tar.gz",
+    "source_size_bytes": 66968384,
+    "source_sha256": "553867b135303dc4c25ab67c5f234d8e900a0e36e66e8484d99adc05fe1e8737",
+    "authentication": "pinned_sha256_from_official_https_source"
+  },
+  "make_policy": [
+    "build=release",
+    "HAVE_LIBCRYPTO=no",
+    "HAVE_X11=no",
+    "HAVE_GLUT=no",
+    "HAVE_GLFW=no",
+    "USE_SYSTEM_LIBS=no",
+    "brotli=no",
+    "mujs=no",
+    "html=no",
+    "xps=no",
+    "svg=no",
+    "extract=no",
+    "tesseract=no",
+    "barcode=no",
+    "archive=no"
+  ],
+  "compiled_components": [
+    {"name": "MuPDF", "version": "1.27.2", "license": "AGPL-3.0-only", "license_path": "COPYING"},
+    {"name": "FreeType", "version": "2.13.3", "license": "FTL OR GPL-2.0-or-later", "license_path": "thirdparty/freetype/LICENSE.TXT"},
+    {"name": "jbig2dec", "version": "0.20", "license": "AGPL-3.0-or-later", "license_path": "thirdparty/jbig2dec/COPYING"},
+    {"name": "Little CMS", "version": "2.16", "license": "MIT", "license_path": "thirdparty/lcms2/LICENSE"},
+    {"name": "libjpeg", "version": "9f", "license": "IJG", "license_path": "thirdparty/libjpeg/README"},
+    {"name": "OpenJPEG", "version": "2.5.4", "license": "BSD-2-Clause", "license_path": "thirdparty/openjpeg/LICENSE"},
+    {"name": "zlib", "version": "1.3.1", "license": "Zlib", "license_path": "thirdparty/zlib/LICENSE"}
+  ],
+  "darwin_build": {
+    "xcode_version": "26.6",
+    "xcode_build": "17F113",
+    "clang_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "sdk_version": "26.5",
+    "deployment_target": "11.0",
+    "make_version": "GNU Make 3.81"
+  },
+  "linux_builder": {
+    "oci_image": "debian@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0",
+    "snapshot": "20260713T000000Z",
+    "build_essential_version": "12.9",
+    "package_manifest_sha256": "91549eddea4cd4c23194934b3d82ee4dc09b61297a70fe6a475d79c927f08ce0",
+    "source_date_epoch": 1778491363,
+    "gcc_version": "12.2.0-14+deb12u1",
+    "make_version": "4.3-4.1",
+    "binutils_version": "2.40-2",
+    "pkg_config_version": "1.8.1-1"
+  },
+  "created_at": "2026-07-16T00:00:00Z"
+}

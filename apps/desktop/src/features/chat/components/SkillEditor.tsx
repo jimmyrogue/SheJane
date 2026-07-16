@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { toast } from 'sonner'
 import { LexicalComposer } from '@lexical/react/LexicalComposer'
 import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin'
 import { ContentEditable } from '@lexical/react/LexicalContentEditable'
@@ -19,6 +20,7 @@ import {
   $createTextNode,
   $getRoot,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   COMMAND_PRIORITY_LOW,
   type EditorState,
@@ -30,17 +32,23 @@ import {
 import {
   $createFunctionNode,
   $createMCPNode,
+  $createPluginCommandNode,
+  $createPluginNode,
   $createSkillNode,
   $isFunctionNode,
   $isMCPNode,
+  $isPluginCommandNode,
+  $isPluginNode,
   $isSkillNode,
   FunctionNode,
   MCPNode,
+  PluginCommandNode,
+  PluginNode,
   SkillNode,
 } from './SkillNode'
 import { tokenizeDraft } from '../skillDraft'
 import { useI18n } from '@/shared/i18n/i18n'
-import type { InstalledSkill, McpServerInfo } from '@/shared/local-host/client'
+import type { InstalledSkill, McpServerInfo, PluginDetail } from '@/shared/local-host/client'
 
 export interface SkillEditorProps {
   draft: string
@@ -50,26 +58,50 @@ export interface SkillEditorProps {
   /** Optional — when omitted (probe not yet ready) the MCP group is
    *  hidden from the slash menu instead of crashing. */
   listMcpServers?: () => Promise<McpServerInfo[]>
+  listPlugins?: () => Promise<PluginDetail[]>
   /** When false (web build, no daemon) the slash-command menu — functions,
    *  skills, MCP, all daemon-executed — is disabled entirely. The editor
    *  still works as a plain text input. Defaults to true. */
   commandsEnabled?: boolean
+  pluginReferencesEnabled?: boolean
   placeholder: string
 }
 
-type MenuKind = 'function' | 'skill' | 'mcp'
+type MenuKind = 'function' | 'skill' | 'mcp' | 'plugin-command'
+
+const isAvailablePlugin = (plugin: PluginDetail) =>
+  plugin.enabled && !plugin.retired && plugin.compatibility === 'compatible'
 
 class ComposerMenuOption extends MenuOption {
   kind: MenuKind
   id: string
   name: string
   description: string
-  constructor(kind: MenuKind, id: string, name: string, description: string) {
+  plugin?: PluginDetail
+  commandId?: string
+  constructor(
+    kind: MenuKind,
+    id: string,
+    name: string,
+    description: string,
+    plugin?: PluginDetail,
+    commandId?: string,
+  ) {
     super(`${kind}:${id}`)
     this.kind = kind
     this.id = id
     this.name = name
     this.description = description
+    this.plugin = plugin
+    this.commandId = commandId
+  }
+}
+
+class PluginMentionOption extends MenuOption {
+  plugin: PluginDetail
+  constructor(plugin: PluginDetail) {
+    super(`plugin:${plugin.id}`)
+    this.plugin = plugin
   }
 }
 
@@ -88,6 +120,22 @@ function buildRootFromDraft(draft: string): void {
     }
     if (node.type === 'mcp') {
       paragraph.append($createMCPNode(node.name))
+      continue
+    }
+    if (node.type === 'plugin') {
+      paragraph.append($createPluginNode(node.pluginId, node.name, node.expectedDigest))
+      continue
+    }
+    if (node.type === 'plugin_command') {
+      paragraph.append(
+        $createPluginCommandNode(
+          node.pluginId,
+          node.pluginName,
+          node.commandId,
+          node.title,
+          node.expectedDigest,
+        ),
+      )
       continue
     }
     const parts = node.value.split('\n')
@@ -193,7 +241,14 @@ function SkillDeletePlugin(): null {
         const index = isBackward ? anchor.offset - 1 : anchor.offset
         target = 'getChildAtIndex' in node ? node.getChildAtIndex(index) : null
       }
-      if (target && ($isSkillNode(target) || $isFunctionNode(target) || $isMCPNode(target))) {
+      if (
+        target &&
+        ($isSkillNode(target) ||
+          $isFunctionNode(target) ||
+          $isMCPNode(target) ||
+          $isPluginNode(target) ||
+          $isPluginCommandNode(target))
+      ) {
         target.remove()
         return true
       }
@@ -220,10 +275,12 @@ function SkillDeletePlugin(): null {
 function SkillTypeaheadPlugin({
   listSkills,
   listMcpServers,
+  listPlugins,
   menuOpenRef,
 }: {
   listSkills: () => Promise<InstalledSkill[]>
   listMcpServers?: () => Promise<McpServerInfo[]>
+  listPlugins?: () => Promise<PluginDetail[]>
   menuOpenRef: { current: boolean }
 }) {
   const [editor] = useLexicalComposerContext()
@@ -231,8 +288,10 @@ function SkillTypeaheadPlugin({
   const [query, setQuery] = useState<string | null>(null)
   const [skills, setSkills] = useState<InstalledSkill[]>([])
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([])
+  const [plugins, setPlugins] = useState<PluginDetail[]>([])
   const [loading, setLoading] = useState(false)
   const [mcpLoading, setMcpLoading] = useState(false)
+  const [pluginsLoading, setPluginsLoading] = useState(false)
   const loadedRef = useRef(false)
 
   useEffect(() => {
@@ -253,11 +312,18 @@ function SkillTypeaheadPlugin({
           .catch(() => setMcpServers([]))
           .finally(() => setMcpLoading(false))
       }
+      if (listPlugins) {
+        setPluginsLoading(true)
+        listPlugins()
+          .then((items) => setPlugins(items.filter(isAvailablePlugin)))
+          .catch(() => setPlugins([]))
+          .finally(() => setPluginsLoading(false))
+      }
     }
     if (query === null) {
       loadedRef.current = false
     }
-  }, [query, listSkills, listMcpServers])
+  }, [query, listSkills, listMcpServers, listPlugins])
 
   const triggerFn = useCallback((text: string): MenuTextMatch | null => {
     const match = /(^|\s)\/([^\s/]*)$/.exec(text)
@@ -306,17 +372,52 @@ function SkillTypeaheadPlugin({
             `${server.source} · ${server.transport}`,
           ),
       )
-    return [...funcOptions, ...skillOptions, ...mcpOptions]
-  }, [functionsCatalog, skills, mcpServers, query])
+    const pluginCommandOptions = plugins.flatMap((plugin) =>
+      plugin.commands
+        .filter((command) => match(command.title, `${plugin.name} ${command.id} ${command.description}`))
+        .map(
+          (command) =>
+            new ComposerMenuOption(
+              'plugin-command',
+              `${plugin.id}:${command.id}`,
+              command.title,
+              `${plugin.name} · ${command.description}`,
+              plugin,
+              command.id,
+            ),
+        ),
+    )
+    return [...funcOptions, ...skillOptions, ...mcpOptions, ...pluginCommandOptions]
+  }, [functionsCatalog, skills, mcpServers, plugins, query])
 
   const onSelectOption = useCallback(
     (option: ComposerMenuOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
+      let replacedPluginCommand = false
       editor.update(() => {
         let node
         if (option.kind === 'function') {
           node = $createFunctionNode(option.id)
         } else if (option.kind === 'mcp') {
           node = $createMCPNode(option.id)
+        } else if (option.kind === 'plugin-command' && option.plugin && option.commandId) {
+          for (const block of $getRoot().getChildren()) {
+            if (!$isElementNode(block)) continue
+            for (const child of block.getChildren()) {
+              if ($isPluginCommandNode(child)) {
+                child.remove()
+                replacedPluginCommand = true
+              }
+            }
+          }
+          const command = option.plugin.commands.find((item) => item.id === option.commandId)
+          if (!command) return
+          node = $createPluginCommandNode(
+            option.plugin.id,
+            option.plugin.name,
+            command.id,
+            command.title,
+            option.plugin.digest,
+          )
         } else {
           node = $createSkillNode(option.id)
         }
@@ -332,9 +433,10 @@ function SkillTypeaheadPlugin({
         node.insertAfter(space)
         space.selectEnd()
       })
+      if (replacedPluginCommand) toast.message(t('composer.pluginMenu.commandReplaced'))
       closeMenu()
     },
-    [editor],
+    [editor, t],
   )
 
   return (
@@ -356,12 +458,15 @@ function SkillTypeaheadPlugin({
         const funcOptions = options.filter((option) => option.kind === 'function')
         const skillOptions = options.filter((option) => option.kind === 'skill')
         const mcpOptions = options.filter((option) => option.kind === 'mcp')
+        const pluginCommandOptions = options.filter((option) => option.kind === 'plugin-command')
         const showSkillsGroup = skillOptions.length > 0 || loading
         // The MCP group only renders when there's something to show AND
         // the App actually wired the listMcpServers prop — when the
         // daemon isn't online yet the prop is undefined and the
         // section silently disappears (avoids "empty group" noise).
         const showMcpGroup = listMcpServers !== undefined && (mcpOptions.length > 0 || mcpLoading)
+        const showPluginCommandGroup =
+          listPlugins !== undefined && (pluginCommandOptions.length > 0 || pluginsLoading)
         const renderItem = (option: ComposerMenuOption) => {
           const index = options.indexOf(option)
           return (
@@ -436,6 +541,25 @@ function SkillTypeaheadPlugin({
             mcpOptions.forEach((option) => rows.push(renderItem(option)))
           }
         }
+        if (showPluginCommandGroup) {
+          if (funcOptions.length > 0 || showSkillsGroup || showMcpGroup) {
+            rows.push(<li key="divider-mcp-plugin" className="composer-menu-divider" aria-hidden="true" />)
+          }
+          rows.push(
+            <li key="grp-plugin-command" className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.pluginCommandsGroup')}
+            </li>,
+          )
+          if (pluginsLoading && pluginCommandOptions.length === 0) {
+            rows.push(
+              <li key="plugin-command-loading" className="composer-skill-menu-empty">
+                {t('composer.pluginMenu.loading')}
+              </li>,
+            )
+          } else {
+            pluginCommandOptions.forEach((option) => rows.push(renderItem(option)))
+          }
+        }
         if (rows.length === 0) {
           rows.push(
             <li key="empty" className="composer-skill-menu-empty">
@@ -454,23 +578,199 @@ function SkillTypeaheadPlugin({
   )
 }
 
+function PluginMentionTypeaheadPlugin({
+  listPlugins,
+  menuOpenRef,
+}: {
+  listPlugins: () => Promise<PluginDetail[]>
+  menuOpenRef: { current: boolean }
+}) {
+  const [editor] = useLexicalComposerContext()
+  const { t } = useI18n()
+  const [query, setQuery] = useState<string | null>(null)
+  const [plugins, setPlugins] = useState<PluginDetail[]>([])
+  const [loading, setLoading] = useState(false)
+  const loadedRef = useRef(false)
+
+  useEffect(() => {
+    if (query !== null && !loadedRef.current) {
+      loadedRef.current = true
+      setLoading(true)
+      listPlugins()
+        .then((items) =>
+          setPlugins(
+            items.filter(isAvailablePlugin),
+          ),
+        )
+        .catch(() => setPlugins([]))
+        .finally(() => setLoading(false))
+    }
+    if (query === null) loadedRef.current = false
+  }, [query, listPlugins])
+
+  const options = useMemo(() => {
+    const normalized = (query ?? '').toLowerCase()
+    return plugins
+      .filter(
+        (plugin) =>
+          normalized === '' ||
+          plugin.name.toLowerCase().includes(normalized) ||
+          plugin.id.toLowerCase().includes(normalized) ||
+          plugin.publisher.name.toLowerCase().includes(normalized),
+      )
+      .map((plugin) => new PluginMentionOption(plugin))
+  }, [plugins, query])
+
+  const triggerFn = useCallback((text: string): MenuTextMatch | null => {
+    const match = /(^|\s)@([^\s@]*)$/.exec(text)
+    if (!match) return null
+    const matchingString = match[2]
+    const replaceableString = `@${matchingString}`
+    return {
+      leadOffset: text.length - replaceableString.length,
+      matchingString,
+      replaceableString,
+    }
+  }, [])
+
+  const onSelectOption = useCallback(
+    (option: PluginMentionOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
+      editor.update(() => {
+        for (const block of $getRoot().getChildren()) {
+          if (!$isElementNode(block)) continue
+          for (const child of block.getChildren()) {
+            if ($isPluginNode(child) && child.getPluginId() === option.plugin.id) child.remove()
+          }
+        }
+        const node = $createPluginNode(
+          option.plugin.id,
+          option.plugin.name,
+          option.plugin.digest,
+        )
+        if (textNodeContainingQuery) {
+          textNodeContainingQuery.replace(node)
+        } else {
+          const selection = $getSelection()
+          if ($isRangeSelection(selection)) selection.insertNodes([node])
+        }
+        const space = $createTextNode(' ')
+        node.insertAfter(space)
+        space.selectEnd()
+      })
+      closeMenu()
+    },
+    [editor],
+  )
+
+  return (
+    <LexicalTypeaheadMenuPlugin<PluginMentionOption>
+      options={options}
+      triggerFn={triggerFn}
+      onQueryChange={setQuery}
+      onSelectOption={onSelectOption}
+      onOpen={() => {
+        menuOpenRef.current = true
+      }}
+      onClose={() => {
+        menuOpenRef.current = false
+      }}
+      menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) => {
+        if (!anchorElementRef.current) return null
+        return createPortal(
+          <ul className="composer-skill-menu" role="listbox" aria-label={t('composer.menu.pluginsGroup')}>
+            <li className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.pluginsGroup')}
+            </li>
+            {loading && options.length === 0 ? (
+              <li className="composer-skill-menu-empty">{t('composer.pluginMenu.loading')}</li>
+            ) : options.length === 0 ? (
+              <li className="composer-skill-menu-empty">{t('composer.pluginMenu.empty')}</li>
+            ) : (
+              options.map((option, index) => (
+                <li
+                  key={option.key}
+                  role="option"
+                  aria-selected={index === selectedIndex}
+                  ref={(element) => option.setRefElement(element)}
+                  className={`composer-skill-menu-item${index === selectedIndex ? ' active' : ''}`}
+                  onMouseEnter={() => setHighlightedIndex(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setHighlightedIndex(index)
+                    selectOptionAndCleanUp(option)
+                  }}
+                >
+                  <span className="composer-skill-menu-name">{option.plugin.name}</span>
+                  <span className="composer-skill-menu-desc">
+                    {option.plugin.publisher.name} · {option.plugin.id}
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>,
+          anchorElementRef.current,
+        )
+      }}
+    />
+  )
+}
+
 export function SkillEditor({
   draft,
   onDraftChange,
   onSend,
   listSkills,
   listMcpServers,
+  listPlugins,
   commandsEnabled = true,
+  pluginReferencesEnabled = true,
   placeholder,
 }: SkillEditorProps) {
+  const { t } = useI18n()
   const draftRef = useRef(draft)
   const lastSerializedRef = useRef(draft)
   const menuOpenRef = useRef(false)
+  const pluginBindings = useMemo(() => {
+    const bindings = new Map<string, { digest: string; label: string }>()
+    for (const node of tokenizeDraft(draft)) {
+      if (node.type === 'plugin') {
+        bindings.set(node.pluginId, { digest: node.expectedDigest, label: node.name })
+      } else if (node.type === 'plugin_command') {
+        bindings.set(node.pluginId, { digest: node.expectedDigest, label: node.pluginName })
+      }
+    }
+    return bindings
+  }, [draft])
+  const [stalePlugins, setStalePlugins] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!listPlugins || pluginBindings.size === 0) {
+      setStalePlugins([])
+      return
+    }
+    let active = true
+    void listPlugins()
+      .then((plugins) => {
+        if (!active) return
+        const current = new Map(plugins.map((plugin) => [plugin.id, plugin.digest]))
+        setStalePlugins(
+          [...pluginBindings].flatMap(([id, binding]) =>
+            current.get(id) === binding.digest ? [] : [binding.label],
+          ),
+        )
+      })
+      .catch(() => {
+        if (active) setStalePlugins([])
+      })
+    return () => {
+      active = false
+    }
+  }, [listPlugins, pluginBindings])
 
   const initialConfig = useMemo(
     () => ({
       namespace: 'composer-skill-editor',
-      nodes: [SkillNode, FunctionNode, MCPNode],
+      nodes: [SkillNode, FunctionNode, MCPNode, PluginNode, PluginCommandNode],
       onError: (error: Error) => {
         // Surface in dev; never crash the composer.
         console.error('[skill-editor]', error)
@@ -509,13 +809,22 @@ export function SkillEditor({
           <SkillTypeaheadPlugin
             listSkills={listSkills}
             listMcpServers={listMcpServers}
+            listPlugins={pluginReferencesEnabled ? listPlugins : undefined}
             menuOpenRef={menuOpenRef}
           />
+        ) : null}
+        {commandsEnabled && pluginReferencesEnabled && listPlugins ? (
+          <PluginMentionTypeaheadPlugin listPlugins={listPlugins} menuOpenRef={menuOpenRef} />
         ) : null}
         <SubmitPlugin onSend={onSend} menuOpenRef={menuOpenRef} />
         <SkillDeletePlugin />
         <ExternalDraftPlugin draft={draft} lastSerializedRef={lastSerializedRef} />
       </LexicalComposer>
+      {stalePlugins.length > 0 ? (
+        <div className="composer-plugin-stale" role="status">
+          {t('composer.pluginMenu.stale', { names: stalePlugins.join('、') })}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "sheet": {"type": "string", "minLength": 1, "maxLength": 31},
+    "range": {"type": "string", "pattern": "^[A-Za-z]{1,3}[1-9][0-9]{0,6}(?::[A-Za-z]{1,3}[1-9][0-9]{0,6})?$"},
+    "max_cells": {"type": "integer", "minimum": 1, "maximum": 10000}
+  }
+}

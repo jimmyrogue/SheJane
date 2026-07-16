@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "include_png": {"type": "boolean"},
+    "max_pages": {"type": "integer", "minimum": 1, "maximum": 100},
+    "dpi": {"type": "integer", "minimum": 72, "maximum": 300}
+  }
+}

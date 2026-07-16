@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_id", "timestamp_seconds", "max_width", "max_height"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "timestamp_seconds": {"type": "number", "minimum": 0, "maximum": 864000},
+    "max_width": {"type": "integer", "minimum": 16, "maximum": 4096},
+    "max_height": {"type": "integer", "minimum": 16, "maximum": 4096}
+  }
+}

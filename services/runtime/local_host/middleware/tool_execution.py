@@ -20,6 +20,7 @@ from ..store.sqlite import (
     ToolOutcomeUnknownError,
     ToolReceiptStateError,
 )
+from ..tools.runtime import RuntimeToolExecution, bind_runtime_tool_execution
 
 READ_ONLY_TOOLS = {
     "clipboard.read",
@@ -119,7 +120,18 @@ def execution_scope_from_messages(base_namespace: str, messages: Any) -> str:
     return base_namespace
 
 
+def canonical_tool_execution_scope(execution_scope: str) -> str:
+    """Remove the LangGraph node-local namespace while retaining subagent ancestry."""
+    base_namespace, marker, batch_hash = execution_scope.rpartition("|batch_")
+    if not marker:
+        return execution_scope
+    parent_namespace = base_namespace.rsplit("|", 1)[0] if "|" in base_namespace else ""
+    return f"{parent_namespace}|batch_{batch_hash}"
+
+
 def tool_risk(tool_name: str) -> str:
+    if tool_name.startswith("plugin."):
+        return "plugin_action"
     if tool_name in READ_ONLY_TOOLS:
         return "read_only"
     if tool_name in WORKSPACE_WRITE_TOOLS:
@@ -129,6 +141,73 @@ def tool_risk(tool_name: str) -> str:
     if tool_name in CONTROL_FLOW_TOOLS:
         return "control_flow"
     return "external_or_unknown"
+
+
+def tool_version_for_context(context: object, tool_name: str) -> str:
+    plugin_versions = getattr(context, "plugin_tool_versions", None)
+    if isinstance(plugin_versions, dict):
+        plugin_version = plugin_versions.get(tool_name)
+        if isinstance(plugin_version, str) and plugin_version:
+            return plugin_version
+    return str(getattr(context, "graph_definition_id", None) or "")
+
+
+async def tool_version_for_invocation(
+    context: object,
+    tool_name: str,
+    arguments: Any,
+) -> str:
+    base = tool_version_for_context(context, tool_name)
+    plugin_versions = getattr(context, "plugin_tool_versions", None)
+    if not isinstance(plugin_versions, dict) or tool_name not in plugin_versions:
+        return base
+    input_id = arguments.get("input_id") if isinstance(arguments, dict) else None
+    input_ids = arguments.get("input_ids") if isinstance(arguments, dict) else None
+    selected_ids: list[str]
+    if isinstance(input_id, str) and input_id:
+        selected_ids = [input_id]
+    elif (
+        isinstance(input_ids, list)
+        and input_ids
+        and all(isinstance(item, str) and item for item in input_ids)
+    ):
+        selected_ids = input_ids
+    else:
+        return base
+    store = getattr(context, "store", None)
+    run_id = str(getattr(context, "run_id", None) or "")
+    if not isinstance(store, LocalStore) or not run_id:
+        return base
+    bindings: list[dict[str, Any]] = []
+    for selected_id in selected_ids:
+        artifact = await store.get_artifact(selected_id)
+        if (
+            artifact is None
+            or artifact.get("run_id") != run_id
+            or artifact.get("storage_kind") != "blob"
+            or not isinstance(artifact.get("content_type"), str)
+            or not isinstance(artifact.get("bytes"), int)
+            or not isinstance(artifact.get("sha256"), str)
+        ):
+            continue
+        bindings.append(
+            {
+                "id": selected_id,
+                "media_type": artifact["content_type"],
+                "size_bytes": artifact["bytes"],
+                "sha256": artifact["sha256"],
+            }
+        )
+    if not bindings:
+        return base
+    binding = json.dumps(
+        bindings,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(binding.encode("utf-8")).hexdigest()
+    return f"{base}:artifact-input:sha256:{digest}"
 
 
 def tool_operation_identity(
@@ -167,10 +246,12 @@ class ToolExecutionMiddleware(AgentMiddleware):
         store = getattr(context, "store", None)
         run_id = str(getattr(context, "run_id", None) or "")
         execution_attempt_id = str(getattr(context, "execution_attempt_id", None) or "")
-        tool_version = str(getattr(context, "graph_definition_id", None) or "")
-        execution_namespace = execution_scope_from_messages(
-            tool_execution_namespace(request),
-            request.state.get("messages") if isinstance(request.state, dict) else None,
+        tool_name = str(request.tool_call.get("name") or "")
+        execution_namespace = canonical_tool_execution_scope(
+            execution_scope_from_messages(
+                tool_execution_namespace(request),
+                request.state.get("messages") if isinstance(request.state, dict) else None,
+            )
         )
         if not isinstance(store, LocalStore) or not run_id or not execution_attempt_id:
             raise ToolReceiptStateError("tool execution is missing durable Runtime context")
@@ -184,6 +265,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
         if not tool_call_id or not tool_name:
             raise ToolReceiptStateError("tool call is missing a stable id or name")
         arguments = call.get("args") or {}
+        tool_version = await tool_version_for_invocation(context, tool_name, arguments)
         operation_id, arguments_hash, arguments_json = tool_operation_identity(
             run_id=run_id,
             tool_call_id=tool_call_id,
@@ -330,7 +412,14 @@ class ToolExecutionMiddleware(AgentMiddleware):
             return _provider_safe_tool_result(request, replay)
 
         try:
-            result = await handler(request)
+            with bind_runtime_tool_execution(
+                RuntimeToolExecution(
+                    context=request.runtime.context,
+                    operation_id=operation_id,
+                    tool_call_id=str(request.tool_call.get("id") or ""),
+                )
+            ):
+                result = await handler(request)
         except GraphBubbleUp:
             await asyncio.shield(
                 store.settle_tool_receipt(
@@ -341,7 +430,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
             )
             raise
         except BaseException as exc:
-            status = "failed" if risk == "read_only" else "outcome_unknown"
+            status = "failed" if risk in {"read_only", "plugin_action"} else "outcome_unknown"
             await asyncio.shield(
                 store.settle_tool_receipt(
                     operation_id=operation_id,
@@ -372,7 +461,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
             if len(result_json.encode("utf-8")) > MAX_MODEL_TOOL_RESULT_BYTES:
                 raise ToolReceiptStateError("bounded tool result still exceeds model limit")
         except BaseException as exc:
-            status = "failed" if risk == "read_only" else "outcome_unknown"
+            status = "failed" if risk in {"read_only", "plugin_action"} else "outcome_unknown"
             await asyncio.shield(
                 store.settle_tool_receipt(
                     operation_id=operation_id,
@@ -733,11 +822,4 @@ def _ordered_batch_position(
 
 def _batch_order_key(execution_scope: str) -> str:
     """Share a key between sibling tools without merging separate subagents."""
-    base_namespace, marker, batch_hash = execution_scope.rpartition("|batch_")
-    if not marker:
-        return execution_scope
-    # The final checkpoint namespace level is the ToolNode task itself and is
-    # different for every sibling. Keep all ancestor levels (including their
-    # task ids) so concurrent subagent invocations remain isolated.
-    parent_namespace = base_namespace.rsplit("|", 1)[0] if "|" in base_namespace else ""
-    return f"{parent_namespace}|batch_{batch_hash}"
+    return canonical_tool_execution_scope(execution_scope)

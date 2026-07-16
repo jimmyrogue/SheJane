@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from jsonschema.validators import validator_for
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
+from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from ..store.sqlite import LocalStore, PermissionDecisionConflictError
+from .approval_reviewer import ApprovalReviewUnavailable, review_approval_batch
 from .tool_execution import (
+    canonical_tool_execution_scope,
     current_execution_namespace,
     execution_scope_from_messages,
     serialize_tool_result,
     tool_operation_identity,
     tool_risk,
+    tool_version_for_invocation,
 )
 
 
@@ -30,15 +35,34 @@ class ToolReviewStateError(RuntimeError):
     retryable = False
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalPolicyDecision:
+    decision: str
+    reason: str
+
+
+def approval_policy_decision(
+    tool_name: str,
+    risk: str,
+    permission_mode: str = "ask",
+) -> ApprovalPolicyDecision:
+    """Return the Runtime-owned P10 decision before optional model review."""
+    if permission_mode == "full_access":
+        return ApprovalPolicyDecision("allow", "full_access")
+    if tool_name == "clipboard.read":
+        return ApprovalPolicyDecision("ask", "protected_runtime_state")
+    if permission_mode == "auto":
+        if risk == "external_or_unknown":
+            return ApprovalPolicyDecision("review", "external_or_unknown")
+        return ApprovalPolicyDecision("allow", "runtime_safe")
+    if risk in {"workspace_write", "external_or_unknown", "plugin_action"}:
+        return ApprovalPolicyDecision("ask", risk)
+    return ApprovalPolicyDecision("allow", "read_only")
+
+
 def tool_requires_review(tool_name: str, risk: str, permission_mode: str = "ask") -> bool:
     """Return whether policy requires a person before this call executes."""
-    if permission_mode == "full_access":
-        return False
-    if tool_name == "clipboard.read":
-        return True
-    if permission_mode == "auto":
-        return risk == "external_or_unknown"
-    return risk in {"workspace_write", "external_or_unknown"}
+    return approval_policy_decision(tool_name, risk, permission_mode).decision in {"ask", "review"}
 
 
 class ToolReviewMiddleware(AgentMiddleware):
@@ -70,14 +94,16 @@ class ToolReviewMiddleware(AgentMiddleware):
         store = getattr(context, "store", None)
         run_id = str(getattr(context, "run_id", None) or "")
         execution_attempt_id = str(getattr(context, "execution_attempt_id", None) or "")
-        tool_version = str(getattr(context, "graph_definition_id", None) or "")
-        execution_namespace = execution_scope_from_messages(current_execution_namespace(), messages)
+        execution_namespace = canonical_tool_execution_scope(
+            execution_scope_from_messages(current_execution_namespace(), messages)
+        )
         permission_mode = str(getattr(context, "permission_mode", "ask") or "ask")
         if not isinstance(store, LocalStore) or not run_id or not execution_attempt_id:
             raise ToolReviewStateError("tool review is missing durable Runtime context")
 
         review_calls: list[tuple[int, ToolCall, dict[str, Any]]] = []
         action_requests: list[dict[str, Any]] = []
+        model_review_calls: list[tuple[int, ToolCall, dict[str, Any]]] = []
         artificial_messages: list[ToolMessage] = []
         tool_registry = getattr(context, "tool_registry", None)
         if not isinstance(tool_registry, dict):
@@ -88,7 +114,8 @@ class ToolReviewMiddleware(AgentMiddleware):
             if not tool_name:
                 raise ToolReviewStateError("tool review requires stable call ids and names")
             arguments = call.get("args") or {}
-            operation_id, arguments_hash, _arguments_json = tool_operation_identity(
+            tool_version = await tool_version_for_invocation(context, tool_name, arguments)
+            operation_id, arguments_hash, arguments_json = tool_operation_identity(
                 run_id=run_id,
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -119,8 +146,18 @@ class ToolReviewMiddleware(AgentMiddleware):
                     message=message,
                 )
                 continue
-            if not tool_requires_review(tool_name, risk, permission_mode):
-                continue
+            receipt = await store.prepare_tool_receipt(
+                operation_id=operation_id,
+                run_id=run_id,
+                execution_attempt_id=execution_attempt_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                execution_namespace=execution_namespace,
+                arguments_hash=arguments_hash,
+                arguments_json=arguments_json,
+                risk=risk,
+            )
             current_permission = await store.get_permission_for_operation(
                 run_id=run_id, operation_id=operation_id
             )
@@ -137,6 +174,22 @@ class ToolReviewMiddleware(AgentMiddleware):
                     arguments_hash=arguments_hash,
                     risk=risk,
                 ):
+                    await _record_review_decision(
+                        store=store,
+                        run_id=run_id,
+                        receipt=receipt,
+                        decision="allow",
+                        source="run_grant",
+                        reason="A matching run-scoped user grant is active.",
+                        model=None,
+                    )
+                    _emit_auto_approved(
+                        operation_id=operation_id,
+                        tool_name=tool_name,
+                        risk=risk,
+                        source="run_grant",
+                        reason="A matching run-scoped user grant is active.",
+                    )
                     continue
             metadata = {
                 "tool_call_id": tool_call_id,
@@ -145,16 +198,134 @@ class ToolReviewMiddleware(AgentMiddleware):
                 "arguments_hash": arguments_hash,
                 "risk": risk,
             }
-            review_calls.append((index, call, metadata))
-            action_requests.append(
-                {
-                    "name": tool_name,
-                    "args": arguments,
+            persisted_decision = str(receipt.get("review_decision") or "")
+            if persisted_decision == "allow":
+                continue
+            if persisted_decision == "ask" or current_permission is not None:
+                persisted_metadata = {
                     **metadata,
-                    "description": _review_description(tool_name, arguments, risk),
-                    "allowed_decisions": ["approve", "edit", "reject"],
+                    **(
+                        {"review_source": str(receipt["review_source"])}
+                        if receipt.get("review_source")
+                        else {}
+                    ),
+                    **(
+                        {"review_reason": str(receipt["review_reason"])}
+                        if receipt.get("review_reason")
+                        else {}
+                    ),
                 }
+                _append_human_review(
+                    review_calls,
+                    action_requests,
+                    index=index,
+                    call=call,
+                    metadata=persisted_metadata,
+                )
+                continue
+            policy = approval_policy_decision(tool_name, risk, permission_mode)
+            if policy.decision == "allow":
+                await _record_review_decision(
+                    store=store,
+                    run_id=run_id,
+                    receipt=receipt,
+                    decision="allow",
+                    source="rule",
+                    reason=policy.reason,
+                    model=None,
+                )
+                _emit_auto_approved(
+                    operation_id=operation_id,
+                    tool_name=tool_name,
+                    risk=risk,
+                    source="rule",
+                    reason=policy.reason,
+                )
+                continue
+            if policy.decision == "review":
+                model_review_calls.append((index, call, metadata))
+                continue
+            await _record_review_decision(
+                store=store,
+                run_id=run_id,
+                receipt=receipt,
+                decision="ask",
+                source="rule",
+                reason=policy.reason,
+                model=None,
             )
+            _append_human_review(
+                review_calls,
+                action_requests,
+                index=index,
+                call=call,
+                metadata=metadata,
+            )
+
+        if model_review_calls:
+            review_actions = [
+                {
+                    "operation_id": metadata["operation_id"],
+                    "tool_name": call["name"],
+                    "risk": metadata["risk"],
+                    "arguments": call.get("args") or {},
+                }
+                for _index, call, metadata in model_review_calls
+            ]
+            try:
+                model_decisions = await review_approval_batch(
+                    model=(
+                        getattr(context, "approval_model", None) or getattr(context, "model", None)
+                    ),
+                    task_goal=str(getattr(context, "task_goal", None) or ""),
+                    actions=review_actions,
+                )
+                review_source = "llm"
+                review_model = str(getattr(context, "mode", None) or "") or None
+            except ApprovalReviewUnavailable:
+                model_decisions = {
+                    metadata["operation_id"]: {
+                        "decision": "ask",
+                        "reason": "The model reviewer is unavailable; fallback policy requires confirmation.",
+                    }
+                    for _index, _call, metadata in model_review_calls
+                }
+                review_source = "fallback"
+                review_model = None
+            for index, call, metadata in model_review_calls:
+                reviewed = model_decisions[metadata["operation_id"]]
+                receipt = await store.get_tool_receipt(metadata["operation_id"])
+                if receipt is None:
+                    raise ToolReviewStateError("tool review receipt disappeared before decision")
+                await _record_review_decision(
+                    store=store,
+                    run_id=run_id,
+                    receipt=receipt,
+                    decision=reviewed["decision"],
+                    source=review_source,
+                    reason=reviewed["reason"],
+                    model=review_model,
+                )
+                if reviewed["decision"] == "allow":
+                    _emit_auto_approved(
+                        operation_id=metadata["operation_id"],
+                        tool_name=call["name"],
+                        risk=metadata["risk"],
+                        source=review_source,
+                        reason=reviewed["reason"],
+                    )
+                    continue
+                _append_human_review(
+                    review_calls,
+                    action_requests,
+                    index=index,
+                    call=call,
+                    metadata={
+                        **metadata,
+                        "review_source": review_source,
+                        "review_reason": reviewed["reason"],
+                    },
+                )
 
         if not review_calls:
             if not artificial_messages:
@@ -192,6 +363,19 @@ class ToolReviewMiddleware(AgentMiddleware):
                 if str(edited.get("name") or "") != original_call["name"]:
                     raise ToolReviewStateError("tool review cannot change the tool name")
                 edited_args = edited["args"]
+                edited_call_id = _edited_tool_call_id(original_call["id"], edited_args)
+                edited_call = ToolCall(
+                    type="tool_call",
+                    id=edited_call_id,
+                    name=original_call["name"],
+                    args=edited_args,
+                )
+                await _cancel_replaced_receipt(
+                    store=store,
+                    run_id=run_id,
+                    operation_id=metadata["operation_id"],
+                )
+                revised_calls[index] = edited_call
                 validation_error = _tool_input_error(
                     tool_registry.get(original_call["name"]), edited_args
                 )
@@ -199,42 +383,31 @@ class ToolReviewMiddleware(AgentMiddleware):
                     message = ToolMessage(
                         content=validation_error,
                         name=original_call["name"],
-                        tool_call_id=original_call["id"],
+                        tool_call_id=edited_call_id,
                         status="error",
                     )
                     artificial_messages.append(message)
                     edited_operation_id, edited_arguments_hash, _ = tool_operation_identity(
                         run_id=run_id,
-                        tool_call_id=original_call["id"],
+                        tool_call_id=edited_call_id,
                         tool_name=original_call["name"],
                         arguments=edited_args,
-                        tool_version=tool_version,
+                        tool_version=metadata["tool_version"],
                         execution_namespace=execution_namespace,
                     )
                     await _record_preflight_failure(
                         store=store,
                         run_id=run_id,
                         execution_attempt_id=execution_attempt_id,
-                        tool_version=tool_version,
+                        tool_version=metadata["tool_version"],
                         execution_namespace=execution_namespace,
-                        call=ToolCall(
-                            type="tool_call",
-                            id=original_call["id"],
-                            name=original_call["name"],
-                            args=edited_args,
-                        ),
+                        call=edited_call,
                         operation_id=edited_operation_id,
                         arguments_hash=edited_arguments_hash,
                         risk=tool_risk(original_call["name"]),
                         message=message,
                     )
                     continue
-                revised_calls[index] = ToolCall(
-                    type="tool_call",
-                    id=original_call["id"],
-                    name=original_call["name"],
-                    args=edited_args,
-                )
                 continue
             if decision_type != "reject":
                 raise ToolReviewStateError("unsupported tool review decision")
@@ -249,7 +422,7 @@ class ToolReviewMiddleware(AgentMiddleware):
                 store=store,
                 run_id=run_id,
                 execution_attempt_id=execution_attempt_id,
-                tool_version=tool_version,
+                tool_version=metadata["tool_version"],
                 execution_namespace=execution_namespace,
                 call=original_call,
                 metadata=metadata,
@@ -258,6 +431,110 @@ class ToolReviewMiddleware(AgentMiddleware):
 
         revised_ai = last_ai.model_copy(update={"tool_calls": revised_calls})
         return {"messages": [revised_ai, *artificial_messages]}
+
+
+def _append_human_review(
+    review_calls: list[tuple[int, ToolCall, dict[str, Any]]],
+    action_requests: list[dict[str, Any]],
+    *,
+    index: int,
+    call: ToolCall,
+    metadata: dict[str, Any],
+) -> None:
+    review_calls.append((index, call, metadata))
+    action_requests.append(
+        {
+            "name": call["name"],
+            "args": call.get("args") or {},
+            **metadata,
+            "description": _review_description(
+                call["name"], call.get("args") or {}, metadata["risk"]
+            ),
+            "allowed_decisions": ["approve", "edit", "reject"],
+        }
+    )
+
+
+async def _record_review_decision(
+    *,
+    store: LocalStore,
+    run_id: str,
+    receipt: dict[str, Any],
+    decision: str,
+    source: str,
+    reason: str,
+    model: str | None,
+) -> None:
+    await store.record_tool_review(
+        operation_id=str(receipt["operation_id"]),
+        run_id=run_id,
+        decision=decision,
+        source=source,
+        reason=reason,
+        model=model,
+    )
+
+
+def _edited_tool_call_id(original_call_id: str, edited_args: dict[str, Any]) -> str:
+    rendered = json.dumps(
+        edited_args,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()[:16]
+    return f"{original_call_id}__edit_{digest}"
+
+
+async def _cancel_replaced_receipt(
+    *,
+    store: LocalStore,
+    run_id: str,
+    operation_id: str,
+) -> None:
+    receipt = await store.get_tool_receipt(operation_id)
+    if receipt is None:
+        raise ToolReviewStateError("edited tool receipt disappeared before replacement")
+    if receipt.get("status") == "canceled":
+        return
+    await store.settle_tool_receipt(
+        operation_id=operation_id,
+        run_id=run_id,
+        status="canceled",
+        error_type="ToolReviewEdited",
+    )
+
+
+def _emit_auto_approved(
+    *,
+    operation_id: str,
+    tool_name: str,
+    risk: str,
+    source: str,
+    reason: str,
+) -> None:
+    if risk not in {"workspace_write", "plugin_action", "external_or_unknown"}:
+        return
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        return
+    writer(
+        {
+            "event": "permission.auto_approved",
+            "data": {
+                "request_id": operation_id,
+                "operation_id": operation_id,
+                "tool": tool_name,
+                "tool_name": tool_name,
+                "risk": risk,
+                "source": source,
+                "reason": reason,
+                "scope": "run",
+            },
+        }
+    )
 
 
 async def _verify_persisted_decision(

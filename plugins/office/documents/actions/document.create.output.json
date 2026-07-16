@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["filename", "paragraph_count", "table_count", "warnings"],
+  "properties": {
+    "filename": {"type": "string", "minLength": 1, "maxLength": 255},
+    "paragraph_count": {"type": "integer", "minimum": 0},
+    "table_count": {"type": "integer", "minimum": 0},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

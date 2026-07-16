@@ -22,6 +22,8 @@ SheJane (石间) is an agentic chat product. Code-level identifiers (package nam
 - `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
 - `apps/desktop/` — Electron/React client; local projection of Runtime-owned conversations.
 - `packages/runtime-sdk/` — public TypeScript SDK for Runtime commands, SSE, snapshots, and generated protocol types.
+- `plugins/` — public WASI and Managed Worker packages, fixtures, workers, and locked Runtime Asset recipes.
+- `docs/plugins/` — public plugin contracts, security model, isolation decisions, and developer guide.
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
 

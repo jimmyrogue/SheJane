@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     checkpoint_db_filename: str = "agent.db"
     store_db_filename: str = "store.db"
     local_db_filename: str = "local-host.db"
+    managed_worker_vm_assets: Path | None = None
+    managed_worker_linux_assets: Path | None = None
+
+    @field_validator("managed_worker_vm_assets", "managed_worker_linux_assets")
+    @classmethod
+    def require_absolute_vm_assets(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("Managed Worker asset manifest must be absolute")
+        return value
 
     # When set, the agent uses a deterministic in-process fake LLM instead of
     # any model provider — no network, no key. Used by the SSE contract test to

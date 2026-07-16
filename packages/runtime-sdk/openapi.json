@@ -296,6 +296,24 @@
             "title": "Permission Mode",
             "type": "string"
           },
+          "plugin_command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginCommandReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_refs": {
+            "items": {
+              "$ref": "#/components/schemas/PluginReference"
+            },
+            "maxItems": 32,
+            "title": "Plugin Refs",
+            "type": "array"
+          },
           "protocol_version": {
             "maximum": 65535.0,
             "minimum": 1.0,
@@ -594,6 +612,26 @@
           },
           "run_id": {
             "title": "Run Id",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "storage_kind": {
+            "default": "inline_text",
+            "enum": [
+              "inline_text",
+              "blob"
+            ],
+            "title": "Storage Kind",
             "type": "string"
           },
           "title": {
@@ -1725,6 +1763,40 @@
         "title": "ListLocalModelProvidersResponse",
         "type": "object"
       },
+      "ListPluginSourcesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSourceSummary"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "title": "ListPluginSourcesResponse",
+        "type": "object"
+      },
+      "ListPluginsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSummary"
+            },
+            "title": "Plugins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plugins"
+        ],
+        "title": "ListPluginsResponse",
+        "type": "object"
+      },
       "ListRunsResponse": {
         "properties": {
           "runs": {
@@ -1843,10 +1915,18 @@
         "type": "object"
       },
       "LocalArtifact": {
-        "description": "Slim representation for `GET /artifacts/:id` (UI quoting).\n\nThe full row in `local_artifacts` (run_id, kind, content_type,\nbytes, metadata_json) is intentionally NOT returned here — that\npayload is for the diagnostics panel, not the chat surface.",
+        "description": "Authorized Artifact metadata; blob bodies use the separate content route.",
         "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
           "content": {
             "title": "Content",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
             "type": "string"
           },
           "created_at": {
@@ -1855,6 +1935,25 @@
           },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "storage_kind": {
+            "enum": [
+              "inline_text",
+              "blob"
+            ],
+            "title": "Storage Kind",
             "type": "string"
           },
           "title": {
@@ -1877,6 +1976,9 @@
           "id",
           "title",
           "content",
+          "content_type",
+          "bytes",
+          "storage_kind",
           "created_at"
         ],
         "title": "LocalArtifact",
@@ -3342,6 +3444,1663 @@
         "title": "PlanResolveCommandReceipt",
         "type": "object"
       },
+      "PluginActionLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "memory_mb": {
+            "title": "Memory Mb",
+            "type": "integer"
+          },
+          "output_mb": {
+            "title": "Output Mb",
+            "type": "integer"
+          },
+          "timeout_ms": {
+            "title": "Timeout Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "timeout_ms",
+          "memory_mb",
+          "output_mb"
+        ],
+        "title": "PluginActionLimits",
+        "type": "object"
+      },
+      "PluginActionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "consumes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Consumes",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "determinism": {
+            "enum": [
+              "pure",
+              "input_stable",
+              "nondeterministic"
+            ],
+            "title": "Determinism",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "enum": [
+                "read",
+                "artifact"
+              ],
+              "type": "string"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/PluginActionLimits"
+          },
+          "produces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Produces",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "consumes",
+          "produces",
+          "effects",
+          "determinism",
+          "capabilities",
+          "limits"
+        ],
+        "title": "PluginActionSummary",
+        "type": "object"
+      },
+      "PluginCommandReference": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "command_id"
+        ],
+        "title": "PluginCommandReference",
+        "type": "object"
+      },
+      "PluginCommandSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "required_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Actions",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "required_actions"
+        ],
+        "title": "PluginCommandSummary",
+        "type": "object"
+      },
+      "PluginDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/PluginActionSummary"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/PluginCommandSummary"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "compatibility": {
+            "enum": [
+              "compatible",
+              "incompatible"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "execution_kind": {
+            "enum": [
+              "wasi",
+              "managed_worker"
+            ],
+            "title": "Execution Kind",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/PluginPathContributionSummary"
+            },
+            "title": "Mcp Servers",
+            "type": "array"
+          },
+          "model_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginModelBindingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "$ref": "#/components/schemas/PluginPublisherSummary"
+          },
+          "retired": {
+            "title": "Retired",
+            "type": "boolean"
+          },
+          "signature_status": {
+            "enum": [
+              "unsigned",
+              "verified"
+            ],
+            "title": "Signature Status",
+            "type": "string"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/PluginPathContributionSummary"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/PluginVersionSummary"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "digest",
+          "publisher",
+          "execution_kind",
+          "signature_status",
+          "compatibility",
+          "enabled",
+          "retired",
+          "description",
+          "actions",
+          "skills",
+          "commands",
+          "mcp_servers",
+          "versions"
+        ],
+        "title": "PluginDetail",
+        "type": "object"
+      },
+      "PluginDisableCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.disable",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type"
+        ],
+        "title": "PluginDisableCommand",
+        "type": "object"
+      },
+      "PluginEnableCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.enable",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type"
+        ],
+        "title": "PluginEnableCommand",
+        "type": "object"
+      },
+      "PluginInstallCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_unsigned": {
+            "default": false,
+            "title": "Allow Unsigned",
+            "type": "boolean"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "source_path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Source Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.install",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "source_path"
+        ],
+        "title": "PluginInstallCommand",
+        "type": "object"
+      },
+      "PluginInstallCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "installed": {
+            "const": true,
+            "default": true,
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.install",
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "version",
+          "digest",
+          "enabled"
+        ],
+        "title": "PluginInstallCommandReceipt",
+        "type": "object"
+      },
+      "PluginModelBindCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "title": "Binding Id",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^local:[^:\\s]+:\\S+$",
+            "title": "Model",
+            "type": "string"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.model.bind",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type",
+          "binding_id",
+          "model"
+        ],
+        "title": "PluginModelBindCommand",
+        "type": "object"
+      },
+      "PluginModelBindCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "model_binding": {
+            "$ref": "#/components/schemas/PluginModelBindingSummary"
+          },
+          "model_binding_revision": {
+            "title": "Model Binding Revision",
+            "type": "integer"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.model.bind",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "digest",
+          "model_binding_revision",
+          "model_binding"
+        ],
+        "title": "PluginModelBindCommandReceipt",
+        "type": "object"
+      },
+      "PluginModelBindingSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "provider_id": {
+            "title": "Provider Id",
+            "type": "string"
+          },
+          "provider_version": {
+            "title": "Provider Version",
+            "type": "integer"
+          },
+          "requested_model": {
+            "title": "Requested Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "requested_model",
+          "provider_id",
+          "provider_version",
+          "model_id"
+        ],
+        "title": "PluginModelBindingSummary",
+        "type": "object"
+      },
+      "PluginPathContributionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path"
+        ],
+        "title": "PluginPathContributionSummary",
+        "type": "object"
+      },
+      "PluginPublisherSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PluginPublisherSummary",
+        "type": "object"
+      },
+      "PluginReference": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plugin_id"
+        ],
+        "title": "PluginReference",
+        "type": "object"
+      },
+      "PluginRemoveCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.remove",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type"
+        ],
+        "title": "PluginRemoveCommand",
+        "type": "object"
+      },
+      "PluginRemoveCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "const": false,
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "retired": {
+            "const": true,
+            "default": true,
+            "title": "Retired",
+            "type": "boolean"
+          },
+          "type": {
+            "const": "plugin.remove",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "digest"
+        ],
+        "title": "PluginRemoveCommandReceipt",
+        "type": "object"
+      },
+      "PluginRollbackCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "target_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Target Digest",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.rollback",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type",
+          "target_digest"
+        ],
+        "title": "PluginRollbackCommand",
+        "type": "object"
+      },
+      "PluginSourceAddCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "index_url": {
+            "maxLength": 2048,
+            "minLength": 9,
+            "pattern": "^https://\\S+$",
+            "title": "Index Url",
+            "type": "string"
+          },
+          "public_key": {
+            "maxLength": 44,
+            "minLength": 44,
+            "title": "Public Key",
+            "type": "string"
+          },
+          "signature_url": {
+            "maxLength": 2048,
+            "minLength": 9,
+            "pattern": "^https://\\S+$",
+            "title": "Signature Url",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.source.add",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "index_url",
+          "signature_url",
+          "public_key"
+        ],
+        "title": "PluginSourceAddCommand",
+        "type": "object"
+      },
+      "PluginSourceCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "index_sha256": {
+            "title": "Index Sha256",
+            "type": "string"
+          },
+          "package_count": {
+            "title": "Package Count",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "plugin.source.add",
+              "plugin.source.refresh"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "source_id",
+          "revision",
+          "index_sha256",
+          "package_count",
+          "changed"
+        ],
+        "title": "PluginSourceCommandReceipt",
+        "type": "object"
+      },
+      "PluginSourceDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "index_sha256": {
+            "title": "Index Sha256",
+            "type": "string"
+          },
+          "index_url": {
+            "title": "Index Url",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "package_count": {
+            "title": "Package Count",
+            "type": "integer"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSourcePackageSummary"
+            },
+            "title": "Packages",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "name",
+          "index_url",
+          "key_id",
+          "index_sha256",
+          "package_count",
+          "revision",
+          "updated_at",
+          "packages"
+        ],
+        "title": "PluginSourceDetail",
+        "type": "object"
+      },
+      "PluginSourceInstallCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "execution_kind": {
+            "enum": [
+              "wasi",
+              "managed_worker"
+            ],
+            "title": "Execution Kind",
+            "type": "string"
+          },
+          "expected_active_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Active Digest"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "package_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Package Digest",
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "any",
+              "darwin/arm64",
+              "darwin/amd64",
+              "linux/arm64",
+              "linux/amd64",
+              "windows/arm64",
+              "windows/amd64"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "source_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.source.install",
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "source_id",
+          "expected_revision",
+          "type",
+          "plugin_id",
+          "version",
+          "execution_kind",
+          "platform",
+          "package_digest"
+        ],
+        "title": "PluginSourceInstallCommand",
+        "type": "object"
+      },
+      "PluginSourceInstallCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "installed": {
+            "const": true,
+            "default": true,
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "previous_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Digest"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_revision": {
+            "title": "Source Revision",
+            "type": "integer"
+          },
+          "type": {
+            "const": "plugin.source.install",
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "source_id",
+          "source_revision",
+          "plugin_id",
+          "version",
+          "digest",
+          "enabled"
+        ],
+        "title": "PluginSourceInstallCommandReceipt",
+        "type": "object"
+      },
+      "PluginSourcePackageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "consumes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Consumes",
+            "type": "array"
+          },
+          "execution_kind": {
+            "enum": [
+              "wasi",
+              "managed_worker"
+            ],
+            "title": "Execution Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "package_digest": {
+            "title": "Package Digest",
+            "type": "string"
+          },
+          "package_size_bytes": {
+            "title": "Package Size Bytes",
+            "type": "integer"
+          },
+          "package_url": {
+            "title": "Package Url",
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "any",
+              "darwin/arm64",
+              "darwin/amd64",
+              "linux/arm64",
+              "linux/amd64",
+              "windows/arm64",
+              "windows/amd64"
+            ],
+            "title": "Platform",
+            "type": "string"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "produces": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Produces",
+            "type": "array"
+          },
+          "publisher_id": {
+            "title": "Publisher Id",
+            "type": "string"
+          },
+          "release_notes": {
+            "title": "Release Notes",
+            "type": "string"
+          },
+          "runtime_min_version": {
+            "title": "Runtime Min Version",
+            "type": "string"
+          },
+          "signer_key_id": {
+            "title": "Signer Key Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "version",
+          "name",
+          "publisher_id",
+          "runtime_min_version",
+          "execution_kind",
+          "platform",
+          "package_url",
+          "package_size_bytes",
+          "package_digest",
+          "signer_key_id",
+          "capabilities",
+          "consumes",
+          "produces",
+          "release_notes"
+        ],
+        "title": "PluginSourcePackageSummary",
+        "type": "object"
+      },
+      "PluginSourceRefreshCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "source_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.source.refresh",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "source_id",
+          "expected_revision",
+          "type"
+        ],
+        "title": "PluginSourceRefreshCommand",
+        "type": "object"
+      },
+      "PluginSourceRemoveCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "source_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.source.remove",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "source_id",
+          "expected_revision",
+          "type"
+        ],
+        "title": "PluginSourceRemoveCommand",
+        "type": "object"
+      },
+      "PluginSourceRemoveCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "removed": {
+            "const": true,
+            "default": true,
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.source.remove",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "source_id"
+        ],
+        "title": "PluginSourceRemoveCommandReceipt",
+        "type": "object"
+      },
+      "PluginSourceSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "index_sha256": {
+            "title": "Index Sha256",
+            "type": "string"
+          },
+          "index_url": {
+            "title": "Index Url",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "package_count": {
+            "title": "Package Count",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "name",
+          "index_url",
+          "key_id",
+          "index_sha256",
+          "package_count",
+          "revision",
+          "updated_at"
+        ],
+        "title": "PluginSourceSummary",
+        "type": "object"
+      },
+      "PluginStateCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "plugin.enable",
+              "plugin.disable"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "digest",
+          "enabled"
+        ],
+        "title": "PluginStateCommandReceipt",
+        "type": "object"
+      },
+      "PluginSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "compatibility": {
+            "enum": [
+              "compatible",
+              "incompatible"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "execution_kind": {
+            "enum": [
+              "wasi",
+              "managed_worker"
+            ],
+            "title": "Execution Kind",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "$ref": "#/components/schemas/PluginPublisherSummary"
+          },
+          "retired": {
+            "title": "Retired",
+            "type": "boolean"
+          },
+          "signature_status": {
+            "enum": [
+              "unsigned",
+              "verified"
+            ],
+            "title": "Signature Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "digest",
+          "publisher",
+          "execution_kind",
+          "signature_status",
+          "compatibility",
+          "enabled",
+          "retired"
+        ],
+        "title": "PluginSummary",
+        "type": "object"
+      },
+      "PluginUpdateCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_unsigned": {
+            "default": false,
+            "title": "Allow Unsigned",
+            "type": "boolean"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "plugin_id": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "source_path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Source Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.update",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "plugin_id",
+          "type",
+          "source_path"
+        ],
+        "title": "PluginUpdateCommand",
+        "type": "object"
+      },
+      "PluginVersionSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "compatibility": {
+            "enum": [
+              "compatible",
+              "incompatible"
+            ],
+            "title": "Compatibility",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "signature_status": {
+            "enum": [
+              "unsigned",
+              "verified"
+            ],
+            "title": "Signature Status",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "installed",
+              "retired"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "digest",
+          "signature_status",
+          "compatibility",
+          "state",
+          "active",
+          "created_at"
+        ],
+        "title": "PluginVersionSummary",
+        "type": "object"
+      },
+      "PluginVersionSwitchCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "previous_digest": {
+            "title": "Previous Digest",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "plugin.update",
+              "plugin.rollback"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "version",
+          "previous_digest",
+          "digest",
+          "enabled"
+        ],
+        "title": "PluginVersionSwitchCommandReceipt",
+        "type": "object"
+      },
       "QuestionAnswer": {
         "properties": {
           "answered": {
@@ -3567,6 +5326,94 @@
           "decision"
         ],
         "title": "ResolvePlanApprovalRequest",
+        "type": "object"
+      },
+      "RuntimeAssetInstallCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Digest"
+          },
+          "source_path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Source Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.runtime_asset.install",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "source_path"
+        ],
+        "title": "RuntimeAssetInstallCommand",
+        "type": "object"
+      },
+      "RuntimeAssetInstallCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "installed": {
+            "const": true,
+            "default": true,
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.runtime_asset.install",
+            "title": "Type",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "asset_id",
+          "version",
+          "platform",
+          "digest"
+        ],
+        "title": "RuntimeAssetInstallCommandReceipt",
         "type": "object"
       },
       "RuntimeInfo": {
@@ -4299,6 +6146,43 @@
         "summary": "Get Artifact"
       }
     },
+    "/local/v1/artifacts/{artifact_id}/content": {
+      "get": {
+        "operationId": "get_artifact_content_local_v1_artifacts__artifact_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Artifact Content"
+      }
+    },
     "/local/v1/commands": {
       "post": {
         "operationId": "accept_command_local_v1_commands_post",
@@ -4321,6 +6205,42 @@
                   },
                   {
                     "$ref": "#/components/schemas/ToolReconcileCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginInstallCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginModelBindCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginSourceAddCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginSourceInstallCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginSourceRefreshCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginSourceRemoveCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RuntimeAssetInstallCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginEnableCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginDisableCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginUpdateCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginRollbackCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginRemoveCommand"
                   }
                 ],
                 "title": "Body"
@@ -4349,6 +6269,33 @@
                     },
                     {
                       "$ref": "#/components/schemas/ToolReconcileCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginInstallCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginModelBindCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginSourceCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginSourceInstallCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginSourceRemoveCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RuntimeAssetInstallCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginStateCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginVersionSwitchCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginRemoveCommandReceipt"
                     }
                   ],
                   "title": "Response Accept Command Local V1 Commands Post"
@@ -4807,6 +6754,120 @@
           }
         },
         "summary": "Resolve Plan Approval"
+      }
+    },
+    "/local/v1/plugin-sources": {
+      "get": {
+        "operationId": "list_plugin_sources_local_v1_plugin_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPluginSourcesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Plugin Sources"
+      }
+    },
+    "/local/v1/plugin-sources/{source_id}": {
+      "get": {
+        "operationId": "inspect_plugin_source_local_v1_plugin_sources__source_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "title": "Source Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginSourceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect Plugin Source"
+      }
+    },
+    "/local/v1/plugins": {
+      "get": {
+        "operationId": "list_plugins_local_v1_plugins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPluginsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Plugins"
+      }
+    },
+    "/local/v1/plugins/{plugin_id}": {
+      "get": {
+        "operationId": "inspect_plugin_local_v1_plugins__plugin_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect Plugin"
       }
     },
     "/local/v1/pptx-outline": {

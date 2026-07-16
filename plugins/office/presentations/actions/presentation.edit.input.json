@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["input_id", "operations"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "output_filename": {"type": "string", "minLength": 6, "maxLength": 255, "pattern": "^[^/\\\\]+\\.pptx$"},
+    "operations": {
+      "type": "array", "minItems": 1, "maxItems": 128,
+      "items": {
+        "oneOf": [
+          {"type": "object", "additionalProperties": false, "required": ["type", "slide"], "properties": {"type": {"const": "add_slide"}, "slide": {"$ref": "#/$defs/slide"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "index", "content"], "properties": {"type": {"const": "update_slide"}, "index": {"$ref": "#/$defs/index"}, "content": {"$ref": "#/$defs/content"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "index"], "properties": {"type": {"const": "delete_slide"}, "index": {"$ref": "#/$defs/index"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "from_index", "to_index"], "properties": {"type": {"const": "move_slide"}, "from_index": {"$ref": "#/$defs/index"}, "to_index": {"$ref": "#/$defs/index"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "index", "image"], "properties": {"type": {"const": "add_image"}, "index": {"$ref": "#/$defs/index"}, "image": {"$ref": "#/$defs/image"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "index", "text_box"], "properties": {"type": {"const": "add_text_box"}, "index": {"$ref": "#/$defs/index"}, "text_box": {"$ref": "#/$defs/text_box"}}},
+          {"type": "object", "additionalProperties": false, "required": ["type", "index", "table"], "properties": {"type": {"const": "add_table"}, "index": {"$ref": "#/$defs/index"}, "table": {"$ref": "#/$defs/table"}}}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "index": {"type": "integer", "minimum": 0, "maximum": 9999},
+    "text": {"type": "string", "maxLength": 10000},
+    "font_name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "coordinate": {"type": "number", "minimum": 0, "maximum": 100},
+    "extent": {"type": "number", "exclusiveMinimum": 0, "maximum": 100},
+    "bullet": {
+      "type": "object", "additionalProperties": false, "required": ["text"],
+      "properties": {
+        "text": {"$ref": "#/$defs/text"}, "level": {"type": "integer", "minimum": 0, "maximum": 8},
+        "font_name": {"$ref": "#/$defs/font_name"}, "font_size": {"type": "number", "minimum": 1, "maximum": 400}
+      }
+    },
+    "slide": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "layout": {"type": "string", "minLength": 1, "maxLength": 200},
+        "title": {"$ref": "#/$defs/text"}, "subtitle": {"$ref": "#/$defs/text"},
+        "notes": {"type": "string", "maxLength": 50000}, "font_name": {"$ref": "#/$defs/font_name"},
+        "bullets": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/bullet"}}
+      }
+    },
+    "image": {
+      "type": "object", "additionalProperties": false, "required": ["input_id", "left", "top", "width"],
+      "properties": {
+        "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "left": {"$ref": "#/$defs/coordinate"}, "top": {"$ref": "#/$defs/coordinate"},
+        "width": {"$ref": "#/$defs/extent"}, "height": {"$ref": "#/$defs/extent"}
+      }
+    },
+    "text_box": {
+      "type": "object", "additionalProperties": false, "required": ["text", "left", "top", "width", "height"],
+      "properties": {
+        "text": {"$ref": "#/$defs/text"}, "left": {"$ref": "#/$defs/coordinate"},
+        "top": {"$ref": "#/$defs/coordinate"}, "width": {"$ref": "#/$defs/extent"},
+        "height": {"$ref": "#/$defs/extent"}, "font_name": {"$ref": "#/$defs/font_name"},
+        "font_size": {"type": "number", "minimum": 1, "maximum": 400}
+      }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false, "required": ["rows", "left", "top", "width", "height"],
+      "properties": {
+        "rows": {"type": "array", "minItems": 1, "maxItems": 1000, "items": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"$ref": "#/$defs/text"}}},
+        "left": {"$ref": "#/$defs/coordinate"}, "top": {"$ref": "#/$defs/coordinate"},
+        "width": {"$ref": "#/$defs/extent"}, "height": {"$ref": "#/$defs/extent"}
+      }
+    },
+    "content": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "title": {"type": "string", "maxLength": 10000},
+        "subtitle": {"type": "string", "maxLength": 10000},
+        "notes": {"type": "string", "maxLength": 50000},
+        "bullets": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/bullet"}}
+      }
+    }
+  }
+}

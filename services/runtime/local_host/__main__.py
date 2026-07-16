@@ -19,6 +19,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, help="loopback listener port")
     parser.add_argument("--token", help="Desktop pairing token")
     parser.add_argument("--data-dir", type=Path, help="Runtime data directory")
+    parser.add_argument(
+        "--managed-worker-vm-assets",
+        type=Path,
+        help="bundled macOS Managed Worker VM asset manifest",
+    )
+    parser.add_argument(
+        "--managed-worker-linux-assets",
+        type=Path,
+        help="bundled Linux Managed Worker asset manifest",
+    )
     return parser.parse_args(argv)
 
 
@@ -33,6 +43,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "port": args.port,
             "pairing_token": args.token,
             "data_dir": args.data_dir,
+            "managed_worker_vm_assets": args.managed_worker_vm_assets,
+            "managed_worker_linux_assets": args.managed_worker_linux_assets,
         }.items()
         if value is not None
     }

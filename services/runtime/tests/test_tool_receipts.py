@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from langchain.agents.middleware import ToolCallRequest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 
@@ -18,7 +18,9 @@ from local_host.middleware.tool_execution import (
     MAX_MODEL_TOOL_RESULT_BYTES,
     ToolExecutionMiddleware,
     _batch_order_key,
+    canonical_tool_execution_scope,
     execution_namespace_from_config,
+    execution_scope_from_messages,
     serialize_tool_result,
     tool_operation_identity,
 )
@@ -94,6 +96,13 @@ def test_batch_order_key_shares_siblings_but_isolates_subagents() -> None:
     assert _batch_order_key("tools:parent-a|agent:x|tools:a|batch_hash") != (
         _batch_order_key("tools:parent-b|agent:x|tools:b|batch_hash")
     )
+
+
+def test_canonical_tool_scope_matches_review_and_execution_nodes() -> None:
+    review = "agent:parent|ToolReviewMiddleware.after_model:review|batch_hash"
+    execution = "agent:parent|tools:execute|batch_hash"
+
+    assert canonical_tool_execution_scope(review) == canonical_tool_execution_scope(execution)
 
 
 def test_long_batch_namespaces_preserve_parent_identity() -> None:
@@ -335,6 +344,200 @@ async def test_completed_tool_result_replays_without_second_execution(tmp_path: 
         assert len(receipts) == 1
         assert receipts[0]["status"] == "completed"
         assert receipts[0]["attempt_count"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_receipt_persists_auto_review_decision_for_replay(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    try:
+        receipt = await store.prepare_tool_receipt(
+            operation_id="op-review-1",
+            run_id=str(run["id"]),
+            execution_attempt_id="job-review:1",
+            execution_namespace="main",
+            tool_call_id="call-review-1",
+            tool_name="execute",
+            tool_version="graph-v1",
+            arguments_hash="args-v1",
+            arguments_json='{"command":"make test"}',
+            risk="external_or_unknown",
+        )
+
+        reviewed = await store.record_tool_review(
+            operation_id=str(receipt["operation_id"]),
+            run_id=str(run["id"]),
+            decision="allow",
+            source="llm",
+            reason="The command directly implements the request.",
+            model="local:test:model",
+        )
+        replayed = await store.record_tool_review(
+            operation_id=str(receipt["operation_id"]),
+            run_id=str(run["id"]),
+            decision="allow",
+            source="llm",
+            reason="The command directly implements the request.",
+            model="local:test:model",
+        )
+
+        assert reviewed["review_decision"] == replayed["review_decision"] == "allow"
+        assert reviewed["review_source"] == "llm"
+        assert reviewed["review_model"] == "local:test:model"
+        assert reviewed["reviewed_at"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_uses_model_reviewer_for_gray_tool_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    reviewer_calls = 0
+
+    class ReviewerModel:
+        async def ainvoke(self, _messages: list[object], **_kwargs: object) -> AIMessage:
+            nonlocal reviewer_calls
+            reviewer_calls += 1
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "operation_id": operation_id,
+                                "decision": "allow",
+                                "reason": "The test command matches the task.",
+                            }
+                        ]
+                    }
+                )
+            )
+
+    call = ToolCall(
+        type="tool_call", id="call-auto-review", name="execute", args={"command": "make test"}
+    )
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-auto-review:1",
+        graph_definition_id="graph-v1",
+        permission_mode="auto",
+        task_goal="Run the tests",
+        mode="local:test:model",
+        model=ReviewerModel(),
+        tool_registry={
+            "execute": SimpleNamespace(
+                tool_call_schema={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                }
+            )
+        },
+    )
+    state = {
+        "messages": [
+            AIMessage(id="batch_auto", content="", tool_calls=[call]),
+        ]
+    }
+    operation_id, _arguments_hash, _arguments_json = tool_operation_identity(
+        run_id=str(run["id"]),
+        tool_call_id=call["id"],
+        tool_name=call["name"],
+        arguments=call["args"],
+        tool_version="graph-v1",
+        execution_namespace=canonical_tool_execution_scope(
+            execution_scope_from_messages("main", state["messages"])
+        ),
+    )
+    monkeypatch.setattr(
+        "local_host.middleware.tool_review.interrupt",
+        lambda _payload: (_ for _ in ()).throw(AssertionError("approved action must not pause")),
+    )
+    try:
+        result = await ToolReviewMiddleware().aafter_model(
+            state,
+            SimpleNamespace(context=context),  # type: ignore[arg-type]
+        )
+        replayed = await ToolReviewMiddleware().aafter_model(
+            state,
+            SimpleNamespace(context=context),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        assert replayed is None
+        assert reviewer_calls == 1
+        receipts = await store.list_tool_receipts_for_run(str(run["id"]))
+        assert len(receipts) == 1
+        assert receipts[0]["review_decision"] == "allow"
+        assert receipts[0]["review_source"] == "llm"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_falls_back_to_human_review_when_model_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    captured: dict[str, object] = {}
+
+    class FailingReviewerModel:
+        async def ainvoke(self, _messages: list[object], **_kwargs: object) -> AIMessage:
+            raise TimeoutError("review provider unavailable")
+
+    class PauseObserved(RuntimeError):
+        pass
+
+    def pause(payload: dict[str, object]) -> object:
+        captured.update(payload)
+        raise PauseObserved
+
+    call = ToolCall(
+        type="tool_call",
+        id="call-auto-fallback",
+        name="execute",
+        args={"command": "make test"},
+    )
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-auto-fallback:1",
+        graph_definition_id="graph-v1",
+        permission_mode="auto",
+        task_goal="Run the tests",
+        mode="local:test:model",
+        model=FailingReviewerModel(),
+        tool_registry={
+            "execute": SimpleNamespace(
+                tool_call_schema={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                }
+            )
+        },
+    )
+    monkeypatch.setattr("local_host.middleware.tool_review.interrupt", pause)
+    try:
+        with pytest.raises(PauseObserved):
+            await ToolReviewMiddleware().aafter_model(
+                {"messages": [AIMessage(content="", tool_calls=[call])]},
+                SimpleNamespace(context=context),  # type: ignore[arg-type]
+            )
+
+        assert captured["kind"] == "tool_review"
+        assert len(captured["action_requests"]) == 1  # type: ignore[arg-type]
+        request = captured["action_requests"][0]  # type: ignore[index]
+        assert request["review_source"] == "fallback"
+        assert "fallback policy" in request["review_reason"]
+        receipts = await store.list_tool_receipts_for_run(str(run["id"]))
+        assert receipts[0]["review_decision"] == "ask"
+        assert receipts[0]["review_source"] == "fallback"
     finally:
         await store.close()
 
@@ -915,6 +1118,31 @@ async def test_artifact_store_enforces_item_quota(
                 title="too large",
                 content="12345",
             )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_blob_gc_keeps_catalog_bodies_and_removes_old_orphans(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    source = tmp_path / "result.bin"
+    source.write_bytes(b"catalog body")
+    try:
+        artifact = await store.create_file_artifact(
+            run_id=str(run["id"]),
+            kind="tool_output",
+            title="result.bin",
+            source_path=source,
+            content_type="application/octet-stream",
+        )
+        referenced = store.artifact_body_path(artifact)
+        orphan = tmp_path / "artifacts" / "sha256" / "ff" / ("f" * 64)
+        orphan.parent.mkdir(parents=True, exist_ok=True)
+        orphan.write_bytes(b"orphan")
+
+        assert await store.gc_orphan_bodies(grace_seconds=0) == 1
+        assert referenced.read_bytes() == b"catalog body"
+        assert not orphan.exists()
     finally:
         await store.close()
 

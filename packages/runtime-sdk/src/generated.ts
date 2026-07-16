@@ -27,6 +27,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local/v1/artifacts/{artifact_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Artifact Content */
+        get: operations["get_artifact_content_local_v1_artifacts__artifact_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/local/v1/commands": {
         parameters: {
             query?: never;
@@ -242,6 +259,74 @@ export interface paths {
          * @description Approve, revise, or reject a Plan Mode `write_todos` pause.
          */
         post: operations["resolve_plan_approval_local_v1_plans__approval_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/plugin-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Plugin Sources */
+        get: operations["list_plugin_sources_local_v1_plugin_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/plugin-sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Plugin Source */
+        get: operations["inspect_plugin_source_local_v1_plugin_sources__source_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Plugins */
+        get: operations["list_plugins_local_v1_plugins_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/local/v1/plugins/{plugin_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Plugin */
+        get: operations["inspect_plugin_local_v1_plugins__plugin_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -901,6 +986,9 @@ export interface components {
              * @enum {string}
              */
             permission_mode: "ask" | "auto" | "full_access";
+            plugin_command?: components["schemas"]["PluginCommandReference"] | null;
+            /** Plugin Refs */
+            plugin_refs?: components["schemas"]["PluginReference"][];
             /** Protocol Version */
             protocol_version: number;
             /** Replace From Client Id */
@@ -1003,6 +1091,14 @@ export interface components {
             };
             /** Run Id */
             run_id: string;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Storage Kind
+             * @default inline_text
+             * @enum {string}
+             */
+            storage_kind: "inline_text" | "blob";
             /** Title */
             title: string;
             /** Tool Call Id */
@@ -1412,6 +1508,16 @@ export interface components {
             /** Providers */
             providers: components["schemas"]["LocalModelProvider"][];
         };
+        /** ListPluginSourcesResponse */
+        ListPluginSourcesResponse: {
+            /** Sources */
+            sources: components["schemas"]["PluginSourceSummary"][];
+        };
+        /** ListPluginsResponse */
+        ListPluginsResponse: {
+            /** Plugins */
+            plugins: components["schemas"]["PluginSummary"][];
+        };
         /** ListRunsResponse */
         ListRunsResponse: {
             /** Runs */
@@ -1452,19 +1558,26 @@ export interface components {
         };
         /**
          * LocalArtifact
-         * @description Slim representation for `GET /artifacts/:id` (UI quoting).
-         *
-         *     The full row in `local_artifacts` (run_id, kind, content_type,
-         *     bytes, metadata_json) is intentionally NOT returned here — that
-         *     payload is for the diagnostics panel, not the chat surface.
+         * @description Authorized Artifact metadata; blob bodies use the separate content route.
          */
         LocalArtifact: {
+            /** Bytes */
+            bytes: number;
             /** Content */
             content: string;
+            /** Content Type */
+            content_type: string;
             /** Created At */
             created_at: string;
             /** Id */
             id: string;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Storage Kind
+             * @enum {string}
+             */
+            storage_kind: "inline_text" | "blob";
             /** Title */
             title: string;
             /** Tool Name */
@@ -2040,6 +2153,642 @@ export interface components {
              */
             type: "plan.resolve";
         };
+        /** PluginActionLimits */
+        PluginActionLimits: {
+            /** Memory Mb */
+            memory_mb: number;
+            /** Output Mb */
+            output_mb: number;
+            /** Timeout Ms */
+            timeout_ms: number;
+        };
+        /** PluginActionSummary */
+        PluginActionSummary: {
+            /** Capabilities */
+            capabilities: string[];
+            /** Consumes */
+            consumes: string[];
+            /** Description */
+            description: string;
+            /**
+             * Determinism
+             * @enum {string}
+             */
+            determinism: "pure" | "input_stable" | "nondeterministic";
+            /** Effects */
+            effects: ("read" | "artifact")[];
+            /** Id */
+            id: string;
+            limits: components["schemas"]["PluginActionLimits"];
+            /** Produces */
+            produces: string[];
+            /** Title */
+            title: string;
+        };
+        /** PluginCommandReference */
+        PluginCommandReference: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+        };
+        /** PluginCommandSummary */
+        PluginCommandSummary: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Required Actions */
+            required_actions: string[];
+            /** Title */
+            title: string;
+        };
+        /** PluginDetail */
+        PluginDetail: {
+            /** Actions */
+            actions: components["schemas"]["PluginActionSummary"][];
+            /** Commands */
+            commands: components["schemas"]["PluginCommandSummary"][];
+            /**
+             * Compatibility
+             * @enum {string}
+             */
+            compatibility: "compatible" | "incompatible";
+            /** Description */
+            description: string;
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Execution Kind
+             * @enum {string}
+             */
+            execution_kind: "wasi" | "managed_worker";
+            /** Id */
+            id: string;
+            /** License */
+            license?: string | null;
+            /** Mcp Servers */
+            mcp_servers: components["schemas"]["PluginPathContributionSummary"][];
+            model_binding?: components["schemas"]["PluginModelBindingSummary"] | null;
+            /** Name */
+            name: string;
+            publisher: components["schemas"]["PluginPublisherSummary"];
+            /** Retired */
+            retired: boolean;
+            /**
+             * Signature Status
+             * @enum {string}
+             */
+            signature_status: "unsigned" | "verified";
+            /** Skills */
+            skills: components["schemas"]["PluginPathContributionSummary"][];
+            /** Version */
+            version: string;
+            /** Versions */
+            versions: components["schemas"]["PluginVersionSummary"][];
+        };
+        /** PluginDisableCommand */
+        PluginDisableCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.disable";
+        };
+        /** PluginEnableCommand */
+        PluginEnableCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.enable";
+        };
+        /** PluginInstallCommand */
+        PluginInstallCommand: {
+            /**
+             * Allow Unsigned
+             * @default false
+             */
+            allow_unsigned: boolean;
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.install";
+        };
+        /** PluginInstallCommandReceipt */
+        PluginInstallCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Installed
+             * @default true
+             * @constant
+             */
+            installed: true;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.install";
+            /** Version */
+            version: string;
+        };
+        /** PluginModelBindCommand */
+        PluginModelBindCommand: {
+            /** Binding Id */
+            binding_id: string;
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Model */
+            model: string;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.model.bind";
+        };
+        /** PluginModelBindCommandReceipt */
+        PluginModelBindCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            model_binding: components["schemas"]["PluginModelBindingSummary"];
+            /** Model Binding Revision */
+            model_binding_revision: number;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.model.bind";
+        };
+        /** PluginModelBindingSummary */
+        PluginModelBindingSummary: {
+            /** Id */
+            id: string;
+            /** Model Id */
+            model_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /** Provider Version */
+            provider_version: number;
+            /** Requested Model */
+            requested_model: string;
+        };
+        /** PluginPathContributionSummary */
+        PluginPathContributionSummary: {
+            /** Id */
+            id: string;
+            /** Path */
+            path: string;
+        };
+        /** PluginPublisherSummary */
+        PluginPublisherSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** PluginReference */
+        PluginReference: {
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Required
+             * @default true
+             */
+            required: boolean;
+        };
+        /** PluginRemoveCommand */
+        PluginRemoveCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.remove";
+        };
+        /** PluginRemoveCommandReceipt */
+        PluginRemoveCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Enabled
+             * @default false
+             * @constant
+             */
+            enabled: false;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Retired
+             * @default true
+             * @constant
+             */
+            retired: true;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.remove";
+        };
+        /** PluginRollbackCommand */
+        PluginRollbackCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /** Target Digest */
+            target_digest: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.rollback";
+        };
+        /** PluginSourceAddCommand */
+        PluginSourceAddCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Index Url */
+            index_url: string;
+            /** Public Key */
+            public_key: string;
+            /** Signature Url */
+            signature_url: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.add";
+        };
+        /** PluginSourceCommandReceipt */
+        PluginSourceCommandReceipt: {
+            /** Changed */
+            changed: boolean;
+            /** Command Id */
+            command_id: string;
+            /** Index Sha256 */
+            index_sha256: string;
+            /** Package Count */
+            package_count: number;
+            /** Revision */
+            revision: number;
+            /** Source Id */
+            source_id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "plugin.source.add" | "plugin.source.refresh";
+        };
+        /** PluginSourceDetail */
+        PluginSourceDetail: {
+            /** Index Sha256 */
+            index_sha256: string;
+            /** Index Url */
+            index_url: string;
+            /** Key Id */
+            key_id: string;
+            /** Name */
+            name: string;
+            /** Package Count */
+            package_count: number;
+            /** Packages */
+            packages: components["schemas"]["PluginSourcePackageSummary"][];
+            /** Revision */
+            revision: number;
+            /** Source Id */
+            source_id: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** PluginSourceInstallCommand */
+        PluginSourceInstallCommand: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Execution Kind
+             * @enum {string}
+             */
+            execution_kind: "wasi" | "managed_worker";
+            /** Expected Active Digest */
+            expected_active_digest?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Package Digest */
+            package_digest: string;
+            /**
+             * Platform
+             * @enum {string}
+             */
+            platform: "any" | "darwin/arm64" | "darwin/amd64" | "linux/arm64" | "linux/amd64" | "windows/arm64" | "windows/amd64";
+            /** Plugin Id */
+            plugin_id: string;
+            /** Source Id */
+            source_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.install";
+            /** Version */
+            version: string;
+        };
+        /** PluginSourceInstallCommandReceipt */
+        PluginSourceInstallCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Installed
+             * @default true
+             * @constant
+             */
+            installed: true;
+            /** Plugin Id */
+            plugin_id: string;
+            /** Previous Digest */
+            previous_digest?: string | null;
+            /** Source Id */
+            source_id: string;
+            /** Source Revision */
+            source_revision: number;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.install";
+            /** Version */
+            version: string;
+        };
+        /** PluginSourcePackageSummary */
+        PluginSourcePackageSummary: {
+            /** Capabilities */
+            capabilities: string[];
+            /** Consumes */
+            consumes: string[];
+            /**
+             * Execution Kind
+             * @enum {string}
+             */
+            execution_kind: "wasi" | "managed_worker";
+            /** Name */
+            name: string;
+            /** Package Digest */
+            package_digest: string;
+            /** Package Size Bytes */
+            package_size_bytes: number;
+            /** Package Url */
+            package_url: string;
+            /**
+             * Platform
+             * @enum {string}
+             */
+            platform: "any" | "darwin/arm64" | "darwin/amd64" | "linux/arm64" | "linux/amd64" | "windows/arm64" | "windows/amd64";
+            /** Plugin Id */
+            plugin_id: string;
+            /** Produces */
+            produces: string[];
+            /** Publisher Id */
+            publisher_id: string;
+            /** Release Notes */
+            release_notes: string;
+            /** Runtime Min Version */
+            runtime_min_version: string;
+            /** Signer Key Id */
+            signer_key_id: string;
+            /** Version */
+            version: string;
+        };
+        /** PluginSourceRefreshCommand */
+        PluginSourceRefreshCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Source Id */
+            source_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.refresh";
+        };
+        /** PluginSourceRemoveCommand */
+        PluginSourceRemoveCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Source Id */
+            source_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.remove";
+        };
+        /** PluginSourceRemoveCommandReceipt */
+        PluginSourceRemoveCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Removed
+             * @default true
+             * @constant
+             */
+            removed: true;
+            /** Source Id */
+            source_id: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.source.remove";
+        };
+        /** PluginSourceSummary */
+        PluginSourceSummary: {
+            /** Index Sha256 */
+            index_sha256: string;
+            /** Index Url */
+            index_url: string;
+            /** Key Id */
+            key_id: string;
+            /** Name */
+            name: string;
+            /** Package Count */
+            package_count: number;
+            /** Revision */
+            revision: number;
+            /** Source Id */
+            source_id: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** PluginStateCommandReceipt */
+        PluginStateCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Plugin Id */
+            plugin_id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "plugin.enable" | "plugin.disable";
+        };
+        /** PluginSummary */
+        PluginSummary: {
+            /**
+             * Compatibility
+             * @enum {string}
+             */
+            compatibility: "compatible" | "incompatible";
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Execution Kind
+             * @enum {string}
+             */
+            execution_kind: "wasi" | "managed_worker";
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            publisher: components["schemas"]["PluginPublisherSummary"];
+            /** Retired */
+            retired: boolean;
+            /**
+             * Signature Status
+             * @enum {string}
+             */
+            signature_status: "unsigned" | "verified";
+            /** Version */
+            version: string;
+        };
+        /** PluginUpdateCommand */
+        PluginUpdateCommand: {
+            /**
+             * Allow Unsigned
+             * @default false
+             */
+            allow_unsigned: boolean;
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Plugin Id */
+            plugin_id: string;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.update";
+        };
+        /** PluginVersionSummary */
+        PluginVersionSummary: {
+            /** Active */
+            active: boolean;
+            /**
+             * Compatibility
+             * @enum {string}
+             */
+            compatibility: "compatible" | "incompatible";
+            /** Created At */
+            created_at: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Signature Status
+             * @enum {string}
+             */
+            signature_status: "unsigned" | "verified";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "installed" | "retired";
+            /** Version */
+            version: string;
+        };
+        /** PluginVersionSwitchCommandReceipt */
+        PluginVersionSwitchCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Plugin Id */
+            plugin_id: string;
+            /** Previous Digest */
+            previous_digest: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "plugin.update" | "plugin.rollback";
+            /** Version */
+            version: string;
+        };
         /** QuestionAnswer */
         QuestionAnswer: {
             /**
@@ -2141,6 +2890,44 @@ export interface components {
             decision: "approve" | "modify" | "reject";
             /** Instructions */
             instructions?: string | null;
+        };
+        /** RuntimeAssetInstallCommand */
+        RuntimeAssetInstallCommand: {
+            /** Command Id */
+            command_id: string;
+            /** Expected Digest */
+            expected_digest?: string | null;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.runtime_asset.install";
+        };
+        /** RuntimeAssetInstallCommandReceipt */
+        RuntimeAssetInstallCommandReceipt: {
+            /** Asset Id */
+            asset_id: string;
+            /** Command Id */
+            command_id: string;
+            /** Digest */
+            digest: string;
+            /**
+             * Installed
+             * @default true
+             * @constant
+             */
+            installed: true;
+            /** Platform */
+            platform: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.runtime_asset.install";
+            /** Version */
+            version: string;
         };
         /**
          * RuntimeInfo
@@ -2461,6 +3248,37 @@ export interface operations {
             };
         };
     };
+    get_artifact_content_local_v1_artifacts__artifact_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     accept_command_local_v1_commands_post: {
         parameters: {
             query?: never;
@@ -2470,7 +3288,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"] | components["schemas"]["PluginInstallCommand"] | components["schemas"]["PluginModelBindCommand"] | components["schemas"]["PluginSourceAddCommand"] | components["schemas"]["PluginSourceInstallCommand"] | components["schemas"]["PluginSourceRefreshCommand"] | components["schemas"]["PluginSourceRemoveCommand"] | components["schemas"]["RuntimeAssetInstallCommand"] | components["schemas"]["PluginEnableCommand"] | components["schemas"]["PluginDisableCommand"] | components["schemas"]["PluginUpdateCommand"] | components["schemas"]["PluginRollbackCommand"] | components["schemas"]["PluginRemoveCommand"];
             };
         };
         responses: {
@@ -2480,7 +3298,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"] | components["schemas"]["PluginInstallCommandReceipt"] | components["schemas"]["PluginModelBindCommandReceipt"] | components["schemas"]["PluginSourceCommandReceipt"] | components["schemas"]["PluginSourceInstallCommandReceipt"] | components["schemas"]["PluginSourceRemoveCommandReceipt"] | components["schemas"]["RuntimeAssetInstallCommandReceipt"] | components["schemas"]["PluginStateCommandReceipt"] | components["schemas"]["PluginVersionSwitchCommandReceipt"] | components["schemas"]["PluginRemoveCommandReceipt"];
                 };
             };
             /** @description Validation Error */
@@ -2849,6 +3667,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanApprovalResolution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_plugin_sources_local_v1_plugin_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPluginSourcesResponse"];
+                };
+            };
+        };
+    };
+    inspect_plugin_source_local_v1_plugin_sources__source_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginSourceDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_plugins_local_v1_plugins_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListPluginsResponse"];
+                };
+            };
+        };
+    };
+    inspect_plugin_local_v1_plugins__plugin_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginDetail"];
                 };
             };
             /** @description Validation Error */

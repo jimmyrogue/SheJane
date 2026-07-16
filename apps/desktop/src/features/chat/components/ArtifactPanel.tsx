@@ -15,16 +15,21 @@ type ArtifactKind = 'html' | 'svg' | 'code' | 'markdown'
 export function ArtifactPanel({
   artifact,
   onClose,
+  onLoadContent,
 }: {
   artifact: LocalArtifact | null
   onClose: () => void
+  onLoadContent?: (artifactID: string) => Promise<Blob>
 }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadFailed, setDownloadFailed] = useState(false)
   const resetRef = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(resetRef.current), [])
 
   const format = useMemo(() => inferArtifactFormat(artifact), [artifact])
+  const isFileBacked = artifact?.storage_kind === 'blob'
 
   const copyArtifact = () => {
     if (!artifact) {
@@ -37,19 +42,32 @@ export function ArtifactPanel({
     })
   }
 
-  const downloadArtifact = () => {
+  const downloadArtifact = async () => {
     if (!artifact) {
       return
     }
-    const blob = new Blob([artifact.content], { type: blobType(format.kind) })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = safeDownloadName(artifact.title, format.kind)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
+    setDownloading(true)
+    setDownloadFailed(false)
+    try {
+      const blob = isFileBacked
+        ? await onLoadContent?.(artifact.id)
+        : new Blob([artifact.content], { type: artifact.content_type || blobType(format.kind) })
+      if (!blob) {
+        throw new Error('artifact content loader is unavailable')
+      }
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = safeDownloadName(artifact.title, format.kind)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setDownloadFailed(true)
+    } finally {
+      setDownloading(false)
+    }
   }
 
   return (
@@ -62,10 +80,10 @@ export function ArtifactPanel({
               <SheetDescription>{artifact?.tool_name ?? t('artifact.defaultTool')}</SheetDescription>
             </div>
             <div className="artifact-preview-actions">
-              <Button className="icon-button light" size="icon-sm" variant="ghost" title={copied ? t('artifact.copied') : t('artifact.copy')} aria-label={copied ? t('artifact.copied') : t('artifact.copy')} onClick={copyArtifact} disabled={!artifact}>
+              <Button className="icon-button light" size="icon-sm" variant="ghost" title={copied ? t('artifact.copied') : t('artifact.copy')} aria-label={copied ? t('artifact.copied') : t('artifact.copy')} onClick={copyArtifact} disabled={!artifact || isFileBacked}>
                 {copied ? <IconCheck size={15} aria-hidden="true" /> : <IconCopy size={15} aria-hidden="true" />}
               </Button>
-              <Button className="icon-button light" size="icon-sm" variant="ghost" title={t('artifact.download')} aria-label={t('artifact.download')} onClick={downloadArtifact} disabled={!artifact}>
+              <Button className="icon-button light" size="icon-sm" variant="ghost" title={downloadFailed ? t('artifact.downloadFailed') : t('artifact.download')} aria-label={downloadFailed ? t('artifact.downloadFailed') : t('artifact.download')} onClick={() => void downloadArtifact()} disabled={!artifact || downloading || (isFileBacked && !onLoadContent)}>
                 <IconDownload size={15} aria-hidden="true" />
               </Button>
               <Button className="icon-button light" size="icon-sm" variant="ghost" title={t('artifact.close')} aria-label={t('artifact.close')} onClick={onClose}>
@@ -75,7 +93,15 @@ export function ArtifactPanel({
           </div>
         </SheetHeader>
         <div className="artifact-body">
-          {artifact ? <ArtifactBody artifact={artifact} kind={format.kind} language={format.language} /> : null}
+          {artifact ? (
+            isFileBacked ? (
+              <div className="artifact-markdown">
+                <p>{t('artifact.fileBackedPreview', { bytes: artifact.bytes.toLocaleString() })}</p>
+              </div>
+            ) : (
+              <ArtifactBody artifact={artifact} kind={format.kind} language={format.language} />
+            )
+          ) : null}
         </div>
       </SheetContent>
     </Sheet>

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["page_count", "rendered_pages", "recalculated_name", "pdf_name", "png_names", "warnings"],
+  "properties": {
+    "page_count": {"type": "integer", "minimum": 1},
+    "rendered_pages": {"type": "integer", "minimum": 0, "maximum": 100},
+    "recalculated_name": {"type": "string", "minLength": 6, "maxLength": 255},
+    "pdf_name": {"type": "string", "minLength": 5, "maxLength": 255},
+    "png_names": {"type": "array", "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 255}},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

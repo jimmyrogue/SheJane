@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "invocation_id": "223e4567-e89b-42d3-a456-426614174001",
+  "operation_id": "run_01:document.render:001",
+  "action": {
+    "plugin_id": "dev.shejane.fixture.documents",
+    "plugin_version": "0.1.0",
+    "plugin_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "action_id": "document.render"
+  },
+  "arguments": {
+    "input_id": "document"
+  },
+  "inputs": [
+    {
+      "id": "document",
+      "path": "/input/document/document.docx",
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "size_bytes": 1024,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "grants": {
+    "capabilities": [
+      "input.read",
+      "artifact.write"
+    ]
+  },
+  "limits": {
+    "timeout_ms": 60000,
+    "memory_mb": 512,
+    "output_mb": 128
+  },
+  "environment": {
+    "locale": "en-US",
+    "timezone": "UTC"
+  }
+}

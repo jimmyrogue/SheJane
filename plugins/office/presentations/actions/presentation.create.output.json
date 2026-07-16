@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["filename", "slide_count", "master_count", "warnings"],
+  "properties": {
+    "filename": {"type": "string", "minLength": 6, "maxLength": 255},
+    "slide_count": {"type": "integer", "minimum": 1, "maximum": 200},
+    "master_count": {"type": "integer", "minimum": 1},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

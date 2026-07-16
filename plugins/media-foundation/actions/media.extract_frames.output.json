@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["frames"],
+  "properties": {
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["timestamp_seconds", "artifact_name"],
+        "properties": {
+          "timestamp_seconds": {"type": "number", "minimum": 0, "maximum": 864000},
+          "artifact_name": {"type": "string", "pattern": "^frame-[0-9]{3}\\.png$"}
+        }
+      }
+    }
+  }
+}

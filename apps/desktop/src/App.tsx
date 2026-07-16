@@ -72,9 +72,14 @@ import {
   getDesktopLocalHostConfig,
   hasLocalHostAuthorization,
   getLocalArtifact,
+  getLocalArtifactContent,
+  getLocalPlugin,
+  getLocalPluginSource,
   getLocalSkillFile,
   listAuthorizedWorkspaces,
   listInstalledSkills,
+  listLocalPlugins,
+  listLocalPluginSources,
   listLocalRuns,
   listLocalThreads,
   listLocalThreadChanges,
@@ -110,6 +115,16 @@ import {
   type PendingPermissionResolveCommand,
   type PendingPlanResolveCommand,
   type PendingToolReconcileCommand,
+  type PendingPluginInstallCommand,
+  type PendingPluginSourceAddCommand,
+  type PendingPluginSourceInstallCommand,
+  type PendingPluginSourceStateCommand,
+  type PendingRuntimeAssetInstallCommand,
+  type PendingPluginModelBindCommand,
+  type PendingPluginStateCommand,
+  type PendingPluginUpdateCommand,
+  type PendingPluginRollbackCommand,
+  type PendingPluginRemoveCommand,
   type PermissionMode,
   type PendingRuntimeCommand,
   type PendingRuntimeCommandFailure,
@@ -127,6 +142,7 @@ const ArtifactPanel = lazy(() => import('./features/chat/components/ArtifactPane
 const DiagnosticsPanel = lazy(() => import('./features/chat/components/DiagnosticsPanel').then((module) => ({ default: module.DiagnosticsPanel })))
 const DocPreviewPanel = lazy(() => import('./features/chat/components/DocPreviewPanel').then((module) => ({ default: module.DocPreviewPanel })))
 const MCPView = lazy(() => import('./features/mcp/MCPView').then((module) => ({ default: module.MCPView })))
+const PluginsView = lazy(() => import('./features/plugins/PluginsView').then((module) => ({ default: module.PluginsView })))
 const SettingsView = lazy(() => import('./features/settings/SettingsView').then((module) => ({ default: module.SettingsView })))
 const SkillsView = lazy(() => import('./features/skills/SkillsView').then((module) => ({ default: module.SkillsView })))
 
@@ -141,6 +157,8 @@ interface LocalHarnessRunOptions {
   metadata?: LocalRunMetadata
   initialAgentEvents?: AgentTimelineItem[]
   replaceFromClientId?: string
+  pluginReferences?: NonNullable<ChatMessage['pluginReferences']>
+  pluginCommand?: NonNullable<ChatMessage['pluginCommand']>
 }
 
 // Skill and MCP discovery are always available. Desktop stores only the user
@@ -173,6 +191,22 @@ interface ConversationRenderContext {
 interface PendingConversationRender {
   conversation: Conversation
   context: ConversationRenderContext
+}
+
+type PendingPluginCommand =
+  | PendingPluginInstallCommand
+  | PendingPluginSourceAddCommand
+  | PendingPluginSourceInstallCommand
+  | PendingPluginSourceStateCommand
+  | PendingRuntimeAssetInstallCommand
+  | PendingPluginModelBindCommand
+  | PendingPluginStateCommand
+  | PendingPluginUpdateCommand
+  | PendingPluginRollbackCommand
+  | PendingPluginRemoveCommand
+
+function isPendingPluginCommand(command: PendingRuntimeCommand): command is PendingPluginCommand {
+  return command.type.startsWith('plugin.')
 }
 
 function clampSidebarWidth(width: number): number {
@@ -317,7 +351,7 @@ function AppContent() {
   const [draft, setDraft] = useState('')
   // Concrete Runtime model selection persisted in localStorage.
   const [mode, setMode] = useState<ChatMode>(readChatMode)
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('auto')
   function changeMode(next: ChatMode): void {
     setMode(next)
     writeChatMode(next)
@@ -330,7 +364,7 @@ function AppContent() {
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [runtimeSettingsConfig, setRuntimeSettingsConfig] = useState<LocalHostConfig | null>(null)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'mcp' | 'settings'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'skills' | 'plugins' | 'mcp' | 'settings'>('chat')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
@@ -351,6 +385,7 @@ function AppContent() {
   const [authorizedWorkspaces, setAuthorizedWorkspaces] = useState<LocalWorkspaceAuthorization[]>([])
   const [localRuns, setLocalRuns] = useState<LocalHarnessRun[]>([])
   const [pendingCommandDeliveryVersion, setPendingCommandDeliveryVersion] = useState(0)
+  const [pluginCatalogVersion, setPluginCatalogVersion] = useState(0)
   const scheduledNotificationIDs = useRef(new Set<string>())
   const runtimeSettingsWriteRef = useRef<Promise<void>>(Promise.resolve())
   const localHostConfigRef = useRef<LocalHostConfig | null>(null)
@@ -917,11 +952,45 @@ function AppContent() {
     return visibleProjected
   }
 
+  async function submitPluginCommand(command: PendingPluginCommand): Promise<RuntimeCommandResult> {
+    if (!hasLocalHostAuthorization(localHostConfig)) {
+      throw new Error(t('app.notice.localHostDisconnected'))
+    }
+    const config = localHostConfig
+    await localData.savePendingRuntimeCommand(command)
+    let result: RuntimeCommandResult | undefined
+    const report = await deliverPendingRuntimeCommands(
+      [command],
+      config,
+      async (_deliveredCommand, deliveredResult) => {
+        result = deliveredResult
+        await localData.deletePendingRuntimeCommand(command.commandId)
+        setPluginCatalogVersion((version) => version + 1)
+      },
+    )
+    const failure = report.failures[0]
+    if (failure) {
+      if (failure.retryable) {
+        setPendingCommandDeliveryVersion((version) => version + 1)
+      } else {
+        await localData.deletePendingRuntimeCommand(command.commandId)
+      }
+      throw failure.error
+    }
+    if (!result) throw new Error('plugin command completed without a receipt')
+    return result
+  }
+
   async function settleDeliveredLocalRunCommand(
     command: PendingRuntimeCommand,
     result: RuntimeCommandResult,
     config: LocalHostConfig,
   ): Promise<boolean> {
+    if (isPendingPluginCommand(command)) {
+      await localData.deletePendingRuntimeCommand(command.commandId)
+      setPluginCatalogVersion((version) => version + 1)
+      return true
+    }
     if (
       command.type === 'question.answer' ||
       command.type === 'permission.resolve' ||
@@ -980,6 +1049,11 @@ function AppContent() {
     config: LocalHostConfig,
   ): Promise<void> {
     const { command } = failure
+    if (isPendingPluginCommand(command)) {
+      await localData.deletePendingRuntimeCommand(command.commandId)
+      setPluginCatalogVersion((version) => version + 1)
+      return
+    }
     if (command.type !== 'run.start' && command.type !== 'run.fork') {
       const existing = await localData.get(command.input.threadId)
       let projected: Conversation | undefined
@@ -1134,7 +1208,8 @@ function AppContent() {
     if (index < 0) {
       return
     }
-    const attachments = conversation.messages[index].attachments ?? []
+    const sourceMessage = conversation.messages[index]
+    const attachments = sourceMessage.attachments ?? []
     conversation.messages = conversation.messages.slice(0, index)
     conversation.updatedAt = new Date().toISOString()
     await localData.save(conversation)
@@ -1155,7 +1230,14 @@ function AppContent() {
         text,
         renderContext,
         agentSettings,
-        { ...localRunOptions, replaceFromClientId: userMessageID },
+        {
+          ...localRunOptions,
+          replaceFromClientId: userMessageID,
+          ...(sourceMessage.pluginReferences
+            ? { pluginReferences: sourceMessage.pluginReferences }
+            : {}),
+          ...(sourceMessage.pluginCommand ? { pluginCommand: sourceMessage.pluginCommand } : {}),
+        },
         targetConversationID,
         attachments,
       )
@@ -1415,7 +1497,25 @@ function AppContent() {
       skills: draftSkills,
       functions: draftFunctions,
       mcps: draftMcps,
+      plugins: draftPlugins,
+      pluginCommand: draftPluginCommand,
     } = parseSkillDraft(content)
+    const selectedPlugins = runOptions?.pluginReferences
+      ? runOptions.pluginReferences.map((plugin) => ({
+        pluginId: plugin.pluginId,
+        name: plugin.name,
+        expectedDigest: plugin.digest,
+      }))
+      : draftPlugins
+    const selectedPluginCommand = runOptions?.pluginCommand
+      ? {
+        pluginId: runOptions.pluginCommand.pluginId,
+        pluginName: runOptions.pluginCommand.pluginName,
+        commandId: runOptions.pluginCommand.commandId,
+        title: runOptions.pluginCommand.title,
+        expectedDigest: runOptions.pluginCommand.digest,
+      }
+      : draftPluginCommand
     const text = parsedText.trim()
     if (!text) {
       throw new Error(t('app.notice.emptyMessage'))
@@ -1441,6 +1541,22 @@ function AppContent() {
       createdAt: timestamp,
       status: 'done',
       attachments: attachments.length ? attachments : undefined,
+      pluginReferences: selectedPlugins.length
+        ? selectedPlugins.map((plugin) => ({
+          pluginId: plugin.pluginId,
+          name: plugin.name,
+          digest: plugin.expectedDigest,
+        }))
+        : undefined,
+      pluginCommand: selectedPluginCommand
+        ? {
+          pluginId: selectedPluginCommand.pluginId,
+          pluginName: selectedPluginCommand.pluginName,
+          commandId: selectedPluginCommand.commandId,
+          title: selectedPluginCommand.title,
+          digest: selectedPluginCommand.expectedDigest,
+        }
+        : undefined,
     }
     const assistantMessage: ChatMessage = {
       id: createLocalID('msg'),
@@ -1521,6 +1637,17 @@ function AppContent() {
       metadata: runOptions?.metadata,
       mode: selectedMode,
       permissionMode,
+      pluginRefs: selectedPlugins.map((plugin) => ({
+        pluginId: plugin.pluginId,
+        expectedDigest: plugin.expectedDigest,
+      })),
+      pluginCommand: selectedPluginCommand
+        ? {
+          pluginId: selectedPluginCommand.pluginId,
+          commandId: selectedPluginCommand.commandId,
+          expectedDigest: selectedPluginCommand.expectedDigest,
+        }
+        : undefined,
     }
     const pendingCommand: PendingRunStartCommand = {
       type: 'run.start',
@@ -2202,7 +2329,7 @@ function AppContent() {
       localData.listPendingRuntimeCommands(),
       localData.list(),
     ])
-    const existingFork = pendingCommands.find((command) =>
+    const existingFork = pendingCommands.find((command): command is PendingRunForkCommand =>
       command.type === 'run.fork' &&
       !command.canceledAt &&
       command.input.sourceRunId === runID &&
@@ -2715,6 +2842,7 @@ function AppContent() {
             onCollapseSidebar={collapseSidebar}
             isDesktop={isDesktop}
             onOpenSkills={() => setMainView('skills')}
+            onOpenPlugins={() => setMainView('plugins')}
             onOpenMcp={() => setMainView('mcp')}
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
@@ -2782,6 +2910,145 @@ function AppContent() {
                 if (bridge?.openFileWithDefaultApp) {
                   void bridge.openFileWithDefaultApp(path)
                 }
+              }}
+            />
+          ) : mainView === 'plugins' ? (
+            <PluginsView
+              refreshVersion={pluginCatalogVersion}
+              visionModels={models
+                .filter((model) => model.imageInputs)
+                .map((model) => ({
+                  id: model.id,
+                  label: model.label,
+                  vendor: model.vendor ?? '',
+                }))}
+              listPlugins={() =>
+                localHostConfig ? listLocalPlugins(localHostConfig) : Promise.resolve([])
+              }
+              listSources={() =>
+                localHostConfig ? listLocalPluginSources(localHostConfig) : Promise.resolve([])
+              }
+              getSource={(sourceId) => {
+                if (!localHostConfig) return Promise.reject(new Error('local host unavailable'))
+                return getLocalPluginSource(sourceId, localHostConfig)
+              }}
+              addSource={(indexURL, signatureURL, publicKey) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.source.add',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { indexURL, signatureURL, publicKey },
+                })
+              }}
+              refreshSource={(source) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.source.refresh',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { sourceId: source.source_id, expectedRevision: source.revision },
+                })
+              }}
+              removeSource={(source) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.source.remove',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { sourceId: source.source_id, expectedRevision: source.revision },
+                })
+              }}
+              installSource={(source, pluginPackage, expectedActiveDigest) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.source.install',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: {
+                    sourceId: source.source_id,
+                    expectedRevision: source.revision,
+                    pluginId: pluginPackage.plugin_id,
+                    version: pluginPackage.version,
+                    executionKind: pluginPackage.execution_kind,
+                    platform: pluginPackage.platform,
+                    packageDigest: pluginPackage.package_digest,
+                    expectedActiveDigest,
+                  },
+                })
+              }}
+              getPlugin={(pluginId) => {
+                if (!localHostConfig) return Promise.reject(new Error('local host unavailable'))
+                return getLocalPlugin(pluginId, localHostConfig)
+              }}
+              selectPackage={() => window.shejaneDesktop?.selectPluginPackage?.() ?? Promise.resolve(undefined)}
+              installPlugin={(sourcePath, allowUnsigned) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.install',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { sourcePath, allowUnsigned },
+                })
+              }}
+              setEnabled={(plugin, enabled) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: enabled ? 'plugin.enable' : 'plugin.disable',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { pluginId: plugin.id, expectedDigest: plugin.digest },
+                })
+              }}
+              updatePlugin={(plugin, sourcePath, allowUnsigned) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.update',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: {
+                    pluginId: plugin.id,
+                    sourcePath,
+                    expectedDigest: plugin.digest,
+                    allowUnsigned,
+                  },
+                })
+              }}
+              rollbackPlugin={(plugin, targetDigest) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.rollback',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: {
+                    pluginId: plugin.id,
+                    targetDigest,
+                    expectedDigest: plugin.digest,
+                  },
+                })
+              }}
+              removePlugin={(plugin) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.remove',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: { pluginId: plugin.id, expectedDigest: plugin.digest },
+                })
+              }}
+              bindVisionModel={(plugin, model) => {
+                const commandId = createLocalID('cmd')
+                return submitPluginCommand({
+                  type: 'plugin.model.bind',
+                  commandId,
+                  createdAt: new Date().toISOString(),
+                  input: {
+                    pluginId: plugin.id,
+                    bindingId: 'vision-default',
+                    model,
+                    expectedDigest: plugin.digest,
+                  },
+                })
               }}
             />
           ) : mainView === 'mcp' ? (
@@ -2882,9 +3149,13 @@ function AppContent() {
               onFailureAction={handleAgentFailureAction}
             />
 
-            {artifactPreview ? (
+            {artifactPreview && localHostConfig ? (
               <Suspense fallback={null}>
-                <ArtifactPanel artifact={artifactPreview} onClose={() => setArtifactPreview(null)} />
+                <ArtifactPanel
+                  artifact={artifactPreview}
+                  onClose={() => setArtifactPreview(null)}
+                  onLoadContent={(artifactID) => getLocalArtifactContent(artifactID, localHostConfig)}
+                />
               </Suspense>
             ) : null}
             {activeDocument ? (
@@ -2989,6 +3260,23 @@ function AppContent() {
                   ? async () => {
                       const catalog = await listMcpServers(localHostConfig)
                       return catalog.servers
+                    }
+                  : undefined
+              }
+              listPlugins={
+                localHostConfig
+                  ? async () => {
+                      const plugins = await listLocalPlugins(localHostConfig)
+                      return Promise.all(
+                        plugins
+                          .filter(
+                            (plugin) =>
+                              plugin.enabled &&
+                              !plugin.retired &&
+                              plugin.compatibility === 'compatible',
+                          )
+                          .map((plugin) => getLocalPlugin(plugin.id, localHostConfig)),
+                      )
                     }
                   : undefined
               }

@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import { Composer } from './Composer'
-import { skillToken } from '../skillDraft'
-import type { InstalledSkill } from '@/shared/local-host/client'
+import { pluginCommandToken, pluginToken, skillToken } from '../skillDraft'
+import type { InstalledSkill, PluginDetail } from '@/shared/local-host/client'
 
 afterEach(() => {
   cleanup()
@@ -16,11 +16,52 @@ const sampleSkills: InstalledSkill[] = [
   { name: 'write', description: 'Strip AI writing patterns', path: '/s/write/SKILL.md' },
 ]
 
+const archiveDigest = `sha256:${'a'.repeat(64)}`
+const archivePlugin: PluginDetail = {
+  id: 'dev.shejane.fixture.archive',
+  name: 'Archive fixture',
+  version: '0.1.0',
+  digest: archiveDigest,
+  description: 'Create a deterministic archive',
+  license: 'AGPL-3.0-only',
+  publisher: { id: 'dev.shejane', name: 'SheJane' },
+  execution_kind: 'wasi',
+  signature_status: 'unsigned',
+  compatibility: 'compatible',
+  enabled: true,
+  retired: false,
+  actions: [],
+  skills: [],
+  mcp_servers: [],
+  versions: [],
+  commands: [
+    {
+      id: 'archive',
+      title: 'Archive files',
+      description: 'Create an archive artifact',
+      required_actions: ['archive.create'],
+    },
+  ],
+}
+
+function prepareTypeaheadLayout() {
+  Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => new DOMRect(),
+  })
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as typeof ResizeObserver
+}
+
 function Harness({
   initialDraft = '',
   onSend = vi.fn(),
   onAppendInstruction,
   listSkills = vi.fn().mockResolvedValue(sampleSkills),
+  listPlugins = vi.fn().mockResolvedValue([archivePlugin]),
   onDraft = vi.fn(),
   projectName,
   onSelectProject,
@@ -36,6 +77,7 @@ function Harness({
   onSend?: () => void
   onAppendInstruction?: () => void
   listSkills?: () => Promise<InstalledSkill[]>
+  listPlugins?: () => Promise<PluginDetail[]>
   onDraft?: (value: string) => void
   projectName?: string
   onSelectProject?: () => void
@@ -61,6 +103,7 @@ function Harness({
         onSend={onSend}
         onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
+        listPlugins={listPlugins}
         mode="local:test:model"
         onModeChange={vi.fn()}
         permissionMode={permissionMode}
@@ -89,6 +132,210 @@ describe('Composer (Lexical skill editor)', () => {
     expect(pill.closest('.skill-chip--inline')).not.toBeNull()
     // No border / icon / remove button — just styled inline text.
     expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument()
+  })
+
+  it('renders plugin and plugin-command chips from structured draft tokens', async () => {
+    const plugin = pluginToken({
+      pluginId: archivePlugin.id,
+      name: archivePlugin.name,
+      expectedDigest: archivePlugin.digest,
+    })
+    const command = pluginCommandToken({
+      pluginId: archivePlugin.id,
+      pluginName: archivePlugin.name,
+      commandId: 'archive',
+      title: 'Archive files',
+      expectedDigest: archivePlugin.digest,
+    })
+    render(<Harness initialDraft={`${plugin} ${command} 处理附件`} />)
+
+    expect((await screen.findByText('Archive fixture')).closest('.plugin-chip--inline')).not.toBeNull()
+    expect(screen.getByText('Archive files').closest('.plugin-command-chip--inline')).not.toBeNull()
+  })
+
+  it('marks a restored plugin token stale when the active digest changed', async () => {
+    const token = pluginToken({
+      pluginId: archivePlugin.id,
+      name: archivePlugin.name,
+      expectedDigest: archivePlugin.digest,
+    })
+    render(
+      <Harness
+        initialDraft={`${token} 处理附件`}
+        listPlugins={vi.fn().mockResolvedValue([
+          { ...archivePlugin, digest: `sha256:${'b'.repeat(64)}` },
+        ])}
+      />,
+    )
+
+    expect(await screen.findByText(/插件版本已变化：Archive fixture/)).toBeInTheDocument()
+  })
+
+  it('offers enabled plugins from the @ menu and inserts a structured token', async () => {
+    prepareTypeaheadLayout()
+    const onDraft = vi.fn()
+    render(<Harness onDraft={onDraft} />)
+    const editor = screen.getByRole('textbox')
+    editor.textContent = '@'
+    fireEvent.input(editor, { inputType: 'insertText', data: '@' })
+
+    fireEvent.click(await screen.findByRole('option', { name: /Archive fixture/ }))
+    expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
+    expect(onDraft).toHaveBeenLastCalledWith(
+      expect.stringContaining(pluginToken({
+        pluginId: archivePlugin.id,
+        name: archivePlugin.name,
+        expectedDigest: archivePlugin.digest,
+      })),
+    )
+  })
+
+  it('offers plugin commands from the slash menu and inserts a structured command token', async () => {
+    prepareTypeaheadLayout()
+    const onDraft = vi.fn()
+    render(<Harness onDraft={onDraft} />)
+    const editor = screen.getByRole('textbox')
+    fireEvent.input(editor, { inputType: 'insertText', data: '/arch' })
+
+    fireEvent.click(await screen.findByRole('option', { name: /Archive files/ }))
+    expect(await screen.findByText('Archive files')).toBeInTheDocument()
+    expect(onDraft).toHaveBeenLastCalledWith(
+      expect.stringContaining(pluginCommandToken({
+        pluginId: archivePlugin.id,
+        pluginName: archivePlugin.name,
+        commandId: 'archive',
+        title: 'Archive files',
+        expectedDigest: archivePlugin.digest,
+      })),
+    )
+  })
+
+  it('selects an @ plugin with the keyboard', async () => {
+    prepareTypeaheadLayout()
+    const onDraft = vi.fn()
+    render(<Harness onDraft={onDraft} />)
+    const editor = screen.getByRole('textbox')
+    editor.textContent = '@'
+    fireEvent.input(editor, { inputType: 'insertText', data: '@' })
+
+    await screen.findByRole('option', { name: /Archive fixture/ })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+
+    expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
+    expect(onDraft).toHaveBeenLastCalledWith(expect.stringContaining(archivePlugin.id))
+  })
+
+  it('hides unavailable plugins from both @ references and slash commands', async () => {
+    prepareTypeaheadLayout()
+    const unavailable = [
+      { ...archivePlugin, enabled: false },
+      { ...archivePlugin, id: `${archivePlugin.id}.retired`, retired: true },
+      { ...archivePlugin, id: `${archivePlugin.id}.incompatible`, compatibility: 'incompatible' as const },
+    ]
+    render(<Harness listPlugins={vi.fn().mockResolvedValue(unavailable)} />)
+    const editor = screen.getByRole('textbox')
+    editor.textContent = '@archive'
+    fireEvent.input(editor, { inputType: 'insertText', data: '@archive' })
+    await waitFor(() => expect(screen.queryByRole('option', { name: /Archive fixture/ })).not.toBeInTheDocument())
+
+    editor.textContent = '/archive'
+    fireEvent.input(editor, { inputType: 'insertText', data: '/archive' })
+    await waitFor(() => expect(screen.queryByRole('option', { name: /Archive files/ })).not.toBeInTheDocument())
+  })
+
+  it('disambiguates same-name plugins by publisher and stable id', async () => {
+    prepareTypeaheadLayout()
+    const other = {
+      ...archivePlugin,
+      id: 'com.other.archive',
+      publisher: { id: 'com.other', name: 'Other Corp' },
+    }
+    const onDraft = vi.fn()
+    render(
+      <Harness
+        listPlugins={vi.fn().mockResolvedValue([archivePlugin, other])}
+        onDraft={onDraft}
+      />,
+    )
+    const editor = screen.getByRole('textbox')
+    editor.textContent = '@other'
+    fireEvent.input(editor, { inputType: 'insertText', data: '@other' })
+
+    const option = await screen.findByRole('option', { name: /Other Corp.*com\.other\.archive/ })
+    fireEvent.click(option)
+    await waitFor(() => expect(onDraft).toHaveBeenLastCalledWith(expect.stringContaining(other.id)))
+    expect(onDraft.mock.calls.at(-1)?.[0]).not.toContain(archivePlugin.id)
+  })
+
+  it('replaces the existing plugin command instead of keeping two', async () => {
+    prepareTypeaheadLayout()
+    const previous = pluginCommandToken({
+      pluginId: archivePlugin.id,
+      pluginName: archivePlugin.name,
+      commandId: 'archive',
+      title: 'Archive files',
+      expectedDigest: archivePlugin.digest,
+    })
+    const pluginWithSecondCommand = {
+      ...archivePlugin,
+      commands: [
+        ...archivePlugin.commands,
+        {
+          id: 'inspect',
+          title: 'Inspect archive',
+          description: 'Inspect without extracting',
+          required_actions: ['archive.inspect'],
+        },
+      ],
+    }
+    const onDraft = vi.fn()
+    render(
+      <Harness
+        initialDraft={`${previous} `}
+        listPlugins={vi.fn().mockResolvedValue([pluginWithSecondCommand])}
+        onDraft={onDraft}
+      />,
+    )
+    const editor = screen.getByRole('textbox')
+    const trailingText = editor.querySelector('[data-lexical-text]')
+    expect(trailingText).not.toBeNull()
+    if (trailingText) trailingText.textContent = ' /inspect'
+    fireEvent.input(editor, { inputType: 'insertText', data: '/inspect' })
+    fireEvent.click(await screen.findByRole('option', { name: /Inspect archive/ }))
+
+    expect(await screen.findByText('Inspect archive')).toBeInTheDocument()
+    expect(screen.queryByText('Archive files')).not.toBeInTheDocument()
+    expect(onDraft).toHaveBeenLastCalledWith(expect.not.stringContaining(previous))
+  })
+
+  it('disables new plugin references and commands while steering an active run', async () => {
+    prepareTypeaheadLayout()
+    render(<Harness hasActiveRun onAppendInstruction={vi.fn()} />)
+    expect(screen.getByText(/新增插件需要新建一次任务/)).toBeInTheDocument()
+    const editor = screen.getByRole('textbox')
+    editor.textContent = '@archive'
+    fireEvent.input(editor, { inputType: 'insertText', data: '@archive' })
+    expect(screen.queryByRole('option', { name: /Archive fixture/ })).not.toBeInTheDocument()
+
+    editor.textContent = '/archive'
+    fireEvent.input(editor, { inputType: 'insertText', data: '/archive' })
+    await waitFor(() => expect(screen.queryByRole('option', { name: /Archive files/ })).not.toBeInTheDocument())
+  })
+
+  it('deletes a plugin chip atomically', async () => {
+    const token = pluginToken({
+      pluginId: archivePlugin.id,
+      name: archivePlugin.name,
+      expectedDigest: archivePlugin.digest,
+    })
+    const onDraft = vi.fn()
+    render(<Harness initialDraft={token} onDraft={onDraft} />)
+    const editor = screen.getByRole('textbox')
+    await screen.findByText('Archive fixture')
+    fireEvent.keyDown(editor, { key: 'Backspace' })
+
+    await waitFor(() => expect(screen.queryByText('Archive fixture')).not.toBeInTheDocument())
+    expect(onDraft).toHaveBeenLastCalledWith('')
   })
 
   it('sends with plain Enter', () => {
@@ -250,6 +497,7 @@ describe('Composer (Lexical skill editor)', () => {
     )
 
     expect(screen.getByText('追加指示到当前任务')).toBeInTheDocument()
+    expect(screen.getByText('当前任务运行中；新增插件需要新建一次任务。')).toBeInTheDocument()
   })
 
   it('shows the send button (not stop) when neither isSending nor hasActiveRun is set', () => {
@@ -268,6 +516,24 @@ describe('Composer (Lexical skill editor)', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /自动审批/ }))
 
     expect(onPermissionModeChange).toHaveBeenCalledWith('auto')
+  })
+
+  it('defaults to automatic approval when no permission mode is supplied', () => {
+    render(
+      <I18nProvider>
+        <Composer
+          draft=""
+          onDraftChange={vi.fn()}
+          isSending={false}
+          onSend={vi.fn()}
+          listSkills={vi.fn().mockResolvedValue([])}
+          mode="local:test:model"
+          onModeChange={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByRole('button', { name: '权限模式：自动审批' })).toBeInTheDocument()
   })
 
   it('requires confirmation before enabling full access', async () => {

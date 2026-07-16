@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,6 +21,36 @@ def office_read(path: str) -> str:
 def workspace_read(path: str) -> str:
     """Read a workspace file."""
     return path
+
+
+@tool("read_file")
+def read_file(path: str) -> str:
+    """Read a file."""
+    return path
+
+
+@tool("execute")
+def execute(command: str) -> str:
+    """Execute a shell command."""
+    return command
+
+
+@tool("task")
+def task(description: str) -> str:
+    """Delegate a task."""
+    return description
+
+
+@tool("plugin.example.archive.extract")
+def archive_extract(input_id: str) -> str:
+    """Extract an archive."""
+    return input_id
+
+
+@tool("plugin.example.text.summarize")
+def text_summarize(input_id: str) -> str:
+    """Summarize a text artifact."""
+    return input_id
 
 
 @tool("office.update_paragraph")
@@ -111,6 +142,31 @@ def test_fork_goal_can_enable_office_without_changing_registered_tools() -> None
         "workspace.read",
     ]
     assert filtered.tools is original.tools
+
+
+def test_delivered_plugin_artifacts_hide_fallback_tools_until_the_next_user_turn() -> None:
+    result = {
+        "status": "succeeded",
+        "artifacts": [{"artifact_id": "artifact-1"}],
+        "provenance": {"plugin": {"id": "example.archive"}},
+    }
+    request = _request(
+        [
+            HumanMessage("extract this archive"),
+            ToolMessage(
+                content=json.dumps(result),
+                tool_call_id="extract-1",
+                name="plugin.example.archive.extract",
+            ),
+        ]
+    )
+    request.tools = [read_file, execute, task, archive_extract, text_summarize]
+
+    filtered = ToolVisibilityMiddleware._apply(request)
+
+    assert [item.name for item in filtered.tools] == ["plugin.example.text.summarize"]
+    request.messages.append(HumanMessage("now inspect it with a shell command"))
+    assert ToolVisibilityMiddleware._apply(request) is request
 
 
 @tool("docs_lookup")

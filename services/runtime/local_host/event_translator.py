@@ -53,6 +53,12 @@ def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
     if kind == "updates":
         return _translate_updates(payload)
     if kind == "custom":
+        if (
+            isinstance(payload, dict)
+            and payload.get("event") in {"tool.progress", "permission.auto_approved"}
+            and isinstance(payload.get("data"), dict)
+        ):
+            return [{"event": payload["event"], "data": _safe_dump(payload["data"])}]
         return [
             {"event": "agent.custom", "data": _safe_dump(payload)},
         ]
@@ -164,12 +170,15 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
         }
         if isinstance(envelope, dict):
             _merge_tool_failure_envelope(data, envelope)
-        return [
+        events = [
             {
                 "event": event_name,
                 "data": data,
             }
         ]
+        if not is_failed and isinstance(envelope, dict):
+            events.extend(_artifact_events(envelope, tool_name=chunk.name))
+        return events
 
     return []
 
@@ -287,6 +296,31 @@ def _envelope_failed(envelope: dict[str, Any] | None) -> bool:
     if not isinstance(envelope, dict) or "ok" not in envelope:
         return False
     return not _truthy(envelope.get("ok"))
+
+
+def _artifact_events(envelope: dict[str, Any], *, tool_name: str | None) -> list[dict[str, Any]]:
+    artifacts = envelope.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+    events: list[dict[str, Any]] = []
+    for artifact in artifacts[:128]:
+        if not isinstance(artifact, dict):
+            continue
+        artifact_id = artifact.get("artifact_id")
+        title = artifact.get("name")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            continue
+        data: dict[str, Any] = {
+            "artifact_id": artifact_id,
+            "title": title if isinstance(title, str) and title else artifact_id,
+            "tool": tool_name,
+        }
+        for key in ("media_type", "size_bytes", "sha256"):
+            value = artifact.get(key)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                data[key] = value
+        events.append({"event": "artifact.created", "data": data})
+    return events
 
 
 def _merge_tool_failure_envelope(data: dict[str, Any], envelope: dict[str, Any]) -> None:

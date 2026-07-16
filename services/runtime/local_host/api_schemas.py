@@ -334,6 +334,40 @@ def _has_invalid_capability_name(capabilities: list[str]) -> bool:
     )
 
 
+class PluginReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plugin_id: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+    )
+    required: bool = True
+    expected_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class PluginCommandReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plugin_id: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+    )
+    command_id: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    )
+    expected_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -379,6 +413,8 @@ class CreateRunRequest(BaseModel):
     permission_mode: PermissionMode = "ask"
     history: list[dict[str, str]] | None = Field(default=None, max_length=256)
     parent_run_id: str | None = Field(default=None, max_length=128)
+    plugin_refs: list[PluginReference] = Field(default_factory=list, max_length=32)
+    plugin_command: PluginCommandReference | None = None
     settings: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
 
@@ -388,6 +424,9 @@ class CreateRunRequest(BaseModel):
             raise ValueError("assistant_message_id must differ from client_message_id")
         if _has_invalid_capability_name(self.required_capabilities):
             raise ValueError("required_capabilities contains an invalid capability name")
+        plugin_ids = [reference.plugin_id for reference in self.plugin_refs]
+        if len(plugin_ids) != len(set(plugin_ids)):
+            raise ValueError("plugin_refs must contain unique plugin ids")
         if any(not path.strip() or len(path) > 4096 for path in self.attachment_paths):
             raise ValueError("attachment_paths contains an invalid path")
         for field_name, value in (("settings", self.settings), ("metadata", self.metadata)):
@@ -626,16 +665,15 @@ class ToolReconciliationResolution(BaseModel):
 
 
 class LocalArtifact(BaseModel):
-    """Slim representation for `GET /artifacts/:id` (UI quoting).
-
-    The full row in `local_artifacts` (run_id, kind, content_type,
-    bytes, metadata_json) is intentionally NOT returned here — that
-    payload is for the diagnostics panel, not the chat surface.
-    """
+    """Authorized Artifact metadata; blob bodies use the separate content route."""
 
     id: str
     title: str
     content: str
+    content_type: str
+    bytes: int
+    sha256: str | None = None
+    storage_kind: Literal["inline_text", "blob"]
     tool_name: str | None = None
     created_at: str
 
@@ -664,6 +702,8 @@ class DiagnosticsArtifact(BaseModel):
     title: str
     content_type: str
     bytes: int
+    sha256: str | None = None
+    storage_kind: Literal["inline_text", "blob"] = "inline_text"
     tool_call_id: str | None = None
     tool_name: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -969,6 +1009,410 @@ class ToolReconcileCommandReceipt(BaseModel):
     resolved: Literal[True] = True
     decision: Literal["confirmed_completed", "retry_not_executed", "abort"]
     resumed: bool
+
+
+class PluginInstallCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.install"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    source_path: str = Field(min_length=1, max_length=4096)
+    expected_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    allow_unsigned: bool = False
+
+
+class PluginInstallCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.install"]
+    command_id: str
+    plugin_id: str
+    version: str
+    digest: str
+    installed: Literal[True] = True
+    enabled: bool
+
+
+class PluginSourceAddCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.source.add"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    index_url: str = Field(min_length=9, max_length=2048, pattern=r"^https://\S+$")
+    signature_url: str = Field(min_length=9, max_length=2048, pattern=r"^https://\S+$")
+    public_key: str = Field(min_length=44, max_length=44)
+
+
+class _PluginSourceStateCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    source_id: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+    )
+    expected_revision: int = Field(ge=1)
+
+
+class PluginSourceRefreshCommand(_PluginSourceStateCommand):
+    type: Literal["plugin.source.refresh"]
+
+
+class PluginSourceRemoveCommand(_PluginSourceStateCommand):
+    type: Literal["plugin.source.remove"]
+
+
+class PluginSourceInstallCommand(_PluginSourceStateCommand):
+    type: Literal["plugin.source.install"]
+    plugin_id: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+    )
+    version: str = Field(
+        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    )
+    execution_kind: Literal["wasi", "managed_worker"]
+    platform: Literal[
+        "any",
+        "darwin/arm64",
+        "darwin/amd64",
+        "linux/arm64",
+        "linux/amd64",
+        "windows/arm64",
+        "windows/amd64",
+    ]
+    package_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    expected_active_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class PluginSourceCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.source.add", "plugin.source.refresh"]
+    command_id: str
+    source_id: str
+    revision: int
+    index_sha256: str
+    package_count: int
+    changed: bool
+
+
+class PluginSourceRemoveCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.source.remove"]
+    command_id: str
+    source_id: str
+    removed: Literal[True] = True
+
+
+class PluginSourceInstallCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.source.install"]
+    command_id: str
+    source_id: str
+    source_revision: int
+    plugin_id: str
+    version: str
+    digest: str
+    previous_digest: str | None = None
+    installed: Literal[True] = True
+    enabled: bool
+
+
+class RuntimeAssetInstallCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.runtime_asset.install"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    source_path: str = Field(min_length=1, max_length=4096)
+    expected_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class RuntimeAssetInstallCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.runtime_asset.install"]
+    command_id: str
+    asset_id: str
+    version: str
+    platform: str
+    digest: str
+    installed: Literal[True] = True
+
+
+class _PluginStateCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    plugin_id: str = Field(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9]+(?:[.-][a-z0-9]+)+$",
+    )
+    expected_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class PluginEnableCommand(_PluginStateCommand):
+    type: Literal["plugin.enable"]
+
+
+class PluginDisableCommand(_PluginStateCommand):
+    type: Literal["plugin.disable"]
+
+
+class PluginUpdateCommand(_PluginStateCommand):
+    type: Literal["plugin.update"]
+    source_path: str = Field(min_length=1, max_length=4096)
+    allow_unsigned: bool = False
+
+
+class PluginRollbackCommand(_PluginStateCommand):
+    type: Literal["plugin.rollback"]
+    target_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class PluginRemoveCommand(_PluginStateCommand):
+    type: Literal["plugin.remove"]
+
+
+class PluginModelBindCommand(_PluginStateCommand):
+    type: Literal["plugin.model.bind"]
+    binding_id: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    model: str = Field(min_length=1, max_length=128, pattern=RUNTIME_MODEL_PATTERN)
+
+
+class PluginStateCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.enable", "plugin.disable"]
+    command_id: str
+    plugin_id: str
+    digest: str
+    enabled: bool
+
+
+class PluginVersionSwitchCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.update", "plugin.rollback"]
+    command_id: str
+    plugin_id: str
+    version: str
+    previous_digest: str
+    digest: str
+    enabled: bool
+
+
+class PluginRemoveCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.remove"]
+    command_id: str
+    plugin_id: str
+    digest: str
+    retired: Literal[True] = True
+    enabled: Literal[False] = False
+
+
+class PluginModelBindingSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    requested_model: str
+    provider_id: str
+    provider_version: int
+    model_id: str
+
+
+class PluginModelBindCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.model.bind"]
+    command_id: str
+    plugin_id: str
+    digest: str
+    model_binding_revision: int
+    model_binding: PluginModelBindingSummary
+
+
+class PluginPublisherSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+
+
+class PluginSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    version: str
+    digest: str
+    publisher: PluginPublisherSummary
+    execution_kind: Literal["wasi", "managed_worker"]
+    signature_status: Literal["unsigned", "verified"]
+    compatibility: Literal["compatible", "incompatible"]
+    enabled: bool
+    retired: bool
+
+
+class PluginActionLimits(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timeout_ms: int
+    memory_mb: int
+    output_mb: int
+
+
+class PluginActionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    description: str
+    consumes: list[str]
+    produces: list[str]
+    effects: list[Literal["read", "artifact"]]
+    determinism: Literal["pure", "input_stable", "nondeterministic"]
+    capabilities: list[str]
+    limits: PluginActionLimits
+
+
+class PluginCommandSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    description: str
+    required_actions: list[str]
+
+
+class PluginPathContributionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    path: str
+
+
+class PluginVersionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str
+    digest: str
+    signature_status: Literal["unsigned", "verified"]
+    compatibility: Literal["compatible", "incompatible"]
+    state: Literal["installed", "retired"]
+    active: bool
+    created_at: str
+
+
+class PluginDetail(PluginSummary):
+    description: str
+    license: str | None = None
+    actions: list[PluginActionSummary]
+    skills: list[PluginPathContributionSummary]
+    commands: list[PluginCommandSummary]
+    mcp_servers: list[PluginPathContributionSummary]
+    versions: list[PluginVersionSummary]
+    model_binding: PluginModelBindingSummary | None = None
+
+
+class ListPluginsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plugins: list[PluginSummary]
+
+
+class PluginSourceSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str
+    name: str
+    index_url: str
+    key_id: str
+    index_sha256: str
+    package_count: int
+    revision: int
+    updated_at: str
+
+
+class PluginSourcePackageSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plugin_id: str
+    version: str
+    name: str
+    publisher_id: str
+    runtime_min_version: str
+    execution_kind: Literal["wasi", "managed_worker"]
+    platform: Literal[
+        "any",
+        "darwin/arm64",
+        "darwin/amd64",
+        "linux/arm64",
+        "linux/amd64",
+        "windows/arm64",
+        "windows/amd64",
+    ]
+    package_url: str
+    package_size_bytes: int
+    package_digest: str
+    signer_key_id: str
+    capabilities: list[str]
+    consumes: list[str]
+    produces: list[str]
+    release_notes: str
+
+
+class PluginSourceDetail(PluginSourceSummary):
+    packages: list[PluginSourcePackageSummary]
+
+
+class ListPluginSourcesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sources: list[PluginSourceSummary]
 
 
 # ---------------------------------------------------------------------------

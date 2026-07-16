@@ -351,6 +351,7 @@ function AgentProgressNoticeBody({
 // plain direct answer, nor become the headline.
 const OPERATION_TYPES = new Set([
   'tool.requested',
+  'tool.progress',
   'tool.started',
   'tool.completed',
   'tool.failed',
@@ -368,6 +369,7 @@ const OPERATION_TYPES = new Set([
 
 const ACTIVITY_TYPES = new Set([
   'tool.requested',
+  'tool.progress',
   'tool.started',
   'tool.completed',
   'tool.failed',
@@ -456,7 +458,11 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
     // (a) latest in-flight tool
     for (let index = events.length - 1; index >= 0; index -= 1) {
       const event = events[index]
-      if (event.type !== 'tool.requested' && event.type !== 'tool.started') {
+      if (
+        event.type !== 'tool.requested' &&
+        event.type !== 'tool.started' &&
+        event.type !== 'tool.progress'
+      ) {
         continue
       }
       if (!event.tool || (pending.get(event.tool) ?? 0) <= 0) {
@@ -473,6 +479,7 @@ function currentActivityLabel(events: AgentTimelineItem[], message: ChatMessage,
       if (
         event.type === 'tool.requested' ||
         event.type === 'tool.started' ||
+        event.type === 'tool.progress' ||
         event.type === 'tool.completed' ||
         event.type === 'tool.failed'
       ) {
@@ -849,6 +856,7 @@ function isProgressEvent(event: AgentTimelineItem): boolean {
   return [
     'skill.selected',
     'tool.requested',
+    'tool.progress',
     'tool.started',
     'tool.completed',
     'tool.failed',
@@ -865,7 +873,11 @@ function isProgressEvent(event: AgentTimelineItem): boolean {
 }
 
 function activeLabel(event: AgentTimelineItem, t: Translator): string {
-  if (event.type === 'tool.requested' || event.type === 'tool.started') {
+  if (
+    event.type === 'tool.requested' ||
+    event.type === 'tool.started' ||
+    event.type === 'tool.progress'
+  ) {
     return t('agent.toolRunning', { tool: stripKnownPrefix(event.label, ['调用工具：', '工具开始：', 'Tool started: ']) })
   }
   if (event.type === 'tool.completed') {

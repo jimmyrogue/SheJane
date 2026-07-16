@@ -4,7 +4,7 @@
 
 ### A local-first desktop Agent Runtime
 
-Run tool-using agents with workspaces, permissions, checkpoints, Skills, and MCP on your own machine.
+Run tool-using agents with workspaces, permissions, checkpoints, Skills, MCP, and deterministic plugins on your own machine.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-B3532F?style=flat-square&logo=gnu)](./LICENSE)
@@ -18,7 +18,7 @@ English · [简体中文](./README.zh-CN.md)
 
 - The local Runtime owns the agent loop, tool execution, permissions, checkpoints, and workspace access.
 - The Electron app is the official desktop client, not the execution kernel. Future clients can use the same Runtime protocol.
-- Skills, MCP servers, and subagents extend the Runtime without adding product-specific integrations to its core.
+- Skills, MCP servers, subagents, and deterministic plugins extend the Runtime without adding product-specific integrations to its core.
 
 ## How it fits together
 
@@ -26,7 +26,7 @@ English · [简体中文](./README.zh-CN.md)
 flowchart LR
     D["Desktop client<br/>Electron + React"] -->|"Loopback HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
     R --> W["Local workspace<br/>Files · Tools · Checkpoints"]
-    R --> E["Extensions<br/>Skills · MCP · Subagents"]
+    R --> E["Extensions<br/>Skills · MCP · Plugins · Subagents"]
     R --> B["BYOK providers<br/>OpenAI-compatible APIs · Anthropic"]
 ```
 
@@ -38,11 +38,13 @@ The desktop client and Runtime communicate over loopback HTTP with a pairing tok
 |---|---|
 | Runtime | LangGraph and Deep Agents loop, streaming events, checkpoints, recovery, planning, verification, memory, and human approval |
 | Local tools | Workspace files, shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
-| Extensions | Skills, MCP servers, subagents, and configurable middleware |
+| Extensions | Skills, MCP servers, deterministic WASI/Managed Worker plugins, subagents, and configurable middleware |
 | Desktop | Electron and React client, local Runtime conversation projection, previews, provider settings, and workspace controls |
 | Runtime SDK | Public TypeScript client for commands, SSE, snapshots, errors, and generated protocol types |
 
 Business-platform connectors are not built into the Runtime. Future integrations should use standard tools or MCP.
+
+The plugin platform is a preview. WASI packages can install and execute through the Runtime-owned Action protocol. Managed Worker packages stay fail-closed until the current platform's production isolation and release Gate passes. See the [plugin developer guide](./docs/plugins/developer-guide.md) for the public package contract and local tooling.
 
 ## Quick start
 
@@ -95,6 +97,7 @@ Run the workflow manually to test packages. Push a `desktop-vX.Y.Z` tag to creat
 - [Runtime protocol](./docs/runtime-protocol.md) defines HTTP, SSE, events, and recovery cursors.
 - [Contributor guide](./CONTRIBUTING.md) covers setup, testing, and the CLA process.
 - [Operations](./docs/operations.md) covers deployment and troubleshooting.
+- [Plugin developer guide](./docs/plugins/developer-guide.md) defines WASI and Managed Worker packages, Actions, validation, and release checks.
 
 ## License
 

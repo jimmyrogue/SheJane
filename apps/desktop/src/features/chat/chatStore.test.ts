@@ -40,6 +40,10 @@ describe('runtime timeline', () => {
       label: '需要权限：用系统浏览器打开网页',
       permissionTool: '用系统浏览器打开网页',
     })
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-fallback', tool: 'shell.run', review_source: 'fallback', review_reason: 'reviewer unavailable' } })).toMatchObject({
+      permissionSource: 'fallback',
+      permissionReason: 'reviewer unavailable',
+    })
     expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-write', tool: 'fs.write' } })).toMatchObject({
       label: '需要权限：写入文件',
       permissionTool: '写入文件',
@@ -55,6 +59,25 @@ describe('runtime timeline', () => {
     })
     expect(timelineItem({ event_type: 'verification.completed', payload: { tool: 'task.verify', status: 'passed' } })).toMatchObject({
       label: '验证通过：验证任务结果',
+    })
+  })
+
+  it('keeps plugin progress correlated with its tool call', () => {
+    expect(timelineItem({
+      event_type: 'tool.progress',
+      payload: {
+        tool: 'plugin.dev.shejane.media.inspect',
+        tool_call_id: 'call-media',
+        message: 'Decoding media',
+        completed: 5,
+        total: 10,
+        unit: 'frames',
+      },
+    })).toMatchObject({
+      type: 'tool.progress',
+      tool: 'plugin.dev.shejane.media.inspect',
+      toolCallId: 'call-media',
+      toolDetail: { kind: 'text', text: 'Decoding media · 5/10 frames' },
     })
   })
 
@@ -213,8 +236,18 @@ describe('runtime timeline', () => {
       label: '本会话已允许：运行命令',
       permissionScope: 'run',
     })
-    expect(timelineItem({ event_type: 'permission.auto_approved', payload: { tool: 'shell.run', scope: 'run' } })).toMatchObject({
-      label: '本会话自动允许：运行命令',
+    expect(timelineItem({ event_type: 'permission.auto_approved', payload: { request_id: 'perm-auto-rule', tool: 'shell.run', source: 'rule', reason: '工作区内操作', scope: 'run' } })).toMatchObject({
+      label: '规则自动允许：运行命令',
+      permissionRequestId: 'perm-auto-rule',
+      permissionSource: 'rule',
+      permissionReason: '工作区内操作',
+      permissionScope: 'run',
+    })
+    expect(timelineItem({ event_type: 'permission.auto_approved', payload: { request_id: 'perm-auto-llm', tool: 'shell.run', source: 'llm', reason: '与当前任务一致', scope: 'run' } })).toMatchObject({
+      label: '智能自动允许：运行命令',
+      permissionRequestId: 'perm-auto-llm',
+      permissionSource: 'llm',
+      permissionReason: '与当前任务一致',
       permissionScope: 'run',
     })
   })

@@ -32,6 +32,7 @@ _OFFICE_SIGNALS = (
     "工作表",
     "单元格",
 )
+_POST_ARTIFACT_FALLBACK_TOOLS = frozenset({"read_file", "execute", "task"})
 
 
 def _tool_name(tool: Any) -> str:
@@ -123,6 +124,34 @@ def _mcp_search_result_names(messages: Sequence[Any]) -> set[str]:
     return set()
 
 
+def delivered_plugin_tool_name(messages: Sequence[Any]) -> str | None:
+    for message in reversed(messages):
+        if getattr(message, "type", None) == "human":
+            return None
+        if getattr(message, "type", None) != "tool":
+            continue
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            continue
+        try:
+            result = json.loads(content)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(result, dict):
+            continue
+        provenance = result.get("provenance")
+        if (
+            result.get("status") == "succeeded"
+            and isinstance(result.get("artifacts"), list)
+            and result["artifacts"]
+            and isinstance(provenance, dict)
+            and isinstance(provenance.get("plugin"), dict)
+        ):
+            name = getattr(message, "name", None)
+            return name if isinstance(name, str) and name else None
+    return None
+
+
 class ToolVisibilityMiddleware(AgentMiddleware):
     """Hide large optional tool families from a model request when irrelevant.
 
@@ -155,6 +184,14 @@ class ToolVisibilityMiddleware(AgentMiddleware):
                 item
                 for item in visible
                 if _tool_name(item) not in deferred or _tool_name(item) in revealed
+            ]
+        delivered_tool = delivered_plugin_tool_name(request.messages)
+        if delivered_tool:
+            visible = [
+                item
+                for item in visible
+                if _tool_name(item) not in _POST_ARTIFACT_FALLBACK_TOOLS
+                and _tool_name(item) != delivered_tool
             ]
         if len(visible) == len(request.tools):
             return request

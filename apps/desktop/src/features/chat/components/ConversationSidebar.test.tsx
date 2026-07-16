@@ -99,6 +99,7 @@ describe('ConversationSidebar', () => {
     expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     expect(screen.getByRole('button', { name: 'Skill' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '插件' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
@@ -106,7 +107,7 @@ describe('ConversationSidebar', () => {
     expect(screen.getAllByTitle('更多 我的项目')).toHaveLength(1)
   })
 
-  it('hides the skills/MCP footer nav on the web build (no local daemon)', () => {
+  it('hides the skills/plugins/MCP footer nav on the web build (no local daemon)', () => {
     // The web build (window.shejaneDesktop undefined → isDesktop=false) can't
     // run skills/connections, so those footer actions must not render. 设置
     // stays (it now navigates to the full settings page).
@@ -134,6 +135,7 @@ describe('ConversationSidebar', () => {
     // Local-daemon footer actions (Skill + MCP) are gone on web.
     expect(screen.queryByText('工具')).not.toBeInTheDocument()
     expect(screen.queryByText('Skill')).not.toBeInTheDocument()
+    expect(screen.queryByText('插件')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('连接')).not.toBeInTheDocument()
 

@@ -27,6 +27,20 @@ describe('Runtime thread projection', () => {
           content: 'Visible question',
           metadata: {
             attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+            plugin_selection: {
+              references: [{
+                plugin_id: 'dev.shejane.fixture.archive',
+                name: 'Archive fixture',
+                digest: `sha256:${'a'.repeat(64)}`,
+              }],
+              command: {
+                plugin_id: 'dev.shejane.fixture.archive',
+                plugin_name: 'Archive fixture',
+                command_id: 'extract',
+                title: 'Extract archive',
+                digest: `sha256:${'a'.repeat(64)}`,
+              },
+            },
           },
           position: 1,
           version: 1,
@@ -91,6 +105,18 @@ describe('Runtime thread projection', () => {
         role: 'user',
         content: 'Visible question',
         attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+        pluginReferences: [{
+          pluginId: 'dev.shejane.fixture.archive',
+          name: 'Archive fixture',
+          digest: `sha256:${'a'.repeat(64)}`,
+        }],
+        pluginCommand: {
+          pluginId: 'dev.shejane.fixture.archive',
+          pluginName: 'Archive fixture',
+          commandId: 'extract',
+          title: 'Extract archive',
+          digest: `sha256:${'a'.repeat(64)}`,
+        },
       },
       {
         id: 'assistant-client-1',

@@ -50,6 +50,7 @@ build/
 !apps/desktop/build/
 apps/desktop/build/*
 !apps/desktop/build/installer.nsh
+!apps/desktop/build/managed-worker-vm.entitlements.plist
 .vite/
 **/.vite/
 .turbo/
@@ -70,6 +71,11 @@ out/
 *.pkg
 *.AppImage
 *.exe
+
+# Generated plugin packages
+*.shejane-plugin
+*.shejane-plugin.tmp
+
 # Python / uv
 .venv/
 *.egg-info/

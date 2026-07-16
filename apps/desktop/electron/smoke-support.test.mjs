@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { writeDesktopSmokeConfig } = require('./smoke-support.cjs')
+const { installDesktopSmokeQuitWatcher, writeDesktopSmokeConfig } = require('./smoke-support.cjs')
 
 describe('desktop smoke support', () => {
   it('does not write anything unless an explicit smoke file is provided', () => {
@@ -44,5 +44,25 @@ describe('desktop smoke support', () => {
       daemonPid: 456,
     })
     expect(payload.writtenAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+
+  it('quits through the normal app lifecycle after an explicit smoke signal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'shejane-smoke-support-'))
+    const filePath = join(dir, 'quit')
+    let quitCalls = 0
+    const stop = installDesktopSmokeQuitWatcher({
+      filePath,
+      intervalMs: 5,
+      quit: () => {
+        quitCalls += 1
+      },
+    })
+
+    expect(typeof stop).toBe('function')
+    await writeFile(filePath, '')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    stop()
+
+    expect(quitCalls).toBe(1)
   })
 })

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "invocation_id": "223e4567-e89b-42d3-a456-426614174001",
+  "operation_id": "run_01:document.render:001",
+  "status": "failed",
+  "artifacts": [],
+  "error": {
+    "code": "invalid_document",
+    "message": "The input is not a valid DOCX document.",
+    "retryable": false
+  }
+}

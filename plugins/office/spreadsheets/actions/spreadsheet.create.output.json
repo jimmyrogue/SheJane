@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["filename", "sheet_count", "cell_count", "chart_count", "timezone_policy", "numeric_policy", "warnings"],
+  "properties": {
+    "filename": {"type": "string", "minLength": 6, "maxLength": 255},
+    "sheet_count": {"type": "integer", "minimum": 1, "maximum": 64},
+    "cell_count": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "chart_count": {"type": "integer", "minimum": 0, "maximum": 256},
+    "timezone_policy": {"const": "UTC"},
+    "numeric_policy": {"const": "IEEE-754 binary64"},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

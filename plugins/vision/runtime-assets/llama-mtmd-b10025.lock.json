@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.llama-mtmd.runtime",
+  "asset_version": "b10025+smolvlm2-500m-q8-0.shejane.1",
+  "platform": "darwin/arm64",
+  "created_at": "2026-07-16T00:00:00Z",
+  "llama_cpp": {
+    "tag": "b10025",
+    "commit": "a3e5b96ac5e278c390df429df0b68efcee3ee1b5",
+    "filename": "llama.cpp-b10025.tar.gz",
+    "source_url": "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10025.tar.gz",
+    "source_size_bytes": 35746908,
+    "source_sha256": "0c173562b6096f60fb8cc0b320d69e13ae27f4c31e34f9859d47658571e141b2",
+    "license": "MIT"
+  },
+  "model": {
+    "id": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
+    "filename": "SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+    "source_url": "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+    "size_bytes": 436808704,
+    "sha256": "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc",
+    "license": "Apache-2.0",
+    "languages": ["en"]
+  },
+  "projector": {
+    "filename": "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+    "source_url": "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf",
+    "size_bytes": 108785184,
+    "sha256": "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b",
+    "license": "Apache-2.0"
+  },
+  "model_license": {
+    "filename": "Apache-2.0.txt",
+    "source_url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "size_bytes": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "inference_policy": {
+    "network": false,
+    "gpu": false,
+    "threads": 1,
+    "seed": 0,
+    "context_tokens": 8192,
+    "model_selection": "asset_fixed"
+  },
+  "cmake_policy": [
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DGGML_BACKEND_DL=OFF",
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_METAL=OFF",
+    "-DGGML_BLAS=OFF",
+    "-DGGML_ACCELERATE=OFF",
+    "-DGGML_RPC=OFF",
+    "-DLLAMA_CURL=OFF",
+    "-DLLAMA_BUILD_SERVER=OFF",
+    "-DLLAMA_BUILD_EXAMPLES=OFF",
+    "-DLLAMA_BUILD_TESTS=OFF",
+    "-DLLAMA_BUILD_COMMON=OFF",
+    "-DLLAMA_BUILD_TOOLS=OFF",
+    "-DLLAMA_BUILD_MTMD=ON",
+    "-DMTMD_VIDEO=OFF"
+  ],
+  "darwin_build": {
+    "architecture": "arm64",
+    "deployment_target": "11.0",
+    "cmake_version": "cmake version 4.4.0",
+    "xcode_version": "Xcode 26.6",
+    "xcode_build": "17F113",
+    "clang_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "sdk_version": "26.5",
+    "make_version": "GNU Make 3.81"
+  },
+  "reproducibility_policy": {
+    "source_date_epoch": 1784160000,
+    "zero_ar_date": 1,
+    "llama_source_prefix": "/usr/src/llama.cpp",
+    "shejane_source_prefix": "/usr/src/shejane"
+  },
+  "compiled_components": [
+    {"name": "llama.cpp", "version": "b10025", "license": "MIT"},
+    {"name": "libmtmd", "version": "b10025", "license": "MIT"},
+    {"name": "nlohmann JSON", "version": "3.12.0", "license": "MIT"},
+    {"name": "SmolVLM2-500M-Video-Instruct GGUF", "version": "Q8_0", "license": "Apache-2.0"}
+  ]
+}

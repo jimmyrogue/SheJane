@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["slide_count", "slide_width", "slide_height", "master_count", "slides", "unsupported_features", "truncated", "warnings"],
+  "properties": {
+    "slide_count": {"type": "integer", "minimum": 0},
+    "slide_width": {"type": "number", "exclusiveMinimum": 0},
+    "slide_height": {"type": "number", "exclusiveMinimum": 0},
+    "master_count": {"type": "integer", "minimum": 1},
+    "slides": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/slide"}},
+    "unsupported_features": {"$ref": "#/$defs/unsupported"},
+    "truncated": {"type": "boolean"},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  },
+  "$defs": {
+    "geometry": {
+      "type": "object",
+      "properties": {
+        "left": {"type": "number"}, "top": {"type": "number"},
+        "width": {"type": "number", "minimum": 0}, "height": {"type": "number", "minimum": 0}
+      }
+    },
+    "bullet": {
+      "type": "object", "additionalProperties": false, "required": ["text", "level"],
+      "properties": {"text": {"type": "string", "maxLength": 10000}, "level": {"type": "integer", "minimum": 0, "maximum": 8}}
+    },
+    "image": {
+      "type": "object", "additionalProperties": false,
+      "required": ["left", "top", "width", "height", "media_type", "sha256"],
+      "properties": {
+        "left": {"type": "number"}, "top": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"},
+        "media_type": {"type": "string", "maxLength": 100}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false,
+      "required": ["left", "top", "width", "height", "rows"],
+      "properties": {
+        "left": {"type": "number"}, "top": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"},
+        "rows": {"type": "array", "maxItems": 1000, "items": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 10000}}}
+      }
+    },
+    "text_box": {
+      "type": "object", "additionalProperties": false,
+      "required": ["left", "top", "width", "height", "text"],
+      "properties": {
+        "left": {"type": "number"}, "top": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"},
+        "text": {"type": "string", "maxLength": 10000}
+      }
+    },
+    "slide": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "layout", "title", "subtitle", "bullets", "notes", "image_count", "images", "tables", "text_boxes", "shape_count"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0}, "layout": {"type": "string", "maxLength": 200},
+        "title": {"type": "string", "maxLength": 10000}, "subtitle": {"type": "string", "maxLength": 10000},
+        "bullets": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/bullet"}},
+        "notes": {"type": "string", "maxLength": 50000}, "image_count": {"type": "integer", "minimum": 0},
+        "images": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/image"}},
+        "tables": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/table"}},
+        "text_boxes": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/text_box"}},
+        "shape_count": {"type": "integer", "minimum": 0}
+      }
+    },
+    "unsupported": {"type": "array", "uniqueItems": true, "maxItems": 3, "items": {"enum": ["animations", "transitions", "audio_or_video"]}}
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["page_count", "encrypted"],
+  "properties": {
+    "page_count": {"type": ["integer", "null"], "minimum": 1, "maximum": 100000},
+    "encrypted": {"type": "boolean"}
+  }
+}

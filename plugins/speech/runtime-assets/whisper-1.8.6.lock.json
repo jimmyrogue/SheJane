@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.whisper.runtime",
+  "asset_version": "1.8.6+large-v3-turbo-q5-0.shejane.1",
+  "whisper_cpp": {
+    "version": "1.8.6",
+    "commit": "23ee03506a91ac3d3f0071b40e66a430eebdfa1d",
+    "license": "MIT",
+    "source_url": "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.8.6.tar.gz",
+    "source_size_bytes": 8841784,
+    "source_sha256": "f8e632016ceae556f3132a16c7f704be1e7715595041f474fa81a2b64c1abf7c",
+    "authentication": "pinned_sha256_from_github_https_for_a_github_verified_tag_commit"
+  },
+  "openai_whisper": {
+    "version": "v20250625",
+    "commit": "31243bad24cc746f07d4c8bfdd2d974872cb1803",
+    "license": "MIT",
+    "source_url": "https://github.com/openai/whisper/archive/refs/tags/v20250625.tar.gz",
+    "source_size_bytes": 7262903,
+    "source_sha256": "812e8a4b54e117c1bda827597f54886084bf062453ede274caf4699153b673f9",
+    "authentication": "pinned_sha256_from_github_https"
+  },
+  "checkpoint": {
+    "name": "large-v3-turbo.pt",
+    "source_url": "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt",
+    "size_bytes": 1617941637,
+    "sha256": "aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a",
+    "authentication": "sha256_embedded_in_the_official_openai_whisper_loader_url"
+  },
+  "model_build": {
+    "python_version": "3.12.10",
+    "torch_version": "2.7.1",
+    "numpy_version": "2.2.6",
+    "conversion_script": "models/convert-pt-to-ggml.py",
+    "converted_size_bytes": 1624555275,
+    "converted_sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+    "quantization": "q5_0",
+    "quantized_name": "ggml-large-v3-turbo-q5_0.bin",
+    "quantized_size_bytes": 574041195,
+    "quantized_sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+  },
+  "cmake_policy": [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DGGML_STATIC=ON",
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_METAL=OFF",
+    "-DGGML_BLAS=OFF",
+    "-DGGML_ACCELERATE=OFF",
+    "-DGGML_CCACHE=OFF",
+    "-DGGML_OPENMP=OFF",
+    "-DGGML_RPC=OFF",
+    "-DGGML_CPU_REPACK=OFF",
+    "-DWHISPER_BUILD_TESTS=OFF",
+    "-DWHISPER_BUILD_EXAMPLES=OFF",
+    "-DWHISPER_BUILD_SERVER=OFF",
+    "-DWHISPER_CURL=OFF",
+    "-DWHISPER_SDL2=OFF",
+    "-DWHISPER_COREML=OFF",
+    "-DWHISPER_OPENVINO=OFF"
+  ],
+  "reproducibility_policy": {
+    "whisper_source_prefix": "/usr/src/whisper.cpp-1.8.6",
+    "shejane_source_prefix": "/usr/src/shejane",
+    "source_date_epoch": "0",
+    "zero_ar_date": "1"
+  },
+  "compiled_components": [
+    {"name": "whisper.cpp", "version": "1.8.6", "license": "MIT", "license_path": "LICENSE"},
+    {"name": "nlohmann JSON", "version": "3.11.2", "license": "MIT", "license_path": "examples/json.hpp"},
+    {"name": "OpenAI Whisper model", "version": "large-v3-turbo", "license": "MIT", "license_path": "LICENSE"}
+  ],
+  "darwin_build": {
+    "xcode_version": "26.6",
+    "xcode_build": "17F113",
+    "clang_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "sdk_version": "26.5",
+    "deployment_target": "11.0",
+    "cmake_version": "cmake version 4.4.0"
+  },
+  "linux_builder": {
+    "oci_image": "debian@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0",
+    "snapshot": "20260713T000000Z",
+    "build_essential_version": "12.9",
+    "cmake_version": "3.25.1-1",
+    "package_manifest_sha256": "c144bc662fe286e81ea50704766b5bc219ab38921bdfcc8e5f4267ff09097983",
+    "gcc_version": "12.2.0-14+deb12u1",
+    "make_version": "4.3-4.1",
+    "binutils_version": "2.40-2",
+    "source_date_epoch": 1784160000,
+    "linker_policy": ["-static-libstdc++", "-static-libgcc"]
+  },
+  "created_at": "2026-07-16T00:00:00Z"
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.nodejs.runtime",
+  "asset_version": "24.18.0+shejane.1",
+  "platform": "linux/arm64",
+  "node": {
+    "version": "24.18.0",
+    "filename": "node-v24.18.0-linux-arm64.tar.xz",
+    "url": "https://nodejs.org/download/release/v24.18.0/node-v24.18.0-linux-arm64.tar.xz",
+    "size_bytes": 30473480,
+    "sha256": "58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6"
+  },
+  "signed_checksums": {
+    "url": "https://nodejs.org/download/release/v24.18.0/SHASUMS256.txt.asc",
+    "size_bytes": 3849,
+    "sha256": "2f70f136714c94decfcc3a6f47e8550375e934c956fb4df9e5a69fafd1e58fcf",
+    "signer_fingerprint": "C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C"
+  },
+  "release_keyring": {
+    "revision": "b28073028e6d6855cfb53bf7fa0137599c01f967",
+    "url": "https://raw.githubusercontent.com/nodejs/release-keys/b28073028e6d6855cfb53bf7fa0137599c01f967/gpg/pubring.kbx",
+    "size_bytes": 95960,
+    "sha256": "6030d4e0cd53330acf2ab68acd455b7ca98bb5d5975376f0b7c0892308ba2d57"
+  }
+}

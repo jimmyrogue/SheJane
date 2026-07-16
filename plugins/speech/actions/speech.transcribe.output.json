@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "engine",
+    "normalization",
+    "input_duration_ms",
+    "requested_language",
+    "resolved_language",
+    "segments",
+    "transcript",
+    "total_segments",
+    "total_characters",
+    "truncated",
+    "text_artifact_name",
+    "srt_artifact_name",
+    "json_artifact_name"
+  ],
+  "properties": {
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "commit", "model", "quantization", "model_sha256", "provider", "threads"],
+      "properties": {
+        "name": {"const": "whisper.cpp"},
+        "version": {"const": "1.8.6"},
+        "commit": {"const": "23ee03506a91ac3d3f0071b40e66a430eebdfa1d"},
+        "model": {"const": "large-v3-turbo"},
+        "quantization": {"const": "Q5_0"},
+        "model_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "provider": {"const": "CPU"},
+        "threads": {"const": 1}
+      }
+    },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "version", "sample_rate_hz", "channels", "sample_format"],
+      "properties": {
+        "engine": {"const": "FFmpeg"},
+        "version": {"const": "8.1.2"},
+        "sample_rate_hz": {"const": 16000},
+        "channels": {"const": 1},
+        "sample_format": {"const": "s16"}
+      }
+    },
+    "input_duration_ms": {"type": "integer", "minimum": 0, "maximum": 7200000},
+    "requested_language": {"type": "string", "pattern": "^(auto|[a-z]{2})$"},
+    "resolved_language": {"type": "string", "pattern": "^[a-z]{2}$"},
+    "segments": {
+      "type": "array",
+      "maxItems": 20000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["start_ms", "end_ms", "text"],
+        "properties": {
+          "start_ms": {"type": "integer", "minimum": 0, "maximum": 7200000},
+          "end_ms": {"type": "integer", "minimum": 0, "maximum": 7200000},
+          "text": {"type": "string", "minLength": 1, "maxLength": 500000}
+        }
+      }
+    },
+    "transcript": {"type": "string", "maxLength": 500000},
+    "total_segments": {"type": "integer", "minimum": 0, "maximum": 20000},
+    "total_characters": {"type": "integer", "minimum": 0, "maximum": 500000},
+    "truncated": {"type": "boolean"},
+    "text_artifact_name": {"oneOf": [{"const": "transcript.txt"}, {"type": "null"}]},
+    "srt_artifact_name": {"oneOf": [{"const": "transcript.srt"}, {"type": "null"}]},
+    "json_artifact_name": {"oneOf": [{"const": "transcript.json"}, {"type": "null"}]}
+  }
+}

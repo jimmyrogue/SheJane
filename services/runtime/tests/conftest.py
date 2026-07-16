@@ -104,6 +104,7 @@ def _install_test_streaming_model(monkeypatch: pytest.MonkeyPatch) -> None:
         provider_id: str,
         model_id: str,
         requested_model: str,
+        required_capabilities: tuple[str, ...] = ("streaming", "tool_calling"),
     ) -> tuple[dict[str, Any], Any]:
         if provider_id == "test" and model_id == "model":
             return await _model_binding(coordinator, principal_id, requested_model)
@@ -113,6 +114,7 @@ def _install_test_streaming_model(monkeypatch: pytest.MonkeyPatch) -> None:
             provider_id=provider_id,
             model_id=model_id,
             requested_model=requested_model,
+            required_capabilities=required_capabilities,
         )
 
     monkeypatch.setattr(RunCoordinator, "_local_model_binding_locked", _local_model_binding_locked)

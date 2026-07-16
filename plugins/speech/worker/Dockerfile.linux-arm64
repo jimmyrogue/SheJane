@@ -1,0 +1,19 @@
+FROM python@sha256:79082fdf411b897d64983893f44e8e1908e21cade2fc5a794d4f46de76c85275
+
+RUN sed -i \
+      -e 's|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/20250520T000000Z|' \
+      -e 's|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/20250520T000000Z|' \
+      /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends binutils=2.40-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-linux-arm64.lock /tmp/requirements.lock
+RUN python -m pip install \
+    --disable-pip-version-check \
+    --no-cache-dir \
+    --require-hashes \
+    -r /tmp/requirements.lock
+
+ENV PYTHONHASHSEED=0 \
+    SOURCE_DATE_EPOCH=1784160000

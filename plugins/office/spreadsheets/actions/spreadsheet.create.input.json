@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["filename", "worksheets"],
+  "properties": {
+    "filename": {"type": "string", "minLength": 6, "maxLength": 255, "pattern": "^[^/\\\\]+\\.xlsx$"},
+    "worksheets": {
+      "type": "array", "minItems": 1, "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["name"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 31, "pattern": "^[^\\[\\]*/?:\\\\]+$"},
+          "cells": {"type": "array", "maxItems": 10000, "items": {"$ref": "#/$defs/cell"}},
+          "merges": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/range"}},
+          "column_widths": {
+            "type": "object", "maxProperties": 16384, "additionalProperties": false,
+            "patternProperties": {"^[A-Za-z]{1,3}$": {"type": "number", "minimum": 1, "maximum": 255}}
+          },
+          "charts": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/chart"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "scalar": {"type": ["string", "number", "integer", "boolean", "null"]},
+    "cell_ref": {"type": "string", "pattern": "^[A-Za-z]{1,3}[1-9][0-9]{0,6}$"},
+    "range": {"type": "string", "pattern": "^[A-Za-z]{1,3}[1-9][0-9]{0,6}(?::[A-Za-z]{1,3}[1-9][0-9]{0,6})?$"},
+    "color": {"type": "string", "pattern": "^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"},
+    "style": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "bold": {"type": "boolean"},
+        "italic": {"type": "boolean"},
+        "font_size": {"type": "number", "minimum": 1, "maximum": 409},
+        "font_color": {"$ref": "#/$defs/color"},
+        "fill_color": {"$ref": "#/$defs/color"},
+        "horizontal": {"enum": ["left", "center", "right"]},
+        "number_format": {"type": "string", "maxLength": 1000}
+      }
+    },
+    "cell": {
+      "type": "object", "additionalProperties": false, "required": ["cell"],
+      "properties": {
+        "cell": {"$ref": "#/$defs/cell_ref"},
+        "value": {"$ref": "#/$defs/scalar"},
+        "formula": {"type": "string", "minLength": 2, "maxLength": 8192, "pattern": "^="},
+        "value_type": {"enum": ["date", "datetime"]},
+        "number_format": {"type": "string", "maxLength": 1000},
+        "style": {"$ref": "#/$defs/style"}
+      },
+      "oneOf": [
+        {"required": ["value"], "not": {"required": ["formula"]}},
+        {"required": ["formula"], "not": {"anyOf": [{"required": ["value"]}, {"required": ["value_type"]}]}}
+      ]
+    },
+    "chart": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "data_range", "anchor"],
+      "properties": {
+        "type": {"enum": ["bar", "line", "pie"]},
+        "title": {"type": "string", "maxLength": 1000},
+        "data_range": {"$ref": "#/$defs/range"},
+        "categories_range": {"$ref": "#/$defs/range"},
+        "anchor": {"$ref": "#/$defs/cell_ref"},
+        "titles_from_data": {"type": "boolean"}
+      }
+    }
+  }
+}

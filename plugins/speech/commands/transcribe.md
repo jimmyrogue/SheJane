@@ -1,0 +1,1 @@
+Transcribe exactly one explicitly selected audio input. Preserve the requested language and prompt, report the resolved language and segment timestamps, and return Artifact references instead of embedding a long transcript in chat. Do not claim speaker identification, translation, live transcription, or word-level timestamps.

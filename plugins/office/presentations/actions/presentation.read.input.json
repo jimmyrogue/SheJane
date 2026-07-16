@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false, "required": ["input_id"],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "start_slide": {"type": "integer", "minimum": 0, "maximum": 9999},
+    "max_slides": {"type": "integer", "minimum": 1, "maximum": 200}
+  }
+}

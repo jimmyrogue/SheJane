@@ -44,6 +44,27 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         toolDetail: toolDetail(payload, tool),
       }
     }
+    case 'tool.progress': {
+      const tool = stringValue(payload.tool)
+      const message = stringValue(payload.message)
+      const completed = Number(payload.completed)
+      const total = Number(payload.total)
+      const unit = stringValue(payload.unit)
+      const amount = Number.isFinite(completed) && Number.isFinite(total) && total > 0
+        ? `${completed}/${total}${unit ? ` ${unit}` : ''}`
+        : ''
+      const detail = [message, amount].filter(Boolean).join(' · ')
+      return {
+        type: event.event_type,
+        label: t('chat.timeline.toolRequested', { tool: toolActionLabel(tool, t) }),
+        eventId,
+        tool,
+        toolCallId: stringValue(payload.tool_call_id) || undefined,
+        toolDetail: detail
+          ? { kind: 'text', text: truncate(detail, TOOL_TARGET_MAX), tooltip: detail }
+          : undefined,
+      }
+    }
     case 'tool.completed': {
       const tool = stringValue(payload.tool)
       const item: AgentTimelineItem = {
@@ -86,6 +107,8 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
         permissionRequestId: stringValue(payload.request_id),
         permissionTool: toolActionLabel(tool, t),
         permissionToolName: tool,
+        permissionSource: approvalSource(payload.review_source),
+        permissionReason: stringValue(payload.review_reason),
         permissionArguments:
           payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
             ? payload.arguments as Record<string, unknown>
@@ -132,13 +155,22 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     }
     case 'permission.auto_approved': {
       const tool = stringValue(payload.tool)
+      const source = approvalSource(payload.source)
+      const labelKey = source === 'llm'
+        ? 'chat.timeline.permissionAutoApprovedLlm'
+        : source === 'rule'
+          ? 'chat.timeline.permissionAutoApprovedRule'
+          : 'chat.timeline.permissionAutoApproved'
       return {
         type: event.event_type,
-        label: t('chat.timeline.permissionAutoApproved', { tool: toolActionLabel(tool, t) }),
+        label: t(labelKey, { tool: toolActionLabel(tool, t) }),
         eventId,
+        permissionRequestId: stringValue(payload.request_id),
         permissionTool: toolActionLabel(tool, t),
         permissionDecision: 'approve',
         permissionScope: 'run',
+        permissionSource: source,
+        permissionReason: stringValue(payload.reason),
       }
     }
     case 'question.asked': {
@@ -291,6 +323,12 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     default:
       return { type: event.event_type, label: event.event_type, eventId }
   }
+}
+
+function approvalSource(value: unknown): AgentTimelineItem['permissionSource'] {
+  return value === 'rule' || value === 'llm' || value === 'fallback' || value === 'run_grant'
+    ? value
+    : undefined
 }
 
 function runFailedTimelineItem(

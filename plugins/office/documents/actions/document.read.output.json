@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "author", "paragraph_count", "table_count", "comment_count", "headings", "headers", "footers", "markdown", "truncated", "warnings"],
+  "properties": {
+    "title": {"type": "string", "maxLength": 1000},
+    "author": {"type": "string", "maxLength": 1000},
+    "paragraph_count": {"type": "integer", "minimum": 0},
+    "table_count": {"type": "integer", "minimum": 0},
+    "comment_count": {"type": "integer", "minimum": 0},
+    "headings": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["level", "text"],
+        "properties": {
+          "level": {"type": "integer", "minimum": 1, "maximum": 9},
+          "text": {"type": "string", "maxLength": 10000}
+        }
+      }
+    },
+    "headers": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 10000}},
+    "footers": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 10000}},
+    "markdown": {"type": "string", "maxLength": 60000},
+    "truncated": {"type": "boolean"},
+    "warnings": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 500}}
+  }
+}

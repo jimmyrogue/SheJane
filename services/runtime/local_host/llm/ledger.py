@@ -57,6 +57,7 @@ class LedgerChatModel(BaseChatModel):
     execution_attempt_id: str
     model_name: str
     max_calls: int
+    call_purpose: str = "agent"
     tool_schema_tokens: int = 0
     bound_tools: tuple[Any, ...] = Field(default_factory=tuple, exclude=True)
     bound_tool_choice: Any = Field(default=None, exclude=True)
@@ -109,6 +110,7 @@ class LedgerChatModel(BaseChatModel):
             execution_attempt_id=self.execution_attempt_id,
             model=self.model_name,
             max_calls=self.max_calls,
+            purpose=self.call_purpose,
         )
 
     async def _agenerate(

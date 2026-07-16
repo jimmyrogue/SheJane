@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.ffmpeg.runtime",
+  "asset_version": "8.1.2+shejane.1",
+  "upstream": {
+    "name": "FFmpeg",
+    "version": "8.1.2",
+    "license": "LGPL-2.1-or-later",
+    "source_url": "https://www.ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz",
+    "signature_url": "https://www.ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz.asc",
+    "signing_key_url": "https://www.ffmpeg.org/ffmpeg-devel.asc",
+    "signing_key_fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8",
+    "source_size_bytes": 11710924,
+    "source_sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+  },
+  "configure_policy": [
+    "--prefix=/",
+    "--bindir=/bin",
+    "--libdir=/lib",
+    "--disable-autodetect",
+    "--disable-network",
+    "--disable-devices",
+    "--disable-avdevice",
+    "--disable-hwaccels",
+    "--disable-ffplay",
+    "--disable-doc",
+    "--disable-debug",
+    "--disable-stripping",
+    "--disable-x86asm",
+    "--enable-zlib",
+    "--enable-shared",
+    "--disable-static",
+    "--disable-decoders",
+    "--enable-decoder=h264,hevc,vp8,vp9,av1,mpeg4,mpeg2video,mpeg1video,aac,aac_fixed,aac_latm,mp3,mp3float,flac,alac,opus,vorbis,ac3,eac3,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_f32le,pcm_f64le,png,mjpeg,webp",
+    "--disable-demuxers",
+    "--enable-demuxer=mov,matroska,mp3,wav,flac,ogg,aac,image2,image2pipe",
+    "--disable-encoders",
+    "--enable-encoder=png,pcm_s16le,flac,mjpeg",
+    "--disable-muxers",
+    "--enable-muxer=image2,wav,flac",
+    "--disable-protocols",
+    "--enable-protocol=file,pipe",
+    "--disable-filters",
+    "--enable-filter=scale,format,aresample",
+    "--enable-rpath",
+    "--install-name-dir=@rpath"
+  ],
+  "required_capabilities": {
+    "decoders": ["h264", "hevc", "vp8", "vp9", "av1", "mpeg4", "mpeg2video", "mpeg1video", "aac", "mp3", "flac", "alac", "opus", "vorbis", "ac3", "eac3", "pcm_s16le", "pcm_s24le", "pcm_f32le", "png", "mjpeg", "webp"],
+    "demuxers": ["mov", "matroska", "mp3", "wav", "flac", "ogg", "aac", "image2", "image2pipe"],
+    "encoders": ["png", "pcm_s16le", "flac", "mjpeg"],
+    "muxers": ["image2", "wav", "flac"],
+    "filters": ["scale", "format", "aresample"],
+    "protocols": ["file", "pipe"]
+  },
+  "system_dependencies": [
+    {
+      "name": "zlib",
+      "license": "Zlib",
+      "purpose": "PNG encoding and decoding"
+    }
+  ],
+  "darwin_build": {
+    "xcode_version": "26.6",
+    "xcode_build": "17F113",
+    "clang_version": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "sdk_version": "26.5",
+    "deployment_target": "11.0",
+    "make_version": "GNU Make 3.81"
+  },
+  "linux_builder": {
+    "oci_image": "debian@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0",
+    "snapshot": "20260713T000000Z",
+    "build_essential_version": "12.9",
+    "pkg_config_version": "1.8.1-1",
+    "zlib_dev_version": "1:1.2.13.dfsg-1",
+    "package_manifest_sha256": "5df3d5e6c7b95977f5c4115d31b6069bae233732dfbb649f147f995674538df0",
+    "source_date_epoch": 1784160000,
+    "gcc_version": "12.2.0-14+deb12u1",
+    "make_version": "4.3-4.1",
+    "binutils_version": "2.40-2"
+  },
+  "linux_configure_override": {
+    "remove": ["--install-name-dir=@rpath"],
+    "append": ["--extra-ldflags=-Wl,-rpath,$ORIGIN/../lib"]
+  },
+  "forbidden_configuration": ["--enable-gpl", "--enable-nonfree"],
+  "created_at": "2026-07-16T00:00:00Z"
+}

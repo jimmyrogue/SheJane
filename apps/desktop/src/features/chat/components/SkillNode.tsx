@@ -1,5 +1,5 @@
 import type { JSX } from 'react'
-import { IconPhoto, IconServer, IconSparkles } from '@tabler/icons-react'
+import { IconBox, IconCommand, IconPhoto, IconServer, IconSparkles } from '@tabler/icons-react'
 import {
   $applyNodeReplacement,
   DecoratorNode,
@@ -10,7 +10,13 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from 'lexical'
-import { functionToken, mcpToken, skillToken } from '../skillDraft'
+import {
+  functionToken,
+  mcpToken,
+  pluginCommandToken,
+  pluginToken,
+  skillToken,
+} from '../skillDraft'
 
 // Display labels for function ids. Extensible: add more capabilities here.
 export const FUNCTION_LABELS: Record<string, string> = {
@@ -227,4 +233,226 @@ export function $createMCPNode(name: string): MCPNode {
 
 export function $isMCPNode(node: LexicalNode | null | undefined): node is MCPNode {
   return node instanceof MCPNode
+}
+
+export type SerializedPluginNode = Spread<
+  { pluginId: string; name: string; expectedDigest: string },
+  SerializedLexicalNode
+>
+
+function PluginChip({ name, pluginId }: { name: string; pluginId: string }): JSX.Element {
+  return (
+    <span className="plugin-chip--inline" data-plugin={pluginId} title={pluginId}>
+      <IconBox className="skill-chip-icon" size={12} aria-hidden="true" />
+      {name}
+    </span>
+  )
+}
+
+export class PluginNode extends DecoratorNode<JSX.Element> {
+  __pluginId: string
+  __name: string
+  __expectedDigest: string
+
+  static getType(): string {
+    return 'plugin'
+  }
+
+  static clone(node: PluginNode): PluginNode {
+    return new PluginNode(node.__pluginId, node.__name, node.__expectedDigest, node.__key)
+  }
+
+  static importJSON(serialized: SerializedPluginNode): PluginNode {
+    return $createPluginNode(serialized.pluginId, serialized.name, serialized.expectedDigest)
+  }
+
+  constructor(pluginId: string, name: string, expectedDigest: string, key?: NodeKey) {
+    super(key)
+    this.__pluginId = pluginId
+    this.__name = name
+    this.__expectedDigest = expectedDigest
+  }
+
+  exportJSON(): SerializedPluginNode {
+    return {
+      type: 'plugin',
+      version: 1,
+      pluginId: this.__pluginId,
+      name: this.__name,
+      expectedDigest: this.__expectedDigest,
+    }
+  }
+
+  createDOM(): HTMLElement {
+    return document.createElement('span')
+  }
+
+  updateDOM(): false {
+    return false
+  }
+
+  isInline(): boolean {
+    return true
+  }
+
+  isKeyboardSelectable(): boolean {
+    return true
+  }
+
+  getPluginId(): string {
+    return this.__pluginId
+  }
+
+  getTextContent(): string {
+    return pluginToken({
+      pluginId: this.__pluginId,
+      name: this.__name,
+      expectedDigest: this.__expectedDigest,
+    })
+  }
+
+  decorate(_editor: LexicalEditor, _config: EditorConfig): JSX.Element {
+    return <PluginChip name={this.__name} pluginId={this.__pluginId} />
+  }
+}
+
+export function $createPluginNode(
+  pluginId: string,
+  name: string,
+  expectedDigest: string,
+): PluginNode {
+  return $applyNodeReplacement(new PluginNode(pluginId, name, expectedDigest))
+}
+
+export function $isPluginNode(node: LexicalNode | null | undefined): node is PluginNode {
+  return node instanceof PluginNode
+}
+
+export type SerializedPluginCommandNode = Spread<
+  {
+    pluginId: string
+    pluginName: string
+    commandId: string
+    title: string
+    expectedDigest: string
+  },
+  SerializedLexicalNode
+>
+
+function PluginCommandChip({ title, pluginName }: { title: string; pluginName: string }): JSX.Element {
+  return (
+    <span className="plugin-command-chip--inline" title={`${pluginName}: ${title}`}>
+      <IconCommand className="skill-chip-icon" size={12} aria-hidden="true" />
+      {title}
+    </span>
+  )
+}
+
+export class PluginCommandNode extends DecoratorNode<JSX.Element> {
+  __pluginId: string
+  __pluginName: string
+  __commandId: string
+  __title: string
+  __expectedDigest: string
+
+  static getType(): string {
+    return 'plugin-command'
+  }
+
+  static clone(node: PluginCommandNode): PluginCommandNode {
+    return new PluginCommandNode(
+      node.__pluginId,
+      node.__pluginName,
+      node.__commandId,
+      node.__title,
+      node.__expectedDigest,
+      node.__key,
+    )
+  }
+
+  static importJSON(serialized: SerializedPluginCommandNode): PluginCommandNode {
+    return $createPluginCommandNode(
+      serialized.pluginId,
+      serialized.pluginName,
+      serialized.commandId,
+      serialized.title,
+      serialized.expectedDigest,
+    )
+  }
+
+  constructor(
+    pluginId: string,
+    pluginName: string,
+    commandId: string,
+    title: string,
+    expectedDigest: string,
+    key?: NodeKey,
+  ) {
+    super(key)
+    this.__pluginId = pluginId
+    this.__pluginName = pluginName
+    this.__commandId = commandId
+    this.__title = title
+    this.__expectedDigest = expectedDigest
+  }
+
+  exportJSON(): SerializedPluginCommandNode {
+    return {
+      type: 'plugin-command',
+      version: 1,
+      pluginId: this.__pluginId,
+      pluginName: this.__pluginName,
+      commandId: this.__commandId,
+      title: this.__title,
+      expectedDigest: this.__expectedDigest,
+    }
+  }
+
+  createDOM(): HTMLElement {
+    return document.createElement('span')
+  }
+
+  updateDOM(): false {
+    return false
+  }
+
+  isInline(): boolean {
+    return true
+  }
+
+  isKeyboardSelectable(): boolean {
+    return true
+  }
+
+  getTextContent(): string {
+    return pluginCommandToken({
+      pluginId: this.__pluginId,
+      pluginName: this.__pluginName,
+      commandId: this.__commandId,
+      title: this.__title,
+      expectedDigest: this.__expectedDigest,
+    })
+  }
+
+  decorate(_editor: LexicalEditor, _config: EditorConfig): JSX.Element {
+    return <PluginCommandChip title={this.__title} pluginName={this.__pluginName} />
+  }
+}
+
+export function $createPluginCommandNode(
+  pluginId: string,
+  pluginName: string,
+  commandId: string,
+  title: string,
+  expectedDigest: string,
+): PluginCommandNode {
+  return $applyNodeReplacement(
+    new PluginCommandNode(pluginId, pluginName, commandId, title, expectedDigest),
+  )
+}
+
+export function $isPluginCommandNode(
+  node: LexicalNode | null | undefined,
+): node is PluginCommandNode {
+  return node instanceof PluginCommandNode
 }

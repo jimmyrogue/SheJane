@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconCheck, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
+import { IconBox, IconCheck, IconCommand, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -175,6 +175,22 @@ export function MessageBubble({
           <ReasoningDisclosure reasoning={message.reasoning} active={message.status === 'streaming'} />
         ) : null}
         <div className="message-content">
+          {!isAssistant && (message.pluginReferences?.length || message.pluginCommand) ? (
+            <div className="message-attachments message-plugin-selection">
+              {message.pluginReferences?.map((plugin) => (
+                <span key={plugin.pluginId} title={`${plugin.pluginId}\n${plugin.digest}`}>
+                  <IconBox size={14} aria-hidden="true" />
+                  @{plugin.name}
+                </span>
+              ))}
+              {message.pluginCommand ? (
+                <span title={`${message.pluginCommand.pluginId}:${message.pluginCommand.commandId}\n${message.pluginCommand.digest}`}>
+                  <IconCommand size={14} aria-hidden="true" />
+                  /{message.pluginCommand.pluginName}: {message.pluginCommand.title}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {message.attachments?.length ? (
             <div className="message-attachments">
               {message.attachments.map((attachment) => (

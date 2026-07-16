@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -50,6 +51,8 @@ from .model_credentials import (
     get_model_api_key,
 )
 from .observability import build_callbacks
+from .plugins.catalog import PluginCatalog
+from .plugins.identity import plugin_action_tool_version
 from .progress_ledger import build_handoff_snapshot
 from .store.fenced_checkpointer import FencedCheckpointer
 from .store.sqlite import (
@@ -58,6 +61,7 @@ from .store.sqlite import (
     LeaseFenceError,
     LocalStore,
     RunAdmissionError,
+    RunInputSnapshotError,
     WorkspaceAdmissionError,
 )
 from .tools.mcp import MCPToolCatalog
@@ -78,13 +82,16 @@ RUNTIME_CAPABILITIES = frozenset(
         "memory",
         "skills",
         "mcp",
+        "plugins",
         "subagents",
         "schedules",
         "hitl",
     }
 )
 
-_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+# Attachments are admitted as immutable Runtime-owned references. Generic
+# model-facing file reads keep their separate 10 MiB ceiling in agent/builder.py.
+_MAX_ATTACHMENT_REFERENCE_BYTES = 1024**4
 
 
 def _attachment_bindings(paths: list[str]) -> list[dict[str, str]]:
@@ -102,6 +109,7 @@ def _attachment_bindings(paths: list[str]) -> list[dict[str, str]]:
 
 
 async def _attachment_admission_error(bindings: list[dict[str, str]]) -> str | None:
+    total_size = 0
     for item in bindings:
         if not isinstance(item, dict):
             return "attachment metadata is invalid"
@@ -116,9 +124,123 @@ async def _attachment_admission_error(bindings: list[dict[str, str]]) -> str | N
         if not await asyncio.to_thread(path.is_file):
             return f"attachment is no longer available: {path.name}"
         size = (await asyncio.to_thread(path.stat)).st_size
-        if size > _MAX_ATTACHMENT_BYTES:
-            return f"attachment exceeds the 10 MiB limit: {path.name}"
+        if size > _MAX_ATTACHMENT_REFERENCE_BYTES:
+            return f"attachment exceeds the 1 TiB file-reference limit: {path.name}"
+        total_size += size
+        if total_size > _MAX_ATTACHMENT_REFERENCE_BYTES:
+            return "attachments exceed the 1 TiB per-Run file-reference limit"
     return None
+
+
+async def _prepare_run_inputs(
+    store: LocalStore,
+    bindings: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    ids = (
+        ["source"]
+        if len(bindings) == 1
+        else [f"attachment_{index}" for index in range(1, len(bindings) + 1)]
+    )
+    prepared: list[dict[str, object]] = []
+    for binding, input_id in zip(bindings, ids, strict=True):
+        source = Path(binding["source_path"])
+        size, digest, blob_key = await store.prepare_run_input_body(source)
+        prepared.append(
+            {
+                "input_id": input_id,
+                "virtual_path": binding["virtual_path"],
+                "original_name": source.name,
+                "media_type": mimetypes.guess_type(source.name)[0] or "application/octet-stream",
+                "bytes": size,
+                "sha256": digest,
+                "blob_key": blob_key,
+            }
+        )
+    return prepared
+
+
+async def _plugin_input_snapshots(
+    store: LocalStore,
+    run_id: str,
+    legacy_bindings: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, object], ...]:
+    snapshots: list[dict[str, object]] = []
+    rows = await store.list_run_inputs(run_id)
+    for item in rows:
+        input_id = str(item["input_id"])
+        name = str(item["original_name"])
+        snapshots.append(
+            {
+                "id": input_id,
+                "path": f"/input/{input_id}/{name}",
+                "media_type": str(item["media_type"]),
+                "size_bytes": int(item["bytes"]),
+                "sha256": str(item["sha256"]),
+                "source_path": str(store.run_input_body_path(item)),
+            }
+        )
+    if not rows and legacy_bindings:
+        ids = (
+            ["source"]
+            if len(legacy_bindings) == 1
+            else [f"attachment_{index}" for index in range(1, len(legacy_bindings) + 1)]
+        )
+        for binding, input_id in zip(legacy_bindings, ids, strict=True):
+            source = Path(binding["source_path"])
+            size, digest = await asyncio.to_thread(_path_identity, source)
+            snapshots.append(
+                {
+                    "id": input_id,
+                    "path": f"/input/{input_id}/{source.name}",
+                    "media_type": mimetypes.guess_type(source.name)[0]
+                    or "application/octet-stream",
+                    "size_bytes": size,
+                    "sha256": digest,
+                    "source_path": str(source),
+                }
+            )
+    return tuple(snapshots)
+
+
+def _path_identity(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
+
+
+async def _resolved_attachment_bindings(
+    store: LocalStore,
+    run_id: str,
+    persisted: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], str | None]:
+    """Resolve durable input ids to private paths, with legacy path compatibility."""
+    if all(isinstance(item.get("source_path"), str) for item in persisted):
+        return persisted, await _attachment_admission_error(persisted)
+    rows = await store.list_run_inputs(run_id)
+    by_id = {str(row["input_id"]): row for row in rows}
+    if len(by_id) != len(persisted):
+        return [], "Runtime-owned attachment metadata is incomplete"
+    resolved: list[dict[str, str]] = []
+    try:
+        for reference in persisted:
+            input_id = str(reference["input_id"])
+            virtual_path = str(reference["virtual_path"])
+            row = by_id[input_id]
+            if virtual_path != str(row["virtual_path"]):
+                return [], "Runtime-owned attachment identity changed"
+            resolved.append(
+                {
+                    "source_path": str(store.run_input_body_path(row)),
+                    "virtual_path": virtual_path,
+                }
+            )
+    except (KeyError, RunInputSnapshotError):
+        return [], "Runtime-owned attachment body is unavailable"
+    return resolved, None
 
 
 def runtime_capabilities(settings: Settings) -> frozenset[str]:
@@ -361,12 +483,14 @@ class RunCoordinator:
         lease_seconds: float = 30.0,
         settings: Settings | None = None,
         mcp_catalog: MCPToolCatalog | None = None,
+        plugin_catalog: PluginCatalog | None = None,
     ) -> None:
         self.store = store
         self.checkpointer = checkpointer
         self.agent_store = agent_store
         self.settings = settings or get_settings()
         self.mcp_catalog = mcp_catalog or MCPToolCatalog(self.settings.data_dir, store=store)
+        self.plugin_catalog = plugin_catalog or PluginCatalog(self.settings.data_dir)
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._wakeups: dict[str, asyncio.Event] = {}
         self._live_subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
@@ -478,6 +602,7 @@ class RunCoordinator:
                     provider_id=provider_id,
                     model_id=model_id,
                     requested_model=requested_model,
+                    required_capabilities=("streaming", "tool_calling"),
                 )
 
         return {}, RunAdmissionError(
@@ -490,10 +615,20 @@ class RunCoordinator:
         self,
         principal_id: str,
         requested_model: str,
+        required_capabilities: tuple[str, ...] = ("streaming", "tool_calling"),
     ) -> AsyncIterator[tuple[dict[str, Any], RunAdmissionError | None]]:
         """Keep a local provider stable until its Run is durably admitted."""
         if self.settings.fake_llm:
-            yield await self._model_binding(principal_id, requested_model)
+            yield (
+                {
+                    "provider": "fake",
+                    "credential_ref": None,
+                    "requested_model": requested_model,
+                    "profile": {capability: True for capability in required_capabilities},
+                    "required_capabilities": list(required_capabilities),
+                },
+                None,
+            )
             return
         if not requested_model.startswith("local:"):
             yield await self._model_binding(principal_id, requested_model)
@@ -515,6 +650,7 @@ class RunCoordinator:
                 provider_id=provider_id,
                 model_id=model_id,
                 requested_model=requested_model,
+                required_capabilities=required_capabilities,
             )
 
     async def _local_model_binding_locked(
@@ -524,6 +660,7 @@ class RunCoordinator:
         provider_id: str,
         model_id: str,
         requested_model: str,
+        required_capabilities: tuple[str, ...] = ("streaming", "tool_calling"),
     ) -> tuple[dict[str, Any], RunAdmissionError | None]:
         provider = await self.store.get_model_provider(
             principal_id=principal_id,
@@ -551,10 +688,13 @@ class RunCoordinator:
                 "model_not_found",
                 "model is not configured for this provider",
             )
-        if not bool(profile.get("tool_calling")) or not bool(profile.get("streaming")):
+        missing = [
+            capability for capability in required_capabilities if not bool(profile.get(capability))
+        ]
+        if missing:
             return {}, RunAdmissionError(
                 "model_capability_unavailable",
-                "model must support streaming and tool calling",
+                f"model must support {', '.join(missing)}",
             )
         if bool(provider.get("requires_api_key")):
             try:
@@ -582,7 +722,7 @@ class RunCoordinator:
             "requested_model": requested_model,
             "model_id": model_id,
             "profile": profile,
-            "required_capabilities": ["streaming", "tool_calling"],
+            "required_capabilities": list(required_capabilities),
         }, None
 
     async def _model_binding_error(
@@ -671,6 +811,8 @@ class RunCoordinator:
         permission_mode: str = "ask",
         history: list[dict[str, str]] | None = None,
         parent_run_id: str | None = None,
+        plugin_refs: list[dict[str, Any]] | None = None,
+        plugin_command: dict[str, Any] | None = None,
         settings: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         settings_are_frozen: bool = False,
@@ -702,6 +844,7 @@ class RunCoordinator:
         attachment_bindings = _attachment_bindings(attachment_paths or [])
         if attachment_bindings:
             public_metadata["_attachments"] = attachment_bindings
+        command_metadata = dict(public_metadata)
         command_payload = {
             "type": "run.start",
             "thread_id": thread_id,
@@ -720,8 +863,10 @@ class RunCoordinator:
             "permission_mode": public_settings.get("permission_mode", "ask"),
             "history": history or [],
             "parent_run_id": parent_run_id,
+            "plugin_refs": plugin_refs or [],
+            "plugin_command": plugin_command,
             "settings": public_settings,
-            "metadata": public_metadata,
+            "metadata": command_metadata,
         }
         accepted = await self.store.accepted_run_for_command(
             principal_id=principal_id,
@@ -762,6 +907,23 @@ class RunCoordinator:
                 else freeze_run_settings(self.settings, public_settings)
             )
             settings_snapshot["_model_binding"] = model_binding
+            prepared_inputs: list[dict[str, object]] = []
+            if admission_error is None and attachment_bindings:
+                try:
+                    prepared_inputs = await _prepare_run_inputs(self.store, attachment_bindings)
+                except (OSError, RunInputSnapshotError) as exc:
+                    admission_error = RunAdmissionError(
+                        "attachment_import_failed",
+                        f"attachment could not be imported into Runtime storage: {exc}",
+                    )
+                else:
+                    public_metadata["_attachments"] = [
+                        {
+                            "input_id": item["input_id"],
+                            "virtual_path": item["virtual_path"],
+                        }
+                        for item in prepared_inputs
+                    ]
 
             run, _created = await self.store.accept_run_command(
                 principal_id=principal_id,
@@ -783,6 +945,9 @@ class RunCoordinator:
                 settings=settings_snapshot,
                 metadata=public_metadata,
                 admission_error=admission_error,
+                plugin_refs=plugin_refs,
+                plugin_command=plugin_command,
+                run_inputs=prepared_inputs,
             )
         self._job_wakeup.set()
         return run
@@ -922,6 +1087,7 @@ class RunCoordinator:
             graph_checkpoint_id=checkpoint_id,
             graph_definition_id=source.get("graph_definition_id"),
             graph_input_kind="fork",
+            inherit_plugin_bindings_from=source_run_id,
         )
         self._job_wakeup.set()
         return run
@@ -1196,8 +1362,11 @@ class RunCoordinator:
                     )
                     return
                 run_metadata = _json_object(run.get("metadata_json"))
-                attachment_bindings = list(run_metadata.get("_attachments") or [])
-                attachment_error = await _attachment_admission_error(attachment_bindings)
+                attachment_bindings, attachment_error = await _resolved_attachment_bindings(
+                    self.store,
+                    run_id,
+                    list(run_metadata.get("_attachments") or []),
+                )
                 if attachment_error is not None:
                     outcome = await self._settle_execution_outcome(
                         run_id=run_id,
@@ -1977,6 +2146,56 @@ class RunCoordinator:
                 retry_failure_category=(retry_context or {}).get("failure_category"),
                 retry_failure_action_kind=(retry_context or {}).get("failure_action_kind"),
             )
+            runtime_context.plugin_inputs = await _plugin_input_snapshots(
+                self.store,
+                run_id,
+                attachment_bindings,
+            )
+            if resource_stack is None:
+                raise RuntimeError(
+                    "plugin snapshot acquisition requires an execution resource stack"
+                )
+            plugin_bindings = await self.store.list_run_plugin_bindings(run_id)
+            plugin_lease = await resource_stack.enter_async_context(
+                self.plugin_catalog.acquire_snapshot(
+                    plugin_bindings,
+                    execution_context=runtime_context,
+                )
+            )
+            runtime_context.plugin_catalog_hash = plugin_lease.action_catalog_hash
+            runtime_context.plugin_lease = plugin_lease
+            public_inputs = [
+                {key: value for key, value in item.items() if key != "source_path"}
+                for item in runtime_context.plugin_inputs
+            ]
+            for action in plugin_lease.actions:
+                action_inputs = [
+                    item for item in public_inputs if item["media_type"] in action.consumes
+                ]
+                invocation_identity = {
+                    "action": {
+                        "plugin_id": action.plugin_id,
+                        "plugin_version": action.plugin_version,
+                        "plugin_digest": action.plugin_digest,
+                        "action_id": action.action_id,
+                    },
+                    "inputs": action_inputs,
+                    "grants": {
+                        "capabilities": sorted(
+                            set(action.capabilities) & {"input.read", "artifact.write"}
+                        )
+                    },
+                    "limits": dict(action.limits),
+                    "environment": {
+                        "locale": runtime_context.locale or "en-US",
+                        "timezone": "UTC",
+                    },
+                    "model_binding": action.model_binding,
+                }
+                runtime_context.plugin_tool_versions[action.tool_name] = plugin_action_tool_version(
+                    invocation_identity,
+                    action_schema_digest=action.action_schema_digest,
+                )
             agent = await build_agent(
                 store=self.store,
                 checkpointer=checkpointer or self.checkpointer,
@@ -1992,6 +2211,7 @@ class RunCoordinator:
                 mcp_enabled=mcp_enabled,
                 mcp_disabled_servers=mcp_disabled_servers or None,
                 mcp_catalog=self.mcp_catalog,
+                plugin_lease=plugin_lease,
                 settings=effective_settings,
                 model_binding=model_binding if isinstance(model_binding, dict) else None,
                 model_api_key=model_api_key,
@@ -2468,6 +2688,8 @@ class RunCoordinator:
                     "operation_id": record.get("operation_id"),
                     "arguments_hash": record.get("arguments_hash"),
                     "risk": record.get("risk"),
+                    "review_source": action.get("review_source"),
+                    "review_reason": action.get("review_reason"),
                     "allowed_decisions": action.get("allowed_decisions") or ["approve", "reject"],
                     "wait_cycle_id": wait_cycle_id,
                     "interrupt_id": interrupt_id,

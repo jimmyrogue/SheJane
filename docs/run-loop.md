@@ -31,6 +31,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │       ├─ 配对 Token 映射为稳定 Runtime 身份 local:owner                          │
   │       ├─ 认证后、JSON 解析前限制请求体为 1 MiB                                   │
   │       ├─ command_id 与 client_message_id 必填                                    │
+  │       ├─ Composer 的 @插件 与 /插件命令编码为 plugin_refs/plugin_command；不注入 goal │
   │       ├─ Renderer 先在 IndexedDB 同一事务保存临时投影和待确认命令                 │
   │       ├─ 断网或重启后按原编号重投；同线程保序，不同线程互不阻塞                  │
   │       ├─ 收到 Runtime 回执后才删除命令；传输中断只保留待确认投影                 │
@@ -43,6 +44,9 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │  RunCoordinator.start_run(principal_id, command_id, client_message_id, ...)      │
   │       ├─ store.accept_run_command(...)                                            │
   │       │    同一事务写命令 + 对话消息 + Run + pending 作业 + 线程变化              │
+  │       │    P3 同事务解析启用/显式/Command 插件，并写精确 run_plugin_bindings       │
+  │       │    显式插件选择按已验证 manifest 规范化到用户消息 metadata；Desktop 历史只投影该值 │
+  │       │    fork 继承源 Run 的精确 digest；更新或退休不改写已接受 Run               │
   │       │    已有对话的 history 从 Runtime 消息生成；客户端历史只用于一次旧数据迁入 │
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
@@ -53,13 +57,15 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │       ├─ Runtime 原子写命令、分支对话、消息、Run、作业和稳定回执                │
   │       └─ 断网或重启后复用同一待发分支，不改写旧分支                            │
   │                                                                                  │
-  │  POST /local/v1/commands  （支持取消和四类等待决定）                             │
+  │  POST /local/v1/commands  （支持取消、四类等待决定与插件生命周期命令）            │
   │       ├─ Renderer 先把命令写入同一个 IndexedDB 待发队列                         │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
   │       ├─ 等待态取消会同时关闭权限、问题、计划审批和其他等待候选                 │
   │       ├─ 同编号同内容返回原回执；同编号不同内容返回 409                         │
   │       ├─ 回执后协调器停止当前执行；权威终态仍由事件与快照返回                   │
   │       ├─ 四类等待事务写决定、事件和回执；等待周期齐全时同事务创建恢复作业       │
+  │       ├─ 插件 install/enable/disable/update/rollback/remove 与 source add/refresh/install/remove 使用同一待发队列与幂等回执 │
+  │       ├─ 来源刷新先验证精确索引字节和独立 Ed25519 签名，失败时保留 last-known-good │
   │       └─ 对应旧接口暂时兼容，桌面客户端已不再调用                              │
   │                                                                                  │
   │  Runtime dispatcher                                                              │
@@ -92,6 +98,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │   agent = build_agent(按结构指纹复用或编译)                                       │
   │   execution_resources = AsyncExitStack      ← 本次执行结束时关闭模型客户端         │
   │     ├─ RuntimeContext                    ← P7 注入身份、任务和本次执行依赖          │
+  │     ├─ PluginCatalog.acquire_snapshot    ← P6 重验精确包 digest 并持有 lease       │
+  │     │   └─ 固定 Action/Skill/Command 描述与 catalog hash；缺包不回退最新版         │
   │     ├─ backend factory → FilesystemBackend(授权工作区或本次执行临时目录)            │
   │     │                                      ← 文件工具和子代理共享当前执行边界      │
   │     ├─ SkillsMiddleware sources = [skills_dir]   ← 只读挂载，渐进披露 Markdown Skills │
@@ -103,6 +111,10 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     ├─ agent_store  = AsyncSqliteStore           ← 显式 memory 工具的持久存储      │
   │     ├─ RuntimeContext.model = 本次模型连接        ← 主模型、摘要和子 Agent 共用代理  │
   │     └─ RuntimeContext.dynamic_tools = Runtime MCP 目录快照 ← 图内只保留无密钥结构代理 │
+  │        ├─ 插件 Action 通过 task-local proxy 进入固定 Agent definition              │
+  │        │   └─ P10 复用 review/receipt，私有 staging 后提升 Runtime Artifact         │
+  │        │      Linux native backend 组合 bwrap namespace、seccomp、私有 tmpfs、       │
+  │        │      Artifact broker 与 delegated cgroup；发布 Gate 未通过时仍拒绝执行      │
   │        └─ MCP 工具 ≥ 12：模型先调用 mcp.search_tools，再按搜索结果加载结构          │
   │                                                                                   │
   │   ┌─ agent.astream(version="v2", durability="sync",                            │    │
@@ -163,6 +175,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │  • local_model_calls 原子预留持久调用预算                                │     │
   │     │  • OutboundPolicy 只处理出站副本：强制过滤凭据，外部供应商按策略脱敏   │     │
   │     │  • 按模型 max_input_tokens 、工具结构和安全余量建立硬上下文边界     │     │
+  │     │  • 插件已产生产物时注入交付指令，并隐藏定位产物的兜底工具与同一 Action │     │
   │     │  • CompletionRouter 是唯一完成候选路由：验证失败时有界返回 model       │     │
   │     │                                                                          │     │
   │     │ wrap_model_call (栈式 nested)                                             │     │
@@ -185,14 +198,18 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │ after_model 的 ToolReviewMiddleware 先解析完整工具批次                   │     │
   │     │  • 校验工具是否存在、参数结构、图定义版本和撤销状态                      │     │
   │     │  • 计算 operation_id、arguments_hash 和风险等级                         │     │
+  │     │  • 准备 Tool Receipt，并优先复用 operation 已持久化的审批决定            │     │
   │     │  • 按 Run 冻结的 ask / auto / full_access 权限模式决定是否询问           │     │
-  │     │  • auto 只自动执行工作区内低风险写入；外部、未知和剪贴板读取仍询问       │     │
+  │     │  • auto 先走确定性规则；只有外部/未知灰区交给当前冻结模型批量审查         │     │
+  │     │  • 审查模型无工具且只返回 allow/ask；超时、异常或非法结果回退人工确认     │     │
+  │     │  • 审查调用写入同一模型账本的 approval_review 独立预算                   │     │
   │     │  • full_access 只取消普通询问，不扩大工作区、系统权限或参数校验边界      │     │
   │     │  • 任一调用需确认时，整批执行前 interrupt 并保存等待候选                 │     │
   │     │  • approve / edit / reject 必须与 SQLite 中的同一决定相符               │     │
   │     │                                                                          │     │
   │     │ wrap_tool_call 的 ToolExecutionMiddleware                               │     │
   │     │  • prepared → running → completed / failed / outcome_unknown            │     │
+  │     │  • 插件 tool version 固定 digest/schema/input/grant/limits；ContextVar 仅传本调用 operation │
   │     │  • 已完成回执直接复用；结果不明进入人工核对，不自动重跑                  │     │
   │     │  • 纯读取可并行；冲突调用按模型批次原始顺序通过公平读写门                │     │
   │     │  • 大结果保存为有配额的工作产物，只把短预览和引用交给模型                │     │
@@ -241,7 +258,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │       return 候选结果：waiting + run.waiting { next, interrupts, handoff }          │
   │                                                                                     │
   │     执行器收到候选结果后：                                                           │
-  │       退出 AsyncExitStack，关闭本次模型客户端和其他执行资源                         │
+  │       退出 AsyncExitStack，关闭模型客户端、PluginExecutionLease 和其他执行资源      │
   │       若清理无法确认：写 run.cleanup_required 并封存当前执行代次，不允许自动重试    │
   │       若租约过期：旧执行者完成清理并提交证明后，才把隔离任务结算为 failed           │
   │       LocalStore.commit_run_result(...)                                             │

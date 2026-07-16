@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.rapidocr.runtime",
+  "asset_version": "3.9.1+ppocrv6-medium.1",
+  "python_version": "3.12",
+  "platform": "darwin/arm64",
+  "created_at": "2026-07-16T00:00:00Z",
+  "build_tools": {
+    "python": "3.12.10",
+    "uv": "0.9.14",
+    "pyinstaller": "6.21.0"
+  },
+  "dependency_policy": {
+    "opencv_distribution": "opencv-python-headless",
+    "opencv_reason": "RapidOCR imports cv2 but requires no desktop GUI integration",
+    "forbidden_binary_markers": ["libtesseract", "libleptonica"]
+  },
+  "packages": [
+    {"filename":"altgraph-0.17.5-py2.py3-none-any.whl","size_bytes":21228,"sha256":"f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597"},
+    {"filename":"antlr4-python3-runtime-4.9.3.tar.gz","size_bytes":117034,"sha256":"f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b"},
+    {"filename":"certifi-2026.6.17-py3-none-any.whl","size_bytes":133289,"sha256":"2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"},
+    {"filename":"charset_normalizer-3.4.9-cp312-cp312-macosx_10_13_universal2.whl","size_bytes":319300,"sha256":"45b0cc4e3556cd875e09102988d1ab8356c998b596c9fced84547c8138b487a0"},
+    {"filename":"colorlog-6.10.1-py3-none-any.whl","size_bytes":11743,"sha256":"2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c"},
+    {"filename":"flatbuffers-25.12.19-py2.py3-none-any.whl","size_bytes":26661,"sha256":"7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4"},
+    {"filename":"idna-3.18-py3-none-any.whl","size_bytes":65455,"sha256":"7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"},
+    {"filename":"macholib-1.16.4-py2.py3-none-any.whl","size_bytes":38117,"sha256":"da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea"},
+    {"filename":"numpy-2.2.6-cp312-cp312-macosx_14_0_arm64.whl","size_bytes":5084103,"sha256":"894b3a42502226a1cac872f840030665f33326fc3dac8e57c607905773cdcde3"},
+    {"filename":"omegaconf-2.3.1-py3-none-any.whl","size_bytes":79502,"sha256":"3d701d14e9a8828f1edd28bb70b725908b34277cdd72cf7d6a83f94dadc6b6a0"},
+    {"filename":"onnxruntime-1.27.0-cp312-cp312-macosx_14_0_arm64.whl","size_bytes":18433506,"sha256":"a14c2ce45312def86b77aea651f46565e45960cf5f0721bfdff449165086ab76"},
+    {"filename":"opencv_python_headless-4.12.0.88-cp37-abi3-macosx_13_0_arm64.whl","size_bytes":37877864,"sha256":"1e58d664809b3350c1123484dd441e1667cd7bed3086db1b9ea1b6f6cb20b50e"},
+    {"filename":"packaging-26.2-py3-none-any.whl","size_bytes":100195,"sha256":"5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"},
+    {"filename":"pillow-12.3.0-cp312-cp312-macosx_11_0_arm64.whl","size_bytes":4780323,"sha256":"ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7"},
+    {"filename":"protobuf-7.35.1-cp310-abi3-macosx_10_9_universal2.whl","size_bytes":433226,"sha256":"24f857477359a85c0c235261b8ba905fd51b2562f4a64ca1df5473f29850cbf6"},
+    {"filename":"pyclipper-1.4.0-cp312-cp312-macosx_10_13_universal2.whl","size_bytes":265676,"sha256":"222ac96c8b8281b53d695b9c4fedc674f56d6d4320ad23f1bdbd168f4e316140"},
+    {"filename":"pyinstaller-6.21.0-py3-none-macosx_10_13_universal2.whl","size_bytes":1052350,"sha256":"327d132389f37912609e01be62810cf96b5aa95b613903e4b8692e0d12fb0eda"},
+    {"filename":"pyinstaller_hooks_contrib-2026.6-py3-none-any.whl","size_bytes":457159,"sha256":"fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3"},
+    {"filename":"pyyaml-6.0.3-cp312-cp312-macosx_11_0_arm64.whl","size_bytes":173973,"sha256":"fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0"},
+    {"filename":"rapidocr-3.9.1-py3-none-any.whl","size_bytes":27274755,"sha256":"600885e4e94e0b427abad394fccb0ec1d3c9118a215ca435bf7680aeae0e292b"},
+    {"filename":"requests-2.34.2-py3-none-any.whl","size_bytes":73075,"sha256":"2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"},
+    {"filename":"setuptools-83.0.0-py3-none-any.whl","size_bytes":1008090,"sha256":"29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"},
+    {"filename":"shapely-2.1.2-cp312-cp312-macosx_11_0_arm64.whl","size_bytes":1643556,"sha256":"ba4d1333cc0bc94381d6d4308d2e4e008e0bd128bdcff5573199742ee3634359"},
+    {"filename":"six-1.17.0-py2.py3-none-any.whl","size_bytes":11050,"sha256":"4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
+    {"filename":"tqdm-4.68.4-py3-none-any.whl","size_bytes":676612,"sha256":"5168118b2368f48c561afda8020fd79195b1bdb0bdf8086b88442c267a315dc2"},
+    {"filename":"urllib3-2.7.0-py3-none-any.whl","size_bytes":131087,"sha256":"9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"}
+  ],
+  "models": [
+    {"filename":"PP-OCRv6_det_medium.onnx","size_bytes":62119454,"sha256":"92078b7355007ccfffcd4c8cd441a3afd4538904d06881b29a155e1e679907c2","source_url":"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/onnx/PP-OCRv6/det/PP-OCRv6_det_medium.onnx"},
+    {"filename":"PP-OCRv6_rec_medium.onnx","size_bytes":76629984,"sha256":"eef444829dbbe18d7fea59a3f6eb75647518d2b3a9568d27c92e42940204894b","source_url":"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/onnx/PP-OCRv6/rec/PP-OCRv6_rec_medium.onnx"},
+    {"filename":"ch_ppocr_mobile_v2.0_cls_mobile.onnx","size_bytes":585532,"sha256":"e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c","source_url":"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.1/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx"}
+  ]
+}

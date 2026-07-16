@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from local_host.event_translator import translate
@@ -91,6 +93,40 @@ def test_messages_mode_emits_tool_completed_for_tool_message() -> None:
     assert events[0]["data"]["content"] == "42"
 
 
+def test_messages_mode_projects_persisted_plugin_artifacts() -> None:
+    tm = ToolMessage(
+        content=json.dumps(
+            {
+                "status": "succeeded",
+                "output": {"pages": 2},
+                "artifacts": [
+                    {
+                        "artifact_id": "art_operation_0",
+                        "name": "report.pdf",
+                        "media_type": "application/pdf",
+                        "size_bytes": 2048,
+                        "sha256": "a" * 64,
+                    }
+                ],
+            }
+        ),
+        tool_call_id="c-plugin",
+        name="plugin__report__render",
+    )
+
+    events = translate("messages", (tm, {}))
+
+    assert [event["event"] for event in events] == ["tool.completed", "artifact.created"]
+    assert events[1]["data"] == {
+        "artifact_id": "art_operation_0",
+        "title": "report.pdf",
+        "tool": "plugin__report__render",
+        "media_type": "application/pdf",
+        "size_bytes": 2048,
+        "sha256": "a" * 64,
+    }
+
+
 def test_messages_mode_treats_failed_tool_envelope_as_tool_failed() -> None:
     tm = ToolMessage(
         content='{"ok":false,"content":"gateway unreachable","errorCode":"gateway_unreachable","recoverable":true}',
@@ -135,6 +171,42 @@ def test_updates_mode_does_not_double_emit_tool_completed() -> None:
 def test_custom_mode_emits_agent_custom() -> None:
     events = translate("custom", {"phase": "planning", "step": 1})
     assert events == [{"event": "agent.custom", "data": {"phase": "planning", "step": 1}}]
+
+
+def test_runtime_tool_progress_uses_stable_event_name() -> None:
+    payload = {
+        "event": "tool.progress",
+        "data": {
+            "tool_call_id": "call_media",
+            "tool": "plugin.dev.shejane.media.inspect",
+            "operation_id": "toolop_media",
+            "sequence": 1,
+            "phase": "decode",
+            "message": "Decoding media",
+            "completed": 5,
+            "total": 10,
+            "unit": "frames",
+        },
+    }
+
+    assert translate("custom", payload) == [{"event": "tool.progress", "data": payload["data"]}]
+
+
+def test_auto_approval_uses_stable_permission_event_name() -> None:
+    payload = {
+        "event": "permission.auto_approved",
+        "data": {
+            "request_id": "toolop-1",
+            "operation_id": "toolop-1",
+            "tool": "execute",
+            "source": "llm",
+            "reason": "The action matches the request.",
+        },
+    }
+
+    assert translate("custom", payload) == [
+        {"event": "permission.auto_approved", "data": payload["data"]}
+    ]
 
 
 def test_unknown_mode_stays_out_of_product_events() -> None:

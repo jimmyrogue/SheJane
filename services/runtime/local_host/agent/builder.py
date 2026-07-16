@@ -32,6 +32,7 @@ What deepagents auto-adds for us (we no longer wire these manually):
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
@@ -39,9 +40,9 @@ import logging
 import os
 import shutil
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
@@ -53,10 +54,11 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
     ToolRetryMiddleware,
 )
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite.aio import AsyncSqliteStore
+from PIL import Image, UnidentifiedImageError
 
 from ..config import Settings, get_settings
 from ..llm.ledger import LedgerChatModel
@@ -66,13 +68,20 @@ from ..middleware.completion_router import (
     completion_repair_instruction,
 )
 from ..middleware.input_guard import InputGuardMiddleware
-from ..middleware.outbound_policy import OutboundPolicyMiddleware
+from ..middleware.outbound_policy import OutboundPolicyMiddleware, sanitize_outbound_text
 from ..middleware.plan_first import PlanFirstMiddleware
 from ..middleware.steering import SteeringMiddleware
 from ..middleware.tool_execution import ToolExecutionMiddleware
 from ..middleware.tool_result_retry import ToolResultRetryMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
-from ..middleware.tool_visibility import ToolVisibilityMiddleware
+from ..middleware.tool_visibility import ToolVisibilityMiddleware, delivered_plugin_tool_name
+from ..model_credentials import CredentialStoreError, get_model_api_key
+from ..plugins.catalog import PluginExecutionLease
+from ..plugins.linux_cgroup import load_linux_cgroup_resources
+from ..plugins.macos_vm import load_macos_vm_resources
+from ..plugins.platforms import current_managed_worker_platform
+from ..plugins.sandbox_runtime import SandboxRuntimeError
+from ..plugins.tools import PluginActionError, build_plugin_tool
 from ..store.sqlite import LocalStore
 from ..tools.mcp import (
     MCP_TOOL_SEARCH_THRESHOLD,
@@ -89,6 +98,10 @@ log = logging.getLogger("local_host.agent.builder")
 
 _AGENT_DEFINITION_CACHE_MAX = 16
 _AGENT_STATE_SCHEMA_VERSION = 1
+_APPROVAL_REVIEW_MAX_CALLS = 8
+_VISION_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
+_VISION_MAX_IMAGE_PIXELS = 40_000_000
+_VISION_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 _DEEPAGENTS_TOOL_NAMES = {
     "write_todos",
@@ -418,6 +431,14 @@ class RuntimePromptMiddleware(AgentMiddleware):
         )
         if repair_instruction:
             prompt = f"{prompt}\n\n<runtime-repair>\n{repair_instruction}\n</runtime-repair>"
+        artifact_instruction = _plugin_artifact_delivery_instruction(
+            getattr(request, "messages", ())
+        )
+        if artifact_instruction:
+            prompt = (
+                f"{prompt}\n\n<runtime-artifact-delivery>\n"
+                f"{artifact_instruction}\n</runtime-artifact-delivery>"
+            )
         system_message = request.system_message
         return request.override(
             system_message=SystemMessage(
@@ -437,6 +458,20 @@ class RuntimePromptMiddleware(AgentMiddleware):
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
         return await handler(self._request_with_context(request))
+
+
+def _plugin_artifact_delivery_instruction(messages: Sequence[Any]) -> str | None:
+    if delivered_plugin_tool_name(messages) is None:
+        return None
+    return (
+        "The latest plugin Action succeeded. Runtime already persisted its artifacts "
+        "and made them available to the user; each artifact_id is a delivered output, "
+        "not a host filesystem path. If these artifacts satisfy the request, reply "
+        "briefly and stop. Do not read the original attachment, search the filesystem, "
+        "call execute or task, or repeat the Action merely to locate or return them. "
+        "Call another compatible plugin Action only when the user requested an additional "
+        "transformation, passing artifact_id as input_id."
+    )
 
 
 class RuntimeModelMiddleware(AgentMiddleware):
@@ -530,6 +565,192 @@ def _build_chat_model(
     raise RuntimeError("Runtime BYOK model binding is required")
 
 
+async def _invoke_plugin_vision(
+    model_binding: Mapping[str, Any],
+    params: dict[str, Any],
+    input_root: Path,
+    inputs: tuple[dict[str, Any], ...],
+    *,
+    store: LocalStore,
+    principal_id: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    provider_id = str(model_binding["provider_id"])
+    provider = await store.get_model_provider(
+        principal_id=principal_id,
+        provider_id=provider_id,
+    )
+    try:
+        models = json.loads(provider.get("models_json") or "[]") if provider else []
+    except (json.JSONDecodeError, TypeError):
+        models = []
+    current_profile = next(
+        (
+            item
+            for item in models
+            if isinstance(item, dict) and item.get("model_id") == model_binding["model_id"]
+        ),
+        None,
+    )
+    if (
+        provider is None
+        or not bool(provider.get("enabled"))
+        or int(provider.get("version") or 1) != int(model_binding["provider_version"])
+        or str(provider.get("kind")) != str(model_binding["provider"])
+        or str(provider.get("base_url")) != str(model_binding["base_url"])
+        or str(provider.get("credential_ref")) != str(model_binding["credential_ref"])
+        or current_profile != dict(model_binding["profile"])
+        or not bool(current_profile.get("image_inputs"))
+    ):
+        raise PluginActionError(
+            "model_binding_unavailable",
+            "configured Vision model binding changed or is unavailable",
+        )
+    try:
+        api_key = (
+            await get_model_api_key(
+                principal_id,
+                provider_id,
+                str(model_binding["credential_ref"]),
+            )
+            if bool(model_binding.get("requires_api_key"))
+            else None
+        )
+    except CredentialStoreError as exc:
+        raise PluginActionError(
+            "model_credential_store_unavailable",
+            "Vision model credential store is unavailable",
+        ) from exc
+    if bool(model_binding.get("requires_api_key")) and not api_key:
+        raise PluginActionError(
+            "model_binding_unavailable",
+            "configured Vision model credential is unavailable",
+        )
+
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": sanitize_outbound_text(
+                params["prompt"],
+                secrets=(api_key,) if api_key else (),
+                pii_types=_outbound_pii_types(settings.pii_redact_types),
+                external=_outbound_is_external(settings, dict(model_binding)),
+            ),
+        }
+    ]
+    references = {str(item["id"]): item for item in inputs}
+    total_bytes = 0
+    input_root = input_root.resolve(strict=True)
+    for input_id in params["input_ids"]:
+        reference = references[input_id]
+        media_type = str(reference["media_type"])
+        if media_type not in _VISION_MEDIA_TYPES:
+            raise PluginActionError("invalid_invocation", "Vision input media type is unsupported")
+        try:
+            relative = PurePosixPath(str(reference["path"])).relative_to("/input")
+        except ValueError as exc:
+            raise PluginActionError("invalid_invocation", "Vision input path is invalid") from exc
+        candidate = input_root.joinpath(*relative.parts)
+        try:
+            candidate.resolve(strict=True).relative_to(input_root)
+        except (FileNotFoundError, ValueError) as exc:
+            raise PluginActionError("invalid_invocation", "Vision input is unavailable") from exc
+        body = candidate.read_bytes()
+        total_bytes += len(body)
+        if (
+            len(body) != int(reference["size_bytes"])
+            or hashlib.sha256(body).hexdigest() != reference["sha256"]
+            or total_bytes > _VISION_MAX_TOTAL_IMAGE_BYTES
+        ):
+            raise PluginActionError("resource_exhausted", "Vision input byte limit exceeded")
+        try:
+            with Image.open(candidate) as image:
+                if (
+                    image.width <= 0
+                    or image.height <= 0
+                    or image.width * image.height > _VISION_MAX_IMAGE_PIXELS
+                    or int(getattr(image, "n_frames", 1)) != 1
+                ):
+                    raise PluginActionError(
+                        "resource_exhausted",
+                        "Vision image dimensions or frame count are unsupported",
+                    )
+                image.verify()
+        except (Image.DecompressionBombError, UnidentifiedImageError, OSError) as exc:
+            raise PluginActionError("invalid_invocation", "Vision input image is invalid") from exc
+        encoded = base64.b64encode(body).decode("ascii")
+        if model_binding["provider"] == "anthropic":
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": encoded,
+                    },
+                }
+            )
+        else:
+            image_url: dict[str, Any] = {"url": f"data:{media_type};base64,{encoded}"}
+            if params.get("detail") is not None:
+                image_url["detail"] = params["detail"]
+            blocks.append({"type": "image_url", "image_url": image_url})
+
+    model = _build_chat_model(
+        settings,
+        "plugin-vision",
+        "vision",
+        model_binding=dict(model_binding),
+        model_api_key=api_key,
+    ).bind(
+        max_tokens=int(params["max_output_tokens"]),
+        temperature=float(params.get("temperature", 0)),
+    )
+    try:
+        response = await model.ainvoke([HumanMessage(content=blocks)])
+    except Exception as exc:
+        log.warning(
+            "plugin vision provider request failed provider=%s model=%s error=%s",
+            provider_id,
+            model_binding["model_id"],
+            type(exc).__name__,
+        )
+        raise PluginActionError(
+            "vision_provider_failed",
+            "configured Vision provider request failed",
+        ) from exc
+    content = response.content
+    text = (
+        content
+        if isinstance(content, str)
+        else "".join(
+            str(item["text"])
+            for item in content
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    )
+    if not text or len(text) > 262_144:
+        raise PluginActionError("vision_provider_failed", "Vision provider returned invalid text")
+    raw_usage = getattr(response, "usage_metadata", None)
+    usage = {
+        key: int(value)
+        for key, value in (raw_usage.items() if isinstance(raw_usage, dict) else ())
+        if key in {"input_tokens", "output_tokens", "total_tokens"}
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        and value >= 0
+    }
+    return {
+        "text": text,
+        "model": {
+            "provider_id": provider_id,
+            "provider_version": int(model_binding["provider_version"]),
+            "model_id": str(model_binding["model_id"]),
+        },
+        "usage": usage,
+    }
+
+
 def _int_or_none(value: Any) -> int | None:
     if value is None:
         return None
@@ -591,6 +812,7 @@ async def build_agent(
     mcp_enabled: bool = True,
     mcp_disabled_servers: set[str] | None = None,
     mcp_catalog: MCPToolCatalog | None = None,
+    plugin_lease: PluginExecutionLease | None = None,
     settings: Settings | None = None,
     model_binding: dict[str, Any] | None = None,
     model_api_key: str | None = None,
@@ -679,6 +901,60 @@ async def build_agent(
         )
     else:
         dynamic_tools = []
+
+    async def invoke_plugin_vision(
+        binding: Mapping[str, Any],
+        params: dict[str, Any],
+        input_root: Path,
+        inputs: tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        principal_id = runtime_context.principal_id if runtime_context is not None else None
+        if not principal_id:
+            raise PluginActionError(
+                "model_binding_unavailable",
+                "Vision Action is missing its Runtime principal",
+            )
+        return await _invoke_plugin_vision(
+            binding,
+            params,
+            input_root,
+            inputs,
+            store=store,
+            principal_id=principal_id,
+            settings=settings,
+        )
+
+    managed_worker_actions = any(
+        action.execution_kind == "managed_worker"
+        for action in (plugin_lease.actions if plugin_lease else ())
+    )
+    vm_resources = None
+    if settings.managed_worker_vm_assets is not None and managed_worker_actions:
+        try:
+            vm_resources = load_macos_vm_resources(settings.managed_worker_vm_assets)
+        except SandboxRuntimeError as exc:
+            raise PluginActionError("executor_unavailable", str(exc)) from exc
+    linux_cgroup = None
+    if settings.managed_worker_linux_assets is not None and managed_worker_actions:
+        try:
+            linux_cgroup = load_linux_cgroup_resources(
+                settings.managed_worker_linux_assets,
+                host_platform=current_managed_worker_platform() or "unsupported",
+            )
+        except SandboxRuntimeError as exc:
+            raise PluginActionError("executor_unavailable", str(exc)) from exc
+
+    plugin_tools = [
+        build_plugin_tool(
+            action,
+            vision_invoker=invoke_plugin_vision,
+            linux_cgroup=linux_cgroup,
+            vm_resources=vm_resources,
+        )
+        for action in (plugin_lease.actions if plugin_lease else ())
+    ]
+    dynamic_tool_map = {item.name: item.tool for item in dynamic_tools}
+    dynamic_tool_map.update({tool.name: tool for tool in plugin_tools})
     mcp_tool_names = {item.name for item in dynamic_tools}
     tools.extend(
         RuntimeToolProxy.from_tool(
@@ -688,6 +964,7 @@ async def build_agent(
         )
         for item in dynamic_tools
     )
+    tools.extend(RuntimeToolProxy.from_tool(tool) for tool in plugin_tools)
     deferred_tool_names = (
         mcp_tool_names if len(mcp_tool_names) >= MCP_TOOL_SEARCH_THRESHOLD else set()
     )
@@ -777,13 +1054,15 @@ async def build_agent(
             steering_emit=steering_emit,
             backend=backend,
             model=model,
-            dynamic_tools={item.name: item.tool for item in dynamic_tools},
+            dynamic_tools=dynamic_tool_map,
             execution_attempt_id=execution_attempt_id,
             tool_mutation_lock=AsyncToolExecutionGate(),
             outbound_is_external=_outbound_is_external(settings, model_binding),
             outbound_pii_types=_outbound_pii_types(settings.pii_redact_types),
             outbound_secrets=(model_api_key,) if model_api_key else (),
             memory_enabled=memory_enabled,
+            plugin_catalog_hash=(plugin_lease.action_catalog_hash if plugin_lease else None),
+            plugin_lease=plugin_lease,
             workspace_root=workspace_root,
             attachments=tuple(
                 str(item.get("virtual_path"))
@@ -816,14 +1095,28 @@ async def build_agent(
         runtime_context.enabled_skills = _active_skill_names(skills_arg)
         runtime_context.backend = backend
         runtime_context.model = model
+        runtime_context.approval_model = (
+            model.model_copy(
+                update={
+                    "call_purpose": "approval_review",
+                    "max_calls": _APPROVAL_REVIEW_MAX_CALLS,
+                }
+            )
+            if isinstance(model, LedgerChatModel)
+            else model
+        )
         runtime_context.execution_attempt_id = execution_attempt_id
         if not isinstance(runtime_context.tool_mutation_lock, AsyncToolExecutionGate):
             runtime_context.tool_mutation_lock = AsyncToolExecutionGate()
         runtime_context.outbound_is_external = _outbound_is_external(settings, model_binding)
         runtime_context.outbound_pii_types = _outbound_pii_types(settings.pii_redact_types)
         runtime_context.outbound_secrets = (model_api_key,) if model_api_key else ()
-        runtime_context.dynamic_tools = {item.name: item.tool for item in dynamic_tools}
+        runtime_context.dynamic_tools = dynamic_tool_map
         runtime_context.memory_enabled = memory_enabled
+        runtime_context.plugin_catalog_hash = (
+            plugin_lease.action_catalog_hash if plugin_lease else None
+        )
+        runtime_context.plugin_lease = plugin_lease
         runtime_context.attachments = tuple(
             str(item.get("virtual_path"))
             for item in attachment_bindings or []
@@ -837,6 +1130,7 @@ async def build_agent(
         subagents=subagents_arg,
         skills=skills_arg,
         memory=memory_arg,
+        plugin_catalog_hash=(plugin_lease.action_catalog_hash if plugin_lease else None),
     )
     runtime_context.graph_definition_id = fingerprint
 
@@ -876,6 +1170,7 @@ def _agent_definition_fingerprint(
     subagents: list[Any] | None,
     skills: list[str] | None,
     memory: list[str] | None,
+    plugin_catalog_hash: str | None,
 ) -> str:
     payload = {
         "version": _AGENT_STATE_SCHEMA_VERSION,
@@ -894,6 +1189,7 @@ def _agent_definition_fingerprint(
         ],
         "skills": skills or [],
         "memory": memory or [],
+        "plugin_catalog_hash": plugin_catalog_hash,
         "middleware": {
             "input_guard": settings.input_guard_mode,
             "plan_first": settings.plan_first_mode,

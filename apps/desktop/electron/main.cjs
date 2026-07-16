@@ -39,7 +39,10 @@ const {
   trayMenuTemplateForPlatform,
   windowMenuOptionsForPlatform,
 } = require('./menu.cjs')
-const { writeDesktopSmokeConfig } = require('./smoke-support.cjs')
+const {
+  installDesktopSmokeQuitWatcher,
+  writeDesktopSmokeConfig,
+} = require('./smoke-support.cjs')
 
 const isDev = process.env.ELECTRON_DEV === 'true'
 const dockLangFile =
@@ -271,6 +274,13 @@ function daemonBinaryPath() {
   return path.join(process.resourcesPath, 'runtime', exe)
 }
 
+function managedWorkerSandboxCommand() {
+  return JSON.stringify([
+    process.execPath,
+    path.join(process.resourcesPath, 'sandbox', 'srt-launcher.mjs'),
+  ])
+}
+
 // Allowlist env forward (mirrors scripts/dev.sh's `env -i`): the daemon never
 // inherits unrelated application or shell secrets.
 function daemonEnv(extra) {
@@ -358,9 +368,16 @@ async function startBundledDaemon() {
     '--port', String(port),
     '--token', daemonToken,
     '--data-dir', path.join(app.getPath('userData'), 'runtime'),
+    ...(process.platform === 'darwin' && process.arch === 'arm64'
+      ? [
+          '--managed-worker-vm-assets',
+          path.join(process.resourcesPath, 'sandbox', 'vm-assets', 'manifest.json'),
+        ]
+      : []),
   ], {
     env: daemonEnv({
       PYTHONUNBUFFERED: '1',
+      SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND: managedWorkerSandboxCommand(),
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -597,12 +614,15 @@ app.whenReady().then(async () => {
     runtimeSessionReady = true
     runtimeConnectionError = null
     if (daemonProcess) {
-      writeDesktopSmokeConfig({
+      const smokeConfigWritten = writeDesktopSmokeConfig({
         baseURL: runtimeConnection.baseURL,
         token: runtimeConnection.token,
         resourcesPath: process.resourcesPath,
         daemonPid: daemonProcess.pid || 0,
       })
+      if (smokeConfigWritten) {
+        installDesktopSmokeQuitWatcher({ quit: () => app.quit() })
+      }
     }
   } catch (error) {
     let shutdownError = null
@@ -734,6 +754,17 @@ ipcMain.handle('shejane:select-attachment-files', async () => {
   }
   const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
   return result.canceled ? [] : result.filePaths.slice(0, 10)
+})
+
+ipcMain.handle('shejane:select-plugin-package', async () => {
+  const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  const options = {
+    title: desktopText(currentLocale, 'dialogs.selectPluginPackageTitle'),
+    properties: ['openFile'],
+    filters: [{ name: 'SheJane Plugin', extensions: ['shejane-plugin'] }],
+  }
+  const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
+  return result.canceled ? undefined : result.filePaths[0]
 })
 
 ipcMain.handle('shejane:open-external', async (_event, rawURL) => {

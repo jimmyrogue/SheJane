@@ -20,7 +20,7 @@ The diagram below describes the current implementation. Target P1-P12 stage numb
 ┌─────────────────────────────────────────────────────────────────┐
 │ SheJane Runtime: services/runtime/local_host/                  │
 │ FastAPI · LangGraph · Deep Agents · SQLite checkpoints          │
-│ BYOK providers · OS credential store · tools · Skills · MCP     │
+│ BYOK · credential store · tools · Skills · MCP · plugins        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,10 +80,11 @@ make logs-client
 | One run from POST to terminal: middleware order, HITL, `scope=run`, and SSE events | `docs/run-loop.md` |
 | Runtime HTTP and SSE: event names, envelope keys, endpoints, and cursors | `docs/runtime-protocol.md` |
 | Runtime packaging and local operations | `docs/operations.md` |
+| Plugin architecture, package contracts, isolation, and developer workflow | `docs/adr/0001-runtime-plugin-platform.md`, `docs/plugins/`, `services/runtime/local_host/plugins/`, `plugins/` |
 | Current priorities | `docs/roadmap.md` |
 | Runtime model providers | `services/runtime/local_host/server.py`, `services/runtime/local_host/runs.py`, `services/runtime/local_host/llm/`, `apps/desktop/src/features/settings/ModelProvidersSettings.tsx` |
 | Runtime code | `services/runtime/local_host/`: `server.py` exposes the local API; `runs.py` owns job leases, execution, cleanup, and settlement; `agent/builder.py` assembles reusable Agent definitions; `agent/subagents.py` defines Deep Agents subagents; `middleware/` owns input observation, output policy, tool visibility, human approval, tool receipts, and the single completion route; `tools/` contains tool implementations; `store/sqlite.py` persists Runtime state and jobs |
-| Client code | `apps/desktop/src/`: `App.tsx` is the chat shell, `features/` contains chat, MCP, Skill, and settings features, and `shared/local-host/client.ts` adapts `@shejane/runtime-sdk` to Electron |
+| Client code | `apps/desktop/src/`: `App.tsx` is the chat shell, `features/` contains chat, MCP, Skill, plugin, and settings features, and `shared/local-host/client.ts` adapts `@shejane/runtime-sdk` to Electron |
 | Client visual system | `docs/ui/shejane-design-system.md`: June 2026 SheJane design tokens, brand mark, app-shell rules, and attachment and artifact glyph language |
 | Contract tests (real HTTP, not MockTransport) | `apps/desktop/src/shared/local-host/client.contract.test.ts` |
 

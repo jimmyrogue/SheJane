@@ -261,6 +261,31 @@ async def test_model_budget_is_reserved_durably_across_attempts(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_approval_review_budget_is_separate_but_uses_same_ledger(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    try:
+        agent = LedgerChatModel(
+            delegate=_StreamingModel(),
+            store=store,
+            run_id=str(run["id"]),
+            execution_attempt_id="job-1:1",
+            model_name="local:test:model",
+            max_calls=1,
+            call_purpose="agent",
+            profile={"max_input_tokens": 8_192},
+        )
+        reviewer = agent.model_copy(update={"call_purpose": "approval_review", "max_calls": 1})
+
+        _ = [chunk async for chunk in agent.astream([HumanMessage(content="agent")])]
+        _ = [chunk async for chunk in reviewer.astream([HumanMessage(content="review")])]
+
+        rows = await store.list_model_calls_for_run(str(run["id"]))
+        assert [row["purpose"] for row in rows] == ["agent", "approval_review"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_declared_tiny_context_fails_before_provider_call(tmp_path: Path) -> None:
     store, run = await _store_and_run(tmp_path)
     try:

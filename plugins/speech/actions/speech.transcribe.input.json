@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "input_id",
+    "language",
+    "initial_prompt",
+    "max_segments",
+    "max_characters",
+    "include_text_artifact",
+    "include_srt_artifact",
+    "include_json_artifact"
+  ],
+  "properties": {
+    "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "language": {"type": "string", "pattern": "^(auto|[a-z]{2})$"},
+    "initial_prompt": {"type": "string", "maxLength": 512},
+    "max_segments": {"type": "integer", "minimum": 1, "maximum": 20000},
+    "max_characters": {"type": "integer", "minimum": 1, "maximum": 500000},
+    "include_text_artifact": {"type": "boolean"},
+    "include_srt_artifact": {"type": "boolean"},
+    "include_json_artifact": {"type": "boolean"}
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "streams"],
+  "properties": {
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "duration_seconds": {"type": "number", "minimum": 0, "maximum": 1000000000},
+        "size_bytes": {"type": "integer", "minimum": 0, "maximum": 1000000000000},
+        "bit_rate": {"type": "integer", "minimum": 0, "maximum": 1000000000000}
+      }
+    },
+    "streams": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec_type", "codec_name"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 0, "maximum": 1024},
+          "codec_type": {"type": "string", "minLength": 1, "maxLength": 32},
+          "codec_name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "width": {"type": "integer", "minimum": 0, "maximum": 100000},
+          "height": {"type": "integer", "minimum": 0, "maximum": 100000},
+          "channels": {"type": "integer", "minimum": 0, "maximum": 1024},
+          "sample_rate": {"type": "integer", "minimum": 0, "maximum": 10000000},
+          "duration_seconds": {"type": "number", "minimum": 0, "maximum": 1000000000},
+          "average_frame_rate": {"type": "string", "maxLength": 64}
+        }
+      }
+    }
+  }
+}

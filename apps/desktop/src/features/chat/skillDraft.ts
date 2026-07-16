@@ -23,11 +23,32 @@ export const FUNC_CLOSE = ''
 export const MCP_OPEN = ''
 export const MCP_CLOSE = ''
 
+export const PLUGIN_OPEN = ''
+export const PLUGIN_CLOSE = ''
+export const PLUGIN_COMMAND_OPEN = ''
+export const PLUGIN_COMMAND_CLOSE = ''
+
+export interface PluginDraftReference {
+  pluginId: string
+  name: string
+  expectedDigest: string
+}
+
+export interface PluginCommandDraftReference {
+  pluginId: string
+  pluginName: string
+  commandId: string
+  title: string
+  expectedDigest: string
+}
+
 export type DraftNode =
   | { type: 'text'; value: string }
   | { type: 'skill'; name: string }
   | { type: 'function'; name: string }
   | { type: 'mcp'; name: string }
+  | ({ type: 'plugin' } & PluginDraftReference)
+  | ({ type: 'plugin_command' } & PluginCommandDraftReference)
 
 /** Wrap a skill name into its sentinel token form. */
 export function skillToken(name: string): string {
@@ -44,6 +65,35 @@ export function mcpToken(name: string): string {
   return `${MCP_OPEN}${name}${MCP_CLOSE}`
 }
 
+export function pluginToken(reference: PluginDraftReference): string {
+  return `${PLUGIN_OPEN}${encodeURIComponent(JSON.stringify([
+    reference.pluginId,
+    reference.name,
+    reference.expectedDigest,
+  ]))}${PLUGIN_CLOSE}`
+}
+
+export function pluginCommandToken(reference: PluginCommandDraftReference): string {
+  return `${PLUGIN_COMMAND_OPEN}${encodeURIComponent(JSON.stringify([
+    reference.pluginId,
+    reference.pluginName,
+    reference.commandId,
+    reference.title,
+    reference.expectedDigest,
+  ]))}${PLUGIN_COMMAND_CLOSE}`
+}
+
+function decodeTuple(value: string, length: number): string[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(decodeURIComponent(value))
+    return Array.isArray(parsed) && parsed.length === length && parsed.every((item) => typeof item === 'string')
+      ? parsed
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Split a raw draft into ordered text / skill nodes. Malformed sentinels
  * (an open without a matching close, or an empty name) are treated as plain
@@ -53,46 +103,89 @@ const tokenPattern = (): RegExp =>
   new RegExp(
     `${SKILL_OPEN}([^${SKILL_OPEN}${SKILL_CLOSE}]+)${SKILL_CLOSE}` +
       `|${FUNC_OPEN}([^${FUNC_OPEN}${FUNC_CLOSE}]+)${FUNC_CLOSE}` +
-      `|${MCP_OPEN}([^${MCP_OPEN}${MCP_CLOSE}]+)${MCP_CLOSE}`,
+      `|${MCP_OPEN}([^${MCP_OPEN}${MCP_CLOSE}]+)${MCP_CLOSE}` +
+      `|${PLUGIN_OPEN}([^${PLUGIN_OPEN}${PLUGIN_CLOSE}]+)${PLUGIN_CLOSE}` +
+      `|${PLUGIN_COMMAND_OPEN}([^${PLUGIN_COMMAND_OPEN}${PLUGIN_COMMAND_CLOSE}]+)${PLUGIN_COMMAND_CLOSE}`,
     'g',
   )
 
 export function tokenizeDraft(draft: string): DraftNode[] {
   const nodes: DraftNode[] = []
+  const appendText = (value: string) => {
+    if (!value) return
+    const previous = nodes.at(-1)
+    if (previous?.type === 'text') previous.value += value
+    else nodes.push({ type: 'text', value })
+  }
   const pattern = tokenPattern()
   let lastIndex = 0
   for (let match = pattern.exec(draft); match; match = pattern.exec(draft)) {
     if (match.index > lastIndex) {
-      nodes.push({ type: 'text', value: draft.slice(lastIndex, match.index) })
+      appendText(draft.slice(lastIndex, match.index))
     }
     if (match[1] !== undefined) {
       nodes.push({ type: 'skill', name: match[1] })
     } else if (match[2] !== undefined) {
       nodes.push({ type: 'function', name: match[2] })
-    } else {
+    } else if (match[3] !== undefined) {
       nodes.push({ type: 'mcp', name: match[3] })
+    } else if (match[4] !== undefined) {
+      const tuple = decodeTuple(match[4], 3)
+      if (tuple) {
+        nodes.push({
+          type: 'plugin',
+          pluginId: tuple[0],
+          name: tuple[1],
+          expectedDigest: tuple[2],
+        })
+      } else {
+        appendText(match[0])
+      }
+    } else {
+      const tuple = decodeTuple(match[5], 5)
+      if (tuple) {
+        nodes.push({
+          type: 'plugin_command',
+          pluginId: tuple[0],
+          pluginName: tuple[1],
+          commandId: tuple[2],
+          title: tuple[3],
+          expectedDigest: tuple[4],
+        })
+      } else {
+        appendText(match[0])
+      }
     }
     lastIndex = match.index + match[0].length
   }
   if (lastIndex < draft.length) {
-    nodes.push({ type: 'text', value: draft.slice(lastIndex) })
+    appendText(draft.slice(lastIndex))
   }
   return nodes
 }
 
 /**
  * Resolve a raw draft into what the user/agent should actually see:
- * - `text`: human-readable string with each token rendered as `@name`
- *   (used for the chat bubble and the task text sent to the agent).
+ * - `text`: user-authored task text. Plugin selectors are metadata and do
+ *   not become prompt text; Skill/MCP mentions retain their legacy display.
  * - `skills`: skill names in first-seen order, de-duplicated (used to force
  *   per-run skills + the skill.use directive prefix).
  */
 export function parseSkillDraft(
   draft: string,
-): { text: string; skills: string[]; functions: string[]; mcps: string[] } {
+): {
+  text: string
+  skills: string[]
+  functions: string[]
+  mcps: string[]
+  plugins: PluginDraftReference[]
+  pluginCommand?: PluginCommandDraftReference
+} {
   const skills: string[] = []
   const functions: string[] = []
   const mcps: string[] = []
+  const plugins: PluginDraftReference[] = []
+  let pluginCommand: PluginCommandDraftReference | undefined
   let text = ''
   for (const node of tokenizeDraft(draft)) {
     if (node.type === 'text') {
@@ -108,7 +201,7 @@ export function parseSkillDraft(
       if (!functions.includes(node.name)) {
         functions.push(node.name)
       }
-    } else {
+    } else if (node.type === 'mcp') {
       // MCP tokens render as @mcp:name so the chat bubble shows the user's
       // intent verbatim. The actual server allowlist override + 'prefer
       // these tools' directive get injected by the send path.
@@ -116,7 +209,23 @@ export function parseSkillDraft(
       if (!mcps.includes(node.name)) {
         mcps.push(node.name)
       }
+    } else if (node.type === 'plugin') {
+      if (!plugins.some((plugin) => plugin.pluginId === node.pluginId)) {
+        plugins.push({
+          pluginId: node.pluginId,
+          name: node.name,
+          expectedDigest: node.expectedDigest,
+        })
+      }
+    } else {
+      pluginCommand = {
+        pluginId: node.pluginId,
+        pluginName: node.pluginName,
+        commandId: node.commandId,
+        title: node.title,
+        expectedDigest: node.expectedDigest,
+      }
     }
   }
-  return { text, skills, functions, mcps }
+  return { text, skills, functions, mcps, plugins, ...(pluginCommand ? { pluginCommand } : {}) }
 }

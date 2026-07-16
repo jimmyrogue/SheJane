@@ -11,6 +11,25 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+
+def test_permission_policy_routes_only_auto_gray_area_to_reviewer() -> None:
+    from local_host.middleware.tool_review import approval_policy_decision
+
+    assert (
+        approval_policy_decision("plugin.example.archive.extract", "plugin_action", "auto").decision
+        == "allow"
+    )
+    assert approval_policy_decision("execute", "external_or_unknown", "auto").decision == ("review")
+    assert approval_policy_decision("clipboard.read", "runtime_state", "auto").decision == "ask"
+    assert (
+        approval_policy_decision("plugin.example.archive.extract", "plugin_action", "ask").decision
+        == "ask"
+    )
+    assert approval_policy_decision("execute", "external_or_unknown", "full_access").decision == (
+        "allow"
+    )
+
+
 # --- input guard ---
 
 

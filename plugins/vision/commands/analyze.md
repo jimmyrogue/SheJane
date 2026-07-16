@@ -1,0 +1,1 @@
+Analyze the explicitly selected image inputs with this plugin's fixed backend. Preserve input order, use the user's question as the bounded prompt, and report the concrete model identity and any warnings. Do not substitute OCR, the current chat model, another Vision plugin, or another backend.

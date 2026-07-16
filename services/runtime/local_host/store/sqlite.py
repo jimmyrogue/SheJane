@@ -13,12 +13,15 @@ Tables in this file:
 - `local_permissions` — pending / resolved permission requests
 - `local_questions`   — pending / answered user questions
 - `local_artifacts`   — tool-produced artifacts (file content, snapshots)
+- `local_run_inputs`  — immutable Runtime-owned bodies admitted for one run
 - `local_steering`    — user instructions queued into an active run
 - `local_plan_approvals` — pending / resolved plan-mode approvals
 - `local_scheduled_runs` — local-only delayed run requests
 - `local_model_providers` — non-secret BYOK provider configuration
 - `local_runtime_settings` — persisted defaults for future runs
 - `local_mcp_catalog` — credential-free MCP tool metadata and refresh state
+- `plugin_versions` — immutable content-addressed plugin package metadata
+- `plugin_installations` — principal-scoped active version and enabled state
 - `local_model_calls` — durable model-call reservations and usage receipts
 - `local_assistant_drafts` — latest complete top-level assistant model round
 """
@@ -28,23 +31,29 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from itertools import chain
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import aiosqlite
 
 from ..auth import LOCAL_OWNER_PRINCIPAL_ID
+from ..plugins.identity import plugin_action_catalog_hash
 
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
-MAX_RUN_ARTIFACT_BYTES = 128 * 1024 * 1024
-MAX_PRINCIPAL_ARTIFACT_BYTES = 512 * 1024 * 1024
-MAX_TOTAL_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
+MAX_BLOB_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024
+MAX_RUN_ARTIFACT_BYTES = 4 * 1024 * 1024 * 1024
+MAX_PRINCIPAL_ARTIFACT_BYTES = 16 * 1024 * 1024 * 1024
+MAX_TOTAL_ARTIFACT_BYTES = 64 * 1024 * 1024 * 1024
 MAX_SETTLEMENT_ARTIFACT_REFS = 256
+MAX_RUN_INPUT_BYTES = 1024**4
 
 
 def _principal_thread_id(principal_id: str, requested_id: str) -> str:
@@ -209,11 +218,82 @@ CREATE TABLE IF NOT EXISTS local_commands (
     client_message_id TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     response_json TEXT NOT NULL DEFAULT '{}',
-    run_id TEXT NOT NULL,
+    run_id TEXT,
     created_at TEXT NOT NULL,
     PRIMARY KEY (principal_id, id),
     FOREIGN KEY (run_id) REFERENCES local_runs(id)
 );
+
+CREATE TABLE IF NOT EXISTS plugin_versions (
+    plugin_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    digest TEXT NOT NULL UNIQUE,
+    manifest_json TEXT NOT NULL,
+    execution_kind TEXT NOT NULL CHECK (execution_kind IN ('wasi', 'managed_worker')),
+    signature_status TEXT NOT NULL CHECK (signature_status IN ('unsigned', 'verified')),
+    signer_key_id TEXT,
+    compatibility TEXT NOT NULL CHECK (compatibility IN ('compatible', 'incompatible')),
+    source TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('installed', 'retired')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT,
+    PRIMARY KEY (plugin_id, digest),
+    UNIQUE (plugin_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS plugin_installations (
+    principal_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    active_digest TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    source TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    model_binding_json TEXT,
+    model_binding_revision INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    retired_at TEXT,
+    PRIMARY KEY (principal_id, plugin_id),
+    FOREIGN KEY (active_digest) REFERENCES plugin_versions(digest)
+);
+
+CREATE TABLE IF NOT EXISTS plugin_sources (
+    principal_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    index_url TEXT NOT NULL,
+    signature_url TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    index_sha256 TEXT NOT NULL,
+    index_json TEXT NOT NULL,
+    signature_json TEXT NOT NULL,
+    package_count INTEGER NOT NULL CHECK (package_count >= 0),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (principal_id, source_id),
+    UNIQUE (principal_id, index_url)
+);
+
+CREATE TABLE IF NOT EXISTS run_plugin_bindings (
+    run_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    selection_source TEXT NOT NULL
+        CHECK (selection_source IN ('explicit', 'command', 'enabled')),
+    required INTEGER NOT NULL CHECK (required IN (0, 1)),
+    command_id TEXT,
+    action_catalog_hash TEXT NOT NULL,
+    model_binding_json TEXT,
+    PRIMARY KEY (run_id, plugin_id),
+    FOREIGN KEY (run_id) REFERENCES local_runs(id),
+    FOREIGN KEY (plugin_id, digest) REFERENCES plugin_versions(plugin_id, digest)
+);
+CREATE INDEX IF NOT EXISTS idx_run_plugin_bindings_digest
+    ON run_plugin_bindings(digest);
 
 CREATE TABLE IF NOT EXISTS local_run_jobs (
     id TEXT PRIMARY KEY,
@@ -245,6 +325,7 @@ CREATE TABLE IF NOT EXISTS local_model_calls (
     execution_attempt_id TEXT NOT NULL,
     call_index INTEGER NOT NULL,
     model TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'agent',
     status TEXT NOT NULL CHECK (
         status IN (
             'reserved', 'streaming', 'completed', 'completed_unmetered',
@@ -279,6 +360,11 @@ CREATE TABLE IF NOT EXISTS local_tool_receipts (
     result_json TEXT,
     result_hash TEXT,
     error_type TEXT,
+    review_decision TEXT,
+    review_source TEXT,
+    review_reason TEXT,
+    review_model TEXT,
+    reviewed_at TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     completed_at TEXT,
@@ -408,12 +494,32 @@ CREATE TABLE IF NOT EXISTS local_artifacts (
     content TEXT NOT NULL,
     content_type TEXT NOT NULL,
     bytes INTEGER NOT NULL DEFAULT 0,
+    storage_kind TEXT NOT NULL DEFAULT 'inline_text',
+    blob_key TEXT,
+    sha256 TEXT,
     tool_call_id TEXT,
     tool_name TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES local_runs(id)
 );
+
+CREATE TABLE IF NOT EXISTS local_run_inputs (
+    run_id TEXT NOT NULL,
+    input_id TEXT NOT NULL,
+    virtual_path TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    blob_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (run_id, input_id),
+    UNIQUE (run_id, virtual_path),
+    FOREIGN KEY (run_id) REFERENCES local_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_local_run_inputs_sha256
+    ON local_run_inputs(sha256);
 
 CREATE TABLE IF NOT EXISTS local_steering (
     id TEXT PRIMARY KEY,
@@ -464,6 +570,18 @@ class CommandConflictError(RuntimeError):
     """A command id was reused with different immutable content."""
 
 
+class PluginVersionConflictError(RuntimeError):
+    """A plugin identity or version is already bound to different content."""
+
+
+class PluginStateError(RuntimeError):
+    """A plugin state transition failed a stable admission rule."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class WorkspaceAdmissionError(RuntimeError):
     """A command references a workspace the principal cannot use."""
 
@@ -482,6 +600,14 @@ class RunAdmissionError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class RunInputSnapshotError(RuntimeError):
+    """A selected local input could not become an immutable Runtime body."""
+
+
+class RunInputQuotaError(RunInputSnapshotError):
+    """A Run input exceeds the immutable input-store safety budget."""
 
 
 class LeaseFenceError(RuntimeError):
@@ -581,6 +707,7 @@ TRANSIENT_RUN_EVENT_TYPES = frozenset(
         "llm.usage",
         "llm.tool_call_chunk",
         "subagent.spawned",
+        "tool.progress",
     }
 )
 
@@ -593,6 +720,16 @@ def _encode_payload(payload: dict[str, Any]) -> str:
         separators=(",", ":"),
         default=str,
     )
+
+
+def _file_identity(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
 
 
 def _json_payload(raw: Any) -> dict[str, Any]:
@@ -651,7 +788,9 @@ class LocalStore:
             await conn.execute("BEGIN IMMEDIATE")
             await cls._ensure_columns(conn)
             await conn.commit()
-            return cls(conn, db_path)
+            store = cls(conn, db_path)
+            await store.gc_orphan_bodies()
+            return store
         except BaseException:
             if conn.in_transaction:
                 await conn.rollback()
@@ -746,6 +885,27 @@ class LocalStore:
             )
         await LocalStore._ensure_principal_scoped_commands(conn)
         await LocalStore._ensure_generic_commands(conn)
+        cursor = await conn.execute("PRAGMA table_info(plugin_installations)")
+        plugin_installation_columns = {row[1] for row in await cursor.fetchall()}
+        if "retired_at" not in plugin_installation_columns:
+            await conn.execute("ALTER TABLE plugin_installations ADD COLUMN retired_at TEXT")
+        if "model_binding_json" not in plugin_installation_columns:
+            await conn.execute(
+                "ALTER TABLE plugin_installations ADD COLUMN model_binding_json TEXT"
+            )
+        if "model_binding_revision" not in plugin_installation_columns:
+            await conn.execute(
+                "ALTER TABLE plugin_installations ADD COLUMN model_binding_revision "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+        cursor = await conn.execute("PRAGMA table_info(run_plugin_bindings)")
+        run_plugin_binding_columns = {row[1] for row in await cursor.fetchall()}
+        if "model_binding_json" not in run_plugin_binding_columns:
+            await conn.execute("ALTER TABLE run_plugin_bindings ADD COLUMN model_binding_json TEXT")
+        cursor = await conn.execute("PRAGMA table_info(plugin_versions)")
+        plugin_version_columns = {row[1] for row in await cursor.fetchall()}
+        if "signer_key_id" not in plugin_version_columns:
+            await conn.execute("ALTER TABLE plugin_versions ADD COLUMN signer_key_id TEXT")
         await LocalStore._ensure_run_job_principals(conn)
         cursor = await conn.execute("PRAGMA table_info(local_run_jobs)")
         job_columns = {row[1] for row in await cursor.fetchall()}
@@ -757,7 +917,10 @@ class LocalStore:
         await LocalStore._ensure_wait_identity_columns(conn)
         await LocalStore._ensure_tool_receipt_namespace(conn)
         await LocalStore._ensure_tool_receipt_version_column(conn)
+        await LocalStore._ensure_tool_receipt_review_columns(conn)
+        await LocalStore._ensure_model_call_purpose_column(conn)
         await LocalStore._ensure_wait_candidates(conn)
+        await LocalStore._ensure_artifact_storage_columns(conn)
         transient_placeholders = ",".join("?" for _ in TRANSIENT_RUN_EVENT_TYPES)
         await conn.execute(
             f"DELETE FROM local_events WHERE event_type IN ({transient_placeholders})",
@@ -772,6 +935,18 @@ class LocalStore:
         ):
             await conn.execute(f"DROP TABLE IF EXISTS {table}")
         await LocalStore._ensure_event_sequence_index(conn)
+
+    @staticmethod
+    async def _ensure_artifact_storage_columns(conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(local_artifacts)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        for column, definition in (
+            ("storage_kind", "TEXT NOT NULL DEFAULT 'inline_text'"),
+            ("blob_key", "TEXT"),
+            ("sha256", "TEXT"),
+        ):
+            if column not in columns:
+                await conn.execute(f"ALTER TABLE local_artifacts ADD COLUMN {column} {definition}")
 
     @staticmethod
     async def _ensure_model_provider_kinds(conn: aiosqlite.Connection) -> None:
@@ -960,6 +1135,29 @@ class LocalStore:
             )
 
     @staticmethod
+    async def _ensure_tool_receipt_review_columns(conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(local_tool_receipts)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        for column in (
+            "review_decision",
+            "review_source",
+            "review_reason",
+            "review_model",
+            "reviewed_at",
+        ):
+            if column not in columns:
+                await conn.execute(f"ALTER TABLE local_tool_receipts ADD COLUMN {column} TEXT")
+
+    @staticmethod
+    async def _ensure_model_call_purpose_column(conn: aiosqlite.Connection) -> None:
+        cursor = await conn.execute("PRAGMA table_info(local_model_calls)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "purpose" not in columns:
+            await conn.execute(
+                "ALTER TABLE local_model_calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'agent'"
+            )
+
+    @staticmethod
     async def _ensure_tool_receipt_namespace(conn: aiosqlite.Connection) -> None:
         cursor = await conn.execute("PRAGMA table_info(local_tool_receipts)")
         columns = {row[1] for row in await cursor.fetchall()}
@@ -1140,28 +1338,28 @@ class LocalStore:
             )
         ).fetchone()
         table_sql = str(schema[0] if schema else "").upper()
-        if "response_json" in columns and "RUN_ID TEXT NOT NULL UNIQUE" not in table_sql:
+        if "response_json" in columns and "RUN_ID TEXT NOT NULL" not in table_sql:
             return
         await conn.execute("SAVEPOINT generic_commands")
         try:
             await conn.execute(
-                "CREATE TABLE local_commands_v3 ("
+                "CREATE TABLE local_commands_v4 ("
                 "principal_id TEXT NOT NULL, id TEXT NOT NULL, command_type TEXT NOT NULL, "
                 "client_message_id TEXT NOT NULL, payload_json TEXT NOT NULL, "
-                "response_json TEXT NOT NULL DEFAULT '{}', run_id TEXT NOT NULL, "
+                "response_json TEXT NOT NULL DEFAULT '{}', run_id TEXT, "
                 "created_at TEXT NOT NULL, PRIMARY KEY (principal_id, id), "
                 "FOREIGN KEY (run_id) REFERENCES local_runs(id))"
             )
             response_expression = "response_json" if "response_json" in columns else "'{}'"
             await conn.execute(
-                "INSERT INTO local_commands_v3 "
+                "INSERT INTO local_commands_v4 "
                 "(principal_id, id, command_type, client_message_id, payload_json, "
                 "response_json, run_id, created_at) "
                 "SELECT principal_id, id, command_type, client_message_id, payload_json, "
                 f"{response_expression}, run_id, created_at FROM local_commands"
             )
             await conn.execute("DROP TABLE local_commands")
-            await conn.execute("ALTER TABLE local_commands_v3 RENAME TO local_commands")
+            await conn.execute("ALTER TABLE local_commands_v4 RENAME TO local_commands")
             await conn.execute("RELEASE generic_commands")
         except BaseException:
             await conn.execute("ROLLBACK TO generic_commands")
@@ -1292,19 +1490,25 @@ class LocalStore:
         execution_attempt_id: str,
         model: str,
         max_calls: int,
+        purpose: str = "agent",
     ) -> dict[str, Any]:
         """Atomically reserve one durable model-call slot for a run."""
+        if purpose not in {"agent", "approval_review"}:
+            raise ValueError("model call purpose is invalid")
         async with self.run_write_transaction(run_id) as conn:
             row = await (
                 await conn.execute(
-                    "SELECT COUNT(*) AS count FROM local_model_calls WHERE run_id = ?",
-                    (run_id,),
+                    "SELECT COUNT(*) AS total_count, "
+                    "COALESCE(SUM(CASE WHEN purpose = ? THEN 1 ELSE 0 END), 0) AS purpose_count "
+                    "FROM local_model_calls WHERE run_id = ?",
+                    (purpose, run_id),
                 )
             ).fetchone()
-            call_index = int(row["count"] if row is not None else 0) + 1
-            if call_index > max(1, int(max_calls)):
+            call_index = int(row["total_count"] if row is not None else 0) + 1
+            purpose_index = int(row["purpose_count"] if row is not None else 0) + 1
+            if purpose_index > max(1, int(max_calls)):
                 raise ModelCallBudgetExceeded(
-                    f"model call budget exhausted for run {run_id}: {max_calls}"
+                    f"{purpose} model call budget exhausted for run {run_id}: {max_calls}"
                 )
             record = {
                 "id": _new_id("model_call"),
@@ -1312,17 +1516,25 @@ class LocalStore:
                 "execution_attempt_id": execution_attempt_id,
                 "call_index": call_index,
                 "model": model,
+                "purpose": purpose,
                 "status": "reserved",
                 "created_at": _now(),
             }
             await conn.execute(
                 "INSERT INTO local_model_calls "
-                "(id, run_id, execution_attempt_id, call_index, model, status, created_at) "
-                "VALUES (:id, :run_id, :execution_attempt_id, :call_index, :model, :status, "
+                "(id, run_id, execution_attempt_id, call_index, model, purpose, status, created_at) "
+                "VALUES (:id, :run_id, :execution_attempt_id, :call_index, :model, :purpose, :status, "
                 ":created_at)",
                 record,
             )
         return record
+
+    async def list_model_calls_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM local_model_calls WHERE run_id = ? ORDER BY call_index",
+            (run_id,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
 
     async def mark_model_call_output(self, *, run_id: str, call_id: str) -> None:
         async with self.run_write_transaction(run_id) as conn:
@@ -1583,6 +1795,66 @@ class LocalStore:
             ).fetchone()
             assert row is not None
             return dict(row)
+
+    async def record_tool_review(
+        self,
+        *,
+        operation_id: str,
+        run_id: str,
+        decision: str,
+        source: str,
+        reason: str,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        if decision not in {"allow", "ask", "deny"}:
+            raise ValueError("tool review decision is invalid")
+        if source not in {"rule", "llm", "fallback", "user", "run_grant"}:
+            raise ValueError("tool review source is invalid")
+        async with self.run_write_transaction(run_id) as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT * FROM local_tool_receipts WHERE operation_id = ? AND run_id = ?",
+                    (operation_id, run_id),
+                )
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown tool receipt: {operation_id}")
+            record = dict(row)
+            if record.get("review_decision") is not None:
+                if (
+                    record.get("review_decision") != decision
+                    or record.get("review_source") != source
+                    or str(record.get("review_reason") or "") != reason
+                    or record.get("review_model") != model
+                ):
+                    raise ToolReceiptStateError(
+                        f"tool receipt {operation_id} already has a different review decision"
+                    )
+                return record
+            reviewed_at = _now()
+            await conn.execute(
+                "UPDATE local_tool_receipts SET review_decision = ?, review_source = ?, "
+                "review_reason = ?, review_model = ?, reviewed_at = ?, updated_at = ? "
+                "WHERE operation_id = ? AND run_id = ? AND review_decision IS NULL",
+                (
+                    decision,
+                    source,
+                    reason,
+                    model,
+                    reviewed_at,
+                    reviewed_at,
+                    operation_id,
+                    run_id,
+                ),
+            )
+            updated = await (
+                await conn.execute(
+                    "SELECT * FROM local_tool_receipts WHERE operation_id = ? AND run_id = ?",
+                    (operation_id, run_id),
+                )
+            ).fetchone()
+            assert updated is not None
+            return dict(updated)
 
     async def begin_tool_receipt(
         self,
@@ -2333,6 +2605,1179 @@ class LocalStore:
             payload_json=_encode_payload(payload),
         )
 
+    async def record_command_receipt(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_type: str,
+        payload: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload_json = _encode_payload(payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type=command_type,
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, ?, '', ?, ?, NULL, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        command_type,
+                        payload_json,
+                        _encode_payload(receipt),
+                        now,
+                    ),
+                )
+                await conn.commit()
+                return receipt
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def install_plugin_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_payload: dict[str, Any],
+        manifest: dict[str, Any],
+        digest: str,
+        signature_status: str,
+        signer_key_id: str | None,
+        compatibility: str,
+        source: str,
+        command_type: str = "plugin.install",
+        receipt_type: str = "plugin.install",
+        receipt_extra: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        payload_json = _encode_payload(command_payload)
+        plugin_id = str(manifest["id"])
+        version = str(manifest["version"])
+        execution_kind = str(manifest["runtime"]["execution"]["kind"])
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type=command_type,
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+
+                bound = await (
+                    await conn.execute(
+                        "SELECT digest FROM plugin_versions WHERE plugin_id = ? AND version = ?",
+                        (plugin_id, version),
+                    )
+                ).fetchone()
+                if bound is not None and bound["digest"] != digest:
+                    raise PluginVersionConflictError(
+                        f"plugin {plugin_id} version {version} already has different content"
+                    )
+                by_digest = await (
+                    await conn.execute(
+                        "SELECT plugin_id, version FROM plugin_versions WHERE digest = ?",
+                        (digest,),
+                    )
+                ).fetchone()
+                if by_digest is not None and (
+                    by_digest["plugin_id"] != plugin_id or by_digest["version"] != version
+                ):
+                    raise PluginVersionConflictError("plugin digest is bound to another identity")
+                if bound is None:
+                    await conn.execute(
+                        "INSERT INTO plugin_versions "
+                        "(plugin_id, version, digest, manifest_json, execution_kind, "
+                        "signature_status, signer_key_id, compatibility, source, state, "
+                        "created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'installed', ?, ?)",
+                        (
+                            plugin_id,
+                            version,
+                            digest,
+                            _encode_payload(manifest),
+                            execution_kind,
+                            signature_status,
+                            signer_key_id,
+                            compatibility,
+                            source,
+                            now,
+                            now,
+                        ),
+                    )
+
+                installation = await (
+                    await conn.execute(
+                        "SELECT active_digest, enabled, retired_at FROM plugin_installations "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if installation is not None and installation["active_digest"] != digest:
+                    raise PluginVersionConflictError(
+                        f"plugin {plugin_id} is already installed; use plugin.update"
+                    )
+                if installation is None:
+                    await conn.execute(
+                        "INSERT INTO plugin_installations "
+                        "(principal_id, plugin_id, active_digest, enabled, source, created_at, updated_at) "
+                        "VALUES (?, ?, ?, 0, ?, ?, ?)",
+                        (principal_id, plugin_id, digest, source, now, now),
+                    )
+                    enabled = False
+                else:
+                    enabled = bool(installation["enabled"])
+                    if installation["retired_at"] is not None:
+                        await conn.execute(
+                            "UPDATE plugin_installations SET retired_at = NULL, "
+                            "revision = revision + 1, updated_at = ? "
+                            "WHERE principal_id = ? AND plugin_id = ?",
+                            (now, principal_id, plugin_id),
+                        )
+                        await conn.execute(
+                            "UPDATE plugin_versions SET state = 'installed', retired_at = NULL, "
+                            "updated_at = ? WHERE digest = ?",
+                            (now, digest),
+                        )
+
+                receipt = {
+                    "type": receipt_type,
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "version": version,
+                    "digest": digest,
+                    "installed": True,
+                    "enabled": enabled,
+                }
+                if receipt_extra:
+                    receipt.update(receipt_extra)
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, ?, '', ?, ?, NULL, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        command_type,
+                        payload_json,
+                        _encode_payload(receipt),
+                        now,
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def list_plugins(self, *, principal_id: str) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute(
+                "SELECT v.*, i.enabled, i.model_binding_json, i.model_binding_revision, "
+                "i.retired_at AS installation_retired_at "
+                "FROM plugin_installations i "
+                "JOIN plugin_versions v ON v.digest = i.active_digest "
+                "WHERE i.principal_id = ? ORDER BY v.plugin_id",
+                (principal_id,),
+            )
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "manifest": json.loads(row["manifest_json"]),
+                "enabled": bool(row["enabled"]),
+                "model_binding": (
+                    json.loads(row["model_binding_json"])
+                    if row["model_binding_json"] is not None
+                    else None
+                ),
+            }
+            for row in rows
+        ]
+
+    async def add_plugin_source_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_payload: dict[str, Any],
+        source_id: str,
+        name: str,
+        index_url: str,
+        signature_url: str,
+        public_key: str,
+        key_id: str,
+        index_sha256: str,
+        index_json: str,
+        signature_json: str,
+        package_count: int,
+    ) -> dict[str, Any]:
+        payload_json = _encode_payload(command_payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.source.add",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing
+                conflict = await (
+                    await conn.execute(
+                        "SELECT source_id FROM plugin_sources WHERE principal_id = ? "
+                        "AND (source_id = ? OR index_url = ?)",
+                        (principal_id, source_id, index_url),
+                    )
+                ).fetchone()
+                if conflict is not None:
+                    raise PluginStateError(
+                        "plugin_source_exists", "plugin source identity or URL already exists"
+                    )
+                await conn.execute(
+                    "INSERT INTO plugin_sources "
+                    "(principal_id, source_id, name, index_url, signature_url, public_key, "
+                    "key_id, index_sha256, index_json, signature_json, package_count, "
+                    "revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (
+                        principal_id,
+                        source_id,
+                        name,
+                        index_url,
+                        signature_url,
+                        public_key,
+                        key_id,
+                        index_sha256,
+                        index_json,
+                        signature_json,
+                        package_count,
+                        now,
+                        now,
+                    ),
+                )
+                receipt = {
+                    "type": "plugin.source.add",
+                    "command_id": command_id,
+                    "source_id": source_id,
+                    "revision": 1,
+                    "index_sha256": index_sha256,
+                    "package_count": package_count,
+                    "changed": True,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, 'plugin.source.add', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def refresh_plugin_source_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_payload: dict[str, Any],
+        source_id: str,
+        expected_revision: int,
+        name: str,
+        index_sha256: str,
+        index_json: str,
+        signature_json: str,
+        package_count: int,
+    ) -> dict[str, Any]:
+        payload_json = _encode_payload(command_payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.source.refresh",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing
+                source = await (
+                    await conn.execute(
+                        "SELECT revision, index_sha256 FROM plugin_sources "
+                        "WHERE principal_id = ? AND source_id = ?",
+                        (principal_id, source_id),
+                    )
+                ).fetchone()
+                if source is None:
+                    raise PluginStateError("plugin_source_not_found", "plugin source not found")
+                if int(source["revision"]) != expected_revision:
+                    raise PluginStateError(
+                        "plugin_source_revision_conflict", "plugin source revision changed"
+                    )
+                changed = source["index_sha256"] != index_sha256
+                revision = expected_revision + 1 if changed else expected_revision
+                if changed:
+                    await conn.execute(
+                        "UPDATE plugin_sources SET name = ?, index_sha256 = ?, index_json = ?, "
+                        "signature_json = ?, package_count = ?, revision = ?, updated_at = ? "
+                        "WHERE principal_id = ? AND source_id = ?",
+                        (
+                            name,
+                            index_sha256,
+                            index_json,
+                            signature_json,
+                            package_count,
+                            revision,
+                            now,
+                            principal_id,
+                            source_id,
+                        ),
+                    )
+                receipt = {
+                    "type": "plugin.source.refresh",
+                    "command_id": command_id,
+                    "source_id": source_id,
+                    "revision": revision,
+                    "index_sha256": index_sha256,
+                    "package_count": package_count,
+                    "changed": changed,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, 'plugin.source.refresh', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def remove_plugin_source_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_payload: dict[str, Any],
+        source_id: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        payload_json = _encode_payload(command_payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.source.remove",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing
+                source = await (
+                    await conn.execute(
+                        "SELECT revision FROM plugin_sources WHERE principal_id = ? AND source_id = ?",
+                        (principal_id, source_id),
+                    )
+                ).fetchone()
+                if source is None:
+                    raise PluginStateError("plugin_source_not_found", "plugin source not found")
+                if int(source["revision"]) != expected_revision:
+                    raise PluginStateError(
+                        "plugin_source_revision_conflict", "plugin source revision changed"
+                    )
+                await conn.execute(
+                    "DELETE FROM plugin_sources WHERE principal_id = ? AND source_id = ?",
+                    (principal_id, source_id),
+                )
+                receipt = {
+                    "type": "plugin.source.remove",
+                    "command_id": command_id,
+                    "source_id": source_id,
+                    "removed": True,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, 'plugin.source.remove', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def list_plugin_sources(self, *, principal_id: str) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute(
+                "SELECT source_id, name, index_url, key_id, index_sha256, package_count, "
+                "revision, updated_at FROM plugin_sources WHERE principal_id = ? "
+                "ORDER BY source_id",
+                (principal_id,),
+            )
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_plugin_source(
+        self,
+        *,
+        principal_id: str,
+        source_id: str,
+    ) -> dict[str, Any] | None:
+        row = await (
+            await self._conn.execute(
+                "SELECT * FROM plugin_sources WHERE principal_id = ? AND source_id = ?",
+                (principal_id, source_id),
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "index": json.loads(row["index_json"])}
+
+    async def get_plugin(
+        self,
+        *,
+        principal_id: str,
+        plugin_id: str,
+    ) -> dict[str, Any] | None:
+        row = await (
+            await self._conn.execute(
+                "SELECT v.*, i.enabled, i.model_binding_json, i.model_binding_revision, "
+                "i.retired_at AS installation_retired_at "
+                "FROM plugin_installations i "
+                "JOIN plugin_versions v ON v.digest = i.active_digest "
+                "WHERE i.principal_id = ? AND i.plugin_id = ?",
+                (principal_id, plugin_id),
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **dict(row),
+            "manifest": json.loads(row["manifest_json"]),
+            "enabled": bool(row["enabled"]),
+            "model_binding": (
+                json.loads(row["model_binding_json"])
+                if row["model_binding_json"] is not None
+                else None
+            ),
+        }
+
+    async def list_plugin_versions(
+        self,
+        *,
+        principal_id: str,
+        plugin_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute(
+                "SELECT v.version, v.digest, v.signature_status, v.compatibility, "
+                "v.state, v.created_at, i.active_digest "
+                "FROM plugin_versions v JOIN plugin_installations i "
+                "ON i.plugin_id = v.plugin_id "
+                "WHERE i.principal_id = ? AND v.plugin_id = ? "
+                "ORDER BY v.created_at DESC, v.version DESC",
+                (principal_id, plugin_id),
+            )
+        ).fetchall()
+        return [
+            {
+                "version": row["version"],
+                "digest": row["digest"],
+                "signature_status": row["signature_status"],
+                "compatibility": row["compatibility"],
+                "state": row["state"],
+                "active": row["digest"] == row["active_digest"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    async def list_run_plugin_bindings(self, run_id: str) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute(
+                "SELECT run_id, plugin_id, version, digest, selection_source, required, "
+                "command_id, action_catalog_hash, model_binding_json "
+                "FROM run_plugin_bindings "
+                "WHERE run_id = ? ORDER BY plugin_id",
+                (run_id,),
+            )
+        ).fetchall()
+        bindings = []
+        for row in rows:
+            binding = {**dict(row), "required": bool(row["required"])}
+            raw_model_binding = binding.pop("model_binding_json")
+            if raw_model_binding is not None:
+                binding["model_binding"] = json.loads(raw_model_binding)
+            bindings.append(binding)
+        return bindings
+
+    @staticmethod
+    async def _resolve_run_plugin_bindings(
+        conn: aiosqlite.Connection,
+        *,
+        principal_id: str,
+        plugin_refs: list[dict[str, Any]],
+        plugin_command: dict[str, Any] | None,
+        inherit_from_run_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if inherit_from_run_id is not None:
+            rows = await (
+                await conn.execute(
+                    "SELECT b.plugin_id, b.version, b.digest, b.selection_source, "
+                    "b.required, b.command_id, b.action_catalog_hash, b.model_binding_json "
+                    "FROM run_plugin_bindings b JOIN plugin_versions v "
+                    "ON v.plugin_id = b.plugin_id AND v.digest = b.digest "
+                    "WHERE b.run_id = ? ORDER BY b.plugin_id",
+                    (inherit_from_run_id,),
+                )
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        rows = await (
+            await conn.execute(
+                "SELECT i.plugin_id, i.active_digest, i.enabled, i.model_binding_json, "
+                "i.retired_at AS installation_retired_at, v.version, v.digest, "
+                "v.manifest_json, v.compatibility, v.state "
+                "FROM plugin_installations i JOIN plugin_versions v "
+                "ON v.plugin_id = i.plugin_id AND v.digest = i.active_digest "
+                "WHERE i.principal_id = ?",
+                (principal_id,),
+            )
+        ).fetchall()
+        installed = {str(row["plugin_id"]): row for row in rows}
+        selected: dict[str, dict[str, Any]] = {}
+
+        def require_available(plugin_id: str, expected_digest: str | None) -> aiosqlite.Row:
+            row = installed.get(plugin_id)
+            if row is None or row["installation_retired_at"] is not None:
+                raise RunAdmissionError("plugin_not_found", f"plugin {plugin_id} is not installed")
+            if not bool(row["enabled"]):
+                raise RunAdmissionError("plugin_disabled", f"plugin {plugin_id} is disabled")
+            if row["compatibility"] != "compatible":
+                raise RunAdmissionError(
+                    "plugin_incompatible", f"plugin {plugin_id} is incompatible"
+                )
+            if row["state"] == "retired":
+                raise RunAdmissionError("plugin_retired", f"plugin {plugin_id} is retired")
+            if expected_digest is not None and expected_digest != row["digest"]:
+                raise RunAdmissionError(
+                    "plugin_digest_mismatch", f"plugin {plugin_id} active digest changed"
+                )
+            return row
+
+        def binding(
+            row: aiosqlite.Row,
+            *,
+            selection_source: str,
+            required: bool,
+            command_id: str | None = None,
+        ) -> dict[str, Any]:
+            manifest = json.loads(str(row["manifest_json"]))
+            command = next(
+                (
+                    item
+                    for item in manifest["contributions"].get("commands", [])
+                    if item["id"] == command_id
+                ),
+                None,
+            )
+            return {
+                "plugin_id": str(row["plugin_id"]),
+                "display_name": str(manifest["name"]),
+                "version": str(row["version"]),
+                "digest": str(row["digest"]),
+                "selection_source": selection_source,
+                "required": int(required),
+                "command_id": command_id,
+                "command_title": str(command["title"]) if command is not None else None,
+                "action_catalog_hash": plugin_action_catalog_hash(
+                    manifest,
+                    plugin_digest=str(row["digest"]),
+                ),
+                "model_binding_json": row["model_binding_json"],
+            }
+
+        for row in rows:
+            if (
+                bool(row["enabled"])
+                and row["compatibility"] == "compatible"
+                and row["state"] != "retired"
+                and row["installation_retired_at"] is None
+            ):
+                selected[str(row["plugin_id"])] = binding(
+                    row,
+                    selection_source="enabled",
+                    required=False,
+                )
+
+        for reference in plugin_refs:
+            plugin_id = str(reference["plugin_id"])
+            row = require_available(plugin_id, reference.get("expected_digest"))
+            selected[plugin_id] = binding(
+                row,
+                selection_source="explicit",
+                required=bool(reference.get("required", True)),
+            )
+
+        if plugin_command is not None:
+            plugin_id = str(plugin_command["plugin_id"])
+            command_id = str(plugin_command["command_id"])
+            row = require_available(plugin_id, plugin_command.get("expected_digest"))
+            manifest = json.loads(str(row["manifest_json"]))
+            commands = manifest["contributions"].get("commands", [])
+            if not any(command["id"] == command_id for command in commands):
+                raise RunAdmissionError(
+                    "plugin_command_not_found",
+                    f"plugin {plugin_id} does not contribute command {command_id}",
+                )
+            selected[plugin_id] = binding(
+                row,
+                selection_source="command",
+                required=True,
+                command_id=command_id,
+            )
+
+        return [selected[plugin_id] for plugin_id in sorted(selected)]
+
+    async def set_plugin_enabled_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_type: str,
+        plugin_id: str,
+        expected_digest: str | None,
+        enabled: bool,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {"type": command_type, "plugin_id": plugin_id}
+        if expected_digest is not None:
+            command_payload["expected_digest"] = expected_digest
+        payload_json = _encode_payload(command_payload)
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type=command_type,
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+                plugin = await (
+                    await conn.execute(
+                        "SELECT i.active_digest, i.enabled, i.retired_at, "
+                        "i.model_binding_json, v.compatibility, v.state, v.manifest_json "
+                        "FROM plugin_installations i JOIN plugin_versions v "
+                        "ON v.digest = i.active_digest "
+                        "WHERE i.principal_id = ? AND i.plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if plugin is None:
+                    raise PluginStateError("plugin_not_found", "plugin is not installed")
+                digest = str(plugin["active_digest"])
+                if expected_digest is not None and expected_digest != digest:
+                    raise PluginStateError("plugin_digest_mismatch", "plugin active digest changed")
+                if enabled and plugin["compatibility"] != "compatible":
+                    raise PluginStateError(
+                        "plugin_incompatible", "plugin is incompatible with this Runtime"
+                    )
+                if enabled and (plugin["retired_at"] is not None or plugin["state"] == "retired"):
+                    raise PluginStateError("plugin_retired", "retired plugin cannot be enabled")
+                manifest = json.loads(str(plugin["manifest_json"]))
+                needs_model_binding = any(
+                    "model.vision.invoke" in action.get("capabilities", [])
+                    for action in manifest.get("contributions", {}).get("actions", [])
+                    if isinstance(action, dict)
+                )
+                if enabled and needs_model_binding and not plugin["model_binding_json"]:
+                    raise PluginStateError(
+                        "plugin_model_binding_required",
+                        "plugin requires an explicit Vision model binding before enablement",
+                    )
+                if bool(plugin["enabled"]) != enabled:
+                    await conn.execute(
+                        "UPDATE plugin_installations SET enabled = ?, revision = revision + 1, "
+                        "updated_at = ? WHERE principal_id = ? AND plugin_id = ?",
+                        (int(enabled), _now(), principal_id, plugin_id),
+                    )
+                receipt = {
+                    "type": command_type,
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "digest": digest,
+                    "enabled": enabled,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) VALUES (?, ?, ?, '', ?, ?, NULL, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        command_type,
+                        payload_json,
+                        _encode_payload(receipt),
+                        _now(),
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def bind_plugin_model_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        plugin_id: str,
+        binding_id: str,
+        requested_model: str,
+        model_binding: dict[str, Any],
+        expected_digest: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {
+            "type": "plugin.model.bind",
+            "plugin_id": plugin_id,
+            "binding_id": binding_id,
+            "model": requested_model,
+        }
+        if expected_digest is not None:
+            command_payload["expected_digest"] = expected_digest
+        payload_json = _encode_payload(command_payload)
+        frozen_binding = {**model_binding, "id": binding_id}
+        binding_json = _encode_payload(frozen_binding)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.model.bind",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+                plugin = await (
+                    await conn.execute(
+                        "SELECT i.active_digest, i.retired_at, i.model_binding_json, "
+                        "i.model_binding_revision, v.manifest_json, v.execution_kind, v.state "
+                        "FROM plugin_installations i JOIN plugin_versions v "
+                        "ON v.digest = i.active_digest "
+                        "WHERE i.principal_id = ? AND i.plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if plugin is None:
+                    raise PluginStateError("plugin_not_found", "plugin is not installed")
+                digest = str(plugin["active_digest"])
+                if expected_digest is not None and expected_digest != digest:
+                    raise PluginStateError("plugin_digest_mismatch", "plugin active digest changed")
+                if plugin["retired_at"] is not None or plugin["state"] == "retired":
+                    raise PluginStateError("plugin_retired", "retired plugin cannot be configured")
+                manifest = json.loads(str(plugin["manifest_json"]))
+                if plugin["execution_kind"] != "managed_worker" or not any(
+                    "model.vision.invoke" in action.get("capabilities", [])
+                    for action in manifest["contributions"]["actions"]
+                ):
+                    raise PluginStateError(
+                        "plugin_capability_denied",
+                        "plugin does not declare model.vision.invoke",
+                    )
+                revision = int(plugin["model_binding_revision"])
+                if plugin["model_binding_json"] != binding_json:
+                    revision += 1
+                    await conn.execute(
+                        "UPDATE plugin_installations SET model_binding_json = ?, "
+                        "model_binding_revision = ?, revision = revision + 1, updated_at = ? "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (binding_json, revision, now, principal_id, plugin_id),
+                    )
+                summary = {
+                    "id": binding_id,
+                    "requested_model": requested_model,
+                    "provider_id": str(model_binding["provider_id"]),
+                    "provider_version": int(model_binding["provider_version"]),
+                    "model_id": str(model_binding["model_id"]),
+                }
+                receipt = {
+                    "type": "plugin.model.bind",
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "digest": digest,
+                    "model_binding_revision": revision,
+                    "model_binding": summary,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'plugin.model.bind', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def update_plugin_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        command_payload: dict[str, Any],
+        plugin_id: str,
+        manifest: dict[str, Any],
+        digest: str,
+        signature_status: str,
+        signer_key_id: str | None,
+        compatibility: str,
+        source: str,
+        command_type: str = "plugin.update",
+        receipt_type: str = "plugin.update",
+        receipt_extra: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
+        payload_json = _encode_payload(command_payload)
+        version = str(manifest["version"])
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type=command_type,
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+                installation = await (
+                    await conn.execute(
+                        "SELECT active_digest, enabled, retired_at FROM plugin_installations "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if installation is None:
+                    raise PluginStateError("plugin_not_found", "plugin is not installed")
+                if installation["retired_at"] is not None:
+                    raise PluginStateError("plugin_retired", "retired plugin must be reinstalled")
+                previous_digest = str(installation["active_digest"])
+                expected_digest = command_payload.get(
+                    "expected_digest", command_payload.get("expected_active_digest")
+                )
+                if expected_digest is not None and expected_digest != previous_digest:
+                    raise PluginStateError("plugin_digest_mismatch", "plugin active digest changed")
+                if manifest["id"] != plugin_id:
+                    raise PluginStateError(
+                        "plugin_identity_mismatch", "update package has a different plugin id"
+                    )
+                if compatibility != "compatible":
+                    raise PluginStateError(
+                        "plugin_incompatible", "update is incompatible with this Runtime"
+                    )
+                bound = await (
+                    await conn.execute(
+                        "SELECT digest FROM plugin_versions WHERE plugin_id = ? AND version = ?",
+                        (plugin_id, version),
+                    )
+                ).fetchone()
+                if bound is not None and bound["digest"] != digest:
+                    raise PluginVersionConflictError(
+                        f"plugin {plugin_id} version {version} already has different content"
+                    )
+                if bound is None:
+                    await conn.execute(
+                        "INSERT INTO plugin_versions "
+                        "(plugin_id, version, digest, manifest_json, execution_kind, "
+                        "signature_status, signer_key_id, compatibility, source, state, "
+                        "created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'installed', ?, ?)",
+                        (
+                            plugin_id,
+                            version,
+                            digest,
+                            _encode_payload(manifest),
+                            manifest["runtime"]["execution"]["kind"],
+                            signature_status,
+                            signer_key_id,
+                            compatibility,
+                            source,
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE plugin_versions SET state = 'installed', retired_at = NULL, "
+                        "updated_at = ? WHERE digest = ?",
+                        (now, digest),
+                    )
+                await conn.execute(
+                    "UPDATE plugin_installations SET active_digest = ?, "
+                    "revision = revision + 1, updated_at = ? "
+                    "WHERE principal_id = ? AND plugin_id = ?",
+                    (digest, now, principal_id, plugin_id),
+                )
+                receipt = {
+                    "type": receipt_type,
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "version": version,
+                    "previous_digest": previous_digest,
+                    "digest": digest,
+                    "enabled": bool(installation["enabled"]),
+                }
+                if receipt_extra:
+                    receipt.update(receipt_extra)
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, ?, '', ?, ?, NULL, ?)",
+                    (
+                        principal_id,
+                        command_id,
+                        command_type,
+                        payload_json,
+                        _encode_payload(receipt),
+                        now,
+                    ),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def rollback_plugin_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        plugin_id: str,
+        target_digest: str,
+        expected_digest: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {
+            "type": "plugin.rollback",
+            "plugin_id": plugin_id,
+            "target_digest": target_digest,
+        }
+        if expected_digest is not None:
+            command_payload["expected_digest"] = expected_digest
+        payload_json = _encode_payload(command_payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.rollback",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+                installation = await (
+                    await conn.execute(
+                        "SELECT active_digest, enabled, retired_at FROM plugin_installations "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if installation is None:
+                    raise PluginStateError("plugin_not_found", "plugin is not installed")
+                if installation["retired_at"] is not None:
+                    raise PluginStateError("plugin_retired", "retired plugin must be reinstalled")
+                previous_digest = str(installation["active_digest"])
+                if expected_digest is not None and expected_digest != previous_digest:
+                    raise PluginStateError("plugin_digest_mismatch", "plugin active digest changed")
+                target = await (
+                    await conn.execute(
+                        "SELECT version, compatibility FROM plugin_versions "
+                        "WHERE plugin_id = ? AND digest = ?",
+                        (plugin_id, target_digest),
+                    )
+                ).fetchone()
+                if target is None:
+                    raise PluginStateError(
+                        "plugin_version_unavailable", "rollback target is not installed"
+                    )
+                if target["compatibility"] != "compatible":
+                    raise PluginStateError("plugin_incompatible", "rollback target is incompatible")
+                await conn.execute(
+                    "UPDATE plugin_versions SET state = 'installed', retired_at = NULL, "
+                    "updated_at = ? WHERE digest = ?",
+                    (now, target_digest),
+                )
+                await conn.execute(
+                    "UPDATE plugin_installations SET active_digest = ?, "
+                    "revision = revision + 1, updated_at = ? "
+                    "WHERE principal_id = ? AND plugin_id = ?",
+                    (target_digest, now, principal_id, plugin_id),
+                )
+                receipt = {
+                    "type": "plugin.rollback",
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "version": target["version"],
+                    "previous_digest": previous_digest,
+                    "digest": target_digest,
+                    "enabled": bool(installation["enabled"]),
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'plugin.rollback', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
+    async def remove_plugin_command(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        plugin_id: str,
+        expected_digest: str | None,
+    ) -> tuple[dict[str, Any], bool]:
+        command_payload: dict[str, Any] = {"type": "plugin.remove", "plugin_id": plugin_id}
+        if expected_digest is not None:
+            command_payload["expected_digest"] = expected_digest
+        payload_json = _encode_payload(command_payload)
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing = await self._accepted_command_receipt_uncommitted(
+                    conn,
+                    principal_id=principal_id,
+                    command_id=command_id,
+                    command_type="plugin.remove",
+                    payload_json=payload_json,
+                )
+                if existing is not None:
+                    await conn.rollback()
+                    return existing, False
+                installation = await (
+                    await conn.execute(
+                        "SELECT active_digest FROM plugin_installations "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                if installation is None:
+                    raise PluginStateError("plugin_not_found", "plugin is not installed")
+                digest = str(installation["active_digest"])
+                if expected_digest is not None and expected_digest != digest:
+                    raise PluginStateError("plugin_digest_mismatch", "plugin active digest changed")
+                await conn.execute(
+                    "UPDATE plugin_installations SET enabled = 0, retired_at = ?, "
+                    "revision = revision + 1, updated_at = ? "
+                    "WHERE principal_id = ? AND plugin_id = ?",
+                    (now, now, principal_id, plugin_id),
+                )
+                active_count = int(
+                    (
+                        await (
+                            await conn.execute(
+                                "SELECT COUNT(*) FROM plugin_installations "
+                                "WHERE active_digest = ? AND retired_at IS NULL",
+                                (digest,),
+                            )
+                        ).fetchone()
+                    )[0]
+                )
+                if active_count == 0:
+                    await conn.execute(
+                        "UPDATE plugin_versions SET state = 'retired', retired_at = ?, "
+                        "updated_at = ? WHERE digest = ?",
+                        (now, now, digest),
+                    )
+                receipt = {
+                    "type": "plugin.remove",
+                    "command_id": command_id,
+                    "plugin_id": plugin_id,
+                    "digest": digest,
+                    "retired": True,
+                    "enabled": False,
+                }
+                await conn.execute(
+                    "INSERT INTO local_commands "
+                    "(principal_id, id, command_type, client_message_id, payload_json, "
+                    "response_json, run_id, created_at) "
+                    "VALUES (?, ?, 'plugin.remove', '', ?, ?, NULL, ?)",
+                    (principal_id, command_id, payload_json, _encode_payload(receipt), now),
+                )
+                await conn.commit()
+                return receipt, True
+            except BaseException:
+                await conn.rollback()
+                raise
+
     async def accepted_run_for_command(
         self,
         *,
@@ -2378,6 +3823,10 @@ class LocalStore:
         settings: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
         admission_error: RunAdmissionError | None = None,
+        plugin_refs: list[dict[str, Any]] | None = None,
+        plugin_command: dict[str, Any] | None = None,
+        inherit_plugin_bindings_from: str | None = None,
+        run_inputs: list[dict[str, Any]] | None = None,
     ) -> tuple[dict[str, Any], bool]:
         """Persist one immutable start command and its queued run."""
         payload_json = _encode_payload(
@@ -2443,6 +3892,47 @@ class LocalStore:
                         raise ParentRunAdmissionError(
                             "parent run has not reached a safely settled state"
                         )
+
+                plugin_bindings = await self._resolve_run_plugin_bindings(
+                    transaction_conn,
+                    principal_id=principal_id,
+                    plugin_refs=plugin_refs or [],
+                    plugin_command=plugin_command,
+                    inherit_from_run_id=inherit_plugin_bindings_from,
+                )
+                normalized_user_item_metadata = dict(user_item_metadata or {})
+                normalized_user_item_metadata.pop("plugin_selection", None)
+                if plugin_refs or plugin_command:
+                    bindings_by_id = {
+                        str(binding["plugin_id"]): binding for binding in plugin_bindings
+                    }
+                    references = []
+                    seen_references: set[str] = set()
+                    for reference in plugin_refs or []:
+                        plugin_id = str(reference["plugin_id"])
+                        if plugin_id in seen_references:
+                            continue
+                        binding = bindings_by_id[plugin_id]
+                        references.append(
+                            {
+                                "plugin_id": plugin_id,
+                                "name": str(binding["display_name"]),
+                                "digest": str(binding["digest"]),
+                            }
+                        )
+                        seen_references.add(plugin_id)
+                    selection: dict[str, Any] = {"references": references}
+                    if plugin_command is not None:
+                        plugin_id = str(plugin_command["plugin_id"])
+                        binding = bindings_by_id[plugin_id]
+                        selection["command"] = {
+                            "plugin_id": plugin_id,
+                            "plugin_name": str(binding["display_name"]),
+                            "command_id": str(plugin_command["command_id"]),
+                            "title": str(binding["command_title"]),
+                            "digest": str(binding["digest"]),
+                        }
+                    normalized_user_item_metadata["plugin_selection"] = selection
 
                 product_thread_id = (
                     _principal_thread_id(principal_id, thread_id)
@@ -2613,6 +4103,47 @@ class LocalStore:
                     graph_input_kind=graph_input_kind,
                 )
                 await self._insert_run(transaction_conn, run)
+                if run_inputs:
+                    await transaction_conn.executemany(
+                        "INSERT INTO local_run_inputs "
+                        "(run_id, input_id, virtual_path, original_name, media_type, bytes, "
+                        "sha256, blob_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                run["id"],
+                                item["input_id"],
+                                item["virtual_path"],
+                                item["original_name"],
+                                item["media_type"],
+                                item["bytes"],
+                                item["sha256"],
+                                item["blob_key"],
+                                now,
+                            )
+                            for item in run_inputs
+                        ],
+                    )
+                if plugin_bindings:
+                    await transaction_conn.executemany(
+                        "INSERT INTO run_plugin_bindings "
+                        "(run_id, plugin_id, version, digest, selection_source, required, "
+                        "command_id, action_catalog_hash, model_binding_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                run["id"],
+                                item["plugin_id"],
+                                item["version"],
+                                item["digest"],
+                                item["selection_source"],
+                                item["required"],
+                                item["command_id"],
+                                item["action_catalog_hash"],
+                                item.get("model_binding_json"),
+                            )
+                            for item in plugin_bindings
+                        ],
+                    )
                 if replace_from_client_id is not None:
                     await transaction_conn.execute(
                         "UPDATE local_thread_items SET superseded_at = ?, "
@@ -2634,7 +4165,7 @@ class LocalStore:
                             "user_message",
                             "completed",
                             user_input or goal,
-                            _encode_payload(user_item_metadata or {}),
+                            _encode_payload(normalized_user_item_metadata),
                             base_position + 1,
                             now,
                             now,
@@ -5841,6 +7372,98 @@ class LocalStore:
         assert updated is not None
         return dict(updated), True
 
+    # --- immutable run inputs and artifacts ---
+
+    async def prepare_run_input_body(self, source_path: Path) -> tuple[int, str, str]:
+        """Import one user-selected file without retaining its mutable host path."""
+        return await asyncio.to_thread(
+            self._promote_blob_body,
+            source_path,
+            None,
+            "inputs",
+            MAX_RUN_INPUT_BYTES,
+            0o400,
+            RunInputSnapshotError,
+            RunInputQuotaError,
+            "run input",
+        )
+
+    async def list_run_inputs(self, run_id: str) -> list[dict[str, Any]]:
+        rows = await (
+            await self._conn.execute(
+                "SELECT * FROM local_run_inputs WHERE run_id = ? ORDER BY rowid",
+                (run_id,),
+            )
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def run_input_body_path(self, run_input: dict[str, Any]) -> Path:
+        return self._stored_blob_path(
+            run_input,
+            root_name="inputs",
+            storage_error=RunInputSnapshotError,
+            label="run input",
+        )
+
+    async def gc_orphan_bodies(
+        self,
+        *,
+        grace_seconds: float = 3600,
+        max_scan: int = 10_000,
+        max_delete: int = 256,
+    ) -> int:
+        """Remove old unreferenced bodies left between file promotion and SQL commit."""
+        artifact_rows = await (
+            await self._conn.execute(
+                "SELECT blob_key FROM local_artifacts WHERE storage_kind = 'blob'"
+            )
+        ).fetchall()
+        input_rows = await (
+            await self._conn.execute("SELECT blob_key FROM local_run_inputs")
+        ).fetchall()
+        referenced = {
+            "artifacts": {str(row[0]) for row in artifact_rows if row[0]},
+            "inputs": {str(row[0]) for row in input_rows if row[0]},
+        }
+        return await asyncio.to_thread(
+            self._gc_orphan_bodies_sync,
+            referenced,
+            grace_seconds,
+            max_scan,
+            max_delete,
+        )
+
+    def _gc_orphan_bodies_sync(
+        self,
+        referenced: dict[str, set[str]],
+        grace_seconds: float,
+        max_scan: int,
+        max_delete: int,
+    ) -> int:
+        cutoff = time.time() - max(0.0, grace_seconds)
+        scanned = 0
+        deleted = 0
+        for root_name in ("artifacts", "inputs"):
+            root = self._db_path.parent / root_name
+            for candidate in chain(root.glob("sha256/*/*"), root.glob(".tmp/*")):
+                if scanned >= max_scan or deleted >= max_delete:
+                    return deleted
+                scanned += 1
+                try:
+                    stat = candidate.lstat()
+                except FileNotFoundError:
+                    continue
+                if candidate.is_symlink() or not candidate.is_file() or stat.st_mtime > cutoff:
+                    continue
+                try:
+                    relative = candidate.relative_to(root).as_posix()
+                except ValueError:
+                    continue
+                if relative.startswith(".tmp/") or relative not in referenced[root_name]:
+                    candidate.unlink(missing_ok=True)
+                    deleted += 1
+        return deleted
+
     # --- artifacts ---
 
     async def create_artifact(
@@ -5856,6 +7479,7 @@ class LocalStore:
         tool_name: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        encoded = content.encode("utf-8")
         record = {
             "id": artifact_id or _new_id("art"),
             "run_id": run_id,
@@ -5863,7 +7487,10 @@ class LocalStore:
             "title": title,
             "content": content,
             "content_type": content_type,
-            "bytes": len(content.encode("utf-8")),
+            "bytes": len(encoded),
+            "storage_kind": "inline_text",
+            "blob_key": None,
+            "sha256": hashlib.sha256(encoded).hexdigest(),
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "metadata_json": _encode_payload(metadata or {}),
@@ -5871,6 +7498,118 @@ class LocalStore:
         }
         if record["bytes"] > MAX_ARTIFACT_BYTES:
             raise ArtifactQuotaError("artifact exceeds the per-item byte limit")
+        return await self._create_artifact_record(record, replayable=artifact_id is not None)
+
+    async def create_file_artifact(
+        self,
+        *,
+        source_path: Path,
+        run_id: str,
+        kind: str,
+        title: str,
+        content_type: str,
+        artifact_id: str | None = None,
+        expected_sha256: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        size, digest, blob_key = await asyncio.to_thread(
+            self._promote_artifact_body,
+            source_path,
+            expected_sha256,
+        )
+        record = {
+            "id": artifact_id or _new_id("art"),
+            "run_id": run_id,
+            "kind": kind,
+            "title": title,
+            "content": "",
+            "content_type": content_type,
+            "bytes": size,
+            "storage_kind": "blob",
+            "blob_key": blob_key,
+            "sha256": digest,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "metadata_json": _encode_payload(metadata or {}),
+            "created_at": _now(),
+        }
+        return await self._create_artifact_record(record, replayable=artifact_id is not None)
+
+    def _promote_artifact_body(
+        self,
+        source_path: Path,
+        expected_sha256: str | None,
+    ) -> tuple[int, str, str]:
+        return self._promote_blob_body(
+            source_path,
+            expected_sha256,
+            "artifacts",
+            MAX_BLOB_ARTIFACT_BYTES,
+            0o600,
+            ArtifactConflictError,
+            ArtifactQuotaError,
+            "artifact body",
+        )
+
+    def _promote_blob_body(
+        self,
+        source_path: Path,
+        expected_sha256: str | None,
+        root_name: str,
+        max_bytes: int,
+        file_mode: int,
+        conflict_error: type[RuntimeError],
+        quota_error: type[RuntimeError],
+        label: str,
+    ) -> tuple[int, str, str]:
+        source = source_path.resolve(strict=True)
+        if source_path.is_symlink() or not source.is_file():
+            raise conflict_error(f"{label} is not a regular file")
+        root = self._db_path.parent / root_name
+        temporary_root = root / ".tmp"
+        temporary_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = temporary_root / uuid.uuid4().hex
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with source.open("rb") as reader, temporary.open("xb") as writer:
+                while chunk := reader.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise quota_error(f"{label} exceeds the per-item byte limit")
+                    digest.update(chunk)
+                    writer.write(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+            actual_sha256 = digest.hexdigest()
+            if expected_sha256 is not None and actual_sha256 != expected_sha256:
+                raise conflict_error(f"{label} digest changed before promotion")
+            blob_key = f"sha256/{actual_sha256[:2]}/{actual_sha256}"
+            destination = root.joinpath(*PurePosixPath(blob_key).parts)
+            destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if destination.exists():
+                if destination.is_symlink() or not destination.is_file():
+                    raise conflict_error(f"{label} store entry is invalid")
+                existing_size, existing_digest = _file_identity(destination)
+                if existing_size != size or existing_digest != actual_sha256:
+                    raise conflict_error(f"{label} store entry is corrupt")
+                temporary.unlink()
+            else:
+                os.replace(temporary, destination)
+                destination.chmod(file_mode)
+            return size, actual_sha256, blob_key
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    async def _create_artifact_record(
+        self,
+        record: dict[str, Any],
+        *,
+        replayable: bool,
+    ) -> dict[str, Any]:
         immutable_fields = (
             "run_id",
             "kind",
@@ -5878,6 +7617,9 @@ class LocalStore:
             "content",
             "content_type",
             "bytes",
+            "storage_kind",
+            "blob_key",
+            "sha256",
             "tool_call_id",
             "tool_name",
             "metadata_json",
@@ -5891,8 +7633,9 @@ class LocalStore:
                 )
             return persisted
 
+        run_id = str(record["run_id"])
         async with self.run_write_transaction(run_id) as conn:
-            if artifact_id:
+            if replayable:
                 existing = await (
                     await conn.execute(
                         "SELECT * FROM local_artifacts WHERE id = ?",
@@ -5941,13 +7684,15 @@ class LocalStore:
             if principal_bytes + record["bytes"] > MAX_PRINCIPAL_ARTIFACT_BYTES:
                 raise ArtifactQuotaError("principal artifact byte limit exceeded")
             if total_bytes + record["bytes"] > MAX_TOTAL_ARTIFACT_BYTES:
-                raise ArtifactQuotaError("local artifact database byte limit exceeded")
+                raise ArtifactQuotaError("local artifact storage byte limit exceeded")
             cursor = await conn.execute(
-                f"INSERT {'OR IGNORE ' if artifact_id else ''}INTO local_artifacts "
+                f"INSERT {'OR IGNORE ' if replayable else ''}INTO local_artifacts "
                 "(id, run_id, kind, title, content, "
-                " content_type, bytes, tool_call_id, tool_name, metadata_json, created_at) "
+                " content_type, bytes, storage_kind, blob_key, sha256, tool_call_id, "
+                " tool_name, metadata_json, created_at) "
                 "VALUES (:id, :run_id, :kind, :title, :content, :content_type, :bytes, "
-                "        :tool_call_id, :tool_name, :metadata_json, :created_at)",
+                "        :storage_kind, :blob_key, :sha256, :tool_call_id, :tool_name, "
+                "        :metadata_json, :created_at)",
                 record,
             )
             if cursor.rowcount == 0:
@@ -5961,6 +7706,42 @@ class LocalStore:
                     raise ArtifactConflictError("artifact identity could not be reconciled")
                 return reconcile_replay(existing)
         return record
+
+    def artifact_body_path(self, artifact: dict[str, Any]) -> Path:
+        if artifact.get("storage_kind") != "blob" or not isinstance(artifact.get("blob_key"), str):
+            raise ArtifactConflictError("artifact does not have a blob body")
+        return self._stored_blob_path(
+            artifact,
+            root_name="artifacts",
+            storage_error=ArtifactConflictError,
+            label="artifact blob body",
+        )
+
+    def _stored_blob_path(
+        self,
+        record: dict[str, Any],
+        *,
+        root_name: str,
+        storage_error: type[RuntimeError],
+        label: str,
+    ) -> Path:
+        blob_key = record.get("blob_key")
+        if not isinstance(blob_key, str):
+            raise storage_error(f"{label} key is missing")
+        relative = PurePosixPath(blob_key)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise storage_error(f"{label} key is invalid")
+        root = (self._db_path.parent / root_name).resolve(strict=True)
+        candidate = root.joinpath(*relative.parts)
+        if candidate.is_symlink() or not candidate.is_file():
+            raise storage_error(f"{label} is missing")
+        try:
+            candidate.resolve(strict=True).relative_to(root)
+        except ValueError as exc:
+            raise storage_error(f"{label} escaped storage") from exc
+        if candidate.stat().st_size != int(record["bytes"]):
+            raise storage_error(f"{label} size changed")
+        return candidate
 
     async def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         cursor = await self._conn.execute(

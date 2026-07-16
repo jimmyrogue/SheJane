@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconAffiliate,
+  IconBox,
   IconDots,
   IconDownload,
   IconLayoutSidebarLeftCollapse,
@@ -64,6 +65,7 @@ export function ConversationSidebar({
   onCollapseSidebar,
   isDesktop = true,
   onOpenSkills,
+  onOpenPlugins,
   onOpenMcp,
   onOpenSettings,
   activeView = 'chat',
@@ -84,11 +86,12 @@ export function ConversationSidebar({
    *  pages are hidden when false. */
   isDesktop?: boolean
   onOpenSkills?: () => void
+  onOpenPlugins?: () => void
   onOpenMcp?: () => void
   /** Navigate to the full 设置 page. Runtime, agent configuration, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
-  activeView?: 'chat' | 'skills' | 'mcp' | 'settings'
+  activeView?: 'chat' | 'skills' | 'plugins' | 'mcp' | 'settings'
   searchRequestVersion?: number
   resizeHandle?: ReactNode
 }) {
@@ -388,6 +391,14 @@ export function ConversationSidebar({
             >
               <IconTool size={14} />
               <span>{t('sidebar.skills')}</span>
+            </button>
+            <button
+              className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'plugins' ? ' active' : ''}`}
+              type="button"
+              onClick={() => onOpenPlugins?.()}
+            >
+              <IconBox size={14} />
+              <span>{t('sidebar.plugins')}</span>
             </button>
             <button
               className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'mcp' ? ' active' : ''}`}

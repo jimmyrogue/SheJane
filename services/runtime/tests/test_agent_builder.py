@@ -155,6 +155,101 @@ async def test_agent_definition_cache_reuses_only_matching_structure(
         await stack.aclose()
 
 
+async def test_build_agent_injects_runtime_owned_plugin_resources(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from langchain_core.tools import tool
+
+    import local_host.agent.builder as builder_module
+    from local_host.agent.builder import build_agent, open_checkpointer
+    from local_host.agent.context_builder import RuntimeContext
+
+    captured: dict[str, object] = {}
+
+    @tool("plugin.test.vision")
+    async def plugin_tool() -> str:
+        """Test Vision plugin tool."""
+        return "ok"
+
+    def fake_build_plugin_tool(
+        _action,
+        *,
+        vision_invoker=None,
+        linux_cgroup=None,
+        vm_resources=None,
+    ):
+        captured["vision_invoker"] = vision_invoker
+        captured["linux_cgroup"] = linux_cgroup
+        captured["vm_resources"] = vm_resources
+        return plugin_tool
+
+    async def fake_invoke_plugin_vision(*args, **kwargs):
+        captured["provider_call"] = (args, kwargs)
+        return {"text": "A lantern.", "usage": {}}
+
+    monkeypatch.setattr(builder_module, "build_plugin_tool", fake_build_plugin_tool)
+    monkeypatch.setattr(builder_module, "_invoke_plugin_vision", fake_invoke_plugin_vision)
+    linux_resources = object()
+    linux_manifest = tmp_path / "linux-manifest.json"
+    monkeypatch.setattr(
+        builder_module,
+        "load_linux_cgroup_resources",
+        lambda path, **_kwargs: linux_resources if path == linux_manifest else None,
+        raising=False,
+    )
+    monkeypatch.setattr(builder_module, "create_deep_agent", lambda **_kwargs: object())
+    settings = reset_settings_for_tests(
+        data_dir=tmp_path,
+        SHEJANE_FAKE_LLM=True,
+        managed_worker_linux_assets=linux_manifest,
+    )
+    store = await LocalStore.open(tmp_path / "store.db")
+    saver, stack = await open_checkpointer(settings)
+    context = RuntimeContext(
+        run_id="run_vision",
+        principal_id="principal_vision",
+        store=store,
+    )
+    lease = SimpleNamespace(
+        actions=(SimpleNamespace(execution_kind="managed_worker"),),
+        action_catalog_hash="vision-catalog",
+    )
+    try:
+        await build_agent(
+            store=store,
+            checkpointer=saver,
+            workspace_root=str(tmp_path),
+            run_id="run_vision",
+            settings=settings,
+            mcp_enabled=False,
+            plugin_lease=lease,
+            runtime_context=context,
+        )
+        vision_invoker = captured["vision_invoker"]
+        assert callable(vision_invoker)
+        result = await vision_invoker(
+            {"id": "vision-default"},
+            {"prompt": "Describe the image."},
+            tmp_path,
+            (),
+        )
+    finally:
+        await store.close()
+        await stack.aclose()
+
+    assert result == {"text": "A lantern.", "usage": {}}
+    assert captured["linux_cgroup"] is linux_resources
+    assert captured["vm_resources"] is None
+    args, kwargs = captured["provider_call"]
+    assert args[0] == {"id": "vision-default"}
+    assert kwargs == {
+        "store": store,
+        "principal_id": "principal_vision",
+        "settings": settings,
+    }
+
+
 async def test_cached_definition_keeps_mcp_implementations_attempt_local(
     tmp_path: Path,
     monkeypatch,

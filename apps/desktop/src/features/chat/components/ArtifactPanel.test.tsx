@@ -11,6 +11,10 @@ function artifact(overrides: Partial<LocalArtifact> = {}): LocalArtifact {
     id: 'artifact-1',
     title: 'report.md',
     content: '# Report\n\n```ts\nconst answer = 42\n```',
+    content_type: 'text/markdown',
+    bytes: 39,
+    sha256: null,
+    storage_kind: 'inline_text',
     tool_name: 'write_file',
     created_at: '2026-06-13T00:00:00Z',
     ...overrides,
@@ -68,5 +72,42 @@ describe('ArtifactPanel', () => {
     )
 
     expect(document.body.querySelector('iframe.artifact-frame')).toHaveAttribute('srcdoc', expect.stringContaining('<svg'))
+  })
+
+  it('keeps file-backed artifacts out of the DOM and downloads their body on demand', async () => {
+    const body = new Blob([new Uint8Array([0, 1, 2])], { type: 'application/octet-stream' })
+    const loadContent = vi.fn().mockResolvedValue(body)
+    const createObjectURL = vi.fn().mockReturnValue('blob:artifact-1')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperties(URL, {
+      createObjectURL: { configurable: true, value: createObjectURL },
+      revokeObjectURL: { configurable: true, value: revokeObjectURL },
+    })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+    render(
+      <I18nProvider>
+        <ArtifactPanel
+          artifact={artifact({
+            title: 'report.docx',
+            content: '',
+            content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            bytes: 3,
+            storage_kind: 'blob',
+          })}
+          onClose={vi.fn()}
+          onLoadContent={loadContent}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText(/3 字节的文件产物/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制产物' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '下载产物' }))
+
+    await waitFor(() => expect(loadContent).toHaveBeenCalledWith('artifact-1'))
+    expect(createObjectURL).toHaveBeenCalledWith(body)
+    expect(click).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:artifact-1')
   })
 })

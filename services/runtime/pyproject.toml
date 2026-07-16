@@ -26,6 +26,8 @@ dependencies = [
     "pyperclip>=1.9.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
+    "packaging==26.2",
+    "jsonschema==4.26.0",
     "pyyaml>=6.0.0",
     "structlog>=24.4.0",
     "aiosqlite>=0.20.0",
@@ -40,10 +42,15 @@ dependencies = [
     "openpyxl>=3.1.0",
     "python-pptx>=1.0.2",
     "langchain-anthropic==1.4.8",
+    "wasmtime==46.0.1",
+    "cryptography==48.0.0",
+    "pillow==12.2.0",
+    "pycdlib==1.16.0",
 ]
 
 [project.scripts]
 shejane-runtime = "local_host.__main__:main"
+shejane-plugin = "local_host.plugin_cli:main"
 
 [build-system]
 requires = ["setuptools>=75"]
@@ -63,6 +70,7 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "pyinstaller>=6.20.0",
+    "zstandard==0.25.0",
 ]
 
 [tool.pytest.ini_options]

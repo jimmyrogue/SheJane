@@ -78,6 +78,8 @@ export interface AgentTimelineItem {
   permissionArguments?: Record<string, unknown>
   permissionDecision?: 'approve' | 'edit' | 'deny'
   permissionScope?: 'once' | 'run'
+  permissionSource?: 'rule' | 'llm' | 'fallback' | 'run_grant'
+  permissionReason?: string
   reconciliationDecision?: 'confirmed_completed' | 'retry_not_executed' | 'abort'
   planApprovalRequestId?: string
   planApprovalDecision?: 'approve' | 'modify' | 'reject'
@@ -108,6 +110,18 @@ export interface ChatMessage {
   createdAt: string
   status: MessageStatus
   attachments?: LocalAttachmentRef[]
+  pluginReferences?: Array<{
+    pluginId: string
+    name: string
+    digest: string
+  }>
+  pluginCommand?: {
+    pluginId: string
+    pluginName: string
+    commandId: string
+    title: string
+    digest: string
+  }
   requestId?: string
   runId?: string
   /** Highest Runtime event sequence already reflected in this cache entry. */

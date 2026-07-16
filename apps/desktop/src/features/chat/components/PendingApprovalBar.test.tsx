@@ -65,4 +65,17 @@ describe('PendingApprovalBar', () => {
     fireEvent.click(screen.getByText('确认未执行，重新尝试'))
     expect(onReconcile).toHaveBeenCalledWith('m1', 'toolop-1', 'retry_not_executed')
   })
+
+  it('explains when intelligent approval falls back to the user', () => {
+    render(
+      <I18nProvider>
+        <PendingApprovalBar
+          approval={{ kind: 'approval', messageID: 'm1', requestID: 'p1', tool: '运行命令', toolName: 'execute', arguments: {}, source: 'fallback' }}
+          onDecision={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.getByText('智能审批暂时不可用，已切换为人工确认。')).toBeInTheDocument()
+  })
 })

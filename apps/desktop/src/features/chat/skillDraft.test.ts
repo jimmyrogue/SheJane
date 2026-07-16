@@ -3,6 +3,8 @@ import {
   functionToken,
   mcpToken,
   parseSkillDraft,
+  pluginCommandToken,
+  pluginToken,
   skillToken,
   SKILL_OPEN,
   SKILL_CLOSE,
@@ -14,6 +16,19 @@ const write = skillToken('write')
 const imageFn = functionToken('image')
 const githubMcp = mcpToken('github')
 const playwrightMcp = mcpToken('playwright')
+const archiveDigest = `sha256:${'a'.repeat(64)}`
+const archivePlugin = pluginToken({
+  pluginId: 'dev.shejane.fixture.archive',
+  name: 'Archive fixture',
+  expectedDigest: archiveDigest,
+})
+const archiveCommand = pluginCommandToken({
+  pluginId: 'dev.shejane.fixture.archive',
+  pluginName: 'Archive fixture',
+  commandId: 'archive',
+  title: 'Archive files',
+  expectedDigest: archiveDigest,
+})
 
 describe('skillDraft.tokenizeDraft', () => {
   it('returns nothing for an empty draft', () => {
@@ -68,6 +83,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: ['hunt', 'write'],
       functions: [],
       mcps: [],
+      plugins: [],
     })
   })
 
@@ -77,6 +93,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: [],
       functions: [],
       mcps: [],
+      plugins: [],
     })
   })
 
@@ -87,6 +104,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: ['demo'],
       functions: [],
       mcps: [],
+      plugins: [],
     })
   })
 
@@ -100,6 +118,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: [],
       functions: ['image'],
       mcps: [],
+      plugins: [],
     })
   })
 
@@ -109,6 +128,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: ['hunt', 'write'],
       functions: ['image'],
       mcps: [],
+      plugins: [],
     })
   })
 
@@ -127,6 +147,7 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: [],
       functions: [],
       mcps: ['github', 'playwright'],
+      plugins: [],
     })
   })
 
@@ -136,6 +157,59 @@ describe('skillDraft.parseSkillDraft', () => {
       skills: ['hunt'],
       functions: ['image'],
       mcps: ['github'],
+      plugins: [],
+    })
+  })
+
+  it('keeps plugin display text separate from its stable identity and digest', () => {
+    expect(tokenizeDraft(`用 ${archivePlugin} 处理`)).toEqual([
+      { type: 'text', value: '用 ' },
+      {
+        type: 'plugin',
+        pluginId: 'dev.shejane.fixture.archive',
+        name: 'Archive fixture',
+        expectedDigest: archiveDigest,
+      },
+      { type: 'text', value: ' 处理' },
+    ])
+    expect(parseSkillDraft(`${archivePlugin} ${archivePlugin} 处理附件`)).toEqual({
+      text: '  处理附件',
+      skills: [],
+      functions: [],
+      mcps: [],
+      plugins: [{
+        pluginId: 'dev.shejane.fixture.archive',
+        name: 'Archive fixture',
+        expectedDigest: archiveDigest,
+      }],
+    })
+  })
+
+  it('parses the last plugin command without injecting it into message text', () => {
+    expect(tokenizeDraft(`${archiveCommand}处理附件`)).toEqual([
+      {
+        type: 'plugin_command',
+        pluginId: 'dev.shejane.fixture.archive',
+        pluginName: 'Archive fixture',
+        commandId: 'archive',
+        title: 'Archive files',
+        expectedDigest: archiveDigest,
+      },
+      { type: 'text', value: '处理附件' },
+    ])
+    expect(parseSkillDraft(`${archiveCommand}处理附件`)).toEqual({
+      text: '处理附件',
+      skills: [],
+      functions: [],
+      mcps: [],
+      plugins: [],
+      pluginCommand: {
+        pluginId: 'dev.shejane.fixture.archive',
+        pluginName: 'Archive fixture',
+        commandId: 'archive',
+        title: 'Archive files',
+        expectedDigest: archiveDigest,
+      },
     })
   })
 })

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "engine",
+    "images",
+    "total_lines",
+    "total_characters",
+    "text_artifact_name",
+    "json_artifact_name"
+  ],
+  "properties": {
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "model", "provider"],
+      "properties": {
+        "name": {"const": "RapidOCR"},
+        "version": {"const": "3.9.1"},
+        "model": {"const": "PP-OCRv6-medium"},
+        "provider": {"const": "CPUExecutionProvider"}
+      }
+    },
+    "images": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input_id", "width", "height", "lines", "full_text", "truncated"],
+        "properties": {
+          "input_id": {"type": "string", "minLength": 1, "maxLength": 100},
+          "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+          "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+          "lines": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text", "confidence", "polygon"],
+              "properties": {
+                "text": {"type": "string", "minLength": 1, "maxLength": 10000},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "polygon": {
+                  "type": "array",
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "items": {"type": "integer", "minimum": 0, "maximum": 16383}
+                  }
+                }
+              }
+            }
+          },
+          "full_text": {"type": "string", "maxLength": 200000},
+          "truncated": {"type": "boolean"}
+        }
+      }
+    },
+    "total_lines": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "total_characters": {"type": "integer", "minimum": 0, "maximum": 200000},
+    "text_artifact_name": {
+      "oneOf": [{"const": "ocr.txt"}, {"type": "null"}]
+    },
+    "json_artifact_name": {
+      "oneOf": [{"const": "ocr.json"}, {"type": "null"}]
+    }
+  }
+}

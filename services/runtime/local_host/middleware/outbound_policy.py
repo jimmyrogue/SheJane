@@ -19,6 +19,20 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 _VALID_PII_TYPES = {"email", "credit_card", "ip", "mac_address", "url"}
 
 
+def sanitize_outbound_text(
+    text: str,
+    *,
+    secrets: tuple[str, ...] = (),
+    pii_types: tuple[str, ...] = (),
+    external: bool,
+) -> str:
+    return _sanitize_text(
+        text,
+        secrets=secrets,
+        rules=_resolved_rules(pii_types) if external else (),
+    )
+
+
 class OutboundPolicyMiddleware(AgentMiddleware):
     """Apply runtime-bound data rules to a model request copy."""
 

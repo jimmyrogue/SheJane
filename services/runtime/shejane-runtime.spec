@@ -11,12 +11,30 @@
 # notarization in a later phase).
 
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 datas = []
 binaries = []
 hiddenimports = []
+
+if sys.platform.startswith("linux"):
+    linux_launcher = Path("build/managed-worker-linux/shejane-managed-worker-linux")
+    linux_bubblewrap = Path("build/managed-worker-linux/bubblewrap")
+    if not linux_launcher.is_file():
+        raise SystemExit("Linux Managed Worker launcher must be built before PyInstaller")
+    if not (linux_bubblewrap / "shejane-bwrap").is_file():
+        raise SystemExit("Linux Managed Worker bubblewrap must be built before PyInstaller")
+    binaries.append((str(linux_launcher), "."))
+    binaries += [
+        (str(linux_bubblewrap / "shejane-bwrap"), "managed-worker-linux"),
+        (str(linux_bubblewrap / "libcap.so.2"), "managed-worker-linux"),
+    ]
+    datas += [
+        (str(linux_bubblewrap / name), "managed-worker-linux")
+        for name in ("COPYING.bubblewrap", "copyright.libcap", "manifest.json")
+    ]
 
 # Packages PyInstaller's static analysis under-collects because they rely on
 # dynamic imports, entry-point discovery, or ship data files / native libs.
@@ -31,6 +49,9 @@ for pkg in (
     "langchain_core",
     "deepagents",
     "markitdown",
+    # wasmtime resolves its platform library with ctypes at import time, so
+    # PyInstaller cannot discover the wheel's nested dylib/DLL from imports.
+    "wasmtime",
 ):
     d, b, h = collect_all(pkg)
     datas += d
