@@ -88,14 +88,21 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
     }
     case 'tool.failed': {
       const tool = stringValue(payload.tool)
+      const errorCode = stringValue(payload.error_code) || undefined
+      const conflictPath = errorCode === 'file_exists' ? fileConflictPath(payload) : ''
       return {
         type: event.event_type,
-        label: t('chat.timeline.toolFailed', { tool: toolActionLabel(tool, t) }),
+        label: errorCode === 'file_exists'
+          ? t('chat.timeline.fileConflict', { target: conflictPath || toolActionLabel(tool, t) })
+          : t('chat.timeline.toolFailed', { tool: toolActionLabel(tool, t) }),
         eventId,
         tool,
+        errorCode,
         toolCallId: stringValue(payload.tool_call_id) || undefined,
-        target: toolTarget(payload, tool),
-        toolDetail: toolDetail(payload, tool),
+        target: conflictPath || toolTarget(payload, tool),
+        toolDetail: conflictPath
+          ? { kind: 'text', text: truncate(conflictPath, TOOL_TARGET_MAX), tooltip: conflictPath }
+          : toolDetail(payload, tool),
       }
     }
     case 'permission.required': {
@@ -399,6 +406,17 @@ function failureActionKindKey(actionKind: NonNullable<AgentTimelineItem['failure
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function fileConflictPath(payload: Record<string, unknown>): string {
+  const content = stringValue(payload.content)
+  if (!content) return ''
+  try {
+    const envelope = JSON.parse(content) as { path?: unknown }
+    return stringValue(envelope.path)
+  } catch {
+    return ''
+  }
 }
 
 function numberValue(value: unknown): number | undefined {

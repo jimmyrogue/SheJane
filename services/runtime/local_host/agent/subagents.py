@@ -37,6 +37,7 @@ from deepagents.middleware.subagents import (
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
+from ..middleware.file_write_conflict import FileWriteConflictMiddleware
 from ..middleware.tool_execution import ToolExecutionMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware
@@ -160,7 +161,11 @@ def _builtin_subagents(
             "system_prompt": _fenced_prompt(DEFAULT_SUBAGENT_PROMPT),
             "model": main_model,
             "tools": main_tools,
-            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
+            "middleware": [
+                ToolReviewMiddleware(),
+                ToolExecutionMiddleware(),
+                FileWriteConflictMiddleware(),
+            ],
         },
         {
             "name": "researcher",
@@ -178,7 +183,11 @@ def _builtin_subagents(
             "system_prompt": _fenced_prompt(RESEARCHER_PROMPT),
             "model": main_model,
             "tools": research_tools,
-            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
+            "middleware": [
+                ToolReviewMiddleware(),
+                ToolExecutionMiddleware(),
+                FileWriteConflictMiddleware(),
+            ],
         },
         {
             "name": "writer",
@@ -190,7 +199,11 @@ def _builtin_subagents(
             "system_prompt": _fenced_prompt(WRITER_PROMPT),
             "model": main_model,
             "tools": [],
-            "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
+            "middleware": [
+                ToolReviewMiddleware(),
+                ToolExecutionMiddleware(),
+                FileWriteConflictMiddleware(),
+            ],
         },
     ]
     return subagents
@@ -261,7 +274,11 @@ def _load_subagent_file(
         "system_prompt": _fenced_prompt(prompt),
         "model": main_model,
         "tools": selected_tools,
-        "middleware": [ToolReviewMiddleware(), ToolExecutionMiddleware()],
+        "middleware": [
+            ToolReviewMiddleware(),
+            ToolExecutionMiddleware(),
+            FileWriteConflictMiddleware(),
+        ],
     }
 
 

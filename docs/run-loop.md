@@ -105,8 +105,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     ├─ SkillsMiddleware sources = [skills_dir]   ← 只读挂载，渐进披露 Markdown Skills │
   │     ├─ MemoryMiddleware  sources = [AGENTS.md]   ← 只读挂载，注入 system prompt    │
   │     ├─ SubAgentMiddleware subagents = [general-purpose, researcher, writer]       │
-  │     ├─ ToolReviewMiddleware + ToolExecutionMiddleware                            │
-  │     │   ← 主 Agent 和子 Agent 共用参数校验、人工确认和持久工具回执                │
+  │     ├─ ToolReviewMiddleware + ToolExecutionMiddleware + FileWriteConflictMiddleware │
+  │     │   ← 主 Agent 和子 Agent 共用参数校验、人工确认、持久回执和文件冲突澄清       │
   │     ├─ checkpointer = lease-fenced AsyncSqliteSaver ← 当前任务租约保护写入          │
   │     ├─ agent_store  = AsyncSqliteStore           ← 显式 memory 工具的持久存储      │
   │     ├─ RuntimeContext.model = 本次模型连接        ← 主模型、摘要和子 Agent 共用代理  │
@@ -385,6 +385,9 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |
 | 错误分类诊断 | `handoff.failure` 将最近 `run.failed` / `tool.failed` 归类并标记 recoverable / retryable / action_kind / recovery_action / suggested action；同一模块也输出 runtime retry decision（`should_retry` / `delay_s` / fail-fast reason） | `test_runs_http` / `test_failure_policy` |
+| 确定性工具失败熔断 | 同一工具连续两次返回完全相同的非临时错误时，CompletionRouter 在下一次模型调用前停止循环并提交 `repeated_tool_failure`，避免耗尽模型调用预算 | `test_middleware` / `test_e2e_capabilities` |
+| 文本读取 | `read_file` 未指定 `offset` / `limit` 时读取后端默认的最多 2000 行，显式分页参数保持不变，工具输出仍受上下文长度上限保护 | `test_e2e_capabilities` |
+| 文件名冲突 | `write_file` 保持只新建语义。首次撞名返回结构化 `file_exists` 和已探测可用的 `suggested_path`，模型可直接换名或改用读后编辑；同一用户轮次再次提交相同路径时，工具执行暂停并询问“自动换名 / 覆盖原文件 / 取消写入”。选择自动换名后，本轮后续对原路径的读写编辑复用实际新路径；覆盖分支读取当前文本后以精确内容匹配编辑，Runtime 核心不猜测用户意图 | `test_e2e_capabilities` / `test_user_ask` |
 | 模型错误 durable failure | 供应商错误进入统一失败策略；不可恢复或重试耗尽后写入结构化 `run.failed` | `test_model_ledger` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |

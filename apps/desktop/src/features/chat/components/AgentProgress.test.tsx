@@ -41,7 +41,7 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('surfaces missing handoff ledger risk while waiting without restoring inline approval controls', () => {
+  it('surfaces missing handoff ledger risk without duplicating the footer diagnostics action', () => {
     const { container } = renderAgentProgress(
       <AgentProgress
         message={message({
@@ -66,7 +66,7 @@ describe('AgentProgress', () => {
     expect(screen.queryByRole('button', { name: '下载诊断' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('暂停前缺少进展账本，恢复时上下文可能不完整。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '下载诊断' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '下载诊断' })).not.toBeInTheDocument()
     expect(screen.queryByText('下载诊断')).not.toBeInTheDocument()
     expect(container.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
     expect(container.querySelector('.agent-progress-status-dot')).not.toBeInTheDocument()
@@ -74,13 +74,11 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('uses the compact notice-card style for a completed run and keeps diagnostics in the drawer', () => {
+  it('uses the compact notice-card style without duplicating footer diagnostics', () => {
     // The expanded body used to dump a per-step list + source/artifact
     // tallies + a "view artifact" button. Users found it noisy and
     // mostly irrelevant — leaks internal events like graph.node /
-    // llm.tool_call_chunk. Now expansion contains ONLY the
-    // diagnostics button; everything else is gone.
-    const onOpenDiagnostics = vi.fn()
+    // llm.tool_call_chunk. Diagnostics now live in the message footer.
     const current = message({
       status: 'done',
       agentEvents: [
@@ -96,7 +94,7 @@ describe('AgentProgress', () => {
       <AgentProgress
         message={current}
         onOpenArtifact={vi.fn()}
-        onOpenDiagnostics={onOpenDiagnostics}
+        onOpenDiagnostics={vi.fn()}
       />,
     )
 
@@ -107,7 +105,7 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('读取 1 个文件')).not.toBeInTheDocument()
     expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
     expect(document.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
-    expect(document.querySelector('.agent-progress-tool-card')).not.toBeInTheDocument()
+    expect(document.querySelector('.agent-progress-tool-card')).toBeInTheDocument()
     // None of the removed UI should be present anywhere — even collapsed.
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
@@ -115,17 +113,15 @@ describe('AgentProgress', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
 
-    // Source/artifact tallies and per-step list are gone for good —
-    // the only thing in the expanded drawer is the diagnostics button.
+    // Source/artifact tallies, per-step internals, and the old diagnostics
+    // action are all absent from the aggregate drawer.
     expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByText('生成 1 个 Artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('下载诊断')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '下载诊断' })).toBeInTheDocument()
-
-    fireEvent.click(screen.getByTitle('查看诊断 run-local'))
-    expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
+    expect(screen.queryByRole('button', { name: '下载诊断' })).not.toBeInTheDocument()
+    expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
   })
 
   it('renders nothing for a tool-less direct answer (skill.selected is not an operation)', () => {
@@ -229,6 +225,29 @@ describe('AgentProgress', () => {
     expect(screen.getByText('https://example.com/news')).toBeInTheDocument()
   })
 
+  it('keeps a resolved file-name conflict as a neutral expandable stage', () => {
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'done',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
+            { type: 'tool.failed', label: '发现文件名冲突：snake.html', tool: 'write_file', toolCallId: 'write-1', errorCode: 'file_exists', target: 'snake.html' },
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake-2.html' },
+            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake-2.html' },
+            { type: 'run.completed', label: '任务完成' },
+          ],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('发现文件名冲突：snake.html')).toBeInTheDocument()
+    expect(container.querySelector('[data-state="conflict"]')).toBeInTheDocument()
+    expect(screen.queryByText('任务失败')).not.toBeInTheDocument()
+  })
+
   it('keeps an active tool failure in the working progress state', () => {
     expect(
       deriveAgentProgress(
@@ -258,7 +277,7 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
+    expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
     // verb and target render in separate spans now
     expect(screen.getByText('读取文件')).toBeInTheDocument()
     expect(screen.getByText('README.md')).toBeInTheDocument()
@@ -368,7 +387,7 @@ describe('AgentProgress', () => {
     expect(screen.getByText('请检查 Runtime 中的模型供应商凭据，然后重试。')).toBeInTheDocument()
   })
 
-  it('does not render the duplicate drawer diagnostics button when the failure CTA opens diagnostics', () => {
+  it('does not duplicate footer diagnostics beside an expandable failure card', () => {
     const onFailureAction = vi.fn()
     const current = message({
       status: 'error',
@@ -396,12 +415,12 @@ describe('AgentProgress', () => {
     expect(screen.queryByRole('button', { name: '查看诊断' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('model provider is not configured (missing API key or base URL): missing API key or base URL')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '查看诊断' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看诊断' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '诊断' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '展开步骤' })).not.toBeInTheDocument()
   })
 
-  it('offers diagnostics for provider quota failures', () => {
+  it('does not duplicate footer diagnostics for provider quota failures', () => {
     const onFailureAction = vi.fn()
     const current = message({
       status: 'error',
@@ -425,8 +444,35 @@ describe('AgentProgress', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    fireEvent.click(screen.getByRole('button', { name: '查看诊断' }))
-    expect(onFailureAction).toHaveBeenCalledWith('diagnostics', current)
+    expect(screen.queryByRole('button', { name: '查看诊断' })).not.toBeInTheDocument()
+    expect(onFailureAction).not.toHaveBeenCalled()
+  })
+
+  it('does not render an action banner for inspect-only diagnostics', () => {
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'run.failed',
+          label: 'agent stopped · 需要排查',
+          failureCategory: 'unknown',
+          failureActionKind: 'inspect',
+          failureRecoveryAction: 'diagnostics',
+        },
+      ],
+    })
+
+    renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('需要排查')).not.toBeInTheDocument()
+    expect(screen.queryByText('需要用户操作')).not.toBeInTheDocument()
   })
 
   it('offers a retry action for retryable failures', () => {
@@ -455,6 +501,66 @@ describe('AgentProgress', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     expect(onFailureAction).toHaveBeenCalledWith('retry', current)
+  })
+
+  it('keeps each run phase as an independently expandable card and separates user actions', () => {
+    const onFailureAction = vi.fn()
+    const current = message({
+      status: 'error',
+      agentEvents: [
+        {
+          type: 'ui.action.requested',
+          label: '请求操作：重试尝试 1',
+          retryAttempt: 1,
+        },
+        {
+          type: 'tool.requested',
+          label: '调用工具：读取文件',
+          tool: 'fs.read',
+          toolCallId: 'read-1',
+          toolDetail: { kind: 'text', text: 'draft.html', tooltip: '/Users/me/Desktop/draft.html' },
+        },
+        {
+          type: 'tool.completed',
+          label: '工具完成：读取文件',
+          tool: 'fs.read',
+          toolCallId: 'read-1',
+        },
+        {
+          type: 'run.failed',
+          label: 'Authorize a workspace before creating or changing files. · 需要你处理',
+          failureCategory: 'workspace',
+          failureActionKind: 'user_action',
+          failureRecoveryAction: 'workspace',
+        },
+      ],
+    })
+
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={current}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={onFailureAction}
+      />,
+    )
+
+    expect(screen.getByText('准备重试尝试 1')).toBeInTheDocument()
+    expect(screen.getByText('已完成读取文件')).toBeInTheDocument()
+    expect(screen.getByText('需要选择保存位置')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开步骤：准备重试尝试 1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开步骤：已完成读取文件' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开详情' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开步骤：准备重试尝试 1' }))
+    expect(screen.getByText('请求操作：重试尝试 1')).toBeInTheDocument()
+
+    const actionButton = screen.getByRole('button', { name: '选择保存位置' })
+    expect(actionButton.closest('.agent-progress-user-action')).toBeInTheDocument()
+    expect(actionButton.closest('.tool-card')).toBeNull()
+    fireEvent.click(actionButton)
+    expect(onFailureAction).toHaveBeenCalledWith('workspace', current)
+    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(3)
   })
 
   it('offers retry for permission failures so the user can grant again', () => {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { IconAlertCircle, IconChevronDown, IconChevronRight, IconFolderPlus, IconInfoCircle, IconReload, IconStethoscope, IconDownload, IconTool, IconWorld } from '@tabler/icons-react'
+import { IconAlertCircle, IconChevronDown, IconChevronRight, IconFolderPlus, IconInfoCircle, IconReload, IconStethoscope, IconTool, IconWorld } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { createTranslator, useI18n, type Translator } from '@/shared/i18n/i18n'
@@ -25,16 +25,23 @@ interface AgentProgressState {
   detail?: string
   failureMessage?: string
   failureAction?: FailureActionCTA
+  failureActionKind?: AgentTimelineItem['failureActionKind']
   pendingPermission?: PendingPermission
   sourcesCount: number
   artifactsCount: number
   latestArtifactID?: string
-  diagnosticsRunID?: string
+}
+
+interface AgentProgressStage {
+  id: string
+  tone: Extract<ProgressTone, 'done' | 'failed'> | 'conflict'
+  label: string
+  detail?: AgentToolDetail
+  events: AgentTimelineItem[]
 }
 
 export function AgentProgress({
   message,
-  onOpenDiagnostics,
   onFailureAction,
 }: {
   message: ChatMessage
@@ -43,25 +50,27 @@ export function AgentProgress({
    *  this component as part of the timeline cleanup (users said the
    *  expanded view was too noisy and they only wanted diagnostics). */
   onOpenArtifact?: (artifactID: string) => void
+  /** Diagnostics now live in MessageBubble's persistent footer. Retained
+   *  temporarily so older callers do not break while they migrate. */
   onOpenDiagnostics?: (runID: string) => void
   onFailureAction?: (action: AgentFailureAction, message: ChatMessage) => void
 }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
   const progress = deriveAgentProgress(message, t)
-  // Permission prompts are no longer shown inline — they are surfaced once in
-  // the approval bar above the composer. The remaining info states collapse
-  // to a single muted line and expand on click.
+  // Permission prompts are surfaced once in the approval bar above the
+  // composer. Other work is retained as independently expandable phases.
   if (!progress || progress.tone === 'permission') {
     return null
   }
 
   const events = message.agentEvents ?? []
-  // Only surface the progress line when there is real tool/operation activity;
-  // a plain direct answer needs no "thinking" row.
+  // Only surface the phase timeline for real tool/operation activity; a plain
+  // direct answer needs no progress chrome.
   if (!events.some((event) => OPERATION_TYPES.has(event.type))) {
     return null
   }
+  const stageHistory = historicalProgressStages(events, message, t)
   const bodyId = `agent-progress-body-${message.id}`
   // While the run is active: the current action + its concrete target
   // ("正在打开 weather.com"). Once finished: the card headline carries the
@@ -90,19 +99,16 @@ export function AgentProgress({
       ? collectInFlightTaskRequests(events)
       : []
   const showTaskList = inFlightTasks.length >= 2
-  const hasDiagnosticsFailureAction = progress.failureAction?.action === 'diagnostics' && Boolean(onFailureAction)
+  const failureAction = progress.failureAction?.action === 'diagnostics' ? undefined : progress.failureAction
   const isHandoffWarning = Boolean(latestHandoffWarningEvent(events) && ACTIVE_RUN_STATUSES.has(message.status))
   const isNoticeCard = isHandoffWarning || progress.tone === 'failed' || progress.tone === 'done'
-  const canExpand = !isNoticeCard && Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !hasDiagnosticsFailureAction)
   const hasNoticeBody = isNoticeCard && Boolean(
     detail?.text ||
     successSummary ||
     progress.failureMessage ||
-    progress.detail ||
-    progress.failureAction ||
-    (progress.diagnosticsRunID && onOpenDiagnostics),
+    progress.detail,
   )
-  const headerCanToggle = canExpand || hasNoticeBody
+  const headerCanToggle = hasNoticeBody
   const NoticeTitleIcon = isNoticeCard && progress.tone !== 'done'
     ? progress.tone === 'failed' ? IconAlertCircle : IconInfoCircle
     : undefined
@@ -147,15 +153,20 @@ export function AgentProgress({
   )
 
   return (
-    <div
-      className={cn(
-        'tool-card agent-progress mt-4',
-        `agent-progress-${progress.tone}`,
-        isNoticeCard ? 'agent-progress-notice-card' : 'agent-progress-tool-card',
-      )}
-      data-state={progress.tone}
-      data-expanded={expanded}
-    >
+    <div className="agent-progress-stages mt-4">
+      {stageHistory.map((stage) => (
+        <AgentProgressStageCard key={stage.id} stage={stage} messageID={message.id} />
+      ))}
+
+      <div
+        className={cn(
+          'tool-card agent-progress agent-progress-stage',
+          `agent-progress-${progress.tone}`,
+          isNoticeCard ? 'agent-progress-notice-card' : 'agent-progress-tool-card',
+        )}
+        data-state={progress.tone}
+        data-expanded={expanded}
+      >
       {headerCanToggle ? (
         <button
           type="button"
@@ -186,9 +197,6 @@ export function AgentProgress({
           progress={progress}
           targetDetail={detail}
           successSummary={successSummary}
-          message={message}
-          onFailureAction={onFailureAction}
-          onOpenDiagnostics={onOpenDiagnostics}
         />
       ) : null}
 
@@ -226,38 +234,85 @@ export function AgentProgress({
         <p className="agent-progress-detail">{progress.detail}</p>
       ) : null}
 
-      {!isNoticeCard && progress.failureAction && onFailureAction ? (
-        <div className="agent-progress-actions">
+      </div>
+
+      {failureAction && onFailureAction ? (
+        <div className="agent-progress-user-action" role="alert">
+          <span>
+            {progress.failureActionKind && progress.failureActionKind !== 'user_action'
+              ? t(failureActionKindLabelKey(progress.failureActionKind))
+              : t('sidebar.status.needsAttention')}
+          </span>
           <Button
             className="agent-progress-action"
             size="sm"
             variant="outline"
-            onClick={() => onFailureAction(progress.failureAction!.action, message)}
+            onClick={() => onFailureAction(failureAction.action, message)}
           >
-            {failureActionIcon(progress.failureAction.action)}
-            {progress.failureAction.label}
+            {failureActionIcon(failureAction.action)}
+            {failureAction.label}
           </Button>
         </div>
       ) : null}
+    </div>
+  )
+}
 
-      {/* Expanded body intentionally contains ONLY the diagnostics
-       *  button. The old per-event step list (graph.node /
-       *  llm.tool_call_chunk / run.started …) was internal-machinery
-       *  noise the user didn't need — the headline above already says
-       *  what's happening in plain language; diagnostics is the
-       *  escape hatch for when something feels wrong. */}
-      {!isNoticeCard && expanded && canExpand ? (
-        <div className="tool-card-results agent-progress-results" id={bodyId} aria-label={t('agent.summary')}>
-          <Button
-            className="agent-progress-action"
-            size="sm"
-            variant="outline"
-            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID! })}
-            onClick={() => onOpenDiagnostics!(progress.diagnosticsRunID!)}
-          >
-            <IconDownload size={13} />
-            {t('agent.diagnostics')}
-          </Button>
+function AgentProgressStageCard({
+  stage,
+  messageID,
+}: {
+  stage: AgentProgressStage
+  messageID: string
+}) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
+  const bodyId = `agent-progress-stage-${messageID}-${stage.id}`
+
+  return (
+    <div
+      className={cn(
+        'tool-card agent-progress agent-progress-stage agent-progress-tool-card',
+        `agent-progress-${stage.tone}`,
+      )}
+      data-state={stage.tone}
+      data-expanded={expanded}
+    >
+      <button
+        type="button"
+        className="tool-card-header agent-progress-summary"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        aria-label={`${expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}：${stage.label}`}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="agent-progress-status-dot" aria-hidden="true" />
+        <span className="name">{stage.label}</span>
+        {stage.detail ? (
+          <>
+            <span className="agent-progress-sep" aria-hidden="true">·</span>
+            {stage.detail.showWebIcon ? (
+              <IconWorld className="agent-progress-target-icon" size={12} aria-hidden="true" />
+            ) : null}
+            <span className="agent-progress-target" title={stage.detail.tooltip ?? stage.detail.text}>
+              {stage.detail.text}
+            </span>
+          </>
+        ) : null}
+        {expanded ? (
+          <IconChevronDown className="tool-card-caret" aria-hidden="true" />
+        ) : (
+          <IconChevronRight className="tool-card-caret" aria-hidden="true" />
+        )}
+      </button>
+
+      {expanded ? (
+        <div className="tool-card-results agent-progress-stage-body" id={bodyId}>
+          {stage.events.map((event, index) => (
+            <div className="agent-progress-stage-event" key={event.eventId ?? `${stage.id}-${index}`}>
+              {event.label}
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -269,22 +324,13 @@ function AgentProgressNoticeBody({
   progress,
   targetDetail,
   successSummary,
-  message,
-  onOpenDiagnostics,
-  onFailureAction,
 }: {
   bodyId: string
   progress: AgentProgressState
   targetDetail?: AgentToolDetail
   successSummary?: string
-  message: ChatMessage
-  onOpenDiagnostics?: (runID: string) => void
-  onFailureAction?: (action: AgentFailureAction, message: ChatMessage) => void
 }) {
-  const { t } = useI18n()
-  const showDiagnosticsDownload = Boolean(progress.diagnosticsRunID && onOpenDiagnostics && !progress.failureAction)
-
-  if (!targetDetail?.text && !successSummary && !progress.failureMessage && !progress.detail && !progress.failureAction && !showDiagnosticsDownload) {
+  if (!targetDetail?.text && !successSummary && !progress.failureMessage && !progress.detail) {
     return null
   }
 
@@ -314,34 +360,6 @@ function AgentProgressNoticeBody({
         </div>
       ) : null}
 
-      {progress.failureAction && onFailureAction ? (
-        <div className="agent-progress-notice-actions agent-progress-actions">
-          <Button
-            className="agent-progress-action"
-            size="sm"
-            variant="outline"
-            onClick={() => onFailureAction(progress.failureAction!.action, message)}
-          >
-            {failureActionIcon(progress.failureAction.action)}
-            {progress.failureAction.label}
-          </Button>
-        </div>
-      ) : null}
-
-      {showDiagnosticsDownload ? (
-        <div className="agent-progress-notice-actions agent-progress-actions">
-          <Button
-            className="agent-progress-action agent-progress-icon-action"
-            size="icon-xs"
-            variant="outline"
-            aria-label={t('agent.downloadDiagnostics')}
-            title={t('agent.viewDiagnostics', { id: progress.diagnosticsRunID! })}
-            onClick={() => onOpenDiagnostics!(progress.diagnosticsRunID!)}
-          >
-            <IconDownload size={12} aria-hidden="true" />
-          </Button>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -389,6 +407,105 @@ const ACTIVE_RUN_STATUSES = new Set<ChatMessage['status']>([
   'waiting_permission',
   'waiting_input',
 ])
+
+function historicalProgressStages(
+  events: AgentTimelineItem[],
+  message: ChatMessage,
+  t: Translator,
+): AgentProgressStage[] {
+  // ponytail: timelines stay small; index groups only if real runs make this scan measurable.
+  const groups: Array<{ id: string; events: AgentTimelineItem[] }> = []
+  const toolCalls = new Map<string, number>()
+
+  const append = (groupIndex: number, event: AgentTimelineItem) => {
+    groups[groupIndex]?.events.push(event)
+  }
+  const push = (id: string, event: AgentTimelineItem) => {
+    groups.push({ id, events: [event] })
+    return groups.length - 1
+  }
+  const latestGroup = (matches: (event: AgentTimelineItem) => boolean) => {
+    for (let index = groups.length - 1; index >= 0; index -= 1) {
+      if (groups[index].events.some(matches)) {
+        return index
+      }
+    }
+    return -1
+  }
+
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index]
+    if (event.type === 'tool.requested') {
+      if (event.tool === 'task') {
+        continue
+      }
+      const groupIndex = push(event.toolCallId || `tool-${index}`, event)
+      if (event.toolCallId) {
+        toolCalls.set(event.toolCallId, groupIndex)
+      }
+      continue
+    }
+    if (['tool.progress', 'tool.started', 'tool.completed', 'tool.failed'].includes(event.type)) {
+      if (event.tool === 'task') {
+        continue
+      }
+      const groupIndex = event.toolCallId && toolCalls.has(event.toolCallId)
+        ? toolCalls.get(event.toolCallId)!
+        : latestGroup((candidate) => candidate.tool === event.tool)
+      if (groupIndex >= 0) {
+        append(groupIndex, event)
+      } else {
+        push(event.toolCallId || `tool-${index}`, event)
+      }
+      continue
+    }
+    if (event.type === 'repair.workflow') {
+      const groupIndex = latestGroup((candidate) =>
+        candidate.type === 'repair.workflow' && candidate.repairAttempt === event.repairAttempt,
+      )
+      if (groupIndex >= 0) {
+        append(groupIndex, event)
+      } else {
+        push(`repair-${event.repairAttempt ?? index}`, event)
+      }
+      continue
+    }
+    if (event.type === 'ui.action.requested') {
+      push(`ui-${index}`, event)
+      continue
+    }
+    if (event.type === 'ui.action.completed') {
+      const groupIndex = latestGroup((candidate) => candidate.type === 'ui.action.requested')
+      if (groupIndex >= 0) {
+        append(groupIndex, event)
+      } else {
+        push(`ui-${index}`, event)
+      }
+      continue
+    }
+    if (event.type === 'browser.observed' || event.type === 'verification.completed') {
+      push(`${event.type}-${index}`, event)
+    }
+  }
+
+  const visibleGroups = ACTIVE_RUN_STATUSES.has(message.status) ? groups.slice(0, -1) : groups
+  return visibleGroups.map((group) => {
+    const latest = group.events[group.events.length - 1]
+    const detailSource = [...group.events].reverse().find((event) => event.toolDetail || event.target)
+    const tone = latest.errorCode === 'file_exists'
+      ? 'conflict'
+      : latest.type === 'tool.failed' || latest.verificationStatus === 'failed' || latest.repairWorkflowStatus === 'failed'
+        ? 'failed'
+        : 'done'
+    return {
+      id: group.id,
+      tone,
+      label: activeLabel(latest, t),
+      detail: detailSource?.toolDetail ?? (detailSource?.target ? { kind: 'text', text: detailSource.target } : undefined),
+      events: group.events.filter((event) => Boolean(event.label)),
+    }
+  })
+}
 
 /** Strip whichever of the known "前缀X" markers prefix the event label so
  *  the tool name comes out clean, then re-wrap it as "正在 X" — the
@@ -579,8 +696,6 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
   const sourcesCount = uniqueCount(events, (event) => (event.type === 'source.collected' ? event.sourceUrl || event.sourceTitle || event.eventId : undefined))
   const artifacts = uniqueValues(events, (event) => event.artifactId)
   const latestArtifactID = [...events].reverse().find((event) => event.artifactId)?.artifactId
-  const diagnosticsRunID = message.runId
-
   if (!events.length && !message.runId) {
     return null
   }
@@ -594,7 +709,6 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
-      diagnosticsRunID,
     }
   }
 
@@ -607,7 +721,6 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
-      diagnosticsRunID,
     }
   }
 
@@ -630,10 +743,10 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
       detail: failureGuidance(latestFailure, t)
         || (sourcesCount || artifacts.length ? t('agent.failedDetail') : undefined),
       failureAction: failureActionCTA(latestFailure, t),
+      failureActionKind: latestFailure?.failureActionKind,
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
-      diagnosticsRunID,
     }
   }
 
@@ -647,7 +760,6 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
       sourcesCount,
       artifactsCount: artifacts.length,
       latestArtifactID,
-      diagnosticsRunID,
     }
   }
 
@@ -659,7 +771,6 @@ export function deriveAgentProgress(message: ChatMessage, t: Translator = create
     sourcesCount,
     artifactsCount: artifacts.length,
     latestArtifactID,
-    diagnosticsRunID,
   }
 }
 

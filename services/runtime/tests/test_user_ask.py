@@ -529,3 +529,16 @@ def test_user_ask_handles_bare_string_resume_value() -> None:
         user_mod.interrupt = real_interrupt
 
     assert result == "user typed this directly"
+
+
+def test_user_ask_handles_durable_question_answer_map() -> None:
+    import local_host.tools.user as user_mod
+
+    original = user_mod.interrupt
+    user_mod.interrupt = lambda _payload: {"question-id": ["自动换名"]}
+    try:
+        result = user_mod.user_ask.invoke({"question": "如何处理？"})
+    finally:
+        user_mod.interrupt = original
+
+    assert result == "自动换名"

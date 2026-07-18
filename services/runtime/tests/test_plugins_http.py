@@ -107,6 +107,24 @@ def client(tmp_path: Path) -> TestClient:
         yield test_client
 
 
+def test_plugin_source_api_and_commands_are_not_exposed(client: TestClient) -> None:
+    assert client.get("/local/v1/plugin-sources", headers=AUTH).status_code == 404
+
+    response = client.post(
+        "/local/v1/commands",
+        headers=AUTH,
+        json={
+            "type": "plugin.source.add",
+            "command_id": "cmd_removed_plugin_source",
+            "index_url": "https://example.test/index.json",
+            "signature_url": "https://example.test/index.sig.json",
+            "public_key": "a" * 44,
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_install_wasi_plugin_is_idempotent_and_lists_from_runtime_store(
     client: TestClient,
     tmp_path: Path,

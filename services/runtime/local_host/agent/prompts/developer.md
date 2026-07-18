@@ -85,6 +85,9 @@ task(subagent_type="researcher",
 ## 工作区
 - 所有文件操作都限制在 `<state>` 块给出的工作区根目录内，不要尝试访问外部路径。
 - 写文件前明确意图：新建 / 覆盖 / 局部修改，对应不同的工具调用。
+- `read_file` 不传 `offset` / `limit` 时会读取最多 2000 行；只有明确只需局部内容时才分页。不要把刚写成功的文件整段读回作为验证，也不要主动 `open.file`，除非用户明确要求打开。
+- `write_file` 只用于新建。若返回 `error_code=file_exists`，用户只是要新建文件时直接采用 `suggested_path`；要修改原文件则先 `read_file` 再 `edit_file`。不要用相同路径重复调用；只有无法判断换名还是覆盖时，才再次提交同一路径，由工具层暂停询问用户。
+- `write_file` 成功即表示内容已经落盘。需要验证时用最小的 `task.verify` 检查，不要重复写入或整文件回读。
 - 大规模重构或删除多个文件前，先确认或建议用户检查 `git status`。
 
 ## 处理 office 文档（.docx / .xlsx）

@@ -7,7 +7,47 @@ import type { LocalRunDiagnostics } from '@/shared/local-host/client'
 afterEach(() => cleanup())
 
 describe('DiagnosticsPanel', () => {
-  it('surfaces the latest task verification status in the handoff summary', () => {
+  it('keeps the result primary and moves technical metadata behind disclosure', () => {
+    const view = renderPanel({
+      events: [
+        {
+          id: 'evt-1',
+          run_id: 'run-1',
+          seq: 1,
+          created_at: '2026-06-11T00:00:00Z',
+          event_type: 'tool.failed',
+          payload: { tool: 'write_file', error_code: 'file_exists' },
+        },
+      ],
+      permissions: [{} as LocalRunDiagnostics['permissions'][number]],
+      handoff: {
+        status: 'completed',
+        headline: 'Run completed with 34 events and 0 artifacts.',
+        ledger_state: 'missing',
+        ledger_message: 'Progress ledger missing for handoff.',
+        next_actions: [
+          'Review the final answer and any listed artifacts.',
+          'Call task.progress with current acceptance criteria, decisions, risks, and next actions.',
+        ],
+        blockers: ['Progress ledger missing for handoff.'],
+        recent_event_types: ['tool.requested', 'run.completed'],
+        failure: null,
+        verification: null,
+      },
+    })
+
+    expect(screen.getByRole('heading', { name: '任务已完成', level: 3 })).toBeInTheDocument()
+    expect(screen.getByText('运行记录')).toBeInTheDocument()
+    expect(document.querySelector('.diagnostics-technical')).not.toHaveAttribute('open')
+    expect(screen.queryByText('交接摘要')).not.toBeInTheDocument()
+    expect(screen.queryByText('账本缺失')).not.toBeInTheDocument()
+    expect(screen.queryByText('Progress ledger missing for handoff.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/请调用 task\.progress/)).not.toBeInTheDocument()
+    expect(screen.queryByText('completed')).not.toBeInTheDocument()
+    expect(view.container.querySelector('[data-slot="badge"]')).not.toBeInTheDocument()
+  })
+
+  it('surfaces a successful verification without secondary counters', () => {
     renderPanel({
       handoff: {
         status: 'completed',
@@ -27,11 +67,9 @@ describe('DiagnosticsPanel', () => {
       },
     })
 
-    expect(screen.getByText('验证结果')).toBeInTheDocument()
     expect(screen.getByText('验证通过')).toBeInTheDocument()
-    expect(screen.getByText('通过 1')).toBeInTheDocument()
-    expect(screen.getByText('失败 0')).toBeInTheDocument()
-    expect(screen.getByText('substring found')).toBeInTheDocument()
+    expect(screen.queryByText('通过 1')).not.toBeInTheDocument()
+    expect(screen.queryByText('失败 0')).not.toBeInTheDocument()
   })
 
   it('localizes failure category and next action from the failure classification', () => {
@@ -71,32 +109,6 @@ describe('DiagnosticsPanel', () => {
     expect(screen.queryByText('需先处理')).not.toBeInTheDocument()
     expect(screen.queryByText(/Inspect blockers and recent failed events/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Sign in to the Electron app/)).not.toBeInTheDocument()
-  })
-
-  it('renders reflection stats and critic notes', () => {
-    renderPanel({
-      reflection: {
-        ai_messages: 2,
-        tool_results: 3,
-        final_answer_chars: 144,
-        critic: {
-          coverage: 4,
-          clarity: 5,
-          grounding: 3,
-          notes: ['cite source'],
-          raw: null,
-        },
-      },
-    })
-
-    expect(screen.getByText('反思')).toBeInTheDocument()
-    expect(screen.getByText('AI 2')).toBeInTheDocument()
-    expect(screen.getByText('工具 3')).toBeInTheDocument()
-    expect(screen.getByText('最终回答 144 字')).toBeInTheDocument()
-    expect(screen.getByText('覆盖 4')).toBeInTheDocument()
-    expect(screen.getByText('清晰 5')).toBeInTheDocument()
-    expect(screen.getByText('依据 3')).toBeInTheDocument()
-    expect(screen.getByText('cite source')).toBeInTheDocument()
   })
 
   it('offers a checkpoint fork action when a checkpoint is available', async () => {

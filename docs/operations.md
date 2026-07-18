@@ -91,13 +91,7 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 同一 publisher 可以保留多把 key 进行轮换。将 `status` 改为 `revoked` 会阻止后续安装；签名有效只证明来源和完整性，不授予额外文件、网络或执行权限。
 
-### 插件来源
-
-Plugin Tab 可以添加两个静态 HTTPS 地址（`index.json` 和独立的 `index.sig.json`）以及索引外取得的 raw Ed25519 公钥（base64）。Runtime 会逐跳复核 HTTPS 目标，限制重定向、超时和响应大小，只有精确索引字节的 SHA-256 与签名都通过后才保存来源。
-
-来源只手动刷新。刷新失败、签名错误或网络不可用时，Runtime 保留上一次验证成功的索引；刷新不会安装、更新或启用任何插件。安装或显式更新时用户选择一个精确包，Runtime 固定来源 revision、插件 ID、版本、执行类型、平台和 package digest；更新还核对界面读取的 active digest，避免覆盖并发变化。归档下载到私有 staging，核对索引声明的精确字节数，再执行既有 canonical digest、发行者签名、manifest、兼容性和 Managed Worker Gate。来源安装不允许未签名确认旁路。
-
-移除来源只删除目录和来源配置，不删除已经安装的内容寻址插件。v1 没有后台刷新或自动更新。来源协议与签名文件格式见 [`docs/plugins/source-index-v1.md`](plugins/source-index-v1.md)。
+官方或第三方插件都以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从 Plugin Tab 本地导入；Runtime 不维护远程插件来源、索引或来源公钥。官方必要插件可以随应用提供，但仍使用相同的包格式、安装记录和运行约束。
 
 `@anthropic-ai/sandbox-runtime@0.0.65` 只保留为旧路径和对照测试，不是 Linux 完整 backend。Linux 使用随 Runtime 冻结的 Bubblewrap 0.11.2、原生 launcher、seccomp、私有 tmpfs、Artifact broker 与 delegated cgroup v2；macOS arm64 使用下述短命 VM。任何旧 SRT 路径都只能证明 access layer，不会自动得到 `resource_isolated=true` 或 `sandboxed=true`。
 

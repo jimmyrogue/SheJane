@@ -22,6 +22,36 @@ from langchain_core.tools import tool
 from langgraph.types import interrupt
 
 
+def ask_user(question: str, options: list[str] | None = None) -> str:
+    """Interrupt the graph for one user decision and normalize its answer."""
+    payload: dict[str, Any] = {
+        "kind": "question",
+        "question": question,
+        "options": list(options) if options else [],
+    }
+    raw = interrupt(payload)
+    if isinstance(raw, dict):
+        answers = raw.get("answers")
+        if isinstance(answers, dict):
+            for value in answers.values():
+                if isinstance(value, list) and value:
+                    return str(value[0])
+                if isinstance(value, str) and value:
+                    return value
+        if "answer" in raw:
+            return str(raw.get("answer", ""))
+        # The durable wait-cycle bridge resumes one question with its stored
+        # answer map directly: ``{question_id: [text]}``.
+        for value in raw.values():
+            if isinstance(value, list) and value:
+                return str(value[0])
+            if isinstance(value, str) and value:
+                return value
+    if isinstance(raw, str):
+        return raw
+    return str(raw) if raw is not None else ""
+
+
 @tool("user.ask")
 def user_ask(question: str, options: list[str] | None = None) -> str:
     """Ask the human a clarifying question and wait for their answer.
@@ -81,35 +111,9 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
             options, free-form text, or — if the user closed the prompt
             without answering — the empty string.
     """
-    payload: dict[str, Any] = {
-        "kind": "question",
-        "question": question,
-        "options": list(options) if options else [],
-    }
-    # `interrupt()` suspends graph execution, surfaces `payload` as the
-    # waiting value, and resumes returning whatever the caller passes
-    # to `Command(resume=...)`. By convention we pass `{"answer": "..."}`.
-    raw = interrupt(payload)
-    if isinstance(raw, dict):
-        # Two accepted resume shapes:
-        #   1. The client's contract — `{"answers": {question_id: [text]}}`
-        #      where the question_id matches what the daemon assigned in
-        #      `local_questions`. Multi-question support, ergonomic for
-        #      future expansion.
-        #   2. Legacy / curl-friendly — `{"answer": "text"}`.
-        # Pick the first string we can find from either shape.
-        answers = raw.get("answers")
-        if isinstance(answers, dict):
-            for value in answers.values():
-                if isinstance(value, list) and value:
-                    return str(value[0])
-                if isinstance(value, str) and value:
-                    return value
-        if "answer" in raw:
-            return str(raw.get("answer", ""))
-    if isinstance(raw, str):
-        return raw
-    return str(raw) if raw is not None else ""
+    # `ask_user()` owns the Runtime question bridge so system middleware and
+    # this model-visible tool share one interrupt/resume contract.
+    return ask_user(question, options)
 
 
 USER_TOOLS = [user_ask]

@@ -147,6 +147,24 @@ describe('MessageBubble meta', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument())
   })
 
+  it('shows diagnostics after the timestamp for every Runtime assistant turn', () => {
+    const onOpenDiagnostics = vi.fn()
+    const { container } = render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ runId: 'run-local' })}
+          onOpenDiagnostics={onOpenDiagnostics}
+        />
+      </I18nProvider>,
+    )
+
+    const time = container.querySelector('.message-meta-time')
+    const diagnostics = screen.getByRole('button', { name: '诊断' })
+    expect(time?.nextElementSibling).toBe(diagnostics)
+    fireEvent.click(diagnostics)
+    expect(onOpenDiagnostics).toHaveBeenCalledWith('run-local')
+  })
+
   it('also lets the user message be copied', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })

@@ -265,40 +265,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/local/v1/plugin-sources": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Plugin Sources */
-        get: operations["list_plugin_sources_local_v1_plugin_sources_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/local/v1/plugin-sources/{source_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Inspect Plugin Source */
-        get: operations["inspect_plugin_source_local_v1_plugin_sources__source_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/local/v1/plugins": {
         parameters: {
             query?: never;
@@ -1508,11 +1474,6 @@ export interface components {
             /** Providers */
             providers: components["schemas"]["LocalModelProvider"][];
         };
-        /** ListPluginSourcesResponse */
-        ListPluginSourcesResponse: {
-            /** Sources */
-            sources: components["schemas"]["PluginSourceSummary"][];
-        };
         /** ListPluginsResponse */
         ListPluginsResponse: {
             /** Plugins */
@@ -2452,229 +2413,6 @@ export interface components {
              */
             type: "plugin.rollback";
         };
-        /** PluginSourceAddCommand */
-        PluginSourceAddCommand: {
-            /** Command Id */
-            command_id: string;
-            /** Index Url */
-            index_url: string;
-            /** Public Key */
-            public_key: string;
-            /** Signature Url */
-            signature_url: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.add";
-        };
-        /** PluginSourceCommandReceipt */
-        PluginSourceCommandReceipt: {
-            /** Changed */
-            changed: boolean;
-            /** Command Id */
-            command_id: string;
-            /** Index Sha256 */
-            index_sha256: string;
-            /** Package Count */
-            package_count: number;
-            /** Revision */
-            revision: number;
-            /** Source Id */
-            source_id: string;
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "plugin.source.add" | "plugin.source.refresh";
-        };
-        /** PluginSourceDetail */
-        PluginSourceDetail: {
-            /** Index Sha256 */
-            index_sha256: string;
-            /** Index Url */
-            index_url: string;
-            /** Key Id */
-            key_id: string;
-            /** Name */
-            name: string;
-            /** Package Count */
-            package_count: number;
-            /** Packages */
-            packages: components["schemas"]["PluginSourcePackageSummary"][];
-            /** Revision */
-            revision: number;
-            /** Source Id */
-            source_id: string;
-            /** Updated At */
-            updated_at: string;
-        };
-        /** PluginSourceInstallCommand */
-        PluginSourceInstallCommand: {
-            /** Command Id */
-            command_id: string;
-            /**
-             * Execution Kind
-             * @enum {string}
-             */
-            execution_kind: "wasi" | "managed_worker";
-            /** Expected Active Digest */
-            expected_active_digest?: string | null;
-            /** Expected Revision */
-            expected_revision: number;
-            /** Package Digest */
-            package_digest: string;
-            /**
-             * Platform
-             * @enum {string}
-             */
-            platform: "any" | "darwin/arm64" | "darwin/amd64" | "linux/arm64" | "linux/amd64" | "windows/arm64" | "windows/amd64";
-            /** Plugin Id */
-            plugin_id: string;
-            /** Source Id */
-            source_id: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.install";
-            /** Version */
-            version: string;
-        };
-        /** PluginSourceInstallCommandReceipt */
-        PluginSourceInstallCommandReceipt: {
-            /** Command Id */
-            command_id: string;
-            /** Digest */
-            digest: string;
-            /** Enabled */
-            enabled: boolean;
-            /**
-             * Installed
-             * @default true
-             * @constant
-             */
-            installed: true;
-            /** Plugin Id */
-            plugin_id: string;
-            /** Previous Digest */
-            previous_digest?: string | null;
-            /** Source Id */
-            source_id: string;
-            /** Source Revision */
-            source_revision: number;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.install";
-            /** Version */
-            version: string;
-        };
-        /** PluginSourcePackageSummary */
-        PluginSourcePackageSummary: {
-            /** Capabilities */
-            capabilities: string[];
-            /** Consumes */
-            consumes: string[];
-            /**
-             * Execution Kind
-             * @enum {string}
-             */
-            execution_kind: "wasi" | "managed_worker";
-            /** Name */
-            name: string;
-            /** Package Digest */
-            package_digest: string;
-            /** Package Size Bytes */
-            package_size_bytes: number;
-            /** Package Url */
-            package_url: string;
-            /**
-             * Platform
-             * @enum {string}
-             */
-            platform: "any" | "darwin/arm64" | "darwin/amd64" | "linux/arm64" | "linux/amd64" | "windows/arm64" | "windows/amd64";
-            /** Plugin Id */
-            plugin_id: string;
-            /** Produces */
-            produces: string[];
-            /** Publisher Id */
-            publisher_id: string;
-            /** Release Notes */
-            release_notes: string;
-            /** Runtime Min Version */
-            runtime_min_version: string;
-            /** Signer Key Id */
-            signer_key_id: string;
-            /** Version */
-            version: string;
-        };
-        /** PluginSourceRefreshCommand */
-        PluginSourceRefreshCommand: {
-            /** Command Id */
-            command_id: string;
-            /** Expected Revision */
-            expected_revision: number;
-            /** Source Id */
-            source_id: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.refresh";
-        };
-        /** PluginSourceRemoveCommand */
-        PluginSourceRemoveCommand: {
-            /** Command Id */
-            command_id: string;
-            /** Expected Revision */
-            expected_revision: number;
-            /** Source Id */
-            source_id: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.remove";
-        };
-        /** PluginSourceRemoveCommandReceipt */
-        PluginSourceRemoveCommandReceipt: {
-            /** Command Id */
-            command_id: string;
-            /**
-             * Removed
-             * @default true
-             * @constant
-             */
-            removed: true;
-            /** Source Id */
-            source_id: string;
-            /**
-             * Type
-             * @constant
-             */
-            type: "plugin.source.remove";
-        };
-        /** PluginSourceSummary */
-        PluginSourceSummary: {
-            /** Index Sha256 */
-            index_sha256: string;
-            /** Index Url */
-            index_url: string;
-            /** Key Id */
-            key_id: string;
-            /** Name */
-            name: string;
-            /** Package Count */
-            package_count: number;
-            /** Revision */
-            revision: number;
-            /** Source Id */
-            source_id: string;
-            /** Updated At */
-            updated_at: string;
-        };
         /** PluginStateCommandReceipt */
         PluginStateCommandReceipt: {
             /** Command Id */
@@ -3288,7 +3026,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"] | components["schemas"]["PluginInstallCommand"] | components["schemas"]["PluginModelBindCommand"] | components["schemas"]["PluginSourceAddCommand"] | components["schemas"]["PluginSourceInstallCommand"] | components["schemas"]["PluginSourceRefreshCommand"] | components["schemas"]["PluginSourceRemoveCommand"] | components["schemas"]["RuntimeAssetInstallCommand"] | components["schemas"]["PluginEnableCommand"] | components["schemas"]["PluginDisableCommand"] | components["schemas"]["PluginUpdateCommand"] | components["schemas"]["PluginRollbackCommand"] | components["schemas"]["PluginRemoveCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"] | components["schemas"]["PluginInstallCommand"] | components["schemas"]["PluginModelBindCommand"] | components["schemas"]["RuntimeAssetInstallCommand"] | components["schemas"]["PluginEnableCommand"] | components["schemas"]["PluginDisableCommand"] | components["schemas"]["PluginUpdateCommand"] | components["schemas"]["PluginRollbackCommand"] | components["schemas"]["PluginRemoveCommand"];
             };
         };
         responses: {
@@ -3298,7 +3036,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"] | components["schemas"]["PluginInstallCommandReceipt"] | components["schemas"]["PluginModelBindCommandReceipt"] | components["schemas"]["PluginSourceCommandReceipt"] | components["schemas"]["PluginSourceInstallCommandReceipt"] | components["schemas"]["PluginSourceRemoveCommandReceipt"] | components["schemas"]["RuntimeAssetInstallCommandReceipt"] | components["schemas"]["PluginStateCommandReceipt"] | components["schemas"]["PluginVersionSwitchCommandReceipt"] | components["schemas"]["PluginRemoveCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"] | components["schemas"]["PluginInstallCommandReceipt"] | components["schemas"]["PluginModelBindCommandReceipt"] | components["schemas"]["RuntimeAssetInstallCommandReceipt"] | components["schemas"]["PluginStateCommandReceipt"] | components["schemas"]["PluginVersionSwitchCommandReceipt"] | components["schemas"]["PluginRemoveCommandReceipt"];
                 };
             };
             /** @description Validation Error */
@@ -3667,57 +3405,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlanApprovalResolution"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_plugin_sources_local_v1_plugin_sources_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ListPluginSourcesResponse"];
-                };
-            };
-        };
-    };
-    inspect_plugin_source_local_v1_plugin_sources__source_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                source_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PluginSourceDetail"];
                 };
             };
             /** @description Validation Error */

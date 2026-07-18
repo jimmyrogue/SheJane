@@ -51,16 +51,6 @@ export type PlanResolveCommandReceipt = Schemas['PlanResolveCommandReceipt']
 export type ToolReconcileCommandReceipt = Schemas['ToolReconcileCommandReceipt']
 export type PluginInstallCommand = Schemas['PluginInstallCommand']
 export type PluginInstallCommandReceipt = Schemas['PluginInstallCommandReceipt']
-export type PluginSourceAddCommand = Schemas['PluginSourceAddCommand']
-export type PluginSourceRefreshCommand = Schemas['PluginSourceRefreshCommand']
-export type PluginSourceRemoveCommand = Schemas['PluginSourceRemoveCommand']
-export type PluginSourceInstallCommand = Schemas['PluginSourceInstallCommand']
-export type PluginSourceCommandReceipt = Schemas['PluginSourceCommandReceipt']
-export type PluginSourceRemoveCommandReceipt = Schemas['PluginSourceRemoveCommandReceipt']
-export type PluginSourceInstallCommandReceipt = Schemas['PluginSourceInstallCommandReceipt']
-export type PluginSourceSummary = Schemas['PluginSourceSummary']
-export type PluginSourcePackageSummary = Schemas['PluginSourcePackageSummary']
-export type PluginSourceDetail = Schemas['PluginSourceDetail']
 export type PluginModelBindCommand = Schemas['PluginModelBindCommand']
 export type PluginModelBindCommandReceipt = Schemas['PluginModelBindCommandReceipt']
 export type PluginModelBindingSummary = Schemas['PluginModelBindingSummary']
@@ -442,30 +432,6 @@ export interface PendingPluginInstallCommand extends PendingRuntimeCommandBase {
   input: { sourcePath: string; expectedDigest?: string; allowUnsigned: boolean }
 }
 
-export interface PendingPluginSourceAddCommand extends PendingRuntimeCommandBase {
-  type: 'plugin.source.add'
-  input: { indexURL: string; signatureURL: string; publicKey: string }
-}
-
-export interface PendingPluginSourceStateCommand extends PendingRuntimeCommandBase {
-  type: 'plugin.source.refresh' | 'plugin.source.remove'
-  input: { sourceId: string; expectedRevision: number }
-}
-
-export interface PendingPluginSourceInstallCommand extends PendingRuntimeCommandBase {
-  type: 'plugin.source.install'
-  input: {
-    sourceId: string
-    expectedRevision: number
-    pluginId: string
-    version: string
-    executionKind: 'wasi' | 'managed_worker'
-    platform: PluginSourcePackageSummary['platform']
-    packageDigest: string
-    expectedActiveDigest?: string
-  }
-}
-
 export interface PendingRuntimeAssetInstallCommand extends PendingRuntimeCommandBase {
   type: 'plugin.runtime_asset.install'
   input: { sourcePath: string; expectedDigest?: string }
@@ -515,9 +481,6 @@ export type PendingRuntimeCommand =
   | PendingPlanResolveCommand
   | PendingToolReconcileCommand
   | PendingPluginInstallCommand
-  | PendingPluginSourceAddCommand
-  | PendingPluginSourceStateCommand
-  | PendingPluginSourceInstallCommand
   | PendingRuntimeAssetInstallCommand
   | PendingPluginModelBindCommand
   | PendingPluginStateCommand
@@ -532,9 +495,6 @@ export type RuntimeCommandResult =
   | PlanResolveCommandReceipt
   | ToolReconcileCommandReceipt
   | PluginInstallCommandReceipt
-  | PluginSourceCommandReceipt
-  | PluginSourceRemoveCommandReceipt
-  | PluginSourceInstallCommandReceipt
   | PluginModelBindCommandReceipt
   | RuntimeAssetInstallCommandReceipt
   | PluginStateCommandReceipt
@@ -746,38 +706,6 @@ async function deliverRuntimeCommand(
           expectedDigest: command.input.expectedDigest,
           allowUnsigned: command.input.allowUnsigned,
         },
-        config,
-        fetcher,
-      )
-    case 'plugin.source.add':
-      return addLocalPluginSourceCommand(
-        command.commandId,
-        command.input.indexURL,
-        command.input.signatureURL,
-        command.input.publicKey,
-        config,
-        fetcher,
-      )
-    case 'plugin.source.refresh':
-      return refreshLocalPluginSourceCommand(
-        command.commandId,
-        command.input.sourceId,
-        command.input.expectedRevision,
-        config,
-        fetcher,
-      )
-    case 'plugin.source.remove':
-      return removeLocalPluginSourceCommand(
-        command.commandId,
-        command.input.sourceId,
-        command.input.expectedRevision,
-        config,
-        fetcher,
-      )
-    case 'plugin.source.install':
-      return installLocalPluginFromSourceCommand(
-        command.commandId,
-        command.input,
         config,
         fetcher,
       )
@@ -1049,30 +977,6 @@ export async function getLocalPlugin(
     { method: 'GET', headers: localHeaders(config, false) },
   )
   return decodeLocalResponse<PluginDetail>(response)
-}
-
-export async function listLocalPluginSources(
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceSummary[]> {
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/plugin-sources`, {
-    method: 'GET',
-    headers: localHeaders(config, false),
-  })
-  const body = await decodeLocalResponse<{ sources?: PluginSourceSummary[] }>(response)
-  return body.sources ?? []
-}
-
-export async function getLocalPluginSource(
-  sourceID: string,
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceDetail> {
-  const response = await fetcher(
-    `${normalizeBaseURL(config.baseURL)}/local/v1/plugin-sources/${encodeURIComponent(sourceID)}`,
-    { method: 'GET', headers: localHeaders(config, false) },
-  )
-  return decodeLocalResponse<PluginSourceDetail>(response)
 }
 
 export async function listLocalThreads(
@@ -1358,99 +1262,6 @@ export async function installLocalPluginCommand(
     body: JSON.stringify(body),
   })
   return decodeLocalResponse<PluginInstallCommandReceipt>(response)
-}
-
-export async function addLocalPluginSourceCommand(
-  commandID: string,
-  indexURL: string,
-  signatureURL: string,
-  publicKey: string,
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceCommandReceipt> {
-  const body: PluginSourceAddCommand = {
-    type: 'plugin.source.add',
-    command_id: commandID,
-    index_url: indexURL,
-    signature_url: signatureURL,
-    public_key: publicKey,
-  }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify(body),
-  })
-  return decodeLocalResponse<PluginSourceCommandReceipt>(response)
-}
-
-export async function refreshLocalPluginSourceCommand(
-  commandID: string,
-  sourceID: string,
-  expectedRevision: number,
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceCommandReceipt> {
-  const body: PluginSourceRefreshCommand = {
-    type: 'plugin.source.refresh',
-    command_id: commandID,
-    source_id: sourceID,
-    expected_revision: expectedRevision,
-  }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify(body),
-  })
-  return decodeLocalResponse<PluginSourceCommandReceipt>(response)
-}
-
-export async function removeLocalPluginSourceCommand(
-  commandID: string,
-  sourceID: string,
-  expectedRevision: number,
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceRemoveCommandReceipt> {
-  const body: PluginSourceRemoveCommand = {
-    type: 'plugin.source.remove',
-    command_id: commandID,
-    source_id: sourceID,
-    expected_revision: expectedRevision,
-  }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify(body),
-  })
-  return decodeLocalResponse<PluginSourceRemoveCommandReceipt>(response)
-}
-
-export async function installLocalPluginFromSourceCommand(
-  commandID: string,
-  input: PendingPluginSourceInstallCommand['input'],
-  config: RuntimeClientConfig,
-  fetcher: Fetcher = fetch,
-): Promise<PluginSourceInstallCommandReceipt> {
-  const body: PluginSourceInstallCommand = {
-    type: 'plugin.source.install',
-    command_id: commandID,
-    source_id: input.sourceId,
-    expected_revision: input.expectedRevision,
-    plugin_id: input.pluginId,
-    version: input.version,
-    execution_kind: input.executionKind,
-    platform: input.platform,
-    package_digest: input.packageDigest,
-    ...(input.expectedActiveDigest
-      ? { expected_active_digest: input.expectedActiveDigest }
-      : {}),
-  }
-  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/local/v1/commands`, {
-    method: 'POST',
-    headers: localHeaders(config, true),
-    body: JSON.stringify(body),
-  })
-  return decodeLocalResponse<PluginSourceInstallCommandReceipt>(response)
 }
 
 export async function installLocalRuntimeAssetCommand(
@@ -1968,14 +1779,6 @@ export class SheJaneRuntimeClient {
     return getLocalPlugin(pluginID, this.config, this.fetcher)
   }
 
-  listPluginSources(): Promise<PluginSourceSummary[]> {
-    return listLocalPluginSources(this.config, this.fetcher)
-  }
-
-  getPluginSource(sourceID: string): Promise<PluginSourceDetail> {
-    return getLocalPluginSource(sourceID, this.config, this.fetcher)
-  }
-
   listThreads(): Promise<{ threads: LocalThread[]; cursor: number }> {
     return listLocalThreads(this.config, this.fetcher)
   }
@@ -2005,62 +1808,6 @@ export class SheJaneRuntimeClient {
       commandID,
       sourcePath,
       options,
-      this.config,
-      this.fetcher,
-    )
-  }
-
-  addPluginSource(
-    commandID: string,
-    indexURL: string,
-    signatureURL: string,
-    publicKey: string,
-  ): Promise<PluginSourceCommandReceipt> {
-    return addLocalPluginSourceCommand(
-      commandID,
-      indexURL,
-      signatureURL,
-      publicKey,
-      this.config,
-      this.fetcher,
-    )
-  }
-
-  refreshPluginSource(
-    commandID: string,
-    sourceID: string,
-    expectedRevision: number,
-  ): Promise<PluginSourceCommandReceipt> {
-    return refreshLocalPluginSourceCommand(
-      commandID,
-      sourceID,
-      expectedRevision,
-      this.config,
-      this.fetcher,
-    )
-  }
-
-  removePluginSource(
-    commandID: string,
-    sourceID: string,
-    expectedRevision: number,
-  ): Promise<PluginSourceRemoveCommandReceipt> {
-    return removeLocalPluginSourceCommand(
-      commandID,
-      sourceID,
-      expectedRevision,
-      this.config,
-      this.fetcher,
-    )
-  }
-
-  installPluginFromSource(
-    commandID: string,
-    input: PendingPluginSourceInstallCommand['input'],
-  ): Promise<PluginSourceInstallCommandReceipt> {
-    return installLocalPluginFromSourceCommand(
-      commandID,
-      input,
       this.config,
       this.fetcher,
     )

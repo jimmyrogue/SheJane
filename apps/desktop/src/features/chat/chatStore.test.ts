@@ -62,6 +62,23 @@ describe('runtime timeline', () => {
     })
   })
 
+  it('projects file-exists as a recoverable conflict instead of a generic failure', () => {
+    expect(timelineItem({
+      event_type: 'tool.failed',
+      payload: {
+        tool: 'write_file',
+        tool_call_id: 'write-1',
+        error_code: 'file_exists',
+        content: JSON.stringify({ path: 'snake.html' }),
+      },
+    })).toMatchObject({
+      label: '发现文件名冲突：snake.html',
+      errorCode: 'file_exists',
+      target: 'snake.html',
+      toolDetail: { kind: 'text', text: 'snake.html' },
+    })
+  })
+
   it('keeps plugin progress correlated with its tool call', () => {
     expect(timelineItem({
       event_type: 'tool.progress',

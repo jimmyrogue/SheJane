@@ -39,7 +39,13 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     retryable = False
     suggested_action = "Inspect the diagnostic events and logs before retrying."
 
-    if _contains_any(
+    if _contains_any(haystack, "model_call_budget_exhausted"):
+        category = "fatal"
+        suggested_action = (
+            "Inspect repeated agent steps or increase the model-call budget only when the task "
+            "legitimately needs more rounds."
+        )
+    elif _contains_any(
         haystack,
         "provider_quota_exceeded",
         "insufficient_quota",
@@ -105,6 +111,8 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
         "validation",
         "verification_failed",
         "verification failed",
+        "repeated_tool_failure",
+        "already exists",
         "invalid",
         "bad request",
         "400",

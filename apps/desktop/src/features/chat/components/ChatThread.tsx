@@ -123,12 +123,12 @@ export function ChatThread({
                 onRegenerate={onRegenerateMessage}
                 onEditResend={onEditResendMessage}
                 onDelete={onDeleteMessage}
+                onOpenDiagnostics={onOpenDiagnostics}
                 runActive={runActive}
               >
                 <AgentProgress
                   message={message}
                   onOpenArtifact={onOpenArtifact}
-                  onOpenDiagnostics={onOpenDiagnostics}
                   onFailureAction={(action, failedMessage) => onFailureAction?.(action, failedMessage.id)}
                 />
               </MessageBubble>

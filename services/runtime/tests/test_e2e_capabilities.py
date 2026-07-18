@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from local_host.config import reset_settings_for_tests
@@ -256,6 +257,398 @@ def test_permission_mode_auto_executes_workspace_writes_without_prompt(
     assert (tmp_path / "auto.txt").read_text(encoding="utf-8") == "approved"
 
 
+def test_workspace_write_without_workspace_fails_before_retry_loop(monkeypatch) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_missing_workspace",
+                        "name": "write_file",
+                        "arguments": {"file_path": "result.html", "content": "done"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ]
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "write a file",
+            permission_mode="auto",
+        )
+
+    failed = next(payload for name, payload in events if name == "run.failed")
+    assert failed["code"] == "workspace_required"
+    assert failed["category"] == "workspace"
+    assert failed["recovery_action"] == "workspace"
+    assert len(handler.requests) == 1
+
+
+def test_existing_file_conflict_is_structured_so_model_can_choose_a_new_name(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "snake.html").write_text("existing", encoding="utf-8")
+    (tmp_path / "snake-2.html").write_text("also existing", encoding="utf-8")
+
+    def write(call_id: str) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (
+                "llm.tool_call",
+                {
+                    "id": call_id,
+                    "name": "write_file",
+                    "arguments": {"file_path": "snake.html", "content": "replacement"},
+                },
+            ),
+            ("llm.done", {"request_id": call_id, "finish_reason": "tool_calls"}),
+        ]
+
+    handler = RecordingHandler(
+        scripts=[
+            write("write-1"),
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "write-2",
+                        "name": "write_file",
+                        "arguments": {
+                            "file_path": "snake-3.html",
+                            "content": "replacement",
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "write-2", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "done", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "write snake.html",
+            workspace_path=str(tmp_path),
+            permission_mode="auto",
+        )
+
+    conflict = next(payload for name, payload in events if name == "tool.failed")
+    conflict_content = json.loads(conflict["content"])
+    assert conflict["error_code"] == "file_exists"
+    assert conflict["recoverable"] is True
+    assert conflict["retryable"] is False
+    assert conflict_content["allowed_actions"] == [
+        "choose_new_path",
+        "read_then_edit",
+        "ask_user",
+    ]
+    assert conflict_content["suggested_path"] == "snake-3.html"
+    assert "run.completed" in {name for name, _ in events}
+    assert sum(name == "tool.failed" for name, _ in events) == 1
+    assert sum(name == "tool.completed" for name, _ in events) == 1
+    assert (tmp_path / "snake.html").read_text(encoding="utf-8") == "existing"
+    assert (tmp_path / "snake-2.html").read_text(encoding="utf-8") == "also existing"
+    assert (tmp_path / "snake-3.html").read_text(encoding="utf-8") == "replacement"
+    assert len(handler.requests) == 3
+
+
+def test_read_file_without_pagination_reads_a_normal_text_file_in_one_call(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "notes.txt").write_text(
+        "".join(f"line {index}\n" for index in range(1, 151)),
+        encoding="utf-8",
+    )
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "read-1",
+                        "name": "read_file",
+                        "arguments": {"file_path": "notes.txt"},
+                    },
+                ),
+                ("llm.done", {"request_id": "read-1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "done", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "read notes.txt",
+            workspace_path=str(tmp_path),
+            permission_mode="auto",
+        )
+
+    result = next(payload for name, payload in events if name == "tool.completed")
+    assert "150\tline 150" in result["content"]
+    assert len(handler.requests) == 2
+
+
+def test_repeated_same_path_conflict_asks_the_user_before_more_writes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "snake.html").write_text("existing", encoding="utf-8")
+
+    def write(call_id: str) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (
+                "llm.tool_call",
+                {
+                    "id": call_id,
+                    "name": "write_file",
+                    "arguments": {"file_path": "snake.html", "content": "replacement"},
+                },
+            ),
+            ("llm.done", {"request_id": call_id, "finish_reason": "tool_calls"}),
+        ]
+
+    handler = RecordingHandler(
+        scripts=[
+            write("write-1"),
+            write("write-2"),
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "write snake.html",
+            workspace_path=str(tmp_path),
+            permission_mode="auto",
+        )
+
+    question = next(payload for name, payload in events if name == "question.asked")
+    assert question["questions"][0]["question"] == "snake.html 已存在，如何处理？"
+    assert [option["label"] for option in question["questions"][0]["options"]] == [
+        "自动换名",
+        "覆盖原文件",
+        "取消写入",
+    ]
+    assert "run.waiting" in {name for name, _ in events}
+    assert not any(name == "run.failed" for name, _ in events)
+    assert sum(name == "tool.failed" for name, _ in events) == 1
+    assert (tmp_path / "snake.html").read_text(encoding="utf-8") == "existing"
+    assert len(handler.requests) == 2
+
+
+def test_interleaved_file_conflicts_still_ask_before_retrying_the_same_path(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "snake.html").write_text("existing", encoding="utf-8")
+    (tmp_path / "贪吃蛇.html").write_text("existing", encoding="utf-8")
+
+    def write(call_id: str, file_path: str) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (
+                "llm.tool_call",
+                {
+                    "id": call_id,
+                    "name": "write_file",
+                    "arguments": {"file_path": file_path, "content": "replacement"},
+                },
+            ),
+            ("llm.done", {"request_id": call_id, "finish_reason": "tool_calls"}),
+        ]
+
+    handler = RecordingHandler(
+        scripts=[
+            write("write-1", "snake.html"),
+            write("write-2", "贪吃蛇.html"),
+            write("write-3", "snake.html"),
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "write snake.html",
+            workspace_path=str(tmp_path),
+            permission_mode="auto",
+        )
+
+    assert any(name == "question.asked" for name, _ in events)
+    assert sum(name == "tool.failed" for name, _ in events) == 2
+    assert len(handler.requests) == 3
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_original", "expected_renamed"),
+    [
+        ("自动换名", "existing", "replacement"),
+        ("覆盖原文件", "replacement", None),
+        ("取消写入", "existing", None),
+    ],
+)
+def test_file_conflict_answer_resumes_the_paused_write(
+    monkeypatch,
+    tmp_path,
+    answer: str,
+    expected_original: str,
+    expected_renamed: str | None,
+) -> None:
+    (tmp_path / "snake.html").write_text("existing", encoding="utf-8")
+
+    def write(call_id: str) -> list[tuple[str, dict[str, Any]]]:
+        return [
+            (
+                "llm.tool_call",
+                {
+                    "id": call_id,
+                    "name": "write_file",
+                    "arguments": {"file_path": "snake.html", "content": "replacement"},
+                },
+            ),
+            ("llm.done", {"request_id": call_id, "finish_reason": "tool_calls"}),
+        ]
+
+    handler = RecordingHandler(
+        scripts=[
+            write("write-1"),
+            write("write-2"),
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "done", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "test"},
+        )
+        assert authorized.status_code == 200, authorized.text
+        run = client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command(
+                "write snake.html",
+                workspace_path=str(tmp_path),
+                permission_mode="auto",
+            ),
+        )
+        assert run.status_code == 200, run.text
+        run_id = run.json()["id"]
+
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
+            first_events = _parse_sse(resp.read().decode("utf-8"))
+        question = next(payload for name, payload in first_events if name == "question.asked")
+        question_id = question["request_id"]
+        resumed = client.post(
+            f"/local/v1/questions/{question_id}",
+            headers=headers,
+            json={"answers": {question_id: [answer]}},
+        )
+        assert resumed.status_code == 200, resumed.text
+
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
+            resumed_events = _parse_sse(resp.read().decode("utf-8"))
+
+    assert "run.completed" in {name for name, _ in resumed_events}
+    assert (tmp_path / "snake.html").read_text(encoding="utf-8") == expected_original
+    renamed = tmp_path / "snake-2.html"
+    if expected_renamed is None:
+        assert not renamed.exists()
+    else:
+        assert renamed.read_text(encoding="utf-8") == expected_renamed
+
+
+def test_auto_rename_redirects_later_file_tools_without_asking_again(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    (tmp_path / "snake.html").write_text("existing", encoding="utf-8")
+
+    def tool_call(call_id: str, name: str, arguments: dict[str, Any]):
+        return [
+            (
+                "llm.tool_call",
+                {"id": call_id, "name": name, "arguments": arguments},
+            ),
+            ("llm.done", {"request_id": call_id, "finish_reason": "tool_calls"}),
+        ]
+
+    original = str(tmp_path / "snake.html")
+    handler = RecordingHandler(
+        scripts=[
+            tool_call("write-1", "write_file", {"file_path": original, "content": "draft"}),
+            tool_call("write-2", "write_file", {"file_path": original, "content": "draft"}),
+            tool_call("read-1", "read_file", {"file_path": original}),
+            tool_call(
+                "edit-1",
+                "edit_file",
+                {"file_path": original, "old_string": "draft", "new_string": "refined"},
+            ),
+            tool_call("write-3", "write_file", {"file_path": original, "content": "ignored"}),
+            [
+                ("llm.delta", {"content_delta": "done"}),
+                ("llm.done", {"request_id": "done", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "test"},
+        )
+        assert authorized.status_code == 200, authorized.text
+        run = client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command(
+                "write snake.html",
+                workspace_path=str(tmp_path),
+                permission_mode="auto",
+            ),
+        )
+        run_id = run.json()["id"]
+
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
+            first_events = _parse_sse(resp.read().decode("utf-8"))
+        question = next(payload for name, payload in first_events if name == "question.asked")
+        question_id = question["request_id"]
+        resumed = client.post(
+            f"/local/v1/questions/{question_id}",
+            headers=headers,
+            json={"answers": {question_id: ["自动换名"]}},
+        )
+        assert resumed.status_code == 200, resumed.text
+
+        with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
+            resumed_events = _parse_sse(resp.read().decode("utf-8"))
+
+    all_events = first_events + resumed_events
+    assert "run.completed" in {name for name, _ in resumed_events}
+    assert {payload["request_id"] for name, payload in all_events if name == "question.asked"} == {
+        question_id
+    }
+    assert (tmp_path / "snake.html").read_text(encoding="utf-8") == "existing"
+    assert (tmp_path / "snake-2.html").read_text(encoding="utf-8") == "refined"
+
+
 def test_permission_mode_auto_uses_current_model_for_gray_actions(
     monkeypatch,
     tmp_path,
@@ -460,7 +853,7 @@ def _parse_sse_persisted(client: TestClient, run_id: str) -> list[tuple[str, dic
     return [(e["event_type"], e["payload"]) for e in diag["events"]]
 
 
-def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch) -> None:
+def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tmp_path) -> None:
     """A run grant is bound to the approved argument fingerprint.
 
     Approving write_file for a.txt must not silently authorize b.txt merely
@@ -502,8 +895,16 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch) ->
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "permissions"},
+        )
+        assert authorized.status_code == 200, authorized.text
         run = client.post(
-            "/local/v1/runs", headers=headers, json=run_command("write two files")
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command("write two files", workspace_path=str(tmp_path)),
         ).json()
         with client.stream("GET", f"/local/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
@@ -542,7 +943,7 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch) ->
     assert "run.completed" in [event[0] for event in _parse_sse(completed_body)]
 
 
-def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
+def test_capability_1b_permission_approve_resumes_the_run(monkeypatch, tmp_path) -> None:
     """Full pause → POST /permissions/:id → resume cycle.
 
     Regression for the `decisions = interrupt(hitl_request)["decisions"]`
@@ -575,7 +976,17 @@ def test_capability_1b_permission_approve_resumes_the_run(monkeypatch) -> None:
     )
     with _make_client(monkeypatch, handler) as client:
         headers = {"Authorization": "Bearer tok"}
-        r = client.post("/local/v1/runs", headers=headers, json=run_command("write a file"))
+        authorized = client.post(
+            "/local/v1/workspaces",
+            headers=headers,
+            json={"path": str(tmp_path), "label": "permissions"},
+        )
+        assert authorized.status_code == 200, authorized.text
+        r = client.post(
+            "/local/v1/runs",
+            headers=headers,
+            json=run_command("write a file", workspace_path=str(tmp_path)),
+        )
         run_id = r.json()["id"]
         with client.stream("GET", f"/local/v1/runs/{run_id}/stream", headers=headers) as resp:
             body1 = resp.read().decode("utf-8")

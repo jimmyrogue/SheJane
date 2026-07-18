@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { IconBox, IconRefresh, IconUpload, IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useI18n } from '@/shared/i18n/i18n'
 import {
   RuntimeHTTPError,
   parseRuntimeModelSpec,
   type PluginDetail,
-  type PluginSourceDetail,
-  type PluginSourcePackageSummary,
-  type PluginSourceSummary,
   type PluginSummary,
   type RuntimeModelSpec,
 } from '@/shared/local-host/client'
@@ -22,8 +18,6 @@ interface VisionModelOption {
 
 export interface PluginsViewProps {
   listPlugins: () => Promise<PluginSummary[]>
-  listSources?: () => Promise<PluginSourceSummary[]>
-  getSource?: (sourceId: string) => Promise<PluginSourceDetail>
   refreshVersion?: number
   visionModels?: VisionModelOption[]
   getPlugin?: (pluginId: string) => Promise<PluginDetail>
@@ -38,20 +32,10 @@ export interface PluginsViewProps {
   rollbackPlugin?: (plugin: PluginSummary, targetDigest: string) => Promise<unknown>
   removePlugin?: (plugin: PluginSummary) => Promise<unknown>
   bindVisionModel?: (plugin: PluginDetail, model: RuntimeModelSpec) => Promise<unknown>
-  addSource?: (indexURL: string, signatureURL: string, publicKey: string) => Promise<unknown>
-  refreshSource?: (source: PluginSourceSummary) => Promise<unknown>
-  removeSource?: (source: PluginSourceSummary) => Promise<unknown>
-  installSource?: (
-    source: PluginSourceSummary,
-    pluginPackage: PluginSourcePackageSummary,
-    expectedActiveDigest?: string,
-  ) => Promise<unknown>
 }
 
 export function PluginsView({
   listPlugins,
-  listSources,
-  getSource,
   refreshVersion,
   visionModels = [],
   getPlugin,
@@ -62,15 +46,9 @@ export function PluginsView({
   rollbackPlugin,
   removePlugin,
   bindVisionModel,
-  addSource,
-  refreshSource,
-  removeSource,
-  installSource,
 }: PluginsViewProps) {
   const { t } = useI18n()
   const [plugins, setPlugins] = useState<PluginSummary[]>([])
-  const [sources, setSources] = useState<PluginSourceSummary[]>([])
-  const [sourceDetail, setSourceDetail] = useState<PluginSourceDetail>()
   const [detail, setDetail] = useState<PluginDetail>()
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -81,18 +59,13 @@ export function PluginsView({
     setLoading(true)
     setFailed(false)
     try {
-      const [nextPlugins, nextSources] = await Promise.all([
-        listPlugins(),
-        listSources ? listSources() : Promise.resolve([]),
-      ])
-      setPlugins(nextPlugins)
-      setSources(nextSources)
+      setPlugins(await listPlugins())
     } catch {
       setFailed(true)
     } finally {
       setLoading(false)
     }
-  }, [listPlugins, listSources])
+  }, [listPlugins])
 
   useEffect(() => {
     void refresh()
@@ -158,19 +131,6 @@ export function PluginsView({
     }
   }
 
-  const showSource = async (source: PluginSourceSummary) => {
-    if (!getSource) return
-    setBusy(`source:detail:${source.source_id}`)
-    setError(undefined)
-    try {
-      setSourceDetail(await getSource(source.source_id))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(undefined)
-    }
-  }
-
   return (
     <section className="workspace skills-view plugins-view">
       <header className="topbar topbar-page">
@@ -209,47 +169,6 @@ export function PluginsView({
           </div>
 
           {error ? <div className="plugins-error" role="alert">{error}</div> : null}
-
-          {listSources ? (
-            <PluginSources
-              sources={sources}
-              detail={sourceDetail}
-              installedPlugins={plugins}
-              busy={Boolean(busy)}
-              onAdd={
-                addSource
-                  ? (indexURL, signatureURL, publicKey) =>
-                      mutate('source:add', () => addSource(indexURL, signatureURL, publicKey))
-                  : undefined
-              }
-              onRefresh={
-                refreshSource
-                  ? async (source) => {
-                      setSourceDetail(undefined)
-                      await mutate(`source:refresh:${source.source_id}`, () => refreshSource(source))
-                    }
-                  : undefined
-              }
-              onRemove={
-                removeSource
-                  ? async (source) => {
-                      if (!window.confirm(t('plugins.sources.confirmRemove', { name: source.name }))) return
-                      setSourceDetail(undefined)
-                      await mutate(`source:remove:${source.source_id}`, () => removeSource(source))
-                    }
-                  : undefined
-              }
-              onInspect={getSource ? showSource : undefined}
-              onInstall={
-                installSource
-                  ? (source, pluginPackage, expectedActiveDigest) =>
-                      mutate(`source:install:${pluginPackage.package_digest}`, () =>
-                        installSource(source, pluginPackage, expectedActiveDigest),
-                      )
-                  : undefined
-              }
-            />
-          ) : null}
 
           {failed ? (
             <div className="skills-section-empty">{t('plugins.loadError')}</div>
@@ -378,190 +297,6 @@ export function PluginsView({
           ) : null}
         </div>
       </div>
-    </section>
-  )
-}
-
-interface PluginSourcesProps {
-  sources: PluginSourceSummary[]
-  detail?: PluginSourceDetail
-  installedPlugins: PluginSummary[]
-  busy: boolean
-  onAdd?: (indexURL: string, signatureURL: string, publicKey: string) => Promise<unknown>
-  onRefresh?: (source: PluginSourceSummary) => Promise<unknown>
-  onRemove?: (source: PluginSourceSummary) => Promise<unknown>
-  onInspect?: (source: PluginSourceSummary) => Promise<unknown>
-  onInstall?: (
-    source: PluginSourceSummary,
-    pluginPackage: PluginSourcePackageSummary,
-    expectedActiveDigest?: string,
-  ) => Promise<unknown>
-}
-
-function PluginSources({
-  sources,
-  detail,
-  installedPlugins,
-  busy,
-  onAdd,
-  onRefresh,
-  onRemove,
-  onInspect,
-  onInstall,
-}: PluginSourcesProps) {
-  const { t } = useI18n()
-  const [indexURL, setIndexURL] = useState('')
-  const [signatureURL, setSignatureURL] = useState('')
-  const [publicKey, setPublicKey] = useState('')
-
-  const submit = async () => {
-    if (!onAdd) return
-    await onAdd(indexURL.trim(), signatureURL.trim(), publicKey.trim())
-    setIndexURL('')
-    setSignatureURL('')
-    setPublicKey('')
-  }
-
-  return (
-    <section className="plugin-sources" aria-labelledby="plugin-sources-title">
-      <div className="plugin-source-heading">
-        <div>
-          <h2 id="plugin-sources-title">{t('plugins.sources.title')}</h2>
-          <p>{t('plugins.sources.intro')}</p>
-        </div>
-      </div>
-      {onAdd ? (
-        <form
-          className="plugin-source-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void submit().catch(() => undefined)
-          }}
-        >
-          <label>
-            <span>{t('plugins.sources.indexURL')}</span>
-            <Input
-              type="url"
-              required
-              value={indexURL}
-              onChange={(event) => setIndexURL(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>{t('plugins.sources.signatureURL')}</span>
-            <Input
-              type="url"
-              required
-              value={signatureURL}
-              onChange={(event) => setSignatureURL(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>{t('plugins.sources.publicKey')}</span>
-            <Input
-              required
-              value={publicKey}
-              onChange={(event) => setPublicKey(event.target.value)}
-            />
-          </label>
-          <Button type="submit" size="sm" disabled={busy}>
-            {t('plugins.sources.add')}
-          </Button>
-        </form>
-      ) : null}
-      {sources.length === 0 ? (
-        <div className="plugin-source-empty">{t('plugins.sources.empty')}</div>
-      ) : (
-        <div className="skills-grid" role="list">
-          {sources.map((source) => (
-            <article className="skill-card plugin-card" role="listitem" key={source.source_id}>
-              <div className="skill-card-head">
-                <div className="skill-card-title">
-                  <span className="skill-card-icon" aria-hidden="true"><IconBox size={15} /></span>
-                  <span className="skill-card-name">{source.name}</span>
-                </div>
-                <span className="plugin-version">r{source.revision}</span>
-              </div>
-              <code className="plugin-id">{source.index_url}</code>
-              <div className="plugin-meta">
-                <span>{t('plugins.sources.packageCount', { count: source.package_count })}</span>
-                <span>{source.key_id}</span>
-              </div>
-              <div className="plugin-card-actions">
-                {onInspect ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    aria-label={t('plugins.sources.inspectAria', { name: source.name })}
-                    onClick={() => void onInspect(source).catch(() => undefined)}
-                  >
-                    {t('plugins.sources.inspect')}
-                  </Button>
-                ) : null}
-                {onRefresh ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    aria-label={t('plugins.sources.refreshAria', { name: source.name })}
-                    onClick={() => void onRefresh(source).catch(() => undefined)}
-                  >
-                    {t('plugins.sources.refresh')}
-                  </Button>
-                ) : null}
-                {onRemove ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    aria-label={t('plugins.sources.removeAria', { name: source.name })}
-                    onClick={() => void onRemove(source).catch(() => undefined)}
-                  >
-                    {t('plugins.sources.remove')}
-                  </Button>
-                ) : null}
-              </div>
-              {detail?.source_id === source.source_id ? (
-                <div className="plugin-source-packages">
-                  {detail.packages.length === 0 ? (
-                    <span className="plugin-source-empty">{t('plugins.sources.noPackages')}</span>
-                  ) : detail.packages.map((pluginPackage) => (
-                    <div className="plugin-source-package" key={`${pluginPackage.plugin_id}:${pluginPackage.version}:${pluginPackage.execution_kind}:${pluginPackage.platform}`}>
-                      <div>
-                        <strong>{pluginPackage.name}</strong>
-                        <span>v{pluginPackage.version} · {pluginPackage.execution_kind === 'wasi' ? 'WASI' : 'Managed Worker'} · {pluginPackage.platform}</span>
-                      </div>
-                      {onInstall ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={busy}
-                          aria-label={t('plugins.sources.installAria', { name: pluginPackage.name, version: pluginPackage.version })}
-                          onClick={() =>
-                            void onInstall(
-                              source,
-                              pluginPackage,
-                              installedPlugins.find(
-                                (installed) => installed.id === pluginPackage.plugin_id,
-                              )?.digest,
-                            ).catch(() => undefined)
-                          }
-                        >
-                          {t('plugins.sources.install')}
-                        </Button>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      )}
     </section>
   )
 }

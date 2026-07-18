@@ -180,9 +180,8 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 | `POST /local/v1/runs` | `{command_id, client_message_id, goal, permission_mode?, attachment_paths?, history?, settings?, ...}` | `permission_mode` 为 `ask`、`auto` 或 `full_access`，省略时使用 `ask`；附件必须是本机现有文件，最多 10 个，接纳时流式导入 Runtime 的不可变内容寻址输入存储（单个及单 Run 合计上限 1 TiB）；后续执行不再依赖原始主机路径。通用模型文件读取仍限制为 10 MiB，大文件必须由兼容插件处理；创建后开 stream → `run.started` |
 | `POST /local/v1/runs/:id/fork` | `{command_id, client_message_id, assistant_message_id, thread_id, protocol_version, required_capabilities, checkpoint_id, ...}` | 创建分支后开 stream → `run.started` |
 | `GET /local/v1/runs/:id/stream` | — | （本协议） |
-| `POST /local/v1/commands` | Run/HITL 命令，以及 `plugin.install`、`plugin.source.add/refresh/install/remove`、`plugin.runtime_asset.install`、`plugin.enable/disable/update/rollback/remove`、`plugin.model.bind` 的严格联合类型 | Run 命令产生对应状态事件；插件命令写入幂等 Command 日志并返回收据 |
+| `POST /local/v1/commands` | Run/HITL 命令，以及 `plugin.install`、`plugin.runtime_asset.install`、`plugin.enable/disable/update/rollback/remove`、`plugin.model.bind` 的严格联合类型 | Run 命令产生对应状态事件；插件命令写入幂等 Command 日志并返回收据 |
 | `GET /local/v1/plugins` / `GET /local/v1/plugins/:id` | — | 返回当前 principal 可见的安装、版本、Action、Command、签名、能力与安全模型绑定摘要，不返回密钥、credential ref 或 provider base URL |
-| `GET /local/v1/plugin-sources` / `GET /local/v1/plugin-sources/:id` | — | 返回 Runtime 持有的已验证来源摘要或 last-known-good 包目录；不返回来源公钥和独立签名字节 |
 | `GET /local/v1/artifacts/:id` | — | 返回授权后的 Artifact 元数据；旧的小型文本可内联，文件 Artifact 只返回 `storage_kind=blob`、大小和摘要 |
 | `GET /local/v1/artifacts/:id/content` | — | 按所属 Run 授权并流式返回正文；支持 HTTP Range，不暴露内部存储路径 |
 

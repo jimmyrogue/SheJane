@@ -189,6 +189,43 @@ def test_completion_router_allows_verified_final_and_leaves_tools_to_builtin_rou
     assert result["completion_route"]["verification_ok"] is True
 
 
+def test_completion_router_stops_repeated_deterministic_tool_failure() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    error = "Cannot write to /snake.html because it already exists."
+    state = {
+        "messages": [
+            HumanMessage(content="write snake.html"),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "write-1", "name": "write_file", "args": {}}],
+            ),
+            ToolMessage(
+                content=error,
+                tool_call_id="write-1",
+                name="write_file",
+                status="error",
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "write-2", "name": "write_file", "args": {}}],
+            ),
+            ToolMessage(
+                content=error,
+                tool_call_id="write-2",
+                name="write_file",
+                status="error",
+            ),
+        ]
+    }
+
+    result = CompletionRouterMiddleware().before_model(state, runtime=None)
+
+    assert result["jump_to"] == "end"
+    assert result["completion_route"]["decision"] == "blocked"
+    assert result["completion_route"]["reason"] == "repeated_tool_failure"
+
+
 def test_completion_router_repairs_prose_clarification_into_user_ask() -> None:
     from local_host.middleware.completion_router import (
         CompletionRouterMiddleware,

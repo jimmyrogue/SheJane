@@ -40,6 +40,22 @@ def test_transient_failures_remain_retryable() -> None:
     assert should_retry_failure_payload("run.failed", failure) is True
 
 
+def test_model_call_budget_exhaustion_is_an_operator_failure() -> None:
+    failure = classify_failure_payload(
+        "run.failed",
+        {
+            "error_code": "model_call_budget_exhausted",
+            "message": "agent model call budget exhausted for run run-1: 20",
+            "recoverable": False,
+            "retryable": False,
+        },
+    )
+
+    assert failure["category"] == "fatal"
+    assert failure["action_kind"] == "operator_action"
+    assert failure["recovery_action"] == "diagnostics"
+
+
 def test_explicit_nonrecoverable_blocks_retryable_true() -> None:
     failure = classify_failure_payload(
         "run.failed",

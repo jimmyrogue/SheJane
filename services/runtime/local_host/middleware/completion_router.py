@@ -8,6 +8,8 @@ from typing import Any, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 
+from ..failure_policy import classify_failure_payload
+
 
 class CompletionRouterState(AgentState):
     completion_route: NotRequired[dict[str, Any]]
@@ -27,6 +29,21 @@ class CompletionRouterMiddleware(AgentMiddleware):
     def __init__(self, *, max_verification_repairs: int = 1) -> None:
         super().__init__()
         self.max_verification_repairs = max(0, max_verification_repairs)
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        messages = list(state.get("messages") or [])
+        repeated = _repeated_deterministic_tool_failure(messages)
+        if repeated is None:
+            return None
+        tool, error = repeated
+        return _terminal_route(
+            "blocked",
+            "repeated_tool_failure",
+            f"{tool} repeated the same deterministic failure: {error}",
+            recoverable=True,
+            run_id=_current_run_id(runtime, messages),
+        )
 
     @hook_config(can_jump_to=["model", "end"])
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -210,6 +227,40 @@ def _assistant_text(content: Any) -> str:
             if isinstance(value, str):
                 parts.append(value)
     return "".join(parts)
+
+
+def _repeated_deterministic_tool_failure(messages: list[Any]) -> tuple[str, str] | None:
+    latest: tuple[str, str] | None = None
+    for message in reversed(messages):
+        message_type = getattr(message, "type", None)
+        if message_type == "human":
+            return None
+        if message_type != "tool":
+            continue
+        if str(getattr(message, "status", "") or "").lower() != "error":
+            return None
+        tool = str(getattr(message, "name", "") or "unknown")
+        error = " ".join(str(getattr(message, "content", "") or "").split())
+        classification = classify_failure_payload(
+            "tool.failed",
+            {"tool": tool, "content": error, "retryable": False},
+        )
+        if classification["category"] not in {
+            "auth",
+            "configuration",
+            "fatal",
+            "permission",
+            "quota",
+            "validation",
+            "workspace",
+        }:
+            return None
+        signature = (tool, error)
+        if latest is None:
+            latest = signature
+            continue
+        return signature if signature == latest else None
+    return None
 
 
 _PROSE_CLARIFICATION = re.compile(

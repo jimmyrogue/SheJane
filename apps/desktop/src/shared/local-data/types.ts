@@ -49,6 +49,7 @@ export interface AgentTimelineItem {
   failureActionKind?: 'retry' | 'user_action' | 'repair' | 'operator_action' | 'inspect'
   failureRecoveryAction?: 'retry' | 'repair' | 'workspace' | 'diagnostics'
   failureSuggestedAction?: string
+  errorCode?: string
   retryAttempt?: number
   retrySourceRunId?: string
   retrySourceMessageId?: string

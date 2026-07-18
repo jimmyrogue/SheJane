@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { LocalConversationStore } from './shared/local-data/localConversations'
@@ -114,6 +114,100 @@ describe('desktop shell', () => {
     expect(await screen.findByRole('button', { name: '添加项目' })).toBeInTheDocument()
     expect((await store.get('conversation-1'))?.workspace).toBeUndefined()
     expect((await store.get('conversation-1'))?.project).toBeUndefined()
+  })
+
+  it('retries a workspace-blocked task after the user chooses a save location', async () => {
+    const store = new LocalConversationStore('shejane-local:runtime:local-owner')
+    window.localStorage.setItem('shejane.chatMode.v2', 'local:test:model')
+    await store.save({
+      id: 'conversation-workspace-recovery',
+      title: '保存 HTML',
+      archived: false,
+      createdAt: '2026-07-17T00:00:00.000Z',
+      updatedAt: '2026-07-17T00:00:00.000Z',
+      messages: [
+        {
+          id: 'user-save-html',
+          role: 'user',
+          content: '把这个 HTML 保存下来',
+          createdAt: '2026-07-17T00:00:00.000Z',
+          status: 'done',
+        },
+        {
+          id: 'assistant-workspace-required',
+          role: 'assistant',
+          content: 'Authorize a workspace before creating or changing files.',
+          createdAt: '2026-07-17T00:00:01.000Z',
+          status: 'error',
+          runId: 'run-workspace-required',
+          agentEvents: [
+            {
+              type: 'run.failed',
+              label: 'Authorize a workspace before creating or changing files.',
+              failureCategory: 'workspace',
+              failureActionKind: 'user_action',
+              failureRecoveryAction: 'workspace',
+            },
+          ],
+        },
+      ],
+    })
+    const runBodies: Array<Record<string, unknown>> = []
+    Object.defineProperty(window, 'shejaneDesktop', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop', ready: true },
+        selectWorkspaceDirectory: vi.fn().mockResolvedValue('/Users/me/Desktop'),
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/local/v1/models') && (!init?.method || init.method === 'GET')) {
+        return new Response(JSON.stringify({
+          models: [{
+            spec: 'local:test:model',
+            model_id: 'model',
+            display_name: 'Test Model',
+            provider_id: 'test',
+            provider_name: 'Test',
+            available: true,
+            tool_calling: true,
+            streaming: true,
+            image_inputs: false,
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/local/v1/workspaces') && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          id: 'workspace-desktop',
+          path: '/Users/me/Desktop',
+          label: 'Desktop',
+          created_at: '2026-07-17T00:00:00.000Z',
+          last_used_at: '2026-07-17T00:00:00.000Z',
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.endsWith('/local/v1/runs') && init?.method === 'POST') {
+        runBodies.push(JSON.parse(String(init.body)))
+        throw new Error('stop after observing retry')
+      }
+      throw new Error('Runtime offline')
+    }))
+    render(<App />)
+
+    await screen.findByText('Test Model')
+    fireEvent.click((await screen.findAllByText('保存 HTML'))[0])
+    fireEvent.click(await screen.findByRole('button', { name: '选择保存位置' }))
+
+    await waitFor(() => expect(runBodies.length).toBeGreaterThan(0))
+    expect(runBodies[0]).toMatchObject({
+      user_input: '把这个 HTML 保存下来',
+      workspace_path: '/Users/me/Desktop',
+      parent_run_id: 'run-workspace-required',
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '选择保存位置' })).not.toBeInTheDocument()
+    })
   })
 
   it('adds files from the native attachment picker', async () => {

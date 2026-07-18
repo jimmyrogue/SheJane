@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconBox, IconCheck, IconCommand, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconTrash } from '@tabler/icons-react'
+import { IconBox, IconCheck, IconCommand, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconStethoscope, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -23,6 +23,7 @@ export function MessageBubble({
   onRegenerate,
   onEditResend,
   onDelete,
+  onOpenDiagnostics,
   runActive = false,
 }: {
   message: ChatMessage
@@ -38,6 +39,8 @@ export function MessageBubble({
   /** Delete a message. Deleting a user message also drops its paired
    *  assistant reply; deleting an assistant message drops just it. */
   onDelete?: (messageID: string) => void
+  /** Open diagnostics for this Runtime-backed assistant turn. */
+  onOpenDiagnostics?: (runID: string) => void
   /** True while a run is streaming for this conversation — disables the
    *  retry/edit/delete actions so the user can't mutate mid-run. */
   runActive?: boolean
@@ -311,6 +314,17 @@ export function MessageBubble({
           ) : null}
           {showUsage && messageTime ? <span className="message-meta-dot" aria-hidden="true">·</span> : null}
           {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
+          {isAssistant && message.runId && onOpenDiagnostics ? (
+            <button
+              type="button"
+              className="message-meta-action"
+              onClick={() => onOpenDiagnostics(message.runId!)}
+              title={t('agent.viewDiagnostics', { id: message.runId })}
+              aria-label={t('agent.diagnostics')}
+            >
+              <IconStethoscope size={13} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       </div>
     </article>

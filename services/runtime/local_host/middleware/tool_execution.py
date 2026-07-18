@@ -68,6 +68,11 @@ MAX_MODEL_TOOL_RESULT_BYTES = 64 * 1024
 MAX_TOOL_ARTIFACT_BYTES = 16 * 1024 * 1024
 
 
+class WorkspaceRequiredError(RuntimeError):
+    code = "workspace_required"
+    retryable = False
+
+
 def tool_execution_namespace(request: ToolCallRequest) -> str:
     config = getattr(getattr(request, "runtime", None), "config", None)
     return execution_namespace_from_config(config)
@@ -412,6 +417,12 @@ class ToolExecutionMiddleware(AgentMiddleware):
             return _provider_safe_tool_result(request, replay)
 
         try:
+            if risk == "workspace_write" and not getattr(
+                request.runtime.context, "workspace_root", None
+            ):
+                raise WorkspaceRequiredError(
+                    "Authorize a workspace before creating or changing files."
+                )
             with bind_runtime_tool_execution(
                 RuntimeToolExecution(
                     context=request.runtime.context,
@@ -430,7 +441,11 @@ class ToolExecutionMiddleware(AgentMiddleware):
             )
             raise
         except BaseException as exc:
-            status = "failed" if risk in {"read_only", "plugin_action"} else "outcome_unknown"
+            status = (
+                "failed"
+                if risk in {"read_only", "plugin_action"} or isinstance(exc, WorkspaceRequiredError)
+                else "outcome_unknown"
+            )
             await asyncio.shield(
                 store.settle_tool_receipt(
                     operation_id=operation_id,

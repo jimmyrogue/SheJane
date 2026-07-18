@@ -750,6 +750,7 @@ async def test_conflicting_batch_preserves_model_order(tmp_path: Path) -> None:
         store=store,
         run_id=str(run["id"]),
         execution_attempt_id="job-1:1",
+        workspace_root=str(tmp_path),
     )
     tool_calls = [
         {"id": "write-1", "name": "write_file", "args": {"path": "a.txt"}},
@@ -817,6 +818,7 @@ async def test_replayed_first_call_advances_conflicting_batch_order(tmp_path: Pa
             store=store,
             run_id=str(run["id"]),
             execution_attempt_id="job-1:1",
+            workspace_root=str(tmp_path),
         )
         middleware = ToolExecutionMiddleware()
         write = _request(
@@ -834,6 +836,7 @@ async def test_replayed_first_call_advances_conflicting_batch_order(tmp_path: Pa
             store=store,
             run_id=str(run["id"]),
             execution_attempt_id="job-2:1",
+            workspace_root=str(tmp_path),
         )
         replayed_write = _request(
             store,

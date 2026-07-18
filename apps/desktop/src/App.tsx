@@ -74,12 +74,10 @@ import {
   getLocalArtifact,
   getLocalArtifactContent,
   getLocalPlugin,
-  getLocalPluginSource,
   getLocalSkillFile,
   listAuthorizedWorkspaces,
   listInstalledSkills,
   listLocalPlugins,
-  listLocalPluginSources,
   listLocalRuns,
   listLocalThreads,
   listLocalThreadChanges,
@@ -116,9 +114,6 @@ import {
   type PendingPlanResolveCommand,
   type PendingToolReconcileCommand,
   type PendingPluginInstallCommand,
-  type PendingPluginSourceAddCommand,
-  type PendingPluginSourceInstallCommand,
-  type PendingPluginSourceStateCommand,
   type PendingRuntimeAssetInstallCommand,
   type PendingPluginModelBindCommand,
   type PendingPluginStateCommand,
@@ -195,9 +190,6 @@ interface PendingConversationRender {
 
 type PendingPluginCommand =
   | PendingPluginInstallCommand
-  | PendingPluginSourceAddCommand
-  | PendingPluginSourceInstallCommand
-  | PendingPluginSourceStateCommand
   | PendingRuntimeAssetInstallCommand
   | PendingPluginModelBindCommand
   | PendingPluginStateCommand
@@ -2517,10 +2509,8 @@ function AppContent() {
         setPendingProject(project)
       }
       if (recoveryTarget) {
-        setNotice(t('app.notice.workspaceBoundWithRetry', { label: name }), {
-          duration: 8000,
-          action: recoveryRetryAction(recoveryTarget),
-        })
+        setNotice(t('app.notice.workspaceBound', { label: name }))
+        await retryRecoveryTarget(recoveryTarget)
         return
       }
       setNotice(t('project.notice.bound', { name }))
@@ -2925,58 +2915,6 @@ function AppContent() {
               listPlugins={() =>
                 localHostConfig ? listLocalPlugins(localHostConfig) : Promise.resolve([])
               }
-              listSources={() =>
-                localHostConfig ? listLocalPluginSources(localHostConfig) : Promise.resolve([])
-              }
-              getSource={(sourceId) => {
-                if (!localHostConfig) return Promise.reject(new Error('local host unavailable'))
-                return getLocalPluginSource(sourceId, localHostConfig)
-              }}
-              addSource={(indexURL, signatureURL, publicKey) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.source.add',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: { indexURL, signatureURL, publicKey },
-                })
-              }}
-              refreshSource={(source) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.source.refresh',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: { sourceId: source.source_id, expectedRevision: source.revision },
-                })
-              }}
-              removeSource={(source) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.source.remove',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: { sourceId: source.source_id, expectedRevision: source.revision },
-                })
-              }}
-              installSource={(source, pluginPackage, expectedActiveDigest) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.source.install',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: {
-                    sourceId: source.source_id,
-                    expectedRevision: source.revision,
-                    pluginId: pluginPackage.plugin_id,
-                    version: pluginPackage.version,
-                    executionKind: pluginPackage.execution_kind,
-                    platform: pluginPackage.platform,
-                    packageDigest: pluginPackage.package_digest,
-                    expectedActiveDigest,
-                  },
-                })
-              }}
               getPlugin={(pluginId) => {
                 if (!localHostConfig) return Promise.reject(new Error('local host unavailable'))
                 return getLocalPlugin(pluginId, localHostConfig)

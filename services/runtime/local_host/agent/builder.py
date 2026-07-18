@@ -67,6 +67,7 @@ from ..middleware.completion_router import (
     CompletionRouterMiddleware,
     completion_repair_instruction,
 )
+from ..middleware.file_write_conflict import FileWriteConflictMiddleware
 from ..middleware.input_guard import InputGuardMiddleware
 from ..middleware.outbound_policy import OutboundPolicyMiddleware, sanitize_outbound_text
 from ..middleware.plan_first import PlanFirstMiddleware
@@ -372,6 +373,7 @@ def _custom_middleware(
         PlanFirstMiddleware(mode=settings.plan_first_mode),
         ToolReviewMiddleware(),
         ToolExecutionMiddleware(),
+        FileWriteConflictMiddleware(),
     ]
     middleware.extend(
         [

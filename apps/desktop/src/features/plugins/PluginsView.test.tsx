@@ -5,8 +5,6 @@ import { PluginsView } from './PluginsView'
 import {
   RuntimeHTTPError,
   type PluginDetail,
-  type PluginSourceDetail,
-  type PluginSourceSummary,
   type PluginSummary,
 } from '@/shared/local-host/client'
 
@@ -91,90 +89,22 @@ const visionDetail: PluginDetail = {
   ],
 }
 
-const source: PluginSourceSummary = {
-  source_id: 'dev.shejane.source',
-  name: 'SheJane source',
-  index_url: 'https://example.test/index.json',
-  key_id: `ed25519:sha256:${'a'.repeat(64)}`,
-  index_sha256: 'b'.repeat(64),
-  package_count: 1,
-  revision: 1,
-  updated_at: '2026-07-16T00:00:00Z',
-}
-
-const sourceDetail: PluginSourceDetail = {
-  ...source,
-  packages: [
-    {
-      plugin_id: 'dev.shejane.fixture.archive',
-      version: '0.1.0',
-      name: 'Archive fixture',
-      publisher_id: 'dev.shejane',
-      runtime_min_version: '0.1.0',
-      execution_kind: 'wasi',
-      platform: 'any',
-      package_url: 'https://example.test/archive.shejane-plugin',
-      package_size_bytes: 1024,
-      package_digest: `sha256:${'c'.repeat(64)}`,
-      signer_key_id: `ed25519:sha256:${'d'.repeat(64)}`,
-      capabilities: ['input.read', 'artifact.write'],
-      consumes: ['application/zip'],
-      produces: ['application/octet-stream'],
-      release_notes: 'Initial release.',
-    },
-  ],
-}
-
 describe('PluginsView', () => {
-  it('adds, refreshes, and removes a signed source', async () => {
-    const addSource = vi.fn().mockResolvedValue(undefined)
-    const refreshSource = vi.fn().mockResolvedValue(undefined)
-    const removeSource = vi.fn().mockResolvedValue(undefined)
-    const installSource = vi.fn().mockResolvedValue(undefined)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+  it('does not expose the removed plugin source management UI', async () => {
+    const listSources = vi.fn().mockResolvedValue([])
+    const legacySourceProps = { listSources }
     render(
       <I18nProvider>
         <PluginsView
           listPlugins={vi.fn().mockResolvedValue([])}
-          listSources={vi.fn().mockResolvedValue([source])}
-          getSource={vi.fn().mockResolvedValue(sourceDetail)}
-          addSource={addSource}
-          refreshSource={refreshSource}
-          removeSource={removeSource}
-          installSource={installSource}
+          {...legacySourceProps}
         />
       </I18nProvider>,
     )
 
-    expect(await screen.findByText('SheJane source')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '查看来源 SheJane source' }))
-    expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '安装 Archive fixture 0.1.0' }))
-    await waitFor(() =>
-      expect(installSource).toHaveBeenCalledWith(source, sourceDetail.packages[0], undefined),
-    )
-    fireEvent.change(screen.getByLabelText('索引 URL'), {
-      target: { value: 'https://new.example/index.json' },
-    })
-    fireEvent.change(screen.getByLabelText('签名 URL'), {
-      target: { value: 'https://new.example/index.sig.json' },
-    })
-    fireEvent.change(screen.getByLabelText('来源公钥'), {
-      target: { value: 'a'.repeat(44) },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '添加来源' }))
-    await waitFor(() =>
-      expect(addSource).toHaveBeenCalledWith(
-        'https://new.example/index.json',
-        'https://new.example/index.sig.json',
-        'a'.repeat(44),
-      ),
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: '刷新来源 SheJane source' }))
-    await waitFor(() => expect(refreshSource).toHaveBeenCalledWith(source))
-    fireEvent.click(screen.getByRole('button', { name: '移除来源 SheJane source' }))
-    await waitFor(() => expect(removeSource).toHaveBeenCalledWith(source))
+    await screen.findByText('还没有安装插件。')
+    expect(listSources).not.toHaveBeenCalled()
+    expect(screen.queryByText('插件来源')).not.toBeInTheDocument()
   })
 
   it('loads Runtime-owned plugins and refreshes the list', async () => {
