@@ -39,6 +39,9 @@ class Expectation:
     # Tool names expected to appear in the trajectory.
     tools_used: list[str] = field(default_factory=list)
     max_steps: int | None = None
+    min_model_calls: int = 0
+    min_input_tokens: int = 0
+    min_output_tokens: int = 0
 
 
 @dataclass
@@ -46,7 +49,8 @@ class EvalCase:
     id: str
     goal: str
     expect: Expectation = field(default_factory=Expectation)
-    mode: str = "fast"
+    model: str = ""
+    workspace_path: str | None = None
     settings: dict | None = None
     # Free-text guidance for the LLM judge (ignored by the heuristic judge).
     rubric: str = ""
@@ -59,6 +63,7 @@ class Trajectory:
     final_text: str = ""
     tool_calls: list[str] = field(default_factory=list)
     steps: int = 0
+    model_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     failed: bool = False
@@ -150,6 +155,14 @@ def heuristic_judge(case: EvalCase, traj: Trajectory) -> Judgment:
     if case.expect.max_steps is not None and traj.steps > case.expect.max_steps:
         efficiency = 0.5
         reasons.append(f"steps {traj.steps} over budget {case.expect.max_steps}")
+    for actual, minimum, label in (
+        (traj.model_calls, case.expect.min_model_calls, "model calls"),
+        (traj.input_tokens, case.expect.min_input_tokens, "input tokens"),
+        (traj.output_tokens, case.expect.min_output_tokens, "output tokens"),
+    ):
+        if actual < minimum:
+            correctness = 0.0
+            reasons.append(f"{label} {actual} below required {minimum}")
     passed = correctness >= 0.999 and tool_choice >= 0.999 and efficiency >= 0.5
     return Judgment(
         round(correctness, 3), round(tool_choice, 3), round(efficiency, 3), passed, reasons

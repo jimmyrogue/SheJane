@@ -11,6 +11,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from local_host.eval import (
     EvalCase,
@@ -22,6 +23,7 @@ from local_host.eval import (
     make_llm_judge,
     parse_judgment,
 )
+from local_host.eval.__main__ import _required_model
 from local_host.eval.driver import HttpDaemonDriver
 
 
@@ -75,6 +77,17 @@ def test_heuristic_fails_a_failed_run() -> None:
     assert j.overall == 0.0
 
 
+def test_heuristic_requires_metered_real_model_calls() -> None:
+    case = _case(expect=Expectation(min_model_calls=1, min_input_tokens=1, min_output_tokens=1))
+    assert heuristic_judge(
+        case,
+        Trajectory(model_calls=2, input_tokens=100, output_tokens=10),
+    ).passed
+    judgment = heuristic_judge(case, Trajectory())
+    assert not judgment.passed
+    assert any("model calls" in reason for reason in judgment.reasons)
+
+
 def test_evaluate_aggregates_pass_rate() -> None:
     cases = [
         _case(id="a", expect=Expectation(answer_contains=["x"])),
@@ -104,11 +117,13 @@ def test_evaluate_captures_driver_crash_as_failed_case() -> None:
 
 
 def test_http_driver_sends_the_strict_run_command(monkeypatch) -> None:
-    requests: list[dict] = []
+    requests: list[tuple[str, dict]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
-            requests.append(json.loads(request.content))
+            requests.append((request.url.path, json.loads(request.content)))
+            if request.url.path.endswith("/workspaces"):
+                return httpx.Response(200, json={"id": "workspace_eval"})
             return httpx.Response(200, json={"id": "run_eval"})
         return httpx.Response(
             200,
@@ -122,12 +137,37 @@ def test_http_driver_sends_the_strict_run_command(monkeypatch) -> None:
 
     monkeypatch.setattr("local_host.eval.driver.httpx.AsyncClient", PatchedClient)
 
-    asyncio.run(HttpDaemonDriver("http://runtime", "tok").run(_case(mode="auto.smart")))
+    asyncio.run(
+        HttpDaemonDriver("http://runtime", "tok").run(
+            _case(model="local:provider:model", workspace_path="/tmp/eval-workspace")
+        )
+    )
 
-    assert requests[0]["model"] == "auto.smart"
-    assert requests[0]["command_id"].startswith("cmd_eval_")
-    assert requests[0]["client_message_id"].startswith("msg_eval_")
-    assert "mode" not in requests[0]
+    assert requests[0] == (
+        "/local/v1/workspaces",
+        {"path": "/tmp/eval-workspace", "label": "eval:c"},
+    )
+    run_request = requests[1][1]
+    assert run_request["model"] == "local:provider:model"
+    assert run_request["workspace_path"] == "/tmp/eval-workspace"
+    assert run_request["command_id"].startswith("cmd_eval_")
+    assert run_request["client_message_id"].startswith("msg_eval_")
+    assert "mode" not in run_request
+
+
+def test_required_model_accepts_a_concrete_runtime_model(monkeypatch) -> None:
+    monkeypatch.setenv("SHEJANE_EVAL_MODEL", "local:provider:model")
+    assert _required_model() == "local:provider:model"
+
+
+@pytest.mark.parametrize("value", [None, "fast", "local::model"])
+def test_required_model_rejects_missing_or_legacy_alias(monkeypatch, value: str | None) -> None:
+    if value is None:
+        monkeypatch.delenv("SHEJANE_EVAL_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("SHEJANE_EVAL_MODEL", value)
+    with pytest.raises(ValueError, match="SHEJANE_EVAL_MODEL"):
+        _required_model()
 
 
 def test_parse_judgment_handles_fenced_json() -> None:

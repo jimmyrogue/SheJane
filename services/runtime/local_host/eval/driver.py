@@ -34,11 +34,21 @@ class HttpDaemonDriver:
             "protocol_version": 1,
             "required_capabilities": ["agent.run", "agent.stream"],
             "goal": case.goal,
-            "model": case.mode,
+            "model": case.model,
+            "permission_mode": "auto",
         }
+        if case.workspace_path:
+            body["workspace_path"] = case.workspace_path
         if case.settings:
             body["settings"] = case.settings
         async with httpx.AsyncClient(timeout=self.timeout) as client:
+            if case.workspace_path:
+                authorized = await client.post(
+                    f"{self.base_url}/local/v1/workspaces",
+                    json={"path": case.workspace_path, "label": f"eval:{case.id}"},
+                    headers=self._headers,
+                )
+                authorized.raise_for_status()
             created = await client.post(
                 f"{self.base_url}/local/v1/runs", json=body, headers=self._headers
             )
@@ -89,6 +99,7 @@ def _apply_event(traj: Trajectory, event: dict) -> None:
         if payload.get("input_tokens") or payload.get("output_tokens"):
             traj.input_tokens = int(payload.get("input_tokens", 0) or 0)
             traj.output_tokens = int(payload.get("output_tokens", 0) or 0)
+        traj.model_calls = int(payload.get("model_calls", 0) or 0)
     elif event_type == "run.failed":
         traj.failed = True
         traj.error = str(payload.get("message", "run failed"))

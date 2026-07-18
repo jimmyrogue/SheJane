@@ -15,7 +15,7 @@
 
 .PHONY: help \
 	dev-electron restart-daemon doctor \
-	test test-e2e test-contract ci build \
+	test test-e2e test-e2e-real test-contract ci build \
 	client-test runtime-sdk-test local-host-test \
 	client-build runtime-sdk-build local-host-build \
 	lint schemas setup-hooks \
@@ -42,10 +42,15 @@ doctor: ## One-shot diagnostic: "why isn't dev working?"
 ##@ Test
 test: client-test runtime-sdk-test local-host-test ## Fast unit suites
 
-test-e2e: ## Full black-box Runtime E2E over real HTTP (boots an isolated daemon on :17399)
+test-e2e: ## Runtime black-box + process recovery + Playwright Electron E2E
 	./scripts/test-contract.sh
 
-test-contract: test-e2e ## Backward-compatible alias for the Runtime E2E suite
+test-e2e-real: export SHEJANE_EVAL_MODEL := $(MODEL)
+test-e2e-real: ## Normal Agent, every Tool, and Desktop flows through a real BYOK LLM
+	@test -n "$$SHEJANE_EVAL_MODEL" || { echo "❌ MODEL is required, for example: make test-e2e-real MODEL=local:deepseek:deepseek-v4-flash" >&2; exit 2; }
+	./scripts/test-e2e-real.sh
+
+test-contract: test-e2e ## Backward-compatible alias for the complete E2E suite
 
 ci: lint test build test-e2e ## Run EVERYTHING CI runs, locally (before pushing a PR)
 
