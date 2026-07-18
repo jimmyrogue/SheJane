@@ -7,6 +7,24 @@ export interface PendingQuestion {
 }
 
 /**
+ * Prefer durable state for a question answer only after its assistant message
+ * has the Runtime run id needed to submit the command. The visible projection
+ * can legitimately be one SSE render ahead of IndexedDB when the user clicks
+ * a single-select option immediately after the card appears.
+ */
+export function conversationForQuestionAnswer(
+  persisted: Conversation | undefined,
+  visible: Conversation | undefined,
+  messageID: string,
+): Conversation | undefined {
+  const persistedMessage = persisted?.messages.find(message => message.id === messageID)
+  if (persistedMessage?.runId) return persisted
+  const visibleMessage = visible?.messages.find(message => message.id === messageID)
+  if (visibleMessage?.runId) return visible
+  return persisted ?? visible
+}
+
+/**
  * Find the single outstanding `user.ask` question for a conversation.
  *
  * Mirrors `findConversationPendingApproval`: questions are surfaced once, in a

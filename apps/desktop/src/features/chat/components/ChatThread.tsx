@@ -11,6 +11,7 @@ import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
 
 export function ChatThread({
   conversation,
+  workspaceRoot,
   onOpenArtifact,
   onOpenDiagnostics,
   onPreviewLocalFile,
@@ -21,6 +22,10 @@ export function ChatThread({
   onFailureAction,
 }: {
   conversation?: Conversation
+  /** Currently effective authorized workspace. App supplies this explicitly
+   *  so a project picked before the first message is usable while the first
+   *  Runtime projection is still converging. */
+  workspaceRoot?: string
   onOpenArtifact: (artifactID: string) => void
   onOpenDiagnostics: (runID: string) => void
   /** Open the DocPreviewPanel for an office file living inside the
@@ -44,7 +49,7 @@ export function ChatThread({
   // Conversations bound to a project workspace carry the absolute path;
   // MessageBubble uses it to resolve relative office-file refs surfaced
   // by the agent's fs.list / ls output.
-  const workspaceRoot = conversation?.workspace?.path
+  const effectiveWorkspaceRoot = workspaceRoot ?? conversation?.workspace?.path
   const runActive =
     conversation?.messages.some(
       (message) =>
@@ -118,7 +123,7 @@ export function ChatThread({
                 message={message}
                 initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}
                 onStreamTextCommit={handleStreamTextCommit}
-                workspaceRoot={workspaceRoot}
+                workspaceRoot={effectiveWorkspaceRoot}
                 onPreviewLocalFile={onPreviewLocalFile}
                 onRegenerate={onRegenerateMessage}
                 onEditResend={onEditResendMessage}

@@ -28,7 +28,7 @@ const TOKEN = process.env.VITE_TEST_LOCAL_HOST_TOKEN ?? 'dev-local-token'
 const MODE = 'local:test:model'
 const SETTINGS = { memory: 'off', skills: 'off', mcp: 'off' } as const
 
-describe.skipIf(!BASE_URL)('contract: Runtime-owned state (live daemon)', () => {
+describe.skipIf(!BASE_URL)('flow:P1/P4/P12 > contract: Runtime-owned state (live daemon)', () => {
   const config = { baseURL: BASE_URL!, token: TOKEN }
 
   it('authorizes, diagnoses, reads, and revokes a workspace', async () => {
@@ -64,7 +64,7 @@ describe.skipIf(!BASE_URL)('contract: Runtime-owned state (live daemon)', () => 
     })
   })
 
-  it('commits a complete run into the authoritative thread and diagnostics', async () => {
+  it('flow:P12 > commits a complete run into the authoritative thread and diagnostics', async () => {
     const suffix = Date.now().toString(36)
     const threadID = `e2e-thread-${suffix}`
     const run = await createLocalRun({

@@ -439,9 +439,14 @@ function historicalProgressStages(
       if (event.tool === 'task') {
         continue
       }
-      const groupIndex = push(event.toolCallId || `tool-${index}`, event)
-      if (event.toolCallId) {
-        toolCalls.set(event.toolCallId, groupIndex)
+      const existingGroup = event.toolCallId ? toolCalls.get(event.toolCallId) : undefined
+      if (existingGroup !== undefined) {
+        append(existingGroup, event)
+      } else {
+        const groupIndex = push(event.toolCallId || `tool-${index}`, event)
+        if (event.toolCallId) {
+          toolCalls.set(event.toolCallId, groupIndex)
+        }
       }
       continue
     }
@@ -895,6 +900,9 @@ function failureCategoryLabelKey(category: string): Parameters<Translator>[0] {
       return 'diagnostics.failureCategory.validation'
     case 'fatal':
       return 'diagnostics.failureCategory.fatal'
+    case 'execution_lease_expired':
+    case 'execution_cleanup_unconfirmed':
+      return 'diagnostics.failureCategory.cleanup'
     default:
       return 'diagnostics.failureCategory.unknown'
   }
@@ -943,6 +951,9 @@ function failureCategoryActionKey(category: string): Parameters<Translator>[0] {
       return 'diagnostics.failureAction.validation'
     case 'fatal':
       return 'diagnostics.failureAction.fatal'
+    case 'execution_lease_expired':
+    case 'execution_cleanup_unconfirmed':
+      return 'diagnostics.failureAction.cleanup'
     default:
       return 'diagnostics.failureAction.unknown'
   }

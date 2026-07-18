@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findConversationPendingQuestion } from './pendingQuestion'
+import { conversationForQuestionAnswer, findConversationPendingQuestion } from './pendingQuestion'
 import type { AgentQuestionItem, Conversation } from '@/shared/local-data/types'
 
 const sampleQuestions: AgentQuestionItem[] = [
@@ -83,5 +83,48 @@ describe('findConversationPendingQuestion', () => {
       ]),
     )
     expect(result).toEqual({ messageID: 'm2', requestID: 'q9', questions: sampleQuestions })
+  })
+})
+
+describe('conversationForQuestionAnswer', () => {
+  it('uses the visible projection when persisted state has only the placeholder message', () => {
+    const persisted = conversation([{
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-16T00:00:00Z',
+      status: 'streaming',
+    }])
+    const visible = conversation([{
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-16T00:00:00Z',
+      status: 'waiting_input',
+      runId: 'run-1',
+    }])
+
+    expect(conversationForQuestionAnswer(persisted, visible, 'm1')).toBe(visible)
+  })
+
+  it('prefers persisted state once it contains the Runtime run id', () => {
+    const persisted = conversation([{
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-16T00:00:00Z',
+      status: 'waiting_input',
+      runId: 'run-1',
+    }])
+    const visible = conversation([{
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-16T00:00:00Z',
+      status: 'waiting_input',
+      runId: 'run-1',
+    }])
+
+    expect(conversationForQuestionAnswer(persisted, visible, 'm1')).toBe(persisted)
   })
 })

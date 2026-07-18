@@ -18,16 +18,22 @@ export function PendingApprovalBar({
     decision: LocalPermissionDecision,
     scope?: LocalPermissionScope,
     editedAction?: LocalEditedToolAction,
-  ) => void
+  ) => boolean | Promise<boolean>
   onReconcile?: (messageID: string, requestID: string, decision: LocalToolReconciliationDecision) => void
 }) {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
   const [argumentsJSON, setArgumentsJSON] = useState('')
+  const [locallySubmittedRequestID, setLocallySubmittedRequestID] = useState<string | null>(null)
   useEffect(() => {
     setEditing(false)
     setArgumentsJSON(JSON.stringify(approval?.arguments ?? {}, null, 2))
   }, [approval?.requestID, approval?.arguments])
+  useEffect(() => {
+    if (approval && locallySubmittedRequestID && approval.requestID !== locallySubmittedRequestID) {
+      setLocallySubmittedRequestID(null)
+    }
+  }, [approval, locallySubmittedRequestID])
   const editedArguments = useMemo(() => {
     try {
       const value = JSON.parse(argumentsJSON) as unknown
@@ -38,7 +44,7 @@ export function PendingApprovalBar({
       return null
     }
   }, [argumentsJSON])
-  if (!approval) {
+  if (!approval || approval.requestID === locallySubmittedRequestID) {
     return null
   }
   if (approval.kind === 'reconciliation') {
@@ -65,8 +71,19 @@ export function PendingApprovalBar({
       </div>
     )
   }
-  const decide = (decision: LocalPermissionDecision, scope?: LocalPermissionScope, editedAction?: LocalEditedToolAction) =>
-    onDecision(approval.messageID, approval.requestID, decision, scope, editedAction)
+  const decide = (
+    decision: LocalPermissionDecision,
+    scope?: LocalPermissionScope,
+    editedAction?: LocalEditedToolAction,
+  ) => {
+    const requestID = approval.requestID
+    setLocallySubmittedRequestID(requestID)
+    void Promise.resolve(
+      onDecision(approval.messageID, requestID, decision, scope, editedAction),
+    ).then((accepted) => {
+      if (!accepted) setLocallySubmittedRequestID(null)
+    }, () => setLocallySubmittedRequestID(null))
+  }
   const permissionDetail = approval.source === 'fallback'
     ? t('agent.permissionFallbackDetail')
     : approval.source === 'llm'

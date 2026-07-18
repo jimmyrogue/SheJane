@@ -34,6 +34,6 @@ export default defineConfig({
     fileParallelism: false,
     // No setupFiles — those exist for jsdom + IndexedDB shims that
     // contract tests don't need.
-    testTimeout: 30_000, // SSE streams can take a few seconds.
+    testTimeout: process.env.VITE_TEST_REAL_LLM_MODEL ? 180_000 : 30_000,
   },
 })

@@ -36,7 +36,7 @@ describe('findConversationPendingApproval', () => {
     ).toBeNull()
   })
 
-  it('ignores resolved and auto-approved requests', () => {
+  it('ignores resolved, auto-approved, and locally submitted requests', () => {
     expect(
       findConversationPendingApproval(
         conversation([
@@ -51,11 +51,36 @@ describe('findConversationPendingApproval', () => {
               { type: 'permission.resolved', label: '已处理', permissionRequestId: 'p1' },
               { type: 'permission.required', label: '需要权限：打开网页', permissionRequestId: 'p2', permissionTool: '打开网页' },
               { type: 'permission.auto_approved', label: '自动允许', permissionRequestId: 'p2' },
+              { type: 'permission.required', label: '需要权限：写文件', permissionRequestId: 'p3', permissionTool: '写文件' },
+              { type: 'ui.permission_decision_pending', label: '已提交', permissionRequestId: 'p3' },
             ],
           },
         ]),
         t,
       ),
+    ).toBeNull()
+  })
+
+  it('keeps a submitted request hidden when an older Runtime projection arrives late', () => {
+    const staleProjection = conversation([{
+      id: 'm1',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-05-13T00:00:00Z',
+      status: 'waiting_permission',
+      agentEvents: [{
+        type: 'permission.required',
+        label: '需要权限：写文件',
+        permissionRequestId: 'p-stale',
+        permissionTool: '写文件',
+      }],
+    }])
+
+    expect(findConversationPendingApproval(staleProjection, t)).toMatchObject({
+      requestID: 'p-stale',
+    })
+    expect(
+      findConversationPendingApproval(staleProjection, t, new Set(['p-stale'])),
     ).toBeNull()
   })
 

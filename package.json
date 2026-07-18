@@ -1,5 +1,8 @@
 {
   "name": "@shejane/workspace",
   "private": true,
-  "packageManager": "pnpm@11.7.0"
+  "packageManager": "pnpm@11.7.0",
+  "devDependencies": {
+    "@modelcontextprotocol/conformance": "0.1.16"
+  }
 }

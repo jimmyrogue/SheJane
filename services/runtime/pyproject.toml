@@ -76,6 +76,11 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "resilience: real process, disconnect, timeout, and crash recovery tests",
+    "flow_p7_resume: LangGraph checkpoint and resume flow",
+    "flow_p10_tool_hitl: Tool execution and human-in-the-loop flow",
+]
 
 [tool.ruff]
 line-length = 100

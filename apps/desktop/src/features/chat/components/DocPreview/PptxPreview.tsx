@@ -29,6 +29,7 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
   const { t } = useI18n()
   const [slides, setSlides] = useState<PptxSlideOutline[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [openError, setOpenError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -52,10 +53,16 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
     }
   }, [sourceKey, refreshKey, localPath, config, onStatus])
 
-  function openNatively() {
+  async function openNatively() {
+    setOpenError(null)
     const bridge = window.shejaneDesktop
     if (bridge?.openFileWithDefaultApp) {
-      void bridge.openFileWithDefaultApp(localPath)
+      try {
+        const result = await bridge.openFileWithDefaultApp(localPath)
+        if (result) setOpenError(result)
+      } catch (err) {
+        setOpenError(err instanceof Error ? err.message : String(err))
+      }
     }
   }
 
@@ -72,11 +79,16 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
   return (
     <div className="doc-preview-pptx" data-testid="pptx-preview">
       <div className="pptx-toolbar">
-        <Button type="button" variant="outline" size="sm" onClick={openNatively}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void openNatively()}>
           <IconExternalLink size={14} />
           {t('pptxPreview.openNatively')}
         </Button>
       </div>
+      {openError ? (
+        <p className="doc-preview-open-error" role="alert">
+          {t('pptxPreview.openFailed', { error: openError })}
+        </p>
+      ) : null}
       {slides.length === 0 ? (
         <div className="doc-preview-empty">{t('pptxPreview.empty')}</div>
       ) : (

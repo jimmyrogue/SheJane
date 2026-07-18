@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PendingApprovalBar } from './PendingApprovalBar'
 import { I18nProvider } from '@/shared/i18n/i18n'
@@ -15,8 +15,8 @@ describe('PendingApprovalBar', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows the prompt and forwards decisions with message id, request id and scope', () => {
-    const onDecision = vi.fn()
+  it('hides optimistically, forwards decisions, and restores a rejected submission', async () => {
+    const onDecision = vi.fn().mockResolvedValue(false)
     render(
       <I18nProvider>
         <PendingApprovalBar
@@ -30,12 +30,16 @@ describe('PendingApprovalBar', () => {
 
     fireEvent.click(screen.getByText('本次运行允许相同参数'))
     expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'run', undefined)
+    expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('允许一次'))
     expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'once', undefined)
+    await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('拒绝'))
     expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'deny', undefined, undefined)
+    await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('修改参数'))
     fireEvent.change(screen.getByLabelText('修改参数'), {

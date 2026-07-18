@@ -78,6 +78,7 @@ const zh = {
   'relative.justNow': '刚刚',
   'message.copy': '复制',
   'message.copied': '已复制',
+  'message.copyFailed': '复制失败',
   'code.copy': '复制代码',
   'code.copied': '已复制代码',
   'message.regenerate': '重新生成',
@@ -590,6 +591,7 @@ const zh = {
   'diagnostics.failureCategory.workspace': '需要选择保存位置',
   'diagnostics.failureCategory.validation': '请求无效',
   'diagnostics.failureCategory.fatal': '实现错误',
+  'diagnostics.failureCategory.cleanup': '执行清理尚未确认',
   'diagnostics.failureCategory.unknown': '未知失败',
   'diagnostics.failureAction.transient': '稍后重试；如果反复出现，请检查网络或服务商状态。',
   'diagnostics.failureAction.auth': '请检查 Runtime 中的模型供应商凭据，然后重试。',
@@ -599,6 +601,7 @@ const zh = {
   'diagnostics.failureAction.workspace': '请选择要保存文件的文件夹。选择后将自动继续刚才的任务。',
   'diagnostics.failureAction.validation': '请修正无效请求参数后重试。',
   'diagnostics.failureAction.fatal': '请检查本地日志或实现错误，修复后再重试。',
+  'diagnostics.failureAction.cleanup': '任务已隔离以避免重复执行；请查看诊断并确认外部执行已停止。',
   'diagnostics.failureAction.unknown': '请查看诊断事件和日志后再重试。',
   'diagnostics.nextAction.reviewArtifacts': '请检查最终回复和列出的产物。',
   'diagnostics.nextAction.resolvePermission': '请先批准或拒绝待处理的权限请求。',
@@ -776,6 +779,7 @@ const zh = {
   'pptxPreview.slideNumber': '幻灯片 {n}',
   'pptxPreview.notesLabel': '演讲者备注',
   'pptxPreview.loadFailed': '无法读取 PowerPoint 大纲：{error}',
+  'pptxPreview.openFailed': '无法在 PowerPoint 中打开：{error}',
   'pdfPreview.loadFailed': '无法加载 PDF：{error}',
 } as const
 
@@ -853,6 +857,7 @@ const en: Record<TranslationKey, string> = {
   'relative.justNow': 'just now',
   'message.copy': 'Copy',
   'message.copied': 'Copied',
+  'message.copyFailed': 'Copy failed',
   'code.copy': 'Copy code',
   'code.copied': 'Code copied',
   'message.regenerate': 'Regenerate',
@@ -1363,6 +1368,7 @@ const en: Record<TranslationKey, string> = {
   'diagnostics.failureCategory.workspace': 'Choose a save location',
   'diagnostics.failureCategory.validation': 'Validation',
   'diagnostics.failureCategory.fatal': 'Implementation error',
+  'diagnostics.failureCategory.cleanup': 'Execution cleanup is unconfirmed',
   'diagnostics.failureCategory.unknown': 'Unknown failure',
   'diagnostics.failureAction.transient': 'Retry after a short backoff; if it repeats, inspect provider or network status.',
   'diagnostics.failureAction.auth': 'Check the model provider credential in Runtime, then retry.',
@@ -1372,6 +1378,7 @@ const en: Record<TranslationKey, string> = {
   'diagnostics.failureAction.workspace': 'Choose the folder where files should be saved. The task will continue automatically.',
   'diagnostics.failureAction.validation': 'Fix the invalid request arguments before retrying.',
   'diagnostics.failureAction.fatal': 'Inspect the local logs or implementation error, fix it, then retry.',
+  'diagnostics.failureAction.cleanup': 'The run is quarantined to prevent replay; inspect diagnostics and confirm external execution has stopped.',
   'diagnostics.failureAction.unknown': 'Inspect the diagnostic events and logs before retrying.',
   'diagnostics.nextAction.reviewArtifacts': 'Review the final answer and any listed artifacts.',
   'diagnostics.nextAction.resolvePermission': 'Approve or deny pending permission requests to continue the run.',
@@ -1543,6 +1550,7 @@ const en: Record<TranslationKey, string> = {
   'pptxPreview.slideNumber': 'Slide {n}',
   'pptxPreview.notesLabel': 'Speaker notes',
   'pptxPreview.loadFailed': 'Failed to load PowerPoint outline: {error}',
+  'pptxPreview.openFailed': 'Failed to open in PowerPoint: {error}',
   'pdfPreview.loadFailed': 'Failed to load PDF: {error}',
 }
 

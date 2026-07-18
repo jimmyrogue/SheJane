@@ -248,6 +248,29 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('任务失败')).not.toBeInTheDocument()
   })
 
+  it('coalesces replayed Tool requests with the same call ID into one stage', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'done',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
+            { type: 'permission.required', label: '需要权限：写入文件', permissionRequestId: 'perm-1', permissionTool: '写入文件' },
+            { type: 'permission.resolved', label: '已允许一次', permissionRequestId: 'perm-1' },
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
+            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
+            { type: 'run.completed', label: '任务完成' },
+          ],
+        })}
+      />,
+    )
+
+    expect(container.querySelectorAll('.agent-progress-tool-card')).toHaveLength(1)
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
   it('keeps an active tool failure in the working progress state', () => {
     expect(
       deriveAgentProgress(
@@ -473,6 +496,28 @@ describe('AgentProgress', () => {
 
     expect(screen.queryByText('需要排查')).not.toBeInTheDocument()
     expect(screen.queryByText('需要用户操作')).not.toBeInTheDocument()
+  })
+
+  it('labels quarantined execution cleanup explicitly instead of as an unknown failure', () => {
+    renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'error',
+          agentEvents: [{
+            type: 'run.cleanup_required',
+            label: 'The execution lease expired before cleanup was confirmed.',
+            failureCategory: 'execution_lease_expired',
+            failureRetryable: false,
+          }],
+        })}
+        onOpenArtifact={vi.fn()}
+        onOpenDiagnostics={vi.fn()}
+        onFailureAction={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('执行清理尚未确认')).toBeInTheDocument()
+    expect(screen.queryByText('未知失败')).not.toBeInTheDocument()
   })
 
   it('offers a retry action for retryable failures', () => {

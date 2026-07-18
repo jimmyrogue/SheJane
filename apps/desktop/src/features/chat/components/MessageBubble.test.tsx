@@ -147,6 +147,19 @@ describe('MessageBubble meta', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '已复制' })).toBeInTheDocument())
   })
 
+  it('contains a clipboard permission failure without showing false success', async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    render(
+      <I18nProvider>
+        <MessageBubble message={message()} />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '复制' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '复制失败' })).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: '已复制' })).not.toBeInTheDocument()
+  })
+
   it('shows diagnostics after the timestamp for every Runtime assistant turn', () => {
     const onOpenDiagnostics = vi.fn()
     const { container } = render(
@@ -464,7 +477,7 @@ describe('MessageBubble meta', () => {
       <I18nProvider>
         <MessageBubble
           message={message({
-            content: 'Files in workspace:\n- report.docx\n- /tmp/numbers.xlsx\n- notes.txt',
+            content: 'Files in workspace:\n- report.docx\n- /tmp/numbers.xlsx\n- slides.pptx\n- notes.txt',
           })}
           workspaceRoot="/Users/me/proj"
           onPreviewLocalFile={onPreviewLocalFile}
@@ -488,6 +501,14 @@ describe('MessageBubble meta', () => {
       path: '/tmp/numbers.xlsx',
       kind: 'excel',
       name: 'numbers.xlsx',
+    })
+
+    const slidesBtn = screen.getByRole('button', { name: 'slides.pptx' })
+    fireEvent.click(slidesBtn)
+    expect(onPreviewLocalFile).toHaveBeenLastCalledWith({
+      path: '/Users/me/proj/slides.pptx',
+      kind: 'powerpoint',
+      name: 'slides.pptx',
     })
 
     // Non-office filename stays plain text — no button for "notes.txt".

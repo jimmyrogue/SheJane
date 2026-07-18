@@ -21,6 +21,7 @@ describe('desktop shell', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -30,6 +31,46 @@ describe('desktop shell', () => {
     expect(await screen.findAllByText('新对话')).not.toHaveLength(0)
     expect(screen.queryByText('登录')).not.toBeInTheDocument()
     expect(screen.queryByText('注册')).not.toBeInTheDocument()
+  })
+
+  it('detects Runtime offline and recovery without remounting the Desktop', async () => {
+    vi.useFakeTimers()
+    let runtimeOnline = true
+    Object.defineProperty(window, 'shejaneDesktop', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        localHost: { baseURL: 'http://127.0.0.1:17371', session: 'desktop', ready: true },
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/local/v1/health')) {
+        if (!runtimeOnline) throw new Error('Runtime offline')
+        return new Response(JSON.stringify({ status: 'ok', mode: 'daemon', worker: 'user' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      throw new Error('catalog unavailable in health-poll test')
+    }))
+
+    render(<App />)
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText(/Runtime 已连接/)).toBeInTheDocument()
+    })
+
+    runtimeOnline = false
+    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText(/Runtime 离线/)).toBeInTheDocument()
+    })
+
+    runtimeOnline = true
+    await vi.advanceTimersByTimeAsync(2_000)
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText(/Runtime 已连接/)).toBeInTheDocument()
+    })
+    vi.useRealTimers()
   })
 
   it('does not expose purchase or usage-billing actions', async () => {

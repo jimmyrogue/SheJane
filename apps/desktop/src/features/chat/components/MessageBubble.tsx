@@ -116,19 +116,28 @@ export function MessageBubble({
   }, [isAssistant, message.id, message.status, onStreamTextCommit, stream.text])
 
   const [copied, setCopied] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
   const copyResetRef = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(copyResetRef.current), [])
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const text = message.content.trim()
     if (!text) {
       return
     }
-    void navigator.clipboard?.writeText(text).then(() => {
+    try {
+      if (!navigator.clipboard) throw new Error('clipboard unavailable')
+      await navigator.clipboard.writeText(text)
+      setCopyFailed(false)
       setCopied(true)
       window.clearTimeout(copyResetRef.current)
       copyResetRef.current = window.setTimeout(() => setCopied(false), 1500)
-    })
+    } catch {
+      setCopied(false)
+      setCopyFailed(true)
+      window.clearTimeout(copyResetRef.current)
+      copyResetRef.current = window.setTimeout(() => setCopyFailed(false), 1500)
+    }
   }
 
   const [editing, setEditing] = useState(false)
@@ -263,9 +272,9 @@ export function MessageBubble({
             <button
               type="button"
               className="message-meta-action"
-              onClick={handleCopy}
-              title={copied ? t('message.copied') : t('message.copy')}
-              aria-label={copied ? t('message.copied') : t('message.copy')}
+              onClick={() => void handleCopy()}
+              title={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
+              aria-label={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
             >
               {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
             </button>
@@ -550,13 +559,14 @@ function processChildren(
 /** Office-file extension → kind mapping. Lowercase keys; the regex
  *  also uses lowercase so case-insensitive matches work in one pass.
  */
-const OFFICE_EXTENSION_KIND: Record<string, 'word' | 'excel'> = {
+const OFFICE_EXTENSION_KIND: Record<string, LocalOfficeFileRef['kind']> = {
   docx: 'word',
   xlsx: 'excel',
+  pptx: 'powerpoint',
 }
 
 /** Regex that captures a chunk of "looks like a path" text ending in
- *  `.docx` / `.xlsx`. Matches:
+ *  `.docx` / `.xlsx` / `.pptx`. Matches:
  *    foo.docx
  *    sub/foo.docx
  *    /Users/me/project/foo.docx
@@ -565,7 +575,7 @@ const OFFICE_EXTENSION_KIND: Record<string, 'word' | 'excel'> = {
  *  common markdown delimiters (backticks, parens) so we don't swallow
  *  surrounding punctuation. Case-insensitive on the extension only.
  */
-const OFFICE_FILE_RE = /([^\s"'`(){}\[\]<>]+\.(?:docx|xlsx))/gi
+const OFFICE_FILE_RE = /([^\s"'`(){}\[\]<>]+\.(?:docx|xlsx|pptx))/gi
 
 /** Cross-platform basename. Mirror of the helper in App.tsx. */
 function pathBasename(path: string): string {
@@ -661,7 +671,7 @@ function OfficeFileLink({
   onClick,
 }: {
   path: string
-  kind: 'word' | 'excel'
+  kind: LocalOfficeFileRef['kind']
   name: string
   display: string
   onClick: (ref: LocalOfficeFileRef) => void

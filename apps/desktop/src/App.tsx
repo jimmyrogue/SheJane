@@ -46,7 +46,10 @@ import { PendingQuestionBar } from './features/chat/components/PendingQuestionBa
 import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './features/settings/runtimeSettings'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
-import { findConversationPendingQuestion } from './features/chat/pendingQuestion'
+import {
+  conversationForQuestionAnswer,
+  findConversationPendingQuestion,
+} from './features/chat/pendingQuestion'
 import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
@@ -147,6 +150,7 @@ const sidebarCollapsedStorageKey = 'shejane.sidebar.collapsed.v1'
 const runtimeThreadIDsStorageKey = 'shejane.runtime-thread-ids.v1'
 const scheduledRunNotificationPollMs = 30_000
 const pendingCommandRetryMs = 2_000
+const runtimeHealthPollMs = 2_000
 interface LocalHarnessRunOptions {
   parentRunId?: string
   metadata?: LocalRunMetadata
@@ -337,8 +341,12 @@ function AppContent() {
   const planDecisionsInFlightRef = useRef(new Set<string>())
   const toolReconciliationsInFlightRef = useRef(new Set<string>())
   const checkpointForksInFlightRef = useRef(new Set<string>())
+  const sendingOperationRef = useRef(0)
 
   const [conversations, setConversations] = useState<Conversation[]>([])
+  const [submittedPermissionRequestIDs, setSubmittedPermissionRequestIDs] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
   const [activeID, setActiveID] = useState<string>()
   const [draft, setDraft] = useState('')
   // Concrete Runtime model selection persisted in localStorage.
@@ -593,6 +601,7 @@ function AppContent() {
    *  sends `shejane:new-chat` after bringing the window forward. */
   useEffect(() => {
     const unsubscribe = window.shejaneDesktop?.onNewChatRequest?.(() => {
+      detachVisibleSend()
       navigationVersionRef.current += 1
       setActiveConversationID(undefined)
       setPendingWorkspace(undefined)
@@ -706,28 +715,52 @@ function AppContent() {
       return
     }
     setLocalHostConfig(config)
+    let disposed = false
+    let polling = false
+    let catalogLoaded = false
     if (desktop?.localHost?.ready === false) {
       setLocalHost({ online: false })
-      return
     }
-    let disposed = false
-    void probeLocalHost(config.baseURL).then((probe) => {
-      if (!disposed) {
-        setLocalHost(probe)
+
+    const loadRuntimeCatalog = async () => {
+      if (catalogLoaded || !hasLocalHostAuthorization(config)) return
+      catalogLoaded = true
+      try {
+        const [workspaces, runs] = await Promise.all([
+          listAuthorizedWorkspaces(config),
+          listLocalRuns(config),
+        ])
+        if (!disposed) {
+          setAuthorizedWorkspaces(workspaces)
+          setLocalRuns(runs)
+        }
+      } catch {
+        catalogLoaded = false
       }
-    })
-    if (hasLocalHostAuthorization(config)) {
-      void Promise.all([listAuthorizedWorkspaces(config), listLocalRuns(config)])
-        .then(([workspaces, runs]) => {
-          if (!disposed) {
-            setAuthorizedWorkspaces(workspaces)
-            setLocalRuns(runs)
-          }
-        })
-        .catch(() => undefined)
     }
+
+    const poll = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const probe = await probeLocalHost(config.baseURL)
+        if (disposed) return
+        setLocalHost(probe)
+        if (probe.online) {
+          await loadRuntimeCatalog()
+        } else {
+          catalogLoaded = false
+        }
+      } finally {
+        polling = false
+      }
+    }
+
+    void poll()
+    const interval = window.setInterval(() => void poll(), runtimeHealthPollMs)
     return () => {
       disposed = true
+      window.clearInterval(interval)
     }
   }, [])
 
@@ -901,7 +934,11 @@ function AppContent() {
         (msg.status === 'streaming' || msg.status === 'waiting_permission' || msg.status === 'waiting_input'),
     ),
   )
-  const pendingApproval = findConversationPendingApproval(activeConversation, t)
+  const pendingApproval = findConversationPendingApproval(
+    activeConversation,
+    t,
+    submittedPermissionRequestIDs,
+  )
   const pendingPlanApproval = pendingApproval ? null : findConversationPendingPlanApproval(activeConversation)
   const pendingQuestion = pendingApproval || pendingPlanApproval ? null : findConversationPendingQuestion(activeConversation)
   const activeWorkspace = activeConversation?.workspace ?? pendingWorkspace
@@ -1078,6 +1115,7 @@ function AppContent() {
   }
 
   function startNewConversation() {
+    detachVisibleSend()
     navigationVersionRef.current += 1
     setActiveConversationID(undefined)
     setPendingWorkspace(undefined)
@@ -1088,6 +1126,7 @@ function AppContent() {
   }
 
   function selectConversation(id: string) {
+    detachVisibleSend()
     navigationVersionRef.current += 1
     setPendingWorkspace(undefined)
     setPendingProject(undefined)
@@ -1103,6 +1142,22 @@ function AppContent() {
 
   function createConversationRenderContext(): ConversationRenderContext {
     return { navigationVersionAtStart: navigationVersionRef.current }
+  }
+
+  function beginVisibleSend(): number {
+    const operation = sendingOperationRef.current + 1
+    sendingOperationRef.current = operation
+    setIsSending(true)
+    return operation
+  }
+
+  function finishVisibleSend(operation: number): void {
+    if (sendingOperationRef.current === operation) setIsSending(false)
+  }
+
+  function detachVisibleSend(): void {
+    sendingOperationRef.current += 1
+    setIsSending(false)
   }
 
   async function refreshConversationsAfterStream(conversationID: string, context: ConversationRenderContext) {
@@ -1142,7 +1197,7 @@ function AppContent() {
   async function sendMessage() {
     const content = draft
     const attachments = pendingAttachments
-    setIsSending(true)
+    const sendingOperation = beginVisibleSend()
     setNotice('')
     setDraft('')
     setPendingAttachments([])
@@ -1175,7 +1230,7 @@ function AppContent() {
         preserveEmptyActive: userNavigatedWhileStreaming && !activeIDRef.current,
       })
     } finally {
-      setIsSending(false)
+      finishVisibleSend(sendingOperation)
     }
   }
 
@@ -1206,6 +1261,7 @@ function AppContent() {
     conversation.updatedAt = new Date().toISOString()
     await localData.save(conversation)
     if (activeIDRef.current !== targetConversationID) {
+      detachVisibleSend()
       navigationVersionRef.current += 1
       setPendingWorkspace(undefined)
       setPendingProject(undefined)
@@ -1215,7 +1271,7 @@ function AppContent() {
     await refreshConversations(targetConversationID)
 
     const renderContext = createConversationRenderContext()
-    setIsSending(true)
+    const sendingOperation = beginVisibleSend()
     setNotice('')
     try {
       const next = await sendLocalHarnessMessage(
@@ -1238,7 +1294,7 @@ function AppContent() {
       setNotice(error instanceof Error ? error.message : t('app.notice.sendFailed'))
       await refreshConversations(targetConversationID)
     } finally {
-      setIsSending(false)
+      finishVisibleSend(sendingOperation)
     }
   }
 
@@ -1803,10 +1859,12 @@ function AppContent() {
     scope: LocalPermissionScope = 'once',
     editedAction?: { name: string, args: Record<string, unknown> },
   ) {
-    if (permissionDecisionsInFlightRef.current.has(requestID)) return
+    if (permissionDecisionsInFlightRef.current.has(requestID)) return false
     permissionDecisionsInFlightRef.current.add(requestID)
+    setSubmittedPermissionRequestIDs((current) => new Set(current).add(requestID))
+    let commandAccepted = false
     try {
-      await handlePermissionDecisionOnce(
+      commandAccepted = await handlePermissionDecisionOnce(
         messageID,
         requestID,
         decision,
@@ -1815,7 +1873,15 @@ function AppContent() {
       )
     } finally {
       permissionDecisionsInFlightRef.current.delete(requestID)
+      if (!commandAccepted) {
+        setSubmittedPermissionRequestIDs((current) => {
+          const next = new Set(current)
+          next.delete(requestID)
+          return next
+        })
+      }
     }
+    return commandAccepted
   }
 
   async function handlePermissionDecisionOnce(
@@ -1824,16 +1890,27 @@ function AppContent() {
     decision: 'approve' | 'edit' | 'deny',
     scope: LocalPermissionScope,
     editedAction?: { name: string, args: Record<string, unknown> },
-  ) {
-    if (!activeID || !localHostConfig) {
+  ): Promise<boolean> {
+    const conversationID = activeIDRef.current
+    if (!conversationID || !localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
-      return
+      return false
     }
-    const conversation = await localData.get(activeID)
-    const message = conversation?.messages.find((item) => item.id === messageID)
+    const persistedConversation = await localData.get(conversationID)
+    const visibleConversation = conversations.find((item) => item.id === conversationID)
+    const findPermissionMessage = (conversation: Conversation | undefined) =>
+      conversation?.messages.find((item) => item.id === messageID)
+      ?? conversation?.messages.find((item) =>
+        item.agentEvents?.some((event) => event.permissionRequestId === requestID),
+      )
+    const sourceConversation = [persistedConversation, visibleConversation].find(
+      (candidate) => Boolean(findPermissionMessage(candidate)?.runId),
+    )
+    const conversation = sourceConversation ? cloneConversation(sourceConversation) : undefined
+    const message = findPermissionMessage(conversation)
     if (!conversation || !message?.runId) {
       setNotice(t('app.notice.missingLocalTask'))
-      return
+      return false
     }
 
     setNotice('')
@@ -1841,6 +1918,21 @@ function AppContent() {
     let commandAccepted = false
     message.status = 'streaming'
     const renderContext = createConversationRenderContext()
+    message.agentEvents = [
+      ...(message.agentEvents ?? []),
+      {
+        type: 'ui.permission_decision_pending',
+        label: t(
+          decision === 'deny'
+            ? 'chat.timeline.permissionDenied'
+            : scope === 'run'
+              ? 'chat.timeline.permissionApprovedRun'
+              : 'chat.timeline.permissionApprovedOnce',
+        ),
+        permissionRequestId: requestID,
+      },
+    ]
+    scheduleConversationRender(conversation, renderContext)
     try {
       const existing = (await localData.listPendingRuntimeCommands()).find(
         (command): command is PendingPermissionResolveCommand =>
@@ -1896,7 +1988,15 @@ function AppContent() {
       scheduleConversationRender(conversation, renderContext)
     } catch (error) {
       message.status = commandAccepted ? 'streaming' : 'waiting_permission'
-      if (!commandAccepted) message.content = contentBeforeDecision
+      if (!commandAccepted) {
+        message.content = contentBeforeDecision
+        message.agentEvents = (message.agentEvents ?? []).filter(
+          (event) => !(
+            event.type === 'ui.permission_decision_pending'
+            && event.permissionRequestId === requestID
+          ),
+        )
+      }
       setNotice(error instanceof Error ? error.message : t('app.notice.localPermissionFailed'))
       scheduleConversationRender(conversation, renderContext)
     } finally {
@@ -1904,6 +2004,7 @@ function AppContent() {
       await localData.save(conversation)
       await refreshConversationsAfterStream(conversation.id, renderContext)
     }
+    return commandAccepted
   }
 
   async function handleToolReconciliation(
@@ -2008,11 +2109,21 @@ function AppContent() {
   }
 
   async function handleQuestionAnswerOnce(messageID: string, requestID: string, answers: Record<string, string[]>) {
-    if (!activeID) {
+    const conversationID = activeIDRef.current
+    if (!conversationID) {
       setNotice(t('app.notice.missingLocalTask'))
       return
     }
-    const conversation = await localData.get(activeID)
+    const persistedConversation = await localData.get(conversationID)
+    const visibleConversation = conversations.find((item) => item.id === conversationID)
+    const selectedConversation = conversationForQuestionAnswer(
+      persistedConversation,
+      visibleConversation,
+      messageID,
+    )
+    const conversation = selectedConversation === visibleConversation && visibleConversation
+      ? cloneConversation(visibleConversation)
+      : selectedConversation
     const message = conversation?.messages.find((item) => item.id === messageID)
     if (!localHostConfig) {
       setNotice(t('app.notice.localHostDisconnected'))
@@ -2328,6 +2439,7 @@ function AppContent() {
       command.input.checkpointId === checkpointID,
     )
     if (existingFork) {
+      detachVisibleSend()
       navigationVersionRef.current += 1
       setPendingWorkspace(undefined)
       setPendingProject(undefined)
@@ -2404,6 +2516,7 @@ function AppContent() {
     try {
       setNotice('')
       await localData.saveWithPendingRuntimeCommand(conversation, pendingCommand)
+      detachVisibleSend()
       navigationVersionRef.current += 1
       setPendingWorkspace(undefined)
       setPendingProject(undefined)
@@ -3077,6 +3190,7 @@ function AppContent() {
 
             <ChatThread
               conversation={activeConversation}
+              workspaceRoot={activeWorkspace?.path}
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
               onPreviewLocalFile={openOfficeDocument}
@@ -3151,7 +3265,7 @@ function AppContent() {
             <div className="composer-dock">
               <PendingApprovalBar
                 approval={pendingApproval}
-                onDecision={(messageID, requestID, decision, scope, editedAction) => void handlePermissionDecision(messageID, requestID, decision, scope, editedAction)}
+                onDecision={handlePermissionDecision}
                 onReconcile={(messageID, requestID, decision) => void handleToolReconciliation(messageID, requestID, decision)}
               />
 
@@ -3530,29 +3644,44 @@ async function streamLocalMessage(
     },
   })
 
-  try {
-    return await subscribe()
-  } catch (error) {
-    if (!(error instanceof LocalStreamCursorResetRequiredError)) throw error
-    const rebuilt = projectRuntimeThread(
-      await getLocalThreadSnapshot(conversation.id, config),
-      undefined,
-      t,
-    )
-    const projectedMessage = rebuilt.messages.find((item) => item.runId === runID)
-    if (!projectedMessage) throw error
-    for (const key of Object.keys(message)) Reflect.deleteProperty(message, key)
-    Object.assign(message, projectedMessage)
-    message.lastEventSeq = Math.max(message.lastEventSeq ?? 0, error.resumeAfter)
-    rebuilt.messages = rebuilt.messages.map((item) => item.id === projectedMessage.id ? message : item)
-    for (const key of Object.keys(conversation)) Reflect.deleteProperty(conversation, key)
-    Object.assign(conversation, rebuilt)
-    seenEventIDs = new Set(
-      (message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[],
-    )
-    toolArgsByCallId.clear()
-    onUpdate()
-    return subscribe()
+  let reconnects = 0
+  let cursorResets = 0
+  while (true) {
+    try {
+      const result = await subscribe()
+      if (result.completed) return result
+    } catch (error) {
+      if (error instanceof LocalStreamCursorResetRequiredError) {
+        if (cursorResets >= 1) throw error
+        cursorResets += 1
+        const rebuilt = projectRuntimeThread(
+          await getLocalThreadSnapshot(conversation.id, config),
+          undefined,
+          t,
+        )
+        const projectedMessage = rebuilt.messages.find((item) => item.runId === runID)
+        if (!projectedMessage) throw error
+        for (const key of Object.keys(message)) Reflect.deleteProperty(message, key)
+        Object.assign(message, projectedMessage)
+        message.lastEventSeq = Math.max(message.lastEventSeq ?? 0, error.resumeAfter)
+        rebuilt.messages = rebuilt.messages.map((item) => item.id === projectedMessage.id ? message : item)
+        for (const key of Object.keys(conversation)) Reflect.deleteProperty(conversation, key)
+        Object.assign(conversation, rebuilt)
+        seenEventIDs = new Set(
+          (message.agentEvents ?? []).map((event) => event.eventId).filter(Boolean) as string[],
+        )
+        toolArgsByCallId.clear()
+        onUpdate()
+        continue
+      }
+      if (reconnects >= 5) throw error
+    }
+    if (reconnects >= 5) {
+      throw new Error('Runtime event stream ended before its completion marker.')
+    }
+    const delay = 100 * (2 ** reconnects)
+    reconnects += 1
+    await new Promise((resolve) => window.setTimeout(resolve, delay))
   }
 }
 

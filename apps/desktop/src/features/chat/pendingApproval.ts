@@ -23,6 +23,7 @@ export interface PendingApproval {
 export function findConversationPendingApproval(
   conversation: Conversation | undefined,
   t: Translator,
+  locallySubmittedRequestIDs: ReadonlySet<string> = new Set(),
 ): PendingApproval | null {
   if (!conversation) {
     return null
@@ -37,6 +38,7 @@ export function findConversationPendingApproval(
       if (
         (event.type === 'permission.resolved' ||
           event.type === 'permission.auto_approved' ||
+          event.type === 'ui.permission_decision_pending' ||
           event.type === 'tool.reconciliation_resolved') &&
         event.permissionRequestId
       ) {
@@ -47,7 +49,8 @@ export function findConversationPendingApproval(
       if (
         (event.type === 'permission.required' || event.type === 'tool.reconciliation_required') &&
         event.permissionRequestId &&
-        !resolved.has(event.permissionRequestId)
+        !resolved.has(event.permissionRequestId) &&
+        !locallySubmittedRequestIDs.has(event.permissionRequestId)
       ) {
         return {
           kind: event.type === 'permission.required' ? 'approval' : 'reconciliation',
