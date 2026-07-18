@@ -10,6 +10,7 @@ import uvicorn
 
 from .config import get_settings
 from .observability import configure_logging
+from .plugins.macos_vm import load_macos_vm_resources
 from .server import create_app
 
 
@@ -28,6 +29,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--managed-worker-linux-assets",
         type=Path,
         help="bundled Linux Managed Worker asset manifest",
+    )
+    parser.add_argument(
+        "--validate-managed-worker-vm-assets",
+        action="store_true",
+        help="validate the bundled macOS VM asset set and exit",
     )
     return parser.parse_args(argv)
 
@@ -51,6 +57,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if overrides:
         settings = settings.model_copy(update=overrides)
         settings = type(settings).model_validate(settings.model_dump())
+    if args.validate_managed_worker_vm_assets:
+        if settings.managed_worker_vm_assets is None:
+            raise SystemExit("--managed-worker-vm-assets is required for validation")
+        load_macos_vm_resources(settings.managed_worker_vm_assets)
+        return 0
     uvicorn.run(
         create_app(settings),
         host=settings.host,

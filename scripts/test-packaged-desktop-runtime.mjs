@@ -4,14 +4,18 @@ import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { spawn } from 'node:child_process'
 
 const execFileAsync = promisify(execFile)
-const appPath = resolve(process.argv[2] || '')
-if (process.platform !== 'darwin' || !appPath.endsWith('.app')) {
-  throw new Error('usage: node scripts/test-packaged-desktop-runtime.mjs /path/to/App.app')
+const packagedPath = resolve(process.argv[2] || '')
+const isMacOSApp = process.platform === 'darwin' && packagedPath.endsWith('.app')
+const isWindowsExecutable = process.platform === 'win32' && packagedPath.endsWith('.exe')
+if (!isMacOSApp && !isWindowsExecutable) {
+  throw new Error(
+    'usage: node scripts/test-packaged-desktop-runtime.mjs /path/to/App.app-or-App.exe',
+  )
 }
 
 const wait = (milliseconds) => new Promise((done) => setTimeout(done, milliseconds))
@@ -45,8 +49,16 @@ const smokeFile = join(temporaryRoot, 'runtime.json')
 const quitFile = join(temporaryRoot, 'quit')
 const home = join(temporaryRoot, 'home')
 const userData = join(temporaryRoot, 'user-data')
-const resourcesPath = join(appPath, 'Contents', 'Resources')
-const macOSDirectory = join(appPath, 'Contents', 'MacOS')
+const resourcesPath = isMacOSApp
+  ? join(packagedPath, 'Contents', 'Resources')
+  : join(dirname(packagedPath), 'resources')
+const macOSDirectory = isMacOSApp ? join(packagedPath, 'Contents', 'MacOS') : null
+const manifest = join(resourcesPath, 'sandbox', 'vm-assets', 'manifest.json')
+const runtimeExecutable = join(
+  resourcesPath,
+  'runtime',
+  process.platform === 'win32' ? 'shejane-runtime.exe' : 'shejane-runtime',
+)
 let appProcess
 let daemonPid = 0
 let stdout = ''
@@ -54,20 +66,46 @@ let stderr = ''
 
 try {
   await access(resourcesPath, constants.R_OK)
+  await access(runtimeExecutable, constants.X_OK)
+  let hasVMManifest = true
+  try {
+    await access(manifest, constants.R_OK)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+    hasVMManifest = false
+  }
+  if (hasVMManifest) {
+    if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+      throw new Error('unsupported package unexpectedly contains Managed Worker VM assets')
+    }
+    await execFileAsync(runtimeExecutable, [
+      '--managed-worker-vm-assets',
+      manifest,
+      '--validate-managed-worker-vm-assets',
+    ], { timeout: 60_000 })
+  } else if (process.platform === 'darwin' && process.arch === 'arm64') {
+    throw new Error('macOS arm64 package is missing Managed Worker VM assets')
+  }
   await mkdir(home, { recursive: true })
   await mkdir(userData, { recursive: true })
-  const executableNames = (await readdir(macOSDirectory, { withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-  if (executableNames.length !== 1) {
-    throw new Error(`packaged app has an ambiguous main executable: ${executableNames.join(', ')}`)
+  let executable = packagedPath
+  if (macOSDirectory) {
+    const executableNames = (await readdir(macOSDirectory, { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+    if (executableNames.length !== 1) {
+      throw new Error(`packaged app has an ambiguous main executable: ${executableNames.join(', ')}`)
+    }
+    executable = join(macOSDirectory, executableNames[0])
   }
-  const executable = join(macOSDirectory, executableNames[0])
   appProcess = spawn(executable, [`--user-data-dir=${userData}`], {
     env: {
       ...process.env,
       HOME: home,
+      USERPROFILE: home,
       TMPDIR: temporaryRoot,
+      TEMP: temporaryRoot,
+      TMP: temporaryRoot,
       SHEJANE_DESKTOP_SMOKE_FILE: smokeFile,
       SHEJANE_DESKTOP_SMOKE_QUIT_FILE: quitFile,
     },
@@ -119,16 +157,20 @@ try {
     throw new Error(`packaged Runtime plugin catalog failed with HTTP ${plugins.status}`)
   }
 
-  const manifest = join(resourcesPath, 'sandbox', 'vm-assets', 'manifest.json')
-  await access(manifest, constants.R_OK)
-  const { stdout: command } = await execFileAsync('/bin/ps', [
-    '-p',
-    String(daemonPid),
-    '-o',
-    'command=',
-  ])
-  if (!command.includes('--managed-worker-vm-assets') || !command.includes(manifest)) {
-    throw new Error('normal Desktop startup did not inject the packaged VM asset manifest')
+  if (process.platform === 'darwin') {
+    const { stdout: command } = await execFileAsync('/bin/ps', [
+      '-p',
+      String(daemonPid),
+      '-o',
+      'command=',
+    ])
+    if (hasVMManifest) {
+      if (!command.includes('--managed-worker-vm-assets') || !command.includes(manifest)) {
+        throw new Error('normal Desktop startup did not inject the packaged VM asset manifest')
+      }
+    } else if (command.includes('--managed-worker-vm-assets')) {
+      throw new Error('unsupported package injected unexpected Managed Worker VM assets')
+    }
   }
 
   await writeFile(quitFile, '')
@@ -143,7 +185,7 @@ try {
     async () => !processExists(daemonPid),
     { timeoutMs: 10_000, failure: 'packaged app left its bundled Runtime running after quit' },
   )
-  process.stdout.write(`packaged Desktop Runtime smoke passed: ${basename(appPath)}\n`)
+  process.stdout.write(`packaged Desktop Runtime smoke passed: ${basename(packagedPath)}\n`)
 } catch (error) {
   if (stdout) {
     process.stderr.write(`packaged app stdout:\n${stdout}\n`)

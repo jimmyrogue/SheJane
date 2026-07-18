@@ -301,36 +301,40 @@ def verify_e2fs_signature(
     lock: dict[str, Any],
     work: Path,
 ) -> None:
-    home = work / "gpg"
-    home.mkdir(mode=0o700)
-    run(["gpg", "--homedir", str(home), "--batch", "--import", str(signing_key)])
-    expected = lock["e2fsprogs"]["signing_key"]
-    fingerprints = run(
-        ["gpg", "--homedir", str(home), "--batch", "--with-colons", "--fingerprint"],
-        capture=True,
-    ).stdout.splitlines()
-    if expected["primary_fingerprint"] not in {
-        line.split(":")[9] for line in fingerprints if line.startswith("fpr:")
-    }:
-        raise SystemExit("e2fsprogs signing key fingerprint changed")
     uncompressed = work / "e2fsprogs.tar"
     with lzma.open(source, "rb") as input_stream, uncompressed.open("wb") as output_stream:
         while chunk := input_stream.read(1024 * 1024):
             output_stream.write(chunk)
-    verification = run(
-        [
-            "gpg",
-            "--homedir",
-            str(home),
-            "--batch",
-            "--status-fd",
-            "1",
-            "--verify",
-            str(signature),
-            str(uncompressed),
-        ],
-        capture=True,
-    ).stdout
+    # GnuPG creates an agent socket below its home. A repository-scoped build
+    # directory can exceed macOS's Unix socket path limit, so keep this
+    # ephemeral keyring in the short system temporary directory.
+    with tempfile.TemporaryDirectory(prefix="shejane-gpg-") as temporary_home:
+        home = Path(temporary_home)
+        home.chmod(0o700)
+        run(["gpg", "--homedir", str(home), "--batch", "--import", str(signing_key)])
+        expected = lock["e2fsprogs"]["signing_key"]
+        fingerprints = run(
+            ["gpg", "--homedir", str(home), "--batch", "--with-colons", "--fingerprint"],
+            capture=True,
+        ).stdout.splitlines()
+        if expected["primary_fingerprint"] not in {
+            line.split(":")[9] for line in fingerprints if line.startswith("fpr:")
+        }:
+            raise SystemExit("e2fsprogs signing key fingerprint changed")
+        verification = run(
+            [
+                "gpg",
+                "--homedir",
+                str(home),
+                "--batch",
+                "--status-fd",
+                "1",
+                "--verify",
+                str(signature),
+                str(uncompressed),
+            ],
+            capture=True,
+        ).stdout
     if f"[GNUPG:] VALIDSIG {expected['signing_fingerprint']} " not in verification:
         raise SystemExit("e2fsprogs source signature is invalid")
 

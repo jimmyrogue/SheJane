@@ -1095,13 +1095,18 @@ jobs:
             | grep -Fq 'com.apple.security.virtualization'
           "${helper}" --self-test
           "${assets}/mke2fs" -V 2>&1 | grep -Fq 'mke2fs 1.47.2'
-      - name: Run packaged macOS Desktop Runtime smoke
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+      - name: Run packaged Desktop Runtime smoke
+        if: matrix.platform == 'macos' || matrix.platform == 'windows'
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find apps/desktop/release -type d -name '*.app' -print -quit)"
-          node scripts/test-packaged-desktop-runtime.mjs "${app}"
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            packaged="$(find apps/desktop/release -type d -name '*.app' -print -quit)"
+          else
+            packaged="$(find apps/desktop/release/win-unpacked -maxdepth 1 -type f -name '*.exe' -print -quit)"
+          fi
+          test -n "${packaged}"
+          node scripts/test-packaged-desktop-runtime.mjs "${packaged}"
       - name: Run packaged macOS Managed Worker VM gate
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         working-directory: services/runtime
