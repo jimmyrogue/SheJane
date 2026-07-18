@@ -42,6 +42,7 @@ from ..middleware.tool_execution import ToolExecutionMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware
 from ..tools.mcp import MCP_TOOL_SEARCH_NAME
+from .backends import RuntimeFilesystemBackend
 from .context_builder import identity_safety_prompt
 
 log = logging.getLogger("local_host.agent.subagents")
@@ -332,7 +333,11 @@ def build_subagent_backend(workspace_root: str | None) -> FilesystemBackend:
     daemon data dir.
     """
     if workspace_root:
-        return FilesystemBackend(root_dir=workspace_root, virtual_mode=True, max_file_size_mb=10)
+        return RuntimeFilesystemBackend(
+            root_dir=workspace_root,
+            virtual_mode=True,
+            max_file_size_mb=10,
+        )
     # No authorized workspace — subagents get a virtual in-memory FS so
     # they can't accidentally touch real disk paths.
-    return FilesystemBackend(virtual_mode=True, max_file_size_mb=10)
+    return RuntimeFilesystemBackend(virtual_mode=True, max_file_size_mb=10)

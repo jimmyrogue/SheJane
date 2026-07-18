@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import re
+import signal
+import subprocess
 from typing import Any
 
 import yaml
+from deepagents.backends import FilesystemBackend, LocalShellBackend
 from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
@@ -26,6 +30,171 @@ from deepagents.backends.protocol import (
 )
 from langgraph.runtime import get_runtime
 from markitdown import MarkItDown
+
+
+class _BoundedReadMixin:
+    """Apply the advertised backend file-size limit to direct reads."""
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        try:
+            resolved_path = self._resolve_path(file_path)  # type: ignore[attr-defined]
+            max_bytes = int(self.max_file_size_bytes)  # type: ignore[attr-defined]
+            if resolved_path.exists() and resolved_path.is_file():
+                size = resolved_path.stat().st_size
+                if size > max_bytes:
+                    return ReadResult(
+                        error=(
+                            f"File '{file_path}' is too large to read "
+                            f"({size} bytes; limit {max_bytes} bytes / {max_bytes // (1024 * 1024)} MB)"
+                        )
+                    )
+        except (OSError, RuntimeError):
+            # Preserve the backend's canonical path/not-found error shape.
+            pass
+        return super().read(file_path, offset, limit)  # type: ignore[misc]
+
+    async def aread(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> ReadResult:
+        return await asyncio.to_thread(self.read, file_path, offset, limit)
+
+
+class RuntimeFilesystemBackend(_BoundedReadMixin, FilesystemBackend):
+    """Filesystem backend with a hard direct-read size boundary."""
+
+
+class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
+    """Run async shell commands in a process group owned by the Run.
+
+    Deep Agents' local backend delegates async execution to a worker thread
+    around ``subprocess.run``. Cancelling that coroutine cannot stop the
+    thread, and a timeout only kills the immediate shell process. A command
+    that spawned children could therefore outlive a canceled/expired Run.
+
+    Runtime execution uses an async subprocess in its own process group so
+    timeout and task cancellation both reap the complete command tree before
+    control returns to the coordinator.
+    """
+
+    async def aexecute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,  # noqa: ASYNC109 - public backend protocol
+    ) -> ExecuteResponse:
+        if not command or not isinstance(command, str):
+            return ExecuteResponse(
+                output="Error: Command must be a non-empty string.",
+                exit_code=1,
+                truncated=False,
+            )
+
+        effective_timeout = timeout if timeout is not None else self._default_timeout
+        if effective_timeout <= 0:
+            raise ValueError(f"timeout must be positive, got {effective_timeout}")
+
+        process: asyncio.subprocess.Process | None = None
+        communicate_task: asyncio.Task[tuple[bytes, bytes]] | None = None
+        try:
+            platform_args: dict[str, Any]
+            if os.name == "nt":
+                platform_args = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            else:
+                platform_args = {"start_new_session": True}
+            process = await asyncio.create_subprocess_shell(
+                command,
+                cwd=str(self.cwd),
+                env=self._env,
+                stdin=subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                **platform_args,
+            )
+            communicate_task = asyncio.create_task(process.communicate())
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(communicate_task),
+                    timeout=effective_timeout,
+                )
+            except TimeoutError:
+                await _kill_shell_process_tree(process)
+                await communicate_task
+                message = f"Error: Command timed out after {effective_timeout} seconds" + (
+                    " (custom timeout). The command may be stuck or require more time."
+                    if timeout is not None
+                    else ". For long-running commands, re-run using the timeout parameter."
+                )
+                return ExecuteResponse(output=message, exit_code=124, truncated=False)
+            return self._execute_response(stdout, stderr, process.returncode or 0)
+        except asyncio.CancelledError:
+            if process is not None and process.returncode is None:
+                await _kill_shell_process_tree(process)
+            if communicate_task is not None and not communicate_task.done():
+                await asyncio.shield(communicate_task)
+            raise
+        except Exception as exc:
+            if process is not None and process.returncode is None:
+                await _kill_shell_process_tree(process)
+            return ExecuteResponse(
+                output=f"Error executing command ({type(exc).__name__}): {exc}",
+                exit_code=1,
+                truncated=False,
+            )
+
+    def _execute_response(
+        self,
+        stdout: bytes,
+        stderr: bytes,
+        returncode: int,
+    ) -> ExecuteResponse:
+        output_parts: list[str] = []
+        if stdout:
+            output_parts.append(stdout.decode("utf-8", errors="replace"))
+        if stderr:
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            output_parts.extend(f"[stderr] {line}" for line in stderr_text.strip().split("\n"))
+        output = "\n".join(output_parts) if output_parts else "<no output>"
+        truncated = False
+        encoded = output.encode("utf-8")
+        if len(encoded) > self._max_output_bytes:
+            output = encoded[: self._max_output_bytes].decode("utf-8", errors="ignore")
+            output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
+            truncated = True
+        if returncode != 0:
+            output = f"{output.rstrip()}\n\nExit code: {returncode}"
+        return ExecuteResponse(output=output, exit_code=returncode, truncated=truncated)
+
+
+async def _kill_shell_process_tree(process: asyncio.subprocess.Process) -> None:
+    """Hard-stop one command tree and reap its direct process."""
+    if process.returncode is not None:
+        return
+    if os.name == "nt":
+        try:
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(process.pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await killer.wait()
+        except (FileNotFoundError, ProcessLookupError):
+            process.kill()
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        await process.wait()
+    except ProcessLookupError:
+        pass
 
 
 class RuntimeBackend(SandboxBackendProtocol):

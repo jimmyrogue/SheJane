@@ -40,6 +40,7 @@ from langchain_core.load.dump import dumps as lc_dumps
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from .failure_policy import classify_failure_payload
+from .tool_outcomes import tool_result_envelope, tool_result_envelope_failed
 
 
 def translate(kind: str, payload: Any) -> list[dict[str, Any]]:
@@ -153,8 +154,8 @@ def _translate_messages(payload: Any) -> list[dict[str, Any]]:
         # ToolMessage.status="error"; treat those as failures too so
         # diagnostics and retry policy see the real outcome.
         status = getattr(chunk, "status", None)
-        envelope = _tool_result_envelope(chunk.content)
-        is_failed = status == "error" or _envelope_failed(envelope)
+        envelope = tool_result_envelope(chunk.content)
+        is_failed = status == "error" or tool_result_envelope_failed(envelope)
         if chunk.name == "task":
             event_name = "subagent.completed"
         elif is_failed:
@@ -279,25 +280,6 @@ def _stringify(content: Any) -> str:
     return str(content)
 
 
-def _tool_result_envelope(content: Any) -> dict[str, Any] | None:
-    if isinstance(content, dict):
-        return content
-    if isinstance(content, str):
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
-def _envelope_failed(envelope: dict[str, Any] | None) -> bool:
-    if not isinstance(envelope, dict) or "ok" not in envelope:
-        return False
-    return not _truthy(envelope.get("ok"))
-
-
 def _artifact_events(envelope: dict[str, Any], *, tool_name: str | None) -> list[dict[str, Any]]:
     artifacts = envelope.get("artifacts")
     if not isinstance(artifacts, list):
@@ -348,16 +330,6 @@ def _merge_tool_failure_envelope(data: dict[str, Any], envelope: dict[str, Any])
     message = envelope.get("message") or envelope.get("error") or envelope.get("content")
     if isinstance(message, str) and message.strip():
         data["message"] = message.strip()
-
-
-def _truthy(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "yes", "ok", "passed"}
-    if isinstance(value, (int, float)):
-        return value != 0
-    return bool(value)
 
 
 def translate_many(events: Iterable[tuple[str, Any]]) -> list[dict[str, Any]]:

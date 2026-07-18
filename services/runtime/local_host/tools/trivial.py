@@ -12,6 +12,7 @@ import subprocess
 import sys
 import webbrowser
 from datetime import datetime
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pyperclip
@@ -64,8 +65,15 @@ def open_url(url: str) -> dict[str, str]:
 
     Returns immediately; no confirmation that the browser actually loaded.
     """
-    if not (url.startswith("http://") or url.startswith("https://")):
+    if url != url.strip() or any(ord(character) < 32 for character in url):
+        return {"ok": "false", "error": "URL contains whitespace or control characters"}
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in {"http", "https"}:
         return {"ok": "false", "error": "only http(s) URLs are allowed"}
+    if not parts.hostname:
+        return {"ok": "false", "error": "URL must include a hostname"}
+    if parts.username is not None or parts.password is not None:
+        return {"ok": "false", "error": "URL credentials are not allowed"}
     webbrowser.open(url, new=2)
     return {"ok": "true", "url": url}
 

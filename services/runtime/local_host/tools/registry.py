@@ -16,6 +16,7 @@ from deepagents.middleware import FilesystemMiddleware
 from langchain_core.tools import BaseTool
 
 from ..store.sqlite import LocalStore
+from ..tool_schemas import tool_input_schema
 from .browser import make_browser_tool_if_configured
 from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
@@ -131,11 +132,8 @@ def _serialize_args_schema(tool: BaseTool) -> dict[str, Any] | None:
     schema — happens with deepagents `task`), return a permissive object
     schema so /v1/tools doesn't 500.
     """
-    schema_attr = getattr(tool, "tool_call_schema", None) or tool.args_schema
-    if schema_attr is None:
-        return None
     try:
-        return schema_attr.model_json_schema()
+        return tool_input_schema(tool)
     except Exception:
         return {"type": "object", "additionalProperties": True}
 

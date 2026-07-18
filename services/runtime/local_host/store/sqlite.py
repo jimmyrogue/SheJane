@@ -1743,7 +1743,7 @@ class LocalStore:
                     or record["arguments_hash"] != arguments_hash
                 ):
                     raise ToolReceiptConflictError(
-                        f"tool call {tool_call_id} was reused with different arguments"
+                        f"tool call {tool_call_id} was reused with a different operation identity"
                     )
                 return record
             now = _now()

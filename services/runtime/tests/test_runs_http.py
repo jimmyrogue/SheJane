@@ -145,6 +145,23 @@ def test_create_run_returns_run_record(client: TestClient) -> None:
     assert "test-cloud-token" not in stored["settings_json"]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/local/v1/runs/run_missing",
+        "/local/v1/runs/run_missing/stream",
+    ],
+)
+def test_unknown_run_returns_stable_machine_readable_error(
+    client: TestClient,
+    path: str,
+) -> None:
+    response = client.get(path, headers={"Authorization": "Bearer tok"})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": {"code": "run_not_found", "message": "run not found"}}
+
+
 def test_create_run_rejects_unknown_permission_mode(client: TestClient) -> None:
     response = client.post(
         "/local/v1/runs",

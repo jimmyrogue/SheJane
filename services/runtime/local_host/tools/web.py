@@ -172,30 +172,38 @@ async def web_fetch(
                     headers["Content-Type"] = content_type
                     content = current_body.encode("utf-8")
 
-                resp = await client.request(
+                async with client.stream(
                     current_method,
                     current_url,
                     headers=headers,
                     content=content,
-                )
-                location = resp.headers.get("location")
-                if resp.status_code in {301, 302, 303, 307, 308} and location:
-                    if redirect_count >= MAX_REDIRECTS:
-                        return {"ok": "false", "error": "too many redirects"}
-                    current_url = urljoin(current_url, location)
-                    if resp.status_code in {301, 302, 303}:
-                        current_method = "GET"
-                        current_body = ""
-                    continue
-                response_content = resp.content[:MAX_RESPONSE_BYTES]
-                truncated = len(resp.content) > MAX_RESPONSE_BYTES
-                return {
-                    "ok": "true",
-                    "status": str(resp.status_code),
-                    "headers": {k: v for k, v in resp.headers.items() if len(v) < 1024},
-                    "body": response_content.decode("utf-8", errors="replace"),
-                    "truncated": "true" if truncated else "false",
-                }
+                ) as resp:
+                    location = resp.headers.get("location")
+                    if resp.status_code in {301, 302, 303, 307, 308} and location:
+                        if redirect_count >= MAX_REDIRECTS:
+                            return {"ok": "false", "error": "too many redirects"}
+                        current_url = urljoin(current_url, location)
+                        if resp.status_code in {301, 302, 303}:
+                            current_method = "GET"
+                            current_body = ""
+                        continue
+
+                    response_content = bytearray()
+                    truncated = False
+                    async for chunk in resp.aiter_bytes():
+                        remaining = MAX_RESPONSE_BYTES - len(response_content)
+                        if len(chunk) > remaining:
+                            response_content.extend(chunk[:remaining])
+                            truncated = True
+                            break
+                        response_content.extend(chunk)
+                    return {
+                        "ok": "true",
+                        "status": str(resp.status_code),
+                        "headers": {k: v for k, v in resp.headers.items() if len(v) < 1024},
+                        "body": response_content.decode("utf-8", errors="replace"),
+                        "truncated": "true" if truncated else "false",
+                    }
         return {"ok": "false", "error": "too many redirects"}
     except httpx.HTTPError as exc:
         return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}

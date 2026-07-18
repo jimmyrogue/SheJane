@@ -12,6 +12,7 @@ import sys
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
+from contextvars import copy_context
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -20,11 +21,21 @@ from typing import Any
 import httpx
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as langchain_tool
+from langgraph.config import get_stream_writer
 
 from ..store.sqlite import LocalStore
 from .mcp_stdio import bounded_stdio_client
+from .runtime import current_runtime_tool_execution
 
 log = logging.getLogger("local_host.tools.mcp")
+
+
+def _bounded_timeout_from_env(name: str, *, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return min(max(value, 0.01), 300.0)
 
 
 # Stable identifiers used by the Runtime API and Desktop source grouping.
@@ -42,6 +53,10 @@ MAX_MCP_SCHEMA_NODES = 4_096
 MAX_MCP_HTTP_BYTES = 4 * 1_024 * 1_024
 MAX_MCP_STDIO_FRAME_BYTES = 4 * 1_024 * 1_024
 MCP_DISCOVERY_TIMEOUT_SECONDS = 15
+MCP_TOOL_TIMEOUT_SECONDS = _bounded_timeout_from_env(
+    "SHEJANE_MCP_TOOL_TIMEOUT_SECONDS",
+    default=60.0,
+)
 MCP_RETRY_BACKOFF_SECONDS = 30
 MCP_TOOL_SEARCH_NAME = "mcp.search_tools"
 MCP_TOOL_SEARCH_RESULT_KIND = "mcp_tool_search_results"
@@ -165,7 +180,54 @@ class _MCPServerSupervisor:
         session = self._session
         if session is None:
             raise RuntimeError(f"MCP server {self.server_name!r} is not connected")
-        return await session.call_tool(name, arguments, **kwargs)
+        previous_progress_callback = kwargs.get("progress_callback")
+        try:
+            execution = current_runtime_tool_execution()
+            stream_writer = get_stream_writer()
+            stream_context = copy_context()
+        except RuntimeError:
+            execution = None
+            stream_writer = None
+            stream_context = None
+        if execution is not None and stream_writer is not None and stream_context is not None:
+
+            async def report_progress(
+                progress: float,
+                total: float | None,
+                message: str | None,
+            ) -> None:
+                stream_context.run(
+                    stream_writer,
+                    {
+                        "event": "tool.progress",
+                        "data": {
+                            "tool_call_id": execution.tool_call_id,
+                            "tool": f"{self.server_name}_{name}",
+                            "progress": progress,
+                            "total": total,
+                            "message": message,
+                        },
+                    },
+                )
+                if previous_progress_callback is not None:
+                    await previous_progress_callback(progress, total, message)
+
+            kwargs["progress_callback"] = report_progress
+        try:
+            async with asyncio.timeout(MCP_TOOL_TIMEOUT_SECONDS):
+                return await session.call_tool(name, arguments, **kwargs)
+        except asyncio.CancelledError:
+            self._retire_session()
+            raise
+        except Exception:
+            self._retire_session()
+            raise
+
+    def _retire_session(self) -> None:
+        self._session = None
+        self._stop.set()
+        if self._on_tools_changed is not None:
+            self._on_tools_changed(self)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -220,6 +282,8 @@ class _MCPServerSupervisor:
                     self.server_name,
                     type(exc).__name__,
                 )
+                if self._on_tools_changed is not None:
+                    self._on_tools_changed(self)
         finally:
             self._session = None
             if context is not None and entered:
@@ -240,7 +304,9 @@ async def _open_mcp_server(
 ) -> tuple[_MCPServerSupervisor | None, tuple[BaseTool, ...], str | None]:
     supervisor = _MCPServerSupervisor(server_name, connection)
     try:
-        return supervisor, await supervisor.start(), None
+        version = f"mcp-v1:{_mcp_config_fingerprint(connection)}"
+        tools = tuple(_with_tool_version(tool, version) for tool in await supervisor.start())
+        return supervisor, tools, None
     except Exception as exc:
         log.warning(
             "MCP server %r discovery failed: %s",
@@ -388,6 +454,8 @@ class MCPToolCatalog:
                     connection,
                     record["tools"],
                 )
+                version = f"mcp-v1:{fingerprint}"
+                tools = [_with_tool_version(tool, version) for tool in tools]
                 accepted = validate_mcp_tools(
                     tools,
                     sensitive_values=_sensitive_values_from_config({name: connection}),
@@ -595,6 +663,12 @@ async def _stop_mcp_servers(supervisors: list[_MCPServerSupervisor]) -> None:
 def _mcp_config_fingerprint(config: dict[str, Any]) -> str:
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _with_tool_version(tool: BaseTool, version: str) -> BaseTool:
+    return tool.model_copy(
+        update={"metadata": {**(tool.metadata or {}), "shejane_tool_version": version}}
+    )
 
 
 class _LimitedResponseStream(httpx.AsyncByteStream):

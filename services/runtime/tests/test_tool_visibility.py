@@ -169,6 +169,20 @@ def test_delivered_plugin_artifacts_hide_fallback_tools_until_the_next_user_turn
     assert ToolVisibilityMiddleware._apply(request) is request
 
 
+def test_blocked_tools_are_hidden_even_when_the_goal_names_them() -> None:
+    request = _request([HumanMessage("delegate this")], goal="use task to delegate")
+    request.tools = [workspace_read, task]
+    middleware = ToolVisibilityMiddleware(blocked_tool_names={"task"})
+
+    filtered = middleware._apply(
+        request,
+        middleware.deferred_tool_names,
+        middleware.blocked_tool_names,
+    )
+
+    assert [item.name for item in filtered.tools] == ["workspace.read"]
+
+
 @tool("docs_lookup")
 def docs_lookup(query: str) -> str:
     """Search the product documentation for setup and API details."""

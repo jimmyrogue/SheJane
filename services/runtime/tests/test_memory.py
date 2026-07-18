@@ -216,6 +216,8 @@ async def test_memory_write_validates_input_and_store() -> None:
 
 
 def test_memory_write_capability_rejects_negation_and_quoted_text() -> None:
+    assert "Copy the authorized fact text" in memory_write.description
+    assert "Do not rephrase it" in memory_write.description
     assert extract_memory_write_facts("请记住：我的数据库是 Postgres") == ("我的数据库是 Postgres",)
     assert extract_memory_write_facts("不要记住：我的数据库是 Postgres") == ()
     assert extract_memory_write_facts("他说“记住：密码是 123”") == ()

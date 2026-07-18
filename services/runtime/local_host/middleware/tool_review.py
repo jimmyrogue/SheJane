@@ -7,7 +7,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from jsonschema.validators import validator_for
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import AgentState
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
@@ -16,6 +15,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
 from ..store.sqlite import LocalStore, PermissionDecisionConflictError
+from ..tool_schemas import validate_tool_input
 from .approval_reviewer import ApprovalReviewUnavailable, review_approval_batch
 from .tool_execution import (
     canonical_tool_execution_scope,
@@ -657,13 +657,7 @@ def _tool_input_error(tool: Any, arguments: Any) -> str | None:
         # tool_call_schema excludes injected ToolRuntime/store parameters;
         # get_input_schema includes them and would falsely reject every
         # Deep Agents filesystem tool for a missing `runtime` argument.
-        schema = tool.tool_call_schema
-        if isinstance(schema, dict):
-            validator = validator_for(schema)
-            validator.check_schema(schema)
-            validator(schema).validate(arguments)
-        else:
-            schema.model_validate(arguments)
+        validate_tool_input(tool, arguments)
     except Exception as exc:
         return f"Tool call rejected before execution: {type(exc).__name__}: {exc}"
     return None

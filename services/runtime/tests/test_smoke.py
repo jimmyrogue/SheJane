@@ -75,6 +75,11 @@ def test_tools_listing_includes_deepagents_runtime_tool_contract(client: TestCli
     assert not {"fs.list", "fs.read", "fs.write", "fs.search"} & set(tools)
     assert "file_path" in tools["read_file"]["args_schema"]["properties"]
     assert "command" in tools["execute"]["args_schema"]["properties"]
+    assert all(
+        tool["args_schema"].get("additionalProperties") is False
+        for tool in tools.values()
+        if isinstance(tool.get("args_schema"), dict)
+    )
 
 
 def test_workspaces_crud(client: TestClient, tmp_path: Path) -> None:
@@ -270,6 +275,178 @@ def test_web_fetch_rejects_invalid_method() -> None:
     out = asyncio.run(web_fetch.ainvoke({"url": "https://example.com", "method": "DELETE"}))
     assert out["ok"] == "false"
     assert "method" in out["error"]
+
+
+def test_open_url_rejects_missing_host_and_credentials(monkeypatch: Any) -> None:
+    from local_host.tools import trivial as trivial_module
+    from local_host.tools.trivial import open_url
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        trivial_module.webbrowser, "open", lambda url, **_kwargs: opened.append(url)
+    )
+
+    missing_host = open_url.invoke({"url": "https://"})
+    credentials = open_url.invoke({"url": "https://user@example.invalid/path"})
+
+    assert missing_host == {"ok": "false", "error": "URL must include a hostname"}
+    assert credentials == {"ok": "false", "error": "URL credentials are not allowed"}
+    assert opened == []
+
+
+def test_web_fetch_returns_a_bounded_success_response(monkeypatch: Any) -> None:
+    import asyncio
+
+    import httpx
+
+    from local_host.tools import web as web_module
+    from local_host.tools.web import MAX_RESPONSE_BYTES, web_fetch
+
+    content = b"x" * (MAX_RESPONSE_BYTES + 17)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=content,
+            headers={"X-E2E": "kept", "X-Oversized": "y" * 1024},
+            request=request,
+        )
+
+    monkeypatch.setattr(
+        web_module,
+        "_pinned_transport",
+        lambda _url: (httpx.MockTransport(handler), ""),
+    )
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/data"}))
+
+    assert out["ok"] == "true"
+    assert out["status"] == "200"
+    assert out["truncated"] == "true"
+    assert len(out["body"]) == MAX_RESPONSE_BYTES
+    assert out["headers"]["x-e2e"] == "kept"
+    assert "x-oversized" not in out["headers"]
+
+
+def test_web_fetch_stops_consuming_the_stream_at_the_response_limit(
+    monkeypatch: Any,
+) -> None:
+    import asyncio
+
+    import httpx
+
+    from local_host.tools import web as web_module
+    from local_host.tools.web import MAX_RESPONSE_BYTES, web_fetch
+
+    class GuardedStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.reads = 0
+            self.closed = False
+
+        async def __aiter__(self):
+            self.reads += 1
+            yield b"x" * (MAX_RESPONSE_BYTES + 1)
+            self.reads += 1
+            raise AssertionError("web.fetch read beyond its response limit")
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = GuardedStream()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream, request=request)
+
+    monkeypatch.setattr(
+        web_module,
+        "_pinned_transport",
+        lambda _url: (httpx.MockTransport(handler), ""),
+    )
+
+    out = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/stream"}))
+
+    assert out["ok"] == "true"
+    assert out["truncated"] == "true"
+    assert len(out["body"]) == MAX_RESPONSE_BYTES
+    assert stream.reads == 1
+    assert stream.closed is True
+
+
+def test_web_fetch_303_redirect_switches_post_to_get(monkeypatch: Any) -> None:
+    import asyncio
+
+    import httpx
+
+    from local_host.tools import web as web_module
+    from local_host.tools.web import web_fetch
+
+    requests: list[tuple[str, str, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, str(request.url), request.content))
+        if request.url.path == "/submit":
+            return httpx.Response(303, headers={"Location": "/result"}, request=request)
+        return httpx.Response(200, text="redirect complete", request=request)
+
+    monkeypatch.setattr(
+        web_module,
+        "_pinned_transport",
+        lambda _url: (httpx.MockTransport(handler), ""),
+    )
+
+    out = asyncio.run(
+        web_fetch.ainvoke(
+            {
+                "url": "https://public.example/submit",
+                "method": "POST",
+                "body": "sensitive-on-first-hop",
+            }
+        )
+    )
+
+    assert out["ok"] == "true"
+    assert out["body"] == "redirect complete"
+    assert requests == [
+        ("POST", "https://public.example/submit", b"sensitive-on-first-hop"),
+        ("GET", "https://public.example/result", b""),
+    ]
+
+
+def test_web_fetch_contains_timeout_and_redirect_exhaustion(monkeypatch: Any) -> None:
+    import asyncio
+
+    import httpx
+
+    from local_host.tools import web as web_module
+    from local_host.tools.web import MAX_REDIRECTS, web_fetch
+
+    def timeout_handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("controlled timeout", request=request)
+
+    monkeypatch.setattr(
+        web_module,
+        "_pinned_transport",
+        lambda _url: (httpx.MockTransport(timeout_handler), ""),
+    )
+    timed_out = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/slow"}))
+    assert timed_out["ok"] == "false"
+    assert "ReadTimeout" in timed_out["error"]
+
+    redirects = 0
+
+    def redirect_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal redirects
+        redirects += 1
+        return httpx.Response(302, headers={"Location": "/again"}, request=request)
+
+    monkeypatch.setattr(
+        web_module,
+        "_pinned_transport",
+        lambda _url: (httpx.MockTransport(redirect_handler), ""),
+    )
+    exhausted = asyncio.run(web_fetch.ainvoke({"url": "https://public.example/again"}))
+    assert exhausted == {"ok": "false", "error": "too many redirects"}
+    assert redirects == MAX_REDIRECTS + 1
 
 
 # --- task.verify ---

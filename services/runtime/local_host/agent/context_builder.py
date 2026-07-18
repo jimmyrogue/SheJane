@@ -171,6 +171,7 @@ class RuntimeContext:
     dynamic_tools: dict[str, object] = field(default_factory=dict)
     tool_registry: dict[str, object] = field(default_factory=dict)
     memory_enabled: bool = True
+    subagents_enabled: bool = True
     # Trusted ingress capability derived from the real top-level user input.
     # Tools may inspect it, but it is never rendered into the model prompt.
     memory_write_facts: tuple[str, ...] = ()

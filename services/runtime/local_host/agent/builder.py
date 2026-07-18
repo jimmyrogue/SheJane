@@ -48,7 +48,7 @@ from urllib.parse import urlparse
 
 import httpx
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain.agents.middleware import (
     AgentMiddleware,
     ToolCallLimitMiddleware,
@@ -91,7 +91,13 @@ from ..tools.mcp import (
 )
 from ..tools.registry import build_tools, tool_definition
 from ..tools.runtime import RuntimeToolProxy
-from .backends import ReadOnlyBackend, ReadOnlyFileBackend, RuntimeBackend
+from .backends import (
+    ReadOnlyBackend,
+    ReadOnlyFileBackend,
+    RuntimeBackend,
+    RuntimeFilesystemBackend,
+    RuntimeLocalShellBackend,
+)
 from .context_builder import AsyncToolExecutionGate, RuntimeContext, build_default_context
 from .subagents import build_subagents
 
@@ -164,6 +170,73 @@ def _resolve_skills_dirs() -> list[Path]:
     return out
 
 
+def skill_catalog_fingerprint() -> str:
+    """Hash the complete discovery tree visible to SkillsMiddleware.
+
+    Discovery probes every directory directly below each configured root for
+    ``SKILL.md``. Hashing the whole dedicated root therefore covers active
+    packages, their supporting files, and directories that can enter or leave
+    the catalog. Symlinks are hashed as links and are never traversed; the
+    virtual backend rejects links that escape their configured root.
+    """
+    digest = hashlib.sha256(b"shejane-skill-catalog-v1\0")
+    for root_index, root in enumerate(_resolve_skills_dirs()):
+        resolved_root = root.resolve(strict=False)
+        _update_catalog_digest(
+            digest,
+            "root",
+            str(root_index),
+            str(resolved_root),
+        )
+        for directory, child_dirs, file_names in os.walk(resolved_root, followlinks=False):
+            child_dirs.sort()
+            file_names.sort()
+            directory_path = Path(directory)
+            relative_directory = directory_path.relative_to(resolved_root)
+            _update_catalog_digest(digest, "directory", relative_directory.as_posix())
+            symlink_dirs = [name for name in child_dirs if (directory_path / name).is_symlink()]
+            child_dirs[:] = [name for name in child_dirs if name not in symlink_dirs]
+            for name in symlink_dirs:
+                path = directory_path / name
+                _update_catalog_digest(
+                    digest,
+                    "symlink",
+                    (relative_directory / name).as_posix(),
+                    os.readlink(path),
+                )
+            for name in file_names:
+                path = directory_path / name
+                relative_path = (relative_directory / name).as_posix()
+                if path.is_symlink():
+                    _update_catalog_digest(
+                        digest,
+                        "symlink",
+                        relative_path,
+                        os.readlink(path),
+                    )
+                    continue
+                if not path.is_file():
+                    _update_catalog_digest(
+                        digest,
+                        "special",
+                        relative_path,
+                        str(path.stat().st_mode),
+                    )
+                    continue
+                _update_catalog_digest(digest, "file", relative_path)
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+                digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _update_catalog_digest(digest: Any, *parts: str) -> None:
+    for part in parts:
+        digest.update(part.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+
+
 def _agent_backend_routes(
     *,
     skills_dirs: list[Path],
@@ -182,7 +255,7 @@ def _agent_backend_routes(
     for item in attachment_bindings or []:
         source = Path(item["source_path"])
         backend = ReadOnlyFileBackend(
-            FilesystemBackend(
+            RuntimeFilesystemBackend(
                 root_dir=source.parent,
                 virtual_mode=True,
                 max_file_size_mb=10,
@@ -195,7 +268,7 @@ def _agent_backend_routes(
         if workspace_root == backend_root or workspace_root.is_relative_to(backend_root):
             raise ValueError("writable workspace cannot be nested inside a read-only skill root")
         backend = ReadOnlyBackend(
-            FilesystemBackend(
+            RuntimeFilesystemBackend(
                 root_dir=backend_root,
                 virtual_mode=True,
                 max_file_size_mb=10,
@@ -211,7 +284,7 @@ def _agent_backend_routes(
         if path.is_dir():
             path = path / "AGENTS.md"
         backend = ReadOnlyFileBackend(
-            FilesystemBackend(
+            RuntimeFilesystemBackend(
                 root_dir=path.parent.resolve(strict=False),
                 virtual_mode=True,
                 max_file_size_mb=10,
@@ -260,7 +333,7 @@ def _build_agent_backend(
     attachment_bindings: list[dict[str, str]] | None = None,
 ):
     workspace_root = Path(effective_workspace).expanduser().resolve()
-    default = LocalShellBackend(
+    default = RuntimeLocalShellBackend(
         root_dir=workspace_root,
         virtual_mode=True,
         env={
@@ -364,7 +437,10 @@ def _custom_middleware(
     middleware: list[AgentMiddleware] = [
         RuntimePromptMiddleware(),
         RuntimeModelMiddleware(),
-        ToolVisibilityMiddleware(deferred_tool_names=deferred_tool_names),
+        ToolVisibilityMiddleware(
+            deferred_tool_names=deferred_tool_names,
+            blocked_tool_names={"task"} if not settings.enable_subagents else None,
+        ),
         OutboundPolicyMiddleware(),
         InputGuardMiddleware(mode=settings.input_guard_mode),  # P1
         # Plan & Execute mode (off | always | auto; auto-skips trivial
@@ -1058,6 +1134,7 @@ async def build_agent(
             model=model,
             dynamic_tools=dynamic_tool_map,
             execution_attempt_id=execution_attempt_id,
+            subagents_enabled=settings.enable_subagents,
             tool_mutation_lock=AsyncToolExecutionGate(),
             outbound_is_external=_outbound_is_external(settings, model_binding),
             outbound_pii_types=_outbound_pii_types(settings.pii_redact_types),
@@ -1115,6 +1192,7 @@ async def build_agent(
         runtime_context.outbound_secrets = (model_api_key,) if model_api_key else ()
         runtime_context.dynamic_tools = dynamic_tool_map
         runtime_context.memory_enabled = memory_enabled
+        runtime_context.subagents_enabled = settings.enable_subagents
         runtime_context.plugin_catalog_hash = (
             plugin_lease.action_catalog_hash if plugin_lease else None
         )
@@ -1124,6 +1202,11 @@ async def build_agent(
             for item in attachment_bindings or []
             if item.get("virtual_path")
         )
+
+    for item in dynamic_tools:
+        version = (item.tool.metadata or {}).get("shejane_tool_version")
+        if isinstance(version, str) and version:
+            runtime_context.plugin_tool_versions[item.name] = version
 
     fingerprint = _agent_definition_fingerprint(
         settings=settings,

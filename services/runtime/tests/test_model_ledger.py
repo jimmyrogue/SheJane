@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -25,6 +26,7 @@ from local_host.llm.ledger import (
     ModelContextBudgetExceeded,
     _conservative_token_count,
     _enforce_context_envelope,
+    _provider_tools,
 )
 from local_host.store.sqlite import LocalStore, ModelCallBudgetExceeded
 
@@ -136,6 +138,12 @@ def _office_read(path: str) -> str:
 @tool("workspace.read")
 def _workspace_read(path: str) -> str:
     """Read a workspace file."""
+    return path
+
+
+@tool("workspace_read")
+def _workspace_read_legacy(path: str) -> str:
+    """Read a workspace file through a legacy safe name."""
     return path
 
 
@@ -361,11 +369,49 @@ async def test_provider_boundary_aliases_and_restores_dotted_tool_names(tmp_path
             profile={"max_input_tokens": 8_192},
         ).bind_tools([_workspace_read])
 
-        chunks = [chunk async for chunk in model.astream([HumanMessage(content="read it")])]
+        provider_model, _, aliases = model._provider_model([HumanMessage(content="read it")])
+        assert isinstance(provider_model, _StrictToolStreamingModel)
+        assert provider_model.bound_tool_name == "workspace_read"
+        assert aliases["workspace_read"] == "workspace.read"
+        legacy_name = f"workspace_read_{hashlib.sha256(b'workspace.read').hexdigest()[:8]}"
+        assert aliases[legacy_name] == "workspace.read"
 
+        chunks = [chunk async for chunk in model.astream([HumanMessage(content="read it")])]
         assert chunks[0].tool_call_chunks[0]["name"] == "workspace.read"
     finally:
         await store.close()
+
+
+def test_provider_boundary_hashes_only_colliding_tool_aliases() -> None:
+    schemas, aliases, _ = _provider_tools([_workspace_read, _workspace_read_legacy])
+    names = [schema["function"]["name"] for schema in schemas]
+
+    assert names[1] == "workspace_read"
+    assert names[0].startswith("workspace_read_")
+    assert len(set(names)) == 2
+    assert aliases[names[0]] == "workspace.read"
+    assert aliases[names[1]] == "workspace_read"
+
+
+def test_provider_boundary_hashes_tool_names_longer_than_wire_limit() -> None:
+    original = f"plugin_{'x' * 70}"
+    schemas, aliases, _ = _provider_tools(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": original,
+                    "description": "Long dynamic Plugin Tool",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+    )
+    wire_name = schemas[0]["function"]["name"]
+
+    assert len(wire_name) == 64
+    assert wire_name.startswith("plugin_")
+    assert aliases[wire_name] == original
 
 
 @pytest.mark.asyncio

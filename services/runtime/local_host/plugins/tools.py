@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 import tempfile
@@ -13,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema.validators import validator_for
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from langgraph.config import get_stream_writer
 
 from ..store.sqlite import LocalStore
@@ -22,20 +23,37 @@ from .catalog import PluginActionDescriptor
 from .executor import ActionExecutor, ManagedWorkerActionExecutor, WasiActionExecutor
 from .linux_cgroup import LinuxCgroupResources
 from .macos_vm import MacOSVMResources
+from .managed_worker import WorkerProtocolError
 from .platforms import current_managed_worker_platform
 from .sandbox_runtime import (
     SandboxRuntimeError,
     configured_srt_launcher,
     managed_worker_release_gate,
 )
+from .wasi import WasiProtocolError, WasiResourceLimitError
 
 _V1_PLATFORM_CAPABILITIES = frozenset({"input.read", "artifact.write", "model.vision.invoke"})
 
 
-class PluginActionError(RuntimeError):
+class PluginActionError(ToolException):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _plugin_error_content(error: ToolException) -> str:
+    if not isinstance(error, PluginActionError):
+        return str(error)
+    return json.dumps(
+        {
+            "ok": False,
+            "error_code": error.code,
+            "message": str(error),
+            "retryable": False,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 class PluginToolAdapter:
@@ -178,12 +196,27 @@ class PluginToolAdapter:
             executor = self._executor_factory(action)
             if uses_vision and isinstance(executor, ManagedWorkerActionExecutor):
                 executor = replace(executor, vision_handler=invoke_vision)
-            result = await executor.invoke(
-                invocation,
-                input_root=input_root,
-                output_root=output_root,
-                on_progress=emit_progress,
-            )
+            try:
+                result = await executor.invoke(
+                    invocation,
+                    input_root=input_root,
+                    output_root=output_root,
+                    on_progress=emit_progress,
+                )
+            except WasiResourceLimitError as exc:
+                raise PluginActionError(exc.code, str(exc)) from exc
+            except WasiProtocolError as exc:
+                raise PluginActionError("protocol_violation", str(exc)) from exc
+            except TimeoutError as exc:
+                raise PluginActionError(
+                    "resource_exhausted",
+                    "Managed Worker execution deadline exceeded",
+                ) from exc
+            except WorkerProtocolError as exc:
+                raise PluginActionError(
+                    "protocol_violation",
+                    "Managed Worker violated the execution protocol",
+                ) from exc
             _validate_result_identity(result, invocation)
             if result["status"] == "failed":
                 error = result.get("error") if isinstance(result.get("error"), dict) else {}
@@ -282,6 +315,7 @@ def build_plugin_tool(
         name=action.tool_name,
         description=action.description,
         args_schema=_thaw_mapping(action.input_schema),
+        handle_tool_error=_plugin_error_content,
     )
 
 

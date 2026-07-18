@@ -39,7 +39,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.base import BaseStore
 from langgraph.types import Command
 
-from .agent.builder import build_agent
+from .agent.builder import build_agent, skill_catalog_fingerprint
 from .agent.context_builder import RuntimeContext
 from .config import Settings, clamp_run_budget, get_settings
 from .event_translator import translate
@@ -258,6 +258,10 @@ class ExecutionWorkspaceError(RuntimeError):
 
 class ExecutionModelBindingError(RuntimeError):
     """A frozen model binding can no longer resolve its credential reference."""
+
+
+class ExecutionSkillBindingError(RuntimeError):
+    """A Run can no longer prove that its admitted Skill catalog is unchanged."""
 
 
 class ExecutionSettlementError(RuntimeError):
@@ -757,6 +761,21 @@ class RunCoordinator:
                 )
         return "run model provider is no longer supported", None
 
+    async def _skill_binding_error(self, settings_snapshot: dict[str, Any]) -> str | None:
+        # Runs accepted before Skill fingerprints existed remain resumable.
+        if settings_snapshot.get("skills") != "on":
+            return None
+        admitted = settings_snapshot.get("_skills_fingerprint")
+        if not isinstance(admitted, str) or not admitted:
+            return None
+        try:
+            current = await asyncio.to_thread(skill_catalog_fingerprint)
+        except OSError as exc:
+            return f"Skill configuration is unavailable: {exc}"
+        if current != admitted:
+            return "Skill configuration changed after Run admission"
+        return None
+
     async def _model_binding_error_locked(
         self,
         *,
@@ -907,6 +926,20 @@ class RunCoordinator:
                 else freeze_run_settings(self.settings, public_settings)
             )
             settings_snapshot["_model_binding"] = model_binding
+            if (
+                settings_snapshot.get("skills") == "on"
+                and "_skills_fingerprint" not in settings_snapshot
+            ):
+                try:
+                    settings_snapshot["_skills_fingerprint"] = await asyncio.to_thread(
+                        skill_catalog_fingerprint
+                    )
+                except OSError as exc:
+                    if admission_error is None:
+                        admission_error = RunAdmissionError(
+                            "skill_catalog_unavailable",
+                            f"Skill configuration could not be inspected: {exc}",
+                        )
             prepared_inputs: list[dict[str, object]] = []
             if admission_error is None and attachment_bindings:
                 try:
@@ -1387,6 +1420,26 @@ class RunCoordinator:
                     )
                     return
                 self._attachments[run_id] = attachment_bindings
+                skill_binding_error = await self._skill_binding_error(frozen_settings)
+                if skill_binding_error is not None:
+                    outcome = await self._settle_execution_outcome(
+                        run_id=run_id,
+                        execution_attempt_id=execution_attempt_id,
+                        outcome=RunOutcome(
+                            "failed",
+                            "run.failed",
+                            _run_failed_payload(ExecutionSkillBindingError(skill_binding_error)),
+                        ),
+                        cleanup_report={"status": "completed"},
+                    )
+                    await self._commit_run_result(
+                        wakeup,
+                        run_id,
+                        outcome.event_type,
+                        outcome.payload,
+                        status=outcome.status,
+                    )
+                    return
                 binding_error, model_api_key = await self._model_binding_error(
                     principal_id,
                     frozen_settings,

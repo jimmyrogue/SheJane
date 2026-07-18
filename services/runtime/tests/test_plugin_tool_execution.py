@@ -780,7 +780,8 @@ def test_agent_executes_plugin_structured_tool_with_injected_runtime(
 ) -> None:
     tool_name = "plugin.dev.shejane.fixture.archive.archive.extract"
     stem = re.sub(r"[^a-zA-Z0-9_-]+", "_", tool_name).strip("_")
-    wire_tool_name = f"{stem[:55]}_{hashlib.sha256(tool_name.encode()).hexdigest()[:8]}"
+    provider_wire_tool_name = stem
+    legacy_wire_tool_name = f"{stem[:55]}_{hashlib.sha256(tool_name.encode()).hexdigest()[:8]}"
 
     class ArtifactAwareHandler(RecordingHandler):
         def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -793,7 +794,7 @@ def test_agent_executes_plugin_structured_tool_with_injected_runtime(
                             "llm.tool_call",
                             {
                                 "id": "call_plugin_e2e",
-                                "name": wire_tool_name,
+                                "name": legacy_wire_tool_name,
                                 "arguments": {"input_id": "source"},
                             },
                         ),
@@ -814,7 +815,7 @@ def test_agent_executes_plugin_structured_tool_with_injected_runtime(
                         "llm.tool_call",
                         {
                             "id": "call_plugin_e2e_retry",
-                            "name": wire_tool_name,
+                            "name": legacy_wire_tool_name,
                             "arguments": {"input_id": "source"},
                         },
                     ),
@@ -901,4 +902,4 @@ def test_agent_executes_plugin_structured_tool_with_injected_runtime(
         for tool in handler.requests[0]["tools"]
         if isinstance(tool, dict)
     ]
-    assert wire_tool_name in advertised_names
+    assert provider_wire_tool_name in advertised_names

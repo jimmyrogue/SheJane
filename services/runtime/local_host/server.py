@@ -440,7 +440,10 @@ async def _owned_run(
 ) -> dict[str, Any]:
     run = await store.get_run_for_principal(principal_id=principal_id, run_id=run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail=not_found_detail)
+        detail: str | dict[str, str] = not_found_detail
+        if not_found_detail == "run not found":
+            detail = {"code": "run_not_found", "message": not_found_detail}
+        raise HTTPException(status_code=404, detail=detail)
     return run
 
 
@@ -1715,7 +1718,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 run_id=body.run_id,
             )
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail="run not found") from exc
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "run_not_found", "message": "run not found"},
+            ) from exc
         except CommandConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if created and receipt["canceled"]:
@@ -1879,7 +1885,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 metadata=body.metadata,
             )
         except RunNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="run not found") from exc
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "run_not_found", "message": "run not found"},
+            ) from exc
         except CheckpointNotFoundError as exc:
             raise HTTPException(status_code=404, detail="checkpoint not found") from exc
         except WorkspaceAdmissionError as exc:

@@ -30,6 +30,7 @@ from local_host.tools.mcp import (
     SOURCE_ENV,
     SOURCE_SHEJANE,
     MCPToolCatalog,
+    _MCPServerSupervisor,
     _normalize_entry,
     discover_servers,
     mcp_sensitive_values,
@@ -47,6 +48,30 @@ async def test_stdio_frame_limit_rejects_before_json_parsing() -> None:
     async with bounded_stdio_client(server, max_frame_bytes=32) as (read, _write):
         result = await read.receive()
     assert isinstance(result, MCPStdioFrameTooLargeError)
+
+
+@pytest.mark.asyncio
+async def test_supervisor_times_out_a_stuck_tool_and_retires_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import local_host.tools.mcp as mcp_mod
+
+    class StuckSession:
+        async def call_tool(self, _name, _arguments, **_kwargs):
+            await asyncio.Event().wait()
+
+    supervisor = _MCPServerSupervisor("stuck", {"command": "unused"})
+    supervisor._session = StuckSession()
+    changed: list[str] = []
+    supervisor.set_tools_changed_callback(lambda item: changed.append(item.server_name))
+    monkeypatch.setattr(mcp_mod, "MCP_TOOL_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(TimeoutError):
+        await supervisor.call_tool("slow", {})
+
+    assert supervisor._session is None
+    assert supervisor._stop.is_set()
+    assert changed == ["stuck"]
 
 
 def _isolate_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -377,6 +402,76 @@ async def test_runtime_catalog_reuses_one_live_session_for_tool_calls(
     assert sessions_closed == 1
     await catalog.close()
     assert sessions_closed == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_catalog_restarts_session_after_tool_transport_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import langchain_mcp_adapters.sessions as sessions_mod
+    from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
+
+    sessions_opened = 0
+    sessions_closed = 0
+
+    class FakeSession:
+        def __init__(self, session_id: int) -> None:
+            self.session_id = session_id
+
+        async def initialize(self) -> None:
+            return None
+
+        async def list_tools(self, cursor=None):
+            return ListToolsResult(
+                tools=[
+                    Tool(
+                        name="lookup",
+                        description="Look up one value.",
+                        inputSchema={"type": "object", "properties": {}},
+                    )
+                ]
+            )
+
+        async def call_tool(self, name, arguments, **kwargs):
+            if self.session_id == 1:
+                raise EOFError("server exited during tools/call")
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"{name}:{self.session_id}")]
+            )
+
+    @asynccontextmanager
+    async def fake_create_session(_connection):
+        nonlocal sessions_opened, sessions_closed
+        sessions_opened += 1
+        try:
+            yield FakeSession(sessions_opened)
+        finally:
+            sessions_closed += 1
+
+    monkeypatch.setattr(sessions_mod, "create_session", fake_create_session)
+    monkeypatch.setenv(
+        "SHEJANE_LOCAL_MCP_SERVERS",
+        json.dumps({"docs": {"command": "node", "args": ["server.js"]}}),
+    )
+    catalog = MCPToolCatalog(tmp_path)
+
+    await catalog.get_tools()
+    async with catalog.acquire_tools() as first_session_tools:
+        with pytest.raises(EOFError, match="server exited"):
+            await first_session_tools[0].tool.ainvoke({})
+
+    for _ in range(20):
+        await asyncio.sleep(0)
+        if sessions_opened == 2:
+            break
+
+    assert sessions_opened == 2
+    async with catalog.acquire_tools() as restarted_tools:
+        result = await restarted_tools[0].tool.ainvoke({})
+    assert result[0]["text"] == "lookup:2"
+
+    await catalog.close()
+    assert sessions_closed == 2
 
 
 @pytest.mark.asyncio

@@ -180,9 +180,12 @@ async def memory_write(
 ) -> dict[str, Any]:
     """Save one durable fact only when the user explicitly asks to remember it.
 
+    Copy the authorized fact text from the user's memory directive exactly.
+    Do not rephrase it, change its point of view, or add punctuation.
+
     Args:
-        fact: The concise fact to remember. Do not infer or save facts without
-            an explicit user request.
+        fact: The exact authorized fact text from the user's memory directive.
+            Do not infer, rephrase, or save facts without an explicit user request.
     """
     normalized = " ".join(str(fact or "").split())
     if not normalized:

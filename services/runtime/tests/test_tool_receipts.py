@@ -11,6 +11,7 @@ from langchain.agents.middleware import ToolCallRequest
 from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
+from pydantic import BaseModel
 
 from local_host.agent.context_builder import AsyncToolExecutionGate, RuntimeContext
 from local_host.auth import LOCAL_OWNER_PRINCIPAL_ID
@@ -80,6 +81,18 @@ def test_tool_review_validates_json_schema_tools() -> None:
 
     assert _tool_input_error(tool, {"value": "ping"}) is None
     assert "ValidationError" in str(_tool_input_error(tool, {}))
+
+
+def test_tool_review_rejects_unknown_fields_for_pydantic_tool_schemas() -> None:
+    class ToolArgs(BaseModel):
+        value: str
+
+    tool = SimpleNamespace(tool_call_schema=ToolArgs)
+
+    assert _tool_input_error(tool, {"value": "ping"}) is None
+    assert "Additional properties are not allowed" in str(
+        _tool_input_error(tool, {"value": "ping", "unexpected": True})
+    )
 
 
 @pytest.mark.asyncio
@@ -344,6 +357,82 @@ async def test_completed_tool_result_replays_without_second_execution(tmp_path: 
         assert len(receipts) == 1
         assert receipts[0]["status"] == "completed"
         assert receipts[0]["attempt_count"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_failed_tool_result_is_failed_in_receipt_and_replay(
+    tmp_path: Path,
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    calls = 0
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        nonlocal calls
+        calls += 1
+        return ToolMessage(
+            content='{"ok":"false","error":"blocked by policy"}',
+            name=request.tool_call["name"],
+            tool_call_id=request.tool_call["id"],
+        )
+
+    try:
+        request = _request(store, str(run["id"]))
+        middleware = ToolExecutionMiddleware()
+
+        first = await middleware.awrap_tool_call(request, handler)
+        second = await middleware.awrap_tool_call(request, handler)
+
+        assert isinstance(first, ToolMessage)
+        assert isinstance(second, ToolMessage)
+        assert first.status == second.status == "error"
+        assert calls == 1
+        receipts = await store.list_tool_receipts_for_run(str(run["id"]))
+        assert len(receipts) == 1
+        assert receipts[0]["status"] == "failed"
+        assert receipts[0]["attempt_count"] == 1
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_subagent_call_is_rejected_before_execution_or_receipt(
+    tmp_path: Path,
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    calls = 0
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        nonlocal calls
+        calls += 1
+        return ToolMessage(
+            content="unexpected subagent result",
+            name=request.tool_call["name"],
+            tool_call_id=request.tool_call["id"],
+        )
+
+    try:
+        context = RuntimeContext(
+            store=store,
+            run_id=str(run["id"]),
+            execution_attempt_id="job-1:1",
+            subagents_enabled=False,
+        )
+        request = _request(
+            store,
+            str(run["id"]),
+            tool_name="task",
+            arguments={"description": "must not run"},
+            context=context,
+        )
+
+        result = await ToolExecutionMiddleware().awrap_tool_call(request, handler)
+
+        assert result.status == "error"
+        assert result.content == "Subagent dispatch is disabled for this Run."
+        assert calls == 0
+        assert await store.list_tool_receipts_for_run(str(run["id"])) == []
     finally:
         await store.close()
 
@@ -681,7 +770,10 @@ async def test_tool_definition_version_is_part_of_operation_identity(tmp_path: P
         await middleware.awrap_tool_call(
             _request(store, str(run["id"]), context=first_context), handler
         )
-        with pytest.raises(ToolReceiptConflictError):
+        with pytest.raises(
+            ToolReceiptConflictError,
+            match="reused with a different operation identity",
+        ):
             await middleware.awrap_tool_call(
                 _request(store, str(run["id"]), context=second_context), handler
             )

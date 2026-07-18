@@ -129,6 +129,47 @@ def test_resolve_skills_dirs_env_override_supports_comma(tmp_path: Path, monkeyp
     assert dirs == [a, b]
 
 
+def test_skill_catalog_fingerprint_covers_skill_support_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from local_host.agent.builder import skill_catalog_fingerprint
+
+    root = tmp_path / "skills"
+    skill = root / "review"
+    references = skill / "references"
+    references.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# Review\n", encoding="utf-8")
+    support = references / "policy.md"
+    support.write_text("version one\n", encoding="utf-8")
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(root))
+
+    before = skill_catalog_fingerprint()
+    support.write_text("version two\n", encoding="utf-8")
+
+    assert skill_catalog_fingerprint() != before
+
+
+def test_skill_catalog_fingerprint_covers_skill_discovery_candidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from local_host.agent.builder import skill_catalog_fingerprint
+
+    root = tmp_path / "skills"
+    root.mkdir()
+    decoy = root / "downloads"
+    decoy.mkdir()
+    file = decoy / "partial.tmp"
+    file.write_text("one", encoding="utf-8")
+    monkeypatch.setenv("SHEJANE_LOCAL_SKILLS_PATH", str(root))
+
+    before = skill_catalog_fingerprint()
+    file.write_text("two", encoding="utf-8")
+
+    assert skill_catalog_fingerprint() != before
+
+
 def test_skill_loader_accepts_allowed_tools_yaml_list(tmp_path: Path) -> None:
     from deepagents.backends import FilesystemBackend
     from deepagents.middleware.skills import _alist_skills

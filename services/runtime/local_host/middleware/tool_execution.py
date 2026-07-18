@@ -20,6 +20,7 @@ from ..store.sqlite import (
     ToolOutcomeUnknownError,
     ToolReceiptStateError,
 )
+from ..tool_outcomes import tool_result_envelope, tool_result_envelope_failed
 from ..tools.runtime import RuntimeToolExecution, bind_runtime_tool_execution
 
 READ_ONLY_TOOLS = {
@@ -269,6 +270,13 @@ class ToolExecutionMiddleware(AgentMiddleware):
         tool_name = str(call.get("name") or "")
         if not tool_call_id or not tool_name:
             raise ToolReceiptStateError("tool call is missing a stable id or name")
+        if tool_name == "task" and getattr(context, "subagents_enabled", True) is False:
+            return ToolMessage(
+                content="Subagent dispatch is disabled for this Run.",
+                name=tool_name,
+                tool_call_id=tool_call_id,
+                status="error",
+            )
         arguments = call.get("args") or {}
         tool_version = await tool_version_for_invocation(context, tool_name, arguments)
         operation_id, arguments_hash, arguments_json = tool_operation_identity(
@@ -464,6 +472,12 @@ class ToolExecutionMiddleware(AgentMiddleware):
             raise
 
         try:
+            if (
+                isinstance(result, ToolMessage)
+                and str(result.status or "") != "error"
+                and tool_result_envelope_failed(tool_result_envelope(result.content))
+            ):
+                result = result.model_copy(update={"status": "error"})
             result = _provider_safe_tool_result(request, result)
             result = await _bound_tool_result(
                 result=result,

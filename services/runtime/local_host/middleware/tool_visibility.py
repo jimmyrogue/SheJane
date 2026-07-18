@@ -160,12 +160,22 @@ class ToolVisibilityMiddleware(AgentMiddleware):
     goal plus the complete retained message/tool-call history, not only one turn.
     """
 
-    def __init__(self, *, deferred_tool_names: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        deferred_tool_names: set[str] | None = None,
+        blocked_tool_names: set[str] | None = None,
+    ) -> None:
         super().__init__()
         self.deferred_tool_names = deferred_tool_names or set()
+        self.blocked_tool_names = blocked_tool_names or set()
 
     @staticmethod
-    def _apply(request: Any, deferred_tool_names: set[str] | None = None) -> Any:
+    def _apply(
+        request: Any,
+        deferred_tool_names: set[str] | None = None,
+        blocked_tool_names: set[str] | None = None,
+    ) -> Any:
         context = getattr(getattr(request, "runtime", None), "context", None)
         task_goal = getattr(context, "task_goal", None)
         visible = visible_tools_for_messages(
@@ -185,6 +195,9 @@ class ToolVisibilityMiddleware(AgentMiddleware):
                 for item in visible
                 if _tool_name(item) not in deferred or _tool_name(item) in revealed
             ]
+        blocked = blocked_tool_names or set()
+        if blocked:
+            visible = [item for item in visible if _tool_name(item) not in blocked]
         delivered_tool = delivered_plugin_tool_name(request.messages)
         if delivered_tool:
             visible = [
@@ -198,11 +211,23 @@ class ToolVisibilityMiddleware(AgentMiddleware):
         return request.override(tools=visible)
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        return handler(self._apply(request, self.deferred_tool_names))
+        return handler(
+            self._apply(
+                request,
+                self.deferred_tool_names,
+                self.blocked_tool_names,
+            )
+        )
 
     async def awrap_model_call(
         self,
         request: Any,
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
-        return await handler(self._apply(request, self.deferred_tool_names))
+        return await handler(
+            self._apply(
+                request,
+                self.deferred_tool_names,
+                self.blocked_tool_names,
+            )
+        )

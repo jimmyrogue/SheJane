@@ -9,7 +9,7 @@ import threading
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from wasmtime import Config, Engine, Store
+from wasmtime import Config, Engine, Store, WasmtimeError
 from wasmtime import component as wasm_component
 
 
@@ -18,7 +18,7 @@ class WasiProtocolError(RuntimeError):
 
 
 class WasiResourceLimitError(WasiProtocolError):
-    """The byte-map Component ABI was asked to buffer too much data."""
+    """The component exhausted a deterministic Runtime resource limit."""
 
     code = "resource_exhausted"
 
@@ -60,7 +60,10 @@ def invoke_wasi_component(
     config.epoch_interruption = True
     config.cranelift_nan_canonicalization = True
     engine = Engine(config)
-    component = wasm_component.Component(engine, component_bytes)
+    try:
+        component = wasm_component.Component(engine, component_bytes)
+    except WasmtimeError as exc:
+        raise WasiProtocolError("WASI component is invalid") from exc
     store = Store(engine)
     store.set_epoch_deadline(1)
     store.set_limits(
@@ -77,7 +80,10 @@ def invoke_wasi_component(
     with linker.root() as root:
         with root.add_instance("wasi:random/insecure-seed@0.2.6") as random:
             random.add_func("insecure-seed", lambda _store: (0, 0))
-    instance = linker.instantiate(store, component)
+    try:
+        instance = linker.instantiate(store, component)
+    except WasmtimeError as exc:
+        raise WasiProtocolError("WASI component imports are invalid") from exc
     invoke = instance.get_func(store, "invoke")
     if invoke is None:
         raise WasiProtocolError("component does not export invoke")
@@ -87,12 +93,25 @@ def invoke_wasi_component(
     )
     timeout.start()
     try:
-        raw_result = invoke(
-            store,
-            json.dumps(invocation, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-            input_bytes,
-        )
-        invoke.post_return(store)
+        try:
+            raw_result = invoke(
+                store,
+                json.dumps(
+                    invocation,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                input_bytes,
+            )
+            invoke.post_return(store)
+        except WasmtimeError as exc:
+            detail = str(exc).lower()
+            if "all fuel consumed" in detail:
+                raise WasiResourceLimitError("WASI execution fuel limit exceeded") from exc
+            if "interrupt" in detail:
+                raise WasiResourceLimitError("WASI execution deadline exceeded") from exc
+            raise WasiProtocolError("WASI component trapped") from exc
     finally:
         timeout.cancel()
     if not isinstance(raw_result, str):

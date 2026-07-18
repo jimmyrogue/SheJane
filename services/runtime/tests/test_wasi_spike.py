@@ -100,6 +100,32 @@ async def test_wasi_rejects_oversized_input_before_buffering(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_wasi_fuel_exhaustion_is_a_stable_resource_limit_error(tmp_path: Path) -> None:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("large.bin", b"0" * (7 * 1024 * 1024))
+    archive_bytes = archive_buffer.getvalue()
+    input_root = tmp_path / "input"
+    output_root = tmp_path / "output"
+    source = input_root / "source" / "archive.zip"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(archive_bytes)
+    output_root.mkdir()
+    invocation = _invocation(archive_bytes)
+    invocation["limits"]["timeout_ms"] = 100
+
+    with pytest.raises(WasiResourceLimitError, match="fuel limit exceeded") as captured:
+        await WasiActionExecutor(COMPONENT).invoke(
+            invocation,
+            input_root=input_root,
+            output_root=output_root,
+        )
+
+    assert captured.value.code == "resource_exhausted"
+    assert list(output_root.iterdir()) == []
+
+
+@pytest.mark.asyncio
 async def test_wasi_component_rejects_archive_path_traversal(tmp_path: Path) -> None:
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w") as archive:
