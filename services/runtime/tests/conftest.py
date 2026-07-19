@@ -25,6 +25,10 @@ import pytest
 @pytest.fixture(autouse=True)
 def _install_test_streaming_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep streaming integration fixtures hermetic without a live provider."""
+    # Production defaults complex runs to incremental execution. Unrelated
+    # tests opt out so their scripted providers do not need plan transitions;
+    # plan-first tests explicitly enable auto/always at their own boundary.
+    monkeypatch.setenv("SHEJANE_PLAN_FIRST", "off")
     from local_host.agent import builder
     from local_host.llm.fake import FakeBackendChatModel
     from tests.streaming_model import TestStreamingChatModel

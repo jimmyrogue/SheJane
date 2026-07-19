@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
 from langchain_core.messages import HumanMessage
 
-from local_host.middleware.plan_first import (
-    AUTO_COMPLEX_CHARS,
-    PLAN_FIRST_SYSTEM_PROMPT,
-    PlanFirstMiddleware,
-    _looks_complex,
-)
+from local_host.middleware.plan_first import AUTO_COMPLEX_CHARS, PlanFirstMiddleware, _looks_complex
 
 # --- mode parsing ---
 
 
-def test_mode_off_by_default(monkeypatch) -> None:
+def test_mode_auto_by_default(monkeypatch) -> None:
     monkeypatch.delenv("SHEJANE_PLAN_FIRST", raising=False)
     mw = PlanFirstMiddleware()
-    assert mw.mode == "off"
+    assert mw.mode == "auto"
 
 
 def test_mode_always_synonyms(monkeypatch) -> None:
@@ -59,6 +55,60 @@ def test_looks_complex_no_user_message() -> None:
     assert _looks_complex([]) is False
 
 
+def test_looks_complex_uses_current_run_input_in_a_multi_turn_conversation() -> None:
+    messages = [
+        HumanMessage(content="hi"),
+        HumanMessage(
+            content="请实现一个完整的文件导入流程",
+            additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-2"},
+        ),
+    ]
+    assert _looks_complex(messages) is True
+
+
+def test_old_complex_turn_does_not_force_a_new_trivial_follow_up() -> None:
+    messages = [
+        HumanMessage(content="please research and implement a complete solution"),
+        HumanMessage(
+            content="谢谢",
+            additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-2"},
+        ),
+    ]
+    assert _looks_complex(messages) is False
+
+
+def test_explicit_single_tool_operation_is_not_forced_into_a_multi_task_plan() -> None:
+    message = HumanMessage(
+        content=(
+            "Use the office.read Tool. Call exactly the office.read tool once with exactly "
+            'these JSON arguments: {"path":"/report.docx"}. Do not change any argument.'
+        )
+    )
+    assert _looks_complex([message]) is False
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        (
+            "Call write_todos with one todo whose content is E2E_TODO_ACTIVE and status "
+            "is in_progress. Include E2E_TODO_ACTIVE in the final answer."
+        ),
+        (
+            'Call user.ask exactly once with question "Choose an E2E option" and options '
+            '["Option A", "Option B"]. After the answer, include the selected option in '
+            "the final response."
+        ),
+        (
+            'You must call the task tool with subagent_type "writer". Ask the subagent to '
+            "return exactly E2E_SUBAGENT_RESULT, then include that exact token in your final answer."
+        ),
+    ],
+)
+def test_explicit_one_tool_contract_is_not_misclassified_as_complex(content: str) -> None:
+    assert _looks_complex([HumanMessage(content=content)]) is False
+
+
 # --- before_agent behavior ---
 
 
@@ -68,16 +118,18 @@ def test_off_mode_does_not_inject() -> None:
     assert mw.before_agent(state, runtime=None) is None
 
 
-def test_always_mode_prepends_plan_first_system_message() -> None:
+def test_always_mode_marks_runtime_state_without_injecting_prompt_text() -> None:
     mw = PlanFirstMiddleware(mode="always")
     state = {"messages": [HumanMessage(content="hi")]}
     result = mw.before_agent(state, runtime=None)
     assert result is not None
-    first = result["messages"][0]
-    assert getattr(first, "type", None) == "system"
-    assert "write_todos" in first.content
-    # Original message preserved after
-    assert result["messages"][1].content == "hi"
+    assert "messages" not in result
+    assert result["incremental_execution"] == {
+        "required": True,
+        "mode": "always",
+        "run_id": "",
+        "repairs": {},
+    }
 
 
 def test_auto_mode_skips_trivial_task() -> None:
@@ -93,12 +145,14 @@ def test_auto_mode_triggers_on_complex_task() -> None:
     }
     result = mw.before_agent(state, runtime=None)
     assert result is not None
-    assert getattr(result["messages"][0], "type", None) == "system"
+    assert result["incremental_execution"]["required"] is True
 
 
-def test_injection_content_matches_protocol_template() -> None:
-    """Guard against accidental rewording — the prompt content is the
-    contract with the LLM."""
-    mw = PlanFirstMiddleware(mode="always")
-    result = mw.before_agent({"messages": [HumanMessage(content="x")]}, runtime=None)
-    assert result["messages"][0].content == PLAN_FIRST_SYSTEM_PROMPT
+def test_chinese_complex_task_uses_incremental_execution() -> None:
+    mw = PlanFirstMiddleware(mode="auto")
+    result = mw.before_agent(
+        {"messages": [HumanMessage(content="请创建一个对对碰游戏并保存到桌面")]},
+        runtime=None,
+    )
+    assert result is not None
+    assert result["incremental_execution"]["required"] is True

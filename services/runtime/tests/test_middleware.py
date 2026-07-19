@@ -7,6 +7,7 @@ that integration is exercised in test_agent_builder.py.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -187,6 +188,339 @@ def test_completion_router_allows_verified_final_and_leaves_tools_to_builtin_rou
     result = mw.after_model(passing_state, runtime=None)
     assert result["completion_route"]["decision"] == "final"
     assert result["completion_route"]["verification_ok"] is True
+
+
+async def test_completion_router_repairs_unnecessary_user_ask_before_it_can_pause() -> None:
+    from local_host.middleware.completion_router import (
+        CompletionRouterMiddleware,
+        completion_repair_instruction,
+    )
+
+    class Reviewer:
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            return AIMessage(
+                content=(
+                    '{"decisions":[{"tool_call_id":"ask-save-content",'
+                    '"decision":"repair","reason":"The content and filename are already in history."}]}'
+                )
+            )
+
+    state = {
+        "messages": [
+            HumanMessage(content="帮我写一个对对碰游戏"),
+            AIMessage(content="<!doctype html><title>对对碰</title>"),
+            HumanMessage(content="在桌面新建一个文本文件，命名为 对对碰.html"),
+            HumanMessage(
+                content="帮我保存到桌面",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-save"},
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "ask-save-content",
+                        "name": "user.ask",
+                        "args": {"question": "你想保存什么内容到桌面？", "options": []},
+                    }
+                ],
+            ),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            clarification_model=Reviewer(),
+            task_goal="帮我保存到桌面",
+            workspace_root=None,
+            attachments=(),
+        )
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["jump_to"] == "model"
+    assert result["completion_route"]["reason"] == "unnecessary_clarification"
+    assert result["clarification_review_state"]["decisions"] == {"ask-save-content": "repair"}
+    assert result["messages"][0].name == "user.ask"
+    assert result["messages"][0].tool_call_id == "ask-save-content"
+    assert "Use the existing conversation evidence" in completion_repair_instruction(result)
+
+
+async def test_completion_router_allows_needed_question_and_caches_the_review() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    class Reviewer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            self.calls += 1
+            return AIMessage(
+                content=(
+                    '{"decisions":[{"tool_call_id":"ask-city","decision":"allow",'
+                    '"reason":"No location is present in the task or history."}]}'
+                )
+            )
+
+    reviewer = Reviewer()
+    state = {
+        "messages": [
+            HumanMessage(
+                content="今天天气怎么样？",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-weather"},
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "ask-city",
+                        "name": "user.ask",
+                        "args": {"question": "你所在的城市是？", "options": []},
+                    }
+                ],
+            ),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            clarification_model=reviewer,
+            task_goal="今天天气怎么样？",
+            workspace_root=None,
+            attachments=(),
+        )
+    )
+
+    first = await CompletionRouterMiddleware().aafter_model(state, runtime)
+    replayed = await CompletionRouterMiddleware().aafter_model({**state, **first}, runtime)
+
+    assert "jump_to" not in first
+    assert first["clarification_review_state"]["decisions"] == {"ask-city": "allow"}
+    assert replayed is None
+    assert reviewer.calls == 1
+
+
+async def test_completion_router_repairs_a_tool_backed_final_answer_once() -> None:
+    from local_host.middleware.completion_router import (
+        CompletionRouterMiddleware,
+        completion_repair_instruction,
+    )
+
+    class Reviewer:
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            return AIMessage(
+                content=(
+                    '{"decision":"repair","reason":"The final answer omitted E2E_SUBAGENT_RESULT."}'
+                )
+            )
+
+    state = {
+        "messages": [
+            HumanMessage(
+                content="Delegate and include E2E_SUBAGENT_RESULT.",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-final"},
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[{"id": "task-1", "name": "task", "args": {}}],
+            ),
+            ToolMessage(content="E2E_SUBAGENT_RESULT", name="task", tool_call_id="task-1"),
+            AIMessage(content="完成。"),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            completion_model=Reviewer(),
+            task_goal="Delegate and include E2E_SUBAGENT_RESULT.",
+        )
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["jump_to"] == "model"
+    assert result["completion_route"]["reason"] == "completion_review_failed"
+    assert result["completion_review_state"]["attempts"] == 1
+    assert "Re-read the current task goal" in completion_repair_instruction(result)
+
+
+async def test_completion_router_blocks_after_bounded_completion_repair() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    class Reviewer:
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            return AIMessage(
+                content='{"decision":"repair","reason":"The required result is still absent."}'
+            )
+
+    state = {
+        "completion_review_state": {"run_id": "run-final", "attempts": 1},
+        "messages": [
+            HumanMessage(
+                content="Include RESULT-1.",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-final"},
+            ),
+            ToolMessage(content="RESULT-1", name="task", tool_call_id="task-1"),
+            AIMessage(content="Done."),
+        ],
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(completion_model=Reviewer(), task_goal="Include RESULT-1.")
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["jump_to"] == "end"
+    assert result["completion_route"]["decision"] == "blocked"
+    assert result["completion_route"]["reason"] == "completion_review_failed"
+
+
+async def test_completion_router_does_not_review_a_plain_chat_answer() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    class Reviewer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            self.calls += 1
+            return AIMessage(content='{"decision":"repair","reason":"not used"}')
+
+    reviewer = Reviewer()
+    state = {
+        "messages": [
+            HumanMessage(
+                content="Say hello.",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-chat"},
+            ),
+            AIMessage(content="Hello."),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(completion_model=reviewer, task_goal="Say hello.")
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["completion_route"]["decision"] == "final"
+    assert reviewer.calls == 0
+
+
+async def test_completion_router_requires_a_small_plan_before_complex_tool_work() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "incremental_execution": {
+            "required": True,
+            "mode": "auto",
+            "run_id": "run-plan",
+            "repairs": {},
+        },
+        "messages": [
+            HumanMessage(
+                content="创建一个游戏并保存",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-plan"},
+            ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "write-too-early",
+                        "name": "write_file",
+                        "args": {"file_path": "game.html", "content": "..."},
+                    }
+                ],
+            ),
+        ],
+    }
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime=None)
+
+    assert result["jump_to"] == "model"
+    assert result["completion_route"]["reason"] == "incremental_plan_required"
+    assert result["messages"][0].tool_call_id == "write-too-early"
+    assert result["incremental_execution"]["repairs"] == {"incremental_plan_required": 1}
+
+
+async def test_completion_router_accepts_one_active_small_task_and_rejects_parallel_work() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    base = {
+        "incremental_execution": {
+            "required": True,
+            "mode": "auto",
+            "run_id": "run-plan",
+            "repairs": {},
+        },
+        "messages": [HumanMessage(content="implement a feature")],
+    }
+    valid_plan = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "plan-valid",
+                "name": "write_todos",
+                "args": {
+                    "todos": [
+                        {"content": "Add failing test", "status": "in_progress"},
+                        {"content": "Implement and verify", "status": "pending"},
+                    ]
+                },
+            }
+        ],
+    )
+    parallel_plan = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "plan-parallel",
+                "name": "write_todos",
+                "args": {
+                    "todos": [
+                        {"content": "Add test", "status": "in_progress"},
+                        {"content": "Implement", "status": "in_progress"},
+                    ]
+                },
+            }
+        ],
+    )
+
+    accepted = await CompletionRouterMiddleware().aafter_model(
+        {**base, "messages": [*base["messages"], valid_plan]}, runtime=None
+    )
+    rejected = await CompletionRouterMiddleware().aafter_model(
+        {**base, "messages": [*base["messages"], parallel_plan]}, runtime=None
+    )
+
+    assert accepted is None
+    assert rejected["completion_route"]["reason"] == "incremental_plan_invalid"
+    assert rejected["jump_to"] == "model"
+
+
+def test_completion_router_cannot_finalize_with_unfinished_small_tasks() -> None:
+    from local_host.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "incremental_execution": {
+            "required": True,
+            "mode": "auto",
+            "run_id": "run-plan",
+            "repairs": {},
+        },
+        "todos": [
+            {"content": "Add test", "status": "completed"},
+            {"content": "Implement", "status": "in_progress"},
+        ],
+        "messages": [
+            HumanMessage(
+                content="implement feature",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-plan"},
+            ),
+            AIMessage(content="Done."),
+        ],
+    }
+
+    result = CompletionRouterMiddleware().after_model(state, runtime=None)
+
+    assert result["jump_to"] == "model"
+    assert result["completion_route"]["reason"] == "incremental_plan_incomplete"
 
 
 def test_completion_router_stops_repeated_deterministic_tool_failure() -> None:

@@ -45,6 +45,88 @@ class FakeBackendChatModel(BaseChatModel):
 
     def _response(self, messages: list[BaseMessage]) -> AIMessage:
         prompt = "\n".join(str(message.content) for message in messages)
+        if "P9 final-answer reviewer" in prompt:
+            payload = _last_json_object(messages)
+            task_goal = str(payload.get("task_goal") or "")
+            candidate = str(payload.get("final_candidate") or "")
+            needs_repair = (
+                "[[e2e:completion-repair]]" in task_goal
+                and "E2E_COMPLETION_REPAIRED" not in candidate
+            )
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "decision": "repair" if needs_repair else "allow",
+                        "reason": (
+                            "The deterministic candidate omitted the required exact token."
+                            if needs_repair
+                            else "The deterministic E2E candidate preserves the requested result."
+                        ),
+                    }
+                )
+            )
+        if "P9 clarification necessity reviewer" in prompt:
+            payload = _last_json_object(messages)
+            proposed = payload.get("proposed_questions") if isinstance(payload, dict) else []
+            task_goal = str(payload.get("task_goal") or "") if isinstance(payload, dict) else ""
+            decision = "repair" if "[[e2e:unnecessary-ask]]" in task_goal else "allow"
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "tool_call_id": str(item.get("tool_call_id") or ""),
+                                "decision": decision,
+                                "reason": (
+                                    "The requested content is already present in the conversation."
+                                    if decision == "repair"
+                                    else "The requested input is not present in the conversation."
+                                ),
+                            }
+                            for item in proposed or []
+                            if isinstance(item, dict)
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        if "[[e2e:unnecessary-ask]]" in prompt:
+            result = _last_tool_result(messages, "user.ask")
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_unnecessary_question",
+                            "name": "user.ask",
+                            "args": {
+                                "question": "What content should I use?",
+                                "options": [],
+                            },
+                        }
+                    ],
+                )
+            return AIMessage(content="E2E unnecessary clarification repaired.")
+        if "[[e2e:completion-repair]]" in prompt:
+            result = _last_tool_result(
+                messages,
+                "time.now",
+                tool_call_id="call_e2e_completion_review_time",
+            )
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_completion_review_time",
+                            "name": "time.now",
+                            "args": {},
+                        }
+                    ],
+                )
+            if "<runtime-repair>" in prompt:
+                return AIMessage(content="E2E_COMPLETION_REPAIRED")
+            return AIMessage(content="Done.")
         if "[[e2e:skill]]" in prompt:
             skill_token = _e2e_skill_token(prompt)
             if skill_token is not None:
@@ -316,6 +398,41 @@ class FakeBackendChatModel(BaseChatModel):
                     tool_calls=[{"id": "call_e2e_generic_tool", "name": name, "args": args}],
                 )
             return AIMessage(content=f"E2E tool result ({name}): {result.content}")
+        if "[[e2e:question-write-file]]" in prompt:
+            answered = (
+                "Choose a recovery option → Option B" in prompt
+                or _last_tool_result(messages, "user.ask") is not None
+            )
+            if not answered:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_recovery_question",
+                            "name": "user.ask",
+                            "args": {
+                                "question": "Choose a recovery option",
+                                "options": ["Option A", "Option B"],
+                            },
+                        }
+                    ],
+                )
+            result = _last_tool_result(messages, "write_file")
+            if result is None:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_recovery_write_file",
+                            "name": "write_file",
+                            "args": {
+                                "file_path": "approved.txt",
+                                "content": "approved by E2E",
+                            },
+                        }
+                    ],
+                )
+            return AIMessage(content="E2E approved file written.")
         if "[[e2e:write-file]]" in prompt:
             result = _last_tool_result(messages, "write_file")
             if result is None:
@@ -496,6 +613,20 @@ def _last_tool_result(
         ),
         None,
     )
+
+
+def _last_json_object(messages: list[BaseMessage]) -> dict[str, Any]:
+    for message in reversed(messages):
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            continue
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
 
 
 def _attachment_path(prompt: str) -> str | None:

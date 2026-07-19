@@ -1623,6 +1623,37 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
     )
     app = create_app(settings)
     with TestClient(app) as c:
+
+        async def seed_answered_choice() -> str:
+            source = await c.app.state.store.create_run(
+                principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+                goal="build a snake game",
+                workspace_path=None,
+            )
+            question = await c.app.state.store.create_question(
+                run_id=source["id"],
+                tool_call_id="ask-game-type",
+                questions=[
+                    {
+                        "question": "贪吃蛇使用哪种游戏类型？",
+                        "header": "游戏类型",
+                        "options": [{"label": "经典数字/符号"}, {"label": "图片素材"}],
+                    }
+                ],
+            )
+            await c.app.state.store.update_run_status(source["id"], "waiting_input")
+            await c.app.state.store.answer_question(
+                question["id"],
+                answers={"贪吃蛇使用哪种游戏类型？": ["经典数字/符号"]},
+                event_payload={
+                    "request_id": question["id"],
+                    "answers": {"贪吃蛇使用哪种游戏类型？": ["经典数字/符号"]},
+                },
+            )
+            await c.app.state.store.update_run_status(source["id"], "failed")
+            return str(source["id"])
+
+        source_run_id = c.portal.call(seed_answered_choice)
         r = c.post(
             "/local/v1/runs",
             headers={"Authorization": "Bearer tok"},
@@ -1630,7 +1661,7 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
                 "retry task",
                 metadata={
                     "intent": "retry",
-                    "source_run_id": "run_failed",
+                    "source_run_id": source_run_id,
                     "source_message_id": "msg_failed",
                     "attempt": 2,
                     "failure_category": "auth",
@@ -1658,9 +1689,11 @@ def test_retry_run_injects_workflow_context(monkeypatch) -> None:
     joined_system = "\n".join(system_blocks)
     assert "恢复重试" in joined_system
     assert "第 2 次" in joined_system
-    assert "run_failed" in joined_system
+    assert source_run_id in joined_system
     assert "msg_failed" in joined_system
     assert "auth / user_action" in joined_system
+    assert "贪吃蛇使用哪种游戏类型？" in joined_system
+    assert "经典数字/符号" in joined_system
 
 
 def test_repair_run_over_attempt_limit_fails_before_model_call(monkeypatch) -> None:

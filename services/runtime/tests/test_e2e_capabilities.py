@@ -54,13 +54,38 @@ class RecordingHandler:
     def __init__(self, scripts: list[list[tuple[str, dict[str, Any]]]]):
         self.scripts = list(scripts)
         self.requests: list[dict[str, Any]] = []
+        self.completion_review_requests = 0
+
+    @property
+    def agent_requests(self) -> int:
+        return len(self.requests) - self.completion_review_requests
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body_bytes = request.read()
         try:
-            self.requests.append(json.loads(body_bytes))
+            body = json.loads(body_bytes)
+            self.requests.append(body)
         except json.JSONDecodeError:
-            self.requests.append({"raw": body_bytes.decode("utf-8", errors="replace")})
+            body = {"raw": body_bytes.decode("utf-8", errors="replace")}
+            self.requests.append(body)
+        if "P9 final-answer reviewer" in str(body):
+            self.completion_review_requests += 1
+            return _sse(
+                [
+                    (
+                        "llm.delta",
+                        {
+                            "content_delta": json.dumps(
+                                {
+                                    "decision": "allow",
+                                    "reason": "The scripted final answer satisfies the test goal.",
+                                }
+                            )
+                        },
+                    ),
+                    ("llm.done", {"request_id": "completion-review", "finish_reason": "stop"}),
+                ]
+            )
         if self.scripts:
             return _sse(self.scripts.pop(0))
         return _sse([("llm.done", {"request_id": "x", "finish_reason": "stop"})])
@@ -284,7 +309,7 @@ def test_workspace_write_without_workspace_fails_before_retry_loop(monkeypatch) 
     assert failed["code"] == "workspace_required"
     assert failed["category"] == "workspace"
     assert failed["recovery_action"] == "workspace"
-    assert len(handler.requests) == 1
+    assert handler.agent_requests == 1
 
 
 def test_existing_file_conflict_is_structured_so_model_can_choose_a_new_name(
@@ -356,7 +381,7 @@ def test_existing_file_conflict_is_structured_so_model_can_choose_a_new_name(
     assert (tmp_path / "snake.html").read_text(encoding="utf-8") == "existing"
     assert (tmp_path / "snake-2.html").read_text(encoding="utf-8") == "also existing"
     assert (tmp_path / "snake-3.html").read_text(encoding="utf-8") == "replacement"
-    assert len(handler.requests) == 3
+    assert handler.agent_requests == 3
 
 
 def test_read_file_without_pagination_reads_a_normal_text_file_in_one_call(
@@ -397,7 +422,7 @@ def test_read_file_without_pagination_reads_a_normal_text_file_in_one_call(
 
     result = next(payload for name, payload in events if name == "tool.completed")
     assert "150\tline 150" in result["content"]
-    assert len(handler.requests) == 2
+    assert handler.agent_requests == 2
 
 
 def test_repeated_same_path_conflict_asks_the_user_before_more_writes(
@@ -445,7 +470,7 @@ def test_repeated_same_path_conflict_asks_the_user_before_more_writes(
     assert not any(name == "run.failed" for name, _ in events)
     assert sum(name == "tool.failed" for name, _ in events) == 1
     assert (tmp_path / "snake.html").read_text(encoding="utf-8") == "existing"
-    assert len(handler.requests) == 2
+    assert handler.agent_requests == 2
 
 
 def test_interleaved_file_conflicts_still_ask_before_retrying_the_same_path(
@@ -486,7 +511,7 @@ def test_interleaved_file_conflicts_still_ask_before_retrying_the_same_path(
 
     assert any(name == "question.asked" for name, _ in events)
     assert sum(name == "tool.failed" for name, _ in events) == 2
-    assert len(handler.requests) == 3
+    assert handler.agent_requests == 3
 
 
 @pytest.mark.parametrize(
@@ -1589,26 +1614,87 @@ def test_capability_9_memory_search_tool_in_agent(monkeypatch, tmp_path) -> None
     assert "memory.search" in names
 
 
-def test_capability_10_plan_first_injects_when_enabled(monkeypatch) -> None:
-    """With SHEJANE_PLAN_FIRST=always, the outgoing system prompt must
-    include the plan-first protocol instruction."""
+def test_capability_10_plan_first_is_a_runtime_gate_not_prompt_text(monkeypatch) -> None:
+    """Complex work is repaired into sequential todo transitions at P9."""
     monkeypatch.setenv("SHEJANE_PLAN_FIRST", "always")
     handler = RecordingHandler(
         scripts=[
             [
-                ("llm.delta", {"content_delta": "ok"}),
-                ("llm.done", {"request_id": "r1", "finish_reason": "stop"}),
-            ]
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "too-early",
+                        "name": "write_file",
+                        "arguments": {"file_path": "too-early.txt", "content": "no"},
+                    },
+                ),
+                ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
+            ],
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "plan-start",
+                        "name": "write_todos",
+                        "arguments": {
+                            "todos": [
+                                {"content": "First slice", "status": "in_progress"},
+                                {"content": "Second slice", "status": "pending"},
+                            ]
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "r2", "finish_reason": "tool_calls"}),
+            ],
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "plan-advance",
+                        "name": "write_todos",
+                        "arguments": {
+                            "todos": [
+                                {"content": "First slice", "status": "completed"},
+                                {"content": "Second slice", "status": "in_progress"},
+                            ]
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "r3", "finish_reason": "tool_calls"}),
+            ],
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "plan-finish",
+                        "name": "write_todos",
+                        "arguments": {
+                            "todos": [
+                                {"content": "First slice", "status": "completed"},
+                                {"content": "Second slice", "status": "completed"},
+                            ]
+                        },
+                    },
+                ),
+                ("llm.done", {"request_id": "r4", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "incremental flow complete"}),
+                ("llm.done", {"request_id": "r5", "finish_reason": "stop"}),
+            ],
         ]
     )
     with _make_client(monkeypatch, handler) as client:
-        _post_run_and_stream(client, "do the thing")
+        events = _post_run_and_stream(client, "do the thing")
 
-    assert handler.requests, "no LLM request was made"
-    outgoing = handler.requests[0]
-    messages = outgoing.get("messages", [])
-    system_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
-    assert "Plan-First protocol" in system_text or "write_todos" in system_text
+    first_system = " ".join(
+        str(message.get("content") or "")
+        for message in handler.requests[0].get("messages", [])
+        if message.get("role") == "system"
+    )
+    assert "Plan-First protocol" not in first_system
+    assert "Call write_todos before any work tool" in str(handler.requests[1])
+    assert any(name == "run.completed" for name, _payload in events)
 
 
 def test_capability_8_happy_path_run_completes(monkeypatch) -> None:

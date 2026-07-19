@@ -104,8 +104,10 @@ from .subagents import build_subagents
 log = logging.getLogger("local_host.agent.builder")
 
 _AGENT_DEFINITION_CACHE_MAX = 16
-_AGENT_STATE_SCHEMA_VERSION = 1
+_AGENT_STATE_SCHEMA_VERSION = 2
 _APPROVAL_REVIEW_MAX_CALLS = 8
+_CLARIFICATION_REVIEW_MAX_CALLS = 4
+_COMPLETION_REVIEW_MAX_CALLS = 4
 _VISION_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 _VISION_MAX_IMAGE_PIXELS = 40_000_000
 _VISION_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -1072,6 +1074,33 @@ async def build_agent(
         if execution_attempt_id is not None
         else provider_model
     )
+    approval_model = (
+        model.model_copy(
+            update={"call_purpose": "approval_review", "max_calls": _APPROVAL_REVIEW_MAX_CALLS}
+        )
+        if isinstance(model, LedgerChatModel)
+        else model
+    )
+    clarification_model = (
+        model.model_copy(
+            update={
+                "call_purpose": "clarification_review",
+                "max_calls": _CLARIFICATION_REVIEW_MAX_CALLS,
+            }
+        )
+        if isinstance(model, LedgerChatModel)
+        else model
+    )
+    completion_model = (
+        model.model_copy(
+            update={
+                "call_purpose": "completion_review",
+                "max_calls": _COMPLETION_REVIEW_MAX_CALLS,
+            }
+        )
+        if isinstance(model, LedgerChatModel)
+        else model
+    )
     definition_model = RuntimeModelProxy(profile=getattr(model, "profile", None))
 
     skills_dirs = _resolve_skills_dirs() if skills_enabled else []
@@ -1132,6 +1161,9 @@ async def build_agent(
             steering_emit=steering_emit,
             backend=backend,
             model=model,
+            approval_model=approval_model,
+            clarification_model=clarification_model,
+            completion_model=completion_model,
             dynamic_tools=dynamic_tool_map,
             execution_attempt_id=execution_attempt_id,
             subagents_enabled=settings.enable_subagents,
@@ -1174,16 +1206,9 @@ async def build_agent(
         runtime_context.enabled_skills = _active_skill_names(skills_arg)
         runtime_context.backend = backend
         runtime_context.model = model
-        runtime_context.approval_model = (
-            model.model_copy(
-                update={
-                    "call_purpose": "approval_review",
-                    "max_calls": _APPROVAL_REVIEW_MAX_CALLS,
-                }
-            )
-            if isinstance(model, LedgerChatModel)
-            else model
-        )
+        runtime_context.approval_model = approval_model
+        runtime_context.clarification_model = clarification_model
+        runtime_context.completion_model = completion_model
         runtime_context.execution_attempt_id = execution_attempt_id
         if not isinstance(runtime_context.tool_mutation_lock, AsyncToolExecutionGate):
             runtime_context.tool_mutation_lock = AsyncToolExecutionGate()

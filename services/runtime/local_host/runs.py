@@ -2086,6 +2086,22 @@ class RunCoordinator:
 
         try:
             settings = self.settings
+            run_metadata = self._run_metadata.get(run_id) or {}
+            repair_context = _repair_context_from_metadata(
+                run_metadata,
+                max_attempts=settings.repair_workflow_max,
+            )
+            retry_context = _retry_context_from_metadata(run_metadata)
+            recovery_context = retry_context or repair_context
+            answered_questions = []
+            source_run_id = (recovery_context or {}).get("source_run_id")
+            if source_run_id:
+                answered_questions = await self.store.list_answered_question_choices_for_run(
+                    principal_id=principal_id,
+                    run_id=str(source_run_id),
+                )
+            clarification_count = await self.store.count_questions_for_run(run_id)
+
             # Mark the run as started FIRST — before model resolution and the
             # (slow) agent build. The client treats run.started as "the daemon
             # accepted this run"; emitting it late opened a window where a
@@ -2094,10 +2110,6 @@ class RunCoordinator:
             if resume_payload is None:
                 await self._enqueue(wakeup, run_id, "run.started", {"goal": goal})
 
-                repair_context = _repair_context_from_metadata(
-                    self._run_metadata.get(run_id) or {},
-                    max_attempts=settings.repair_workflow_max,
-                )
                 if repair_context is not None:
                     if _repair_context_rejected(repair_context):
                         await self._enqueue(
@@ -2121,7 +2133,6 @@ class RunCoordinator:
                         "repair.workflow",
                         _repair_workflow_payload(repair_context, status="started"),
                     )
-                retry_context = _retry_context_from_metadata(self._run_metadata.get(run_id) or {})
 
             resolved_model = mode
             run_settings = self._settings_overrides.get(run_id) or {}
@@ -2185,6 +2196,7 @@ class RunCoordinator:
                 mode=resolved_model,
                 permission_mode=str(run_settings.get("permission_mode") or "ask"),
                 turn_count=turn_count,
+                clarification_count=clarification_count,
                 repair_intent=bool(repair_context),
                 repair_attempt=(repair_context or {}).get("attempt"),
                 repair_max_attempts=(repair_context or {}).get("max_attempts"),
@@ -2198,6 +2210,13 @@ class RunCoordinator:
                 retry_source_message_id=(retry_context or {}).get("source_message_id"),
                 retry_failure_category=(retry_context or {}).get("failure_category"),
                 retry_failure_action_kind=(retry_context or {}).get("failure_action_kind"),
+                recovery_answered_questions=tuple(
+                    (
+                        str(item["question"]),
+                        tuple(str(answer) for answer in item["answers"]),
+                    )
+                    for item in answered_questions
+                ),
             )
             runtime_context.plugin_inputs = await _plugin_input_snapshots(
                 self.store,

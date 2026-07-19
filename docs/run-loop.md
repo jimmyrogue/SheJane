@@ -190,6 +190,10 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │       ↓                                                                  │     │
 │     │ after_model：仅 CompletionRouter 可决定最终候选、修复或明确失败          │     │
 │     │  • 需要用户补充信息的正文提问会有界修复为 user.ask，不提交伪终态       │     │
+│     │  • user.ask 在进入等待前做一次有界必要性审查；历史已回答则返回 model    │     │
+│     │  • 审查使用独立 clarification_review 账本预算；不可用时放行可见问题卡   │     │
+│     │  • 有当前轮工具回执的最终候选走 completion_review；遗漏交付物最多修复一次│     │
+│     │  • 修复后仍不合格则 blocked；审查不可用时退回确定性完成判定             │     │
   │     │                                                                          │     │
   │     │ 有 tool_calls?                                                            │     │
   │     │   no → 出循环 → after_agent                                                │     │
@@ -376,7 +380,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 编辑重跑 | 复用持久 `run.start`，以当前未替换的用户消息为前置条件；Runtime 原子隐藏旧投影并创建新 Run，旧记录不删除 | `test_run_result_commit` / `App.test` |
 | 检查点分叉 | 客户端持久保存 `run.fork`；Runtime 从公开检查点创建新产品对话和明确分支头，同编号重放返回原 Run | `test_runs_http` / `client.test` / `App.test` |
 | 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |
-| 结束前进展账本 guard | `@after_model + jump_to="model"`，有非 `task.progress` 工具工作且最后一次工具后没有刷新账本时，最多要求模型调用一次 `task.progress` | `test_middleware` / `test_agent_builder` |
+| 复杂任务小步执行 | `PlanFirstMiddleware` 按当前 Run 的 `task_input` 写入 `incremental_execution` 状态，不注入 Plan-First 文案；`CompletionRouter` 在 P9 强制先写 2–8 个 todos、只保留一个 `in_progress`、每次最多完成一个任务，并阻止未全部完成时提交最终答案。默认 `auto`，可显式关闭 | `test_plan_first` / `test_middleware` / `test_e2e_capabilities` |
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
 | 显式长期记忆 | 主任务入口从真实用户输入提取精确记忆事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；读写按所有者与工作区双重隔离 | `test_memory` / `test_memory_http` / `test_subagents` |
 | Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` / `runtime-agent.contract.test.ts` |
@@ -436,7 +440,7 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 
 | 维度 | 为什么 mock 不够 |
 |---|---|
-| TodoList 真分解复杂任务 | 需真 LLM 推理决定 todos 内容 |
+| Todo 内容是否语义完整 | 结构与单步状态已由 Runtime 强制；内容质量仍需真 LLM 与结果 grader |
 | SubAgent 真完成研究 | 需真 LLM 推理在 researcher 子 agent 里跑完 |
 | Memory AGENTS.md 真被遵守 | 验证规则真改变模型输出，需真 LLM |
 

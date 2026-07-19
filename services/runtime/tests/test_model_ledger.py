@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from collections.abc import AsyncIterator, Sequence
@@ -16,7 +17,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.outputs import ChatGenerationChunk, ChatResult
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 from langgraph.graph import START, MessagesState, StateGraph
 
@@ -127,6 +128,20 @@ class _StrictToolStreamingModel(_StreamingModel):
                 ],
             )
         )
+
+
+class _SlowReviewModel(BaseChatModel):
+    @property
+    def _llm_type(self) -> str:
+        return "slow-review-test"
+
+    async def _agenerate(self, *args: object, **kwargs: object) -> ChatResult:
+        del args, kwargs
+        await asyncio.sleep(60)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="allow"))])
+
+    def _generate(self, *args: object, **kwargs: object) -> ChatResult:
+        raise NotImplementedError
 
 
 @tool("office.read")
@@ -247,6 +262,34 @@ async def test_failure_after_visible_output_is_outcome_unknown(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_canceled_read_only_review_is_not_an_unknown_agent_outcome(tmp_path: Path) -> None:
+    store, run = await _store_and_run(tmp_path)
+    try:
+        model = LedgerChatModel(
+            delegate=_SlowReviewModel(),
+            store=store,
+            run_id=str(run["id"]),
+            execution_attempt_id="job-1:1",
+            model_name="local:test:model",
+            max_calls=1,
+            call_purpose="completion_review",
+            profile={"max_input_tokens": 8_192},
+        )
+
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                await model.ainvoke([HumanMessage(content="review")])
+
+        usage = await store.model_usage_summary(str(run["id"]))
+        assert usage["outcome_unknown_calls"] == 0
+        assert usage["model_calls"] == 1
+        rows = await store.list_model_calls_for_run(str(run["id"]))
+        assert rows[0]["status"] == "failed"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_model_budget_is_reserved_durably_across_attempts(tmp_path: Path) -> None:
     store, run = await _store_and_run(tmp_path)
     try:
@@ -269,7 +312,7 @@ async def test_model_budget_is_reserved_durably_across_attempts(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_approval_review_budget_is_separate_but_uses_same_ledger(tmp_path: Path) -> None:
+async def test_review_budgets_are_separate_but_use_the_same_ledger(tmp_path: Path) -> None:
     store, run = await _store_and_run(tmp_path)
     try:
         agent = LedgerChatModel(
@@ -282,13 +325,26 @@ async def test_approval_review_budget_is_separate_but_uses_same_ledger(tmp_path:
             call_purpose="agent",
             profile={"max_input_tokens": 8_192},
         )
-        reviewer = agent.model_copy(update={"call_purpose": "approval_review", "max_calls": 1})
+        approval = agent.model_copy(update={"call_purpose": "approval_review", "max_calls": 1})
+        clarification = agent.model_copy(
+            update={"call_purpose": "clarification_review", "max_calls": 1}
+        )
+        completion = agent.model_copy(update={"call_purpose": "completion_review", "max_calls": 1})
 
         _ = [chunk async for chunk in agent.astream([HumanMessage(content="agent")])]
-        _ = [chunk async for chunk in reviewer.astream([HumanMessage(content="review")])]
+        _ = [chunk async for chunk in approval.astream([HumanMessage(content="approval")])]
+        _ = [
+            chunk async for chunk in clarification.astream([HumanMessage(content="clarification")])
+        ]
+        _ = [chunk async for chunk in completion.astream([HumanMessage(content="completion")])]
 
         rows = await store.list_model_calls_for_run(str(run["id"]))
-        assert [row["purpose"] for row in rows] == ["agent", "approval_review"]
+        assert [row["purpose"] for row in rows] == [
+            "agent",
+            "approval_review",
+            "clarification_review",
+            "completion_review",
+        ]
     finally:
         await store.close()
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 
@@ -53,7 +54,11 @@ def ask_user(question: str, options: list[str] | None = None) -> str:
 
 
 @tool("user.ask")
-def user_ask(question: str, options: list[str] | None = None) -> str:
+def user_ask(
+    question: str,
+    options: list[str] | None = None,
+    runtime: ToolRuntime[Any] = None,  # type: ignore[assignment]
+) -> str:
     """Ask the human a clarifying question and wait for their answer.
 
         CALL THIS *BEFORE* OTHER TOOLS when the user's request is missing
@@ -89,7 +94,9 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
           * `options` must be the clickable answers to THIS question.
             Don't put long descriptions in `options`; put short labels.
           * Keep using this tool across rounds — don't switch to prose
-            questions after a few calls.
+            questions after a few calls. Ask only for genuinely blocking
+            inputs, never repeat an answered question, and stop after four
+            calls by using reasonable defaults.
 
         Examples of GOOD usage:
             user_ask(question="你想在普吉岛待几天？", options=["3天", "5天", "7天"])
@@ -111,6 +118,14 @@ def user_ask(question: str, options: list[str] | None = None) -> str:
             options, free-form text, or — if the user closed the prompt
             without answering — the empty string.
     """
+    context = getattr(runtime, "context", None)
+    if int(getattr(context, "clarification_count", 0) or 0) >= 4:
+        return (
+            "Clarification limit reached. Do not call user.ask again in this run. "
+            "Use the answers already provided plus reasonable defaults, state those "
+            "assumptions briefly, and continue the task."
+        )
+
     # `ask_user()` owns the Runtime question bridge so system middleware and
     # this model-visible tool share one interrupt/resume contract.
     return ask_user(question, options)

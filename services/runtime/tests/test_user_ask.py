@@ -28,13 +28,64 @@ class RecordingHandler:
     def __init__(self, scripts: list[list[tuple[str, dict]]]):
         self.scripts = list(scripts)
         self.requests: list[dict] = []
+        self.review_requests = 0
+        self.completion_review_requests = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body_bytes = request.read()
         try:
-            self.requests.append(json.loads(body_bytes))
+            body = json.loads(body_bytes)
+            self.requests.append(body)
         except json.JSONDecodeError:
-            self.requests.append({"raw": body_bytes.decode(errors="replace")})
+            body = {"raw": body_bytes.decode(errors="replace")}
+            self.requests.append(body)
+        if "P9 clarification necessity reviewer" in str(body):
+            self.review_requests += 1
+            payload: dict[str, Any] = {}
+            for message in reversed(body.get("messages") or []):
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, str):
+                    continue
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    payload = parsed
+                    break
+            decisions = [
+                {
+                    "tool_call_id": str(item.get("tool_call_id") or ""),
+                    "decision": "allow",
+                    "reason": "Test fixture allows the scripted question.",
+                }
+                for item in payload.get("proposed_questions") or []
+                if isinstance(item, dict)
+            ]
+            return _sse(
+                [
+                    ("llm.delta", {"content_delta": json.dumps({"decisions": decisions})}),
+                    ("llm.done", {"request_id": "review", "finish_reason": "stop"}),
+                ]
+            )
+        if "P9 final-answer reviewer" in str(body):
+            self.completion_review_requests += 1
+            return _sse(
+                [
+                    (
+                        "llm.delta",
+                        {
+                            "content_delta": json.dumps(
+                                {
+                                    "decision": "allow",
+                                    "reason": "The scripted answer includes the selected value.",
+                                }
+                            )
+                        },
+                    ),
+                    ("llm.done", {"request_id": "completion-review", "finish_reason": "stop"}),
+                ]
+            )
         if self.scripts:
             return _sse(self.scripts.pop(0))
         return _sse([("llm.done", {"request_id": "x", "finish_reason": "stop"})])
@@ -481,6 +532,81 @@ def test_user_ask_resume_via_questions_endpoint(monkeypatch) -> None:
     assert "run.resumed" in names2 or "run.completed" in names2, (
         f"expected run.resumed or run.completed after question resume. got: {names2}"
     )
+
+
+def test_user_ask_stops_interrupting_after_four_questions(monkeypatch) -> None:
+    """A clarification loop must not keep sending the user back to the composer."""
+    scripts = [
+        [
+            (
+                "llm.tool_call",
+                {
+                    "id": f"call_q{index}",
+                    "name": "user.ask",
+                    "arguments": {"question": f"Question {index}?", "options": ["A", "B"]},
+                },
+            ),
+            ("llm.done", {"request_id": f"rq{index}", "finish_reason": "tool_calls"}),
+        ]
+        for index in range(1, 6)
+    ]
+    scripts.append(
+        [
+            ("llm.delta", {"content_delta": "Continuing with reasonable defaults."}),
+            ("llm.done", {"request_id": "final", "finish_reason": "stop"}),
+        ]
+    )
+    handler = RecordingHandler(scripts=scripts)
+
+    with _make_client(monkeypatch, handler) as client:
+        headers = {"Authorization": "Bearer tok"}
+        response = client.post("/local/v1/runs", headers=headers, json=run_command("x"))
+        run_id = response.json()["id"]
+        asked = 0
+        answered_question_ids: set[str] = set()
+
+        for _ in range(5):
+            with client.stream(
+                "GET",
+                f"/local/v1/runs/{run_id}/stream",
+                headers=headers,
+            ) as stream:
+                events = _parse_sse(stream.read().decode("utf-8"))
+            question_events = [event for event in events if event[0] == "question.asked"]
+            question_event = question_events[-1] if question_events else None
+            if question_event is None:
+                break
+            question_id = question_event[1]["request_id"]
+            if question_id in answered_question_ids:
+                break
+            answered_question_ids.add(question_id)
+            asked += 1
+            answer = client.post(
+                f"/local/v1/questions/{question_id}",
+                headers=headers,
+                json={"answers": {question_id: ["A"]}},
+            )
+            assert answer.status_code == 200
+
+        with client.stream(
+            "GET",
+            f"/local/v1/runs/{run_id}/stream",
+            headers=headers,
+        ) as stream:
+            stream.read()
+        stored_run = client.portal.call(client.app.state.store.get_run, run_id)
+        stored_events = client.portal.call(client.app.state.store.events_since, run_id, 0)
+        event_summary = [
+            (event["event_type"], json.loads(event["payload_json"])) for event in stored_events
+        ]
+
+    assert asked == 4
+    assert stored_run is not None and stored_run["status"] == "completed", event_summary[-5:]
+    assert len(handler.requests) - handler.review_requests - handler.completion_review_requests == 6
+    # Reviewer owns a separate four-call budget; the fifth proposed question
+    # fails open to the tool's own clarification limit without provider I/O.
+    assert handler.review_requests == 4
+    assert handler.completion_review_requests == 1
 
 
 # --- payload shape from the tool ---

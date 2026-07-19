@@ -104,3 +104,41 @@ def test_sse_stream_seq_is_monotonic(tmp_path) -> None:
     seqs = [e["seq"] for e in _envelopes(raw) if e.get("seq") is not None]
     assert seqs == sorted(seqs), f"seq not monotonic: {seqs}"
     assert len(seqs) == len(set(seqs)), "duplicate seq values"
+
+
+def test_p9_rejects_an_answered_question_and_run_continues_without_waiting(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        _, raw = _run_and_read(
+            client,
+            (
+                "[[e2e:unnecessary-ask]] The conversation already contains the requested "
+                "content. Try to ask for it once, then obey the P9 repair."
+            ),
+        )
+
+    envelopes = _envelopes(raw)
+    names = [event["event_type"] for event in envelopes]
+    assert "question.asked" not in names
+    assert "run.waiting" not in names
+    assert "run.completed" in names
+    completed = next(event for event in envelopes if event["event_type"] == "run.completed")
+    assert "E2E unnecessary clarification repaired" in completed["payload"]["final_text"]
+
+
+def test_p9_repairs_a_tool_backed_final_answer_before_run_completion(tmp_path) -> None:
+    with _client(tmp_path) as client:
+        _, raw = _run_and_read(
+            client,
+            (
+                "[[e2e:completion-repair]] Call time.now once, then include the exact token "
+                "E2E_COMPLETION_REPAIRED in the final answer."
+            ),
+        )
+
+    envelopes = _envelopes(raw)
+    names = [event["event_type"] for event in envelopes]
+    assert "tool.completed" in names
+    assert "run.failed" not in names
+    assert names.count("llm.round.started") >= 3
+    completed = next(event for event in envelopes if event["event_type"] == "run.completed")
+    assert "E2E_COMPLETION_REPAIRED" in completed["payload"]["final_text"]

@@ -47,8 +47,38 @@ class _OpenAICompatibleHandler(BaseHTTPRequestHandler):
         type(self).request_count += 1
         length = int(self.headers.get("content-length", "0"))
         payload = json.loads(self.rfile.read(length) or b"{}")
+        is_completion_review = "P9 final-answer reviewer" in str(payload)
         has_tool_result = any(message.get("role") == "tool" for message in payload["messages"])
-        if has_tool_result:
+        if is_completion_review:
+            chunks = [
+                {
+                    "id": "chatcmpl-review",
+                    "object": "chat.completion.chunk",
+                    "model": "qwen3:8b",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "decision": "allow",
+                                        "reason": "The direct model answer satisfies the goal.",
+                                    }
+                                ),
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "chatcmpl-review",
+                    "object": "chat.completion.chunk",
+                    "model": "qwen3:8b",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            ]
+        elif has_tool_result:
             chunks = [
                 {
                     "id": "chatcmpl-2",
@@ -960,7 +990,7 @@ def test_openai_compatible_provider_completes_model_tool_model_loop(
             assert "tool.completed" in stream
             assert "run.completed" in stream
             assert "Direct model done." in stream
-            assert _OpenAICompatibleHandler.request_count == 2
+            assert _OpenAICompatibleHandler.request_count == 3
     finally:
         upstream.shutdown()
         thread.join(timeout=2)

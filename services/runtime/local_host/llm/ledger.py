@@ -154,7 +154,7 @@ class LedgerChatModel(BaseChatModel):
                 self.store.fail_model_call(
                     run_id=self.run_id,
                     call_id=receipt["id"],
-                    outcome_unknown=output_started or _outcome_may_be_unknown(exc),
+                    outcome_unknown=self._outcome_unknown(exc, output_started=output_started),
                     error_code=_error_code(exc),
                 )
             )
@@ -204,11 +204,19 @@ class LedgerChatModel(BaseChatModel):
                 self.store.fail_model_call(
                     run_id=self.run_id,
                     call_id=receipt["id"],
-                    outcome_unknown=output_started or _outcome_may_be_unknown(exc),
+                    outcome_unknown=self._outcome_unknown(exc, output_started=output_started),
                     error_code=_error_code(exc),
                 )
             )
             raise
+
+    def _outcome_unknown(self, exc: BaseException, *, output_started: bool) -> bool:
+        # Review calls are read-only and cannot emit Tool calls into the graph.
+        # A timeout may leave provider billing uncertain, but never leaves the
+        # Agent's external execution outcome uncertain.
+        if self.call_purpose != "agent":
+            return False
+        return output_started or _outcome_may_be_unknown(exc)
 
     def _bounded_messages(
         self,

@@ -168,6 +168,8 @@ class RuntimeContext:
     backend: object | None = None
     model: object | None = None
     approval_model: object | None = None
+    clarification_model: object | None = None
+    completion_model: object | None = None
     dynamic_tools: dict[str, object] = field(default_factory=dict)
     tool_registry: dict[str, object] = field(default_factory=dict)
     memory_enabled: bool = True
@@ -207,6 +209,7 @@ class RuntimeContext:
     # but needs to know about the current run.
     mode: str | None = None  # Runtime model selection stored with the run
     turn_count: int | None = None  # message count incl. current turn
+    clarification_count: int = 0
     repair_intent: bool = False
     repair_attempt: int | None = None
     repair_max_attempts: int | None = None
@@ -220,6 +223,7 @@ class RuntimeContext:
     retry_source_message_id: str | None = None
     retry_failure_category: str | None = None
     retry_failure_action_kind: str | None = None
+    recovery_answered_questions: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 class ContextBuilder:
@@ -380,6 +384,12 @@ class ContextBuilder:
             bullets.append(
                 "- 重试要求: 先利用原失败分类调整策略，避免盲目重复上一次失败路径。"
                 "如果同类失败再次出现，说明明确阻塞和下一步需要用户或运营处理的信息。"
+            )
+        if runtime.recovery_answered_questions:
+            bullets.append("- 已确认的用户选择（必须沿用，不得再次询问）:")
+            bullets.extend(
+                f"  - {question} → {', '.join(answers)}"
+                for question, answers in runtime.recovery_answered_questions
             )
         if not bullets:
             return ContextLayer(name="state", priority=50, content="")

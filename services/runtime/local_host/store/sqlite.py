@@ -1474,7 +1474,12 @@ class LocalStore:
         purpose: str = "agent",
     ) -> dict[str, Any]:
         """Atomically reserve one durable model-call slot for a run."""
-        if purpose not in {"agent", "approval_review"}:
+        if purpose not in {
+            "agent",
+            "approval_review",
+            "clarification_review",
+            "completion_review",
+        }:
             raise ValueError("model call purpose is invalid")
         async with self.run_write_transaction(run_id) as conn:
             row = await (
@@ -6814,6 +6819,58 @@ class LocalStore:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+    async def count_questions_for_run(self, run_id: str) -> int:
+        row = await (
+            await self._conn.execute(
+                "SELECT COUNT(*) FROM local_questions WHERE run_id = ?",
+                (run_id,),
+            )
+        ).fetchone()
+        return int(row[0] if row else 0)
+
+    async def list_answered_question_choices_for_run(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return the source run's resolved choices without crossing principals.
+
+        Later answers replace earlier answers for the same question. This keeps
+        retry context compact when a failed run asked the same thing repeatedly.
+        """
+        rows = await (
+            await self._conn.execute(
+                "SELECT q.answers_json FROM local_questions q "
+                "JOIN local_runs r ON r.id = q.run_id "
+                "WHERE r.principal_id = ? AND q.run_id = ? "
+                "AND q.status = 'answered' AND q.answers_json IS NOT NULL "
+                "ORDER BY q.created_at, q.id",
+                (principal_id, run_id),
+            )
+        ).fetchall()
+        choices: dict[str, list[str]] = {}
+        for row in rows:
+            try:
+                answers = json.loads(str(row["answers_json"]))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(answers, dict):
+                continue
+            for raw_question, raw_values in answers.items():
+                question = str(raw_question).strip()
+                if not question:
+                    continue
+                values = raw_values if isinstance(raw_values, list) else [raw_values]
+                normalized = [
+                    str(value).strip()
+                    for value in values
+                    if value is not None and str(value).strip()
+                ]
+                if normalized:
+                    choices[question] = normalized
+        return [{"question": question, "answers": answers} for question, answers in choices.items()]
 
     async def answer_question(
         self,

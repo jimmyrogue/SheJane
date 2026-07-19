@@ -7,13 +7,26 @@ import re
 from typing import Any, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
+from langchain_core.messages import ToolMessage
 
 from ..failure_policy import classify_failure_payload
+from .clarification_reviewer import (
+    ClarificationReviewUnavailable,
+    review_clarification_batch,
+)
+from .completion_reviewer import (
+    CompletionReviewUnavailable,
+    review_completion_candidate,
+)
 
 
 class CompletionRouterState(AgentState):
     completion_route: NotRequired[dict[str, Any]]
     verification_repair_state: NotRequired[dict[str, Any]]
+    clarification_review_state: NotRequired[dict[str, Any]]
+    completion_review_state: NotRequired[dict[str, Any]]
+    incremental_execution: NotRequired[dict[str, Any]]
+    todos: NotRequired[list[dict[str, Any]]]
 
 
 class CompletionRouterMiddleware(AgentMiddleware):
@@ -26,9 +39,17 @@ class CompletionRouterMiddleware(AgentMiddleware):
 
     state_schema = CompletionRouterState
 
-    def __init__(self, *, max_verification_repairs: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        max_verification_repairs: int = 1,
+        max_clarification_repairs: int = 1,
+        max_completion_repairs: int = 1,
+    ) -> None:
         super().__init__()
         self.max_verification_repairs = max(0, max_verification_repairs)
+        self.max_clarification_repairs = max(0, max_clarification_repairs)
+        self.max_completion_repairs = max(0, max_completion_repairs)
 
     @hook_config(can_jump_to=["end"])
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -65,7 +86,7 @@ class CompletionRouterMiddleware(AgentMiddleware):
                 run_id=run_id,
             )
         if getattr(last, "tool_calls", None):
-            return None
+            return _incremental_tool_route(state, last, run_id)
 
         finish_reason = _finish_reason(last)
         if finish_reason in {"length", "max_tokens"}:
@@ -124,6 +145,10 @@ class CompletionRouterMiddleware(AgentMiddleware):
                 "jump_to": "model",
             }
 
+        incremental = _incremental_final_route(state, run_id)
+        if incremental is not None:
+            return incremental
+
         verification = _latest_task_verification(messages)
         if verification is not None and not verification["ok"]:
             attempts = _repair_attempts_for_run(state, run_id)
@@ -179,6 +204,483 @@ class CompletionRouterMiddleware(AgentMiddleware):
                 ),
             }
         }
+
+    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Apply deterministic routing plus bounded P9 semantic review."""
+        deterministic = self.after_model(state, runtime)
+        if deterministic is not None:
+            route = deterministic.get("completion_route")
+            if isinstance(route, dict) and route.get("decision") == "final":
+                return await self._review_final_candidate(state, runtime, deterministic)
+            return deterministic
+        messages = list(state.get("messages") or [])
+        if not messages:
+            return None
+        last = messages[-1]
+        if getattr(last, "type", None) != "ai":
+            return None
+        ask_calls = [
+            call
+            for call in (getattr(last, "tool_calls", None) or [])
+            if str(call.get("name") or "") == "user.ask"
+        ]
+        if not ask_calls:
+            return None
+
+        run_id = _current_run_id(runtime, messages)
+        previous = state.get("clarification_review_state")
+        review_state = previous if isinstance(previous, dict) else {}
+        previous_decisions = (
+            dict(review_state.get("decisions") or {})
+            if review_state.get("run_id") == run_id
+            else {}
+        )
+        call_ids = [str(call.get("id") or "") for call in ask_calls]
+        if all(previous_decisions.get(call_id) == "allow" for call_id in call_ids):
+            return None
+
+        context = getattr(runtime, "context", None)
+        questions = [
+            {
+                "tool_call_id": str(call.get("id") or ""),
+                "question": str((call.get("args") or {}).get("question") or ""),
+                "options": list((call.get("args") or {}).get("options") or []),
+            }
+            for call in ask_calls
+        ]
+        try:
+            reviewed = await review_clarification_batch(
+                model=getattr(context, "clarification_model", None),
+                task_goal=str(getattr(context, "task_goal", None) or ""),
+                messages=messages,
+                questions=questions,
+                runtime_facts={
+                    "workspace_configured": bool(getattr(context, "workspace_root", None)),
+                    "attachments": list(getattr(context, "attachments", ()) or ()),
+                },
+            )
+            source = "llm"
+        except ClarificationReviewUnavailable:
+            # The question UI is the safe fallback. A reviewer outage must not
+            # turn optional semantic checking into a new deadlock.
+            reviewed = {
+                call_id: {
+                    "decision": "allow",
+                    "reason": "Reviewer unavailable; the question UI remains available.",
+                }
+                for call_id in call_ids
+            }
+            source = "fallback"
+
+        merged_decisions = {
+            **previous_decisions,
+            **{call_id: value["decision"] for call_id, value in reviewed.items()},
+        }
+        repairs = (
+            int(review_state.get("repairs") or 0) if review_state.get("run_id") == run_id else 0
+        )
+        rejected = [call_id for call_id, value in reviewed.items() if value["decision"] == "repair"]
+        if not rejected or repairs >= self.max_clarification_repairs:
+            # Bounded repair: after the one corrective loop, fail open to the
+            # visible question card instead of cycling invisibly forever.
+            if rejected:
+                merged_decisions.update({call_id: "allow" for call_id in rejected})
+            return {
+                "clarification_review_state": {
+                    "run_id": run_id,
+                    "decisions": merged_decisions,
+                    "repairs": repairs,
+                    "source": source,
+                }
+            }
+
+        tool_messages: list[ToolMessage] = []
+        for call in getattr(last, "tool_calls", None) or []:
+            call_id = str(call.get("id") or "")
+            if str(call.get("name") or "") == "user.ask":
+                content = (
+                    "Runtime P9 review found that this question is already answered by the "
+                    "conversation or runtime evidence. Use that evidence and continue."
+                )
+            else:
+                content = (
+                    "Not executed because a sibling clarification was rejected. Reissue this "
+                    "tool call only if it is still needed after using the existing evidence."
+                )
+            tool_messages.append(
+                ToolMessage(
+                    content=content,
+                    name=str(call.get("name") or "unknown"),
+                    tool_call_id=call_id,
+                    status="error",
+                )
+            )
+        return {
+            "messages": tool_messages,
+            "completion_route": {
+                "decision": "repair_requested",
+                "reason": "unnecessary_clarification",
+                "message": "The proposed question is already answered by available evidence.",
+                "recoverable": True,
+                "attempts": repairs + 1,
+                "max_attempts": self.max_clarification_repairs,
+                "run_id": run_id,
+                "instruction": (
+                    "Use the existing conversation evidence to continue the current task. "
+                    "Do not ask the rejected question again. If a different fact is genuinely "
+                    "blocking, call user.ask with only that missing fact."
+                ),
+            },
+            "clarification_review_state": {
+                "run_id": run_id,
+                "decisions": merged_decisions,
+                "repairs": repairs + 1,
+                "source": source,
+                "reasons": {call_id: reviewed[call_id]["reason"] for call_id in rejected},
+            },
+            "jump_to": "model",
+        }
+
+    async def _review_final_candidate(
+        self,
+        state: Any,
+        runtime: Any,
+        deterministic: dict[str, Any],
+    ) -> dict[str, Any]:
+        messages = list(state.get("messages") or [])
+        run_id = _current_run_id(runtime, messages)
+        if not _has_current_tool_evidence(messages, run_id):
+            return deterministic
+
+        context = getattr(runtime, "context", None)
+        try:
+            reviewed = await review_completion_candidate(
+                model=getattr(context, "completion_model", None),
+                task_goal=str(getattr(context, "task_goal", None) or ""),
+                messages=messages,
+                final_candidate=_assistant_text(getattr(messages[-1], "content", None)),
+            )
+            source = "llm"
+        except CompletionReviewUnavailable:
+            # Semantic review is defense in depth. Provider or parser failure
+            # must not deadlock an otherwise deterministically valid run.
+            return {
+                **deterministic,
+                "completion_review_state": {
+                    "run_id": run_id,
+                    "attempts": 0,
+                    "decision": "allow",
+                    "source": "fallback",
+                },
+            }
+
+        previous = state.get("completion_review_state")
+        review_state = previous if isinstance(previous, dict) else {}
+        attempts = (
+            int(review_state.get("attempts") or 0) if review_state.get("run_id") == run_id else 0
+        )
+        if reviewed["decision"] == "allow":
+            return {
+                **deterministic,
+                "completion_review_state": {
+                    "run_id": run_id,
+                    "attempts": attempts,
+                    "decision": "allow",
+                    "source": source,
+                    "reason": reviewed["reason"],
+                },
+            }
+
+        if attempts >= self.max_completion_repairs:
+            blocked = _terminal_route(
+                "blocked",
+                "completion_review_failed",
+                "The final answer still omitted or contradicted required task evidence.",
+                recoverable=True,
+                run_id=run_id,
+            )
+            blocked["completion_review_state"] = {
+                "run_id": run_id,
+                "attempts": attempts,
+                "decision": "repair",
+                "source": source,
+                "reason": reviewed["reason"],
+            }
+            return blocked
+
+        attempt = attempts + 1
+        return {
+            "completion_route": {
+                "decision": "repair_requested",
+                "reason": "completion_review_failed",
+                "message": "The final candidate did not preserve required task evidence.",
+                "recoverable": True,
+                "attempts": attempt,
+                "max_attempts": self.max_completion_repairs,
+                "run_id": run_id,
+                "instruction": (
+                    "Re-read the current task goal and the latest completed ToolMessages. "
+                    "Produce one corrected final answer that includes every explicitly "
+                    "requested result, exact value, and selected user answer. Do not repeat "
+                    "successful tools unless required evidence is genuinely absent."
+                ),
+            },
+            "completion_review_state": {
+                "run_id": run_id,
+                "attempts": attempt,
+                "decision": "repair",
+                "source": source,
+                "reason": reviewed["reason"],
+            },
+            "jump_to": "model",
+        }
+
+
+def _incremental_tool_route(state: Any, last: Any, run_id: str) -> dict[str, Any] | None:
+    config = _incremental_config(state, run_id)
+    if config is None:
+        return None
+    calls = list(getattr(last, "tool_calls", None) or [])
+    if not calls:
+        return None
+    names = [str(call.get("name") or "") for call in calls]
+    current_todos = _todo_items(state.get("todos") if isinstance(state, dict) else None)
+
+    # Missing information may be gathered before planning. It is still
+    # reviewed by the clarification gate below. Everything else must begin
+    # with one isolated, valid write_todos transition.
+    if not current_todos:
+        if names and all(name == "user.ask" for name in names):
+            return None
+        if len(calls) != 1 or names != ["write_todos"]:
+            return _incremental_repair_route(
+                state,
+                config,
+                run_id=run_id,
+                reason="incremental_plan_required",
+                message="Complex tool work must start with a small executable plan.",
+                instruction=(
+                    "Call write_todos before any work tool. Use 2 to 8 independently "
+                    "verifiable tasks and mark exactly one task in_progress."
+                ),
+                calls=calls,
+            )
+        proposed = _todo_items((calls[0].get("args") or {}).get("todos"))
+        error = _todo_plan_error(proposed, mode=str(config.get("mode") or "auto"), initial=True)
+        if error is not None:
+            return _incremental_repair_route(
+                state,
+                config,
+                run_id=run_id,
+                reason="incremental_plan_invalid",
+                message=error,
+                instruction=(
+                    "Rewrite the todo list as 2 to 8 small, independently verifiable tasks. "
+                    "Mark exactly one task in_progress and the rest pending."
+                ),
+                calls=calls,
+            )
+        return None
+
+    if "write_todos" in names:
+        if len(calls) != 1 or names != ["write_todos"]:
+            return _incremental_repair_route(
+                state,
+                config,
+                run_id=run_id,
+                reason="incremental_plan_invalid",
+                message="A todo transition must be the only tool call in its model round.",
+                instruction="Call write_todos alone, then continue work in the next model round.",
+                calls=calls,
+            )
+        proposed = _todo_items((calls[0].get("args") or {}).get("todos"))
+        error = _todo_plan_error(proposed, mode=str(config.get("mode") or "auto"), initial=False)
+        if error is None:
+            error = _todo_transition_error(current_todos, proposed)
+        if error is not None:
+            return _incremental_repair_route(
+                state,
+                config,
+                run_id=run_id,
+                reason="incremental_plan_invalid",
+                message=error,
+                instruction=(
+                    "Update one task boundary at a time: preserve completed tasks, complete at "
+                    "most one new task, and keep exactly one task in_progress until all finish."
+                ),
+                calls=calls,
+            )
+        return None
+
+    status_error = _todo_plan_error(
+        current_todos,
+        mode=str(config.get("mode") or "auto"),
+        initial=False,
+    )
+    if status_error is not None:
+        return _incremental_repair_route(
+            state,
+            config,
+            run_id=run_id,
+            reason="incremental_plan_invalid",
+            message=status_error,
+            instruction="Repair the todo state with write_todos before calling another work tool.",
+            calls=calls,
+        )
+    if all(item["status"] == "completed" for item in current_todos) and not all(
+        name == "user.ask" for name in names
+    ):
+        return _incremental_repair_route(
+            state,
+            config,
+            run_id=run_id,
+            reason="incremental_plan_stale",
+            message="The completed plan does not cover the newly proposed work.",
+            instruction="Add the newly discovered work as a small in_progress todo before doing it.",
+            calls=calls,
+        )
+    return None
+
+
+def _incremental_final_route(state: Any, run_id: str) -> dict[str, Any] | None:
+    config = _incremental_config(state, run_id)
+    if config is None:
+        return None
+    todos = _todo_items(state.get("todos") if isinstance(state, dict) else None)
+    if not todos:
+        return _incremental_repair_route(
+            state,
+            config,
+            run_id=run_id,
+            reason="incremental_plan_required",
+            message="A complex task cannot finalize before its small-task plan exists.",
+            instruction=(
+                "Call write_todos with 2 to 8 independently verifiable tasks, mark exactly "
+                "one in_progress, and execute them before finalizing."
+            ),
+        )
+    if not all(item["status"] == "completed" for item in todos):
+        return _incremental_repair_route(
+            state,
+            config,
+            run_id=run_id,
+            reason="incremental_plan_incomplete",
+            message="The model tried to finalize while planned tasks remain unfinished.",
+            instruction=(
+                "Continue the single in_progress task. After obtaining evidence, update "
+                "write_todos, advance one task, and finalize only when every task is completed."
+            ),
+        )
+    return None
+
+
+def _incremental_config(state: Any, run_id: str) -> dict[str, Any] | None:
+    value = state.get("incremental_execution") if isinstance(state, dict) else None
+    if not isinstance(value, dict) or value.get("required") is not True:
+        return None
+    scoped_run = str(value.get("run_id") or "")
+    if scoped_run and run_id and scoped_run != run_id:
+        return None
+    return value
+
+
+def _todo_items(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, str]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            return []
+        content = " ".join(str(raw.get("content") or "").split())
+        status = str(raw.get("status") or "")
+        if not content or status not in {"pending", "in_progress", "completed"}:
+            return []
+        items.append({"content": content, "status": status})
+    return items
+
+
+def _todo_plan_error(
+    todos: list[dict[str, str]],
+    *,
+    mode: str,
+    initial: bool,
+) -> str | None:
+    minimum = 1 if mode == "always" else 2
+    if len(todos) < minimum or len(todos) > 8:
+        return f"Incremental execution requires {minimum} to 8 small tasks."
+    active = sum(item["status"] == "in_progress" for item in todos)
+    completed = sum(item["status"] == "completed" for item in todos)
+    if initial and completed:
+        return "A new plan cannot claim tasks were completed before execution."
+    if completed == len(todos):
+        return None
+    if active != 1:
+        return "Incremental execution requires exactly one in_progress task."
+    return None
+
+
+def _todo_transition_error(
+    previous: list[dict[str, str]],
+    proposed: list[dict[str, str]],
+) -> str | None:
+    prior_completed = {item["content"] for item in previous if item["status"] == "completed"}
+    next_completed = {item["content"] for item in proposed if item["status"] == "completed"}
+    if not prior_completed.issubset(next_completed):
+        return "Previously completed tasks cannot be removed or reopened."
+    if len(next_completed - prior_completed) > 1:
+        return "Complete at most one new task per todo transition."
+    return None
+
+
+def _incremental_repair_route(
+    state: Any,
+    config: dict[str, Any],
+    *,
+    run_id: str,
+    reason: str,
+    message: str,
+    instruction: str,
+    calls: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    repairs = dict(config.get("repairs") or {})
+    attempts = _int_state(repairs.get(reason))
+    if attempts >= 1:
+        return _terminal_route(
+            "blocked",
+            reason,
+            message,
+            recoverable=True,
+            run_id=run_id,
+        )
+    repairs[reason] = attempts + 1
+    update: dict[str, Any] = {
+        "completion_route": {
+            "decision": "repair_requested",
+            "reason": reason,
+            "message": message,
+            "recoverable": True,
+            "attempts": attempts + 1,
+            "max_attempts": 1,
+            "run_id": run_id,
+            "instruction": instruction,
+        },
+        "incremental_execution": {**config, "run_id": run_id, "repairs": repairs},
+        "jump_to": "model",
+    }
+    if calls:
+        update["messages"] = [
+            ToolMessage(
+                content=(
+                    "Runtime P9 did not execute this call because the incremental task state "
+                    "must be repaired first. Follow the runtime repair instruction."
+                ),
+                name=str(call.get("name") or "unknown"),
+                tool_call_id=str(call.get("id") or ""),
+                status="error",
+            )
+            for call in calls
+        ]
+    return update
 
 
 def completion_repair_instruction(state: Any, *, run_id: str | None = None) -> str | None:
@@ -371,6 +873,21 @@ def _verification_invalidating_tool(messages: list[Any]) -> str | None:
         if status == "error" or name not in _VERIFICATION_PRESERVING_TOOLS:
             return name
     return None
+
+
+def _has_current_tool_evidence(messages: list[Any], run_id: str) -> bool:
+    """Limit semantic review to tool evidence produced for the current task."""
+    start = 0
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        kwargs = getattr(message, "additional_kwargs", None)
+        if not isinstance(kwargs, dict) or kwargs.get("runtime_kind") != "task_input":
+            continue
+        message_run_id = str(kwargs.get("runtime_run_id") or "")
+        if not run_id or not message_run_id or message_run_id == run_id:
+            start = index
+            break
+    return any(getattr(message, "type", None) == "tool" for message in messages[start:-1])
 
 
 def _current_run_id(runtime: Any, messages: list[Any]) -> str:
