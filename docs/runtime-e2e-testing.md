@@ -117,7 +117,7 @@ Tool case 在测试输出中按 `filesystem`、`runtime-context`、`network`、`
 - Desktop 可见配置冻结从真实设置页切换 `subagents`：已等待批准的旧 Run 保留 `subagents=true` 快照并完成 `task` receipt，新 Run 持久化 `subagents=false` 且没有 completed `task` receipt；该场景实际发现并修复了 DeepAgents 在 `subagents=None` 时仍自动注入 `general-purpose` 子代理的问题，Runtime 现在同时在模型可见 Tool 集和执行边界关闭 `task`；
 - Desktop 在 Runtime kill-point 后从可见 `cleanup_required` 消息打开诊断面板，展开技术详情核对 Run ID，并通过 Electron Main 的真实 `will-download` 生命周期验证下载完成、文件名与落盘 JSON schema/终态；
 - Desktop 在旧 Run 崩溃并进入 `cleanup_required` 后创建新对话时，旧发送状态不能把新 Composer 锁成“停止生成”；可见发送操作使用独立 token，旧异步流稍后结束也不能覆盖新发送状态；
-- Desktop 在无 workspace 时先批准写 Tool 并验证零副作用，再从失败 CTA 选择/授权目录；自动 retry 仍需第二次权限批准，最终文件只写入授权 workspace 一次；
+- Desktop 在无 workspace 时先完成一次结构化 `user.ask` 并批准写 Tool、验证零副作用，再从失败 CTA 选择/授权目录；自动 retry 保留并复用原问题答案、不再重复提问，仍需第二次权限批准，最终文件只写入授权 workspace 一次；
 - Desktop 在 validation 失败后从可见 CTA 启动 repair Run；原用户消息只保留一条，Runtime 注入 repair workflow 元数据，最终步骤收敛为“修复完成 1/3”并返回正常结果；
 - Desktop 实际点击模型回答中的 HTTPS Markdown 链接，证明请求经过 Electron Main 并只调用一次系统 handler；`file:` URL 被 allowlist 拒绝且零系统调用，允许协议遇到 OS handler 异常时通过 preload IPC 返回稳定错误而不污染 Renderer；
 - Desktop 用真实 `python-pptx` 文件验证“已选 workspace → 回答中的 `.pptx` 文件按钮 → Runtime outline → PowerPoint 系统打开”纵向链路；系统返回权限错误时预览面板显示可访问的 alert。该场景实际发现并修复了首次 workspace 未传给消息线程、文件识别器漏掉 `.pptx`、预览 config 身份变化导致请求无限重启，以及系统打开错误被静默丢弃四个问题；

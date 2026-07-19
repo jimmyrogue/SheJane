@@ -504,7 +504,12 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live daemon
       const run = await createLocalRun({
         commandId: `cmd_e2e_tool_${suffix}`,
         clientMessageId: `msg_e2e_tool_${suffix}`,
-        goal: toolCase.goal ?? encodedToolGoal(toolCase.name, args, toolCase.instruction),
+        goal: toolCase.goal ?? encodedToolGoal(
+          toolCase.name,
+          args,
+          toolCase.instruction,
+          toolCase.expected,
+        ),
         workspacePath: workspace,
         mode: RUN_MODEL,
         settings: toolCase.settings ?? DEFAULT_SETTINGS,
@@ -563,7 +568,7 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live daemon
       const run = await createLocalRun({
         commandId: `cmd_e2e_host_guard_${suffix}`,
         clientMessageId: `msg_e2e_host_guard_${suffix}`,
-        goal: encodedToolGoal(name, args),
+        goal: encodedToolGoal(name, args, undefined, expected),
         workspacePath: workspace,
         mode: RUN_MODEL,
         settings: DEFAULT_SETTINGS,
@@ -1621,13 +1626,16 @@ function encodedToolGoal(
   name: string,
   args: Record<string, unknown>,
   instruction = `Use the ${name} Tool.`,
+  expectedMarker?: string,
 ): string {
   if (REAL_LLM_MODEL) {
     return [
       instruction,
       `Call exactly the ${name} tool once with exactly these JSON arguments: ${JSON.stringify(args)}.`,
       'Do not substitute another tool or change any argument.',
-      'After the tool returns, include its complete result verbatim in your final answer.',
+      expectedMarker
+        ? `After the tool returns, include the exact success marker ${JSON.stringify(expectedMarker)} in your final answer.`
+        : 'After the tool returns, briefly report its result in your final answer.',
     ].join('\n')
   }
   const payload = Buffer.from(JSON.stringify({ name, args }), 'utf8').toString('base64url')

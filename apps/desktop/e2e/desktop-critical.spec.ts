@@ -322,6 +322,27 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
     expect(harness.rendererErrors).toEqual([])
   })
 
+  test('dismisses a structured user.ask question when the run is canceled', async () => {
+    const { page } = harness
+    await page.getByRole('button', { name: /新对话|New chat/ }).click()
+    const composer = page.getByRole('textbox', {
+      name: /交给石间|Hand it to SheJane|Describe a task/,
+    })
+    await composer.fill(realPrompt(
+      '[[e2e:ask]] cancel from the visible Desktop',
+      'Use user.ask exactly once. Ask the exact question "Cancel this E2E question?" with exactly two options labeled "Keep" and "Cancel".',
+    ))
+    await page.getByRole('button', { name: /发送|Send/ }).click()
+
+    const question = page.getByRole('region', { name: /需要你的选择|Your input is needed/ })
+    await expect(question).toBeVisible()
+    await question.getByRole('button', { name: /取消对话|Stop run/ }).click()
+
+    await expect(question).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /停止生成|Stop/ })).toHaveCount(0)
+    expect(harness.rendererErrors).toEqual([])
+  })
+
   test('denies a visible Tool request without producing its file side effect', async () => {
     const workspace = fs.mkdtempSync(
       path.join(process.env.SHEJANE_E2E_TMP_DIR ?? os.tmpdir(), 'desktop-deny-workspace-'),
@@ -577,15 +598,29 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
       const composer = page.getByRole('textbox', {
         name: /交给石间|Hand it to SheJane|Describe a task/,
       })
-      const prompt = '[[e2e:write-file]] recover by choosing a workspace'
+      const prompt = '[[e2e:question-write-file]] preserve my choice while recovering a workspace'
       await composer.fill(prompt)
       await page.getByRole('button', { name: /发送|Send/ }).click()
+      const recoveryQuestion = page.getByRole('region', {
+        name: /需要你的选择|Your input is needed/,
+      })
+      await expect(recoveryQuestion.getByText('Choose a recovery option', { exact: true }))
+        .toBeVisible()
+      await recoveryQuestion.getByRole('radio', { name: /Option B/ }).click()
       await page.locator('.approval-bar').getByRole('button', { name: /允许一次|Allow once/ }).click()
 
       const chooseWorkspace = page.getByRole('button', {
         name: /选择保存位置|Choose save location/,
       })
       await expect(chooseWorkspace).toBeVisible()
+      const answeredQuestion = page
+        .locator('.message.assistant .message-content')
+        .getByText('Choose a recovery option', { exact: true })
+      const answeredChoice = page
+        .locator('.message.user .message-content')
+        .getByText('Option B', { exact: true })
+      await expect(answeredQuestion).toBeVisible()
+      await expect(answeredChoice).toBeVisible()
       expect(fs.existsSync(path.join(workspace, 'approved.txt'))).toBe(false)
 
       await app.evaluate(({ dialog }, selectedPath) => {
@@ -593,6 +628,8 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
       }, workspace)
       await chooseWorkspace.click()
       await expect(page.getByText(path.basename(workspace), { exact: true })).toBeVisible()
+      await expect(answeredQuestion).toBeVisible()
+      await expect(answeredChoice).toBeVisible()
 
       const retryApproval = page.locator('.approval-bar')
       await expect(retryApproval).toBeVisible()

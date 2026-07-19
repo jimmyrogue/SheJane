@@ -140,7 +140,7 @@ if [[ "$PHASE" == "all" || "$PHASE" == "desktop" ]]; then
   SHEJANE_E2E_REAL_LLM_MODEL="$MODEL" \
   pnpm --filter @shejane/desktop exec playwright test \
     --config playwright.config.ts \
-    --grep 'launches, connects, sends a task|binds a workspace and resolves a Tool approval|answers a structured user.ask'
+    --grep 'launches, connects, sends a task|binds a workspace and resolves a Tool approval|answers a structured user.ask|dismisses a structured user.ask'
 fi
 
 echo "✅ Real LLM normal-path phase passed: $PHASE"
