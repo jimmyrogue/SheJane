@@ -183,6 +183,22 @@ describe('desktop shell', () => {
           runId: 'run-workspace-required',
           agentEvents: [
             {
+              type: 'question.asked',
+              label: '需要选择',
+              questionRequestId: 'question-style',
+              questions: [{
+                question: '你想要什么风格？',
+                header: '风格',
+                options: [{ label: '经典数字/符号' }, { label: '简洁文字' }],
+              }],
+            },
+            {
+              type: 'question.answered',
+              label: '已回答',
+              questionRequestId: 'question-style',
+              questionAnswers: { '你想要什么风格？': ['经典数字/符号'] },
+            },
+            {
               type: 'run.failed',
               label: 'Authorize a workspace before creating or changing files.',
               failureCategory: 'workspace',
@@ -238,6 +254,8 @@ describe('desktop shell', () => {
 
     await screen.findByText('Test Model')
     fireEvent.click((await screen.findAllByText('保存 HTML'))[0])
+    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
+    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: '选择保存位置' }))
 
     await waitFor(() => expect(runBodies.length).toBeGreaterThan(0))
@@ -246,6 +264,10 @@ describe('desktop shell', () => {
       workspace_path: '/Users/me/Desktop',
       parent_run_id: 'run-workspace-required',
     })
+    expect(runBodies[0]).not.toHaveProperty('replace_from_client_id')
+    expect(screen.getAllByText('把这个 HTML 保存下来')).toHaveLength(1)
+    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
+    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '选择保存位置' })).not.toBeInTheDocument()
     })

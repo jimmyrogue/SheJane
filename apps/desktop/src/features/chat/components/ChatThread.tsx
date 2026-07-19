@@ -134,7 +134,9 @@ export function ChatThread({
                 <AgentProgress
                   message={message}
                   onOpenArtifact={onOpenArtifact}
-                  onFailureAction={(action, failedMessage) => onFailureAction?.(action, failedMessage.id)}
+                  onFailureAction={index === conversation.messages.length - 1
+                    ? (action, failedMessage) => onFailureAction?.(action, failedMessage.id)
+                    : undefined}
                 />
               </MessageBubble>
             </Fragment>

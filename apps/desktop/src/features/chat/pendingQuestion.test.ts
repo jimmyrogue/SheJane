@@ -56,6 +56,26 @@ describe('findConversationPendingQuestion', () => {
     ).toBeNull()
   })
 
+  it('ignores an unanswered question after its run is canceled', () => {
+    expect(
+      findConversationPendingQuestion(
+        conversation([
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            createdAt: '2026-05-16T00:00:00Z',
+            status: 'done',
+            agentEvents: [
+              { type: 'question.asked', label: 'q', questionRequestId: 'q1', questions: sampleQuestions },
+              { type: 'run.canceled', label: 'Task canceled' },
+            ],
+          },
+        ]),
+      ),
+    ).toBeNull()
+  })
+
   it('returns the newest unanswered question scanning messages newest-first', () => {
     const result = findConversationPendingQuestion(
       conversation([

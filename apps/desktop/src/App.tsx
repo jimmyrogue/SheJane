@@ -156,6 +156,7 @@ interface LocalHarnessRunOptions {
   metadata?: LocalRunMetadata
   initialAgentEvents?: AgentTimelineItem[]
   replaceFromClientId?: string
+  hideUserMessage?: boolean
   pluginReferences?: NonNullable<ChatMessage['pluginReferences']>
   pluginCommand?: NonNullable<ChatMessage['pluginCommand']>
 }
@@ -1024,17 +1025,14 @@ function AppContent() {
       command.type === 'question.answer' ||
       command.type === 'permission.resolve' ||
       command.type === 'plan.resolve' ||
-      command.type === 'tool.reconcile'
+      command.type === 'tool.reconcile' ||
+      command.type === 'run.cancel'
     ) {
       await localData.deletePendingRuntimeCommand(command.commandId)
       const projected = await syncRuntimeThreadCache(config)
       setConversations((items) =>
         projected.reduce((next, conversation) => upsertConversation(next, conversation), items),
       )
-      return true
-    }
-    if (command.type === 'run.cancel') {
-      await localData.deletePendingRuntimeCommand(command.commandId)
       return true
     }
     const run = result as LocalHarnessRun
@@ -1243,6 +1241,7 @@ function AppContent() {
     preferLocal: boolean,
     localRunOptions?: LocalHarnessRunOptions,
     targetConversationID = activeIDRef.current,
+    preservePriorTurns = false,
   ) {
     if (!targetConversationID) {
       return
@@ -1257,18 +1256,20 @@ function AppContent() {
     }
     const sourceMessage = conversation.messages[index]
     const attachments = sourceMessage.attachments ?? []
-    conversation.messages = conversation.messages.slice(0, index)
-    conversation.updatedAt = new Date().toISOString()
-    await localData.save(conversation)
-    if (activeIDRef.current !== targetConversationID) {
-      detachVisibleSend()
-      navigationVersionRef.current += 1
-      setPendingWorkspace(undefined)
-      setPendingProject(undefined)
-      setActiveConversationID(targetConversationID)
-      setMainView('chat')
+    if (!preservePriorTurns) {
+      conversation.messages = conversation.messages.slice(0, index)
+      conversation.updatedAt = new Date().toISOString()
+      await localData.save(conversation)
+      if (activeIDRef.current !== targetConversationID) {
+        detachVisibleSend()
+        navigationVersionRef.current += 1
+        setPendingWorkspace(undefined)
+        setPendingProject(undefined)
+        setActiveConversationID(targetConversationID)
+        setMainView('chat')
+      }
+      await refreshConversations(targetConversationID)
     }
-    await refreshConversations(targetConversationID)
 
     const renderContext = createConversationRenderContext()
     const sendingOperation = beginVisibleSend()
@@ -1280,7 +1281,8 @@ function AppContent() {
         agentSettings,
         {
           ...localRunOptions,
-          replaceFromClientId: userMessageID,
+          replaceFromClientId: preservePriorTurns ? undefined : userMessageID,
+          hideUserMessage: preservePriorTurns,
           ...(sourceMessage.pluginReferences
             ? { pluginReferences: sourceMessage.pluginReferences }
             : {}),
@@ -1355,12 +1357,14 @@ function AppContent() {
     }
     const userMessage = messages[userIndex]
     const assistantMessage = messages[assistantIndex]
+    const retryRunOptions = retryRunOptionsFor(assistantMessage)
     void resendFromUserMessage(
       userMessage.id,
       userMessage.content,
       true,
-      retryRunOptionsFor(assistantMessage),
+      retryRunOptions,
       conversationID,
+      Boolean(retryRunOptions),
     )
   }
 
@@ -1449,6 +1453,7 @@ function AppContent() {
           initialAgentEvents,
         },
         target.conversationID,
+        true,
       )
     } finally {
       endRecoveryAction(recoveryStateRef.current, 'repair', target)
@@ -1616,7 +1621,11 @@ function AppContent() {
     }
 
     const priorMessages = conversation.messages
-    conversation.messages = [...priorMessages, userMessage, assistantMessage]
+    conversation.messages = [
+      ...priorMessages,
+      ...(runOptions?.hideUserMessage ? [] : [userMessage]),
+      assistantMessage,
+    ]
     conversation.updatedAt = timestamp
     scheduleConversationRender(conversation, context)
 
@@ -1672,7 +1681,12 @@ function AppContent() {
         project: conversation.project,
         workspace: conversation.workspace,
       },
-      userItemMetadata: attachments.length ? { attachments } : undefined,
+      userItemMetadata: attachments.length || runOptions?.hideUserMessage
+        ? {
+          ...(attachments.length ? { attachments } : {}),
+          ...(runOptions?.hideUserMessage ? { hidden_from_transcript: true } : {}),
+        }
+        : undefined,
       replaceFromClientId: runOptions?.replaceFromClientId,
       goal,
       workspacePath: conversation.workspace?.path.trim() || undefined,
@@ -1788,8 +1802,8 @@ function AppContent() {
       }
       if (!existing) await localData.savePendingRuntimeCommand(command)
       try {
-        await cancelLocalRunCommand(command.commandId, command.input.runId, localHostConfig)
-        await localData.deletePendingRuntimeCommand(command.commandId)
+        const result = await cancelLocalRunCommand(command.commandId, command.input.runId, localHostConfig)
+        await settleDeliveredLocalRunCommand(command, result, localHostConfig)
       } catch (error) {
         setPendingCommandDeliveryVersion((version) => version + 1)
         throw error

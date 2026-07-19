@@ -86,6 +86,25 @@ describe('MessageBubble meta', () => {
     expect(container.querySelector('.message-content')?.textContent).toBe('S SESSION INTENT\n用户要求整理文件。')
   })
 
+  it('shows the full buffered reply as soon as the message reaches done', () => {
+    vi.useFakeTimers()
+    const fullReply = '第一段 第二段 第三段 第四段 第五段 第六段'
+    const renderBubble = (content: string, status: ChatMessage['status']) => (
+      <I18nProvider>
+        <MessageBubble message={message({ status, content })} />
+      </I18nProvider>
+    )
+    const { container, rerender } = render(renderBubble('第一段 ', 'streaming'))
+
+    act(() => {
+      vi.advanceTimersByTime(22)
+    })
+    rerender(renderBubble(fullReply, 'streaming'))
+    rerender(renderBubble(fullReply, 'done'))
+
+    expect(container.querySelector('.message-content')?.textContent).toBe(fullReply)
+  })
+
   it('keeps reasoning collapsed and renders it as plain text', () => {
     const { container } = render(
       <I18nProvider>

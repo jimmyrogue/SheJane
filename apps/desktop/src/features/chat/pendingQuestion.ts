@@ -39,6 +39,9 @@ export function findConversationPendingQuestion(
     return null
   }
   for (const message of [...conversation.messages].reverse()) {
+    if (message.status !== 'waiting_input') {
+      continue
+    }
     const events = message.agentEvents ?? []
     if (!events.length) {
       continue

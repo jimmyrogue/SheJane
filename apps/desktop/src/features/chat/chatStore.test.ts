@@ -321,6 +321,31 @@ describe('runtime timeline', () => {
   // now normalizes to {label} at its boundary, but the parser stays
   // tolerant so any future emitter / older daemon still works.
   describe('question.asked option-shape tolerance', () => {
+    it('keeps a free-text question when the agent provides no preset options', () => {
+      const item = timelineItem({
+        event_type: 'question.asked',
+        payload: {
+          request_id: 'q-free-text',
+          questions: [
+            {
+              question: '请告诉我需要补充的内容',
+              options: [],
+            },
+          ],
+        },
+      })
+
+      expect(item).not.toBeNull()
+      expect(item?.questions).toEqual([
+        {
+          question: '请告诉我需要补充的内容',
+          header: '',
+          multiSelect: false,
+          options: [],
+        },
+      ])
+    })
+
     it('accepts options as plain strings (legacy daemon shape)', () => {
       const item = timelineItem({
         event_type: 'question.asked',

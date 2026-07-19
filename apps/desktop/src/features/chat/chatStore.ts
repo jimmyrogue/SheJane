@@ -686,7 +686,10 @@ function parseQuestionPayload(value: unknown): AgentQuestionItem[] {
         return description ? { label, description } : { label }
       })
       .filter((option): option is { label: string; description?: string } => Boolean(option))
-    if (!question || options.length === 0) {
+    // A user.ask question may intentionally be free-form. The question bar
+    // always renders its text input, so an empty options list is valid and
+    // must not make the Runtime-owned wait state disappear from Desktop.
+    if (!question) {
       continue
     }
     questions.push({ question, header, multiSelect: item.multiSelect === true, options })

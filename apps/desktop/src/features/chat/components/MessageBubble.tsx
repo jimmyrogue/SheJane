@@ -73,9 +73,8 @@ export function MessageBubble({
     }
     if (!isAssistant || message.status !== 'streaming') {
       if (stream.isStreaming) {
-        // Run finished, but the typewriter may still have buffered text.
-        // Push whatever tail just arrived, then let it drain at animation
-        // speed (stream.end) instead of snapping the full reply in at once.
+        // A terminal run can trigger an OS notification immediately. Flush
+        // the buffered tail now so "reply complete" never precedes the UI.
         if (message.content.startsWith(previousContentRef.current)) {
           const delta = message.content.slice(previousContentRef.current.length)
           if (delta) {
@@ -85,7 +84,7 @@ export function MessageBubble({
           stream.pushChunk(message.content)
         }
         previousContentRef.current = message.content
-        stream.end()
+        stream.finish()
       } else {
         previousContentRef.current = message.content
       }

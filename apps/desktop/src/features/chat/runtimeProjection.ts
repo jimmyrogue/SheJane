@@ -28,6 +28,7 @@ export function projectRuntimeThread(
   const existingByID = new Map((existing?.messages ?? []).map((message) => [message.id, message]))
   const messages = [...snapshot.items]
     .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))
+    .filter((item) => !isHiddenTranscriptItem(item))
     .map((item) => projectRuntimeItem(
       item,
       runs.get(item.run_id ?? ''),
@@ -49,6 +50,11 @@ export function projectRuntimeThread(
     ...(workspaceValue(metadata.workspace) ? { workspace: workspaceValue(metadata.workspace) } : {}),
     messages,
   }
+}
+
+function isHiddenTranscriptItem(item: LocalThreadItem): boolean {
+  return item.item_type === 'user_message'
+    && objectValue(item.metadata).hidden_from_transcript === true
 }
 
 function projectRuntimeItem(

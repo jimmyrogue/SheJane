@@ -193,4 +193,68 @@ describe('Runtime thread projection', () => {
 
     expect(conversation.messages[0]?.lastEventSeq).toBe(8)
   })
+
+  it('omits an internal retry input while keeping its assistant result', () => {
+    const snapshot: LocalThreadSnapshot = {
+      thread: {
+        id: 'conversation-retry',
+        title: 'Retry',
+        metadata: {},
+        version: 2,
+        created_at: '2026-07-12T00:00:00Z',
+        updated_at: '2026-07-12T00:00:02Z',
+      },
+      items: [
+        {
+          id: 'internal-retry-user',
+          thread_id: 'conversation-retry',
+          run_id: 'run-retry',
+          client_id: 'internal-retry-user-client',
+          item_type: 'user_message',
+          status: 'completed',
+          content: 'Do not show this duplicate prompt',
+          metadata: { hidden_from_transcript: true },
+          position: 1,
+          version: 1,
+          created_at: '2026-07-12T00:00:01Z',
+          updated_at: '2026-07-12T00:00:01Z',
+        },
+        {
+          id: 'retry-assistant',
+          thread_id: 'conversation-retry',
+          run_id: 'run-retry',
+          client_id: 'retry-assistant-client',
+          item_type: 'assistant_message',
+          status: 'completed',
+          content: 'Recovered',
+          metadata: {},
+          position: 2,
+          version: 1,
+          created_at: '2026-07-12T00:00:01Z',
+          updated_at: '2026-07-12T00:00:02Z',
+        },
+      ],
+      runs: [{
+        id: 'run-retry',
+        goal: 'Do not show this duplicate prompt',
+        status: 'completed',
+        thread_id: 'conversation-retry',
+        assistant_item_id: 'retry-assistant',
+        history_json: '[]',
+        settings_json: '{}',
+        metadata_json: '{"intent":"retry"}',
+        created_at: '2026-07-12T00:00:01Z',
+        updated_at: '2026-07-12T00:00:02Z',
+      }],
+      events: [],
+      event_high_watermarks: { 'run-retry': 0 },
+      cursor: 2,
+      has_more_items: false,
+      events_truncated: false,
+    }
+
+    expect(projectRuntimeThread(snapshot).messages).toMatchObject([
+      { role: 'assistant', content: 'Recovered' },
+    ])
+  })
 })
